@@ -189,13 +189,15 @@ class RTLCodeGen(target.TargetCodeGenerator):
         options = [
             "-DDACE_RTL_VERBOSE=\"{}\"".format(verbose),
             "-DDACE_RTL_VERILATOR_FLAGS=\"{}\"".format(verilator_flags),
-            "-DDACE_RTL_VERILATOR_LINT_WARNINGS=\"{}\"".format(
-                verilator_lint_warnings), "-DDACE_RTL_MODE=\"{}\"".format(mode)
+            "-DDACE_RTL_VERILATOR_LINT_WARNINGS=\"{}\"".format(verilator_lint_warnings),
+            "-DDACE_RTL_MODE=\"{}\"".format(mode)
         ]
         return options
 
     def generate_rtl_parameters(self, constants):
-        # construct parameters module header
+        """
+        Construct parameters module header
+        """
         if len(constants) == 0:
             return str()
         else:
@@ -234,6 +236,9 @@ class RTLCodeGen(target.TargetCodeGenerator):
         ]
 
     def generate_rtl_inputs_outputs(self, buses, scalars):
+        """
+        Generates all of the input and output ports for the tasklet
+        """
         inputs = []
         outputs = []
         for scalar, (is_output, total_size) in scalars.items():
@@ -248,6 +253,9 @@ class RTLCodeGen(target.TargetCodeGenerator):
         return inputs, outputs
 
     def generate_cpp_zero_inits(self, tasklet):
+        """
+        Generate zero initialization statements
+        """
         valids = [
             f'model->s_axis_{name}_tvalid = 0;'
             for name in tasklet.in_connectors
@@ -345,6 +353,9 @@ for(int i = 0; i < {veclen}; i++){{
         return internal_state_str, internal_state_var
 
     def generate_input_hs(self, tasklet):
+        """
+        Generate checking whether input to the tasklet has been consumed
+        """
         template = '''
         if (model->s_axis_{name}_tready == 1 && model->s_axis_{name}_tvalid == 1) {{
             read_input_hs_{name} = true;
@@ -352,6 +363,9 @@ for(int i = 0; i < {veclen}; i++){{
         return [template.format(name=name) for name in tasklet.in_connectors]
 
     def generate_feeding(self, tasklet, inputs):
+        """
+        Generate statements for feeding into a streaming AXI bus
+        """
         debug_feed_element = "std::cout << \"feed new element\" << std::endl;" if self.verilator_debug else ""
         template = '''
         if (model->s_axis_{name}_tvalid == 0 && in_ptr_{name} < num_elements_{name}) {{
@@ -366,11 +380,17 @@ for(int i = 0; i < {veclen}; i++){{
         ]
 
     def generate_ptrs(self, tasklet):
+        """
+        Generate pointers for the transaction counters
+        """
         ins = [f'int in_ptr_{name} = 0;' for name in tasklet.in_connectors]
         outs = [f'int out_ptr_{name} = 0;' for name in tasklet.out_connectors]
         return ins, outs
 
     def generate_exporting(self, tasklet, outputs):
+        """
+        Generate statements for whether an element output by the tasklet is ready.
+        """
         debug_export_element = "std::cout << \"export element\" << std::endl;" if self.verilator_debug else ""
         template = '''
         if (model->m_axis_{name}_tvalid == 1) {{
@@ -385,6 +405,9 @@ for(int i = 0; i < {veclen}; i++){{
         ]
 
     def generate_write_output_hs(self, tasklet):
+        """
+        Generate check for whether an element has been consumed from the output of a tasklet.
+        """
         template = '''
         if (model->m_axis_{name}_tready && model->m_axis_{name}_tvalid == 1) {{
             write_output_hs_{name} = true;
@@ -392,6 +415,9 @@ for(int i = 0; i < {veclen}; i++){{
         return [template.format(name=name) for name in tasklet.out_connectors]
 
     def generate_hs_flags(self, tasklet):
+        """
+        Generate flags
+        """
         ins = [
             f'bool read_input_hs_{name} = false;'
             for name in tasklet.in_connectors
@@ -403,6 +429,9 @@ for(int i = 0; i < {veclen}; i++){{
         return ins + outs
 
     def generate_input_hs_toggle(self, tasklet):
+        """
+        Generate statements for toggling input flags.
+        """
         debug_read_input_hs = "std::cout << \"remove read_input_hs flag\" << std::endl;" if self.verilator_debug else ""
         template = '''
         if (read_input_hs_{name}) {{
@@ -417,6 +446,9 @@ for(int i = 0; i < {veclen}; i++){{
         ]
 
     def generate_output_hs_toggle(self, tasklet):
+        """
+        Generate statements for toggling output flags.
+        """
         debug_write_output_hs = "std::cout << \"remove write_output_hs flag\" << std::endl;" if self.verilator_debug else ""
         template = '''
         if (write_output_hs_{name}) {{
@@ -432,6 +464,9 @@ for(int i = 0; i < {veclen}; i++){{
         ]
 
     def generate_running_condition(self, tasklet):
+        """
+        Generate the condition for whether the simulation should be running.
+        """
         # TODO should be changed with free-running kernels. Currently only
         # one element is supported. Additionally, this should not be used as
         # condition, as the amount of input and output elements might not be
@@ -456,7 +491,6 @@ for(int i = 0; i < {veclen}; i++){{
                                                 state.node_id(tasklet))
 
         # Collect all of the input and output connectors into buses and scalars
-        import dace
         buses = {}
         scalars = {}
         for edge in state.in_edges(tasklet):
@@ -545,8 +579,7 @@ for(int i = 0; i < {veclen}; i++){{
                     },
                     "memory": {}
                 },
-                "ip_cores": tasklet.ip_cores if isinstance(
-                    tasklet, nodes.RTLTasklet) else {}
+                "ip_cores": tasklet.ip_cores if isinstance(tasklet, nodes.RTLTasklet) else {},
             }
 
             self.code_objects.append(
