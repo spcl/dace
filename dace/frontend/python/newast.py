@@ -126,6 +126,7 @@ def _add_transient_data(sdfg: SDFG,
 
 
 def parse_dace_program(f,
+                       name,
                        argtypes,
                        global_vars,
                        modules,
@@ -170,7 +171,7 @@ def parse_dace_program(f,
         for k, v in global_vars.items() if not k in argtypes and k != '_'
     }).visit(src_ast)
 
-    pv = ProgramVisitor(name=f.__name__,
+    pv = ProgramVisitor(name=name,
                         filename=src_file,
                         line_offset=src_line,
                         col_offset=0,
@@ -2529,9 +2530,8 @@ class ProgramVisitor(ExtNodeVisitor):
                             '__i%d + %d' % (i, s)
                             for i, (s, _, _) in enumerate(inp_subset)
                         ])))
-                    out_memlet = Memlet("{a}[{s}]".format(
-                        a=target_name,
-                        s=target_index))
+                    out_memlet = Memlet("{a}[{s}]".format(a=target_name,
+                                                          s=target_index))
                     if op:
                         out_memlet.wcr = LambdaProperty.from_string(
                             'lambda x, y: x {} y'.format(op))
@@ -2544,7 +2544,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     state.add_mapped_tasklet(state.label, {
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                         for i, (start, end, step) in enumerate(target_subset)
-                    }, {'__inp': inp_memlet, **input_memlets},
+                    }, {
+                        '__inp': inp_memlet,
+                        **input_memlets
+                    },
                                              tasklet_code,
                                              {'__out': out_memlet},
                                              external_edges=True,
@@ -2624,7 +2627,7 @@ class ProgramVisitor(ExtNodeVisitor):
             out_memlet = Memlet.simple(target_name, '%s' % target_subset)
             if boolarr is not None:
                 out_memlet.dynamic = True
-            
+
             for cname, memlet in input_memlets.items():
                 r = state.add_read(memlet.data)
                 state.add_edge(r, None, tasklet, cname, memlet)
@@ -2971,7 +2974,14 @@ class ProgramVisitor(ExtNodeVisitor):
         self._visit_assign(node, node.target, None)
 
     def visit_Assign(self, node: ast.Assign):
+        # Compute first target
         self._visit_assign(node, node.targets[0], None)
+
+        # Then, for other targets make copies
+        for target in node.targets[1:]:
+            assign_from_first = ast.copy_location(
+                ast.Assign(targets=[target], value=node.targets[0]), node)
+            self._visit_assign(assign_from_first, target, None)
 
     def visit_AnnAssign(self, node: ast.AnnAssign):
         type_name = rname(node.annotation)
@@ -3207,7 +3217,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.last_state = output_indirection
 
     def visit_AugAssign(self, node: ast.AugAssign):
-
         self._visit_assign(node, node.target,
                            augassign_ops[type(node.op).__name__])
 
@@ -3528,7 +3537,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 for k, v in argdict.items() if self._is_inputnode(sdfg, k)
             }
             outputs = {
-                k: v
+                k: copy.deepcopy(v) if k in inputs else v
                 for k, v in argdict.items() if self._is_outputnode(sdfg, k)
             }
             # If an argument does not register as input nor as output,

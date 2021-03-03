@@ -294,12 +294,11 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.defined_vars.add(name, DefinedType.Stream,
                                               ctypedef)
 
-        elif (
-                nodedesc.storage == dtypes.StorageType.CPU_Heap or
-            (nodedesc.storage == dtypes.StorageType.Register and
-             ((symbolic.issymbolic(arrsize, sdfg.constants)) or
-              ((arrsize_bytes > Config.get("compiler", "max_stack_array_size"))
-               == True)))):
+        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
+              or (nodedesc.storage == dtypes.StorageType.Register and
+                  ((symbolic.issymbolic(arrsize, sdfg.constants)) or
+                   ((arrsize_bytes > Config.get(
+                       "compiler", "max_stack_array_size")) == True)))):
 
             if nodedesc.storage == dtypes.StorageType.Register:
 
@@ -536,8 +535,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Writing one index
             if (isinstance(memlet.subset, subsets.Indices)
                     and memlet.wcr is None
-                    and self._dispatcher.defined_vars.get(vconn)[0]
-                    == DefinedType.Scalar):
+                    and self._dispatcher.defined_vars.get(
+                        vconn)[0] == DefinedType.Scalar):
                 stream.write(
                     "%s = %s;" %
                     (vconn,
@@ -560,8 +559,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     if is_array_stream_view(sdfg, dfg, src_node):
                         return  # Do nothing (handled by ArrayStreamView)
 
-                    array_subset = (memlet.subset if memlet.data
-                                    == dst_node.data else memlet.other_subset)
+                    array_subset = (memlet.subset
+                                    if memlet.data == dst_node.data else
+                                    memlet.other_subset)
                     if array_subset is None:  # Need to use entire array
                         array_subset = subsets.Range.from_array(dst_nodedesc)
 
@@ -1479,8 +1479,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                           vconn,
                                           conntype=node.in_connectors[vconn]))
 
-        for _, uconn, _, _, out_memlet in sorted(state.out_edges(node),
-                                                 key=lambda e: e.src_conn or ''):
+        for _, uconn, _, _, out_memlet in sorted(
+                state.out_edges(node), key=lambda e: e.src_conn or ''):
             if out_memlet.data is not None:
                 memlet_references.append(
                     cpp.emit_memlet_reference(
@@ -1504,6 +1504,18 @@ class CPUCodeGen(TargetCodeGenerator):
         self._dispatcher.defined_vars.enter_scope(sdfg,
                                                   can_access_parent=inline)
         state_dfg = sdfg.nodes()[state_id]
+
+        # Quick sanity check.
+        # TODO(later): Is this necessary or "can_access_parent" should always be False?
+        if inline:
+            for nestedarr, ndesc in node.sdfg.arrays.items():
+                if (self._dispatcher.defined_vars.has(nestedarr)
+                        and ndesc.transient):
+                    raise NameError(
+                        f'Data name "{nestedarr}" in SDFG "{node.sdfg.name}" '
+                        'already defined in higher scopes and will be shadowed. '
+                        'Please rename or disable inline_sdfgs in the DaCe '
+                        'configuration to compile.')
 
         # Emit nested SDFG as a separate function
         nested_stream = CodeIOStream()
