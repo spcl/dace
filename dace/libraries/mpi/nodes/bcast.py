@@ -61,11 +61,11 @@ class ExpandBcastMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Recv(dace.sdfg.nodes.LibraryNode):
+class Bcast(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        "MPI": ExpandRecvMPI,
+        "MPI": ExpandBcastMPI,
     }
     default_implementation = "MPI"
 
