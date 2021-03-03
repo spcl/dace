@@ -52,6 +52,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
         self.code_objects: List[codeobject.CodeObject] = list()
         self.cpp_general_header_added: bool = False
         self.mode: str = config.Config.get("compiler", "rtl", "mode")
+        self.part: str = config.Config.get("compiler", "rtl", "part")
 
     def generate_node(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView,
                       state_id: int, node: nodes.Node,
@@ -532,6 +533,7 @@ for(int i = 0; i < {veclen}; i++){{
         if self.mode == 'xilinx':
             rtllib_config = {
                 "name": unique_name,
+                "part": self.part,
                 "buses": {
                     name : ('m_axis' if is_output else 's_axis', vec_len)
                     for name, (is_output, _, vec_len) in buses.items()

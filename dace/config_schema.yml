@@ -516,6 +516,11 @@ required:
                         description: >
                           Target of FPGA kernel build
                           Can be either (simulator/xilinx).
+                    part:
+                        type: str
+                        default: xcu280-fsvh2892-2L-e
+                        title: Target part
+                        description: Target part for the Xilinx Vivado project
 
             #############################################
             # MPI compiler
