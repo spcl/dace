@@ -24,16 +24,25 @@ def infer_connector_types(sdfg: SDFG):
                 if cname is None:
                     continue
                 scalar = (e.data.subset and e.data.subset.num_elements() == 1)
+                if e.data.data is not None:
+                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is
+                                           not dtypes.StorageType.GPU_Global)
+                else:
+                    allocated_as_scalar = True
+
                 if node.in_connectors[cname].type is None:
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
-                        scalar = isinstance(node.sdfg.arrays[cname],
-                                            data.Scalar)
+                        scalar = (isinstance(node.sdfg.arrays[cname],
+                                             data.Scalar)
+                                  and allocated_as_scalar)
                         dtype = node.sdfg.arrays[cname].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     elif e.data.data is not None:  # Obtain type from memlet
                         scalar |= isinstance(sdfg.arrays[e.data.data],
                                              data.Scalar)
+                        if isinstance(node, nodes.LibraryNode):
+                            scalar &= allocated_as_scalar
                         dtype = sdfg.arrays[e.data.data].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     else:  # Code->Code
@@ -54,16 +63,25 @@ def infer_connector_types(sdfg: SDFG):
                 scalar = (e.data.subset and e.data.subset.num_elements() == 1
                           and (not e.data.dynamic or
                                (e.data.dynamic and e.data.wcr is not None)))
+                if e.data.data is not None:
+                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is
+                                           not dtypes.StorageType.GPU_Global)
+                else:
+                    allocated_as_scalar = True
+                    
                 if node.out_connectors[cname].type is None:
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
-                        scalar = isinstance(node.sdfg.arrays[cname],
-                                            data.Scalar)
+                        scalar = (isinstance(node.sdfg.arrays[cname],
+                                             data.Scalar)
+                                  and allocated_as_scalar)
                         dtype = node.sdfg.arrays[cname].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     elif e.data.data is not None:  # Obtain type from memlet
                         scalar |= isinstance(sdfg.arrays[e.data.data],
                                              data.Scalar)
+                        if isinstance(node, nodes.LibraryNode):
+                            scalar &= allocated_as_scalar
                         dtype = sdfg.arrays[e.data.data].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     else:
@@ -165,7 +183,7 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
         elif isinstance(node, nodes.NestedSDFG):
             # Nested SDFGs retain same schedule as their parent scope
             if node.schedule is dtypes.ScheduleType.Default:
-                node.schedule = parent_schedule or child_schedule
+                node.schedule = parent_schedule
             _set_default_schedule_types(node.sdfg, node.schedule)
         elif getattr(node, 'schedule', False):
             if node.schedule is dtypes.ScheduleType.Default:

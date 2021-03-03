@@ -89,11 +89,8 @@ def generate_program_folder(sdfg,
     if sdfg is not None:
         # Save the SDFG itself and its hash
         hash = sdfg.save(os.path.join(out_path, "program.sdfg"), hash=True)
-    else:
-        hash = '-1'
-
-    with open(os.path.join(out_path, 'include', 'hash.h'), 'w') as hfile:
-        hfile.write(f'#define __HASH_{sdfg.name} "{hash}"\n')
+        with open(os.path.join(out_path, 'include', 'hash.h'), 'w') as hfile:
+            hfile.write(f'#define __HASH_{sdfg.name} "{hash}"\n')
 
     return out_path
 

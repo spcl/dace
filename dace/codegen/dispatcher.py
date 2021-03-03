@@ -32,7 +32,7 @@ class DefinedMemlets:
         The ones defined in the first (top) scope, refer to global variables.
     """
     def __init__(self):
-        self._scopes = [(None, {}, True)]
+        self._scopes = [(None, {}, True), (None, {}, True)]
 
     def enter_scope(self, parent, can_access_parent=True):
         self._scopes.append((parent, {}, can_access_parent))
@@ -368,9 +368,10 @@ class TargetDispatcher(object):
 
         # Check if the node satisfies any predicates that delegate to a
         # specific code generator
+        state = sdfg.node(state_id)
         satisfied_dispatchers = [
             dispatcher for pred, dispatcher in self._node_dispatchers
-            if pred(sdfg, node)
+            if pred(sdfg, state, node)
         ]
         num_satisfied = len(satisfied_dispatchers)
         if num_satisfied > 1:

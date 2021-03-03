@@ -50,6 +50,40 @@ def test_scalar_output():
     assert np.allclose(ret, A[1, 1] + 5)
 
 
+@pytest.mark.gpu
+def test_scalar_output_ptr_access():
+    sdfg = dace.SDFG("scalptrtest")
+    state = sdfg.add_state()
+    sdfg.add_scalar("scal",
+                    dace.float64,
+                    transient=True,
+                    storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("__return", [1], dace.float64)
+
+    tasklet = state.add_tasklet(
+        "write",
+        {},
+        {"outp": dace.pointer(dace.float64)},
+        """
+        double a = 5;
+        cudaMemcpyAsync(outp, &a, 1 * sizeof(double), cudaMemcpyHostToDevice,
+                        __state->gpu_context->streams[0]);
+        """,
+        language=dace.dtypes.Language.CPP,
+    )
+    access_scal = state.add_access("scal")
+
+    write_unsqueezed = state.add_write("__return")
+    state.add_edge(tasklet, "outp", access_scal, None,
+                   sdfg.make_array_memlet("scal"))
+    state.add_edge(access_scal, None, write_unsqueezed, None,
+                   sdfg.make_array_memlet("scal"))
+
+    ret = sdfg()
+    assert np.allclose(ret, 5)
+
+
 if __name__ == '__main__':
     test_dot_gpu()
     test_scalar_output()
+    test_scalar_output_ptr_access()

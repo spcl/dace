@@ -79,12 +79,20 @@ class InlineSDFG(transformation.Transformation):
 
         # Replace all inner symbols based on symbol mapping
         repldict = {
-            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
+            symbolic.pystr_to_symbolic(k):
+            symbolic.pystr_to_symbolic('__dacesym_' + str(v))
             for k, v in nested_sdfg.symbol_mapping.items()
         }
+        # need two dicts to avoid clashes
+        repldict_inv = {
+            symbolic.pystr_to_symbolic('__dacesym_' + str(v)):
+            symbolic.pystr_to_symbolic(v)
+            for v in nested_sdfg.symbol_mapping.values()
+        }
+
         istrides = [
-            istr.subs(repldict) if symbolic.issymbolic(istr) else istr
-            for istr in inner_strides
+            istr.subs(repldict).subs(repldict_inv)
+            if symbolic.issymbolic(istr) else istr for istr in inner_strides
         ]
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
@@ -458,12 +466,23 @@ class InlineSDFG(transformation.Transformation):
         ]
         for edge in removed_in_edges:
             # Find first access node that refers to this edge
-            node = next(n for n in order if n.data == edge.data.data)
+            try:
+                node = next(n for n in order if n.data == edge.data.data)
+            except StopIteration:
+                raise NameError(f'Access node with data "{n.data}" not found in'
+                                f' nested SDFG "{nsdfg.name}" while inlining '
+                                '(reconnecting inputs)')
             state.add_edge(edge.src, edge.src_conn, node, edge.dst_conn,
                            edge.data)
         for edge in removed_out_edges:
             # Find last access node that refers to this edge
-            node = next(n for n in reversed(order) if n.data == edge.data.data)
+            try:
+                node = next(n for n in reversed(order)
+                            if n.data == edge.data.data)
+            except StopIteration:
+                raise NameError(f'Access node with data "{n.data}" not found in'
+                                f' nested SDFG "{nsdfg.name}" while inlining '
+                                '(reconnecting outputs)')
             state.add_edge(node, edge.src_conn, edge.dst, edge.dst_conn,
                            edge.data)
 

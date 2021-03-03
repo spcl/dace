@@ -4,10 +4,12 @@
 from dace import registry
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.properties import ShapeProperty, make_properties
 from dace.transformation import transformation
 from dace.transformation.dataflow import MapTiling, MapTilingWithOverlap, MapFusion, TrivialMapElimination
 
 @registry.autoregister_params(singlestate=True)
+@make_properties
 class BufferTiling(transformation.Transformation):
     """ Implements the buffer tiling transformation.
 
@@ -20,6 +22,10 @@ class BufferTiling(transformation.Transformation):
     _map1_exit = nodes.MapExit(nodes.Map('', [], []))
     _array = nodes.AccessNode('')
     _map2_entry = nodes.MapEntry(nodes.Map('', [], []))
+
+    tile_sizes = ShapeProperty(dtype=tuple,
+                               default=(128, 128, 128),
+                               desc="Tile size per dimension")
 
     # Returns a list of graphs that represent the pattern
     @staticmethod
@@ -45,13 +51,13 @@ class BufferTiling(transformation.Transformation):
             # Check that buffers are transient.
             if not sdfg.arrays[buf.data].transient:
                 return False
-            
+
             # Check that buffers have exactly 1 input and 1 output edge.
             if graph.in_degree(buf) != 1:
                 return False
             if graph.out_degree(buf) != 1:
                 return False
-            
+
             # Check that buffers are next to the maps.
             if graph.in_edges(buf)[0].src != map1_exit:
                 return False

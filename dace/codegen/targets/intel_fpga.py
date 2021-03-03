@@ -877,7 +877,8 @@ __kernel void \\
 
                     typedef = defined_ctype + "*"
                     memlet_references.append(
-                        (typedef, uconn, cpp.cpp_ptr_expr(sdfg, out_memlet)))
+                        (typedef, uconn,
+                         cpp.cpp_ptr_expr(sdfg, out_memlet, defined_type)))
 
                     self._dispatcher.defined_vars.add(uconn,
                                                       DefinedType.Pointer,
