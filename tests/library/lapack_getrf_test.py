@@ -6,6 +6,7 @@ import dace.libraries.lapack as lapack
 import numpy as np
 import sys
 import warnings
+import pytest
 
 ###############################################################################
 
@@ -17,7 +18,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("matrix_lufact_getrf_{}_{}".format(implementation, dtype))
+    sdfg = dace.SDFG("matrix_lufact_getrf_{}_{}".format(implementation, str(dtype)))
     state = sdfg.add_state("dataflow")
 
     sdfg.add_array("x" + suffix, [n,n],
@@ -65,31 +66,34 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
 ###############################################################################
 
+@pytest.mark.parametrize("implementation, dtype", [
+    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl)
+])
 
-def _test_getrf(implementation, dtype, sdfg):
+def test_getrf(implementation, dtype):
+    sdfg = make_sdfg(implementation, dtype)
     getrf_sdfg = sdfg.compile()
+    np_dtype = getattr(np, dtype.to_string())
     
     from scipy.linalg import lu_factor
     size = 4
     lapack_status = np.array([-1], dtype=np.int32)
-    A = np.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]], dtype=dtype)
-    lu_ref = lu_factor(A)
+    A = np.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]], dtype=np_dtype)
+    lu_ref, _ = lu_factor(A)
+    pivots = np.ndarray([0,0,0,0], dtype=np.int32)
   
     # the x is input AND output, the "result" argument gives the lapack status!
-    getrf_sdfg(x=A, result=lapack_status, pivots=np.ndarray([0,0,0,0], dtype=np.int32), n=size)
+    getrf_sdfg(x=A, result=lapack_status, pivots=pivots, n=size)
 
     if np.allclose(A, lu_ref):
         print("Test ran successfully for {}.".format(implementation))
     else:
         raise ValueError("Validation error!")
 
-
-def test_getrf():
-    _test_getrf("32-bit MKL", np.float32, make_sdfg("MKL", dace.float32))
-    _test_getrf("64-bit MKL", np.float64, make_sdfg("MKL", dace.float64))
-
 ###############################################################################
 
 if __name__ == "__main__":
-    test_getrf()
+    test_getrf("MKL", dace.float32)
+    test_getrf("MKL", dace.float64)
 ###############################################################################
