@@ -260,11 +260,25 @@ class RedundantSecondArray(pm.Transformation):
         e1 = graph.edges_between(in_array, out_array)[0]
         _, b1_subset = _validate_subsets(e1, sdfg.arrays)
 
-        # In strict mode, make sure the memlet covers the removed array
         if strict:
+            # In strict mode, make sure the memlet covers the removed array
             if any(m != a
                    for m, a in zip(b1_subset.size(), out_desc.shape)):
                 return False
+            # In strict mode, abort if the state has two more access nodes for
+            # in array and at least one is a write access. There might be a
+            # RW, WR, or WW dependency.
+            # NOTE: Can we make relax this somehow?
+            accesses = [n for n in graph.nodes()
+                        if isinstance(n, nodes.AccessNode) and
+                        n.desc(sdfg) == in_desc]
+            if len(accesses) > 1:
+                if any(a.access in (
+                        dtypes.AccessType.ReadWrite,
+                        dtypes.AccessType.WriteOnly)
+                       for a in accesses):
+                    return False
+            
 
         # Make sure that both arrays are using the same storage location
         # and are of the same type (e.g., Stream->Stream)
