@@ -5,9 +5,9 @@ name: Build and Test
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, ci-fix ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, ci-fix ]
 
 jobs:
   test:
@@ -28,7 +28,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get install -y libyaml-dev cmake
-        sudo apt-get install -y libblas-dev
+        sudo apt-get install -y libblas-dev libopenblas-dev
         sudo apt-get install -y libpapi-dev papi-tools  # Instrumentation dependencies
         sudo apt-get install -y verilator # RTL simulation dependencies
         python -m pip install --upgrade pip
@@ -46,7 +46,7 @@ jobs:
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
         export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
-        pytest --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow"
+        pytest --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl"
         codecov
     - name: Run other tests
       run: |
@@ -86,7 +86,7 @@ jobs:
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
         . /opt/setupenv
-        pytest --cov-report=xml --cov=dace --tb=short -m "gpu or verilator"
+        pytest --cov-report=xml --cov=dace --tb=short -m "gpu or verilator or mkl"
         codecov
 
     - name: Run PAPI tests

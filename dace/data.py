@@ -28,6 +28,7 @@ def create_datadescriptor(obj):
     except AttributeError:
         if isinstance(obj, numpy.ndarray):
             return Array(dtype=dtypes.typeclass(obj.dtype.type),
+                         strides=tuple(s // obj.itemsize for s in obj.strides),
                          shape=obj.shape)
         if symbolic.issymbolic(obj):
             return Scalar(symbolic.symtype(obj))
