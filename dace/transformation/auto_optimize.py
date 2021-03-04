@@ -12,7 +12,7 @@ import warnings
 
 
 # Transformations
-from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion
+from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, MapTiling
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import helpers, ReduceExpansion
@@ -35,10 +35,11 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
 
     #CompositeFusion.allow_expansion = apply_multi_expansion
     #CompositeFusion.allow_tiling = apply_stencil_tiling
-
+    
     if isinstance(graph_or_subgraph, SDFG):
         # If we have an SDFG, recurse into graphs 
         #graph_or_subgraph.apply_transformations_repeated(ReduceExpansion)
+        graph_or_subgraph.apply_strict_transformations()
         graph_or_subgraph.apply_transformations_repeated(MapFusion)
         for graph in graph_or_subgraph.nodes():
             greedy_fuse(graph, validate_all)
@@ -170,6 +171,9 @@ def auto_optimize(sdfg: SDFG,
     
     # Map fusion
     greedy_fuse(sdfg, validate_all)
+    #sdfg.apply_transformations(MapTiling)
+    #print("MapTiling")
+
 
     # Tiled WCR and streams
     tile_wcrs(sdfg, validate_all)

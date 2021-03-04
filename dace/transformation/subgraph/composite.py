@@ -87,7 +87,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 if SubgraphFusion.can_be_applied(sdfg_copy, subgraph_copy):
                     return True 
                 
-            elif CompositeFusion.allow_tiling:
+            elif CompositeFusion.allow_tiling._default == True:
                 if StencilTiling.can_be_applied(sdfg, subgraph):
                     return True 
 
