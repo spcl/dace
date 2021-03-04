@@ -565,23 +565,38 @@ def _check_map_conflicts(map, edge):
 
 
 def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
-    """ Detects whether a write-conflict-resolving edge can be emitted without
-        using atomics or critical sections. """
+    """
+    Detects whether a write-conflict-resolving edge can be emitted without
+    using atomics or critical sections.
+    """
+    return (is_write_conflicted_with_reason(dfg, edge, datanode, sdfg_schedule)
+            is not None)
+
+
+def is_write_conflicted_with_reason(dfg, edge, datanode=None,
+                                    sdfg_schedule=None):
+    """
+    Detects whether a write-conflict-resolving edge can be emitted without
+    using atomics or critical sections, returning the node or SDFG that caused
+    the decision.
+    :return: None if the conflict is nonatomic, otherwise returns the scope entry
+             node or SDFG that caused the decision to be made.
+    """
 
     if edge.data.wcr_nonatomic or edge.data.wcr is None:
-        return False
+        return None
 
     # If it's an entire SDFG, it's probably write-conflicted
     if isinstance(dfg, SDFG):
         if datanode is None:
-            return True
+            return dfg
         in_edges = find_incoming_edges(datanode, dfg)
         if len(in_edges) != 1:
-            return True
+            return dfg
         if (isinstance(in_edges[0].src, nodes.ExitNode) and
                 in_edges[0].src.map.schedule == dtypes.ScheduleType.Sequential):
-            return False
-        return True
+            return None
+        return dfg
 
     # Traverse memlet path to determine conflicts.
     # If no conflicts will occur, write without atomics
@@ -596,20 +611,20 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
                     # print('PAR: Continuing from map')
                     continue
                 # print('SEQ: Map is conflicted')
-                return True
+                return dfg.entry_node(e.dst)
             # Should never happen (no such thing as write-conflicting reads)
             if (isinstance(e.src, nodes.EntryNode)
                     and e.src.map.schedule != dtypes.ScheduleType.Sequential):
                 warnings.warn(
                     'Unexpected WCR path to have write-conflicting reads')
-                return True
+                return e.src
 
         sdfg = dfg.parent
         dst = path[-1].dst
         # Unexpected case
         if not isinstance(dst, nodes.AccessNode):
             warnings.warn('Unexpected WCR path to not end in access node')
-            return True
+            return dst
 
         # If this is a nested SDFG and the access leads outside
         if not sdfg.arrays[dst.data].transient:
@@ -623,7 +638,7 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
             # Memlet path ends here, transient. We can thus safely write here
             edge = None
             # print('PAR: Reached transient')
-            return False
+            return None
 
     return False
 
