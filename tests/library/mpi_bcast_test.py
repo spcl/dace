@@ -28,7 +28,7 @@ def make_sdfg(dtype):
     
     state.add_memlet_path(x,
                           bcast_node,
-                          dst_conn="_buffer",
+                          dst_conn="_inbuffer",
                           memlet=Memlet.simple(x, "0:n", num_accesses=n))
     state.add_memlet_path(root,
                           bcast_node,
@@ -36,7 +36,7 @@ def make_sdfg(dtype):
                           memlet=Memlet.simple(root, "0:1", num_accesses=1))
     state.add_memlet_path(bcast_node,
                           xout,
-                          src_conn="_buffer",
+                          src_conn="_outbuffer",
                           memlet=Memlet.simple(xout, "0:n", num_accesses=1))
 
     return sdfg
@@ -59,10 +59,10 @@ def _test_mpi(info, sdfg, dtype):
   
     size = 128
     A = np.full(size, rank, dtype=dtype)
-    root = np.array([23], dtype=np.int32)
+    root = np.array([0], dtype=np.int32)
     mpi_sdfg(x=A,root=root, n=size)
     # now B should be an array of size, containing 0
-    if not np.allclose(B, np.full(size, 0, dtype=dtype)):
+    if not np.allclose(A, np.full(size, 0, dtype=dtype)):
         raise(ValueError("The received values are not what I expected."))
 
 def test_mpi():

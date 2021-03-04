@@ -52,7 +52,7 @@ class ExpandBcastMPI(ExpandTransformation):
         if root.dtype.base_type != dace.dtypes.int32:
             raise ValueError("Bcast root must be an integer!")
 
-        code = f"MPI_Bcast(_buffer, {count_str}, {mpi_dtype_str}, _root, MPI_COMM_WORLD);"
+        code = f"MPI_Bcast(_inbuffer, {count_str}, {mpi_dtype_str}, _root, MPI_COMM_WORLD);"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -73,8 +73,8 @@ class Bcast(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={"_buffer", "_root"},
-                         outputs={"_buffer"},
+                         inputs={"_inbuffer", "_root"},
+                         outputs={"_outbuffer"},
                          **kwargs)
 
     def validate(self, sdfg, state):
@@ -85,10 +85,10 @@ class Bcast(dace.sdfg.nodes.LibraryNode):
         
         inbuffer, outbuffer, src, tag = None, None, None, None
         for e in state.out_edges(self):
-            if e.src_conn == "_buffer":
+            if e.src_conn == "_outbuffer":
                 outbuffer = sdfg.arrays[e.data.data]
         for e in state.in_edges(self):
-            if e.dst_conn == "_buffer":
+            if e.dst_conn == "_inbuffer":
                 inbuffer = sdfg.arrays[e.data.data]
             if e.dst_conn == "_root":
                 root = sdfg.arrays[e.data.data]
@@ -100,7 +100,7 @@ class Bcast(dace.sdfg.nodes.LibraryNode):
 
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):  
-            if src_conn == '_buffer':
+            if src_conn == '_outbuffer':
                 dims = [str(e) for e in data.subset.size_exact()]
                 count_str = "*".join(dims)
 
