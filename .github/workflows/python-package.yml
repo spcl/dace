@@ -28,7 +28,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get install -y libyaml-dev cmake
-        sudo apt-get install -y libblas-dev libopenblas-dev
+        sudo apt-get install -y libblas-dev libopenblas-dev liblapacke-dev
         sudo apt-get install -y libpapi-dev papi-tools  # Instrumentation dependencies
         sudo apt-get install -y mpich # MPI dependencies
         sudo apt-get install -y verilator # RTL simulation dependencies
