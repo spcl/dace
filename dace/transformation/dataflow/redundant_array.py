@@ -45,7 +45,9 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     if not src_subset:
         if src_name:
             desc = arrays[src_name]
-            if not isinstance(desc, data.View):
+            if isinstance(desc, data.View):
+                src_subset = subsets.Range.from_array(desc)
+            else:
                 src_subset = copy.deepcopy(dst_subset)
                 padding = len(desc.shape) - len(src_subset)
                 if padding != 0:
@@ -67,7 +69,9 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     elif not dst_subset:
         if dst_name:
             desc = arrays[dst_name]
-            if not isinstance(desc, data.View):
+            if isinstance(desc, data.View):
+                dst_subset = subsets.Range.from_array(desc)
+            else:
                 dst_subset = copy.deepcopy(src_subset)
                 padding = len(desc.shape) - len(dst_subset)
                 if padding != 0:
@@ -270,7 +274,8 @@ class RedundantSecondArray(pm.Transformation):
         # and are of the same type (e.g., Stream->Stream)
         if in_desc.storage != out_desc.storage:
             return False
-        if type(in_desc) != type(out_desc):
+        if (type(in_desc) != type(out_desc) and not
+                isinstance(in_desc, data.View)):
             return False
 
         # Find occurrences in this and other states
