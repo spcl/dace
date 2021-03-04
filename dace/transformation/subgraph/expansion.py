@@ -74,10 +74,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
                         subset = dcpy(e.data.subset)
                         subset.pop([i for i in range(subset.dims()-1)])
                         for s in subset.free_symbols:
-                            print("SYMBOL", s)
-                            print(map_entry.map.params)
-                            print(reassignment[map_entry])
-                            print(map_entry.map.params.index(s))
+                            
                             if reassignment[map_entry][map_entry.map.params.index(s)] != -1:
                                 return False 
 
