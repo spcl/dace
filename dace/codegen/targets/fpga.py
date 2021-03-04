@@ -1280,10 +1280,28 @@ class FPGACodeGen(TargetCodeGenerator):
             if len(labels) == 0:
                 raise RuntimeError("Expected at least one tasklet or data node")
             module_name = "_".join(labels)
+
+            # Consider only the scalars that are actually used in this subgraph
+            subgraph_scalar_parameters = []
+            for is_output, pname, p, *other in scalar_parameters:
+                if any(item.data == pname for item in subgraph.data_nodes()):
+                    if len(other) > 0:  # Xilinx: we indicate also the interface
+                        subgraph_scalar_parameters.append(
+                            (is_output, pname, p, *other))
+                    else:
+                        subgraph_scalar_parameters.append((is_output, pname, p))
+
+            # Consider only the symbols that are actually used in this subgraph
+            subgraph_symbol_parameters = {}
+            for symb, type in symbol_parameters.items():
+                if symb in subgraph.free_symbols:
+                    subgraph_symbol_parameters[symb] = type
+
             self.generate_module(
                 sdfg, state, module_name, subgraph,
-                subgraph_parameters[subgraph] + scalar_parameters,
-                symbol_parameters, module_stream, entry_stream, host_stream)
+                subgraph_parameters[subgraph] + subgraph_scalar_parameters,
+                subgraph_symbol_parameters, module_stream, entry_stream,
+                host_stream)
 
     def generate_nsdfg_header(self, sdfg, state, state_id, node,
                               memlet_references, sdfg_label):

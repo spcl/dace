@@ -198,16 +198,20 @@ class RedundantArray(pm.Transformation):
                 e3.data.data = out_array.data
                 a3_subset.offset(a1_subset, negative=True)
                 if isinstance(b_subset, subsets.Indices):
-                    e3.data.subset = b_subset.new_offset(a3_subset, False)
+                    e3.data.dst_subset = b_subset.new_offset(a3_subset, False)
                 else:
-                    e3.data.subset = b_subset.compose(a3_subset)
+                    e3.data.dst_subset = b_subset.compose(a3_subset)
                 # NOTE: This fixes the following case:
                 # Tasklet ----> A[subset] ----> ... -----> A
                 # Tasklet is not data, so it doesn't have an other subset.
                 if isinstance(e3.src, nodes.AccessNode):
-                    e3.data.other_subset = other_subset
+                    e3.data.data = e3.src.data
+                    e3.data.src_subset = other_subset
                 else:
+                    e3.data.src_subset = None
+                    e3.data.subset = copy.deepcopy(e3.data.dst_subset)
                     e3.data.other_subset = None
+                    
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
             graph.add_edge(e2.src, e2.src_conn, out_array, e2.dst_conn, e2.data)
