@@ -165,54 +165,54 @@ class RedundantArray(pm.Transformation):
             if len(accesses) > 0:
                 # We need to ensure that a data race will not happen if we
                 # remove in_array.
-                # If there is no path between the access nodes (disconnected
-                # components), then it is definitely possible to have data
-                # races. Abort.
+                # First, we simplify the graph (see transient_reuse)
+                # Copy the whole graph
+                G = nx.MultiDiGraph()
+                for n in graph.nodes():
+                    G.add_node(n)
+                for n in graph.nodes():
+                    for e in graph.all_edges(n):
+                        G.add_edge(e.src, e.dst)
+
+                # Collapse all mappings and their scopes into one node
+                scope_children = graph.scope_children()
+                for n in scope_children[None]:
+                    if isinstance(n, nodes.EntryNode):
+                        G.add_edges_from([
+                            (n, x) for (y, x) in G.out_edges(graph.exit_node(n))
+                        ])
+                        G.remove_nodes_from(scope_children[n])
+
+                # Remove all nodes that are not AccessNodes or have incoming wcr
+                # edges and connect their predecessors and successors
+                for n in graph.nodes():
+                    if n in G.nodes():
+                        if not isinstance(n, nodes.AccessNode):
+                            for p in G.predecessors(n):
+                                for c in G.successors(n):
+                                    G.add_edge(p, c)
+                            G.remove_node(n)
+                        else:
+                            for e in graph.all_edges(n):
+                                if e.data.wcr is not None:
+                                    for p in G.predecessors(n):
+                                        for s in G.successors(n):
+                                            G.add_edge(p, s)
+                                    G.remove_node(n)
+                                    break
+                # Loop over the accesses
                 for a in accesses:
-                    if (not nx.has_path(graph.nx, a, out_array) and not
-                            nx.has_path(graph.nx, out_array, a)):
+                    has_bward_path = nx.has_path(G, a, out_array)
+                    has_fward_path = nx.has_path(G, out_array, a)
+                    # If there is no path between the access nodes (disconnected
+                    # components), then it is definitely possible to have data
+                    # races. Abort.
+                    if not (has_bward_path or has_fward_path):
                         return False
-                # If there are paths, then we may have data races only if there
-                # is a path `a ---> CodeNode ---> out_array` or
-                # `a ---> Map ---> out_array` (or their inverse),
-                # without any other access nodes in between (always after
-                # removing in_array).
-                # We may need the scope dictionary
-                scope_dict = graph.scope_dict()
-                for a in accesses:
-                    if nx.has_path(graph.nx, a, out_array):
-                        paths = nx.all_simple_paths(graph.nx, a, out_array)
-                        for path in paths:
-                            front_edge = graph.edges_between(a, path[1])[0]
-                            front_path = graph.memlet_path(front_edge)
-                            front_dst = front_path[-1].dst
-                            back_edge = graph.edges_between(path[-3],
-                                                            path[-2])[0]
-                            back_path = graph.memlet_path(back_edge)
-                            back_src = back_path[0].src
-                            if front_dst == back_src:
-                                if isinstance(front_dst, nodes.AccessNode):
-                                    # An access node in between should stop
-                                    # data races
-                                    continue
-                                else:
-                                    # Otherwise, we have a CodeNode in between
-                                    # (unsafe)
-                                    return False
-                            # Check that the ends of the path are not inside the
-                            # same (Map) scope (unsafe), but not in the same
-                            # scope as a
-                            scope_front = scope_dict[front_dst]
-                            scope_back = scope_dict[back_src]
-                            scope_a = scope_dict[a]
-                            if (scope_front and scope_back and
-                                    scope_front is scope_back):
-                                if scope_a and scope_a is not scope_front:
-                                    return False            
-                    else:
-                        # If the other access node is after out_array, then it
-                        # is always safe to remove in_array
-                        continue
+                    # If there is a forward path then a must not be a direct
+                    # successor of in_array.
+                    if has_bward_path and out_array in G.successors(a):
+                        return False
 
         return True
 
@@ -329,60 +329,57 @@ class RedundantSecondArray(pm.Transformation):
             # might be a RW, WR, or WW dependency.
             accesses = [n for n in graph.nodes()
                         if isinstance(n, nodes.AccessNode) and
-                        n.desc(sdfg) == in_desc]
-            if len(accesses) > 1:
-                if any(graph.in_degree(a) > 0 for a in accesses):
+                        n.desc(sdfg) == in_desc and n is not in_array]
+            if len(accesses) > 0:
+                if (graph.in_degree(in_array) > 0 or
+                        any(graph.in_degree(a) > 0 for a in accesses)):
                     # We need to ensure that a data race will not happen if we
                     # remove in_array.
-                    # If there is no path between the access nodes (disconnected
-                    # components), then it is definitely possible to have data
-                    # races. Abort.
+                    # First, we simplify the graph (see transient_reuse)
+                    # Copy the whole graph
+                    G = nx.MultiDiGraph()
+                    for n in graph.nodes():
+                        G.add_node(n)
+                    for n in graph.nodes():
+                        for e in graph.all_edges(n):
+                            G.add_edge(e.src, e.dst)
+                    # Collapse all mappings and their scopes into one node
+                    scope_children = graph.scope_children()
+                    for n in scope_children[None]:
+                        if isinstance(n, nodes.EntryNode):
+                            G.add_edges_from([(n, x) for (y, x) in
+                                              G.out_edges(graph.exit_node(n))])
+                            G.remove_nodes_from(scope_children[n])
+                    # Remove all nodes that are not AccessNodes or have incoming
+                    # wcr edges and connect their predecessors and successors
+                    for n in graph.nodes():
+                        if n in G.nodes():
+                            if not isinstance(n, nodes.AccessNode):
+                                for p in G.predecessors(n):
+                                    for c in G.successors(n):
+                                        G.add_edge(p, c)
+                                G.remove_node(n)
+                            else:
+                                for e in graph.all_edges(n):
+                                    if e.data.wcr is not None:
+                                        for p in G.predecessors(n):
+                                            for s in G.successors(n):
+                                                G.add_edge(p, s)
+                                        G.remove_node(n)
+                                        break
+                    # Loop over the accesses
                     for a in accesses:
-                        if (not nx.has_path(graph.nx, a, in_array) and not
-                                nx.has_path(graph.nx, in_array, a)):
+                        has_bward_path = nx.has_path(G, a, in_array)
+                        has_fward_path = nx.has_path(G, in_array, a)
+                        # If there is no path between the access nodes
+                        # (disconnected components), then it is definitely
+                        # possible to have data races. Abort.
+                        if not (has_bward_path or has_fward_path):
                             return False
-                    # If there are paths, then we may have data races only if
-                    # there is a path `a ---> CodeNode ---> out_array` or
-                    # `a ---> Map ---> out_array` (or their inverse),
-                    # without any other access nodes in between (always after
-                    # removing in_array).
-                    # We may need the scope dictionary
-                    scope_dict = graph.scope_dict()
-                    for a in accesses:
-                        if nx.has_path(graph.nx, in_array, a):
-                            paths = nx.all_simple_paths(graph.nx, in_array, a)
-                            for path in paths:
-                                front_edge = graph.edges_between(path[1],
-                                                                 path[2])[0]
-                                front_path = graph.memlet_path(front_edge)
-                                front_dst = front_path[-1].dst
-                                back_edge = graph.edges_between(path[-2], a)[0]
-                                back_path = graph.memlet_path(back_edge)
-                                back_src = back_path[0].src
-                                if front_dst == back_src:
-                                    if isinstance(front_dst, nodes.AccessNode):
-                                        # An access node in between should stop
-                                        # data races
-                                        continue
-                                    else:
-                                        # Otherwise, we have a CodeNode in
-                                        # between (unsafe)
-                                        return False
-                                # Check that the ends of the path are not inside
-                                # the same (Map) scope (unsafe), but not in the
-                                # same scope as a
-                                scope_front = scope_dict[front_dst]
-                                scope_back = scope_dict[back_src]
-                                scope_a = scope_dict[a]
-                                if (scope_front and scope_back and
-                                        scope_front is scope_back):
-                                    if scope_a and scope_a is not scope_front:
-                                        return False            
-                        else:
-                            # If the other access node is before in_array, then
-                            # it is always safe to remove out_array
-                            continue
-            
+                        # If there is a forward path then a must not be a direct
+                        # successor of in_array.
+                        if has_fward_path and a in G.successors(in_array):
+                            return False     
 
         # Make sure that both arrays are using the same storage location
         # and are of the same type (e.g., Stream->Stream)

@@ -94,6 +94,7 @@ class MapFusion(transformation.Transformation):
         first_map_exit = graph.nodes()[candidate[MapFusion.first_map_exit]]
         first_map_entry = graph.entry_node(first_map_exit)
         second_map_entry = graph.nodes()[candidate[MapFusion.second_map_entry]]
+        second_map_exit = graph.exit_node(second_map_entry)
 
         for _in_e in graph.in_edges(first_map_exit):
             if _in_e.data.wcr is not None:
@@ -179,6 +180,53 @@ class MapFusion(transformation.Transformation):
             # fail.
             if provided is False:
                 return False
+
+        # Checking for stencil pattern and common input/output data
+        # (after fusing the maps)
+        first_map_inputs = set([e.src.data
+                                for e in graph.in_edges(first_map_entry)
+                                if isinstance(e.src, nodes.AccessNode)])
+        second_map_outputs = set([e.dst.data
+                                  for e in graph.out_edges(second_map_exit)
+                                  if isinstance(e.dst, nodes.AccessNode)])
+        common_data = first_map_inputs.intersection(second_map_outputs)
+        if common_data:
+            input_accesses = [graph.memlet_path(e)[-1].data.src_subset
+                              for e in graph.out_edges(first_map_entry)
+                              if e.data.data in common_data]
+            if len(input_accesses) > 1:
+                for i, a in enumerate(input_accesses[:-1]):
+                    for b in input_accesses[i+1:]:
+                        if isinstance(a, subsets.Indices):
+                            c = subsets.Range.from_indices(a)
+                            c.offset(b, negative=True)
+                        else:
+                            c = a.offset_new(b, negative=True)
+                        for r in c:
+                            if r != (0, 0, 1):
+                                return False
+
+            output_accesses = [graph.memlet_path(e)[0].data.dst_subset
+                               for e in graph.in_edges(second_map_exit)
+                               if e.data.data in common_data]
+
+            # Compute output accesses with respect to first map's symbols
+            oacc_permuted = [
+                dcpy(a).replace({
+                    symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
+                    for k, v in params_dict.items()
+                }) for a in output_accesses]
+            
+            a = input_accesses[0]
+            for b in oacc_permuted:
+                if isinstance(a, subsets.Indices):
+                    c = subsets.Range.from_indices(a)
+                    c.offset(b, negative=True)
+                else:
+                    c = a.offset_new(b, negative=True)
+                for r in c:
+                    if r != (0, 0, 1):
+                        return False
 
         # Success
         return True
