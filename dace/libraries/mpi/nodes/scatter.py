@@ -29,30 +29,18 @@ class ExpandScatterMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (buffer, count_str), root = node.validate(
+        (inbuffer, in_count_str), (outbuffer, out_count_str), root = node.validate(
             parent_sdfg, parent_state)
-        dtype = buffer.dtype.base_type
-        mpi_dtype_str = "MPI_BYTE"
-        if dtype == dace.dtypes.float32:
-            mpi_dtype_str = "MPI_FLOAT"
-        elif dtype == dace.dtypes.float64:
-            mpi_dtype_str = "MPI_DOUBLE" 
-        elif dtype == dace.dtypes.complex64:
-            mpi_dtype_str = "MPI_COMPLEX"
-        elif dtype == dace.dtypes.complex128:
-            mpi_dtype_str = "MPI_COMPLEX_DOUBLE"
-        elif dtype == dace.dtypes.int32:
-            mpi_dtype_str = "MPI_INT"
+        in_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(inbuffer.dtype.base_type)
+        out_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(outbuffer.dtype.base_type)
 
-        else:
-            print("The datatype "+str(dtype)+" is not supported!")
-            raise(NotImplementedError) 
-        if buffer.dtype.veclen > 1:
+        
+        if inbuffer.dtype.veclen > 1:
             raise(NotImplementedError)
         if root.dtype.base_type != dace.dtypes.int32:
             raise ValueError("Scatter root must be an integer!")
 
-        code = f"MPI_Scatter(_buffer, {count_str}, {mpi_dtype_str}, _root, MPI_COMM_WORLD);"
+        code = f"int _commsize;\nMPI_Comm_size(MPI_COMM_WORLD, &_commsize);\nMPI_Scatter(_inbuffer, {in_count_str}/_commsize, {in_mpi_dtype_str}, _outbuffer, {out_count_str}, {out_mpi_dtype_str}, _root, MPI_COMM_WORLD);"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -73,8 +61,8 @@ class Scatter(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={"_buffer", "_root"},
-                         outputs={"_buffer"},
+                         inputs={"_inbuffer", "_root"},
+                         outputs={"_outbuffer"},
                          **kwargs)
 
     def validate(self, sdfg, state):
@@ -83,26 +71,29 @@ class Scatter(dace.sdfg.nodes.LibraryNode):
                  parent SDFG.
         """
         
-        inbuffer, outbuffer, src, tag = None, None, None, None
+        inbuffer, outbuffer, root = None, None, None
         for e in state.out_edges(self):
-            if e.src_conn == "_buffer":
+            if e.src_conn == "_outbuffer":
                 outbuffer = sdfg.arrays[e.data.data]
         for e in state.in_edges(self):
-            if e.dst_conn == "_buffer":
+            if e.dst_conn == "_inbuffer":
                 inbuffer = sdfg.arrays[e.data.data]
             if e.dst_conn == "_root":
                 root = sdfg.arrays[e.data.data]
 
-        if inbuffer != outbuffer:
-            raise(ValueError("Bcast input and output buffer must be the same!"))
         if root.dtype.base_type != dace.dtypes.int32:
-            raise(ValueError("Bcast root must be an integer!"))
+            raise(ValueError("Scatter root must be an integer!"))
 
-        count_str = "XXX"
+        in_count_str = "XXX"
+        out_count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):  
-            if src_conn == '_buffer':
+            if src_conn == '_outbuffer':
                 dims = [str(e) for e in data.subset.size_exact()]
-                count_str = "*".join(dims)
+                out_count_str = "*".join(dims)        
+        for _, _, _, dst_conn, data in state.in_edges(self): 
+            if dst_conn == '_inbuffer':
+                dims = [str(e) for e in data.subset.size_exact()]
+                in_count_str = "*".join(dims)
 
-        return (inbuffer, count_str), root
+        return (inbuffer, in_count_str), (outbuffer, out_count_str), root
 
