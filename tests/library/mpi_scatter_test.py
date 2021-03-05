@@ -7,6 +7,7 @@ import sys
 import warnings
 import numpy as np
 from mpi4py import MPI as MPI4PY
+import pytest
 
 
 ###############################################################################
@@ -15,37 +16,43 @@ from mpi4py import MPI as MPI4PY
 def make_sdfg(dtype):
 
     n = dace.symbol("n")
+    p = dace.symbol("p")
 
-    sdfg = dace.SDFG("mpi_bcast")
+    sdfg = dace.SDFG("mpi_scatter")
     state = sdfg.add_state("dataflow")
 
-    sdfg.add_array("x", [n], dtype, transient=False)
+    sdfg.add_array("inbuf", [n*p], dtype, transient=False)
+    sdfg.add_array("outbuf", [n], dtype, transient=False)
     sdfg.add_array("root", [1], dace.dtypes.int32, transient=False)
-    x = state.add_access("x")
-    xout = state.add_access("x")
+    inbuf = state.add_access("inbuf")
+    outbuf = state.add_access("outbuf")
     root = state.add_access("root")
-    bcast_node = mpi.nodes.bcast.Bcast("bcast")
+    scatter_node = mpi.nodes.scatter.Scatter("scatter")
     
-    state.add_memlet_path(x,
-                          bcast_node,
+    state.add_memlet_path(inbuf,
+                          scatter_node,
                           dst_conn="_inbuffer",
-                          memlet=Memlet.simple(x, "0:n", num_accesses=n))
+                          memlet=Memlet.simple(inbuf, "0:n*p", num_accesses=n))
     state.add_memlet_path(root,
-                          bcast_node,
+                          scatter_node,
                           dst_conn="_root",
                           memlet=Memlet.simple(root, "0:1", num_accesses=1))
-    state.add_memlet_path(bcast_node,
-                          xout,
+    state.add_memlet_path(scatter_node,
+                          outbuf,
                           src_conn="_outbuffer",
-                          memlet=Memlet.simple(xout, "0:n", num_accesses=1))
+                          memlet=Memlet.simple(outbuf, "0:n", num_accesses=1))
 
     return sdfg
 
 
 ###############################################################################
 
-
-def _test_mpi(info, sdfg, dtype):
+@pytest.mark.parametrize("implementation, dtype", [
+    pytest.param("MPI", dace.float32, marks=pytest.mark.mpi),
+    pytest.param("MPI", dace.float64, marks=pytest.mark.mpi)
+])
+def test_mpi(implementation, dtype):
+    np_dtype = getattr(np, dtype.to_string())
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()
@@ -54,22 +61,22 @@ def _test_mpi(info, sdfg, dtype):
         raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
+            sdfg = make_sdfg(dtype)
             mpi_sdfg = sdfg.compile()
         comm.Barrier()
   
-    size = 128
-    A = np.full(size, rank, dtype=dtype)
+    size = 8
+    A = np.full(size*commsize, 7, dtype=np_dtype)
+    B = np.full(size, 42, dtype=np_dtype)
     root = np.array([0], dtype=np.int32)
-    mpi_sdfg(x=A,root=root, n=size)
+    mpi_sdfg(inbuf=A, outbuf=B, root=root, n=size, p=commsize)
     # now B should be an array of size, containing 0
-    if not np.allclose(A, np.full(size, 0, dtype=dtype)):
+    if not np.allclose(B, np.full(size, 7, dtype=np_dtype)):
         raise(ValueError("The received values are not what I expected."))
-
-def test_mpi():
-    _test_mpi("MPI Send/Recv", make_sdfg(np.float), np.float)
 
 ###############################################################################
 
 if __name__ == "__main__":
-    test_mpi()
+    test_mpi("MPI", dace.float32)
+    test_mpi("MPI", dace.float64)
 ###############################################################################
