@@ -1,0 +1,28 @@
+import numpy as np
+
+import dace
+
+
+def test_redundant_array_removal():
+    @dace.program
+    def reshape(data: dace.float64[9], reshaped: dace.float64[3, 3]):
+        reshaped[:] = np.reshape(data, [3, 3])
+
+    @dace.program
+    def test_redundant_array_removal(A: dace.float64[9], B: dace.float64[3]):
+        A_reshaped = dace.define_local([3, 3], dace.float64)
+        reshape(A, A_reshaped)
+        return A_reshaped + B
+
+    A = np.arange(9).astype(np.float64)
+    B = np.arange(3).astype(np.float64)
+    result = test_redundant_array_removal(A.copy(), B.copy())
+    assert np.allclose(result, A.reshape(3, 3) + B)
+
+    data_accesses = {
+        n.data
+        for n, _ in
+        test_redundant_array_removal.to_sdfg().all_nodes_recursive()
+        if isinstance(n, dace.nodes.AccessNode)
+    }
+    assert "A_reshaped" not in data_accesses
