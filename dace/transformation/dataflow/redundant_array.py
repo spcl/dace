@@ -262,6 +262,10 @@ class RedundantSecondArray(pm.Transformation):
 
         # In strict mode, make sure the memlet covers the removed array
         if strict:
+            # If b1_subset cannot be inferred, then we cannot procceed with the
+            # transformation
+            if not b1_subset:
+                return False
             if any(m != a
                    for m, a in zip(b1_subset.size(), out_desc.shape)):
                 return False
@@ -336,7 +340,7 @@ class RedundantSecondArray(pm.Transformation):
         a_subset, b1_subset = _validate_subsets(e1, sdfg.arrays)
         # Find extraneous B subset dimensions
         dim_to_pop = []
-        if a_subset.dims() != b1_subset.dims():
+        if a_subset and b1_subset and a_subset.dims() != b1_subset.dims():
             a_size = a_subset.size_exact()
             b_size = b1_subset.size_exact()
             for i, sz in enumerate(reversed(b_size)):
@@ -357,7 +361,7 @@ class RedundantSecondArray(pm.Transformation):
                 b3_subset.offset(b1_subset, negative=True)
                 # (0, a:b)(d) = (0, a+d) (or offset for indices)
                 if isinstance(a_subset, subsets.Indices):
-                    if dim_to_pop:
+                    if b3_subset and dim_to_pop:
                         indices = b3_subset.indices
                         for i in dim_to_pop:
                             indices.pop(i)
@@ -366,7 +370,7 @@ class RedundantSecondArray(pm.Transformation):
                         subset = b3_subset
                     e3.data.subset = a_subset.new_offset(subset, False)
                 else:
-                    if dim_to_pop:
+                    if b3_subset and dim_to_pop:
                         ranges, tsizes = b3_subset.ranges, b3_subset.tile_sizes
                         for i in dim_to_pop:
                             ranges.pop(i)
