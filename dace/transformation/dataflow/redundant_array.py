@@ -334,6 +334,14 @@ class RedundantSecondArray(pm.Transformation):
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
         a_subset, b1_subset = _validate_subsets(e1, sdfg.arrays)
+        # Find extraneous B subset dimensions
+        dim_to_pop = []
+        if a_subset.dims() != b1_subset.dims():
+            a_size = a_subset.size_exact()
+            b_size = b1_subset.size_exact()
+            for i, sz in enumerate(reversed(b_size)):
+                if sz not in a_size:
+                    dim_to_pop.append(len(b_size) - 1 - i)
         # 2. Iterate over the e2 edges and traverse the memlet tree
         for e2 in graph.out_edges(out_array):
             path = graph.memlet_tree(e2)
@@ -349,9 +357,25 @@ class RedundantSecondArray(pm.Transformation):
                 b3_subset.offset(b1_subset, negative=True)
                 # (0, a:b)(d) = (0, a+d) (or offset for indices)
                 if isinstance(a_subset, subsets.Indices):
-                    e3.data.subset = a_subset.new_offset(b3_subset, False)
+                    if dim_to_pop:
+                        indices = b3_subset.indices
+                        for i in dim_to_pop:
+                            indices.pop(i)
+                        subset = subset.Indices(indices)
+                    else:
+                        subset = b3_subset
+                    e3.data.subset = a_subset.new_offset(subset, False)
                 else:
-                    e3.data.subset = a_subset.compose(b3_subset)
+                    if dim_to_pop:
+                        ranges, tsizes = b3_subset.ranges, b3_subset.tile_sizes
+                        for i in dim_to_pop:
+                            ranges.pop(i)
+                            tsizes.pop(i)
+                        subset = subsets.Range(ranges)
+                        subset.tile_sizes = tsizes
+                    else:
+                        subset = b3_subset
+                    e3.data.subset = a_subset.compose(subset)
                 # NOTE: This fixes the following case:
                 # A ----> A[subset] ----> ... -----> Tasklet
                 # Tasklet is not data, so it doesn't have an other subset.
