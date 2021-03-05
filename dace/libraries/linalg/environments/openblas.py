@@ -9,7 +9,7 @@ class OpenBLAS:
     cmake_packages = ["LAPACK", "BLAS"]
     cmake_variables = {"BLA_VENDOR": "OpenBLAS"}
     cmake_includes = []  
-    cmake_libraries = ["${LAPACK_LIBRARIES}" "${BLAS_LIBRARIES}"]
+    cmake_libraries = ["${LAPACK_LIBRARIES}", "${BLAS_LIBRARIES}"]
     cmake_compile_flags = []
     cmake_link_flags = ["${LAPACK_LINKER_FLAGS}", "${BLAS_LINKER_FLAGS}"]
     cmake_files = []
