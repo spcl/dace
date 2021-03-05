@@ -4,7 +4,9 @@
 
 import copy
 import functools
+import networkx as nx
 import typing
+
 
 from dace import data, registry, subsets, dtypes
 from dace.sdfg import nodes
@@ -154,6 +156,63 @@ class RedundantArray(pm.Transformation):
             if any(m != a
                    for m, a in zip(edge.data.subset.size(), in_desc.shape)):
                 return False
+            # In strict mode, check if the state has two or more access nodes
+            # for the output array. Definitely one of them (out_array) is a
+            # write access. Therefore, there might be a RW, WR, or WW dependency.
+            accesses = [n for n in graph.nodes()
+                        if isinstance(n, nodes.AccessNode) and
+                        n.desc(sdfg) == out_desc and n is not out_array]
+            if len(accesses) > 0:
+                # We need to ensure that a data race will not happen if we
+                # remove in_array.
+                # If there is no path between the access nodes (disconnected
+                # components), then it is definitely possible to have data
+                # races. Abort.
+                for a in accesses:
+                    if (not nx.has_path(graph.nx, a, out_array) and not
+                            nx.has_path(graph.nx, out_array, a)):
+                        return False
+                # If there are paths, then we may have data races only if there
+                # is a path `a ---> CodeNode ---> out_array` or
+                # `a ---> Map ---> out_array` (or their inverse),
+                # without any other access nodes in between (always after
+                # removing in_array).
+                # We may need the scope dictionary
+                scope_dict = graph.scope_dict()
+                for a in accesses:
+                    if nx.has_path(graph.nx, a, out_array):
+                        paths = nx.all_simple_paths(graph.nx, a, out_array)
+                        for path in paths:
+                            front_edge = graph.edges_between(a, path[1])[0]
+                            front_path = graph.memlet_path(front_edge)
+                            front_dst = front_path[-1].dst
+                            back_edge = graph.edges_between(path[-3],
+                                                            path[-2])[0]
+                            back_path = graph.memlet_path(back_edge)
+                            back_src = back_path[0].src
+                            if front_dst == back_src:
+                                if isinstance(front_dst, nodes.AccessNode):
+                                    # An access node in between should stop
+                                    # data races
+                                    continue
+                                else:
+                                    # Otherwise, we have a CodeNode in between
+                                    # (unsafe)
+                                    return False
+                            # Check that the ends of the path are not inside the
+                            # same (Map) scope (unsafe), but not in the same
+                            # scope as a
+                            scope_front = scope_dict[front_dst]
+                            scope_back = scope_dict[back_src]
+                            scope_a = scope_dict[a]
+                            if (scope_front and scope_back and
+                                    scope_front is scope_back):
+                                if scope_a and scope_a is not scope_front:
+                                    return False            
+                    else:
+                        # If the other access node is after out_array, then it
+                        # is always safe to remove in_array
+                        continue
 
         return True
 
@@ -265,19 +324,64 @@ class RedundantSecondArray(pm.Transformation):
             if any(m != a
                    for m, a in zip(b1_subset.size(), out_desc.shape)):
                 return False
-            # In strict mode, abort if the state has two more access nodes for
-            # in array and at least one is a write access. There might be a
-            # RW, WR, or WW dependency.
-            # NOTE: Can we make relax this somehow?
+            # In strict mode, check if the state has two or more access nodes
+            # for in_array and at least one of them is a write access. There
+            # might be a RW, WR, or WW dependency.
             accesses = [n for n in graph.nodes()
                         if isinstance(n, nodes.AccessNode) and
                         n.desc(sdfg) == in_desc]
             if len(accesses) > 1:
-                if any(a.access in (
-                        dtypes.AccessType.ReadWrite,
-                        dtypes.AccessType.WriteOnly)
-                       for a in accesses):
-                    return False
+                if any(graph.in_degree(a) > 0 for a in accesses):
+                    # We need to ensure that a data race will not happen if we
+                    # remove in_array.
+                    # If there is no path between the access nodes (disconnected
+                    # components), then it is definitely possible to have data
+                    # races. Abort.
+                    for a in accesses:
+                        if (not nx.has_path(graph.nx, a, in_array) and not
+                                nx.has_path(graph.nx, in_array, a)):
+                            return False
+                    # If there are paths, then we may have data races only if
+                    # there is a path `a ---> CodeNode ---> out_array` or
+                    # `a ---> Map ---> out_array` (or their inverse),
+                    # without any other access nodes in between (always after
+                    # removing in_array).
+                    # We may need the scope dictionary
+                    scope_dict = graph.scope_dict()
+                    for a in accesses:
+                        if nx.has_path(graph.nx, in_array, a):
+                            paths = nx.all_simple_paths(graph.nx, in_array, a)
+                            for path in paths:
+                                front_edge = graph.edges_between(path[1],
+                                                                 path[2])[0]
+                                front_path = graph.memlet_path(front_edge)
+                                front_dst = front_path[-1].dst
+                                back_edge = graph.edges_between(path[-2], a)[0]
+                                back_path = graph.memlet_path(back_edge)
+                                back_src = back_path[0].src
+                                if front_dst == back_src:
+                                    if isinstance(front_dst, nodes.AccessNode):
+                                        # An access node in between should stop
+                                        # data races
+                                        continue
+                                    else:
+                                        # Otherwise, we have a CodeNode in
+                                        # between (unsafe)
+                                        return False
+                                # Check that the ends of the path are not inside
+                                # the same (Map) scope (unsafe), but not in the
+                                # same scope as a
+                                scope_front = scope_dict[front_dst]
+                                scope_back = scope_dict[back_src]
+                                scope_a = scope_dict[a]
+                                if (scope_front and scope_back and
+                                        scope_front is scope_back):
+                                    if scope_a and scope_a is not scope_front:
+                                        return False            
+                        else:
+                            # If the other access node is before in_array, then
+                            # it is always safe to remove out_array
+                            continue
             
 
         # Make sure that both arrays are using the same storage location
