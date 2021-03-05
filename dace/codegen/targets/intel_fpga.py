@@ -594,7 +594,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # If the kernel takes no arguments, we don't have to call it from the
         # host
         is_autorun = len(kernel_args_opencl) == 0
-        
+
         # create a unique module name to prevent name clashes
         module_function_name = "mod_" + str(sdfg.sdfg_id) + "_" + name
         # The official limit suggested by Intel for module name is 61. However, the compiler
@@ -770,7 +770,7 @@ __kernel void \\
 
         #generate Stream defines if needed
         for edge in state.in_edges(node):
-            if edge.data.data is not None: # skip empty memlets
+            if edge.data.data is not None:  # skip empty memlets
                 desc = sdfg.arrays[edge.data.data]
                 if isinstance(desc, dace.data.Stream):
                     src_node = find_input_arraynode(state, edge)
@@ -1496,6 +1496,20 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                                    memlet.num_accesses))
 
         return ast.copy_location(updated, node)
+
+    def visit_BinOp(self, t):
+        if t.op.__class__.__name__ == 'Pow':
+            # Special case for integer power: do not generate dace namespaces (dace::math) but just call pow
+            if not (isinstance(t.right, (ast.Num, ast.Constant))
+                    and int(t.right.n) == t.right.n and t.right.n >= 0):
+                left_value = cppunparse.cppunparse(self.visit(t.left),
+                                                   expr_semicolon=False)
+                right_value = cppunparse.cppunparse(self.visit(t.right),
+                                                    expr_semicolon=False)
+                updated = ast.Name(
+                    id="pow({},{})".format(left_value, right_value))
+                return ast.copy_location(updated, t)
+        return t
 
     def visit_Name(self, node):
         if node.id not in self.memlets:
