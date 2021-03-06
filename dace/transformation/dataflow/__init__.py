@@ -45,3 +45,6 @@ from .mpi import MPITransformMap
 
 # Algorithmic
 from .matrix_product_transpose import MatrixProductTranspose
+
+# Distributions
+from .map_distribution import ElementWiseArrayOperation
