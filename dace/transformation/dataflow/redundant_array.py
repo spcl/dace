@@ -37,11 +37,11 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     if not src_subset and not dst_subset:
         # NOTE: This should never happen
         raise NotImplementedError
-    # NOTE: If any of the subsets is None, it means that we proceed in 
+    # NOTE: If any of the subsets is None, it means that we proceed in
     # experimental mode. The base case here is that we just copy the other
     # subset. However, if we can locate the other array, we check the
     # dimensionality of the subset and we pop or pad indices/ranges accordingly.
-    # In that case, we also set the subset to start from 0 in each dimension. 
+    # In that case, we also set the subset to start from 0 in each dimension.
     if not src_subset:
         if src_name:
             desc = arrays[src_name]
@@ -186,7 +186,7 @@ class RedundantArray(pm.Transformation):
                 dtypes.AllocationLifetime.Scope, in_desc.alignment,
                 in_desc.debuginfo, in_desc.total_size)
             return
-        
+
         # 2. Iterate over the e2 edges and traverse the memlet tree
         for e2 in graph.in_edges(in_array):
             path = graph.memlet_tree(e2)
@@ -205,13 +205,14 @@ class RedundantArray(pm.Transformation):
                 # Tasklet ----> A[subset] ----> ... -----> A
                 # Tasklet is not data, so it doesn't have an other subset.
                 if isinstance(e3.src, nodes.AccessNode):
-                    e3.data.data = e3.src.data
+                    if e3.src.data == out_array.data:
+                        e3.data.data = e3.src.data
                     e3.data.src_subset = other_subset
                 else:
                     e3.data.src_subset = None
                     e3.data.subset = copy.deepcopy(e3.data.dst_subset)
                     e3.data.other_subset = None
-                    
+
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
             graph.add_edge(e2.src, e2.src_conn, out_array, e2.dst_conn, e2.data)
