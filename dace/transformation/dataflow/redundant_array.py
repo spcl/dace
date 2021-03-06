@@ -6,8 +6,8 @@ import copy
 import functools
 import typing
 
-from dace import data, registry, subsets, dtypes
-from dace.sdfg import nodes
+from dace import data, registry, subsets, dtypes, memlet as mm
+from dace.sdfg import nodes, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
 from dace.transformation import transformation as pm
@@ -164,9 +164,6 @@ class RedundantArray(pm.Transformation):
         return "Remove " + str(in_array)
 
     def apply(self, sdfg):
-        def gnode(nname):
-            return graph.nodes()[self.subgraph[nname]]
-
         graph = sdfg.nodes()[self.state_id]
         in_array = self.in_array(sdfg)
         out_array = self.out_array(sdfg)
@@ -195,23 +192,29 @@ class RedundantArray(pm.Transformation):
                 other_subset, a3_subset = _validate_subsets(
                     e3, sdfg.arrays, dst_name=in_array.data)
                 # 2-b. Modify memlet to match array B.
-                e3.data.data = out_array.data
+                dname = out_array.data
+                src_is_data = False
                 a3_subset.offset(a1_subset, negative=True)
                 if isinstance(b_subset, subsets.Indices):
-                    e3.data.dst_subset = b_subset.new_offset(a3_subset, False)
+                    dst_subset = b_subset.new_offset(a3_subset, False)
                 else:
-                    e3.data.dst_subset = b_subset.compose(a3_subset)
+                    dst_subset = b_subset.compose(a3_subset)
                 # NOTE: This fixes the following case:
                 # Tasklet ----> A[subset] ----> ... -----> A
                 # Tasklet is not data, so it doesn't have an other subset.
                 if isinstance(e3.src, nodes.AccessNode):
                     if e3.src.data == out_array.data:
-                        e3.data.data = e3.src.data
-                    e3.data.src_subset = other_subset
+                        dname = e3.src.data
+                        src_is_data = True
+                    src_subset = other_subset
                 else:
-                    e3.data.src_subset = None
-                    e3.data.subset = copy.deepcopy(e3.data.dst_subset)
-                    e3.data.other_subset = None
+                    src_subset = None
+
+                subset = src_subset if src_is_data else dst_subset
+                other_subset = dst_subset if src_is_data else src_subset
+                e3.data.data = dname
+                e3.data.subset = subset
+                e3.data.other_subset = other_subset
 
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
@@ -263,8 +266,8 @@ class RedundantSecondArray(pm.Transformation):
 
         # In strict mode, make sure the memlet covers the removed array
         if strict:
-            if b1_subset is None or any(m != a
-                   for m, a in zip(b1_subset.size(), out_desc.shape)):
+            if b1_subset is None or any(
+                    m != a for m, a in zip(b1_subset.size(), out_desc.shape)):
                 return False
 
         # Make sure that both arrays are using the same storage location
