@@ -419,6 +419,30 @@ def min_value(dtype: typeclass):
     raise TypeError('Unsupported type "%s" for minimum' % dtype)
 
 
+def reduction_identity(dtype: typeclass, red: ReductionType) -> Any:
+    """ 
+    Returns known identity values (which we can safely reset transients to) 
+    for built-in reduction types.
+    :param dtype: Input type.
+    :param red: Reduction type.
+    :return: Identity value in input type, or None if not found.
+    """
+    _VALUE_GENERATORS = {
+        ReductionType.Custom: lambda x: None,
+        ReductionType.Min: max_value,
+        ReductionType.Max: min_value,
+        ReductionType.Sum: lambda x: x(0),
+        ReductionType.Product: lambda x: x(1),
+        ReductionType.Logical_And: lambda x: x(True),
+        ReductionType.Logical_Or: lambda x: x(False),
+        ReductionType.Bitwise_And: lambda x: ~x(0),
+        ReductionType.Bitwise_Or: lambda x: x(0),
+    }
+    if red not in _VALUE_GENERATORS:
+        return None
+    return _VALUE_GENERATORS[red](dtype)
+
+
 def result_type_of(lhs, *rhs):
     """
     Returns the largest between two or more types (dace.types.typeclass)
@@ -939,37 +963,13 @@ TYPECLASS_TO_STRING = {
 }
 
 TYPECLASS_STRINGS = [
-    "int",
-    "float",
-    "complex",
-    "bool",
-    "bool_",
-    "int8",
-    "int16",
-    "int32",
-    "int64",
-    "uint8",
-    "uint16",
-    "uint32",
-    "uint64",
-    "float16",
-    "float32",
-    "float64",
-    "complex64",
-    "complex128"
+    "int", "float", "complex", "bool", "bool_", "int8", "int16", "int32",
+    "int64", "uint8", "uint16", "uint32", "uint64", "float16", "float32",
+    "float64", "complex64", "complex128"
 ]
 
 INTEGER_TYPES = [
-    bool,
-    bool_,
-    int8,
-    int16,
-    int32,
-    int64,
-    uint8,
-    uint16,
-    uint32,
-    uint64
+    bool, bool_, int8, int16, int32, int64, uint8, uint16, uint32, uint64
 ]
 
 #######################################################
