@@ -4,13 +4,15 @@
 
 import copy
 import functools
+import networkx as nx
 import typing
 
-from dace import data, registry, subsets, dtypes
-from dace.sdfg import nodes
+
+from dace import data, registry, subsets, dtypes, memlet as mm
+from dace.sdfg import nodes, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
-from dace.transformation import transformation as pm
+from dace.transformation import transformation as pm, helpers
 from dace.config import Config
 
 # Helper methods #############################################################
@@ -37,11 +39,11 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     if not src_subset and not dst_subset:
         # NOTE: This should never happen
         raise NotImplementedError
-    # NOTE: If any of the subsets is None, it means that we proceed in 
+    # NOTE: If any of the subsets is None, it means that we proceed in
     # experimental mode. The base case here is that we just copy the other
     # subset. However, if we can locate the other array, we check the
     # dimensionality of the subset and we pop or pad indices/ranges accordingly.
-    # In that case, we also set the subset to start from 0 in each dimension. 
+    # In that case, we also set the subset to start from 0 in each dimension.
     if not src_subset:
         if src_name:
             desc = arrays[src_name]
@@ -154,6 +156,30 @@ class RedundantArray(pm.Transformation):
             if any(m != a
                    for m, a in zip(edge.data.subset.size(), in_desc.shape)):
                 return False
+            # In strict mode, check if the state has two or more access nodes
+            # for the output array. Definitely one of them (out_array) is a
+            # write access. Therefore, there might be a RW, WR, or WW dependency.
+            accesses = [n for n in graph.nodes()
+                        if isinstance(n, nodes.AccessNode) and
+                        n.desc(sdfg) == out_desc and n is not out_array]
+            if len(accesses) > 0:
+                # We need to ensure that a data race will not happen if we
+                # remove in_array.
+                # First, we simplify the graph
+                G = helpers.simplify_state(graph)
+                # Loop over the accesses
+                for a in accesses:
+                    has_bward_path = nx.has_path(G, a, out_array)
+                    has_fward_path = nx.has_path(G, out_array, a)
+                    # If there is no path between the access nodes (disconnected
+                    # components), then it is definitely possible to have data
+                    # races. Abort.
+                    if not (has_bward_path or has_fward_path):
+                        return False
+                    # If there is a forward path then a must not be a direct
+                    # successor of in_array.
+                    if has_bward_path and out_array in G.successors(a):
+                        return False
 
         return True
 
@@ -164,9 +190,6 @@ class RedundantArray(pm.Transformation):
         return "Remove " + str(in_array)
 
     def apply(self, sdfg):
-        def gnode(nname):
-            return graph.nodes()[self.subgraph[nname]]
-
         graph = sdfg.nodes()[self.state_id]
         in_array = self.in_array(sdfg)
         out_array = self.out_array(sdfg)
@@ -186,7 +209,7 @@ class RedundantArray(pm.Transformation):
                 dtypes.AllocationLifetime.Scope, in_desc.alignment,
                 in_desc.debuginfo, in_desc.total_size)
             return
-        
+
         # 2. Iterate over the e2 edges and traverse the memlet tree
         for e2 in graph.in_edges(in_array):
             path = graph.memlet_tree(e2)
@@ -195,23 +218,30 @@ class RedundantArray(pm.Transformation):
                 other_subset, a3_subset = _validate_subsets(
                     e3, sdfg.arrays, dst_name=in_array.data)
                 # 2-b. Modify memlet to match array B.
-                e3.data.data = out_array.data
+                dname = out_array.data
+                src_is_data = False
                 a3_subset.offset(a1_subset, negative=True)
                 if isinstance(b_subset, subsets.Indices):
-                    e3.data.dst_subset = b_subset.new_offset(a3_subset, False)
+                    dst_subset = b_subset.new_offset(a3_subset, False)
                 else:
-                    e3.data.dst_subset = b_subset.compose(a3_subset)
+                    dst_subset = b_subset.compose(a3_subset)
                 # NOTE: This fixes the following case:
                 # Tasklet ----> A[subset] ----> ... -----> A
                 # Tasklet is not data, so it doesn't have an other subset.
                 if isinstance(e3.src, nodes.AccessNode):
-                    e3.data.data = e3.src.data
-                    e3.data.src_subset = other_subset
+                    if e3.src.data == out_array.data:
+                        dname = e3.src.data
+                        src_is_data = True
+                    src_subset = other_subset
                 else:
-                    e3.data.src_subset = None
-                    e3.data.subset = copy.deepcopy(e3.data.dst_subset)
-                    e3.data.other_subset = None
-                    
+                    src_subset = None
+
+                subset = src_subset if src_is_data else dst_subset
+                other_subset = dst_subset if src_is_data else src_subset
+                e3.data.data = dname
+                e3.data.subset = subset
+                e3.data.other_subset = other_subset
+
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
             graph.add_edge(e2.src, e2.src_conn, out_array, e2.dst_conn, e2.data)
@@ -260,15 +290,37 @@ class RedundantSecondArray(pm.Transformation):
         e1 = graph.edges_between(in_array, out_array)[0]
         _, b1_subset = _validate_subsets(e1, sdfg.arrays)
 
-        # In strict mode, make sure the memlet covers the removed array
         if strict:
-            # If b1_subset cannot be inferred, then we cannot procceed with the
-            # transformation
-            if not b1_subset:
+            # In strict mode, make sure the memlet covers the removed array
+            if b1_subset is None or any(
+                    m != a for m, a in zip(b1_subset.size(), out_desc.shape)):
                 return False
-            if any(m != a
-                   for m, a in zip(b1_subset.size(), out_desc.shape)):
-                return False
+            # In strict mode, check if the state has two or more access nodes
+            # for in_array and at least one of them is a write access. There
+            # might be a RW, WR, or WW dependency.
+            accesses = [n for n in graph.nodes()
+                        if isinstance(n, nodes.AccessNode) and
+                        n.desc(sdfg) == in_desc and n is not in_array]
+            if len(accesses) > 0:
+                if (graph.in_degree(in_array) > 0 or
+                        any(graph.in_degree(a) > 0 for a in accesses)):
+                    # We need to ensure that a data race will not happen if we
+                    # remove in_array.
+                    # First, we simplify the graph
+                    G = helpers.simplify_state(graph)
+                    # Loop over the accesses
+                    for a in accesses:
+                        has_bward_path = nx.has_path(G, a, in_array)
+                        has_fward_path = nx.has_path(G, in_array, a)
+                        # If there is no path between the access nodes
+                        # (disconnected components), then it is definitely
+                        # possible to have data races. Abort.
+                        if not (has_bward_path or has_fward_path):
+                            return False
+                        # If there is a forward path then a must not be a direct
+                        # successor of in_array.
+                        if has_fward_path and a in G.successors(in_array):
+                            return False     
 
         # Make sure that both arrays are using the same storage location
         # and are of the same type (e.g., Stream->Stream)

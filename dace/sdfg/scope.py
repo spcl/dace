@@ -196,7 +196,7 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         sdfg,
         state,
         node,
-        dtypes.GPU_SCHEDULES + [dtypes.ScheduleType.GPU_Default],
+        dtypes.GPU_SCHEDULES,
     )
 
 
