@@ -263,7 +263,7 @@ class RedundantSecondArray(pm.Transformation):
 
         # In strict mode, make sure the memlet covers the removed array
         if strict:
-            if any(m != a
+            if b1_subset is None or any(m != a
                    for m, a in zip(b1_subset.size(), out_desc.shape)):
                 return False
 
