@@ -40,7 +40,7 @@ class ExpandGatherMPI(ExpandTransformation):
         if root.dtype.base_type != dace.dtypes.int32:
             raise ValueError("Gather root must be an integer!")
 
-        code = f"int _commsize;\nMPI_Comm_size(MPI_COMM_WORLD, &_commsize);\nMPI_Gather(_inbuffer, {in_count_str}/_commsize, {in_mpi_dtype_str}, _outbuffer, {out_count_str}, {out_mpi_dtype_str}, _root, MPI_COMM_WORLD);"
+        code = f"int _commsize;\nMPI_Comm_size(MPI_COMM_WORLD, &_commsize);\nMPI_Gather(_inbuffer, {in_count_str}, {in_mpi_dtype_str}, _outbuffer, {out_count_str}/_commsize, {out_mpi_dtype_str}, _root, MPI_COMM_WORLD);"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -50,7 +50,7 @@ class ExpandGatherMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Scatter(dace.sdfg.nodes.LibraryNode):
+class Gather(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
