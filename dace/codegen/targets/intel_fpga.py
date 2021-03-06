@@ -1497,19 +1497,19 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
         return ast.copy_location(updated, node)
 
-    def visit_BinOp(self, t):
-        if t.op.__class__.__name__ == 'Pow':
+    def visit_BinOp(self, node):
+        if node.op.__class__.__name__ == 'Pow':
             # Special case for integer power: do not generate dace namespaces (dace::math) but just call pow
-            if not (isinstance(t.right, (ast.Num, ast.Constant))
-                    and int(t.right.n) == t.right.n and t.right.n >= 0):
-                left_value = cppunparse.cppunparse(self.visit(t.left),
+            if not (isinstance(node.right, (ast.Num, ast.Constant))
+                    and int(node.right.n) == node.right.n and node.right.n >= 0):
+                left_value = cppunparse.cppunparse(self.visit(node.left),
                                                    expr_semicolon=False)
-                right_value = cppunparse.cppunparse(self.visit(t.right),
+                right_value = cppunparse.cppunparse(self.visit(node.right),
                                                     expr_semicolon=False)
                 updated = ast.Name(
                     id="pow({},{})".format(left_value, right_value))
-                return ast.copy_location(updated, t)
-        return t
+                return ast.copy_location(updated, node)
+        return self.generic_visit(node)
 
     def visit_Name(self, node):
         if node.id not in self.memlets:
