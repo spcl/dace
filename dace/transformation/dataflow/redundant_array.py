@@ -12,7 +12,7 @@ from dace import data, registry, subsets, dtypes
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
-from dace.transformation import transformation as pm
+from dace.transformation import transformation as pm, helpers
 from dace.config import Config
 
 # Helper methods #############################################################
@@ -165,41 +165,8 @@ class RedundantArray(pm.Transformation):
             if len(accesses) > 0:
                 # We need to ensure that a data race will not happen if we
                 # remove in_array.
-                # First, we simplify the graph (see transient_reuse)
-                # Copy the whole graph
-                G = nx.MultiDiGraph()
-                for n in graph.nodes():
-                    G.add_node(n)
-                for n in graph.nodes():
-                    for e in graph.all_edges(n):
-                        G.add_edge(e.src, e.dst)
-
-                # Collapse all mappings and their scopes into one node
-                scope_children = graph.scope_children()
-                for n in scope_children[None]:
-                    if isinstance(n, nodes.EntryNode):
-                        G.add_edges_from([
-                            (n, x) for (y, x) in G.out_edges(graph.exit_node(n))
-                        ])
-                        G.remove_nodes_from(scope_children[n])
-
-                # Remove all nodes that are not AccessNodes or have incoming wcr
-                # edges and connect their predecessors and successors
-                for n in graph.nodes():
-                    if n in G.nodes():
-                        if not isinstance(n, nodes.AccessNode):
-                            for p in G.predecessors(n):
-                                for c in G.successors(n):
-                                    G.add_edge(p, c)
-                            G.remove_node(n)
-                        else:
-                            for e in graph.all_edges(n):
-                                if e.data.wcr is not None:
-                                    for p in G.predecessors(n):
-                                        for s in G.successors(n):
-                                            G.add_edge(p, s)
-                                    G.remove_node(n)
-                                    break
+                # First, we simplify the graph
+                G = helpers.simplify_state(graph)
                 # Loop over the accesses
                 for a in accesses:
                     has_bward_path = nx.has_path(G, a, out_array)
@@ -335,38 +302,8 @@ class RedundantSecondArray(pm.Transformation):
                         any(graph.in_degree(a) > 0 for a in accesses)):
                     # We need to ensure that a data race will not happen if we
                     # remove in_array.
-                    # First, we simplify the graph (see transient_reuse)
-                    # Copy the whole graph
-                    G = nx.MultiDiGraph()
-                    for n in graph.nodes():
-                        G.add_node(n)
-                    for n in graph.nodes():
-                        for e in graph.all_edges(n):
-                            G.add_edge(e.src, e.dst)
-                    # Collapse all mappings and their scopes into one node
-                    scope_children = graph.scope_children()
-                    for n in scope_children[None]:
-                        if isinstance(n, nodes.EntryNode):
-                            G.add_edges_from([(n, x) for (y, x) in
-                                              G.out_edges(graph.exit_node(n))])
-                            G.remove_nodes_from(scope_children[n])
-                    # Remove all nodes that are not AccessNodes or have incoming
-                    # wcr edges and connect their predecessors and successors
-                    for n in graph.nodes():
-                        if n in G.nodes():
-                            if not isinstance(n, nodes.AccessNode):
-                                for p in G.predecessors(n):
-                                    for c in G.successors(n):
-                                        G.add_edge(p, c)
-                                G.remove_node(n)
-                            else:
-                                for e in graph.all_edges(n):
-                                    if e.data.wcr is not None:
-                                        for p in G.predecessors(n):
-                                            for s in G.successors(n):
-                                                G.add_edge(p, s)
-                                        G.remove_node(n)
-                                        break
+                    # First, we simplify the graph
+                    G = helpers.simplify_state(graph)
                     # Loop over the accesses
                     for a in accesses:
                         has_bward_path = nx.has_path(G, a, in_array)

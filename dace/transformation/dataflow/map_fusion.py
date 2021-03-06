@@ -139,6 +139,17 @@ class MapFusion(transformation.Transformation):
         params_dict = {}
         for _index, _param in enumerate(first_map_entry.map.params):
             params_dict[_param] = second_map_entry.map.params[perm[_index]]
+        # Create intermediate dicts to avoid conflicts, such as {i:j, j:i}
+        repldict = {
+            symbolic.pystr_to_symbolic(k):
+            symbolic.pystr_to_symbolic('__dacesym_' + str(v))
+            for k, v in params_dict.items()
+        }
+        repldict_inv = {
+            symbolic.pystr_to_symbolic('__dacesym_' + str(v)):
+            symbolic.pystr_to_symbolic(v)
+            for v in params_dict.values()
+        }
 
         out_memlets = [e.data for e in graph.in_edges(first_map_exit)]
 
@@ -160,12 +171,14 @@ class MapFusion(transformation.Transformation):
 
             provided = False
 
-            # Compute second subset with respect to first subset's symbols
+            # Compute second subset with respect to first subset's symbols  
             sbs_permuted = dcpy(second_edge.data.subset)
-            sbs_permuted.replace({
-                symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
-                for k, v in params_dict.items()
-            })
+            print(sbs_permuted)
+            if sbs_permuted:
+                sbs_permuted.replace(repldict)
+                print(sbs_permuted)
+                sbs_permuted.replace(repldict_inv)
+                print(sbs_permuted)
 
             for first_memlet in out_memlets:
                 if first_memlet.data != second_edge.data.data:
@@ -211,11 +224,11 @@ class MapFusion(transformation.Transformation):
                                if e.data.data in common_data]
 
             # Compute output accesses with respect to first map's symbols
-            oacc_permuted = [
-                dcpy(a).replace({
-                    symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
-                    for k, v in params_dict.items()
-                }) for a in output_accesses]
+            oacc_permuted = [dcpy(a) for a in output_accesses]
+            oacc_permuted = [a.replace(repldict) if a else a
+                             for a in oacc_permuted]
+            oacc_permuted = [a.replace(repldict_inv) if a else a
+                             for a in oacc_permuted]
             
             a = input_accesses[0]
             for b in oacc_permuted:
