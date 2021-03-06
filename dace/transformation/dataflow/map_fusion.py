@@ -173,12 +173,9 @@ class MapFusion(transformation.Transformation):
 
             # Compute second subset with respect to first subset's symbols  
             sbs_permuted = dcpy(second_edge.data.subset)
-            print(sbs_permuted)
             if sbs_permuted:
                 sbs_permuted.replace(repldict)
-                print(sbs_permuted)
                 sbs_permuted.replace(repldict_inv)
-                print(sbs_permuted)
 
             for first_memlet in out_memlets:
                 if first_memlet.data != second_edge.data.data:
