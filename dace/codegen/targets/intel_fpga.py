@@ -594,7 +594,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # If the kernel takes no arguments, we don't have to call it from the
         # host
         is_autorun = len(kernel_args_opencl) == 0
-
+        
         # create a unique module name to prevent name clashes
         module_function_name = "mod_" + str(sdfg.sdfg_id) + "_" + name
         # The official limit suggested by Intel for module name is 61. However, the compiler
@@ -770,19 +770,21 @@ __kernel void \\
 
         #generate Stream defines if needed
         for edge in state.in_edges(node):
-            desc = sdfg.arrays[edge.data.data]
-            if isinstance(desc, dace.data.Stream):
-                src_node = find_input_arraynode(state, edge)
-                self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
-                                               state, state_id, None,
-                                               nested_stream)
+            if edge.data.data is not None: # skip empty memlets
+                desc = sdfg.arrays[edge.data.data]
+                if isinstance(desc, dace.data.Stream):
+                    src_node = find_input_arraynode(state, edge)
+                    self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
+                                                   state, state_id, None,
+                                                   nested_stream)
         for edge in state.out_edges(node):
-            desc = sdfg.arrays[edge.data.data]
-            if isinstance(desc, dace.data.Stream):
-                dst_node = find_output_arraynode(state, edge)
-                self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
-                                               state, state_id, None,
-                                               nested_stream)
+            if edge.data.data is not None:  # skip empty memlets
+                desc = sdfg.arrays[edge.data.data]
+                if isinstance(desc, dace.data.Stream):
+                    dst_node = find_output_arraynode(state, edge)
+                    self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
+                                                   state, state_id, None,
+                                                   nested_stream)
         return function_header + "\n" + nested_stream.getvalue()
 
     def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
