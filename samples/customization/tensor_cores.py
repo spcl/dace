@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
 This sample shows how to extend the frontend and backend of DaCe by adding
 NVIDIA Tensor Core storage type and code generation support.

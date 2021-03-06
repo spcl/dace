@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes and functions that implement the orthogonal
     tiling transformation. """
 
@@ -41,6 +41,9 @@ class MapTiling(transformation.Transformation):
     divides_evenly = Property(dtype=bool,
                               default=False,
                               desc="Tile size divides dimension length evenly")
+    tile_trivial = Property(dtype=bool,
+                              default=False,
+                              desc="Tiles even if tile_size is 1")
 
     @staticmethod
     def annotates_memlets():
@@ -104,7 +107,7 @@ class MapTiling(transformation.Transformation):
                                     self.expr_index)
 
             # Special case: Tile size of 1 should be omitted from inner map
-            if tile_size == 1 and tile_stride == 1:
+            if tile_size == 1 and tile_stride == 1 and self.tile_trivial == False:
                 stripmine.dim_idx = dim_idx
                 stripmine.new_dim_prefix = ''
                 stripmine.tile_size = str(tile_size)

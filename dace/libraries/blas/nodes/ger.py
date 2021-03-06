@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.symbolic import symstr
 from dace.properties import Property, SymbolicProperty
 from dace.transformation.transformation import ExpandTransformation

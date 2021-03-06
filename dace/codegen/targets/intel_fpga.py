@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import astunparse
 import functools
@@ -125,7 +125,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 #include "dace/intel_fpga/host.h"
 #include <iostream>\n\n""")
 
-        self._frame.generate_fileheader(self._global_sdfg, host_code)
+        self._frame.generate_fileheader(self._global_sdfg, host_code,
+                                        'intelfpga_host')
 
         params_comma = self._global_sdfg.signature(with_arrays=False)
         if params_comma:
@@ -769,19 +770,21 @@ __kernel void \\
 
         #generate Stream defines if needed
         for edge in state.in_edges(node):
-            desc = sdfg.arrays[edge.data.data]
-            if isinstance(desc, dace.data.Stream):
-                src_node = find_input_arraynode(state, edge)
-                self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
-                                               state, state_id, None,
-                                               nested_stream)
+            if edge.data.data is not None:  # skip empty memlets
+                desc = sdfg.arrays[edge.data.data]
+                if isinstance(desc, dace.data.Stream):
+                    src_node = find_input_arraynode(state, edge)
+                    self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
+                                                   state, state_id, None,
+                                                   nested_stream)
         for edge in state.out_edges(node):
-            desc = sdfg.arrays[edge.data.data]
-            if isinstance(desc, dace.data.Stream):
-                dst_node = find_output_arraynode(state, edge)
-                self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
-                                               state, state_id, None,
-                                               nested_stream)
+            if edge.data.data is not None:  # skip empty memlets
+                desc = sdfg.arrays[edge.data.data]
+                if isinstance(desc, dace.data.Stream):
+                    dst_node = find_output_arraynode(state, edge)
+                    self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
+                                                   state, state_id, None,
+                                                   nested_stream)
         return function_header + "\n" + nested_stream.getvalue()
 
     def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
@@ -877,7 +880,8 @@ __kernel void \\
 
                     typedef = defined_ctype + "*"
                     memlet_references.append(
-                        (typedef, uconn, cpp.cpp_ptr_expr(sdfg, out_memlet)))
+                        (typedef, uconn,
+                         cpp.cpp_ptr_expr(sdfg, out_memlet, defined_type)))
 
                     self._dispatcher.defined_vars.add(uconn,
                                                       DefinedType.Pointer,
@@ -1492,6 +1496,20 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                                    memlet.num_accesses))
 
         return ast.copy_location(updated, node)
+
+    def visit_BinOp(self, node):
+        if node.op.__class__.__name__ == 'Pow':
+            # Special case for integer power: do not generate dace namespaces (dace::math) but just call pow
+            if not (isinstance(node.right, (ast.Num, ast.Constant))
+                    and int(node.right.n) == node.right.n and node.right.n >= 0):
+                left_value = cppunparse.cppunparse(self.visit(node.left),
+                                                   expr_semicolon=False)
+                right_value = cppunparse.cppunparse(self.visit(node.right),
+                                                    expr_semicolon=False)
+                updated = ast.Name(
+                    id="pow({},{})".format(left_value, right_value))
+                return ast.copy_location(updated, node)
+        return self.generic_visit(node)
 
     def visit_Name(self, node):
         if node.id not in self.memlets:

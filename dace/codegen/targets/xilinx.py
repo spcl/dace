@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import itertools
 import os
@@ -109,7 +109,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 #include "dace/dace.h"
 #include <iostream>\n\n""")
 
-        self._frame.generate_fileheader(self._global_sdfg, host_code)
+        self._frame.generate_fileheader(self._global_sdfg, host_code,
+                                        'xilinx_host')
 
         params_comma = self._global_sdfg.signature(with_arrays=False)
         if params_comma:
@@ -313,10 +314,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         Emits a conflict resolution call from a memlet.
         """
         redtype = operations.detect_reduction_type(memlet.wcr)
+        defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type), indices)
         else:
-            ptr = cpp.cpp_ptr_expr(sdfg, memlet, indices=indices)
+            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices)
 
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
@@ -422,7 +424,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             """#include <dace/xilinx/device.h>
 #include <dace/math.h>
 #include <dace/complex.h>""", sdfg)
-        self._frame.generate_fileheader(sdfg, module_stream)
+        self._frame.generate_fileheader(sdfg, module_stream, 'xilinx_device')
         module_stream.write("\n", sdfg)
 
         symbol_params = [

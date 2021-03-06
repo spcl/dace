@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from six import StringIO
 import ast
 import ctypes
@@ -97,7 +97,7 @@ class CUDACodeGen(TargetCodeGenerator):
         dispatcher.register_map_dispatcher(dtypes.GPU_SCHEDULES, self)
 
         dispatcher.register_node_dispatcher(self,
-                                            CUDACodeGen.node_dispatch_predicate)
+                                            self.node_dispatch_predicate)
 
         dispatcher.register_state_dispatcher(self,
                                              self.state_dispatch_predicate)
@@ -264,11 +264,12 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
         return [self._codeobject]
 
-    @staticmethod
-    def node_dispatch_predicate(sdfg, node):
+    def node_dispatch_predicate(self, sdfg, state, node):
         if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
             if node.schedule in dtypes.GPU_SCHEDULES:
                 return True
+        if isinstance(node, nodes.NestedSDFG) and self._in_device_code:
+            return True
         return False
 
     def state_dispatch_predicate(self, sdfg, state):
@@ -967,7 +968,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
     def generate_state(self, sdfg, state, function_stream, callsite_stream):
         # Two modes: device-level state and if this state has active streams
-        if self._toplevel_schedule in dtypes.GPU_SCHEDULES:
+        if self._in_device_code:
             self.generate_devicelevel_state(sdfg, state, function_stream,
                                             callsite_stream)
         else:
@@ -2076,7 +2077,7 @@ void  *{kname}_args[] = {{ {kargs} }};
 
     def generate_node(self, sdfg, dfg, state_id, node, function_stream,
                       callsite_stream):
-        if CUDACodeGen.node_dispatch_predicate(sdfg, node):
+        if self.node_dispatch_predicate(sdfg, dfg, node):
             # Dynamically obtain node generator according to class name
             gen = getattr(self, '_generate_' + type(node).__name__)
             gen(sdfg, dfg, state_id, node, function_stream, callsite_stream)

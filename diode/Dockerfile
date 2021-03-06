@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 FROM httpd:2.4
 COPY ./diode/webclient/ /usr/local/apache2/htdocs/webclient/
 COPY ./diode/ /usr/local/apache2/htdocs/webclient/renderer_dir/

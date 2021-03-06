@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes and functions that implement the strip-mining
     transformation."""
 
@@ -156,9 +156,8 @@ class StripMining(transformation.Transformation):
         desc="Continuous (false) or strided (true) elements in tile")
 
     tiling_type = Property(
-        dtype=str,
-        default='normal',
-        choices=['normal', 'ceilrange', 'number_of_tiles'],
+        default=dtypes.TilingType.Normal,
+        choices=dtypes.TilingType,
         allow_none=True,
         desc="normal: the outerloop increments with tile_size, "
         "ceilrange: uses ceiling(N/tile_size) in outer range, "
@@ -228,7 +227,10 @@ class StripMining(transformation.Transformation):
             return target_dim
         candidate = '%s_%s' % (prefix, target_dim)
         index = 1
-        while candidate in map(str, stree[entry].defined_vars):
+        defined_vars = set(
+            str(s) for s in (state.symbols_defined_at(entry).keys()
+                             | sdfg.symbols.keys()))
+        while candidate in defined_vars:
             candidate = '%s%d_%s' % (prefix, index, target_dim)
             index += 1
         return candidate
@@ -474,7 +476,8 @@ class StripMining(transformation.Transformation):
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
-                        new_memlet.num_accesses = new_memlet.num_elements()
+                        new_memlet.num_accesses = new_memlet.num_elements(
+                        ).simplify()
                     new_in_edges[key] = new_memlet
             else:
                 if src_conn is not None and src_conn[:4] == 'OUT_':
@@ -520,7 +523,8 @@ class StripMining(transformation.Transformation):
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
-                        new_memlet.num_accesses = new_memlet.num_elements()
+                        new_memlet.num_accesses = new_memlet.num_elements(
+                        ).simplify()
                     new_out_edges[key] = new_memlet
             else:
                 if dst_conn is not None and dst_conn[:3] == 'IN_':
@@ -534,7 +538,7 @@ class StripMining(transformation.Transformation):
                     exit_in_conn[in_conn] = None
                 if out_conn:
                     exit_out_conn[out_conn] = None
-                new_in_edges[(memlet.data, in_conn, out_conn)] = dcpy(memlet)
+                new_out_edges[(memlet.data, in_conn, out_conn)] = dcpy(memlet)
         new_map_exit.in_connectors = exit_in_conn
         map_exit.out_connectors = exit_out_conn
         for (_, in_conn, out_conn), memlet in new_out_edges.items():

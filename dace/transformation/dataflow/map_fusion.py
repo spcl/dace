@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement the map fusion transformation.
 """
 
@@ -111,7 +111,7 @@ class MapFusion(transformation.Transformation):
 
                 # If array is used anywhere else in this state.
                 num_occurrences = len([
-                    n for n in graph.nodes()
+                    n for s in sdfg.nodes() for n in s.nodes()
                     if isinstance(n, nodes.AccessNode) and n.data == dst.data
                 ])
                 if num_occurrences > 1:

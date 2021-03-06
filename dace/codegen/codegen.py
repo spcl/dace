@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import os
 from typing import List
@@ -110,6 +110,9 @@ def generate_code(sdfg) -> List[CodeObject]:
         os.remove('test2.sdfg')
 
         # Run with the deserialized version
+        # NOTE: This means that all subsequent modifications to `sdfg`
+        # are not reflected outside of this function (e.g., library
+        # node expansion).
         sdfg = sdfg2
 
     # Before generating the code, run type inference on the SDFG connectors
@@ -117,6 +120,14 @@ def generate_code(sdfg) -> List[CodeObject]:
 
     # Set default storage/schedule types in SDFG
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
+    # Recursively expand library nodes that have not yet been expanded
+    sdfg.expand_library_nodes()
+
+    # After expansion, run another pass of connector/type inference
+    infer_types.infer_connector_types(sdfg)
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
 
     frame = framecode.DaCeCodeGenerator()
 

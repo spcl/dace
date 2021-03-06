@@ -1,4 +1,4 @@
-% Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+% Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 A = 0
 for i=1:5
     A = i+2

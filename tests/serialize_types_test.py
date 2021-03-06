@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.properties import Property, make_properties
 from dace.serialize import all_properties_to_json, set_properties_from_json

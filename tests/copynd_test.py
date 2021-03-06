@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import dace
@@ -93,6 +93,30 @@ def test():
         dace.memlet.Memlet.simple(arrays[-2],
                                   '20:40, 10:30',
                                   other_subset_str='2, 10:30, 20:40'))
+    
+    # Copy 10: Copying from 2d array to another 2d array a 1d slice
+    # The src stride is 1, while the dst stride is N
+    arrays.append(
+        state.add_array('A_' + str(len(arrays)), [40, 40], dace.float32))
+    arrays.append(
+        state.add_array('A_' + str(len(arrays)), [40, 40], dace.float32))
+    state.add_edge(
+        arrays[-2], None, arrays[-1], None,
+        dace.memlet.Memlet.simple(arrays[-2],
+                                  '20, 10:30',
+                                  other_subset_str='10:30, 10'))
+    
+    # Copy 11: Copying from 2d array to another 2d array a 1d slice
+    # The src stride is N, while the dst stride is 1
+    arrays.append(
+        state.add_array('A_' + str(len(arrays)), [40, 40], dace.float32))
+    arrays.append(
+        state.add_array('A_' + str(len(arrays)), [40, 40], dace.float32))
+    state.add_edge(
+        arrays[-2], None, arrays[-1], None,
+        dace.memlet.Memlet.simple(arrays[-2],
+                                  '10:30, 20',
+                                  other_subset_str='10, 10:30'))
 
     array_data = [
         np.random.rand(*[
@@ -122,7 +146,11 @@ def test():
         np.linalg.norm(array_data[15] - array_data[14][4, 1, 2, 1:(N - 1):2]) /
         (N / 2 - 1),
         np.linalg.norm(array_data[17][2, 10:30, 20:40] -
-                       array_data[16][20:40, 10:30]) / 400
+                       array_data[16][20:40, 10:30]) / 400,
+        np.linalg.norm(array_data[19][10:30, 10] -
+                       array_data[18][20, 10:30]) / 20,
+        np.linalg.norm(array_data[21][10, 10:30] -
+                       array_data[20][10:30, 20]) / 20
     ]
 
     print('Differences: ', diffs)
