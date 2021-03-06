@@ -398,8 +398,8 @@ class FPGACodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, dace.data.View):
             return self._cpu_codegen.allocate_view(sdfg, dfg, state_id, node,
                                                    function_stream,
-                                                   callsite_stream,
-                                                   callsite_stream)
+                                                   declaration_stream,
+                                                   allocation_stream)
         elif isinstance(nodedesc, dace.data.Stream):
 
             if not self._in_device_code:
