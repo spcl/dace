@@ -3,7 +3,8 @@ import numpy as np
 
 import dace
 from dace.libraries.blas import Transpose
-from dace.transformation.dataflow import RedundantSecondArray
+from dace.transformation.dataflow import RedundantArray, RedundantSecondArray
+
 
 def test_out():
     sdfg = dace.SDFG("test_redundant_copy_out")
@@ -68,7 +69,7 @@ def test_out_success():
     state.add_edge(D, None, t, '__in2', dace.Memlet.simple("D", "0"))
     state.add_memlet_path(t, mx, E, memlet=dace.Memlet.simple("E", "i, j, k"),
                           src_conn='__out')
-    
+
 
     sdfg.validate()
     sdfg.apply_strict_transformations()
@@ -194,6 +195,56 @@ def test_in():
     assert (A_arr == D_arr.T).all()
 
 
+def test_view_array_array():
+    sdfg = dace.SDFG('redarrtest')
+    sdfg.add_view('v', [2, 10], dace.float64)
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_transient('tmp', [20], dace.float64)
+
+    state = sdfg.add_state()
+    t = state.add_tasklet('something', {}, {'out'}, 'out[1, 1] = 6')
+    v = state.add_access('v')
+    tmp = state.add_access('tmp')
+    w = state.add_write('A')
+    state.add_edge(t, 'out', v, None, dace.Memlet('v[0:2, 0:10]'))
+    state.add_nedge(v, tmp, dace.Memlet('tmp[0:20]'))
+    state.add_nedge(tmp, w, dace.Memlet('A[0:20]'))
+
+    assert sdfg.apply_transformations_repeated(RedundantArray) == 1
+    sdfg.validate()
+
+
+def test_array_array_view():
+    sdfg = dace.SDFG('redarrtest')
+    sdfg.add_view('v', [2, 10], dace.float64)
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_transient('tmp', [20], dace.float64)
+
+    state = sdfg.add_state()
+    a = state.add_read('A')
+    tmp = state.add_access('tmp')
+    v = state.add_access('v')
+    t = state.add_tasklet('something', {'inp'}, {}, 'inp[1, 1] + 6')
+    state.add_nedge(a, tmp, dace.Memlet('A[0:20]'))
+    state.add_nedge(tmp, v, dace.Memlet('tmp[0:20]'))
+    state.add_edge(v, None, t, 'inp', dace.Memlet('v[0:2, 0:10]'))
+
+    assert sdfg.apply_transformations_repeated(RedundantSecondArray) == 1
+    sdfg.validate()
+
+
+def test_reverse_copy():
+    @dace.program
+    def redarrtest(p: dace.float64[20, 20]):
+        p[-1, :] = p[-2, :]
+
+    p = np.random.rand(20, 20)
+    pp = np.copy(p)
+    pp[-1, :] = pp[-2, :]
+    redarrtest(p)
+    assert np.allclose(p, pp)
+
+
 if __name__ == '__main__':
     test_in()
     test_out()
@@ -201,3 +252,6 @@ if __name__ == '__main__':
     test_out_failure_subset_mismatch()
     test_out_failure_no_overlap()
     test_out_failure_partial_overlap()
+    test_view_array_array()
+    test_array_array_view()
+    test_reverse_copy()
