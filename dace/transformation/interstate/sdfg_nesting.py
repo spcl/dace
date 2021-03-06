@@ -1027,7 +1027,7 @@ class NestSDFG(transformation.Transformation):
                             and src.data == inputs[mem.data]):
                         mem.data = inputs[mem.data]
                     elif (mem.data in outputs.keys()
-                          and src.data == outputs[mem.data]):
+                          and (src.data == outputs[mem.data] or dst.data == outputs[mem.data])):
                         mem.data = outputs[mem.data]
                 elif (isinstance(dst, nodes.AccessNode)
                       and mem.data in outputs.keys()
