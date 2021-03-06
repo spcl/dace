@@ -21,7 +21,7 @@ from dace.codegen.dispatcher import DefinedType
 from dace.config import Config
 from dace.frontend import operations
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.sdfg import nodes
+from dace.sdfg import nodes, graph as gr
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu
 
@@ -597,6 +597,8 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None,
                 in_edges[0].src.map.schedule == dtypes.ScheduleType.Sequential):
             return None
         return dfg
+    elif isinstance(dfg, gr.SubgraphView):
+        dfg = dfg.graph
 
     # Traverse memlet path to determine conflicts.
     # If no conflicts will occur, write without atomics
@@ -640,7 +642,7 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None,
             # print('PAR: Reached transient')
             return None
 
-    return False
+    return None
 
 
 class LambdaToFunction(ast.NodeTransformer):
