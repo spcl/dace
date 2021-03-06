@@ -4,13 +4,15 @@
 
 import copy
 import functools
+import networkx as nx
 import typing
+
 
 from dace import data, registry, subsets, dtypes, memlet as mm
 from dace.sdfg import nodes, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
-from dace.transformation import transformation as pm
+from dace.transformation import transformation as pm, helpers
 from dace.config import Config
 
 # Helper methods #############################################################
@@ -154,6 +156,30 @@ class RedundantArray(pm.Transformation):
             if any(m != a
                    for m, a in zip(edge.data.subset.size(), in_desc.shape)):
                 return False
+            # In strict mode, check if the state has two or more access nodes
+            # for the output array. Definitely one of them (out_array) is a
+            # write access. Therefore, there might be a RW, WR, or WW dependency.
+            accesses = [n for n in graph.nodes()
+                        if isinstance(n, nodes.AccessNode) and
+                        n.desc(sdfg) == out_desc and n is not out_array]
+            if len(accesses) > 0:
+                # We need to ensure that a data race will not happen if we
+                # remove in_array.
+                # First, we simplify the graph
+                G = helpers.simplify_state(graph)
+                # Loop over the accesses
+                for a in accesses:
+                    has_bward_path = nx.has_path(G, a, out_array)
+                    has_fward_path = nx.has_path(G, out_array, a)
+                    # If there is no path between the access nodes (disconnected
+                    # components), then it is definitely possible to have data
+                    # races. Abort.
+                    if not (has_bward_path or has_fward_path):
+                        return False
+                    # If there is a forward path then a must not be a direct
+                    # successor of in_array.
+                    if has_bward_path and out_array in G.successors(a):
+                        return False
 
         return True
 
@@ -264,11 +290,37 @@ class RedundantSecondArray(pm.Transformation):
         e1 = graph.edges_between(in_array, out_array)[0]
         _, b1_subset = _validate_subsets(e1, sdfg.arrays)
 
-        # In strict mode, make sure the memlet covers the removed array
         if strict:
+            # In strict mode, make sure the memlet covers the removed array
             if b1_subset is None or any(
                     m != a for m, a in zip(b1_subset.size(), out_desc.shape)):
                 return False
+            # In strict mode, check if the state has two or more access nodes
+            # for in_array and at least one of them is a write access. There
+            # might be a RW, WR, or WW dependency.
+            accesses = [n for n in graph.nodes()
+                        if isinstance(n, nodes.AccessNode) and
+                        n.desc(sdfg) == in_desc and n is not in_array]
+            if len(accesses) > 0:
+                if (graph.in_degree(in_array) > 0 or
+                        any(graph.in_degree(a) > 0 for a in accesses)):
+                    # We need to ensure that a data race will not happen if we
+                    # remove in_array.
+                    # First, we simplify the graph
+                    G = helpers.simplify_state(graph)
+                    # Loop over the accesses
+                    for a in accesses:
+                        has_bward_path = nx.has_path(G, a, in_array)
+                        has_fward_path = nx.has_path(G, in_array, a)
+                        # If there is no path between the access nodes
+                        # (disconnected components), then it is definitely
+                        # possible to have data races. Abort.
+                        if not (has_bward_path or has_fward_path):
+                            return False
+                        # If there is a forward path then a must not be a direct
+                        # successor of in_array.
+                        if has_fward_path and a in G.successors(in_array):
+                            return False     
 
         # Make sure that both arrays are using the same storage location
         # and are of the same type (e.g., Stream->Stream)
