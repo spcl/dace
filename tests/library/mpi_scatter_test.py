@@ -76,7 +76,47 @@ def test_mpi(implementation, dtype):
 
 ###############################################################################
 
+N = dace.symbol('N', dtype=dace.int64)
+P = dace.symbol('P', dtype=dace.int64)
+
+@dace.program
+def dace_scatter_gather(A: dace.float32[N*P]):
+    tmp = np.empty_like(A, shape=[N])
+    dace.comm.Scatter(A, tmp, root=0)
+    tmp[:] = np.pi
+    dace.comm.Gather(tmp, A, root=0)
+
+
+def test_dace_scatter_gather():
+
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    commsize = comm.Get_size()
+    mpi_sdfg = None
+    if commsize < 2:
+        raise ValueError("This test is supposed to be run with at least two processes!")
+    for r in range(0, commsize):
+        if r == rank:
+            mpi_sdfg = dace_scatter_gather.compile()
+        comm.Barrier()
+
+    length = 128
+    if rank == 0:
+        A = np.full([length * commsize], np.pi, dtype=np.float32)
+    else:
+        A = np.random.randn(length * commsize).astype(np.float32)
+    
+    mpi_sdfg(A=A, N=length, P=commsize)
+
+    if rank == 0:
+        assert(np.allclose(A, np.full([length * commsize], np.pi, dtype=np.float32)))
+    else:
+        assert(True)
+
+###############################################################################
+
 if __name__ == "__main__":
     test_mpi("MPI", dace.float32)
     test_mpi("MPI", dace.float64)
+    test_dace_scatter_gather()
 ###############################################################################

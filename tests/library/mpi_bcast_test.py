@@ -66,10 +66,43 @@ def _test_mpi(info, sdfg, dtype):
         raise(ValueError("The received values are not what I expected."))
 
 def test_mpi():
-    _test_mpi("MPI Send/Recv", make_sdfg(np.float), np.float)
+    _test_mpi("MPI Bcast", make_sdfg(np.float64), np.float64)
+
+###############################################################################
+
+N = dace.symbol('N', dtype=dace.int64)
+
+@dace.program
+def dace_bcast(A: dace.float32[N]):
+    dace.comm.Bcast(A, root=0)
+
+
+def test_dace_bcast():
+
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    commsize = comm.Get_size()
+    mpi_sdfg = None
+    if commsize < 2:
+        raise ValueError("This test is supposed to be run with at least two processes!")
+    for r in range(0, commsize):
+        if r == rank:
+            mpi_sdfg = dace_bcast.compile()
+        comm.Barrier()
+
+    length = 128
+    if rank == 0:
+        A = np.full([length], np.pi, dtype=np.float32)
+    else:
+        A = np.random.randn(length).astype(np.float32)
+    
+    mpi_sdfg(A=A, N=length)
+
+    assert(np.allclose(A, np.full([length], np.pi, dtype=np.float32)))
 
 ###############################################################################
 
 if __name__ == "__main__":
     test_mpi()
+    test_dace_bcast()
 ###############################################################################

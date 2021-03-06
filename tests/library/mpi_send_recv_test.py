@@ -89,10 +89,46 @@ def _test_mpi(info, sdfg, dtype):
         raise(ValueError("The received values are not what I expected."))
 
 def test_mpi():
-    _test_mpi("MPI Send/Recv", make_sdfg(np.float), np.float)
+    _test_mpi("MPI Send/Recv", make_sdfg(np.float64), np.float64)
+
+###############################################################################
+
+myrank = dace.symbol('myrank', dtype=dace.int32)
+mysize = dace.symbol('mysize', dtype=dace.int32)
+
+@dace.program
+def dace_send_recv():
+    tmp1 = np.full([1], myrank, dtype=np.int32)
+    tmp2 = np.zeros([1], dtype=np.int32)
+    if myrank == 0:
+        dace.comm.Send(tmp1, 1, tag=42)
+        dace.comm.Recv(tmp2, mysize - 1, tag=42)
+    else:
+        dace.comm.Recv(tmp2, (myrank - 1) % mysize, tag=42)
+        dace.comm.Send(tmp1, (myrank + 1) % mysize, tag=42)
+    return tmp2
+
+
+def test_dace_send_recv():
+
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    commsize = comm.Get_size()
+    mpi_sdfg = None
+    if commsize < 2:
+        raise ValueError("This test is supposed to be run with at least two processes!")
+    for r in range(0, commsize):
+        if r == rank:
+            mpi_sdfg = dace_send_recv.compile()
+        comm.Barrier()
+    
+    prv_rank = mpi_sdfg(myrank=rank, mysize=commsize)
+
+    assert(prv_rank[0] == (rank - 1) % commsize)
 
 ###############################################################################
 
 if __name__ == "__main__":
     test_mpi()
+    test_dace_send_recv()
 ###############################################################################
