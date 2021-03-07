@@ -2,6 +2,7 @@
 import numpy as np
 
 import dace
+from dace import nodes
 from dace.libraries.blas import Transpose
 from dace.transformation.dataflow import RedundantArray, RedundantSecondArray
 
@@ -245,6 +246,37 @@ def test_reverse_copy():
     assert np.allclose(p, pp)
 
 
+C_in, C_out, H, K, N, W = (dace.symbol(s, dace.int64)
+                           for s in ('C_in', 'C_out', 'H', 'K', 'N', 'W'))
+
+
+# Deep learning convolutional operator (stride = 1)
+@dace.program
+def conv2d(input: dace.float32[N, H, W, C_in],
+           weights: dace.float32[K, K, C_in, C_out]):
+    output = np.ndarray((N, H-K+1, W-K+1, C_out), dtype=np.float32)
+
+    # Loop structure adapted from https://github.com/SkalskiP/ILearnDeepLearning.py/blob/ba0b5ba589d4e656141995e8d1a06d44db6ce58d/01_mysteries_of_neural_networks/06_numpy_convolutional_neural_net/src/layers/convolutional.py#L88
+    # for i, j in dace.map[0:H-K+1, 0:W-K+1]:
+    for i in range(H-K+1):
+        for j in range(W-K+1):
+            output[:, i, j, :] = np.sum(
+                input[:, i:i + K, j:j + K, :, np.newaxis] *
+                weights[np.newaxis, :, :, :],
+                axis=(1, 2, 3),
+            )
+
+    return output
+
+
+def test_conv2d():
+    sdfg = conv2d.to_sdfg(strict=True)
+    access_nodes = [n for n, _ in sdfg.all_nodes_recursive()
+                    if isinstance(n, nodes.AccessNode) and
+                    not isinstance(sdfg.arrays[n.data], dace.data.View)]
+    assert(len(access_nodes) == 4)
+
+
 if __name__ == '__main__':
     test_in()
     test_out()
@@ -255,3 +287,4 @@ if __name__ == '__main__':
     test_view_array_array()
     test_array_array_view()
     test_reverse_copy()
+    test_conv2d()

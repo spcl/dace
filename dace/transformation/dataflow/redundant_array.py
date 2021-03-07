@@ -7,7 +7,6 @@ import functools
 import networkx as nx
 import typing
 
-
 from dace import data, registry, subsets, dtypes, memlet as mm
 from dace.sdfg import nodes, SDFGState
 from dace.sdfg import utils as sdutil
@@ -92,6 +91,54 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     return src_subset, dst_subset
 
 
+def find_dims_to_pop(a_size, b_size):
+    dims_to_pop = []
+    for i, sz in enumerate(reversed(a_size)):
+        if sz not in b_size:
+            dims_to_pop.append(len(a_size) - 1 - i)
+    return dims_to_pop
+
+
+def pop_dims(subset, dims):
+    popped = []
+    if isinstance(subset, subsets.Indices):
+        indices = copy.deepcopy(subsets.Indices)
+        for i in dims:
+            popped.append(indices.pop(i))
+        return subsets.Indices(indices)
+    else:
+        ranges = copy.deepcopy(subset.ranges)
+        tsizes = copy.deepcopy(subset.tile_sizes)
+        for i in dims:
+            r = ranges.pop(i)
+            t = tsizes.pop(i)
+            popped.append((r, t))
+        new_subset = subsets.Range(ranges)
+        new_subset.tile_sizes = tsizes
+        return new_subset, popped
+
+
+def compose_and_push_back(first, second, dims=None, popped=None):
+    if isinstance(first, subsets.Indices):
+        subset = first.new_offset(second, negative=False)
+    else:
+        subset = first.compose(second)
+    if dims and popped and len(dims) == len(popped):
+        if isinstance(first, subsets.Indices):
+            indices = subset.Indices
+            for d, p in zip(dims, popped):
+                indices.insert(d, p)
+            subset = subsets.Indices(indices)
+        else:
+            ranges = subset.ranges
+            tsizes = subset.tile_sizes
+            for d, (r, t) in zip(dims, popped):
+                ranges.insert(d, r)
+                tsizes.insert(d, t)
+            subset = subsets.Range(ranges)
+            subset.tile_sizes = tsizes
+    return subset
+
 ##############################################################################
 
 
@@ -153,8 +200,10 @@ class RedundantArray(pm.Transformation):
         if strict:
             # In strict mode, make sure the memlet covers the removed array
             edge = graph.edges_between(in_array, out_array)[0]
-            if any(m != a
-                   for m, a in zip(edge.data.subset.size(), in_desc.shape)):
+            subset = copy.deepcopy(edge.data.subset)
+            subset.squeeze()
+            shape = [sz for sz in in_desc.shape if sz != 1]
+            if any(m != a for m, a in zip(subset.size(), shape)):
                 return False
             # In strict mode, check if the state has two or more access nodes
             # for the output array. Definitely one of them (out_array) is a
@@ -200,11 +249,37 @@ class RedundantArray(pm.Transformation):
         e1 = graph.edges_between(in_array, out_array)[0]
         a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
 
+        # Find extraneous A or B subset dimensions
+        a_dims_to_pop = []
+        b_dims_to_pop = []
+        bset = b_subset
+        popped = []
+        if a1_subset and b_subset and a1_subset.dims() != b_subset.dims():
+            a_size = a1_subset.size_exact()
+            b_size = b_subset.size_exact()
+            if a1_subset.dims() > b_subset.dims():
+                a_dims_to_pop = find_dims_to_pop(a_size, b_size)
+            else:
+                b_dims_to_pop = find_dims_to_pop(b_size, a_size)
+                bset, popped = pop_dims(b_subset, b_dims_to_pop)
+
+        from dace.libraries.standard import Reduce
+        reduction = False
+        for e in graph.in_edges(in_array):
+            if isinstance(e.src, Reduce):
+                reduction = True
+
         # If the memlet does not cover the removed array, create a view.
-        if any(m != a for m, a in zip(a1_subset.size(), in_desc.shape)):
+        if reduction or any(m != a
+                            for m, a in zip(a1_subset.size(), in_desc.shape)):
+            view_strides = in_desc.strides
+            if (b_dims_to_pop and len(b_dims_to_pop) == len(out_desc.shape) -
+                    len(in_desc.shape)):
+                view_strides = [s for i, s in enumerate(out_desc.strides)
+                                if i not in b_dims_to_pop]
             sdfg.arrays[in_array.data] = data.View(
                 in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
-                out_desc.storage, out_desc.location, in_desc.strides,
+                out_desc.storage, out_desc.location, view_strides,
                 in_desc.offset, out_desc.may_alias,
                 dtypes.AllocationLifetime.Scope, in_desc.alignment,
                 in_desc.debuginfo, in_desc.total_size)
@@ -221,10 +296,14 @@ class RedundantArray(pm.Transformation):
                 dname = out_array.data
                 src_is_data = False
                 a3_subset.offset(a1_subset, negative=True)
-                if isinstance(b_subset, subsets.Indices):
-                    dst_subset = b_subset.new_offset(a3_subset, False)
+
+                if a3_subset and a_dims_to_pop:
+                    aset, _ = pop_dims(a3_subset, a_dims_to_pop)
                 else:
-                    dst_subset = b_subset.compose(a3_subset)
+                    aset = a3_subset
+
+                dst_subset = compose_and_push_back(bset, aset, b_dims_to_pop,
+                                                   popped)
                 # NOTE: This fixes the following case:
                 # Tasklet ----> A[subset] ----> ... -----> A
                 # Tasklet is not data, so it doesn't have an other subset.
@@ -292,8 +371,12 @@ class RedundantSecondArray(pm.Transformation):
 
         if strict:
             # In strict mode, make sure the memlet covers the removed array
-            if b1_subset is None or any(
-                    m != a for m, a in zip(b1_subset.size(), out_desc.shape)):
+            if not b1_subset:
+                return False
+            subset = copy.deepcopy(b1_subset)
+            subset.squeeze()
+            shape = [sz for sz in out_desc.shape if sz != 1]
+            if any(m != a for m, a in zip(subset.size(), shape)):
                 return False
             # In strict mode, check if the state has two or more access nodes
             # for in_array and at least one of them is a write access. There
@@ -390,6 +473,21 @@ class RedundantSecondArray(pm.Transformation):
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
         a_subset, b1_subset = _validate_subsets(e1, sdfg.arrays)
+        
+        # Find extraneous A or B subset dimensions
+        a_dims_to_pop = []
+        b_dims_to_pop = []
+        aset = a_subset
+        popped = []
+        if a_subset and b1_subset and a_subset.dims() != b1_subset.dims():
+            a_size = a_subset.size_exact()
+            b_size = b1_subset.size_exact()
+            if a_subset.dims() > b1_subset.dims():
+                a_dims_to_pop = find_dims_to_pop(a_size, b_size)
+                aset, popped = pop_dims(a_subset, a_dims_to_pop)
+            else:
+                b_dims_to_pop = find_dims_to_pop(b_size, a_size)
+
         # 2. Iterate over the e2 edges and traverse the memlet tree
         for e2 in graph.out_edges(out_array):
             path = graph.memlet_tree(e2)
@@ -404,10 +502,14 @@ class RedundantSecondArray(pm.Transformation):
                 # (c+d) - (c:c+b) = (d)
                 b3_subset.offset(b1_subset, negative=True)
                 # (0, a:b)(d) = (0, a+d) (or offset for indices)
-                if isinstance(a_subset, subsets.Indices):
-                    e3.data.subset = a_subset.new_offset(b3_subset, False)
+                
+                if b3_subset and b_dims_to_pop:
+                    bset, _ = pop_dims(b3_subset, b_dims_to_pop)
                 else:
-                    e3.data.subset = a_subset.compose(b3_subset)
+                    bset = b3_subset
+                
+                e3.data.subset = compose_and_push_back(aset, bset, a_dims_to_pop,
+                                                       popped)
                 # NOTE: This fixes the following case:
                 # A ----> A[subset] ----> ... -----> Tasklet
                 # Tasklet is not data, so it doesn't have an other subset.
