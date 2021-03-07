@@ -1,8 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
-from dace.data import Array
-from dace import dtypes, memlet as mm, properties
+from dace import dtypes, memlet as mm, properties, data as dt
 from dace.symbolic import symstr
 import dace.library
 from dace import SDFG, SDFGState
@@ -265,16 +264,16 @@ class ExpandGemmCuBLAS(ExpandTransformation):
             if e.dst_conn == '_a':
                 anode = state.memlet_path(e)[0].src
                 if isinstance(anode, dace.sdfg.nodes.AccessNode):
-                    adesc: Array = sdfg.arrays[anode.data]
+                    adesc: dt.Array = sdfg.arrays[anode.data]
             elif e.dst_conn == '_b':
                 bnode = state.memlet_path(e)[0].src
                 if isinstance(bnode, dace.sdfg.nodes.AccessNode):
-                    bdesc: Array = sdfg.arrays[bnode.data]
+                    bdesc: dt.Array = sdfg.arrays[bnode.data]
         for e in state.out_edges(node):
             if e.src_conn == '_c':
                 cnode = state.memlet_path(e)[-1].dst
                 if isinstance(cnode, dace.sdfg.nodes.AccessNode):
-                    cdesc: Array = sdfg.arrays[cnode.data]
+                    cdesc: dt.Array = sdfg.arrays[cnode.data]
         if not adesc or not bdesc or not cdesc:
             raise ValueError('Unsupported input/output arrays')
 
@@ -363,7 +362,10 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
                for desc in [adesc, bdesc, cdesc]):
             nsdfg = dace.SDFG('nested_gemm')
             for name, desc in [('_a', adesc), ('_b', bdesc), ('_c', cdesc)]:
-                dcopy = dc(desc)
+                if isinstance(desc, dt.View):
+                    dcopy = desc.as_array()
+                else:
+                    dcopy = dc(desc)
                 dcopy.transient = False
                 nsdfg.add_datadesc(name, dcopy)
                 dcopy_gpu = dc(desc)
