@@ -228,7 +228,7 @@ if(DACE_ENABLE_INTELFPGA)
   add_definitions(-DDACE_INTELFPGA)
   set(DACE_LIBS ${DACE_LIBS} ${IntelFPGAOpenCL_LIBRARIES})
 endif()
-if (DACE_ENABLE_RTL AND DACE_RTL_MODE STREQUAL "xilinx")
+if (DACE_ENABLE_RTL AND DACE_ENABLE_XILINX)
   set(DACE_RTLLIB_DIR ${CMAKE_SOURCE_DIR}/../external/rtllib)
   include ("${DACE_RTLLIB_DIR}/cmake/rtl_target.cmake")
 endif()
@@ -312,7 +312,35 @@ endif() # DACE_ENABLE_HIP
 
 # create verilator RTL simulation objects
 if(DACE_ENABLE_RTL)
-  if (${DACE_RTL_MODE} STREQUAL "simulator")
+  if (DACE_ENABLE_XILINX)
+    # Get all of the kernel names
+    list(APPEND RTL_KERNELS "")
+    foreach(RTL_FILE ${DACE_RTL_FILES})
+        get_filename_component(RTL_KERNEL ${RTL_FILE} DIRECTORY)
+        list(APPEND RTL_KERNELS ${RTL_KERNEL})
+    endforeach()
+    list(REMOVE_DUPLICATES RTL_KERNELS)
+
+    # Prepare build folders
+    set (RTL_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/rtl/generated")
+    set (RTL_LOG_DIR       "${CMAKE_CURRENT_BINARY_DIR}/rtl/log")
+    set (RTL_TEMP_DIR      "${CMAKE_CURRENT_BINARY_DIR}/rtl/tmp")
+    file (MAKE_DIRECTORY
+        ${RTL_GENERATED_DIR}
+        ${RTL_LOG_DIR}
+        ${RTL_TEMP_DIR}
+    )
+
+    # Generate all of the .xo targets
+    foreach(RTL_SRC_DIR ${RTL_KERNELS})
+        get_filename_component(RTL_KERNEL ${RTL_SRC_DIR} NAME)
+        get_filename_component(RTL_SCRIPTS "${RTL_SRC_DIR}/../scripts" ABSOLUTE)
+        set (RTL_XO "${RTL_KERNEL}.xo")
+        rtllib_rtl_target(${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} ${RTL_GENERATED_DIR} ${RTL_LOG_DIR} ${RTL_TEMP_DIR} "${RTLLIB_DIR}/rtl" ${RTL_XO})
+        set (DACE_VITIS_KERNELS_HW_EMU ${DACE_VITIS_KERNELS_HW_EMU} ${RTL_XO})
+        set (DACE_VITIS_KERNELS_HW ${DACE_VITIS_KERNELS_HW} ${RTL_XO})
+    endforeach()
+  else()
     # find verilator installation
     find_package(verilator HINTS $ENV{VERILATOR_ROOT} ${VERILATOR_ROOT})
     if (NOT verilator_FOUND)
@@ -365,34 +393,6 @@ if(DACE_ENABLE_RTL)
       # add object library for linking
       set(DACE_LIBS ${DACE_LIBS} ${${RTL_FILE_NAME}})
 
-    endforeach()
-  elseif (${DACE_RTL_MODE} STREQUAL "xilinx")
-    # Get all of the kernel names
-    list(APPEND RTL_KERNELS "")
-    foreach(RTL_FILE ${DACE_RTL_FILES})
-        get_filename_component(RTL_KERNEL ${RTL_FILE} DIRECTORY)
-        list(APPEND RTL_KERNELS ${RTL_KERNEL})
-    endforeach()
-    list(REMOVE_DUPLICATES RTL_KERNELS)
-
-    # Prepare build folders
-    set (RTL_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/rtl/generated")
-    set (RTL_LOG_DIR       "${CMAKE_CURRENT_BINARY_DIR}/rtl/log")
-    set (RTL_TEMP_DIR      "${CMAKE_CURRENT_BINARY_DIR}/rtl/tmp")
-    file (MAKE_DIRECTORY
-        ${RTL_GENERATED_DIR}
-        ${RTL_LOG_DIR}
-        ${RTL_TEMP_DIR}
-    )
-
-    # Generate all of the .xo targets
-    foreach(RTL_SRC_DIR ${RTL_KERNELS})
-        get_filename_component(RTL_KERNEL ${RTL_SRC_DIR} NAME)
-        get_filename_component(RTL_SCRIPTS "${RTL_SRC_DIR}/../scripts" ABSOLUTE)
-        set (RTL_XO "${RTL_KERNEL}.xo")
-        rtllib_rtl_target(${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} ${RTL_GENERATED_DIR} ${RTL_LOG_DIR} ${RTL_TEMP_DIR} "${RTLLIB_DIR}/rtl" ${RTL_XO})
-        set (DACE_VITIS_KERNELS_HW_EMU ${DACE_VITIS_KERNELS_HW_EMU} ${RTL_XO})
-        set (DACE_VITIS_KERNELS_HW ${DACE_VITIS_KERNELS_HW} ${RTL_XO})
     endforeach()
   endif()
 endif() # DACE_ENABLE_RTL

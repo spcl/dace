@@ -509,13 +509,6 @@ required:
                         default: false
                         title: Verilator Enable Debug
                         description: Enable/disable verbose internal state debug output.
-                    mode:
-                        type: str
-                        default: simulator
-                        title: Compilation mode
-                        description: >
-                          Target of FPGA kernel build
-                          Can be either (simulator/xilinx).
                     part:
                         type: str
                         default: xcu280-fsvh2892-2L-e

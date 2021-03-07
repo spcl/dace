@@ -51,8 +51,10 @@ class RTLCodeGen(target.TargetCodeGenerator):
             "compiler", "rtl", "verilator_enable_debug")
         self.code_objects: List[codeobject.CodeObject] = list()
         self.cpp_general_header_added: bool = False
-        self.mode: str = config.Config.get("compiler", "rtl", "mode")
+        self.vendor: str = config.Config.get("compiler", "fpga_vendor")
         self.part: str = config.Config.get("compiler", "rtl", "part")
+        self.hardware_target: bool = config.Config.get(
+            "compiler", "xilinx", "mode").startswith("hardware")
 
     def generate_node(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView,
                       state_id: int, node: nodes.Node,
@@ -513,7 +515,7 @@ for(int i = 0; i < {veclen}; i++){{
                 symbolic.evaluate(tasklet.in_connectors[edge.dst_conn].bytes,
                                   sdfg.constants))
             if isinstance(arr, data.Array):
-                if self.mode == 'xilinx':
+                if self.hardware_target:
                     raise NotImplementedError(
                         'Array input for hardware* not implemented')
                 else:
@@ -539,7 +541,7 @@ for(int i = 0; i < {veclen}; i++){{
                 symbolic.evaluate(tasklet.out_connectors[edge.src_conn].bytes,
                                   sdfg.constants))
             if isinstance(arr, data.Array):
-                if self.mode == 'xilinx':
+                if self.hardware_target:
                     raise NotImplementedError(
                         'Array input for hardware* not implemented')
                 else:
@@ -570,70 +572,73 @@ for(int i = 0; i < {veclen}; i++){{
                 linkable=True,
                 environments=None))
 
-        if self.mode == 'xilinx':
-            rtllib_config = {
-                "name": unique_name,
-                "part": self.part,
-                "buses": {
-                    name: ('m_axis' if is_output else 's_axis', vec_len)
-                    for name, (is_output, _, vec_len) in buses.items()
-                },
-                "params": {
-                    "scalars": {
-                        name: total_size
-                        for name, (_, total_size) in scalars.items()
+        if self.hardware_target:
+            if self.vendor == 'xilinx':
+                rtllib_config = {
+                    "name": unique_name,
+                    "part": self.part,
+                    "buses": {
+                        name: ('m_axis' if is_output else 's_axis', vec_len)
+                        for name, (is_output, _, vec_len) in buses.items()
                     },
-                    "memory": {}
-                },
-                "ip_cores": tasklet.ip_cores if isinstance(
-                    tasklet, nodes.RTLTasklet) else {},
-            }
+                    "params": {
+                        "scalars": {
+                            name: total_size
+                            for name, (_, total_size) in scalars.items()
+                        },
+                        "memory": {}
+                    },
+                    "ip_cores": tasklet.ip_cores if isinstance(
+                        tasklet, nodes.RTLTasklet) else {},
+                }
 
-            self.code_objects.append(
-                codeobject.CodeObject(name=f"{unique_name}_control",
-                                      code=rtllib_control(rtllib_config),
-                                      language="v",
-                                      target=RTLCodeGen,
-                                      title="rtl",
-                                      target_type="{}".format(unique_name),
-                                      additional_compiler_kwargs="",
-                                      linkable=True,
-                                      environments=None))
+                self.code_objects.append(
+                    codeobject.CodeObject(name=f"{unique_name}_control",
+                                          code=rtllib_control(rtllib_config),
+                                          language="v",
+                                          target=RTLCodeGen,
+                                          title="rtl",
+                                          target_type="{}".format(unique_name),
+                                          additional_compiler_kwargs="",
+                                          linkable=True,
+                                          environments=None))
 
-            self.code_objects.append(
-                codeobject.CodeObject(name=f"{unique_name}_top",
-                                      code=rtllib_top(rtllib_config),
-                                      language="v",
-                                      target=RTLCodeGen,
-                                      title="rtl",
-                                      target_type="{}".format(unique_name),
-                                      additional_compiler_kwargs="",
-                                      linkable=True,
-                                      environments=None))
+                self.code_objects.append(
+                    codeobject.CodeObject(name=f"{unique_name}_top",
+                                          code=rtllib_top(rtllib_config),
+                                          language="v",
+                                          target=RTLCodeGen,
+                                          title="rtl",
+                                          target_type="{}".format(unique_name),
+                                          additional_compiler_kwargs="",
+                                          linkable=True,
+                                          environments=None))
 
-            self.code_objects.append(
-                codeobject.CodeObject(name=f"{unique_name}_package",
-                                      code=rtllib_package(rtllib_config),
-                                      language="tcl",
-                                      target=RTLCodeGen,
-                                      title="rtl",
-                                      target_type="scripts",
-                                      additional_compiler_kwargs="",
-                                      linkable=True,
-                                      environments=None))
+                self.code_objects.append(
+                    codeobject.CodeObject(name=f"{unique_name}_package",
+                                          code=rtllib_package(rtllib_config),
+                                          language="tcl",
+                                          target=RTLCodeGen,
+                                          title="rtl",
+                                          target_type="scripts",
+                                          additional_compiler_kwargs="",
+                                          linkable=True,
+                                          environments=None))
 
-            self.code_objects.append(
-                codeobject.CodeObject(name=f"{unique_name}_synth",
-                                      code=rtllib_synth(rtllib_config),
-                                      language="tcl",
-                                      target=RTLCodeGen,
-                                      title="rtl",
-                                      target_type="scripts",
-                                      additional_compiler_kwargs="",
-                                      linkable=True,
-                                      environments=None))
-
-        else:
+                self.code_objects.append(
+                    codeobject.CodeObject(name=f"{unique_name}_synth",
+                                          code=rtllib_synth(rtllib_config),
+                                          language="tcl",
+                                          target=RTLCodeGen,
+                                          title="rtl",
+                                          target_type="scripts",
+                                          additional_compiler_kwargs="",
+                                          linkable=True,
+                                          environments=None))
+            else:  # self.vendor != "xilinx"
+                raise NotImplementedError(
+                    'Only RTL codegen for Xilinx is implemented')
+        else:  # not hardware_target
             # generate verilator simulation cpp code components
             inputs, outputs = self.generate_cpp_inputs_outputs(tasklet)
             valid_zeros, ready_zeros = self.generate_cpp_zero_inits(tasklet)
