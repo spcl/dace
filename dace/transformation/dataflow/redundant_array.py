@@ -7,9 +7,6 @@ import functools
 import networkx as nx
 import typing
 
-from networkx.algorithms.operators.binary import compose
-
-
 from dace import data, registry, subsets, dtypes, memlet as mm
 from dace.sdfg import nodes, SDFGState
 from dace.sdfg import utils as sdutil
