@@ -89,6 +89,8 @@ class ExpandReducePure(pm.ExpandTransformation):
             nstate = nsdfg.add_state()
         # END OF INIT
 
+        keepdims = input_dims == output_dims
+
         # (If axes != all) Add outer map, which corresponds to the output range
         if len(axes) != input_dims:
             # Interleave input and output axes to match input memlet
@@ -98,20 +100,46 @@ class ExpandReducePure(pm.ExpandTransformation):
                 if i in axes:
                     input_subset.append('_i%d' % ictr)
                     ictr += 1
+                    if keepdims:
+                        octr += 1
                 else:
                     input_subset.append('_o%d' % octr)
                     octr += 1
 
             output_size = outedge.data.subset.size()
 
-            ome, omx = nstate.add_map(
-                'reduce_output', {
+            # NOTE: Support for keepdims and smart RedundantCopy
+            # Main idea: if the output length for some dimension is 1, then just
+            # plug index 0 in the output subset
+            if keepdims:
+                output_subset_str = ','.join(
+                    ['_o%d' % i if output_size[i] != 1 else '0'
+                     for i in range(output_dims)])
+                map_ranges = {
                     '_o%d' % i: '0:%s' % symstr(sz)
-                    for i, sz in enumerate(outedge.data.subset.size())
-                })
+                    for i, sz in enumerate(output_size)
+                    if sz != 1
+                }
+            else:
+                output_subset_str = ','.join(
+                    ['_o%d' % i for i in range(output_dims)])
+                map_ranges = {
+                    '_o%d' % i: '0:%s' % symstr(sz)
+                    for i, sz in enumerate(output_size)
+                }
+
+
+            ome, omx = nstate.add_map(
+                'reduce_output',
+                map_ranges)
+                # {
+                #     '_o%d' % i: '0:%s' % symstr(sz)
+                #     for i, sz in enumerate(outedge.data.subset.size())
+                # })
             outm = dace.Memlet.simple(
                 '_out',
-                ','.join(['_o%d' % i for i in range(output_dims)]),
+                # ','.join(['_o%d' % i for i in range(output_dims)]),
+                output_subset_str,
                 wcr_str=node.wcr)
             inmm = dace.Memlet.simple('_in', ','.join(input_subset))
         else:
