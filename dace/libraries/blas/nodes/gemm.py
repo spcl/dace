@@ -9,7 +9,7 @@ from dace import SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts
+from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts, check_access
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands,
                                               _get_codegen_gemm_opts)
 from .. import environments
@@ -209,6 +209,8 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
 
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
 
+        check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
+
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
                                      alpha, beta, dtype.ctype, func)
 
@@ -275,6 +277,8 @@ class ExpandGemmCuBLAS(ExpandTransformation):
                     cdesc: Array = sdfg.arrays[cnode.data]
         if not adesc or not bdesc or not cdesc:
             raise ValueError('Unsupported input/output arrays')
+
+        check_access(dtypes.ScheduleType.GPU_Default, adesc, bdesc, cdesc)
 
         dtype = adesc.dtype.base_type
         func = '%sgemm' % to_blastype(dtype.type)
