@@ -272,7 +272,8 @@ def conv2d(input: dace.float32[N, H, W, C_in],
 def test_conv2d():
     sdfg = conv2d.to_sdfg(strict=True)
     access_nodes = [n for n, _ in sdfg.all_nodes_recursive()
-                    if isinstance(n, nodes.AccessNode)]
+                    if isinstance(n, nodes.AccessNode) and
+                    not isinstance(sdfg.arrays[n.data], dace.data.View)]
     assert(len(access_nodes) == 4)
 
 
