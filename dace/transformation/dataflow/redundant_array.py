@@ -13,7 +13,6 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
 from dace.transformation import transformation as pm, helpers
 from dace.config import Config
-from dace.libraries.standard import Reduce
 
 # Helper methods #############################################################
 
@@ -264,6 +263,7 @@ class RedundantArray(pm.Transformation):
                 b_dims_to_pop = find_dims_to_pop(b_size, a_size)
                 bset, popped = pop_dims(b_subset, b_dims_to_pop)
 
+        from dace.libraries.standard import Reduce
         reduction = False
         for e in graph.in_edges(in_array):
             if isinstance(e.src, Reduce):
