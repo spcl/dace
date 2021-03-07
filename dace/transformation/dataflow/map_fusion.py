@@ -94,6 +94,7 @@ class MapFusion(transformation.Transformation):
         first_map_exit = graph.nodes()[candidate[MapFusion.first_map_exit]]
         first_map_entry = graph.entry_node(first_map_exit)
         second_map_entry = graph.nodes()[candidate[MapFusion.second_map_entry]]
+        second_map_exit = graph.exit_node(second_map_entry)
 
         for _in_e in graph.in_edges(first_map_exit):
             if _in_e.data.wcr is not None:
@@ -138,6 +139,17 @@ class MapFusion(transformation.Transformation):
         params_dict = {}
         for _index, _param in enumerate(first_map_entry.map.params):
             params_dict[_param] = second_map_entry.map.params[perm[_index]]
+        # Create intermediate dicts to avoid conflicts, such as {i:j, j:i}
+        repldict = {
+            symbolic.pystr_to_symbolic(k):
+            symbolic.pystr_to_symbolic('__dacesym_' + str(v))
+            for k, v in params_dict.items()
+        }
+        repldict_inv = {
+            symbolic.pystr_to_symbolic('__dacesym_' + str(v)):
+            symbolic.pystr_to_symbolic(v)
+            for v in params_dict.values()
+        }
 
         out_memlets = [e.data for e in graph.in_edges(first_map_exit)]
 
@@ -159,12 +171,11 @@ class MapFusion(transformation.Transformation):
 
             provided = False
 
-            # Compute second subset with respect to first subset's symbols
+            # Compute second subset with respect to first subset's symbols  
             sbs_permuted = dcpy(second_edge.data.subset)
-            sbs_permuted.replace({
-                symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
-                for k, v in params_dict.items()
-            })
+            if sbs_permuted:
+                sbs_permuted.replace(repldict)
+                sbs_permuted.replace(repldict_inv)
 
             for first_memlet in out_memlets:
                 if first_memlet.data != second_edge.data.data:
@@ -179,6 +190,53 @@ class MapFusion(transformation.Transformation):
             # fail.
             if provided is False:
                 return False
+
+        # Checking for stencil pattern and common input/output data
+        # (after fusing the maps)
+        first_map_inputs = set([e.src.data
+                                for e in graph.in_edges(first_map_entry)
+                                if isinstance(e.src, nodes.AccessNode)])
+        second_map_outputs = set([e.dst.data
+                                  for e in graph.out_edges(second_map_exit)
+                                  if isinstance(e.dst, nodes.AccessNode)])
+        common_data = first_map_inputs.intersection(second_map_outputs)
+        if common_data:
+            input_accesses = [graph.memlet_path(e)[-1].data.src_subset
+                              for e in graph.out_edges(first_map_entry)
+                              if e.data.data in common_data]
+            if len(input_accesses) > 1:
+                for i, a in enumerate(input_accesses[:-1]):
+                    for b in input_accesses[i+1:]:
+                        if isinstance(a, subsets.Indices):
+                            c = subsets.Range.from_indices(a)
+                            c.offset(b, negative=True)
+                        else:
+                            c = a.offset_new(b, negative=True)
+                        for r in c:
+                            if r != (0, 0, 1):
+                                return False
+
+            output_accesses = [graph.memlet_path(e)[0].data.dst_subset
+                               for e in graph.in_edges(second_map_exit)
+                               if e.data.data in common_data]
+
+            # Compute output accesses with respect to first map's symbols
+            oacc_permuted = [dcpy(a) for a in output_accesses]
+            oacc_permuted = [a.replace(repldict) if a else a
+                             for a in oacc_permuted]
+            oacc_permuted = [a.replace(repldict_inv) if a else a
+                             for a in oacc_permuted]
+            
+            a = input_accesses[0]
+            for b in oacc_permuted:
+                if isinstance(a, subsets.Indices):
+                    c = subsets.Range.from_indices(a)
+                    c.offset(b, negative=True)
+                else:
+                    c = a.offset_new(b, negative=True)
+                for r in c:
+                    if r != (0, 0, 1):
+                        return False
 
         # Success
         return True
