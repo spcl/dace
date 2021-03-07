@@ -745,8 +745,6 @@ model->eval();
 {out_ptrs}
 {num_elements}
 
-// TODO tmp fix. Should have correct stopping condition
-//while (out_ptr_b < num_elements_a) {{
 while ({running_condition}) {{
 
     // increment time
