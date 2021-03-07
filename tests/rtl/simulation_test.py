@@ -67,8 +67,8 @@ def test_tasklet_scalar():
     B = state.add_write('B')
 
     # connect input/output array with the tasklet
-    state.add_edge(A, None, tasklet, 'a', dace.Memlet.simple('A', '0'))
-    state.add_edge(tasklet, 'b', B, None, dace.Memlet.simple('B', '0'))
+    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[0]'))
+    state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[0]'))
 
     # validate sdfg
     sdfg.validate()
@@ -151,8 +151,8 @@ def test_tasklet_parameter():
     B = state.add_write('B')
 
     # connect input/output array with the tasklet
-    state.add_edge(A, None, tasklet, 'a', dace.Memlet.simple('A', '0'))
-    state.add_edge(tasklet, 'b', B, None, dace.Memlet.simple('B', '0'))
+    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[0]'))
+    state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[0]'))
 
     # validate sdfg
     sdfg.validate()
@@ -239,8 +239,8 @@ def test_tasklet_vector():
     B = state.add_write('B')
 
     # connect input/output array with the tasklet
-    state.add_edge(A, None, tasklet, 'a', dace.Memlet.simple('A', '0:N-1'))
-    state.add_edge(tasklet, 'b', B, None, dace.Memlet.simple('B', '0'))
+    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[0:N-1]'))
+    state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[0]'))
 
     # validate sdfg
     sdfg.validate()
@@ -338,10 +338,10 @@ def test_multi_tasklet():
     C = state.add_write('C')
 
     # connect input/output array with the tasklet
-    state.add_edge(A, None, tasklet0, 'a', dace.Memlet.simple('A', '0'))
-    state.add_edge(tasklet0, 'b', B_w, None, dace.Memlet.simple('B', '0'))
-    state.add_edge(B_r, None, tasklet1, 'b', dace.Memlet.simple('B', '0'))
-    state.add_edge(tasklet1, 'c', C, None, dace.Memlet.simple('C', '0'))
+    state.add_edge(A, None, tasklet0, 'a', dace.Memlet('A[0]'))
+    state.add_edge(tasklet0, 'b', B_w, None, dace.Memlet('B[0]'))
+    state.add_edge(B_r, None, tasklet1, 'b', dace.Memlet('B[0]'))
+    state.add_edge(tasklet1, 'c', C, None, dace.Memlet('C[0]'))
 
     # validate sdfg
     sdfg.validate()

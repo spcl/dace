@@ -371,12 +371,12 @@ state.add_memlet_path(read_x_inp,
                       read_x_entry,
                       read_x,
                       dst_conn='inp',
-                      memlet=dace.Memlet.simple('fpga_x', 'i'))
+                      memlet=dace.Memlet('fpga_x[i]'))
 state.add_memlet_path(read_x,
                       read_x_exit,
                       read_x_out,
                       src_conn='out',
-                      memlet=dace.Memlet.simple('x_stream', '0'))
+                      memlet=dace.Memlet('x_stream[0]'))
 
 read_y_inp = state.add_read('fpga_y')
 read_y_out = state.add_write('y_stream')
@@ -384,12 +384,12 @@ state.add_memlet_path(read_y_inp,
                       read_y_entry,
                       read_y,
                       dst_conn='inp',
-                      memlet=dace.Memlet.simple('fpga_y', 'i'))
+                      memlet=dace.Memlet('fpga_y[i]'))
 state.add_memlet_path(read_y,
                       read_y_exit,
                       read_y_out,
                       src_conn='out',
-                      memlet=dace.Memlet.simple('y_stream', '0'))
+                      memlet=dace.Memlet('y_stream[0]'))
 
 # add tasklet memlets
 a = state.add_read('a')
@@ -399,19 +399,19 @@ result = state.add_write('result_stream')
 state.add_memlet_path(a,
                       rtl_tasklet,
                       dst_conn='a_in',
-                      memlet=dace.Memlet.simple('a', '0'))
+                      memlet=dace.Memlet('a[0]'))
 state.add_memlet_path(x,
                       rtl_tasklet,
                       dst_conn='x_in',
-                      memlet=dace.Memlet.simple('x_stream', '0'))
+                      memlet=dace.Memlet('x_stream[0]'))
 state.add_memlet_path(y,
                       rtl_tasklet,
                       dst_conn='y_in',
-                      memlet=dace.Memlet.simple('y_stream', '0'))
+                      memlet=dace.Memlet('y_stream[0]'))
 state.add_memlet_path(rtl_tasklet,
                       result,
                       src_conn='result_out',
-                      memlet=dace.Memlet.simple('result_stream', '0'))
+                      memlet=dace.Memlet('result_stream[0]'))
 
 # add write_c memlets and access nodes
 write_result_inp = state.add_read('result_stream')
@@ -420,12 +420,12 @@ state.add_memlet_path(write_result_inp,
                       write_result_entry,
                       write_result,
                       dst_conn='inp',
-                      memlet=dace.Memlet.simple('result_stream', '0'))
+                      memlet=dace.Memlet('result_stream[0]'))
 state.add_memlet_path(write_result,
                       write_result_exit,
                       write_result_out,
                       src_conn='out',
-                      memlet=dace.Memlet.simple('fpga_result', 'i'))
+                      memlet=dace.Memlet('fpga_result[i]'))
 
 # add copy to device state
 copy_to_device = sdfg.add_state('copy_to_device')
@@ -435,10 +435,10 @@ dev_x = copy_to_device.add_write('fpga_x')
 dev_y = copy_to_device.add_write('fpga_y')
 copy_to_device.add_memlet_path(cpu_x,
                                dev_x,
-                               memlet=dace.Memlet.simple('x', '0:N//VECLEN'))
+                               memlet=dace.Memlet('x[0:N//VECLEN]'))
 copy_to_device.add_memlet_path(cpu_y,
                                dev_y,
-                               memlet=dace.Memlet.simple('y', '0:N//VECLEN'))
+                               memlet=dace.Memlet('y[0:N//VECLEN]'))
 sdfg.add_edge(copy_to_device, state, dace.InterstateEdge())
 
 # add copy to host state
@@ -447,7 +447,7 @@ dev_result = copy_to_host.add_read('fpga_result')
 cpu_result = copy_to_host.add_write('result')
 copy_to_host.add_memlet_path(dev_result,
                              cpu_result,
-                             memlet=dace.Memlet.simple('result', '0:N//VECLEN'))
+                             memlet=dace.Memlet('result[0:N//VECLEN]'))
 sdfg.add_edge(state, copy_to_host, dace.InterstateEdge())
 
 # validate sdfg
@@ -458,7 +458,7 @@ sdfg.validate()
 if __name__ == '__main__':
 
     # init data structures
-    N.set(16777216)
+    N.set(4096)
     a = np.random.rand(1)[0].astype(np.float32)
     x = np.random.rand(N.get()).astype(np.float32)
     y = np.random.rand(N.get()).astype(np.float32)

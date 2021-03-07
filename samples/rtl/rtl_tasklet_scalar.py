@@ -73,11 +73,11 @@ B = state.add_write('B')
 state.add_memlet_path(A,
                       tasklet,
                       dst_conn='a',
-                      memlet=dace.Memlet.simple('A', '0'))
+                      memlet=dace.Memlet('A[0]'))
 state.add_memlet_path(tasklet,
                       B,
                       src_conn='b',
-                      memlet=dace.Memlet.simple('B', '0'))
+                      memlet=dace.Memlet('B[0]'))
 
 # validate sdfg
 sdfg.validate()

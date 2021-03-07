@@ -81,10 +81,10 @@ B_r = state.add_read('B')
 C = state.add_write('C')
 
 # connect input/output array with the tasklet
-state.add_edge(A, None, tasklet0, 'a', dace.Memlet.simple('A', '0'))
-state.add_edge(tasklet0, 'b', B_w, None, dace.Memlet.simple('B', '0'))
-state.add_edge(B_r, None, tasklet1, 'b', dace.Memlet.simple('B', '0'))
-state.add_edge(tasklet1, 'c', C, None, dace.Memlet.simple('C', '0'))
+state.add_edge(A, None, tasklet0, 'a', dace.Memlet('A[0]'))
+state.add_edge(tasklet0, 'b', B_w, None, dace.Memlet('B[0]'))
+state.add_edge(B_r, None, tasklet1, 'b', dace.Memlet('B[0]'))
+state.add_edge(tasklet1, 'c', C, None, dace.Memlet('C[0]'))
 
 # validate sdfg
 sdfg.validate()

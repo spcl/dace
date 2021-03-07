@@ -99,12 +99,12 @@ state.add_memlet_path(read_a_inp,
                       read_a_entry,
                       read_a,
                       dst_conn='inp',
-                      memlet=dace.Memlet.simple('fpga_A', 'i'))
+                      memlet=dace.Memlet('fpga_A[i]'))
 state.add_memlet_path(read_a,
                       read_a_exit,
                       read_a_out,
                       src_conn='out',
-                      memlet=dace.Memlet.simple('A_stream', '0'))
+                      memlet=dace.Memlet('A_stream[0]'))
 
 # add tasklet memlets
 A = state.add_read('A_stream')
@@ -112,11 +112,11 @@ B = state.add_write('B_stream')
 state.add_memlet_path(A,
                       rtl_tasklet,
                       dst_conn='a',
-                      memlet=dace.Memlet.simple('A_stream', '0'))
+                      memlet=dace.Memlet('A_stream[0]'))
 state.add_memlet_path(rtl_tasklet,
                       B,
                       src_conn='b',
-                      memlet=dace.Memlet.simple('B_stream', '0'))
+                      memlet=dace.Memlet('B_stream[0]'))
 
 # add write_b memlets and access nodes
 write_b_inp = state.add_read('B_stream')
@@ -125,12 +125,12 @@ state.add_memlet_path(write_b_inp,
                       write_b_entry,
                       write_b,
                       dst_conn='inp',
-                      memlet=dace.Memlet.simple('B_stream', '0'))
+                      memlet=dace.Memlet('B_stream[0]'))
 state.add_memlet_path(write_b,
                       write_b_exit,
                       write_b_out,
                       src_conn='out',
-                      memlet=dace.Memlet.simple('fpga_B', 'i'))
+                      memlet=dace.Memlet('fpga_B[i]'))
 
 # add copy to device state
 copy_to_device = sdfg.add_state('copy_to_device')
@@ -138,7 +138,7 @@ cpu_a = copy_to_device.add_read('A')
 dev_a = copy_to_device.add_write('fpga_A')
 copy_to_device.add_memlet_path(cpu_a,
                                dev_a,
-                               memlet=dace.Memlet.simple('A', '0:N'))
+                               memlet=dace.Memlet('A[0:N]'))
 sdfg.add_edge(copy_to_device, state, dace.InterstateEdge())
 
 # add copy to host state
@@ -147,7 +147,7 @@ dev_b = copy_to_host.add_read('fpga_B')
 cpu_b = copy_to_host.add_write('B')
 copy_to_host.add_memlet_path(dev_b,
                              cpu_b,
-                             memlet=dace.Memlet.simple('B', '0:N'))
+                             memlet=dace.Memlet('B[0:N]'))
 sdfg.add_edge(state, copy_to_host, dace.InterstateEdge())
 
 # validate sdfg
