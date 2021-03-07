@@ -12,7 +12,7 @@ import warnings
 
 
 # Transformations
-from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion
+from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, MapTiling
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import helpers, ReduceExpansion
@@ -170,6 +170,7 @@ def auto_optimize(sdfg: SDFG,
     
     # Map fusion
     greedy_fuse(sdfg, validate_all)
+    #sdfg.apply_transformations(MapTiling)
 
     # Tiled WCR and streams
     tile_wcrs(sdfg, validate_all)
@@ -182,7 +183,7 @@ def auto_optimize(sdfg: SDFG,
                                         validate_all=validate_all)
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.MapEntry):
-            node.map.collapse = len(node.map.range)
+            node.map.collapse = len(node.map.range) # TODO: try without as well :) 
 
     # Set all library nodes to expand to fast library calls
     
@@ -201,7 +202,7 @@ def auto_optimize(sdfg: SDFG,
     # TODO(later): Safe vectorization
     
     # Disable OpenMP parallel sections
-    # TODO(later): Set on a per-SDFG basis
+    # TODO(later): Set on a per-SDFG basis 
     '''
     config.Config.set('compiler', 'cpu', 'openmp_sections', value=False)
     
