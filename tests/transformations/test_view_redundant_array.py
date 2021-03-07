@@ -26,3 +26,20 @@ def test_redundant_array_removal():
         if isinstance(n, dace.nodes.AccessNode)
     }
     assert "A_reshaped" not in data_accesses
+
+
+def test_libnode_expansion():
+    @dace.program
+    def test_broken_matmul(A: dace.float64[8, 2, 4], B: dace.float64[4, 3]):
+        return np.einsum("aik,kj->aij", A, B)
+
+    sdfg = test_broken_matmul.to_sdfg()
+    sdfg.expand_library_nodes()
+    sdfg.apply_gpu_transformations()
+    sdfg.apply_strict_transformations()
+
+    A = np.random.rand(8, 2, 4).astype(np.float64)
+    B = np.random.rand(4, 3).astype(np.float64)
+    C = test_broken_matmul(A.copy(), B.copy())
+
+    assert np.allclose(A @ B, C)
