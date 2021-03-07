@@ -617,8 +617,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                             node.data][0] = '{}_top_1.m_axis_{}'.format(
                                 rtl_name, edge.src_conn)
 
-            # Skip RTL modules
-            # Should still generate the node:
+            # Make the dispatcher trigger generation of the RTL module, but
+            # ignore the generated code, as the RTL codegen will generate the
+            # appropriate files.
             ignore_stream = CodeIOStream()
             self._dispatcher.dispatch_subgraph(sdfg,
                                                subgraph,
