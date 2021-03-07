@@ -692,7 +692,9 @@ for(int i = 0; i < {veclen}; i++){{
                 if self.verilator_debug else "",
                 debug_internal_state="""
 // report internal state
-VL_PRINTF("[t=%lu] ap_aclk=%u ap_areset=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->ap_aclk, model->ap_areset, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
+VL_PRINTF("[t=%lu] ap_aclk=%u ap_areset=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", 
+    main_time, model->ap_aclk, model->ap_areset, 
+    model->valid_i, model->ready_i, model->valid_o, model->ready_o);
 VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
 std::cout << std::flush;
 """.format(internal_state_str=internal_state_str,
