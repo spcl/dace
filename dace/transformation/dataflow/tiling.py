@@ -18,7 +18,7 @@ class MapTiling(transformation.Transformation):
         in every dimension of the matched Map.
     """
 
-    map_entry = transformation.PatternNode(nodes.MapEntry)
+    _map_entry = nodes.MapEntry(nodes.Map("", [], []))
 
     # Properties
     prefix = Property(dtype=str,
@@ -51,7 +51,7 @@ class MapTiling(transformation.Transformation):
 
     @staticmethod
     def expressions():
-        return [sdutil.node_path_graph(MapTiling.map_entry)]
+        return [sdutil.node_path_graph(MapTiling._map_entry)]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
@@ -59,7 +59,7 @@ class MapTiling(transformation.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        map_entry = graph.nodes()[candidate[MapTiling.map_entry]]
+        map_entry = graph.nodes()[candidate[MapTiling._map_entry]]
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 
     def apply(self, sdfg):
@@ -70,11 +70,11 @@ class MapTiling(transformation.Transformation):
             tile_strides = self.strides
 
         # Retrieve map entry and exit nodes.
-        map_entry = graph.nodes()[self.subgraph[MapTiling.map_entry]]
+        map_entry = graph.nodes()[self.subgraph[MapTiling._map_entry]]
         from dace.transformation.dataflow.map_collapse import MapCollapse
         from dace.transformation.dataflow.strip_mining import StripMining
         stripmine_subgraph = {
-            StripMining._map_entry: self.subgraph[MapTiling.map_entry]
+            StripMining._map_entry: self.subgraph[MapTiling._map_entry]
         }
         sdfg_id = sdfg.sdfg_id
         last_map_entry = None

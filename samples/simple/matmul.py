@@ -145,8 +145,8 @@ def optimize_for_cpu(sdfg: dace.SDFG, m: int, n: int, k: int):
         exit_rti = find_mapexit_by_param(sdfg, 'tile1_i')
         AccumulateTransient.apply_to(sdfg,
                                      dict(array='C', identity=0),
-                                     map_exit=exit_inner,
-                                     outer_map_exit=exit_rti)
+                                     _map_exit=exit_inner,
+                                     _outer_map_exit=exit_rti)
 
         # Vectorize microkernel map
         postamble = n % 4 != 0
@@ -232,8 +232,8 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
     btile_exit = state.exit_node(btile)
     AccumulateTransient.apply_to(sdfg,
                                  dict(identity=0),
-                                 map_exit=warptile_exit,
-                                 outer_map_exit=btile_exit)
+                                 _map_exit=warptile_exit,
+                                 _outer_map_exit=btile_exit)
     # Set C tile to zero on allocation
     c_access = next(n for n in state.data_nodes() if n.data == 'trans_gpu_C')
     c_access.setzero = True

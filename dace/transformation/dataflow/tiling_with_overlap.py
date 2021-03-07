@@ -34,7 +34,7 @@ class MapTilingWithOverlap(MapTiling):
             return
         
         graph = sdfg.nodes()[self.state_id]
-        map_entry = graph.nodes()[self.subgraph[self.map_entry]]
+        map_entry = graph.nodes()[self.subgraph[self._map_entry]]
 
         # Tile the map
         self.tile_trivial = True

@@ -95,7 +95,7 @@ class NestStateSubgraph(unittest.TestCase):
 
     def test_index_propagation_in_tiled_sdfg(self):
         sdfg, state, t, me, mx = create_sdfg_4()
-        tiling.MapTiling.apply_to(sdfg=sdfg, options={'tile_sizes': (2,)}, map_entry=me)
+        tiling.MapTiling.apply_to(sdfg=sdfg, options={'tile_sizes': (2,)}, _map_entry=me)
         nested_me = state.in_edges(t)[0].src
         nested_mx = state.out_edges(t)[0].dst
         nest_state_subgraph(sdfg, state, SubgraphView(state, [nested_me, t, nested_mx]))
