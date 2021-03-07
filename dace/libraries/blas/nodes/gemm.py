@@ -366,6 +366,7 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
                     dcopy = desc.as_array()
                 else:
                     dcopy = dc(desc)
+                dcopy.lifetime = dtypes.AllocationLifetime.Scope
                 dcopy_gpu = dc(dcopy)
                 dcopy.transient = False
                 nsdfg.add_datadesc(name, dcopy)

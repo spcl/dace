@@ -255,6 +255,7 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                 else:
                     dcopy = dc(desc)
                 dcopy.transient = False
+                dcopy.lifetime = dtypes.AllocationLifetime.Scope
                 dcopy_gpu = dc(dcopy)
                 nsdfg.add_datadesc(name, dcopy)
                 dcopy_gpu.transient = True
