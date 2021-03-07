@@ -23,7 +23,7 @@ def test_redundant_array_removal():
     data_accesses = {
         n.data
         for n, _ in
-        test_redundant_array_removal.to_sdfg().all_nodes_recursive()
+        test_redundant_array_removal.to_sdfg(strict=True).all_nodes_recursive()
         if isinstance(n, dace.nodes.AccessNode)
     }
     assert "A_reshaped" not in data_accesses
