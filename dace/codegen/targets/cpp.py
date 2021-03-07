@@ -746,6 +746,14 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
                 state_id,
                 node,
             )
+        else:
+            callsite_stream.write(
+                '%sStream_t __dace_current_stream = nullptr;' %
+                Config.get('compiler', 'cuda', 'backend'),
+                sdfg,
+                state_id,
+                node,
+            )
 
         if node.language != dtypes.Language.CPP:
             raise ValueError(

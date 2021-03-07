@@ -278,8 +278,6 @@ class ExpandGemmCuBLAS(ExpandTransformation):
         if not adesc or not bdesc or not cdesc:
             raise ValueError('Unsupported input/output arrays')
 
-        check_access(dtypes.ScheduleType.GPU_Default, adesc, bdesc, cdesc)
-
         dtype = adesc.dtype.base_type
         func = '%sgemm' % to_blastype(dtype.type)
         if dtype == dace.float16:
