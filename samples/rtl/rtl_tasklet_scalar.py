@@ -69,30 +69,18 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
 A = state.add_read('A')
 B = state.add_write('B')
 
-mentry, mexit = state.add_map('rtl_map', dict(i='0:1'))
-
 # connect input/output array with the tasklet
 state.add_memlet_path(A,
-                      mentry,
                       tasklet,
                       dst_conn='a',
                       memlet=dace.Memlet.simple('A', '0'))
 state.add_memlet_path(tasklet,
-                      mexit,
                       B,
                       src_conn='b',
                       memlet=dace.Memlet.simple('B', '0'))
 
 # validate sdfg
 sdfg.validate()
-
-#from dace.transformation.dataflow import StreamingMemory
-#from dace.transformation.interstate import FPGATransformState
-from dace.transformation.dataflow import TrivialMapElimination
-#sdfg.apply_transformations(FPGATransformState)
-#sdfg.apply_transformations_repeated(StreamingMemory,
-#                                    dict(storage=dace.StorageType.FPGA_Local))
-sdfg.apply_transformations_repeated(TrivialMapElimination)
 
 ######################################################################
 

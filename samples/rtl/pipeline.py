@@ -1,7 +1,11 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+#
+# This sample shows a DEPTH deep pipeline, where each stage adds 1 to the
+# integer input stream.
+#
+# It is intended for running hardware_emulation or hardware xilinx targets.
+
 import dace
-from dace.transformation.dataflow import StreamingMemory
-from dace.transformation.interstate import FPGATransformState
-from dace.transformation.dataflow import TrivialMapElimination
 import numpy as np
 
 # add symbols
@@ -45,12 +49,13 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
                                 outputs={'b'},
                                 code='''
     /*
-        This tasklet tests whether a contineous stream of data can be processed
         Convention:
            |--------------------------------------------------------|
            |                                                        |
         -->| ap_aclk (clock input)                                  |
         -->| ap_areset (reset input, rst on high)                   |
+        -->| ap_start (start pulse from host)                       |
+        <--| ap_done (tells the host that the kernel is done)       |
            |                                                        |
            | For each input:             For each output:           |
            |                                                        |
@@ -63,7 +68,7 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
            |--------------------------------------------------------|
     */
 
-    assign ap_done = 1;
+    assign ap_done = 1; // free-running kernel
 
     reg [DEPTH-1:0]       tvalids;
     reg [31:0] tdatas [DEPTH-1:0];

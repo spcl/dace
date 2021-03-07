@@ -1,7 +1,12 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+#
+# This sample shows the AXPY BLAS routine. It is implemented through Xilinx
+# IPs in order to utilize double pumping, which doubles the performance per
+# consumed FPGA resource.
+#
+# It is intended for running hardware_emulation or hardware xilinx targets.
+
 import dace
-from dace.transformation.dataflow import StreamingMemory
-from dace.transformation.interstate import FPGATransformState
-from dace.transformation.dataflow import TrivialMapElimination
 import numpy as np
 
 # add symbol
@@ -66,7 +71,26 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
                                 inputs={'a_in', 'x_in', 'y_in'},
                                 outputs={'result_out'},
                                 code='''
-    assign ap_done = 1; // free-running
+    /*
+        Convention:
+           |--------------------------------------------------------|
+           |                                                        |
+        -->| ap_aclk (clock input)                                  |
+        -->| ap_areset (reset input, rst on high)                   |
+        -->| ap_start (start pulse from host)                       |
+        <--| ap_done (tells the host that the kernel is done)       |
+           |                                                        |
+           | For each input:             For each output:           |
+           |                                                        |
+        -->|     s_axis_{input}_tvalid   reg m_axis_{output}_tvalid |-->
+        -->|     s_axis_{input}_tdata    reg m_axis_{output}_tdata  |-->
+        <--| reg s_axis_{input}_tready       m_axis_{output}_tready |<--
+        -->|     s_axis_{input}_tkeep    reg m_axis_{output}_tkeep  |-->
+        -->|     s_axis_{input}_tlast    reg m_axis_{output}_tlast  |-->
+           |                                                        |
+           |--------------------------------------------------------|
+    */
+    assign ap_done = 1; // free-running kernel
     wire clk_300;
     wire clk_600;
     wire rstn_300;

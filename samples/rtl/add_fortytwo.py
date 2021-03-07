@@ -1,7 +1,10 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+#
+# This sample shows adding a constant integer value to a stream of integers.
+#
+# It is intended for running hardware_emulation or hardware xilinx targets.
+
 import dace
-from dace.transformation.dataflow import StreamingMemory
-from dace.transformation.interstate import FPGATransformState
-from dace.transformation.dataflow import TrivialMapElimination
 import numpy as np
 
 # add symbol
@@ -41,12 +44,13 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
                                 outputs={'b'},
                                 code='''
     /*
-        This tasklet tests whether a contineous stream of data can be processed
         Convention:
            |--------------------------------------------------------|
            |                                                        |
         -->| ap_aclk (clock input)                                  |
         -->| ap_areset (reset input, rst on high)                   |
+        -->| ap_start (start pulse from host)                       |
+        <--| ap_done (tells the host that the kernel is done)       |
            |                                                        |
            | For each input:             For each output:           |
            |                                                        |
@@ -59,25 +63,20 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
            |--------------------------------------------------------|
     */
 
-    assign ap_done = 1;
-
-    reg ready;
+    assign ap_done = 1; // free-running kernel
 
     always@(posedge ap_aclk) begin
         if (ap_areset) begin // case: reset
             s_axis_a_tready <= 1'b1;
             m_axis_b_tvalid <= 1'b0;
             m_axis_b_tdata <= 0;
-            ready <= 1'b1;
-        end else if (ready && s_axis_a_tvalid && s_axis_a_tready) begin
+        end else if (s_axis_a_tvalid && s_axis_a_tready) begin
             s_axis_a_tready <= 1'b0;
             m_axis_b_tvalid <= 1'b1;
             m_axis_b_tdata <= s_axis_a_tdata + 42;
-            ready <= 1'b0;
-        end else if (!ready && m_axis_b_tvalid && m_axis_b_tready) begin
+        end else if (!s_axis_a_tready && m_axis_b_tvalid && m_axis_b_tready) begin
             s_axis_a_tready <= 1'b1;
             m_axis_b_tvalid <= 1'b0;
-            ready <= 1'b1;
         end
     end
     ''',

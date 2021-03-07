@@ -1,7 +1,12 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+#
+# This sample shows how to utilize an IP core in an RTL tasklet. This is done
+# through the vector add problem, which adds two floating point vectors
+# together.
+#
+# It is intended for running hardware_emulation or hardware xilinx targets.
+
 import dace
-from dace.transformation.dataflow import StreamingMemory
-from dace.transformation.interstate import FPGATransformState
-from dace.transformation.dataflow import TrivialMapElimination
 import numpy as np
 
 # add symbol
@@ -16,9 +21,6 @@ state = sdfg.add_state('device_state')
 # add parameter
 veclen = 1
 sdfg.add_constant('VECLEN', veclen)
-sdfg.add_constant('DATA_WIDTH', 256)
-sdfg.add_constant('WORD_WIDTH', 32)
-sdfg.add_constant('RATIO', 2)
 
 # add arrays
 sdfg.add_array('A', [N // veclen],
@@ -66,13 +68,12 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
                                 outputs={'c'},
                                 code='''
     /*
-        This tasklet tests whether a contineous stream of data can be processed
         Convention:
            |--------------------------------------------------------|
            |                                                        |
         -->| ap_aclk (clock input)                                  |
         -->| ap_areset (reset input, rst on high)                   |
-        -->| ap_start (start pulse from host)           |           |
+        -->| ap_start (start pulse from host)                       |
         <--| ap_done (tells the host that the kernel is done)       |
            |                                                        |
            | For each input:             For each output:           |
@@ -86,9 +87,9 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
            |--------------------------------------------------------|
     */
 
-    assign ap_done = 1;
+    assign ap_done = 1; // free-running kernel
 
-    wire ap_aresetn = ~ap_areset;
+    wire ap_aresetn = ~ap_areset; // IP core is active-low reset
 
     floating_point_add add(
         .aclk(ap_aclk),
@@ -235,7 +236,7 @@ if __name__ == '__main__':
     print("a={}, b={}, c={}".format(a, b, c))
 
     # check result
-    for i in range(N.get() // veclen):
-        assert c[i] == a[i] + b[i]
-
-    print("Assert passed!")
+    expected = a + b
+    diff = np.linalg.norm(expected - result) / N.get()
+    print("Difference:", diff)
+    exit(0 if diff <= 1e-5 else 1)
