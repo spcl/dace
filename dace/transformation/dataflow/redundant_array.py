@@ -46,7 +46,13 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     if not src_subset:
         if src_name:
             desc = arrays[src_name]
-            if not isinstance(desc, data.View):
+            if isinstance(desc, data.View) or edge.data.data == dst_name:
+                src_subset = subsets.Range.from_array(desc)
+                if src_subset.num_elements() != dst_subset.num_elements():
+                    raise ValueError(
+                        "Source subset is missing (dst_subset: {}, "
+                        "src_shape: {}".format(dst_subset, desc.shape))
+            else:
                 src_subset = copy.deepcopy(dst_subset)
                 padding = len(desc.shape) - len(src_subset)
                 if padding != 0:
@@ -68,7 +74,13 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     elif not dst_subset:
         if dst_name:
             desc = arrays[dst_name]
-            if not isinstance(desc, data.View):
+            if isinstance(desc, data.View) or edge.data.data == src_name:
+                dst_subset = subsets.Range.from_array(desc)
+                if src_subset.num_elements() != dst_subset.num_elements():
+                    raise ValueError(
+                        "Destination subset is missing (src_subset: {}, "
+                        "dst_shape: {}".format(src_subset, desc.shape))
+            else:
                 dst_subset = copy.deepcopy(src_subset)
                 padding = len(desc.shape) - len(dst_subset)
                 if padding != 0:
@@ -410,7 +422,19 @@ class RedundantSecondArray(pm.Transformation):
         if in_desc.storage != out_desc.storage:
             return False
         if type(in_desc) != type(out_desc):
-            return False
+            # We may proceed only in the case of View -> Access
+            if not isinstance(in_desc, data.View):
+                return False
+            # Check that the View's immediate ancestors are Accesses.
+            # Otherwise, the application of the transformation will result in an
+            # ambiguous View.
+            view_ancestors_desc = [
+                e.src.desc(sdfg)
+                if isinstance(e.src, nodes.AccessNode) else None
+                for e in graph.in_edges(in_array)]
+            if any([not desc or isinstance(desc, data.View)
+                    for desc in view_ancestors_desc]):
+                return False
 
         # Find occurrences in this and other states
         occurrences = []
