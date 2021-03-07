@@ -255,8 +255,8 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                 else:
                     dcopy = dc(desc)
                 dcopy.transient = False
+                dcopy_gpu = dc(dcopy)
                 nsdfg.add_datadesc(name, dcopy)
-                dcopy_gpu = dc(desc)
                 dcopy_gpu.transient = True
                 dcopy_gpu.storage = dace.StorageType.GPU_Global
                 nsdfg.add_datadesc(name + '_gpu', dcopy_gpu)

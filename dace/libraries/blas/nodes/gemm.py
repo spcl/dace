@@ -366,9 +366,9 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
                     dcopy = desc.as_array()
                 else:
                     dcopy = dc(desc)
+                dcopy_gpu = dc(dcopy)
                 dcopy.transient = False
                 nsdfg.add_datadesc(name, dcopy)
-                dcopy_gpu = dc(desc)
                 dcopy_gpu.transient = True
                 dcopy_gpu.storage = dace.StorageType.GPU_Global
                 nsdfg.add_datadesc(name + '_gpu', dcopy_gpu)
