@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 import dace
 
@@ -28,6 +29,7 @@ def test_redundant_array_removal():
     assert "A_reshaped" not in data_accesses
 
 
+@pytest.mark.gpu
 def test_libnode_expansion():
     @dace.program
     def test_broken_matmul(A: dace.float64[8, 2, 4], B: dace.float64[4, 3]):
