@@ -88,9 +88,11 @@ run_all() {
     run_sample blas/nodes/gemv_test gemv_FPGA_Accumulate_float_False_w4_1 1 --target accumulate --vectorize 4
     run_sample blas/nodes/ger_test ger_test_1 1 --target fpga
 
+    # Multiple gearboxing
+    run_sample fpga/multiple_veclen_conversions multiple_veclen_conversions 0
+
     # RTL cores
     DACE_compiler_xilinx_mode="hardware_emulation"
-    DACE_compiler_rtl_mode="xilinx"
     run_sample rtl/hardware_test floating_point_vector_plus_scalar 0 1
 }
 
