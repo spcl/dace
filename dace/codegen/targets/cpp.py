@@ -736,24 +736,24 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
         # set the stream to a local variable.
         max_streams = int(
             Config.get("compiler", "cuda", "max_concurrent_streams"))
-        if (max_streams >= 0 and not is_devicelevel_gpu(sdfg, state_dfg, node)
-                and hasattr(node, "_cuda_stream")):
-            callsite_stream.write(
-                'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
-                %
-                (node._cuda_stream, Config.get('compiler', 'cuda', 'backend')),
-                sdfg,
-                state_id,
-                node,
-            )
-        else:
-            callsite_stream.write(
-                '%sStream_t __dace_current_stream = nullptr;' %
-                Config.get('compiler', 'cuda', 'backend'),
-                sdfg,
-                state_id,
-                node,
-            )
+        if not is_devicelevel_gpu(sdfg, state_dfg, node):
+            if (max_streams >= 0 and hasattr(node, "_cuda_stream")):
+                callsite_stream.write(
+                    'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
+                    %
+                    (node._cuda_stream, Config.get('compiler', 'cuda', 'backend')),
+                    sdfg,
+                    state_id,
+                    node,
+                )
+            else:
+                callsite_stream.write(
+                    '%sStream_t __dace_current_stream = nullptr;' %
+                    Config.get('compiler', 'cuda', 'backend'),
+                    sdfg,
+                    state_id,
+                    node,
+                )
 
         if node.language != dtypes.Language.CPP:
             raise ValueError(
