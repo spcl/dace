@@ -281,7 +281,7 @@ class DaceProgram:
             sdfg = sdfg.optimize()
 
         # Invoke auto-optimization as necessary
-        if self.auto_optimize:
+        if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
             from dace.transformation import auto_optimize as autoopt
             sdfg = autoopt.auto_optimize(sdfg, self.device)
 
