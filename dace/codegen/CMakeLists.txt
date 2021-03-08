@@ -328,15 +328,21 @@ if(DACE_ENABLE_RTL)
     file (MAKE_DIRECTORY
         ${RTL_GENERATED_DIR}
         ${RTL_LOG_DIR}
-        ${RTL_TEMP_DIR}
-    )
+        ${RTL_TEMP_DIR})
+    execute_process(COMMAND ${Vitis_PLATFORMINFO} -p ${DACE_XILINX_TARGET_PLATFORM} -jhardwarePlatform.board.part
+      OUTPUT_VARIABLE RTL_PART
+      RESULT_VARIABLE _platforminfo_res)
+
+    if (NOT ${_platforminfo_res} EQUAL 0)
+      message(FATAL_ERROR "No part was found for platform ${DACE_XILINX_TARGET_PLATFORM} after querying 'platforminfo -p ${DACE_XILINX_TARGET_PLATFORM} -j\"hardwarePlatform.board.part\"'")
+    endif()
 
     # Generate all of the .xo targets
     foreach(RTL_SRC_DIR ${RTL_KERNELS})
         get_filename_component(RTL_KERNEL ${RTL_SRC_DIR} NAME)
         get_filename_component(RTL_SCRIPTS "${RTL_SRC_DIR}/../scripts" ABSOLUTE)
         set (RTL_XO "${RTL_KERNEL}.xo")
-        rtllib_rtl_target(${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} ${RTL_GENERATED_DIR} ${RTL_LOG_DIR} ${RTL_TEMP_DIR} "${RTLLIB_DIR}/rtl" ${RTL_XO})
+        rtllib_rtl_target(${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} ${RTL_GENERATED_DIR} ${RTL_LOG_DIR} ${RTL_TEMP_DIR} "${RTLLIB_DIR}/rtl" ${RTL_XO} ${RTL_PART})
         set (DACE_VITIS_KERNELS_HW_EMU ${DACE_VITIS_KERNELS_HW_EMU} ${RTL_XO})
         set (DACE_VITIS_KERNELS_HW ${DACE_VITIS_KERNELS_HW} ${RTL_XO})
     endforeach()
@@ -594,7 +600,7 @@ if(DACE_ENABLE_XILINX)
         -o ${DACE_KERNEL_NAME}_hw.xo
         DEPENDS ${DACE_VITIS_KERNEL_FILES})
 
-        set(DACE_VITIS_KERNELS_HW ${DACE_VITIS_KERNELS_HW} ${DACE_KERNEL_NAME}_hw.xo)
+      set(DACE_VITIS_KERNELS_HW ${DACE_VITIS_KERNELS_HW} ${DACE_KERNEL_NAME}_hw.xo)
 
     endforeach()
 

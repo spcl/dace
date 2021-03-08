@@ -52,7 +52,6 @@ class RTLCodeGen(target.TargetCodeGenerator):
         self.code_objects: List[codeobject.CodeObject] = list()
         self.cpp_general_header_added: bool = False
         self.vendor: str = config.Config.get("compiler", "fpga_vendor")
-        self.part: str = config.Config.get("compiler", "rtl", "part")
         self.hardware_target: bool = config.Config.get(
             "compiler", "xilinx", "mode").startswith("hardware")
 
@@ -576,7 +575,6 @@ for(int i = 0; i < {veclen}; i++){{
             if self.vendor == 'xilinx':
                 rtllib_config = {
                     "name": unique_name,
-                    "part": self.part,
                     "buses": {
                         name: ('m_axis' if is_output else 's_axis', vec_len)
                         for name, (is_output, _, vec_len) in buses.items()
@@ -692,8 +690,8 @@ for(int i = 0; i < {veclen}; i++){{
                 if self.verilator_debug else "",
                 debug_internal_state="""
 // report internal state
-VL_PRINTF("[t=%lu] ap_aclk=%u ap_areset=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", 
-    main_time, model->ap_aclk, model->ap_areset, 
+VL_PRINTF("[t=%lu] ap_aclk=%u ap_areset=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n",
+    main_time, model->ap_aclk, model->ap_areset,
     model->valid_i, model->ready_i, model->valid_o, model->ready_o);
 VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
 std::cout << std::flush;

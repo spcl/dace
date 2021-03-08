@@ -391,8 +391,8 @@ required:
                         description: Platform name of Vitis/SDx/SDAccel target.
 
                     frequency:
-                        type: str 
-                        default: '' 
+                        type: str
+                        default: ''
                         title: Target frequency for Xilinx kernels
                         description: >
                             Target frequency when compiling kernels for Xilinx.
@@ -509,11 +509,6 @@ required:
                         default: false
                         title: Verilator Enable Debug
                         description: Enable/disable verbose internal state debug output.
-                    part:
-                        type: str
-                        default: xcu280-fsvh2892-2L-e
-                        title: Target part
-                        description: Target part for the Xilinx Vivado project
 
             #############################################
             # MPI compiler
@@ -796,8 +791,8 @@ required:
                             implementation has been explicitly set on a node.
                     fpga:
                         type: dict
-                        title: FPGA 
-                        description: FPGA-specific BLAS options. 
+                        title: FPGA
+                        description: FPGA-specific BLAS options.
                         required:
                             default_stream_depth:
                                 type: int
