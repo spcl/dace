@@ -5,9 +5,9 @@ import dace
 from dace.sdfg.state import SDFGState
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.propagation import propagate_states
-from dace import config, dtypes
+from dace import config, data as dt, dtypes, Memlet
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Union
+from typing import Set, Tuple, Union
 import warnings
 
 
@@ -94,10 +94,90 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
 
 
 def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
-    # MapTiling (unless constant sized and less than tile size) -> AccumulateTransient and AccumulateStream
-    # if smaller than tile size, don't transform and make sequential
-    config.Config.get('optimizer', 'autotile_size')
-    pass
+    # Avoid import loops
+    from dace.codegen.targets import cpp
+    from dace.frontend import operations
+    from dace.transformation import dataflow
+
+    # Determine on which nodes to run the operation
+    graph = graph_or_subgraph
+    if isinstance(graph_or_subgraph, gr.SubgraphView):
+        graph = graph_or_subgraph.graph
+    if isinstance(graph, SDFG):
+        for state in graph_or_subgraph.nodes():
+            tile_wcrs(state, validate_all)
+        return
+    if not isinstance(graph, SDFGState):
+        raise TypeError(
+            'Graph must be a state, an SDFG, or a subgraph of either')
+    sdfg = graph.parent
+
+    edges_to_consider: Set[Tuple[gr.MultiConnectorEdge[Memlet],
+                                 nodes.EntryNode]] = set()
+    for edge in graph_or_subgraph.edges():
+        if edge.data.wcr is not None:
+            if (isinstance(edge.src, (nodes.ExitNode, nodes.NestedSDFG))
+                    or isinstance(edge.dst, nodes.EntryNode)):
+                # Do not consider intermediate edges
+                continue
+            reason = cpp.is_write_conflicted_with_reason(graph, edge)
+            if reason is None or not isinstance(reason, nodes.EntryNode):
+                # Do not consider edges that will not generate atomics or
+                # atomics we cannot transform
+                continue
+            edges_to_consider.add((edge, reason))
+
+    tile_size = config.Config.get('optimizer', 'autotile_size')
+    debugprint = config.Config.get_bool('debugprint')
+
+    transformed = set()
+    for edge, mapentry in edges_to_consider:
+        if mapentry in transformed:
+            continue
+        transformed.add(mapentry)
+        # NOTE: The test below is crafted for Sympy to be "definitely True"
+        if (mapentry.map.range.num_elements() < tile_size) == True:
+            # If smaller than tile size, don't transform and instead make map sequential
+            if debugprint:
+                print(f'Making map "{mapentry}" sequential due to being '
+                      'smaller than tile size')
+            mapentry.map.schedule = dtypes.ScheduleType.Sequential
+            continue
+
+        print('will transform', mapentry)
+        # MapTiling -> AccumulateTransient / AccumulateStream
+        outer_mapentry = dataflow.MapTiling.apply_to(
+            sdfg, dict(tile_sizes=(tile_size, )), _map_entry=mapentry)
+
+        # Transform all outgoing WCR and stream edges
+        mapexit = graph.exit_node(mapentry)
+        outer_mapexit = graph.exit_node(outer_mapentry)
+        for e in graph.out_edges(mapexit):
+            if isinstance(sdfg.arrays[e.data.data], dt.Stream):
+                mpath = graph.memlet_path(e)
+                tasklet = mpath[0].src
+                if not isinstance(tasklet, nodes.Tasklet) or len(mpath) != 3:
+                    # TODO(later): Implement StreamTransient independently of tasklet
+                    continue
+                dataflow.StreamTransient.apply_to(sdfg,
+                                                  _tasklet=tasklet,
+                                                  _map_exit=mapexit,
+                                                  _outer_map_exit=outer_mapexit)
+            else:
+                if e.data.is_empty() or e.data.wcr is None or e.data.wcr_nonatomic:
+                    continue
+
+                dtype = sdfg.arrays[e.data.data].dtype
+                redtype = operations.detect_reduction_type(e.data.wcr)
+                dataflow.AccumulateTransient.apply_to(
+                    sdfg,
+                    options=dict(identity=dtypes.reduction_identity(dtype, redtype),
+                                 array=e.data.data),
+                    _map_exit=mapexit,
+                    _outer_map_exit=outer_mapexit)
+
+    if debugprint and len(transformed) > 0:
+        print(f'Optimized {len(transformed)} write-conflicted maps')
 
 
 def find_fast_library(device: dtypes.DeviceType) -> str:
@@ -110,16 +190,10 @@ def find_fast_library(device: dtypes.DeviceType) -> str:
         result = []
 
         # BLAS calls
-        try:
-            if mkl.IntelMKL.is_installed():
-                result.append('MKL')
-        except AttributeError:
-            pass 
-        try:
-            if openblas.OpenBLAS.is_installed():
-                result.append('OpenBLAS')
-        except AttributeError:
-            pass 
+        # if mkl.IntelMKL.is_installed():
+        #     result.append('MKL')
+        # elif openblas.OpenBLAS.is_installed():
+        #     result.append('OpenBLAS')
 
         return result + ['pure']
 
@@ -147,6 +221,8 @@ def auto_optimize(sdfg: SDFG,
     :param validate_all: If True, validates the SDFG after every step.
     :return: The optimized SDFG.
     :note: Operates in-place on the given SDFG.
+    :note: This function is still experimental and may harm correctness in
+           certain cases. Please report an issue if it does.
     """
     # Strict transformations
     sdfg.apply_strict_transformations(validate=False, validate_all=validate_all)
