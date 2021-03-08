@@ -332,9 +332,13 @@ class RedundantArray(pm.Transformation):
                 e3.data.data = dname
                 e3.data.subset = subset
                 e3.data.other_subset = other_subset
+                e3.data.wcr = e1.data.wcr
+                e3.data.wcr_nonatomic = e1.data.wcr_nonatomic
 
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
+            e2.data.wcr = e1.data.wcr
+            e2.data.wcr_nonatomic = e1.data.wcr_nonatomic
             graph.add_edge(e2.src, e2.src_conn, out_array, e2.dst_conn, e2.data)
 
         # Finally, remove in_array node
@@ -541,8 +545,13 @@ class RedundantSecondArray(pm.Transformation):
                     e3.data.other_subset = other_subset
                 else:
                     e3.data.other_subset = None
+                e3.data.wcr = e1.data.wcr
+                e3.data.wcr_nonatomic = e1.data.wcr_nonatomic
+
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
+            e2.data.wcr = e1.data.wcr
+            e2.data.wcr_nonatomic = e1.data.wcr_nonatomic
             graph.add_edge(in_array, e2.src_conn, e2.dst, e2.dst_conn, e2.data)
 
         # Finally, remove out_array node
