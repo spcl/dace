@@ -122,14 +122,16 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
                                                   map_exit=mapexit,
                                                   outer_map_exit=outer_mapexit)
             else:
-                if e.data.is_empty() or e.data.wcr is None or e.data.wcr_nonatomic:
+                if e.data.is_empty(
+                ) or e.data.wcr is None or e.data.wcr_nonatomic:
                     continue
 
                 dtype = sdfg.arrays[e.data.data].dtype
                 redtype = operations.detect_reduction_type(e.data.wcr)
                 dataflow.AccumulateTransient.apply_to(
                     sdfg,
-                    options=dict(identity=dtypes.reduction_identity(dtype, redtype),
+                    options=dict(identity=dtypes.reduction_identity(
+                        dtype, redtype),
                                  array=e.data.data),
                     map_exit=mapexit,
                     outer_map_exit=outer_mapexit)
@@ -156,6 +158,7 @@ def find_fast_library(device: dtypes.DeviceType) -> str:
 
     return ['pure']
 
+
 def move_small_arrays_to_stack(sdfg: SDFG) -> None:
     """
     Set all Default storage types that are constant sized and less than 
@@ -166,7 +169,8 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
     converted = 0
     tile_size = config.Config.get('optimizer', 'autotile_size')
     for sd, aname, array in sdfg.arrays_recursive():
-        if array.transient and array.storage == dtypes.StorageType.Default:
+        if (array.transient and array.storage == dtypes.StorageType.Default
+                and array.lifetime == dtypes.AllocationLifetime.Scope):
             if not symbolic.issymbolic(array.total_size, sd.constants):
                 eval_size = symbolic.evaluate(array.total_size, sd.constants)
                 if eval_size <= tile_size:
@@ -175,6 +179,7 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
 
     if config.Config.get_bool('debugprint') and converted > 0:
         print(f'Statically allocating {converted} transient arrays')
+
 
 def auto_optimize(sdfg: SDFG,
                   device: dtypes.DeviceType,
