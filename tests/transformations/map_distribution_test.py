@@ -5,6 +5,7 @@ import dace
 import numpy as np
 from mpi4py import MPI as MPI4PY
 from dace.transformation.dataflow import ElementWiseArrayOperation
+import pytest
 
 
 N = dace.symbol('N', dtype=dace.int64)
@@ -14,7 +15,7 @@ N = dace.symbol('N', dtype=dace.int64)
 def eao_mpi(A: dace.float64[N], B: dace.float64[N]):
     return A * B
 
-
+@pytest.mark.mpi
 def test_eao_mpi():
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()

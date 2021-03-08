@@ -87,8 +87,8 @@ def dace_scatter_gather(A: dace.float32[N*P]):
     dace.comm.Gather(tmp, A, root=0)
 
 
+@pytest.mark.mpi
 def test_dace_scatter_gather():
-
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()
