@@ -13,6 +13,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
 from dace.transformation import transformation as pm, helpers
 from dace.config import Config
+from networkx.exception import NodeNotFound
 
 # Helper methods #############################################################
 
@@ -230,8 +231,14 @@ class RedundantArray(pm.Transformation):
                 G = helpers.simplify_state(graph)
                 # Loop over the accesses
                 for a in accesses:
-                    has_bward_path = nx.has_path(G, a, out_array)
-                    has_fward_path = nx.has_path(G, out_array, a)
+                    try:
+                        has_bward_path = nx.has_path(G, a, out_array)
+                    except NodeNotFound:
+                        has_bward_path = nx.has_path(graph.nx, a, out_array)
+                    try:
+                        has_fward_path = nx.has_path(G, out_array, a)
+                    except NodeNotFound:
+                        has_fward_path = nx.has_path(graph.nx, out_array, a)
                     # If there is no path between the access nodes (disconnected
                     # components), then it is definitely possible to have data
                     # races. Abort.
@@ -409,8 +416,14 @@ class RedundantSecondArray(pm.Transformation):
                     G = helpers.simplify_state(graph)
                     # Loop over the accesses
                     for a in accesses:
-                        has_bward_path = nx.has_path(G, a, in_array)
-                        has_fward_path = nx.has_path(G, in_array, a)
+                        try:
+                            has_bward_path = nx.has_path(G, a, in_array)
+                        except NodeNotFound:
+                            has_bward_path = nx.has_path(graph.nx, a, in_array)
+                        try:
+                            has_fward_path = nx.has_path(G, in_array, a)
+                        except NodeNotFound:
+                            has_fward_path = nx.has_path(graph.nx, in_array, a)
                         # If there is no path between the access nodes
                         # (disconnected components), then it is definitely
                         # possible to have data races. Abort.
