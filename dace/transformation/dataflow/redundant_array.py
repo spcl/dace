@@ -13,6 +13,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
 from dace.transformation import transformation as pm, helpers
 from dace.config import Config
+from networkx.exception import NodeNotFound
 
 # Helper methods #############################################################
 
@@ -138,13 +139,13 @@ def compose_and_push_back(first, second, dims=None, popped=None):
     if dims and popped and len(dims) == len(popped):
         if isinstance(first, subsets.Indices):
             indices = subset.Indices
-            for d, p in zip(dims, popped):
+            for d, p in zip(reversed(dims), reversed(popped)):
                 indices.insert(d, p)
             subset = subsets.Indices(indices)
         else:
             ranges = subset.ranges
             tsizes = subset.tile_sizes
-            for d, (r, t) in zip(dims, popped):
+            for d, (r, t) in zip(reversed(dims), reversed(popped)):
                 ranges.insert(d, r)
                 tsizes.insert(d, t)
             subset = subsets.Range(ranges)
@@ -230,8 +231,14 @@ class RedundantArray(pm.Transformation):
                 G = helpers.simplify_state(graph)
                 # Loop over the accesses
                 for a in accesses:
-                    has_bward_path = nx.has_path(G, a, out_array)
-                    has_fward_path = nx.has_path(G, out_array, a)
+                    try:
+                        has_bward_path = nx.has_path(G, a, out_array)
+                    except NodeNotFound:
+                        has_bward_path = nx.has_path(graph.nx, a, out_array)
+                    try:
+                        has_fward_path = nx.has_path(G, out_array, a)
+                    except NodeNotFound:
+                        has_fward_path = nx.has_path(graph.nx, out_array, a)
                     # If there is no path between the access nodes (disconnected
                     # components), then it is definitely possible to have data
                     # races. Abort.
@@ -332,9 +339,13 @@ class RedundantArray(pm.Transformation):
                 e3.data.data = dname
                 e3.data.subset = subset
                 e3.data.other_subset = other_subset
+                e3.data.wcr = e1.data.wcr
+                e3.data.wcr_nonatomic = e1.data.wcr_nonatomic
 
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
+            e2.data.wcr = e1.data.wcr
+            e2.data.wcr_nonatomic = e1.data.wcr_nonatomic
             graph.add_edge(e2.src, e2.src_conn, out_array, e2.dst_conn, e2.data)
 
         # Finally, remove in_array node
@@ -405,8 +416,14 @@ class RedundantSecondArray(pm.Transformation):
                     G = helpers.simplify_state(graph)
                     # Loop over the accesses
                     for a in accesses:
-                        has_bward_path = nx.has_path(G, a, in_array)
-                        has_fward_path = nx.has_path(G, in_array, a)
+                        try:
+                            has_bward_path = nx.has_path(G, a, in_array)
+                        except NodeNotFound:
+                            has_bward_path = nx.has_path(graph.nx, a, in_array)
+                        try:
+                            has_fward_path = nx.has_path(G, in_array, a)
+                        except NodeNotFound:
+                            has_fward_path = nx.has_path(graph.nx, in_array, a)
                         # If there is no path between the access nodes
                         # (disconnected components), then it is definitely
                         # possible to have data races. Abort.
@@ -541,8 +558,13 @@ class RedundantSecondArray(pm.Transformation):
                     e3.data.other_subset = other_subset
                 else:
                     e3.data.other_subset = None
+                e3.data.wcr = e1.data.wcr
+                e3.data.wcr_nonatomic = e1.data.wcr_nonatomic
+
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
+            e2.data.wcr = e1.data.wcr
+            e2.data.wcr_nonatomic = e1.data.wcr_nonatomic
             graph.add_edge(in_array, e2.src_conn, e2.dst, e2.dst_conn, e2.data)
 
         # Finally, remove out_array node
