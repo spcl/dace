@@ -72,9 +72,14 @@ class InlineSDFG(transformation.Transformation):
         ostrides = [
             os for i, os in enumerate(outer_strides) if i not in dims_to_ignore
         ]
+
+        istrides = [
+            os for i, os in enumerate(inner_strides) if i not in dims_to_ignore
+        ]
+
         if len(ostrides) == 0:
             ostrides = [1]
-        if len(ostrides) != len(inner_strides):
+        if len(ostrides) != len(istrides):
             return False
 
         # Replace all inner symbols based on symbol mapping
@@ -92,8 +97,9 @@ class InlineSDFG(transformation.Transformation):
 
         istrides = [
             istr.subs(repldict).subs(repldict_inv)
-            if symbolic.issymbolic(istr) else istr for istr in inner_strides
+            if symbolic.issymbolic(istr) else istr for istr in istrides
         ]
+
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
