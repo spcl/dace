@@ -197,10 +197,13 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         dtypes.pointer(
                                                             nodedesc.dtype),
                                                         ancestor=0)
-
-        declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
-        # Casting is already done in emit_memlet_reference
-        allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
+        if declaration_stream == allocation_stream:
+            # Declare and define to guarantee compatibility with OpenCL
+            declaration_stream.write(f'{atype} {aname} = {value};', sdfg, state_id, node)
+        else:
+            declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
+            # Casting is already done in emit_memlet_reference
+            allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
                        declaration_stream, allocation_stream):
