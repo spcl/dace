@@ -2,7 +2,66 @@
 #
 # This sample shows the AXPY BLAS routine. It is implemented through Xilinx
 # IPs in order to utilize double pumping, which doubles the performance per
-# consumed FPGA resource.
+# consumed FPGA resource. The block diagram of the design (with reset
+# synchronization omitted) is:
+#
+#          ap_aclk          s_axis_y_in        s_axis_x_in     a
+#             │                  │                  │          │
+#             │                  │                  │          │
+#             │                  │                  │          │
+#     ┌───────┼─────────┬────────┼─────────┐        │          │
+#     │       │         │        │         │        │          │
+#     │       │         │        ▼         │        ▼          │
+#     │       │         │  ┌────────────┐  │  ┌────────────┐   │
+#     │       │         └─►│            │  └─►│            │   │
+#     │       │            │ Clock sync │     │ Clock sync │   │
+#     │       │         ┌─►│            │  ┌─►│            │   │
+#     │       ▼ 300 MHz │  └─────┬──────┘  │  └─────┬──────┘   │
+#     │ ┌────────────┐  │        │         │        │          │
+#     │ │ Clock      │  │        │         │        │          │
+#     │ │            │  ├────────┼─────────┤        │          │
+#     │ │ Multiplier │  │        │         │        │          │
+#     │ └─────┬──────┘  │        ▼ 64 bit  │        ▼ 64 bit   │
+#     │       │ 600 MHz │  ┌────────────┐  │  ┌────────────┐   │
+#     │       │         │  │            │  │  │            │   │
+#     │       └─────────┼─►│ Data issue │  └─►│ Data issue │   │
+#     │                 │  │            │     │            │   │
+#     │                 │  └─────┬──────┘     └─────┬──────┘   │
+#     │                 │        │ 32 bit           │ 32 bit   │
+#     │                 │        │                  │          │
+#     │                 │        │                  │          │
+#     │                 │        │                  ▼          ▼
+#     │                 │        │                 ┌────────────┐
+#     │                 │        │                 │            │
+#     │                 ├────────┼────────────────►│ Multiplier │
+#     │                 │        │                 │            │
+#     │                 │        │                 └─────┬──────┘
+#     │                 │        │                       │
+#     │                 │        │        ┌──────────────┘
+#     │                 │        │        │
+#     │                 │        ▼        ▼
+#     │                 │      ┌────────────┐
+#     │                 │      │            │
+#     │                 ├─────►│    Adder   │
+#     │                 │      │            │
+#     │                 │      └─────┬──────┘
+#     │                 │            │
+#     │                 │            ▼ 32 bit
+#     │                 │      ┌─────────────┐
+#     │                 │      │             │
+#     │                 ├─────►│ Data packer │
+#     │                 │      │             │
+#     │                 │      └─────┬───────┘
+#     │                 │            │ 64 bit
+#     │                 │            ▼
+#     │                 │      ┌────────────┐
+#     │                 └─────►│            │
+#     │                        │ Clock sync │
+#     └───────────────────────►│            │
+#                              └─────┬──────┘
+#                                    │
+#                                    ▼
+#                            m_axis_result_out
 #
 # It is intended for running hardware_emulation or hardware xilinx targets.
 
@@ -96,7 +155,7 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
     wire rstn_300;
     wire rstn_600;
 
-    clk_wiz_0 clk_wiz_inst (
+    clk_wiz_0 clock_multiplier (
         .clk_in1(ap_aclk),
         .clk_out1(clk_300),
         .clk_out2(clk_600)
@@ -124,7 +183,7 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
     wire [63:0] axis_x_clk_data_tdata;
     wire        axis_x_clk_data_tready;
 
-    slow_to_fast_clk slow_to_fast_clk_x (
+    slow_to_fast_clk clock_sync_x (
         .s_axis_aclk(clk_300),
         .s_axis_aresetn(rstn_300),
         .m_axis_aclk(clk_600),
@@ -143,7 +202,7 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
     wire [63:0] axis_y_clk_data_tdata;
     wire        axis_y_clk_data_tready;
 
-    slow_to_fast_clk slow_to_fast_clk_y (
+    slow_to_fast_clk clock_sync_y (
         .s_axis_aclk(clk_300),
         .s_axis_aresetn(rstn_300),
         .m_axis_aclk(clk_600),
@@ -162,7 +221,7 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
     wire [31:0] axis_x_data_fl_tdata;
     wire        axis_x_data_fl_tready;
 
-    slow_to_fast_data slow_to_fast_data_x (
+    slow_to_fast_data data_issue_x (
         .aclk(clk_600),
         .aresetn(rstn_600),
 
@@ -179,7 +238,7 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
     wire [31:0] axis_y_data_fl_tdata;
     wire        axis_y_data_fl_tready;
 
-    slow_to_fast_data slow_to_fast_data_y (
+    slow_to_fast_data data_issue_y (
         .aclk(clk_600),
         .aresetn(rstn_600),
 
@@ -196,7 +255,7 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
     wire [31:0] axis_ax_tdata;
     wire        axis_ax_tready;
 
-    floating_point_mult fl_mult (
+    floating_point_mult multiplier (
         .aclk(clk_600),
 
         .s_axis_a_tvalid(1),
@@ -216,7 +275,7 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
     wire [31:0] axis_result_tdata;
     wire        axis_result_tready;
 
-    floating_point_add fl_add (
+    floating_point_add adder (
         .aclk(clk_600),
 
         .s_axis_a_tvalid(axis_ax_tvalid),
@@ -236,7 +295,7 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
     wire [63:0] axis_result_data_clk_tdata;
     wire        axis_result_data_clk_tready;
 
-    fast_to_slow_data fast_to_slow_data_result (
+    fast_to_slow_data data_packer (
         .aclk(clk_600),
         .aresetn(rstn_600),
 
@@ -249,7 +308,7 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
         .m_axis_tready(axis_result_data_clk_tready)
     );
 
-    fast_to_slow_clk fast_to_slow_clk_result (
+    fast_to_slow_clk clock_sync_result (
         .s_axis_aclk(clk_600),
         .s_axis_aresetn(rstn_600),
         .m_axis_aclk(clk_300),
