@@ -636,8 +636,7 @@ if(DACE_ENABLE_XILINX)
 
     add_custom_command(
       OUTPUT ${DACE_PROGRAM_NAME}_hw_emu.xclbin
-      -E env LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
-      COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
+      XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${VITIS_BUILD_FLAGS}
       ${VITIS_CONFIG_LINK}
       -l
@@ -653,8 +652,7 @@ if(DACE_ENABLE_XILINX)
 
     add_custom_command(
       OUTPUT ${DACE_PROGRAM_NAME}_hw.xclbin
-      -E env LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
-      COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
+      XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${VITIS_BUILD_FLAGS}
       ${VITIS_CONFIG_LINK}
       -l

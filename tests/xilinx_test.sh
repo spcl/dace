@@ -93,7 +93,7 @@ run_all() {
 
     # RTL cores
     DACE_compiler_xilinx_mode="hardware_emulation"
-    run_sample rtl/hardware_test floating_point_vector_plus_scalar 0 1
+    LIBRARY_PATH=$LIBRARY_PATH:/usr/lib/x86_64-linux-gnu run_sample rtl/hardware_test floating_point_vector_plus_scalar 0 1
 }
 
 # Check if xocc is vailable
