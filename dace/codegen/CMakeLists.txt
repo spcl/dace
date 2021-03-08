@@ -143,8 +143,9 @@ endif()
 
 # Function for performing deferred variable expansion
 function(expand_deferred_variables VAR_NAME)
-  string(REGEX MATCHALL "_DACE_CMAKE_EXPAND{(.+)}" EXPAND_VARS 
+  string(REGEX MATCHALL "_DACE_CMAKE_EXPAND{([^}]+)}" EXPAND_VARS 
          "${${VAR_NAME}}")
+  string(REPLACE " " ";" EXPAND_VARS "${EXPAND_VARS}")
   foreach(EXPAND_VAR ${EXPAND_VARS})
       # Extract only the variable name
       string(REGEX REPLACE "_DACE_CMAKE_EXPAND{(.+)}" "\\1"
