@@ -121,7 +121,6 @@ jobs:
         export DACE_testing_single_cache=1
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
-        export LIBRARY_PATH=$LIBRARY_PATH:/usr/lib/x86_64_linux-gnu
         . /opt/setupenv
         ./tests/xilinx_test.sh 0
 
