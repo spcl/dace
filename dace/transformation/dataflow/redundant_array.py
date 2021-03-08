@@ -139,13 +139,13 @@ def compose_and_push_back(first, second, dims=None, popped=None):
     if dims and popped and len(dims) == len(popped):
         if isinstance(first, subsets.Indices):
             indices = subset.Indices
-            for d, p in zip(dims, popped):
+            for d, p in zip(reversed(dims), reversed(popped)):
                 indices.insert(d, p)
             subset = subsets.Indices(indices)
         else:
             ranges = subset.ranges
             tsizes = subset.tile_sizes
-            for d, (r, t) in zip(dims, popped):
+            for d, (r, t) in zip(reversed(dims), reversed(popped)):
                 ranges.insert(d, r)
                 tsizes.insert(d, t)
             subset = subsets.Range(ranges)
