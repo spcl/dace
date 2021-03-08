@@ -222,10 +222,9 @@ class MapFusion(transformation.Transformation):
 
             # Compute output accesses with respect to first map's symbols
             oacc_permuted = [dcpy(a) for a in output_accesses]
-            oacc_permuted = [a.replace(repldict) if a else a
-                             for a in oacc_permuted]
-            oacc_permuted = [a.replace(repldict_inv) if a else a
-                             for a in oacc_permuted]
+            for a in oacc_permuted:
+                a.replace(repldict)
+                a.replace(repldict_inv)
             
             a = input_accesses[0]
             for b in oacc_permuted:
