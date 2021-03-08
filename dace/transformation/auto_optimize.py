@@ -144,14 +144,13 @@ def find_fast_library(device: dtypes.DeviceType) -> str:
     if device is dtypes.DeviceType.GPU:
         return ['cuBLAS', 'CUB', 'pure']
     elif device is dtypes.DeviceType.CPU:
-        # TODO: add "is_installed" checks to environments
         result = []
 
         # BLAS calls
-        # if mkl.IntelMKL.is_installed():
-        #     result.append('MKL')
-        # elif openblas.OpenBLAS.is_installed():
-        #     result.append('OpenBLAS')
+        if mkl.IntelMKL.is_installed():
+            result.append('MKL')
+        elif openblas.OpenBLAS.is_installed():
+            result.append('OpenBLAS')
 
         return result + ['pure']
 
