@@ -2,7 +2,7 @@
 """ Automatic optimization routines for SDFGs. """
 
 from dace.sdfg.state import SDFGState
-from dace import config, data as dt, dtypes, Memlet
+from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
 from typing import Set, Tuple, Union
 import warnings
@@ -156,6 +156,25 @@ def find_fast_library(device: dtypes.DeviceType) -> str:
 
     return ['pure']
 
+def move_small_arrays_to_stack(sdfg: SDFG) -> None:
+    """
+    Set all Default storage types that are constant sized and less than 
+    the auto-tile size to the stack (as StorageType.Register).
+    :param sdfg: The SDFG to operate on.
+    :note: Operates in-place on the SDFG.
+    """
+    converted = 0
+    tile_size = config.Config.get('optimizer', 'autotile_size')
+    for sd, aname, array in sdfg.arrays_recursive():
+        if array.transient and array.storage == dtypes.StorageType.Default:
+            if not symbolic.issymbolic(array.total_size, sd.constants):
+                eval_size = symbolic.evaluate(array.total_size, sd.constants)
+                if eval_size <= tile_size:
+                    array.storage = dtypes.StorageType.Register
+                    converted += 1
+
+    if config.Config.get_bool('debugprint') and converted > 0:
+        print(f'Statically allocating {converted} transient arrays')
 
 def auto_optimize(sdfg: SDFG,
                   device: dtypes.DeviceType,
@@ -222,6 +241,9 @@ def auto_optimize(sdfg: SDFG,
     # Disable OpenMP parallel sections
     # TODO(later): Set on a per-SDFG basis
     config.Config.set('compiler', 'cpu', 'openmp_sections', value=False)
+
+    # Set all Default storage types that are constant sized to registers
+    move_small_arrays_to_stack(sdfg)
 
     # Validate at the end
     if validate or validate_all:
