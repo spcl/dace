@@ -8,7 +8,7 @@ from typing import Set, Tuple, Union
 import warnings
 
 # Transformations
-from dace.transformation.dataflow import MapCollapse
+from dace.transformation.dataflow import MapCollapse, MapFusion
 from dace.transformation.interstate import LoopToMap
 
 # Environments
@@ -18,12 +18,40 @@ GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
 
 def greedy_fuse(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
-    # TODO: If two maps share connected nodes (horizontal/vertical), fuse
-    # TODO: run multiexpansion first
-    pass
+    """
+    Greedily fuses maps in an SDFG or subgraphs thereof. This fuses
+    maps if they are connected via a shared access node (parallel or
+    in sequence).
+    :param graph_or_subgraph: The SDFG or subgraph thereof to fuse within.
+    :param validate_all: If True, runs SDFG validation after every fusion.
+    :note: This function operates in-place.
+    """
+    # If two maps share connected nodes (horizontal/vertical), fuse
+    # TODO: Run MultiExpansion first, use SubgraphFusion
+    sdfg = graph_or_subgraph
+    if isinstance(graph_or_subgraph, gr.SubgraphView):
+        sdfg = graph_or_subgraph.graph
+    if not isinstance(sdfg, SDFG):
+        raise TypeError('Graph must be an SDFG or a subgraph thereof')
+    states = graph_or_subgraph.nodes()
+
+    # Vertical Fusion
+    sdfg.apply_transformations_repeated(MapFusion,
+                                        strict=True,
+                                        validate=False,
+                                        validate_all=validate_all,
+                                        states=states)
 
 
 def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
+    """
+    Tiles parallel write-conflict resolution maps in an SDFG, state,
+    or subgraphs thereof. Reduces the number of atomic operations by tiling
+    and introducing transient arrays to accumulate atomics on.
+    :param graph_or_subgraph: The SDFG/state/subgraph to optimize within.
+    :param validate_all: If True, runs SDFG validation after every tiling.
+    :note: This function operates in-place.
+    """
     # Avoid import loops
     from dace.codegen.targets import cpp
     from dace.frontend import operations
