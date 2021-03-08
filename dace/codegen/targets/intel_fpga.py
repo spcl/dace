@@ -877,12 +877,12 @@ __kernel void \\
                     # if this is a scalar and the argument passed is also a scalar
                     # then we have to pass it by reference, i.e., we should define it
                     # as a pointer since references do not exist in C99
-
-                    typedef = defined_ctype + "*"
+                    typedef = defined_ctype
+                    if defined_type is not DefinedType.Pointer:
+                        typedef = typedef + "*"
                     memlet_references.append(
                         (typedef, uconn,
                          cpp.cpp_ptr_expr(sdfg, out_memlet, defined_type)))
-
                     self._dispatcher.defined_vars.add(uconn,
                                                       DefinedType.Pointer,
                                                       typedef,
@@ -913,6 +913,7 @@ __kernel void \\
                     # if this is not already a mapped symbol, add it
                     if p not in node.symbol_mapping.keys():
                         memlet_references.append((typedef, p, p))
+
         return memlet_references
 
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
@@ -1500,8 +1501,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
     def visit_BinOp(self, node):
         if node.op.__class__.__name__ == 'Pow':
             # Special case for integer power: do not generate dace namespaces (dace::math) but just call pow
-            if not (isinstance(node.right, (ast.Num, ast.Constant))
-                    and int(node.right.n) == node.right.n and node.right.n >= 0):
+            if not (isinstance(node.right, (ast.Num, ast.Constant)) and int(
+                    node.right.n) == node.right.n and node.right.n >= 0):
                 left_value = cppunparse.cppunparse(self.visit(node.left),
                                                    expr_semicolon=False)
                 right_value = cppunparse.cppunparse(self.visit(node.right),
