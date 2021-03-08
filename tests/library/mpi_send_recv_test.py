@@ -7,6 +7,7 @@ import sys
 import warnings
 import numpy as np
 from mpi4py import MPI as MPI4PY
+import pytest
 
 
 ###############################################################################
@@ -88,6 +89,7 @@ def _test_mpi(info, sdfg, dtype):
     if not np.allclose(B, np.full(size, srank, dtype=dtype)):
         raise(ValueError("The received values are not what I expected."))
 
+@pytest.mark.mpi
 def test_mpi():
     _test_mpi("MPI Send/Recv", make_sdfg(np.float64), np.float64)
 
@@ -109,8 +111,8 @@ def dace_send_recv():
     return tmp2
 
 
+@pytest.mark.mpi
 def test_dace_send_recv():
-
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()

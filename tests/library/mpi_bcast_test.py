@@ -7,6 +7,7 @@ import sys
 import warnings
 import numpy as np
 from mpi4py import MPI as MPI4PY
+import pytest
 
 
 ###############################################################################
@@ -65,6 +66,7 @@ def _test_mpi(info, sdfg, dtype):
     if not np.allclose(A, np.full(size, 0, dtype=dtype)):
         raise(ValueError("The received values are not what I expected."))
 
+@pytest.mark.mpi
 def test_mpi():
     _test_mpi("MPI Bcast", make_sdfg(np.float64), np.float64)
 
@@ -77,8 +79,8 @@ def dace_bcast(A: dace.float32[N]):
     dace.comm.Bcast(A, root=0)
 
 
+@pytest.mark.mpi
 def test_dace_bcast():
-
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()
