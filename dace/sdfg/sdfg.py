@@ -937,12 +937,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Add free state symbols
         for state in self.nodes():
             free_syms |= state.free_symbols
-            # Add defined nested SDFG symbols
-            for n in state.nodes():
-                if isinstance(n, dace.nodes.NestedSDFG):
-                    for s in n.sdfg.symbols:
-                        if s not in n.symbol_mapping.keys():
-                            defined_syms.add(s)
 
         # Add free inter-state symbols
         for e in self.edges():
