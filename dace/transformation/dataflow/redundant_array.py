@@ -243,7 +243,7 @@ class RedundantArray(pm.Transformation):
                             return False
                     return True
                 return False
-            else:
+            elif isinstance(out_desc, data.View):
                 # Case Access -> View
                 # Check that the View's immediate successors are Accesses.
                 # Otherwise, the application of the transformation will result
@@ -255,6 +255,9 @@ class RedundantArray(pm.Transformation):
                 if any([not desc or isinstance(desc, data.View)
                         for desc in view_successors_desc]):
                     return False
+            else:
+                # Something else, for example, Stream
+                return False
         else:
             # Two views connected to each other
             if isinstance(in_desc, data.View):
@@ -495,13 +498,16 @@ class RedundantSecondArray(pm.Transformation):
                 if any([not desc or isinstance(desc, data.View)
                         for desc in view_ancestors_desc]):
                     return False
-            else:
+            elif isinstance(out_desc, data.View):
                 # Case Access -> View
                 # If the View points to the Access and has the same shape,
                 # it can be removed
                 e = sdutil.get_view_edge(graph, out_array)
                 if e and e.src is in_array and in_desc.shape == out_desc.shape:
                     return True
+                return False
+            else:
+                # Something else, for example, Stream
                 return False
         else:
             # Two views connected to each other
