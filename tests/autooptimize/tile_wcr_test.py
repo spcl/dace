@@ -43,13 +43,13 @@ def test_symmap():
     _runtest(sdfg, 257)
 
 
-@pytest.mark.skip
 def test_libnode():
     @dace.program
     def sum(A: dace.float32[N], out: dace.float32[1]):
         dace.reduce(lambda a, b: a + b, A, out, identity=0)
 
     sdfg = sum.to_sdfg()
+    sdfg.expand_library_nodes()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
     assert 'reduce(' in code and code.count('atomic') == 1
@@ -59,4 +59,4 @@ def test_libnode():
 if __name__ == '__main__':
     test_symmap()
     test_shortmap()
-    # test_libnode() # Not yet supported
+    test_libnode()

@@ -102,7 +102,6 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
             mapentry.map.schedule = dtypes.ScheduleType.Sequential
             continue
 
-        print('will transform', mapentry)
         # MapTiling -> AccumulateTransient / AccumulateStream
         outer_mapentry = dataflow.MapTiling.apply_to(
             sdfg, dict(tile_sizes=(tile_size, )), map_entry=mapentry)
@@ -218,7 +217,8 @@ def auto_optimize(sdfg: SDFG,
     greedy_fuse(sdfg, validate_all)
 
     # Tiled WCR and streams
-    tile_wcrs(sdfg, validate_all)
+    for nsdfg in list(sdfg.all_sdfgs_recursive()):
+        tile_wcrs(nsdfg, validate_all)
 
     # Collapse maps
     sdfg.apply_transformations_repeated(MapCollapse,
