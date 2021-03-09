@@ -284,8 +284,8 @@ def test_conv2d():
 
 
 if __name__ == '__main__':
-    # test_in()
-    # test_out()
+    test_in()
+    test_out()
     test_out_success()
     test_out_failure_subset_mismatch()
     test_out_failure_no_overlap()
