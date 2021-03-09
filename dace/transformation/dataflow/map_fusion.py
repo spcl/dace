@@ -171,7 +171,7 @@ class MapFusion(transformation.Transformation):
 
             provided = False
 
-            # Compute second subset with respect to first subset's symbols  
+            # Compute second subset with respect to first subset's symbols
             sbs_permuted = dcpy(second_edge.data.subset)
             if sbs_permuted:
                 sbs_permuted.replace(repldict)
@@ -193,20 +193,24 @@ class MapFusion(transformation.Transformation):
 
         # Checking for stencil pattern and common input/output data
         # (after fusing the maps)
-        first_map_inputs = set([e.src.data
-                                for e in graph.in_edges(first_map_entry)
-                                if isinstance(e.src, nodes.AccessNode)])
-        second_map_outputs = set([e.dst.data
-                                  for e in graph.out_edges(second_map_exit)
-                                  if isinstance(e.dst, nodes.AccessNode)])
+        first_map_inputs = set([
+            e.src.data for e in graph.in_edges(first_map_entry)
+            if isinstance(e.src, nodes.AccessNode)
+        ])
+        second_map_outputs = set([
+            e.dst.data for e in graph.out_edges(second_map_exit)
+            if isinstance(e.dst, nodes.AccessNode)
+        ])
         common_data = first_map_inputs.intersection(second_map_outputs)
         if common_data:
-            input_accesses = [graph.memlet_path(e)[-1].data.src_subset
-                              for e in graph.out_edges(first_map_entry)
-                              if e.data.data in common_data]
+            input_accesses = [
+                graph.memlet_path(e)[-1].data.src_subset
+                for e in graph.out_edges(first_map_entry)
+                if e.data.data in common_data
+            ]
             if len(input_accesses) > 1:
                 for i, a in enumerate(input_accesses[:-1]):
-                    for b in input_accesses[i+1:]:
+                    for b in input_accesses[i + 1:]:
                         if isinstance(a, subsets.Indices):
                             c = subsets.Range.from_indices(a)
                             c.offset(b, negative=True)
@@ -216,17 +220,21 @@ class MapFusion(transformation.Transformation):
                             if r != (0, 0, 1):
                                 return False
 
-            output_accesses = [graph.memlet_path(e)[0].data.dst_subset
-                               for e in graph.in_edges(second_map_exit)
-                               if e.data.data in common_data]
+            output_accesses = [
+                graph.memlet_path(e)[0].data.dst_subset
+                for e in graph.in_edges(second_map_exit)
+                if e.data.data in common_data
+            ]
 
             # Compute output accesses with respect to first map's symbols
             oacc_permuted = [dcpy(a) for a in output_accesses]
-            oacc_permuted = [a.replace(repldict) if a else a
-                             for a in oacc_permuted]
-            oacc_permuted = [a.replace(repldict_inv) if a else a
-                             for a in oacc_permuted]
-            
+            oacc_permuted = [
+                a.replace(repldict) if a else a for a in oacc_permuted
+            ]
+            oacc_permuted = [
+                a.replace(repldict_inv) if a else a for a in oacc_permuted
+            ]
+
             a = input_accesses[0]
             for b in oacc_permuted:
                 if isinstance(a, subsets.Indices):
@@ -467,8 +475,27 @@ class MapFusion(transformation.Transformation):
             )
             edge.data.data = local_name
             edge.data.subset = "0"
-            local_node = edge.src
-            src_connector = edge.src_conn
+
+            # If source of edge leads to multiple destinations,
+            # redirect all through an access node
+            if graph.out_degree(edge.src) > 1:
+                local_node = graph.add_access(local_name)
+                src_connector = None
+
+                out_edges = list(graph.out_edges(edge.src))
+                # Add edge that leads to transient node
+                graph.add_edge(edge.src, edge.src_conn, local_node, None,
+                               dcpy(edge.data))
+
+                for other_edge in out_edges:
+                    if other_edge is not edge:
+                        graph.remove_edge(other_edge)
+                        graph.add_edge(local_node, src_connector,
+                                       other_edge.dst, other_edge.dst_conn,
+                                       other_edge.data)
+            else:
+                local_node = edge.src
+                src_connector = edge.src_conn
 
             # Add edge that leads to the second node
             graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
