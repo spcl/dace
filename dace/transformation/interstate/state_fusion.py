@@ -327,8 +327,8 @@ class StateFusion(transformation.Transformation):
 
                 first_inout = fused_cc.first_inputs | fused_cc.first_outputs
                 for other_cc in resulting_ccs:
-                    if other_cc is fused_cc:
-                        continue
+                    # if other_cc is fused_cc:
+                    #     continue
                     # If an input/output of a connected component in the first
                     # state is an output of another connected component in the
                     # second state, we have a potential data race (Read-Write
