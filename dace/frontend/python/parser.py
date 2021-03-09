@@ -243,6 +243,8 @@ class DaceProgram:
         self.kwargs = kwargs
         self.name = f.__name__
         self.argnames = _get_argnames(f)
+        self.auto_optimize = auto_optimize
+        self.device = device
 
         global_vars = _get_locals_and_globals(f)
 
@@ -283,6 +285,11 @@ class DaceProgram:
         # Allow CLI to prompt for optimizations
         if Config.get_bool('optimizer', 'transform_on_call'):
             sdfg = sdfg.optimize()
+
+        # Invoke auto-optimization as necessary
+        if self.auto_optimize:
+            from dace.transformation import auto_optimize as autoopt
+            sdfg = autoopt.auto_optimize(sdfg, self.device)
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)

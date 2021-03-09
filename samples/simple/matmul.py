@@ -144,7 +144,7 @@ def optimize_for_cpu(sdfg: dace.SDFG, m: int, n: int, k: int):
         exit_inner = find_mapexit_by_param(sdfg, 'k')
         exit_rti = find_mapexit_by_param(sdfg, 'tile1_i')
         AccumulateTransient.apply_to(sdfg,
-                                     dict(array='C'),
+                                     dict(array='C', identity=0),
                                      _map_exit=exit_inner,
                                      _outer_map_exit=exit_rti)
 
@@ -231,6 +231,7 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
     warptile_exit = state.exit_node(warptile)
     btile_exit = state.exit_node(btile)
     AccumulateTransient.apply_to(sdfg,
+                                 dict(identity=0),
                                  _map_exit=warptile_exit,
                                  _outer_map_exit=btile_exit)
     # Set C tile to zero on allocation

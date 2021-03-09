@@ -2,6 +2,7 @@
 """ Transformation helper API. """
 import copy
 import itertools
+from networkx import MultiDiGraph
 
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
@@ -603,3 +604,48 @@ def constant_symbols(sdfg: SDFG) -> Set[str]:
         for e in sdfg.edges() for k in e.data.assignments.keys()
     }
     return set(sdfg.symbols) - interstate_symbols
+
+
+def simplify_state(state: SDFGState) -> MultiDiGraph:
+    """
+    Returns a networkx MultiDiGraph object that contains all the access nodes
+    and corresponding edges of an SDFG state. The removed code nodes and map
+    scopes are replaced by edges that connect their ancestor and succesor access
+    nodes.
+    :param state: The input SDFG state.
+    :return: The MultiDiGraph object.
+    """
+
+    # Copy the whole state
+    G = MultiDiGraph()
+    for n in state.nodes():
+        G.add_node(n)
+    for n in state.nodes():
+        for e in state.all_edges(n):
+            G.add_edge(e.src, e.dst)
+    # Collapse all mappings and their scopes into one node
+    scope_children = state.scope_children()
+    for n in scope_children[None]:
+        if isinstance(n, nodes.EntryNode):
+            G.add_edges_from([(n, x) for (y, x) in
+                                G.out_edges(state.exit_node(n))])
+            G.remove_nodes_from(scope_children[n])
+    # Remove all nodes that are not AccessNodes or have incoming
+    # wcr edges and connect their predecessors and successors
+    for n in state.nodes():
+        if n in G.nodes():
+            if not isinstance(n, nodes.AccessNode):
+                for p in G.predecessors(n):
+                    for c in G.successors(n):
+                        G.add_edge(p, c)
+                G.remove_node(n)
+            else:
+                for e in state.all_edges(n):
+                    if e.data.wcr is not None:
+                        for p in G.predecessors(n):
+                            for s in G.successors(n):
+                                G.add_edge(p, s)
+                        G.remove_node(n)
+                        break
+    
+    return G
