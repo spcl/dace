@@ -83,6 +83,14 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
                 # Do not consider edges that will not generate atomics or
                 # atomics we cannot transform
                 continue
+
+            # Check if identity value can be inferred
+            redtype = operations.detect_reduction_type(edge.data.wcr)
+            dtype = sdfg.arrays[edge.data.data].dtype
+            identity = dtypes.reduction_identity(dtype, redtype)
+            if identity is None:  # Cannot infer identity value
+                continue
+
             edges_to_consider.add((edge, reason))
 
     tile_size = config.Config.get('optimizer', 'autotile_size')
@@ -127,10 +135,12 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
 
                 dtype = sdfg.arrays[e.data.data].dtype
                 redtype = operations.detect_reduction_type(e.data.wcr)
+                identity = dtypes.reduction_identity(dtype, redtype)
+                if identity is None:  # Cannot infer identity value
+                    continue
                 dataflow.AccumulateTransient.apply_to(
                     sdfg,
-                    options=dict(identity=dtypes.reduction_identity(
-                        dtype, redtype),
+                    options=dict(identity=identity,
                                  array=e.data.data),
                     map_exit=mapexit,
                     outer_map_exit=outer_mapexit)
