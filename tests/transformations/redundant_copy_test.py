@@ -74,9 +74,15 @@ def test_out_success():
 
     sdfg.validate()
     sdfg.apply_strict_transformations()
-    sdfg.apply_transformations_repeated(RedundantSecondArray)
-    assert len(state.nodes()) == 7
-    assert B not in state.nodes()
+    arrays, views = 0, 0
+    for n in state.nodes():
+        if isinstance(n, dace.nodes.AccessNode):
+            if isinstance(n.desc(sdfg), dace.data.View):
+                views += 1
+            else:
+                arrays += 1
+    assert views == 1
+    assert arrays == 4
     sdfg.validate()
 
     A_arr = np.arange(125, dtype=np.float32).reshape(5, 5, 5)
@@ -278,8 +284,8 @@ def test_conv2d():
 
 
 if __name__ == '__main__':
-    test_in()
-    test_out()
+    # test_in()
+    # test_out()
     test_out_success()
     test_out_failure_subset_mismatch()
     test_out_failure_no_overlap()
