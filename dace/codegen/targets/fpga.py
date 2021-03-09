@@ -274,6 +274,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     # transient (inner-level inputs/outputs are just connected
                     # to data in the outer layers, whereas transients can be
                     # independent).
+                    # Views are not nested global transients
                     if scope == subgraph or n.desc(scope).transient:
                         if scope.out_degree(n) > 0:
                             candidates.append((False, n.data, n.desc(scope)))
@@ -282,9 +283,10 @@ class FPGACodeGen(TargetCodeGenerator):
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dace.data.Array)
                                     and n.desc(scope).storage
-                                    == dace.dtypes.StorageType.FPGA_Global
-                                    and n.data
-                                    not in nested_global_transients_seen):
+                                    == dace.dtypes.StorageType.FPGA_Global and
+                                    n.data not in nested_global_transients_seen
+                                    and not isinstance(n.desc(scope),
+                                                       dace.data.View)):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
@@ -386,13 +388,22 @@ class FPGACodeGen(TargetCodeGenerator):
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
                        declaration_stream, allocation_stream):
+
         result_decl = StringIO()
         result_alloc = StringIO()
         nodedesc = node.desc(sdfg)
         arrsize = nodedesc.total_size
         is_dynamically_sized = dace.symbolic.issymbolic(arrsize, sdfg.constants)
-
         dataname = node.data
+
+        if not isinstance(nodedesc, dace.data.Stream):
+            # With the exception of streams, if the variable has been already defined we can return
+            try:
+                self._dispatcher.defined_vars.get(dataname)
+                return
+            except KeyError:
+                pass  # The variable was not defined,  we can continue
+
         allocname = cpp.ptr(dataname, nodedesc)
 
         if isinstance(nodedesc, dace.data.View):
@@ -447,6 +458,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
                 else:
                     if isinstance(nodedesc, dace.data.Array):
+
                         # TODO: Distinguish between read, write, and read+write
                         self._allocated_global_arrays.add(node.data)
                         memory_bank_arg = ""

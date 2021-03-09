@@ -14,7 +14,8 @@ def fpga_update(sdfg, state, depth):
         if (isinstance(node, nodes.AccessNode)
                 and node.desc(sdfg).storage == dtypes.StorageType.Default):
             nodedesc = node.desc(sdfg)
-            if depth >= 2:
+            # Views are transients, hence they should have local storage
+            if depth >= 2 or isinstance(nodedesc, data.View):
                 nodedesc.storage = dtypes.StorageType.FPGA_Local
             else:
                 if scope_dict[node]:
@@ -77,7 +78,7 @@ class FPGATransformState(transformation.Transformation):
                     return False
 
                 # Streams cannot be unbounded on FPGA
-                if nodedesc.buffer_size < 1:
+                if ndedesc.buffer_size < 1:
                     return False
 
         for node in state.nodes():
@@ -100,8 +101,8 @@ class FPGATransformState(transformation.Transformation):
             if (candidate_map.schedule == dtypes.ScheduleType.MPI
                     or candidate_map.schedule == dtypes.ScheduleType.GPU_Device
                     or candidate_map.schedule == dtypes.ScheduleType.FPGA_Device
-                    or candidate_map.schedule ==
-                    dtypes.ScheduleType.GPU_ThreadBlock):
+                    or candidate_map.schedule
+                    == dtypes.ScheduleType.GPU_ThreadBlock):
                 return False
 
             # Recursively check parent for FPGA schedules
@@ -109,10 +110,10 @@ class FPGATransformState(transformation.Transformation):
             current_node = map_entry
             while current_node is not None:
                 if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
-                        or current_node.map.schedule ==
-                        dtypes.ScheduleType.FPGA_Device
-                        or current_node.map.schedule ==
-                        dtypes.ScheduleType.GPU_ThreadBlock):
+                        or current_node.map.schedule
+                        == dtypes.ScheduleType.FPGA_Device
+                        or current_node.map.schedule
+                        == dtypes.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
@@ -159,7 +160,6 @@ class FPGATransformState(transformation.Transformation):
                             continue
                         input_nodes.append(outer_node)
                         wcr_input_nodes.add(outer_node)
-
         if input_nodes:
             # create pre_state
             pre_state = sd.SDFGState('pre_' + state.label, sdfg)
@@ -248,5 +248,4 @@ class FPGATransformState(transformation.Transformation):
         for src, src_conn, dst, dst_conn, mem in state.edges():
             if mem.data is not None and mem.data in fpga_data:
                 mem.data = 'fpga_' + mem.data
-
         fpga_update(sdfg, state, 0)
