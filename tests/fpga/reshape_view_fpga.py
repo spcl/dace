@@ -158,6 +158,6 @@ def test_reshape_subset():
     assert np.allclose(expected, B)
 
 if __name__ == "__main__":
-    # test_reshape_np()
-    # test_view_fpga_sdfg()
+    test_reshape_np()
+    test_view_fpga_sdfg()
     test_reshape_dst_explicit()

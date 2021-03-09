@@ -301,7 +301,7 @@ def emit_memlet_reference(dispatcher,
 
         # if the target variable has storage FPGA Local, then it means that we are on the device
         # and we can't use references
-        ref = '&' if not nodedesc.storage == dace.StorageType.FPGA_Local else ''
+        ref = '&' if nodedesc is None or not nodedesc.storage == dace.StorageType.FPGA_Local else ''
     else:
         # Cast as necessary
         expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype,
