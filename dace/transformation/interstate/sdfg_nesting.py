@@ -79,6 +79,9 @@ class InlineSDFG(transformation.Transformation):
 
         if len(ostrides) == 0:
             ostrides = [1]
+        if len(istrides) == 0:
+            istrides = [1]
+
         if len(ostrides) != len(istrides):
             return False
 
@@ -99,7 +102,6 @@ class InlineSDFG(transformation.Transformation):
             istr.subs(repldict).subs(repldict_inv)
             if symbolic.issymbolic(istr) else istr for istr in istrides
         ]
-
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
@@ -1033,7 +1035,8 @@ class NestSDFG(transformation.Transformation):
                             and src.data == inputs[mem.data]):
                         mem.data = inputs[mem.data]
                     elif (mem.data in outputs.keys()
-                          and (src.data == outputs[mem.data] or dst.data == outputs[mem.data])):
+                          and (src.data == outputs[mem.data]
+                               or dst.data == outputs[mem.data])):
                         mem.data = outputs[mem.data]
                 elif (isinstance(dst, nodes.AccessNode)
                       and mem.data in outputs.keys()
