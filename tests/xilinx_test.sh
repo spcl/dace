@@ -90,6 +90,9 @@ run_all() {
 
     # Multiple gearboxing
     run_sample fpga/multiple_veclen_conversions multiple_veclen_conversions 0
+
+    # Views
+    run_sample fpga/reshape_view_fpga 0
 }
 
 # Check if xocc is vailable
