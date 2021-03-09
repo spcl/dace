@@ -181,7 +181,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     # cannot use memlet tree here as there could be
                     # not just one map succedding. Do it manually
                     for oedge in graph.out_edges(out_edge.dst):
-                        if oedge.src_conn[3:] == out_edge.dst_conn[2:]:
+                        if oedge.src_conn and oedge.src_conn[3:] == out_edge.dst_conn[2:]:
                             subset_to_add = dcpy(oedge.data.subset \
                                                  if oedge.data.data == node.data \
                                                  else oedge.data.other_subset)
@@ -386,7 +386,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         for out_edge in graph.out_edges(node):
             if out_edge.dst in map_entries:
                 for other_edge in graph.out_edges(out_edge.dst):
-                    if other_edge.src_conn[3:] == out_edge.dst_conn[2:]:
+                    if other_edge.src_conn and other_edge.src_conn[3:] == out_edge.dst_conn[2:]:
                         other_subset = other_edge.data.subset \
                                        if other_edge.data.data == node.data \
                                        else other_edge.data.other_subset
@@ -831,7 +831,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # do one pass to augment all transient arrays
         data_intermediate = set([node.data for node in intermediate_nodes])
         for data_name in data_intermediate:
-            if subgraph_contains_data[data_name]:
+            if subgraph_contains_data[data_name] and isinstance(sdfg.data(data_name), dace.data.Array):
                 all_nodes = [
                     n for n in intermediate_nodes if n.data == data_name
                 ]
@@ -886,6 +886,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 new_data_totalsize = data._prod(new_data_shape)
                 new_data_offset = [0] * len(new_data_shape)
                 # augment.
+                print("AUGMENTING", sdfg.data(data_name))
+                print("AUGMENTING", data_name)
                 transient_to_transform = sdfg.data(data_name)
                 transient_to_transform.shape = new_data_shape
                 transient_to_transform.strides = new_data_strides
@@ -924,7 +926,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
             # memlets of all in between transients:
             # offset memlets if array has been augmented
-            if subgraph_contains_data[node.data]:
+            if subgraph_contains_data[node.data] and isinstance(sdfg.data(node.data), dace.data.Array):
                 # get min_offset
                 min_offset = min_offsets[node.data]
                 # re-add invariant dimensions with offset 0
