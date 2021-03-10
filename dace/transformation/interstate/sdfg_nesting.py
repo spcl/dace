@@ -1068,4 +1068,7 @@ class NestSDFG(transformation.Transformation):
         defined_syms |= set(nested_sdfg.constants.keys())
 
         for s in defined_syms:
-            outer_sdfg.symbols.pop(s, None)
+            type = outer_sdfg.symbols.pop(s, None)
+            if type is not None:
+                # update or add the symbol in the nested sdfg
+                nested_sdfg.symbols[s] = type
