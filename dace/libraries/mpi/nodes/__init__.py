@@ -9,4 +9,5 @@ from .scatter import Scatter
 from .gather import Gather
 from .reduce import Reduce
 from .allreduce import Allreduce
+from .allgather import Allgather
 
