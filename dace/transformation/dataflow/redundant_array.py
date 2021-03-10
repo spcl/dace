@@ -7,7 +7,7 @@ import functools
 import networkx as nx
 import typing
 
-from dace import data, registry, subsets, dtypes, memlet as mm
+from dace import data, registry, subsets, symbolic, dtypes, memlet as mm
 from dace.sdfg import nodes, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
@@ -49,10 +49,12 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
             desc = arrays[src_name]
             if isinstance(desc, data.View) or edge.data.data == dst_name:
                 src_subset = subsets.Range.from_array(desc)
-                if src_subset.num_elements() != dst_subset.num_elements():
+                src_expr = src_subset.num_elements()
+                dst_expr = dst_subset.num_elements()
+                if symbolic.inequal_symbols(src_expr, dst_expr):
                     raise ValueError(
-                        "Source subset is missing (dst_subset: {}, "
-                        "src_shape: {}".format(dst_subset, desc.shape))
+                        "Destination subset is missing (src_subset: {}, "
+                        "dst_shape: {}".format(src_subset, desc.shape))
             else:
                 src_subset = copy.deepcopy(dst_subset)
                 padding = len(desc.shape) - len(src_subset)
@@ -77,7 +79,9 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
             desc = arrays[dst_name]
             if isinstance(desc, data.View) or edge.data.data == src_name:
                 dst_subset = subsets.Range.from_array(desc)
-                if src_subset.num_elements() != dst_subset.num_elements():
+                src_expr = src_subset.num_elements()
+                dst_expr = dst_subset.num_elements()
+                if symbolic.inequal_symbols(src_expr, dst_expr):
                     raise ValueError(
                         "Destination subset is missing (src_subset: {}, "
                         "dst_shape: {}".format(src_subset, desc.shape))
@@ -187,11 +191,14 @@ class RedundantArray(pm.Transformation):
         # Make sure that the candidate is a transient variable
         if not in_desc.transient:
             return False
+        
+        # 1. Get edge e1 and extract subsets for arrays A and B
+        e1 = graph.edges_between(in_array, out_array)[0]
+        a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
 
         if strict:
             # In strict mode, make sure the memlet covers the removed array
-            edge = graph.edges_between(in_array, out_array)[0]
-            subset = copy.deepcopy(edge.data.subset)
+            subset = copy.deepcopy(e1.data.subset)
             subset.squeeze()
             shape = [sz for sz in in_desc.shape if sz != 1]
             if any(m != a for m, a in zip(subset.size(), shape)):
@@ -281,6 +288,28 @@ class RedundantArray(pm.Transformation):
 
         if len(occurrences) > 1:
             return False
+        
+        # 2. Iterate over the e2 edges
+        for e2 in graph.in_edges(in_array):
+            # 2-a. Extract/validate subsets for array A and others
+            try:
+                _, a2_subset = _validate_subsets(e2, sdfg.arrays)
+            except NotImplementedError:
+                return False
+            # 2-b. Check whether a2_subset covers a1_subset
+            if not a2_subset.covers(a1_subset):
+                return False
+            # 2-c. Validate subsets in memlet tree
+            # (should not be needed for valid SDGs)
+            path = graph.memlet_tree(e2)
+            for e3 in path:
+                if e3 is not e2:
+                    try:
+                        _validate_subsets(e3,
+                                          sdfg.arrays,
+                                          dst_name=in_array.data)
+                    except NotImplementedError:
+                        return False
 
         return True
 
