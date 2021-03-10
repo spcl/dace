@@ -152,6 +152,7 @@ def compose_and_push_back(first, second, dims=None, popped=None):
             subset.tile_sizes = tsizes
     return subset
 
+
 ##############################################################################
 
 
@@ -186,7 +187,7 @@ class RedundantArray(pm.Transformation):
         # Make sure that the candidate is a transient variable
         if not in_desc.transient:
             return False
-        
+
         if strict:
             # In strict mode, make sure the memlet covers the removed array
             edge = graph.edges_between(in_array, out_array)[0]
@@ -198,9 +199,10 @@ class RedundantArray(pm.Transformation):
             # In strict mode, check if the state has two or more access nodes
             # for the output array. Definitely one of them (out_array) is a
             # write access. Therefore, there might be a RW, WR, or WW dependency.
-            accesses = [n for n in graph.nodes()
-                        if isinstance(n, nodes.AccessNode) and
-                        n.desc(sdfg) == out_desc and n is not out_array]
+            accesses = [
+                n for n in graph.nodes() if isinstance(n, nodes.AccessNode)
+                and n.desc(sdfg) == out_desc and n is not out_array
+            ]
             if len(accesses) > 0:
                 # We need to ensure that a data race will not happen if we
                 # remove in_array.
@@ -251,9 +253,12 @@ class RedundantArray(pm.Transformation):
                 view_successors_desc = [
                     e.dst.desc(sdfg)
                     if isinstance(e.dst, nodes.AccessNode) else None
-                    for e in graph.out_edges(out_array)]
-                if any([not desc or isinstance(desc, data.View)
-                        for desc in view_successors_desc]):
+                    for e in graph.out_edges(out_array)
+                ]
+                if any([
+                        not desc or isinstance(desc, data.View)
+                        for desc in view_successors_desc
+                ]):
                     return False
             else:
                 # Something else, for example, Stream
@@ -324,13 +329,21 @@ class RedundantArray(pm.Transformation):
             in_ancestors_desc = [
                 e.src.desc(sdfg)
                 if isinstance(e.src, nodes.AccessNode) else None
-                for e in graph.in_edges(in_array)]
-            if all([desc and isinstance(desc, data.View)
-                    for desc in in_ancestors_desc]):
+                for e in graph.in_edges(in_array)
+            ]
+            if all([
+                    desc and isinstance(desc, data.View)
+                    for desc in in_ancestors_desc
+            ]):
                 for e in graph.in_edges(in_array):
                     a_subset, _ = _validate_subsets(e, sdfg.arrays)
-                    graph.add_edge(e.src, e.src_conn, out_array, None, mm.Memlet(
-                        out_array.data, subset=b_subset, other_subset=a_subset))
+                    graph.add_edge(
+                        e.src, e.src_conn, out_array, None,
+                        mm.Memlet(out_array.data,
+                                  subset=b_subset,
+                                  other_subset=a_subset,
+                                  wcr=e1.data.wcr,
+                                  wcr_nonatomic=e1.data.wcr.nonatomic))
                     graph.remove_edge(e)
                 graph.remove_edge(e1)
                 graph.remove_node(in_array)
@@ -338,10 +351,12 @@ class RedundantArray(pm.Transformation):
                     del sdfg.arrays[in_array.data]
                 return
             view_strides = in_desc.strides
-            if (b_dims_to_pop and len(b_dims_to_pop) == len(out_desc.shape) -
-                    len(in_desc.shape)):
-                view_strides = [s for i, s in enumerate(out_desc.strides)
-                                if i not in b_dims_to_pop]
+            if (b_dims_to_pop and len(b_dims_to_pop)
+                    == len(out_desc.shape) - len(in_desc.shape)):
+                view_strides = [
+                    s for i, s in enumerate(out_desc.strides)
+                    if i not in b_dims_to_pop
+                ]
             sdfg.arrays[in_array.data] = data.View(
                 in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
                 out_desc.storage, out_desc.location, view_strides,
@@ -353,6 +368,8 @@ class RedundantArray(pm.Transformation):
         # 2. Iterate over the e2 edges and traverse the memlet tree
         for e2 in graph.in_edges(in_array):
             path = graph.memlet_tree(e2)
+            wcr = e1.data.wcr
+            wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
                 # 2-a. Extract subsets for array B and others
                 other_subset, a3_subset = _validate_subsets(
@@ -385,13 +402,15 @@ class RedundantArray(pm.Transformation):
                 e3.data.data = dname
                 e3.data.subset = subset
                 e3.data.other_subset = other_subset
-                e3.data.wcr = e1.data.wcr
-                e3.data.wcr_nonatomic = e1.data.wcr_nonatomic
+                wcr = wcr or e3.data.wcr
+                wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
+                e3.data.wcr = wcr
+                e3.data.wcr_nonatomic = wcr_nonatomic
 
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
-            e2.data.wcr = e1.data.wcr
-            e2.data.wcr_nonatomic = e1.data.wcr_nonatomic
+            e2.data.wcr = wcr
+            e2.data.wcr_nonatomic = wcr_nonatomic
             graph.add_edge(e2.src, e2.src_conn, out_array, e2.dst_conn, e2.data)
 
         # Finally, remove in_array node
@@ -450,12 +469,13 @@ class RedundantSecondArray(pm.Transformation):
             # In strict mode, check if the state has two or more access nodes
             # for in_array and at least one of them is a write access. There
             # might be a RW, WR, or WW dependency.
-            accesses = [n for n in graph.nodes()
-                        if isinstance(n, nodes.AccessNode) and
-                        n.desc(sdfg) == in_desc and n is not in_array]
+            accesses = [
+                n for n in graph.nodes() if isinstance(n, nodes.AccessNode)
+                and n.desc(sdfg) == in_desc and n is not in_array
+            ]
             if len(accesses) > 0:
-                if (graph.in_degree(in_array) > 0 or
-                        any(graph.in_degree(a) > 0 for a in accesses)):
+                if (graph.in_degree(in_array) > 0
+                        or any(graph.in_degree(a) > 0 for a in accesses)):
                     # We need to ensure that a data race will not happen if we
                     # remove in_array.
                     # First, we simplify the graph
@@ -478,7 +498,7 @@ class RedundantSecondArray(pm.Transformation):
                         # If there is a forward path then a must not be a direct
                         # successor of in_array.
                         if has_fward_path and a in G.successors(in_array):
-                            return False     
+                            return False
 
         # Make sure that both arrays are using the same storage location
         # and are of the same type (e.g., Stream->Stream)
@@ -494,9 +514,12 @@ class RedundantSecondArray(pm.Transformation):
                 view_ancestors_desc = [
                     e.src.desc(sdfg)
                     if isinstance(e.src, nodes.AccessNode) else None
-                    for e in graph.in_edges(in_array)]
-                if any([not desc or isinstance(desc, data.View)
-                        for desc in view_ancestors_desc]):
+                    for e in graph.in_edges(in_array)
+                ]
+                if any([
+                        not desc or isinstance(desc, data.View)
+                        for desc in view_ancestors_desc
+                ]):
                     return False
             elif isinstance(out_desc, data.View):
                 # Case Access -> View
@@ -577,7 +600,7 @@ class RedundantSecondArray(pm.Transformation):
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
         a_subset, b1_subset = _validate_subsets(e1, sdfg.arrays)
-        
+
         # Find extraneous A or B subset dimensions
         a_dims_to_pop = []
         b_dims_to_pop = []
@@ -591,22 +614,30 @@ class RedundantSecondArray(pm.Transformation):
                 aset, popped = pop_dims(a_subset, a_dims_to_pop)
             else:
                 b_dims_to_pop = find_dims_to_pop(b_size, a_size)
-        
+
         # If the src subset does not cover the removed array, create a view.
-        if a_subset and any(
-                    m != a for m, a in zip(a_subset.size(), out_desc.shape)):
+        if a_subset and any(m != a
+                            for m, a in zip(a_subset.size(), out_desc.shape)):
             # NOTE: We do not want to create another view, if the immediate
             # successors of out_array are views as well. We just remove it.
             out_successors_desc = [
                 e.dst.desc(sdfg)
                 if isinstance(e.dst, nodes.AccessNode) else None
-                for e in graph.out_edges(out_array)]
-            if all([desc and isinstance(desc, data.View)
-                    for desc in out_successors_desc]):
+                for e in graph.out_edges(out_array)
+            ]
+            if all([
+                    desc and isinstance(desc, data.View)
+                    for desc in out_successors_desc
+            ]):
                 for e in graph.out_edges(out_array):
                     _, b_subset = _validate_subsets(e, sdfg.arrays)
-                    graph.add_edge(in_array, None, e.dst, e.dst_conn, mm.Memlet(
-                        in_array.data, subset=a_subset, other_subset=b_subset))
+                    graph.add_edge(
+                        in_array, None, e.dst, e.dst_conn,
+                        mm.Memlet(in_array.data,
+                                  subset=a_subset,
+                                  other_subset=b_subset,
+                                  wcr=e1.data.wcr,
+                                  wcr_nonatomic=e1.data.wcr_nonatomic))
                     graph.remove_edge(e)
                 graph.remove_edge(e1)
                 graph.remove_node(out_array)
@@ -614,10 +645,12 @@ class RedundantSecondArray(pm.Transformation):
                     del sdfg.arrays[out_array.data]
                 return
             view_strides = out_desc.strides
-            if (a_dims_to_pop and len(a_dims_to_pop) == len(in_desc.shape) -
-                    len(out_desc.shape)):
-                view_strides = [s for i, s in enumerate(in_desc.strides)
-                                if i not in a_dims_to_pop]
+            if (a_dims_to_pop and len(a_dims_to_pop)
+                    == len(in_desc.shape) - len(out_desc.shape)):
+                view_strides = [
+                    s for i, s in enumerate(in_desc.strides)
+                    if i not in a_dims_to_pop
+                ]
             sdfg.arrays[out_array.data] = data.View(
                 out_desc.dtype, out_desc.shape, True, out_desc.allow_conflicts,
                 in_desc.storage, in_desc.location, view_strides,
@@ -629,6 +662,8 @@ class RedundantSecondArray(pm.Transformation):
         # 2. Iterate over the e2 edges and traverse the memlet tree
         for e2 in graph.out_edges(out_array):
             path = graph.memlet_tree(e2)
+            wcr = e1.data.wcr
+            wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
                 # 2-a. Extract subsets for array B and others
                 b3_subset, other_subset = _validate_subsets(
@@ -640,14 +675,14 @@ class RedundantSecondArray(pm.Transformation):
                 # (c+d) - (c:c+b) = (d)
                 b3_subset.offset(b1_subset, negative=True)
                 # (0, a:b)(d) = (0, a+d) (or offset for indices)
-                
+
                 if b3_subset and b_dims_to_pop:
                     bset, _ = pop_dims(b3_subset, b_dims_to_pop)
                 else:
                     bset = b3_subset
-                
-                e3.data.subset = compose_and_push_back(aset, bset, a_dims_to_pop,
-                                                       popped)
+
+                e3.data.subset = compose_and_push_back(aset, bset,
+                                                       a_dims_to_pop, popped)
                 # NOTE: This fixes the following case:
                 # A ----> A[subset] ----> ... -----> Tasklet
                 # Tasklet is not data, so it doesn't have an other subset.
@@ -655,13 +690,15 @@ class RedundantSecondArray(pm.Transformation):
                     e3.data.other_subset = other_subset
                 else:
                     e3.data.other_subset = None
-                e3.data.wcr = e1.data.wcr
-                e3.data.wcr_nonatomic = e1.data.wcr_nonatomic
+                wcr = wcr or e3.data.wcr
+                wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
+                e3.data.wcr = wcr
+                e3.data.wcr_nonatomic = wcr_nonatomic
 
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
-            e2.data.wcr = e1.data.wcr
-            e2.data.wcr_nonatomic = e1.data.wcr_nonatomic
+            e2.data.wcr = wcr
+            e2.data.wcr_nonatomic = wcr_nonatomic
             graph.add_edge(in_array, e2.src_conn, e2.dst, e2.dst_conn, e2.data)
 
         # Finally, remove out_array node
