@@ -493,6 +493,32 @@ def result_type_of(lhs, *rhs):
         return lhs
     return rhs  # RHS is bigger
 
+class opaque(typeclass):
+    """ A data type for an opaque object, useful for C bindings/libnodes, i.e., MPI_Request. """
+
+    def __init__(self, typename):
+        self.type = typename
+        self.ctype = typename
+        self.ctype_unaligned = typename
+        self.dtype = self
+
+    def to_json(self):
+        return {'type': 'opaque', 'name': self.ctype}
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        if json_obj['type'] != 'opaque':
+            raise TypeError("Invalid type for opaque object")
+
+        return opaque(json_to_typeclass(json_obj['ctype'], context))
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        return self
+
+    def as_numpy_dtype(self):
+        raise NotImplementedError("Not sure how to make a numpy type from an opaque C type.")
+
 
 class pointer(typeclass):
     """ A data type for a pointer to an existing typeclass.
