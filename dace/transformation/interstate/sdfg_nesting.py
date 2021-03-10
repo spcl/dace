@@ -65,26 +65,6 @@ class InlineSDFG(transformation.Transformation):
         :param nested_sdfg: Nested SDFG node with symbol mapping.
         :return: True if all strides match, False otherwise.
         """
-        # Take unsqueezing into account
-        dims_to_ignore = [
-            i for i, s in enumerate(memlet.subset.size()) if s == 1
-        ]
-        ostrides = [
-            os for i, os in enumerate(outer_strides) if i not in dims_to_ignore
-        ]
-
-        istrides = [
-            os for i, os in enumerate(inner_strides) if i not in dims_to_ignore
-        ]
-
-        if len(ostrides) == 0:
-            ostrides = [1]
-        if len(istrides) == 0:
-            istrides = [1]
-
-        if len(ostrides) != len(istrides):
-            return False
-
         # Replace all inner symbols based on symbol mapping
         repldict = {
             symbolic.pystr_to_symbolic(k):
@@ -100,8 +80,25 @@ class InlineSDFG(transformation.Transformation):
 
         istrides = [
             istr.subs(repldict).subs(repldict_inv)
-            if symbolic.issymbolic(istr) else istr for istr in istrides
+            if symbolic.issymbolic(istr) else istr for istr in inner_strides
         ]
+
+        if istrides == list(outer_strides):
+            return True
+
+        # Take unsqueezing into account
+        dims_to_ignore = [
+            i for i, s in enumerate(memlet.subset.size()) if s == 1
+        ]
+        ostrides = [
+            os for i, os in enumerate(outer_strides) if i not in dims_to_ignore
+        ]
+
+        if len(ostrides) == 0:
+            ostrides = [1]
+
+        if len(ostrides) != len(istrides):
+            return False
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
