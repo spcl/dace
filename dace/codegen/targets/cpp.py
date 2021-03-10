@@ -223,8 +223,7 @@ def emit_memlet_reference(dispatcher,
                           memlet: mmlt.Memlet,
                           pointer_name: str,
                           conntype: dtypes.typeclass,
-                          ancestor: int = 1,
-                          nodedesc: data = None) -> Tuple[str, str, str]:
+                          ancestor: int = 1) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -298,10 +297,7 @@ def emit_memlet_reference(dispatcher,
 
         # Device buffers are passed by reference
         expr = datadef
-
-        # if the target variable has storage FPGA Local, then it means that we are on the device
-        # and we can't use references
-        ref = '&' if nodedesc is None or not nodedesc.storage == dace.StorageType.FPGA_Local else ''
+        ref = '&'
     else:
         # Cast as necessary
         expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype,

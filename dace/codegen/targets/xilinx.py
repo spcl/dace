@@ -316,7 +316,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         redtype = operations.detect_reduction_type(memlet.wcr)
         defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet,
+                                                defined_type), indices)
         else:
             ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices)
 
@@ -794,6 +795,15 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         else:
             self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node,
                                           dst_node, edge, None, callsite_stream)
+
+    def allocate_view(self, sdfg: dace.SDFG, dfg: dace.SDFGState, state_id: int,
+                      node: dace.nodes.AccessNode, global_stream: CodeIOStream,
+                      declaration_stream: CodeIOStream,
+                      allocation_stream: CodeIOStream):
+        return self._cpu_codegen.allocate_view(sdfg, dfg, state_id, node,
+                                               global_stream,
+                                               declaration_stream,
+                                               allocation_stream)
 
     def unparse_tasklet(self, *args, **kwargs):
         # Pass this object for callbacks into the Xilinx codegen

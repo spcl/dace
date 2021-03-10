@@ -167,10 +167,15 @@ class CPUCodeGen(TargetCodeGenerator):
         self._generated_nodes.add(node)
         self._locals.clear_scope(self._ldepth + 1)
 
-    def allocate_view(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
-                      node: nodes.AccessNode, global_stream: CodeIOStream,
+    def allocate_view(self,
+                      sdfg: SDFG,
+                      dfg: SDFGState,
+                      state_id: int,
+                      node: nodes.AccessNode,
+                      global_stream: CodeIOStream,
                       declaration_stream: CodeIOStream,
-                      allocation_stream: CodeIOStream):
+                      allocation_stream: CodeIOStream,
+                      codegen=None):
         """
         Allocates (creates pointer and refers to original) a view of an
         existing array, scalar, or view.
@@ -196,10 +201,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         name,
                                                         dtypes.pointer(
                                                             nodedesc.dtype),
-                                                        ancestor=0,
-                                                        nodedesc=nodedesc)
+                                                        ancestor=0)
         if declaration_stream == allocation_stream:
-            # Declare and define to guarantee compatibility with OpenCL
             declaration_stream.write(f'{atype} {aname} = {value};', sdfg,
                                      state_id, node)
         else:
