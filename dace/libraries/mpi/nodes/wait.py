@@ -11,9 +11,9 @@ from dace.frontend.common import op_repository as oprepo
 
 
 @dace.library.expansion
-class ExpandRecvPure(ExpandTransformation):
+class ExpandWaitPure(ExpandTransformation):
     """
-    Naive backend-agnostic expansion of MPI Recv.
+    Naive backend-agnostic expansion of Wait.
     """
 
     environments = []
@@ -21,21 +21,17 @@ class ExpandRecvPure(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         raise(NotImplementedError)
-  
+
+
 @dace.library.expansion
-class ExpandRecvMPI(ExpandTransformation):
+class ExpandWaitMPI(ExpandTransformation):
 
     environments = [environments.mpi.MPI]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (buffer, count_str), src, tag = node.validate(parent_sdfg, parent_state)
-        mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(buffer.dtype.base_type)
-
-        if buffer.dtype.veclen > 1:
-            raise(NotImplementedError)
-
-        code = f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, _src, _tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);"
+        req, status = node.validate(parent_sdfg, parent_state)
+        code = f"MPI_Status _s;\nMPI_Wait(&_request, &_s);\n_stat_tag = _s.MPI_TAG;\n_stat_source = _s.MPI_SOURCE;"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -45,43 +41,37 @@ class ExpandRecvMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Recv(dace.sdfg.nodes.LibraryNode):
+class Wait(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        "MPI": ExpandRecvMPI,
+        "MPI": ExpandWaitMPI,
     }
     default_implementation = "MPI"
+
+    # Object fields
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={"_src", "_tag"},
-                         outputs={"_buffer"},
+                         inputs={"_request"},
+                         outputs={"_stat_tag", "_stat_source"},
                          **kwargs)
 
     def validate(self, sdfg, state):
         """
-        :return: A three-tuple (buffer, src, tag) of the three data descriptors in the
-                 parent SDFG.
+        :return: req, status
         """
         
-        buffer, src, tag = None, None, None
-        for e in state.out_edges(self):
-            if e.src_conn == "_buffer":
-                buffer = sdfg.arrays[e.data.data]
+        req, status = None, None
         for e in state.in_edges(self):
-            if e.dst_conn == "_src":
-                src = sdfg.arrays[e.data.data]
-            if e.dst_conn == "_tag":
-                tag = sdfg.arrays[e.data.data]
-        
-        count_str = "XXX"
-        for _, src_conn, _, _, data in state.out_edges(self):  
-            if src_conn == '_buffer':
-                dims = [str(e) for e in data.subset.size_exact()]
-                count_str = "*".join(dims)
-
-        return (buffer, count_str), src, tag
+            if e.dst_conn == "_request":
+                req = sdfg.arrays[e.data.data]
+        for e in state.out_edges(self):        
+            if e.src_conn == "_status":
+                status = sdfg.arrays[e.data.data]
+            
+        return req, status
 
 

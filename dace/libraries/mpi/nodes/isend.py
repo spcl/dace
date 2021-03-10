@@ -11,9 +11,9 @@ from dace.frontend.common import op_repository as oprepo
 
 
 @dace.library.expansion
-class ExpandSendPure(ExpandTransformation):
+class ExpandIsendPure(ExpandTransformation):
     """
-    Naive backend-agnostic expansion of Send.
+    Naive backend-agnostic expansion of Isend.
     """
 
     environments = []
@@ -23,36 +23,37 @@ class ExpandSendPure(ExpandTransformation):
         raise(NotImplementedError)
 
 
-
 @dace.library.expansion
-class ExpandSendMPI(ExpandTransformation):
+class ExpandIsendMPI(ExpandTransformation):
 
     environments = [environments.mpi.MPI]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (buffer, count_str), dest, tag = node.validate(parent_sdfg, parent_state)
+        buffer, count_str, dest, tag, req = node.validate(parent_sdfg, parent_state)
         mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(buffer.dtype.base_type)
 
         if buffer.dtype.veclen > 1:
             raise(NotImplementedError)
 
-        code = f"MPI_Send(_buffer, {count_str}, {mpi_dtype_str}, _dest, _tag, MPI_COMM_WORLD);"
+        code = f"MPI_Isend(_buffer, {count_str}, {mpi_dtype_str}, _dest, _tag, MPI_COMM_WORLD, _request);"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)
+        conn = tasklet.out_connectors
+        conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
+        tasklet.out_connectors = conn
         return tasklet
 
 
-
 @dace.library.node
-class Send(dace.sdfg.nodes.LibraryNode):
+class Isend(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        "MPI": ExpandSendMPI,
+        "MPI": ExpandIsendMPI,
     }
     default_implementation = "MPI"
 
@@ -63,19 +64,15 @@ class Send(dace.sdfg.nodes.LibraryNode):
         super().__init__(name,
                          *args,
                          inputs={"_buffer", "_dest", "_tag"},
-                         outputs={},
+                         outputs={"_request"},
                          **kwargs)
 
     def validate(self, sdfg, state):
         """
-        :return: Buffer, count, mpi_dtype of the input data
+        :return: buffer, count, mpi_dtype, req of the input data
         """
-
-        # Squeeze input memlets
-        # squeezed1 = copy.deepcopy(in_memlets[0].subset)
-        # sqdims1 = squeezed1.squeeze()
         
-        buffer, dest, tag = None, None, None
+        buffer, dest, tag, req = None, None, None, None
         for e in state.in_edges(self):
             if e.dst_conn == "_buffer":
                 buffer = sdfg.arrays[e.data.data]
@@ -83,6 +80,9 @@ class Send(dace.sdfg.nodes.LibraryNode):
                 dest = sdfg.arrays[e.data.data]
             if e.dst_conn == "_tag":
                 tag = sdfg.arrays[e.data.data]
+        for e in state.out_edges(self):        
+            if e.src_conn == "_request":
+                req = sdfg.arrays[e.data.data]
         
         if dest.dtype.base_type != dace.dtypes.int32:
             raise ValueError("Source must be an integer!")
@@ -95,7 +95,6 @@ class Send(dace.sdfg.nodes.LibraryNode):
                 dims = [str(e) for e in data.subset.size_exact()]
                 count_str = "*".join(dims)
             
-        #TODO make sure buffer is contiguous!
+        return buffer, count_str, dest, tag, req
 
-        return (buffer, count_str), dest, tag
 
