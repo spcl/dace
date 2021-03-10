@@ -342,8 +342,8 @@ class RedundantArray(pm.Transformation):
                         mm.Memlet(out_array.data,
                                   subset=b_subset,
                                   other_subset=a_subset,
-                                  wcr=e1.wcr,
-                                  wcr_nonatomic=e1.wcr.nonatomic))
+                                  wcr=e1.data.wcr,
+                                  wcr_nonatomic=e1.data.wcr.nonatomic))
                     graph.remove_edge(e)
                 graph.remove_edge(e1)
                 graph.remove_node(in_array)
@@ -368,8 +368,8 @@ class RedundantArray(pm.Transformation):
         # 2. Iterate over the e2 edges and traverse the memlet tree
         for e2 in graph.in_edges(in_array):
             path = graph.memlet_tree(e2)
-            wcr = None
-            wcr_nonatomic = None
+            wcr = e1.data.wcr
+            wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
                 # 2-a. Extract subsets for array B and others
                 other_subset, a3_subset = _validate_subsets(
@@ -404,6 +404,8 @@ class RedundantArray(pm.Transformation):
                 e3.data.other_subset = other_subset
                 wcr = wcr or e3.data.wcr
                 wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
+                e3.data.wcr = wcr
+                e3.data.wcr_nonatomic = wcr_nonatomic
 
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
@@ -634,8 +636,8 @@ class RedundantSecondArray(pm.Transformation):
                         mm.Memlet(in_array.data,
                                   subset=a_subset,
                                   other_subset=b_subset,
-                                  wcr=e1.wcr,
-                                  wcr_nonatomic=e1.wcr_nonatomic))
+                                  wcr=e1.data.wcr,
+                                  wcr_nonatomic=e1.data.wcr_nonatomic))
                     graph.remove_edge(e)
                 graph.remove_edge(e1)
                 graph.remove_node(out_array)
@@ -660,8 +662,8 @@ class RedundantSecondArray(pm.Transformation):
         # 2. Iterate over the e2 edges and traverse the memlet tree
         for e2 in graph.out_edges(out_array):
             path = graph.memlet_tree(e2)
-            wcr = None
-            wcr_nonatomic = None
+            wcr = e1.data.wcr
+            wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
                 # 2-a. Extract subsets for array B and others
                 b3_subset, other_subset = _validate_subsets(
@@ -690,6 +692,8 @@ class RedundantSecondArray(pm.Transformation):
                     e3.data.other_subset = None
                 wcr = wcr or e3.data.wcr
                 wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
+                e3.data.wcr = wcr
+                e3.data.wcr_nonatomic = wcr_nonatomic
 
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
