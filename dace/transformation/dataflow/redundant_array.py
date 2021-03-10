@@ -186,30 +186,7 @@ class RedundantArray(pm.Transformation):
         # Make sure that the candidate is a transient variable
         if not in_desc.transient:
             return False
-
-        # Make sure that both arrays are using the same storage location
-        # and are of the same type (e.g., Stream->Stream)
-        if in_desc.storage != out_desc.storage:
-            return False
-        if type(in_desc) != type(out_desc):
-            return False
-        if isinstance(in_desc, data.View):  # Two views connected to each other
-            return False
-
-        # Find occurrences in this and other states
-        occurrences = []
-        for state in sdfg.nodes():
-            occurrences.extend([
-                n for n in state.nodes()
-                if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == in_desc
-            ])
-        for isedge in sdfg.edges():
-            if in_array.data in isedge.data.free_symbols:
-                occurrences.append(isedge)
-
-        if len(occurrences) > 1:
-            return False
-
+        
         if strict:
             # In strict mode, make sure the memlet covers the removed array
             edge = graph.edges_between(in_array, out_array)[0]
@@ -248,6 +225,57 @@ class RedundantArray(pm.Transformation):
                     # successor of in_array.
                     if has_bward_path and out_array in G.successors(a):
                         return False
+
+        # Make sure that both arrays are using the same storage location
+        # and are of the same type (e.g., Stream->Stream)
+        if in_desc.storage != out_desc.storage:
+            return False
+        if type(in_desc) != type(out_desc):
+            if isinstance(in_desc, data.View):
+                # Case View -> Access
+                # If the View points to the Access and has the same shape,
+                # it can be removed, unless there is a reduction!
+                e = sdutil.get_view_edge(graph, in_array)
+                if e and e.dst is out_array and in_desc.shape == out_desc.shape:
+                    from dace.libraries.standard import Reduce
+                    for e in graph.in_edges(in_array):
+                        if isinstance(e.src, Reduce):
+                            return False
+                    return True
+                return False
+            elif isinstance(out_desc, data.View):
+                # Case Access -> View
+                # Check that the View's immediate successors are Accesses.
+                # Otherwise, the application of the transformation will result
+                # in an ambiguous View.
+                view_successors_desc = [
+                    e.dst.desc(sdfg)
+                    if isinstance(e.dst, nodes.AccessNode) else None
+                    for e in graph.out_edges(out_array)]
+                if any([not desc or isinstance(desc, data.View)
+                        for desc in view_successors_desc]):
+                    return False
+            else:
+                # Something else, for example, Stream
+                return False
+        else:
+            # Two views connected to each other
+            if isinstance(in_desc, data.View):
+                return False
+
+        # Find occurrences in this and other states
+        occurrences = []
+        for state in sdfg.nodes():
+            occurrences.extend([
+                n for n in state.nodes()
+                if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == in_desc
+            ])
+        for isedge in sdfg.edges():
+            if in_array.data in isedge.data.free_symbols:
+                occurrences.append(isedge)
+
+        if len(occurrences) > 1:
+            return False
 
         return True
 
@@ -291,6 +319,24 @@ class RedundantArray(pm.Transformation):
         # If the memlet does not cover the removed array, create a view.
         if reduction or any(m != a
                             for m, a in zip(a1_subset.size(), in_desc.shape)):
+            # NOTE: We do not want to create another view, if the immediate
+            # ancestors of in_array are views as well. We just remove it.
+            in_ancestors_desc = [
+                e.src.desc(sdfg)
+                if isinstance(e.src, nodes.AccessNode) else None
+                for e in graph.in_edges(in_array)]
+            if all([desc and isinstance(desc, data.View)
+                    for desc in in_ancestors_desc]):
+                for e in graph.in_edges(in_array):
+                    a_subset, _ = _validate_subsets(e, sdfg.arrays)
+                    graph.add_edge(e.src, e.src_conn, out_array, None, mm.Memlet(
+                        out_array.data, subset=b_subset, other_subset=a_subset))
+                    graph.remove_edge(e)
+                graph.remove_edge(e1)
+                graph.remove_node(in_array)
+                if in_array.data in sdfg.arrays:
+                    del sdfg.arrays[in_array.data]
+                return
             view_strides = in_desc.strides
             if (b_dims_to_pop and len(b_dims_to_pop) == len(out_desc.shape) -
                     len(in_desc.shape)):
@@ -440,17 +486,32 @@ class RedundantSecondArray(pm.Transformation):
             return False
         if type(in_desc) != type(out_desc):
             # We may proceed only in the case of View -> Access
-            if not isinstance(in_desc, data.View):
+            if isinstance(in_desc, data.View):
+                # Case View -> Access
+                # Check that the View's immediate ancestors are Accesses.
+                # Otherwise, the application of the transformation will result
+                # in an ambiguous View.
+                view_ancestors_desc = [
+                    e.src.desc(sdfg)
+                    if isinstance(e.src, nodes.AccessNode) else None
+                    for e in graph.in_edges(in_array)]
+                if any([not desc or isinstance(desc, data.View)
+                        for desc in view_ancestors_desc]):
+                    return False
+            elif isinstance(out_desc, data.View):
+                # Case Access -> View
+                # If the View points to the Access and has the same shape,
+                # it can be removed
+                e = sdutil.get_view_edge(graph, out_array)
+                if e and e.src is in_array and in_desc.shape == out_desc.shape:
+                    return True
                 return False
-            # Check that the View's immediate ancestors are Accesses.
-            # Otherwise, the application of the transformation will result in an
-            # ambiguous View.
-            view_ancestors_desc = [
-                e.src.desc(sdfg)
-                if isinstance(e.src, nodes.AccessNode) else None
-                for e in graph.in_edges(in_array)]
-            if any([not desc or isinstance(desc, data.View)
-                    for desc in view_ancestors_desc]):
+            else:
+                # Something else, for example, Stream
+                return False
+        else:
+            # Two views connected to each other
+            if isinstance(in_desc, data.View):
                 return False
 
         # Find occurrences in this and other states
@@ -508,6 +569,8 @@ class RedundantSecondArray(pm.Transformation):
         graph = sdfg.nodes()[self.state_id]
         in_array = gnode(RedundantSecondArray._in_array)
         out_array = gnode(RedundantSecondArray._out_array)
+        in_desc = sdfg.arrays[in_array.data]
+        out_desc = sdfg.arrays[out_array.data]
 
         # We assume the following pattern: A -- e1 --> B -- e2 --> others
 
@@ -528,6 +591,40 @@ class RedundantSecondArray(pm.Transformation):
                 aset, popped = pop_dims(a_subset, a_dims_to_pop)
             else:
                 b_dims_to_pop = find_dims_to_pop(b_size, a_size)
+        
+        # If the src subset does not cover the removed array, create a view.
+        if a_subset and any(
+                    m != a for m, a in zip(a_subset.size(), out_desc.shape)):
+            # NOTE: We do not want to create another view, if the immediate
+            # successors of out_array are views as well. We just remove it.
+            out_successors_desc = [
+                e.dst.desc(sdfg)
+                if isinstance(e.dst, nodes.AccessNode) else None
+                for e in graph.out_edges(out_array)]
+            if all([desc and isinstance(desc, data.View)
+                    for desc in out_successors_desc]):
+                for e in graph.out_edges(out_array):
+                    _, b_subset = _validate_subsets(e, sdfg.arrays)
+                    graph.add_edge(in_array, None, e.dst, e.dst_conn, mm.Memlet(
+                        in_array.data, subset=a_subset, other_subset=b_subset))
+                    graph.remove_edge(e)
+                graph.remove_edge(e1)
+                graph.remove_node(out_array)
+                if out_array.data in sdfg.arrays:
+                    del sdfg.arrays[out_array.data]
+                return
+            view_strides = out_desc.strides
+            if (a_dims_to_pop and len(a_dims_to_pop) == len(in_desc.shape) -
+                    len(out_desc.shape)):
+                view_strides = [s for i, s in enumerate(in_desc.strides)
+                                if i not in a_dims_to_pop]
+            sdfg.arrays[out_array.data] = data.View(
+                out_desc.dtype, out_desc.shape, True, out_desc.allow_conflicts,
+                in_desc.storage, in_desc.location, view_strides,
+                out_desc.offset, in_desc.may_alias,
+                dtypes.AllocationLifetime.Scope, out_desc.alignment,
+                out_desc.debuginfo, out_desc.total_size)
+            return
 
         # 2. Iterate over the e2 edges and traverse the memlet tree
         for e2 in graph.out_edges(out_array):
@@ -569,7 +666,5 @@ class RedundantSecondArray(pm.Transformation):
 
         # Finally, remove out_array node
         graph.remove_node(out_array)
-        # TODO: Should the array be removed from the SDFG?
-        # del sdfg.arrays[out_array]
-        if Config.get_bool("debugprint"):
-            RedundantSecondArray._arrays_removed += 1
+        if out_array.data in sdfg.arrays:
+            del sdfg.arrays[out_array.data]
