@@ -147,7 +147,7 @@ namespace dace {
         // Non-conflicting version --> no critical section
         template <typename WCR>
         static DACE_HDFI double reduce(WCR wcr, double *ptr, const double& value) {
-            double old;
+            double old = *ptr;
             *ptr = wcr(old, value);
             return old;
         }
