@@ -1055,3 +1055,17 @@ class NestSDFG(transformation.Transformation):
             outer_state.add_edge(
                 nested_node, val, arrnode, None,
                 memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
+
+        # Remove from the parent SDFG the symbols that are defined in the nested one
+        defined_syms = set()
+
+        for name, desc in nested_sdfg.arrays.items():
+            defined_syms.add(name)
+
+        for e in nested_sdfg.edges():
+            defined_syms |= set(e.data.new_symbols({}).keys())
+
+        defined_syms |= set(nested_sdfg.constants.keys())
+
+        for s in defined_syms:
+            outer_sdfg.symbols.pop(s, None)
