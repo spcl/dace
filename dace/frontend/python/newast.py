@@ -1325,15 +1325,15 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Parse possible values to slices or objects that can be used in
             the SDFG API. """
         if isinstance(arg, ast.Subscript) and rname(arg) == '_':
-            # result = [
-            #     ':'.join([str(d) for d in dim]) for dim in
-            #     astutils.subscript_to_slice(arg, self.sdfg.arrays)[1]
-            # ]
-            expr: MemletExpr = ParseMemlet(
-                self, {**self.sdfg.arrays, **self.defined}, arg)
-            rng = expr.subset
-            # rng = dace.subsets.Range(
-            #     astutils.subscript_to_slice(arg, self.sdfg.arrays)[1])
+            # TODO: Refactor to return proper symbols and not strings.
+            rng = dace.subsets.Range(
+                astutils.subscript_to_slice(arg, self.sdfg.arrays)[1])
+            repldict = dict()
+            for sname in rng.free_symbols:
+                if sname in self.defined:
+                    repldict[sname] = self.defined[sname]
+            if repldict:
+                rng.replace(repldict)
             result = rng.string_list()
             if as_list is False and len(result) == 1:
                 return result[0]
@@ -1765,6 +1765,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 ctr = 0
                 repldict = {}
                 symval = pystr_to_symbolic(val)
+                
 
                 for atom in symval.free_symbols:
                     if symbolic.issymbolic(atom, self.sdfg.constants):
