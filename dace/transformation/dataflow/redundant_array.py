@@ -82,7 +82,6 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
             desc = arrays[dst_name]
             if isinstance(desc, data.View) or edge.data.data == src_name:
                 dst_subset = subsets.Range.from_array(desc)
-                src_subset = subsets.Range.from_array(desc)
                 src_expr = src_subset.num_elements()
                 src_expr_exact = src_subset.num_elements_exact()
                 dst_expr = dst_subset.num_elements()
