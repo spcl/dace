@@ -916,11 +916,6 @@ class TaskletTransformer(ExtNodeTransformer):
                 self, {**self.sdfg.arrays, **self.scope_arrays, **self.defined},
                 actual_node)
             rng = expr.subset
-            # rng = dace.subsets.Range(
-            #     astutils.subscript_to_slice(actual_node, {
-            #         **self.sdfg.arrays,
-            #         **self.scope_arrays
-            #     })[1])
         elif isinstance(node, ast.Subscript):
             actual_node = copy.deepcopy(node)
             if isinstance(actual_node.value, ast.Call):
@@ -931,11 +926,6 @@ class TaskletTransformer(ExtNodeTransformer):
                 self, {**self.sdfg.arrays, **self.scope_arrays, **self.defined},
                 actual_node)
             rng = expr.subset
-            # rng = dace.subsets.Range(
-            #     astutils.subscript_to_slice(actual_node, {
-            #         **self.sdfg.arrays,
-            #         **self.scope_arrays
-            #     })[1])
         elif isinstance(node, ast.Call):
             rng = dace.subsets.Range.from_array({
                 **self.sdfg.arrays,
@@ -1281,10 +1271,6 @@ class ProgramVisitor(ExtNodeVisitor):
     @property
     def defined(self):
         # Check parent SDFG arrays first
-        # result = {
-        #     k: self.parent_arrays[v]
-        #     for k, v in self.variables.items() if v in self.parent_arrays
-        # }
         result = {}
         result.update({
             k: v
@@ -2003,14 +1989,6 @@ class ProgramVisitor(ExtNodeVisitor):
                         # memlet.subset.offset(memlet.subset, True, outer_indices)
                 else:
                     vname = memlet.data
-            # for conn, memlet in inputs.items():
-            #     if _subset_has_indirection(memlet.subset):
-            #         read_node = entry_node
-            #         if entry_node is None:
-            #             read_node = state.add_read(memlet.data)
-            #         add_indirection_subgraph(self.sdfg, state, read_node,
-            #                                  internal_node, memlet, conn)
-            #         continue
 
                 read_node = state.add_read(vname,
                                            debuginfo=self.current_lineinfo)
@@ -2262,12 +2240,18 @@ class ProgramVisitor(ExtNodeVisitor):
                     infer_expr_type(ranges[0][2], self.sdfg.symbols)),
                 integer=integer, nonnegative=nonnegative, positive=positive)
 
-            # TODO: What if two consecutive loops use the same symbol?
-            # if sym_name in self.symbols.keys():
-            if sym_obj in self.symbols.keys():
-                warnings.warn("Two for-loops using the same symbol ({}) in the "
-                              "same nested SDFG level. This is not officially "
-                              "supported (yet).".format(sym_name))
+            # TODO: What if two consecutive loops use the same symbol
+            # but different ranges?
+            if sym_name in self.sdfg.symbols.keys():
+                for k, v in self.symbols.items():
+                    if (str(k) == sym_name and
+                            v != subsets.Range([(start, stop - 1, step)])):
+                        warnings.warn(
+                            "Two for-loops using the same variable ({}) but "
+                            "different ranges in the same nested SDFG level. "
+                            "This may work but is not officially supported."
+                            "".format(sym_name))
+                        break
             else:
                 self.sdfg.add_symbol(sym_name, sym_obj.dtype)
 
