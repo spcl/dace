@@ -2789,6 +2789,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if op is not None:
                         memlet.wcr = LambdaProperty.from_string(
                             'lambda x, y: x {} y'.format(op))
+                        memlet.wcr_nonatomic = True
                     state.add_nedge(op1, op2, memlet)
             else:
                 in1_subset = copy.deepcopy(rtarget_subset)
