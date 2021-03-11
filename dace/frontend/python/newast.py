@@ -377,9 +377,16 @@ def add_indirection_subgraph(sdfg: SDFG,
             and memlet.subset.num_elements() != 1):
         rng = copy.deepcopy(memlet.subset)
         nonsqz_dims = rng.squeeze()
+        mapped_rng = []
+        for i, r in enumerate(memlet.subset):
+            if i in nonsqz_dims:
+                mapped_rng.append(r)
         ind_entry, ind_exit = graph.add_map('indirection', {
+            # NOTE: Experimental (original code below)
             '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
-            for i, (s, e, t) in enumerate(rng)
+            for i, (s, e, t) in enumerate(mapped_rng)
+        #     '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
+            # for i, (s, e, t) in enumerate(rng)
         },
                                             debuginfo=pvisitor.current_lineinfo)
         inp_base_path.insert(0, ind_entry)
@@ -499,7 +506,11 @@ def add_indirection_subgraph(sdfg: SDFG,
     tmp_shape = storage.shape
     indirectRange = subsets.Range([(0, s - 1, 1) for s in tmp_shape])
     if ind_entry:  # Amend indirected range
-        indirectRange = ','.join([ind for ind in ind_entry.map.params])
+        # indirectRange = ','.join([ind for ind in ind_entry.map.params])
+        # NOTE: Experimental (original code above)
+        indirectRange = ','.join(
+            ["{} - {}".format(ind, r[0])
+             for ind, r in zip(ind_entry.map.params, mapped_rng)])
 
     # Create memlet that depends on the full array that we look up in
     fullRange = subsets.Range([(0, s - 1, 1) for s in array.shape])
