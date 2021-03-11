@@ -400,7 +400,9 @@ class FPGACodeGen(TargetCodeGenerator):
         dataname = node.data
 
         if not isinstance(nodedesc, dace.data.Stream):
-            # With the exception of streams, if the variable has been already defined we can return
+            # Unless this is a Stream, if the variable has been already defined we can return
+            # For Streams, we still allocate them to keep track of their names across
+            # nested SDFGs (needed by Intel FPGA backend for channel mangling)
             try:
                 self._dispatcher.defined_vars.get(dataname)
                 return
