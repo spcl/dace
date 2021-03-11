@@ -54,6 +54,37 @@ run_sample() {
     return 0
 }
 
+run_multi_sample(){
+    # Executes a test with multiple Dace programs inside
+    # Args:
+    #  1 - Name of FPGA sample located in samples/fpga
+    #  2 - Boolean flag whether to assert II=1 in all loops
+    #  3-x - Nome of the generated SDFGs
+
+    sdfgs=("${@:3}")
+    TESTS=`expr $TESTS + 1`
+    echo -e "${YELLOW}Running test $1...${NC}"
+    yes | $PYTHON_BINARY $1.py
+    if [ $? -ne 0 ]; then
+      bail "$1 (${RED}simulation failed${NC})"
+      return 1
+    fi
+    for i in "${sdfgs[@]}"; do
+        (cd .dacecache/$i/build && make xilinx_synthesis)
+        if [ $? -ne 0 ]; then
+          bail "$1 (${RED}high-level synthesis failed${NC})"
+          return 1
+        fi
+        if [ $2 -ne 0 ]; then
+          grep -n .dacecache/$2/build/*_hls.log -e "Final II = \([2-9]\|1[0-9]+\)"
+          if [ $? == 0 ]; then
+            bail "$1 (${RED}design was not fully pipelined${NC})"
+          fi
+        fi
+    done
+    return 0
+}
+
 run_all() {
 
     # Args:
@@ -82,14 +113,17 @@ run_all() {
     run_sample fpga/streaming_memory streamingcomp_1 1
 
     ## BLAS
-    run_sample blas/nodes/axpy_test axpy_test_fpga_1_w4_1 1 --target fpga 
+    run_sample blas/nodes/axpy_test axpy_test_fpga_1_w4_1 1 --target fpga
     run_sample blas/nodes/dot_test dot_FPGA_PartialSums_float_w16_1 1 --target xilinx
     run_sample blas/nodes/gemv_test gemv_FPGA_TilesByColumn_float_True_w4_1 1 --target tiles_by_column --transpose --vectorize 4
-    run_sample blas/nodes/gemv_test gemv_FPGA_Accumulate_float_False_w4_1 1 --target accumulate --vectorize 4 
-    run_sample blas/nodes/ger_test ger_test_1 1 --target fpga 
+    run_sample blas/nodes/gemv_test gemv_FPGA_Accumulate_float_False_w4_1 1 --target accumulate --vectorize 4
+    run_sample blas/nodes/ger_test ger_test_1 1 --target fpga
 
     # Multiple gearboxing
     run_sample fpga/multiple_veclen_conversions multiple_veclen_conversions 0
+
+    # Views
+    run_multi_sample fpga/reshape_view_fpga 0 "view_fpga" "reshp_np_1" "reshapedst_1"
 }
 
 # Check if xocc is vailable
