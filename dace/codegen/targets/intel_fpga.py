@@ -24,6 +24,7 @@ from dace.codegen.tools.type_inference import infer_expr_type
 from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
+from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg import SDFGState
 import dace.sdfg.utils as utils
 from dace.symbolic import evaluate
@@ -582,7 +583,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         scalars += [(False, k, v) for k, v in symbol_parameters.items()]
         scalars = list(sorted(scalars, key=lambda t: t[1]))
         for is_output, pname, p in itertools.chain(arrays, scalars):
-            if pname in added:
+            if pname in added or isinstance(p, dace.data.View):
                 continue
             added.add(pname)
             arg = self.make_kernel_argument(p, pname, is_output, True)
@@ -915,6 +916,58 @@ __kernel void \\
                         memlet_references.append((typedef, p, p))
 
         return memlet_references
+
+    def allocate_view(self, sdfg: dace.SDFG, dfg: SDFGState, state_id: int,
+                      node: dace.nodes.AccessNode, global_stream: CodeIOStream,
+                      declaration_stream: CodeIOStream,
+                      allocation_stream: CodeIOStream):
+        """
+        Allocates (creates pointer and refers to original) a view of an
+        existing array, scalar, or view. Specifically tailored for Intel FPGA
+        """
+        name = node.data
+        nodedesc = node.desc(sdfg)
+        if self._dispatcher.defined_vars.has(name):
+            return  # View was already allocated
+
+        # Check directionality of view (referencing dst or src)
+        edge = sdutils.get_view_edge(dfg, node)
+
+        # Allocate the viewed data before the view, if necessary
+        mpath = dfg.memlet_path(edge)
+        viewed_dnode = mpath[0].src if edge.dst is node else mpath[-1].dst
+        self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, viewed_dnode,
+                                           global_stream, allocation_stream)
+
+        # Emit memlet as a reference and register defined variable
+        if nodedesc.storage == dace.dtypes.StorageType.FPGA_Global:
+            # If the viewed (hence the view) node has global storage type, we need to specifically
+            # derive the declaration/definition
+
+            qualifier = "__global volatile "
+            atype = dtypes.pointer(nodedesc.dtype).ctype
+            aname = name
+            viewed_desc = sdfg.arrays[edge.data.data]
+            value = cpp.ptr(edge.data.data, viewed_desc)
+            defined_type, _ = self._dispatcher.defined_vars.get(
+                edge.data.data, 0)
+            # Register defined variable
+            self._dispatcher.defined_vars.add(aname,
+                                              defined_type,
+                                              atype,
+                                              allow_shadowing=True)
+        else:
+            qualifier = ""
+            atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
+                                                            sdfg,
+                                                            edge.data,
+                                                            name,
+                                                            dtypes.pointer(
+                                                                nodedesc.dtype),
+                                                            ancestor=0,
+                                                            nodedesc=nodedesc)
+        declaration_stream.write(f'{qualifier}{atype} {aname}  = {value};',
+                                 sdfg, state_id, node)
 
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
                                    dst_node, edge, callsite_stream):

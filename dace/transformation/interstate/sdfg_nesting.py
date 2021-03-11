@@ -18,6 +18,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
+from dace import data
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
@@ -1002,8 +1003,8 @@ class NestSDFG(transformation.Transformation):
                 scope_dict = state.scope_dict()
                 for node in state.nodes():
                     if (isinstance(node, nodes.AccessNode)
-                            and node.desc(nested_sdfg).transient):
-
+                            and node.desc(nested_sdfg).transient and
+                            not isinstance(node.desc(nested_sdfg), data.View)):
                         arrname = node.data
                         if arrname not in transients and not scope_dict[node]:
                             arrobj = nested_sdfg.arrays[arrname]
@@ -1011,7 +1012,6 @@ class NestSDFG(transformation.Transformation):
                             outer_sdfg.arrays[arrname] = dc(arrobj)
                             transients[arrname] = '__' + arrname + '_out'
                         node.data = '__' + arrname + '_out'
-
         for arrname in inputs.keys():
             nested_sdfg.arrays.pop(arrname)
         for arrname in outputs.keys():
@@ -1039,7 +1039,6 @@ class NestSDFG(transformation.Transformation):
                       and mem.data in outputs.keys()
                       and dst.data == outputs[mem.data]):
                     mem.data = outputs[mem.data]
-
         outer_state = outer_sdfg.add_state(outer_sdfg.label)
 
         nested_node = outer_state.add_nested_sdfg(nested_sdfg, outer_sdfg,
