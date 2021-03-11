@@ -327,7 +327,31 @@ class StateFusion(transformation.Transformation):
 
                 first_inout = fused_cc.first_inputs | fused_cc.first_outputs
                 for other_cc in resulting_ccs:
+                    # NOTE: Special handling for `other_cc is fused_cc`
                     if other_cc is fused_cc:
+                        # Checking for potential Read-Write data races
+                        for d in first_inout:
+                            if d in other_cc.second_outputs:
+                                nodes_second = [
+                                    n for n in second_output if n.data == d
+                                ]
+                                # Read-Write race
+                                if d in fused_cc.first_inputs:
+                                    nodes_first = [
+                                        n for n in first_input if n.data == d
+                                    ]
+                                for n2 in nodes_second:
+                                    for e in second_state.in_edges(n2):
+                                        path = second_state.memlet_path(e)
+                                        src = path[0].src
+                                        if src in second_input and src.data in fused_cc.first_outputs:
+                                            for n1 in fused_cc.first_output_nodes:
+                                                if n1.data == src.data:
+                                                    for n0 in nodes_first:
+                                                        if not nx.has_path(
+                                                                first_state._nx,
+                                                                n0, n1):
+                                                            return False
                         continue
                     # If an input/output of a connected component in the first
                     # state is an output of another connected component in the
@@ -475,8 +499,9 @@ class StateFusion(transformation.Transformation):
                 continue
 
             if first_state.in_degree(node) == 0:
-                candidates = [x for x in order
-                              if x.data == node.data and x in top]
+                candidates = [
+                    x for x in order if x.data == node.data and x in top
+                ]
                 if len(candidates) == 0:
                     continue
                 elif len(candidates) == 1:
