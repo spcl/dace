@@ -173,9 +173,10 @@ class InterstateEdge(object):
             if new_idx + length < len(condition):
                 if re.match("[A-Za-z0-9_]+$", condition[new_idx + length]):
                     matched = False
+            last_idx, new_idx = new_idx, condition.find(name, new_idx + length)
             if matched:
                 new_condition += new_name
-            last_idx, new_idx = new_idx, condition.find(name, new_idx + length)
+                last_idx += length
         if last_idx < len(condition):
             new_condition += condition[last_idx:]
         self.condition.as_string = new_condition
