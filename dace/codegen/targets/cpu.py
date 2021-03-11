@@ -167,15 +167,10 @@ class CPUCodeGen(TargetCodeGenerator):
         self._generated_nodes.add(node)
         self._locals.clear_scope(self._ldepth + 1)
 
-    def allocate_view(self,
-                      sdfg: SDFG,
-                      dfg: SDFGState,
-                      state_id: int,
-                      node: nodes.AccessNode,
-                      global_stream: CodeIOStream,
+    def allocate_view(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
+                      node: nodes.AccessNode, global_stream: CodeIOStream,
                       declaration_stream: CodeIOStream,
-                      allocation_stream: CodeIOStream,
-                      codegen=None):
+                      allocation_stream: CodeIOStream):
         """
         Allocates (creates pointer and refers to original) a view of an
         existing array, scalar, or view.
