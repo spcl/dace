@@ -798,7 +798,7 @@ class TaskletTransformer(ExtNodeTransformer):
             sym_rng = []
             for i, r in enumerate(rng):
                 for s, sr in self.symbols.items():
-                    if s in symbolic.symlist(r).keys():
+                    if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
                         sym_rng.append(sr)
 
@@ -2263,7 +2263,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 integer=integer, nonnegative=nonnegative, positive=positive)
 
             # TODO: What if two consecutive loops use the same symbol?
-            if sym_name in self.symbols.keys():
+            # if sym_name in self.symbols.keys():
+            if sym_obj in self.symbols.keys():
                 warnings.warn("Two for-loops using the same symbol ({}) in the "
                               "same nested SDFG level. This is not officially "
                               "supported (yet).".format(sym_name))
@@ -2272,9 +2273,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             extra_syms = {sym_name: sym_obj}
 
-            # self.symbols[sym_name] = subsets.Range([(b, "({}) - 1".format(e), s)
-            #                                         for b, e, s in ranges])
-            self.symbols[sym_name] = subsets.Range([(start, stop - 1, step)])
+            self.symbols[sym_obj] = subsets.Range([(start, stop - 1, step)])
 
             # Add range symbols as necessary
             for rng in ranges[0]:
@@ -2901,7 +2900,7 @@ class ProgramVisitor(ExtNodeVisitor):
             sym_rng = []
             for i, r in enumerate(rng):
                 for s, sr in self.symbols.items():
-                    if s in symbolic.symlist(r).keys():
+                    if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
                         sym_rng.append(sr)
 
