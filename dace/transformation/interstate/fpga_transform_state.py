@@ -77,7 +77,7 @@ class FPGATransformState(transformation.Transformation):
                     return False
 
                 # Streams cannot be unbounded on FPGA
-                if ndedesc.buffer_size < 1:
+                if nodedesc.buffer_size < 1:
                     return False
 
         for node in state.nodes():
