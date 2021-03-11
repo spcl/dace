@@ -217,9 +217,8 @@ class Range(Subset):
     def num_elements(self):
         return reduce(sp.Mul, self.size(), 1)
     
-    def num_elements_true(self):
-        # return reduce(sp.Mul, self.bounding_box_size(), 1)
-        return reduce(sp.Mul, self.size(), 1)
+    def num_elements_exact(self):
+        return reduce(sp.Mul, self.bounding_box_size(), 1)
 
     def size(self, for_codegen=False):
         """ Returns the number of elements in each dimension. """
@@ -776,7 +775,7 @@ class Indices(Subset):
     def num_elements(self):
         return 1
     
-    def num_elements_true(self):
+    def num_elements_exact(self):
         return 1
 
     def bounding_box_size(self):
