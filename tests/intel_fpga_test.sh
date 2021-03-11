@@ -139,7 +139,7 @@ run_all() {
     run_sample intel_fpga/constant_type_inference constant_type_inference "\n"
 
     # Views
-    run_sample fpga/reshape_view_fpga "\n"
+    run_sample fpga/reshape_view_fpga reshape_view_fpga "\n\n\n"
 }
 
 # Check if aoc is vailable
