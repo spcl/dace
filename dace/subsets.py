@@ -216,6 +216,9 @@ class Range(Subset):
 
     def num_elements(self):
         return reduce(sp.Mul, self.size(), 1)
+    
+    def num_elements_exact(self):
+        return reduce(sp.Mul, self.bounding_box_size(), 1)
 
     def size(self, for_codegen=False):
         """ Returns the number of elements in each dimension. """
@@ -614,14 +617,13 @@ class Range(Subset):
                              rs * other[idx][2], rt))
                     else:
                         new_subset.append(rb + rs * other[idx])
-        elif (self.data_dims() == 0 and other.data_dims() == 0 and
+        elif (other.data_dims() == 0 and
                 all([r == (0, 0, 1) if isinstance(other, Range) else r == 0
                 for r in other])):
-            # NOTE: This is a special case where both subsets contain a single
-            # element, while the other subset is the (multidimensional) index
-            # zero. For example, A[i, j] -> tmp[0]. The result of such a
-            # composition should be equal to the first subset. Perhaps this
-            # can be generalized.
+            # NOTE: This is a special case where the other subset is the
+            # (potentially multidimensional) index zero.
+            # For example, A[i, j] -> tmp[0]. The result of such a
+            # composition should be equal to the first subset.
             if isinstance(other, Range):
                 new_subset.extend(self.ranges)
             else:
@@ -770,6 +772,9 @@ class Indices(Subset):
         return hash(tuple(i for i in self.indices))
 
     def num_elements(self):
+        return 1
+    
+    def num_elements_exact(self):
         return 1
 
     def bounding_box_size(self):

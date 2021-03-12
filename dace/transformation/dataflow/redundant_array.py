@@ -7,7 +7,7 @@ import functools
 import networkx as nx
 import typing
 
-from dace import data, registry, subsets, dtypes, memlet as mm
+from dace import data, registry, subsets, symbolic, dtypes, memlet as mm
 from dace.sdfg import nodes, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
@@ -49,7 +49,12 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
             desc = arrays[src_name]
             if isinstance(desc, data.View) or edge.data.data == dst_name:
                 src_subset = subsets.Range.from_array(desc)
-                if src_subset.num_elements() != dst_subset.num_elements():
+                src_expr = src_subset.num_elements()
+                src_expr_exact = src_subset.num_elements_exact()
+                dst_expr = dst_subset.num_elements()
+                dst_expr_exact = dst_subset.num_elements_exact()
+                if (src_expr != dst_expr and symbolic.inequal_symbols(
+                        src_expr_exact, dst_expr_exact)):
                     raise ValueError(
                         "Source subset is missing (dst_subset: {}, "
                         "src_shape: {}".format(dst_subset, desc.shape))
@@ -77,7 +82,12 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
             desc = arrays[dst_name]
             if isinstance(desc, data.View) or edge.data.data == src_name:
                 dst_subset = subsets.Range.from_array(desc)
-                if src_subset.num_elements() != dst_subset.num_elements():
+                src_expr = src_subset.num_elements()
+                src_expr_exact = src_subset.num_elements_exact()
+                dst_expr = dst_subset.num_elements()
+                dst_expr_exact = dst_subset.num_elements_exact()
+                if (src_expr != dst_expr and symbolic.inequal_symbols(
+                        src_expr_exact, dst_expr_exact)):
                     raise ValueError(
                         "Destination subset is missing (src_subset: {}, "
                         "dst_shape: {}".format(src_subset, desc.shape))
@@ -187,15 +197,59 @@ class RedundantArray(pm.Transformation):
         # Make sure that the candidate is a transient variable
         if not in_desc.transient:
             return False
+        
+        # 1. Get edge e1 and extract subsets for arrays A and B
+        e1 = graph.edges_between(in_array, out_array)[0]
+        a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
 
         if strict:
             # In strict mode, make sure the memlet covers the removed array
-            edge = graph.edges_between(in_array, out_array)[0]
-            subset = copy.deepcopy(edge.data.subset)
+            subset = copy.deepcopy(e1.data.subset)
             subset.squeeze()
             shape = [sz for sz in in_desc.shape if sz != 1]
             if any(m != a for m, a in zip(subset.size(), shape)):
                 return False
+
+            # NOTE: Library node check
+            # The transformation must not apply in strict mode if in_array is
+            # not a view, is output of a library node, and an access or a view
+            # of out_desc is also input to the same library node.
+            # The reason is that the application of the transformation will lead
+            # to out_desc being both input and output of the library node.
+            # We do not know if this is safe.
+
+            # First find the true out_desc (in case out_array is a view).
+            true_out_desc = out_desc
+            if isinstance(out_desc, data.View):
+                e = sdutil.get_view_edge(graph, out_array)
+                if not e:
+                    return False
+                true_out_desc = sdfg.arrays[e.src.data]
+
+            if not isinstance(in_desc, data.View):
+
+                edges_to_check = []
+                for a in graph.in_edges(in_array):
+                    if isinstance(a.src, nodes.LibraryNode):
+                        edges_to_check.append(a)
+                    elif (isinstance(a.src, nodes.AccessNode) and
+                            isinstance(sdfg.arrays[a.src.data], data.View)):
+                        for b in graph.in_edges(a.src):
+                            edges_to_check.append(graph.memlet_path(b)[0])
+
+                for a in edges_to_check:
+                    if isinstance(a.src, nodes.LibraryNode):
+                        for b in graph.in_edges(a.src):
+                            if isinstance(b.src, nodes.AccessNode):
+                                desc = sdfg.arrays[b.src.data]
+                                if isinstance(desc, data.View):
+                                    e = sdutil.get_view_edge(graph, b.src)
+                                    if not e:
+                                        return False
+                                    desc = sdfg.arrays[e.src.data]
+                                    if desc is true_out_desc:
+                                        return False
+
             # In strict mode, check if the state has two or more access nodes
             # for the output array. Definitely one of them (out_array) is a
             # write access. Therefore, there might be a RW, WR, or WW dependency.
@@ -281,6 +335,28 @@ class RedundantArray(pm.Transformation):
 
         if len(occurrences) > 1:
             return False
+        
+        # 2. Iterate over the e2 edges
+        for e2 in graph.in_edges(in_array):
+            # 2-a. Extract/validate subsets for array A and others
+            try:
+                _, a2_subset = _validate_subsets(e2, sdfg.arrays)
+            except NotImplementedError:
+                return False
+            # 2-b. Check whether a2_subset covers a1_subset
+            if not a2_subset.covers(a1_subset):
+                return False
+            # 2-c. Validate subsets in memlet tree
+            # (should not be needed for valid SDGs)
+            path = graph.memlet_tree(e2)
+            for e3 in path:
+                if e3 is not e2:
+                    try:
+                        _validate_subsets(e3,
+                                          sdfg.arrays,
+                                          dst_name=in_array.data)
+                    except NotImplementedError:
+                        return False
 
         return True
 
@@ -466,6 +542,47 @@ class RedundantSecondArray(pm.Transformation):
             shape = [sz for sz in out_desc.shape if sz != 1]
             if any(m != a for m, a in zip(subset.size(), shape)):
                 return False
+            
+            # NOTE: Library node check
+            # The transformation must not apply in strict mode if out_array is
+            # not a view, is input to a library node, and an access or a view
+            # of in_desc is also output to the same library node.
+            # The reason is that the application of the transformation will lead
+            # to in_desc being both input and output of the library node.
+            # We do not know if this is safe.
+
+            # First find the true in_desc (in case in_array is a view).
+            true_in_desc = in_desc
+            if isinstance(in_desc, data.View):
+                e = sdutil.get_view_edge(graph, in_array)
+                if not e:
+                    return False
+                true_in_desc = sdfg.arrays[e.dst.data]
+
+            if not isinstance(out_desc, data.View):
+
+                edges_to_check = []
+                for a in graph.out_edges(out_array):
+                    if isinstance(a.dst, nodes.LibraryNode):
+                        edges_to_check.append(a)
+                    elif (isinstance(a.dst, nodes.AccessNode) and
+                            isinstance(sdfg.arrays[a.dst.data], data.View)):
+                        for b in graph.out_edges(a.dst):
+                            edges_to_check.append(graph.memlet_path(b)[-1])
+
+                for a in edges_to_check:
+                    if isinstance(a.dst, nodes.LibraryNode):
+                        for b in graph.out_edges(a.dst):
+                            if isinstance(b.dst, nodes.AccessNode):
+                                desc = sdfg.arrays[b.dst.data]
+                                if isinstance(desc, data.View):
+                                    e = sdutil.get_view_edge(graph, b.dst)
+                                    if not e:
+                                        return False
+                                    desc = sdfg.arrays[e.dst.data]
+                                    if desc is true_in_desc:
+                                        return False
+
             # In strict mode, check if the state has two or more access nodes
             # for in_array and at least one of them is a write access. There
             # might be a RW, WR, or WW dependency.
