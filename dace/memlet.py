@@ -181,6 +181,7 @@ class Memlet(object):
         node._other_subset = dcpy(self._other_subset, memo=memo)
         node._data = dcpy(self._data, memo=memo)
         node._wcr = dcpy(self._wcr, memo=memo)
+        node._wcr_nonatomic = dcpy(self._wcr_nonatomic, memo=memo)
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
         node._wcr_nonatomic = self._wcr_nonatomic
         node._allow_oob = self._allow_oob
