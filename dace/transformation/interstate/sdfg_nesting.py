@@ -18,6 +18,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
+from dace import data
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
@@ -65,18 +66,6 @@ class InlineSDFG(transformation.Transformation):
         :param nested_sdfg: Nested SDFG node with symbol mapping.
         :return: True if all strides match, False otherwise.
         """
-        # Take unsqueezing into account
-        dims_to_ignore = [
-            i for i, s in enumerate(memlet.subset.size()) if s == 1
-        ]
-        ostrides = [
-            os for i, os in enumerate(outer_strides) if i not in dims_to_ignore
-        ]
-        if len(ostrides) == 0:
-            ostrides = [1]
-        if len(ostrides) != len(inner_strides):
-            return False
-
         # Replace all inner symbols based on symbol mapping
         repldict = {
             symbolic.pystr_to_symbolic(k):
@@ -94,6 +83,23 @@ class InlineSDFG(transformation.Transformation):
             istr.subs(repldict).subs(repldict_inv)
             if symbolic.issymbolic(istr) else istr for istr in inner_strides
         ]
+
+        if istrides == list(outer_strides):
+            return True
+
+        # Take unsqueezing into account
+        dims_to_ignore = [
+            i for i, s in enumerate(memlet.subset.size()) if s == 1
+        ]
+        ostrides = [
+            os for i, os in enumerate(outer_strides) if i not in dims_to_ignore
+        ]
+
+        if len(ostrides) == 0:
+            ostrides = [1]
+
+        if len(ostrides) != len(istrides):
+            return False
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
@@ -997,8 +1003,8 @@ class NestSDFG(transformation.Transformation):
                 scope_dict = state.scope_dict()
                 for node in state.nodes():
                     if (isinstance(node, nodes.AccessNode)
-                            and node.desc(nested_sdfg).transient):
-
+                            and node.desc(nested_sdfg).transient and
+                            not isinstance(node.desc(nested_sdfg), data.View)):
                         arrname = node.data
                         if arrname not in transients and not scope_dict[node]:
                             arrobj = nested_sdfg.arrays[arrname]
@@ -1006,7 +1012,6 @@ class NestSDFG(transformation.Transformation):
                             outer_sdfg.arrays[arrname] = dc(arrobj)
                             transients[arrname] = '__' + arrname + '_out'
                         node.data = '__' + arrname + '_out'
-
         for arrname in inputs.keys():
             nested_sdfg.arrays.pop(arrname)
         for arrname in outputs.keys():
@@ -1027,13 +1032,13 @@ class NestSDFG(transformation.Transformation):
                             and src.data == inputs[mem.data]):
                         mem.data = inputs[mem.data]
                     elif (mem.data in outputs.keys()
-                          and src.data == outputs[mem.data]):
+                          and (src.data == outputs[mem.data]
+                               or dst.data == outputs[mem.data])):
                         mem.data = outputs[mem.data]
                 elif (isinstance(dst, nodes.AccessNode)
                       and mem.data in outputs.keys()
                       and dst.data == outputs[mem.data]):
                     mem.data = outputs[mem.data]
-
         outer_state = outer_sdfg.add_state(outer_sdfg.label)
 
         nested_node = outer_state.add_nested_sdfg(nested_sdfg, outer_sdfg,
@@ -1049,3 +1054,20 @@ class NestSDFG(transformation.Transformation):
             outer_state.add_edge(
                 nested_node, val, arrnode, None,
                 memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
+
+        # Remove from the parent SDFG the symbols that are defined in the nested one
+        defined_syms = set()
+
+        for name, desc in nested_sdfg.arrays.items():
+            defined_syms.add(name)
+
+        for e in nested_sdfg.edges():
+            defined_syms |= set(e.data.new_symbols({}).keys())
+
+        defined_syms |= set(nested_sdfg.constants.keys())
+
+        for s in defined_syms:
+            type = outer_sdfg.symbols.pop(s, None)
+            if type is not None:
+                # update or add the symbol in the nested sdfg
+                nested_sdfg.symbols[s] = type

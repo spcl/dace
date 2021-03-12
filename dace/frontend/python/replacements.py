@@ -3946,6 +3946,8 @@ def reshape(pv: 'ProgramVisitor',
             newshape: Union[str, symbolic.SymbolicType,
                             Tuple[Union[str, symbolic.SymbolicType]]],
             order='C') -> str:
+    if isinstance(arr, (list, tuple)) and len(arr) == 1:
+        arr = arr[0]
     desc = sdfg.arrays[arr]
 
     # "order" determines stride orders
