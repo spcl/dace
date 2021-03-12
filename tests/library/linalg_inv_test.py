@@ -138,7 +138,6 @@ def test_inv(implementation,
     global id
     id += 1
 
-    print(shape)
     in_shape = shape[0]
     out_shape = shape[1]
     in_offset = shape[2]

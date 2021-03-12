@@ -137,13 +137,17 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
 ###############################################################################
 
-@pytest.mark.parametrize("implementation, dtype", [
-    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param("cuSolverDn", dace.float32, marks=pytest.mark.gpu),
-    pytest.param("cuSolverDn", dace.float64, marks=pytest.mark.gpu),
+@pytest.mark.parametrize("implementation, dtype, storage", [
+    pytest.param("MKL", dace.float32, dace.StorageType.Default,
+                 marks=pytest.mark.mkl),
+    pytest.param("MKL", dace.float64, dace.StorageType.Default,
+                 marks=pytest.mark.mkl),
+    pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global,
+                 marks=pytest.mark.gpu),
+    pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global,
+                 marks=pytest.mark.gpu),
 ])
-def test_getrs(implementation, dtype, storage=dace.StorageType.Default):
+def test_getrs(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)
     solve_sdfg = sdfg.compile()
     np_dtype = getattr(np, dtype.to_string())
