@@ -88,11 +88,16 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
         if veclen != 1:
             n /= veclen
 
+        # NOTE: In the case where the RHS is only a single vector (1D array),
+        # cuSOLVER still expects ldb to be the "number of rows"
+        if len(desc_rhs.shape) == 1:
+            stride_rhs = rows_rhs
+
         code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) +
                 f"""
                 cusolverDn{func}(
-                    __dace_cusolverDn_handle, {rows_a}, {cols_rhs}, _a,
-                    {stride_a}, _ipiv, _rhs_in, {stride_rhs}, _res); 
+                    __dace_cusolverDn_handle, CUBLAS_OP_N, {rows_a}, {cols_rhs},
+                    _a, {stride_a}, _ipiv, _rhs_in, {stride_rhs}, _res); 
                 """)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
