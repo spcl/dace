@@ -99,7 +99,8 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
                     sizeof({cuda_type}) * __dace_workspace_size);
                 cusolverDn{func}(
                     __dace_cusolverDn_handle, {rows_x}, {cols_x}, _xin,
-                    {stride_x}, __dace_workspace, _ipiv, _res); 
+                    {stride_x}, __dace_workspace, _ipiv, _res);
+                cudaFree(__dace_workspace);
                 """)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
