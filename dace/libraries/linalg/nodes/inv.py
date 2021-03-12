@@ -8,7 +8,7 @@ import numpy as np
 from dace import Memlet
 from dace.libraries.lapack.nodes import Getrf, Getri, Getrs
 from dace.transformation.transformation import ExpandTransformation
-from .. import environments
+from dace.libraries.lapack import environments
 
 
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):

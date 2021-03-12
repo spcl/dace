@@ -105,6 +105,10 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)
+        conn = tasklet.out_connectors
+        conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t)
+                for c, t in conn.items()}
+        tasklet.out_connectors = conn
 
         return tasklet
 

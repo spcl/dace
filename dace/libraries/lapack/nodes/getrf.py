@@ -3,6 +3,7 @@ import copy
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
+from dace import dtypes
 from dace.libraries.lapack import lapack_helpers
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
@@ -108,6 +109,10 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)
+        conn = tasklet.out_connectors
+        conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t)
+                for c, t in conn.items()}
+        tasklet.out_connectors = conn
 
         return tasklet
 
