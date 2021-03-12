@@ -229,6 +229,16 @@ class ExpandInvMKL(ExpandTransformation):
             return _make_sdfg_getrs(node, parent_state, parent_sdfg, "MKL")
 
 
+@dace.library.expansion
+class ExpandInvCuSolverDn(ExpandTransformation):
+
+    environments = [environments.cusolverdn.cuSolverDn]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        return _make_sdfg_getrs(node, parent_state, parent_sdfg, "cuSolverDn")
+
+
 @dace.library.node
 class Inv(dace.sdfg.nodes.LibraryNode):
 
@@ -236,7 +246,7 @@ class Inv(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "OpenBLAS": ExpandInvOpenBLAS,
         "MKL": ExpandInvMKL,
-        # "cuBLAS": ExpandMatInvCuBLAS
+        "cuSolverDn": ExpandInvCuSolverDn
     }
     default_implementation = ExpandInvOpenBLAS
 

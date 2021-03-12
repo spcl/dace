@@ -4,6 +4,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.symbolic import symstr
+from dace.libraries.lapack import lapack_helpers
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic
@@ -68,6 +69,41 @@ class ExpandGetrsMKL(ExpandTransformation):
         return ExpandGetrsOpenBLAS.expansion(*args, **kwargs)
 
 
+@dace.library.expansion
+class ExpandGetrsCuSolverDn(ExpandTransformation):
+
+    environments = [environments.cusolverdn.cuSolverDn]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res = node.validate(
+            parent_sdfg, parent_state)
+        dtype = desc_a.dtype.base_type
+        veclen = desc_a.dtype.veclen
+
+        func, cuda_type, _ = lapack_helpers.cuda_type_metadata(dtype)
+        func = func + 'getrs'
+
+        n = n or node.n
+        if veclen != 1:
+            n /= veclen
+
+        code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) +
+                f"""
+                cusolverDn{func}(
+                    __dace_cusolverDn_handle, {rows_a}, {cols_rhs}, _a,
+                    {stride_a}, _ipiv, _rhs_in, {stride_rhs}, _res); 
+                """)
+
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+
+        return tasklet
+
+
 @dace.library.node
 class Getrs(dace.sdfg.nodes.LibraryNode):
 
@@ -75,6 +111,7 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "OpenBLAS": ExpandGetrsOpenBLAS,
         "MKL": ExpandGetrsMKL,
+        "cuSolverDn": ExpandGetrsCuSolverDn
     }
     default_implementation = ExpandGetrsOpenBLAS
 
