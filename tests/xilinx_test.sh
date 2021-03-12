@@ -119,6 +119,9 @@ run_all() {
     run_sample blas/nodes/gemv_test gemv_FPGA_Accumulate_float_False_w4_1 1 --target accumulate --vectorize 4
     run_sample blas/nodes/ger_test ger_test_1 1 --target fpga
 
+    ## STD LibNodes
+    run_multi_sample fpga/reduce_fpga 0 "reduction_sum_one_axis" "reduction_sum_all_axis" "reduction_sum_4D" "reduction_max"
+
     # Multiple gearboxing
     run_sample fpga/multiple_veclen_conversions multiple_veclen_conversions 0
 
