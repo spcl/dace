@@ -56,8 +56,8 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                 if (src_expr != dst_expr and symbolic.inequal_symbols(
                         src_expr_exact, dst_expr_exact)):
                     raise ValueError(
-                        "Destination subset is missing (src_subset: {}, "
-                        "dst_shape: {}".format(src_subset, desc.shape))
+                        "Source subset is missing (dst_subset: {}, "
+                        "src_shape: {}".format(dst_subset, desc.shape))
             else:
                 src_subset = copy.deepcopy(dst_subset)
                 padding = len(desc.shape) - len(src_subset)

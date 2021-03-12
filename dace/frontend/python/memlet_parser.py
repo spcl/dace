@@ -100,12 +100,12 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             try:
                 if (rb < 0) == True:
                     rb += array.shape[indices[idx]]
-            except:
+            except (TypeError, ValueError):
                 pass
             try:
                 if (re < 0) == True:
                     re += array.shape[indices[idx]]
-            except:
+            except (TypeError, ValueError):
                 pass
             ndslice[idx] = (rb, re, rs)
             offsets.append(idx)

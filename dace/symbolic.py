@@ -832,8 +832,9 @@ def _sunpickle(obj):
 
 
 class SympyAwarePickler(pickle.Pickler):
-    """ Custom Pickler class that safely saves SymPy expressions
-        with function definitions in expressions (e.g., int_ceil).
+    """
+    Custom Pickler class that safely saves SymPy expressions
+    with function definitions in expressions (e.g., int_ceil).
     """
     def persistent_id(self, obj):
         if isinstance(obj, sympy.Basic):
@@ -845,8 +846,9 @@ class SympyAwarePickler(pickle.Pickler):
 
 
 class SympyAwareUnpickler(pickle.Unpickler):
-    """ Custom Unpickler class that safely restores SymPy expressions
-        with function definitions in expressions (e.g., int_ceil).
+    """
+    Custom Unpickler class that safely restores SymPy expressions
+    with function definitions in expressions (e.g., int_ceil).
     """
     def persistent_load(self, pid):
         type_tag, value = pid
@@ -857,9 +859,10 @@ class SympyAwareUnpickler(pickle.Unpickler):
     
 
 def equalize_symbol(sym: sympy.Expr) -> sympy.Expr:
-    """ If a symbol or symbolic expressions has multiple symbols with the same
-        name, it substitutes them with the last symbol (as they appear in
-        s.free_symbols).
+    """
+    If a symbol or symbolic expressions has multiple symbols with the same
+    name, it substitutes them with the last symbol (as they appear in
+    s.free_symbols).
     """
     symdict = {s.name: s for s in sym.free_symbols}
     repldict = {s: symdict[s.name] for s in sym.free_symbols}
@@ -868,9 +871,10 @@ def equalize_symbol(sym: sympy.Expr) -> sympy.Expr:
 
 def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr,
                                                             sympy.Expr]:
-    """ If the 2 input expressions use different symbols but with the same name,
-        it substitutes the symbols of the second expressions with those of the
-        first expression.
+    """
+    If the 2 input expressions use different symbols but with the same name,
+    it substitutes the symbols of the second expressions with those of the
+    first expression.
     """
     a = equalize_symbol(a)
     b = equalize_symbol(b)
@@ -887,10 +891,15 @@ def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr,
 
 def inequal_symbols(a: Union[sympy.Expr, Any],
                     b: Union[sympy.Expr, Any]) -> bool:
-    """ Compares 2 symbolic expressions and returns True if they are not equal.
+    """
+    Compares 2 symbolic expressions and returns True if they are not equal.
     """
     if not isinstance(a, sympy.Expr) or not isinstance(b, sympy.Expr):
         return a != b
     else:
         a, b = equalize_symbols(a, b)
+        # NOTE: We simplify in an attempt to remove inconvenient methods, such
+        # as `ceiling` and `floor`, if the symbol assumptions allow it.
+        # We subtract and compare to zero according to the SymPy documentation
+        # (https://docs.sympy.org/latest/tutorial/gotchas.html).
         return (a - b).simplify() != 0

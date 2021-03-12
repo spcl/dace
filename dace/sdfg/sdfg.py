@@ -157,29 +157,11 @@ class InterstateEdge(object):
             newv = astutils.unparse(vast)
             if newv != v:
                 self.assignments[k] = newv
-        # condition = self.condition
-        # self.condition.as_string = condition.as_string.replace(name, new_name)
-        # NOTE: Experimental (converting to symbols and back still has issues)
-        condition = self.condition.as_string
-        new_condition = ""
-        length = len(name)
-        last_idx, new_idx = 0, condition.find(name)
-        while new_idx >= 0:
-            matched = True
-            if new_idx - last_idx > 0:
-                new_condition += condition[last_idx:new_idx]
-                if re.match("[A-Za-z0-9_]+$", condition[new_idx - 1]):
-                    matched = False
-            if new_idx + length < len(condition):
-                if re.match("[A-Za-z0-9_]+$", condition[new_idx + length]):
-                    matched = False
-            last_idx, new_idx = new_idx, condition.find(name, new_idx + length)
-            if matched:
-                new_condition += new_name
-                last_idx += length
-        if last_idx < len(condition):
-            new_condition += condition[last_idx:]
-        self.condition.as_string = new_condition
+        condition = ast.parse(self.condition.as_string)
+        condition = astutils.ASTFindReplace({name: new_name}).visit(condition)
+        newc = astutils.unparse(condition)
+        if newc != condition:
+            self.condition.as_string = newc
 
     def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
         """
