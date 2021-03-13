@@ -83,6 +83,9 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
                 # Do not consider edges that will not generate atomics or
                 # atomics we cannot transform
                 continue
+            if reason not in graph_or_subgraph.nodes():
+                # Skip if conflict exists outside of nested SDFG
+                continue
 
             # Check if identity value can be inferred
             redtype = operations.detect_reduction_type(edge.data.wcr)
@@ -178,6 +181,8 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
     converted = 0
     tile_size = config.Config.get('optimizer', 'autotile_size')
     for sd, aname, array in sdfg.arrays_recursive():
+        if isinstance(array, dt.Stream):
+            continue
         if (array.transient and array.storage == dtypes.StorageType.Default
                 and array.lifetime == dtypes.AllocationLifetime.Scope):
             if not symbolic.issymbolic(array.total_size, sd.constants):
