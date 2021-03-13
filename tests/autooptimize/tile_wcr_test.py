@@ -75,7 +75,8 @@ def test_block_reduction():
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
-    assert 'reduce(' in code and code.count('atomic') == 1
+    if dace.Config.get_bool('optimizer', 'autotile_partial_parallelism'):
+        assert 'reduce(' in code and code.count('atomic') == 0
     _runtest2d(sdfg, 257, 257)
     del sdfg
 

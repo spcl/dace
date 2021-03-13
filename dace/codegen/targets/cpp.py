@@ -577,6 +577,18 @@ def _check_map_conflicts(map, edge):
     return True
 
 
+def write_conflicted_map_params(map, edge):
+    result = []
+    for itervar, (_, _, mapskip) in zip(map.params, map.range):
+        itersym = symbolic.pystr_to_symbolic(itervar)
+        a = sp.Wild('a', exclude=[itersym])
+        b = sp.Wild('b', exclude=[itersym])
+        if not _check_range_conflicts(edge.data.subset, a, itersym, b, mapskip):
+            result.append(itervar)
+
+    return result
+
+
 def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
     """
     Detects whether a write-conflict-resolving edge can be emitted without
@@ -586,7 +598,9 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
             is not None)
 
 
-def is_write_conflicted_with_reason(dfg, edge, datanode=None,
+def is_write_conflicted_with_reason(dfg,
+                                    edge,
+                                    datanode=None,
                                     sdfg_schedule=None):
     """
     Detects whether a write-conflict-resolving edge can be emitted without

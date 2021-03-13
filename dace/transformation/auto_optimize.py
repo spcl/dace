@@ -43,19 +43,25 @@ def greedy_fuse(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
                                         states=states)
 
 
-def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
+def tile_wcrs(graph_or_subgraph: GraphViewType,
+              validate_all: bool,
+              prefer_partial_parallelism: bool = None) -> None:
     """
     Tiles parallel write-conflict resolution maps in an SDFG, state,
     or subgraphs thereof. Reduces the number of atomic operations by tiling
     and introducing transient arrays to accumulate atomics on.
     :param graph_or_subgraph: The SDFG/state/subgraph to optimize within.
     :param validate_all: If True, runs SDFG validation after every tiling.
+    :param prefer_partial_parallelism: If set, prefers extracting non-conflicted
+                                       map dimensions over tiling WCR map (may
+                                       not perform well if parallel dimensions
+                                       are small).
     :note: This function operates in-place.
     """
     # Avoid import loops
     from dace.codegen.targets import cpp
     from dace.frontend import operations
-    from dace.transformation import dataflow
+    from dace.transformation import dataflow, helpers as xfh
 
     # Determine on which nodes to run the operation
     graph = graph_or_subgraph
@@ -98,12 +104,47 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
 
     tile_size = config.Config.get('optimizer', 'autotile_size')
     debugprint = config.Config.get_bool('debugprint')
+    if prefer_partial_parallelism is None:
+        prefer_partial_parallelism = config.Config.get_bool(
+            'optimizer', 'autotile_partial_parallelism')
 
-    transformed = set()
+    maps_to_consider: Set[nodes.MapEntry] = set(me
+                                                for _, me in edges_to_consider)
+
+    transformed: Set[nodes.MapEntry] = set()
+
+    # Heuristic: If the map is only partially conflicted, extract
+    # parallel dimensions instead of tiling
+    if prefer_partial_parallelism:
+        for mapentry in maps_to_consider:
+            # Check the write-conflicts of all WCR edges in map
+            conflicts: Set[str] = set()
+            for edge, me in edges_to_consider:
+                if me is not mapentry:
+                    continue
+                conflicts |= set(cpp.write_conflicted_map_params(
+                    mapentry, edge))
+
+            nonconflicted_dims = set(mapentry.params) - conflicts
+            if nonconflicted_dims:
+                dims = [
+                    i for i, p in enumerate(mapentry.params)
+                    if p in nonconflicted_dims
+                ]
+                if ((dt._prod(s for i, s in enumerate(mapentry.range.size())
+                              if i in dims) < tile_size) == True):
+                    # Map has a small range, extracting parallelism may not be
+                    # beneficial
+                    continue
+                xfh.extract_map_dims(sdfg, mapentry, dims)
+                transformed.add(mapentry)
+
+    # Tile and accumulate other not-transformed maps
     for edge, mapentry in edges_to_consider:
         if mapentry in transformed:
             continue
         transformed.add(mapentry)
+
         # NOTE: The test "(x < y) == True" below is crafted for SymPy
         # to be "definitely True"
         if all((s < tile_size) == True for s in mapentry.map.range.size()):
