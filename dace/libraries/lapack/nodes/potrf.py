@@ -128,7 +128,7 @@ class Potrf(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandPotrfMKL,
         "cuSolverDn": ExpandPotrfCuSolverDn
     }
-    default_implementation = ExpandPotrfOpenBLAS
+    default_implementation = None
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)

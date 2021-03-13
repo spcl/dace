@@ -18,7 +18,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     (
         ain_shape, ain_dtype, ain_strides, 
         bin_shape, bin_dtype, bin_strides, 
-        out_shape, out_dtype, out_strides, m, n
+        out_shape, out_dtype, out_strides, n, rhs
     ) = arr_desc
     dtype = ain_dtype
 
@@ -27,9 +27,9 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     ain_arr = sdfg.add_array('_ain', ain_shape, dtype=ain_dtype, strides=ain_strides)
     ainout_arr = sdfg.add_array('_ainout', [n, n], dtype=ain_dtype, transient=True)
     bin_arr = sdfg.add_array('_bin', bin_shape, dtype=bin_dtype, strides=bin_strides)
-    binout_shape = [m, n]
+    binout_shape = [n, rhs]
     if implementation == 'cuSolverDn':
-        binout_shape = [n, m]
+        binout_shape = [rhs, n]
     binout_arr = sdfg.add_array('_binout', binout_shape, dtype=out_dtype, transient=True)
     bout_arr = sdfg.add_array('_bout', out_shape, dtype=out_dtype, strides=out_strides)
     ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True)
@@ -168,7 +168,7 @@ class Solve(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandSolveMKL,
         "cuSolverDn": ExpandSolveCuSolverDn
     }
-    default_implementation = ExpandSolveOpenBLAS
+    default_implementation = None
 
     # Object fields
     def __init__(self, name, *args, **kwargs):
@@ -228,15 +228,15 @@ class Solve(dace.sdfg.nodes.LibraryNode):
         if shape_ain[0] != shape_ain[1]:
             raise ValueError("linalg.solve only supported with first input a "
                              "square matrix")
-        if shape_ain[-1] != shape_bin[-1]:
+        if shape_ain[-1] != shape_bin[0]:
             raise ValueError(
-                "Both inputs must have the same number of columns")
+                "A column must be equal to B rows")
         if not np.array_equal(shape_bin, shape_out):
             raise ValueError(
                 "Squeezed shape of second input and output must be the same")
 
         strides_ain = np.array(desc_ain.strides)[dims_ain].tolist()
-        strides_bin = np.array(desc_ain.strides)[dims_bin].tolist()
+        strides_bin = np.array(desc_bin.strides)[dims_bin].tolist()
         strides_out = np.array(desc_out.strides)[dims_out].tolist()
         if strides_ain[-1] != 1:
             raise ValueError(
@@ -248,4 +248,4 @@ class Solve(dace.sdfg.nodes.LibraryNode):
         return (shape_ain, desc_ain.dtype, strides_ain, 
                 shape_bin, desc_bin.dtype, strides_bin,
                 shape_out, desc_out.dtype, strides_out,
-                shape_out[0], shape_ain[0])
+                shape_out[0], shape_out[1])

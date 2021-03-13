@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from mpmath.libmp.libelefun import int_pow_fixed
 import dace
 
 import ast
@@ -4433,6 +4434,115 @@ def dot(pv: 'ProgramVisitor',
                    dace.Memlet.from_array(op_out, arr_out))
 
     return op_out
+
+
+# NumPy linalg replacements ###################################################
+
+@oprepo.replaces('dace.linalg.inv')
+@oprepo.replaces('numpy.linalg.inv')
+def _inv(pv: 'ProgramVisitor',
+         sdfg: SDFG,
+         state: SDFGState,
+         inp_op: str):
+    
+
+    if not isinstance(inp_op, str) or not inp_op in sdfg.arrays.keys():
+        raise SyntaxError()
+
+    inp_arr = sdfg.arrays[inp_op]
+    out_arr = sdfg.add_temp_transient(inp_arr.shape, inp_arr.dtype,
+                                      storage=inp_arr.storage)
+
+    from dace.libraries.linalg import Inv
+
+    inp = state.add_read(inp_op)
+    out = state.add_write(out_arr[0])
+    inv_node = Inv("inv", overwrite_a=False, use_getri=True)
+
+    state.add_memlet_path(inp,
+                          inv_node,
+                          dst_conn="_ain",
+                          memlet=Memlet.from_array(inp_op, inp_arr))
+    state.add_memlet_path(inv_node,
+                          out,
+                          src_conn="_aout",
+                          memlet=Memlet.from_array(*out_arr))
+
+    return out_arr[0]
+
+
+@oprepo.replaces('dace.linalg.solve')
+@oprepo.replaces('numpy.linalg.solve')
+def _solve(pv: 'ProgramVisitor',
+           sdfg: SDFG,
+           state: SDFGState,
+           op_a: str,
+           op_b: str):
+    
+
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or not op in sdfg.arrays.keys():
+            raise SyntaxError()
+
+    a_arr = sdfg.arrays[op_a]
+    b_arr = sdfg.arrays[op_b]
+    out_arr = sdfg.add_temp_transient(b_arr.shape, b_arr.dtype,
+                                      storage=b_arr.storage)
+
+    from dace.libraries.linalg import Solve
+
+    a_inp = state.add_read(op_a)
+    b_inp = state.add_read(op_b)
+    out = state.add_write(out_arr[0])
+    solve_node = Solve("solve")
+
+    state.add_memlet_path(a_inp,
+                          solve_node,
+                          dst_conn="_ain",
+                          memlet=Memlet.from_array(op_a, a_arr))
+    state.add_memlet_path(b_inp,
+                          solve_node,
+                          dst_conn="_bin",
+                          memlet=Memlet.from_array(op_b, b_arr))
+    state.add_memlet_path(solve_node,
+                          out,
+                          src_conn="_bout",
+                          memlet=Memlet.from_array(*out_arr))
+
+    return out_arr[0]
+
+
+@oprepo.replaces('dace.linalg.cholesky')
+@oprepo.replaces('numpy.linalg.cholesky')
+def _inv(pv: 'ProgramVisitor',
+         sdfg: SDFG,
+         state: SDFGState,
+         inp_op: str):
+    
+
+    if not isinstance(inp_op, str) or not inp_op in sdfg.arrays.keys():
+        raise SyntaxError()
+
+    inp_arr = sdfg.arrays[inp_op]
+    out_arr = sdfg.add_temp_transient(inp_arr.shape, inp_arr.dtype,
+                                      storage=inp_arr.storage)
+
+    from dace.libraries.linalg import Cholesky
+
+    inp = state.add_read(inp_op)
+    out = state.add_write(out_arr[0])
+    chlsky_node = Cholesky("cholesky", lower=True)
+
+    state.add_memlet_path(inp,
+                          chlsky_node,
+                          dst_conn="_a",
+                          memlet=Memlet.from_array(inp_op, inp_arr))
+    state.add_memlet_path(chlsky_node,
+                          out,
+                          src_conn="_b",
+                          memlet=Memlet.from_array(*out_arr))
+
+    return out_arr[0]
 
 
 # MPI replacements ############################################################

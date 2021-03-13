@@ -131,7 +131,7 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandCholeskyMKL,
         "cuSolverDn": ExpandCholeskyCuSolverDn
     }
-    default_implementation = ExpandCholeskyOpenBLAS
+    default_implementation = None
 
     def __init__(self, name, lower=True, *args, **kwargs):
         super().__init__(name,

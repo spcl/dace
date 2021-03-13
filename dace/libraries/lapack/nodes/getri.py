@@ -76,7 +76,7 @@ class Getri(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandGetriOpenBLAS,
         "MKL": ExpandGetriMKL,
     }
-    default_implementation = ExpandGetriOpenBLAS
+    default_implementation = None
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)

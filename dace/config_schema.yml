@@ -802,3 +802,33 @@ required:
                                     Default FPGA stream depth used in the BLAS
                                     library nodes and the corresponding
                                     streaming transformations
+            lapack:
+                type: dict
+                title: LAPACK
+                description: Built-in LAPACK DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: OpenBLAS
+                        description: Default implementation LAPACK library nodes.
+                    override:
+                        type: bool
+                        default: false
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.
+            linalg:
+                type: dict
+                title: linalg
+                description: Built-in NumPy linalg DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: OpenBLAS
+                        description: Default implementation linang library nodes.
+                    override:
+                        type: bool
+                        default: false
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.

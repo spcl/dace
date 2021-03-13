@@ -126,7 +126,7 @@ class Getrf(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandGetrfMKL,
         "cuSolverDn": ExpandGetrfCuSolverDn
     }
-    default_implementation = ExpandGetrfOpenBLAS
+    default_implementation = None
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)

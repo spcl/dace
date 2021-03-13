@@ -122,7 +122,7 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandGetrsMKL,
         "cuSolverDn": ExpandGetrsCuSolverDn
     }
-    default_implementation = ExpandGetrsOpenBLAS
+    default_implementation = None
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)

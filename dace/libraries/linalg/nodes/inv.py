@@ -248,7 +248,7 @@ class Inv(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandInvMKL,
         "cuSolverDn": ExpandInvCuSolverDn
     }
-    default_implementation = ExpandInvOpenBLAS
+    default_implementation = None
 
     # Object fields
     def __init__(self, name, overwrite_a=False, use_getri=True, *args, **kwargs):
