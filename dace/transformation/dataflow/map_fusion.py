@@ -3,6 +3,7 @@
 """
 
 from copy import deepcopy as dcpy
+from dace.sdfg.state import SDFGState
 from dace import data, dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes
 from dace.memlet import Memlet
@@ -298,7 +299,7 @@ class MapFusion(transformation.Transformation):
                 adjacent to the new map entry node post fusion.
 
         """
-        graph = sdfg.nodes()[self.state_id]
+        graph: SDFGState = sdfg.nodes()[self.state_id]
         first_exit = graph.nodes()[self.subgraph[MapFusion.first_map_exit]]
         first_entry = graph.entry_node(first_exit)
         second_entry = graph.nodes()[self.subgraph[MapFusion.second_map_entry]]
@@ -498,11 +499,11 @@ class MapFusion(transformation.Transformation):
 
             # If source of edge leads to multiple destinations,
             # redirect all through an access node
-            if graph.out_degree(edge.src) > 1:
+            out_edges = list(graph.out_edges_by_connector(edge.src, edge.src_conn))
+            if len(out_edges) > 1:
                 local_node = graph.add_access(local_name)
                 src_connector = None
 
-                out_edges = list(graph.out_edges(edge.src))
                 # Add edge that leads to transient node
                 graph.add_edge(edge.src, edge.src_conn, local_node, None,
                                dcpy(edge.data))
