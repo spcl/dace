@@ -3,7 +3,7 @@
 """
 
 from copy import deepcopy as dcpy
-from dace import dtypes, registry, symbolic, subsets
+from dace import data, dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes
 from dace.memlet import Memlet
 from dace.sdfg import replace
@@ -193,21 +193,43 @@ class MapFusion(transformation.Transformation):
 
         # Checking for stencil pattern and common input/output data
         # (after fusing the maps)
-        first_map_inputs = set([
-            e.src.data for e in graph.in_edges(first_map_entry)
-            if isinstance(e.src, nodes.AccessNode)
-        ])
-        second_map_outputs = set([
-            e.dst.data for e in graph.out_edges(second_map_exit)
-            if isinstance(e.dst, nodes.AccessNode)
-        ])
-        common_data = first_map_inputs.intersection(second_map_outputs)
+        first_map_inputnodes = {e.src: e.src.data
+                                for e in graph.in_edges(first_map_entry)
+                                if isinstance(e.src, nodes.AccessNode)}
+        input_views = set()
+        viewed_inputnodes = dict()
+        for n in first_map_inputnodes.keys():
+            if isinstance(n.desc(sdfg), data.View):
+                input_views.add(n)
+        for v in input_views:
+            del first_map_inputnodes[v]
+            e = sdutil.get_view_edge(graph, v)
+            if e:
+                first_map_inputnodes[e.src] = e.src.data
+                viewed_inputnodes[e.src.data] = v
+        second_map_outputnodes = {e.dst: e.dst.data
+                                  for e in graph.out_edges(second_map_exit)
+                                  if isinstance(e.dst, nodes.AccessNode)}
+        output_views = set()
+        viewed_outputnodes = dict()
+        for n in second_map_outputnodes:
+            if isinstance(n.desc(sdfg), data.View):
+                output_views.add(n)
+        for v in output_views:
+            del second_map_outputnodes[v]
+            e = sdutil.get_view_edge(graph, v)
+            if e:
+                second_map_outputnodes[e.dst] = e.dst.data
+                viewed_outputnodes[e.dst.data] = v
+        common_data = set(first_map_inputnodes.values()).intersection(
+            set(second_map_outputnodes.values()))
         if common_data:
-            input_accesses = [
-                graph.memlet_path(e)[-1].data.src_subset
-                for e in graph.out_edges(first_map_entry)
-                if e.data.data in common_data
-            ]
+            input_data = [viewed_inputnodes[d].data
+                          if d in viewed_inputnodes.keys() else d
+                          for d in common_data]
+            input_accesses = [graph.memlet_path(e)[-1].data.src_subset
+                              for e in graph.out_edges(first_map_entry)
+                              if e.data.data in input_data]
             if len(input_accesses) > 1:
                 for i, a in enumerate(input_accesses[:-1]):
                     for b in input_accesses[i + 1:]:
@@ -220,11 +242,12 @@ class MapFusion(transformation.Transformation):
                             if r != (0, 0, 1):
                                 return False
 
-            output_accesses = [
-                graph.memlet_path(e)[0].data.dst_subset
-                for e in graph.in_edges(second_map_exit)
-                if e.data.data in common_data
-            ]
+            output_data = [viewed_outputnodes[d].data
+                           if d in viewed_outputnodes.keys() else d
+                           for d in common_data]
+            output_accesses = [graph.memlet_path(e)[0].data.dst_subset
+                               for e in graph.in_edges(second_map_exit)
+                               if e.data.data in output_data]
 
             # Compute output accesses with respect to first map's symbols
             oacc_permuted = [dcpy(a) for a in output_accesses]

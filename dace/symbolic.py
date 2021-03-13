@@ -4,7 +4,7 @@ from functools import lru_cache
 import sympy
 import pickle
 import re
-from typing import Dict, Optional, Set, Union
+from typing import Any, Dict, Optional, Set, Tuple, Union
 import warnings
 import numpy
 
@@ -832,8 +832,9 @@ def _sunpickle(obj):
 
 
 class SympyAwarePickler(pickle.Pickler):
-    """ Custom Pickler class that safely saves SymPy expressions
-        with function definitions in expressions (e.g., int_ceil).
+    """
+    Custom Pickler class that safely saves SymPy expressions
+    with function definitions in expressions (e.g., int_ceil).
     """
     def persistent_id(self, obj):
         if isinstance(obj, sympy.Basic):
@@ -845,8 +846,9 @@ class SympyAwarePickler(pickle.Pickler):
 
 
 class SympyAwareUnpickler(pickle.Unpickler):
-    """ Custom Unpickler class that safely restores SymPy expressions
-        with function definitions in expressions (e.g., int_ceil).
+    """
+    Custom Unpickler class that safely restores SymPy expressions
+    with function definitions in expressions (e.g., int_ceil).
     """
     def persistent_load(self, pid):
         type_tag, value = pid
@@ -854,3 +856,50 @@ class SympyAwareUnpickler(pickle.Unpickler):
             return _sunpickle(value)
         else:
             raise pickle.UnpicklingError("unsupported persistent object")
+    
+
+def equalize_symbol(sym: sympy.Expr) -> sympy.Expr:
+    """
+    If a symbol or symbolic expressions has multiple symbols with the same
+    name, it substitutes them with the last symbol (as they appear in
+    s.free_symbols).
+    """
+    symdict = {s.name: s for s in sym.free_symbols}
+    repldict = {s: symdict[s.name] for s in sym.free_symbols}
+    return sym.subs(repldict)
+
+
+def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr,
+                                                            sympy.Expr]:
+    """
+    If the 2 input expressions use different symbols but with the same name,
+    it substitutes the symbols of the second expressions with those of the
+    first expression.
+    """
+    a = equalize_symbol(a)
+    b = equalize_symbol(b)
+    a_syms = {s.name: s for s in a.free_symbols}
+    b_syms = {s.name: s for s in b.free_symbols}
+    common_names = set(a_syms.keys()).intersection(set(b_syms.keys()))
+    if common_names:
+        repldict = dict()
+        for name in common_names:
+            repldict[b_syms[name]] = a_syms[name]
+        b = b.subs(repldict)
+    return a, b
+
+
+def inequal_symbols(a: Union[sympy.Expr, Any],
+                    b: Union[sympy.Expr, Any]) -> bool:
+    """
+    Compares 2 symbolic expressions and returns True if they are not equal.
+    """
+    if not isinstance(a, sympy.Expr) or not isinstance(b, sympy.Expr):
+        return a != b
+    else:
+        a, b = equalize_symbols(a, b)
+        # NOTE: We simplify in an attempt to remove inconvenient methods, such
+        # as `ceiling` and `floor`, if the symbol assumptions allow it.
+        # We subtract and compare to zero according to the SymPy documentation
+        # (https://docs.sympy.org/latest/tutorial/gotchas.html).
+        return (a - b).simplify() != 0

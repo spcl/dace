@@ -171,7 +171,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 data = node.desc(sdfg)
                 if node.data not in all_transients or node.data in allocated:
                     continue
-                if data.storage != dace.dtypes.StorageType.FPGA_Global:
+                if data.storage != dace.dtypes.StorageType.FPGA_Global or isinstance(
+                        data, dace.data.View):
                     continue
                 allocated.add(node.data)
                 self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
@@ -188,6 +189,7 @@ class FPGACodeGen(TargetCodeGenerator):
             self.generate_kernel(sdfg, state, kernel_name, subgraphs,
                                  function_stream, callsite_stream)
         else:  # self._in_device_code == True
+
             to_allocate = dace.sdfg.local_transients(sdfg, state, None)
             allocated = set()
             for node in state.data_nodes():
@@ -196,7 +198,8 @@ class FPGACodeGen(TargetCodeGenerator):
                     continue
                 # Make sure there are no global transients in the nested state
                 # that are thus not gonna be allocated
-                if data.storage == dace.dtypes.StorageType.FPGA_Global:
+                if data.storage == dace.dtypes.StorageType.FPGA_Global and not isinstance(
+                        data, dace.data.View):
                     raise cgx.CodegenError(
                         "Cannot allocate global memory from device code.")
                 allocated.add(node.data)
@@ -274,6 +277,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     # transient (inner-level inputs/outputs are just connected
                     # to data in the outer layers, whereas transients can be
                     # independent).
+                    # Views are not nested global transients
                     if scope == subgraph or n.desc(scope).transient:
                         if scope.out_degree(n) > 0:
                             candidates.append((False, n.data, n.desc(scope)))
@@ -282,9 +286,10 @@ class FPGACodeGen(TargetCodeGenerator):
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dace.data.Array)
                                     and n.desc(scope).storage
-                                    == dace.dtypes.StorageType.FPGA_Global
-                                    and n.data
-                                    not in nested_global_transients_seen):
+                                    == dace.dtypes.StorageType.FPGA_Global and
+                                    n.data not in nested_global_transients_seen
+                                    and not isinstance(n.desc(scope),
+                                                       dace.data.View)):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
@@ -308,12 +313,12 @@ class FPGACodeGen(TargetCodeGenerator):
                             interface_id = global_interfaces[dataname]
                             global_interfaces[dataname] += 1
                             data_to_interface[dataname] = interface_id
-
-                        subgraph_parameters[subgraph].append(
-                            (is_output, dataname, data, interface_id))
-                        global_data_parameters.append(
-                            (is_output, dataname, data, interface_id))
-                        global_data_names.add(dataname)
+                        if not isinstance(data, dace.data.View):
+                            subgraph_parameters[subgraph].append(
+                                (is_output, dataname, data, interface_id))
+                            global_data_parameters.append(
+                                (is_output, dataname, data, interface_id))
+                            global_data_names.add(dataname)
                     elif (data.storage
                           in (dace.dtypes.StorageType.FPGA_Local,
                               dace.dtypes.StorageType.FPGA_Registers,
@@ -386,20 +391,30 @@ class FPGACodeGen(TargetCodeGenerator):
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
                        declaration_stream, allocation_stream):
+
         result_decl = StringIO()
         result_alloc = StringIO()
         nodedesc = node.desc(sdfg)
         arrsize = nodedesc.total_size
         is_dynamically_sized = dace.symbolic.issymbolic(arrsize, sdfg.constants)
-
         dataname = node.data
+
+        if not isinstance(nodedesc, dace.data.Stream):
+            # Unless this is a Stream, if the variable has been already defined we can return
+            # For Streams, we still allocate them to keep track of their names across
+            # nested SDFGs (needed by Intel FPGA backend for channel mangling)
+            try:
+                self._dispatcher.defined_vars.get(dataname)
+                return
+            except KeyError:
+                pass  # The variable was not defined,  we can continue
+
         allocname = cpp.ptr(dataname, nodedesc)
 
         if isinstance(nodedesc, dace.data.View):
-            return self._cpu_codegen.allocate_view(sdfg, dfg, state_id, node,
-                                                   function_stream,
-                                                   callsite_stream,
-                                                   callsite_stream)
+            return self.allocate_view(sdfg, dfg, state_id, node,
+                                      function_stream, declaration_stream,
+                                      allocation_stream)
         elif isinstance(nodedesc, dace.data.Stream):
 
             if not self._in_device_code:
@@ -447,6 +462,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
                 else:
                     if isinstance(nodedesc, dace.data.Array):
+
                         # TODO: Distinguish between read, write, and read+write
                         self._allocated_global_arrays.add(node.data)
                         memory_bank_arg = ""
@@ -1221,7 +1237,6 @@ class FPGACodeGen(TargetCodeGenerator):
 
     def generate_kernel(self, sdfg, state, kernel_name, subgraphs,
                         function_stream, callsite_stream):
-
         if self._in_device_code:
             raise cgx.CodegenError("Tried to generate kernel from device code")
         self._in_device_code = True
@@ -1363,7 +1378,9 @@ class FPGACodeGen(TargetCodeGenerator):
             if arg in seen:
                 continue
             seen.add(arg)
-            if not isinstance(arg, dace.data.Stream):
+            # Streams and Views are not passed as arguments
+            if not isinstance(arg, dace.data.Stream) and not isinstance(
+                    arg, dace.data.View):
                 kernel_args_call_host.append(arg.as_arg(False, name=argname))
                 kernel_args_opencl.append(
                     FPGACodeGen.make_opencl_parameter(argname, arg))
