@@ -231,7 +231,6 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
     warptile_exit = state.exit_node(warptile)
     btile_exit = state.exit_node(btile)
     AccumulateTransient.apply_to(sdfg,
-                                 dict(identity=0),
                                  map_exit=warptile_exit,
                                  outer_map_exit=btile_exit)
     # Set C tile to zero on allocation
