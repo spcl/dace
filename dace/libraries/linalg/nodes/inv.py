@@ -21,7 +21,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
          n) = arr_desc
     dtype = in_dtype
 
-    sdfg = dace.SDFG("{l}_{d}_sdfg".format(l=node.label, d=dtype))
+    sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
     a_arr = sdfg.add_array('_ain', in_shape, dtype=in_dtype, strides=in_strides)
     if not node._overwrite:
@@ -33,7 +33,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True)
     info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True)
 
-    state = sdfg.add_state("{l}_{d}_state".format(l=node.label, d=dtype))
+    state = sdfg.add_state("{l}_state".format(l=node.label))
 
     getrf_node = Getrf('getrf')
     getrf_node.implementation = implementation
@@ -101,7 +101,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
          n) = arr_desc
     dtype = in_dtype
 
-    sdfg = dace.SDFG("{l}_{d}_sdfg".format(l=node.label, d=dtype))
+    sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
     a_arr = sdfg.add_array('_ain', in_shape, dtype=in_dtype, strides=in_strides)
     if not node._overwrite:
@@ -116,7 +116,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True)
     info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True)
 
-    state = sdfg.add_state("{l}_{d}_state".format(l=node.label, d=dtype))
+    state = sdfg.add_state("{l}_state".format(l=node.label))
 
     getrf_node = Getrf('getrf')
     getrf_node.implementation = implementation

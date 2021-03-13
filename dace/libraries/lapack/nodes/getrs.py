@@ -65,9 +65,37 @@ class ExpandGetrsMKL(ExpandTransformation):
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
-    def expansion(*args, **kwargs):
-        return ExpandGetrsOpenBLAS.expansion(*args, **kwargs)
+    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res = node.validate(
+            parent_sdfg, parent_state)
+        dtype = desc_a.dtype.base_type
+        lapack_dtype = "X"
+        cast = ""
+        if dtype == dace.dtypes.float32:
+            lapack_dtype = "s"
+        elif dtype == dace.dtypes.float64:
+            lapack_dtype = "d" 
+        elif dtype == dace.dtypes.complex64:
+            lapack_dtype = "c"
+            cast = "(MKL_Complex8*)"
+        elif dtype == dace.dtypes.complex128:
+            lapack_dtype = "z"
+            cast = "(MKL_Complex16*)"
+        else:
+            print("The datatype "+str(dtype)+" is not supported!")
+            raise(NotImplementedError) 
+        if desc_a.dtype.veclen > 1:
+            raise(NotImplementedError)
 
+
+        n = n or node.n
+        code = f"_res = LAPACKE_{lapack_dtype}getrs(LAPACK_ROW_MAJOR, 'N', {rows_a}, {cols_rhs}, {cast}_a, {stride_a}, _ipiv, {cast}_rhs_in, {stride_rhs});"
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+        return tasklet
 
 @dace.library.expansion
 class ExpandGetrsCuSolverDn(ExpandTransformation):

@@ -16,7 +16,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
                                                              parent_state)
     dtype = inp_desc.dtype
 
-    sdfg = dace.SDFG("{l}_{d}_sdfg".format(l=node.label, d=dtype))
+    sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
     ain_arr = sdfg.add_array('_a', inp_shape, dtype=dtype, strides=inp_desc.strides)
     bout_arr = sdfg.add_array('_b', out_shape, dtype=dtype, strides=out_desc.strides)
@@ -26,7 +26,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     else:
         binout_arr = bout_arr
 
-    state = sdfg.add_state("{l}_{d}_state".format(l=node.label, d=dtype))
+    state = sdfg.add_state("{l}_state".format(l=node.label))
 
     potrf_node = Potrf('potrf', lower=node._lower)
     potrf_node.implementation = implementation
