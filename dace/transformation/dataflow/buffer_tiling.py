@@ -100,14 +100,14 @@ class BufferTiling(transformation.Transformation):
         upper_extents = tuple(a-b for a,b in zip(map1_entry.range.max_element(), map2_entry.range.max_element()))
 
         # Tile the first map with overlap
-        MapTilingWithOverlap.apply_to(sdfg, _map_entry=map1_entry,
+        MapTilingWithOverlap.apply_to(sdfg, map_entry=map1_entry,
             options={'tile_sizes': self.tile_sizes, 'lower_overlap': lower_extents, 'upper_overlap': upper_extents})
         tile_map1_exit = graph.out_edges(map1_exit)[0].dst
         tile_map1_entry = graph.entry_node(tile_map1_exit)
         tile_map1_entry.label = 'BufferTiling'
 
         # Tile the second map
-        MapTiling.apply_to(sdfg, _map_entry=map2_entry, options={'tile_sizes': self.tile_sizes, 'tile_trivial': True})
+        MapTiling.apply_to(sdfg, map_entry=map2_entry, options={'tile_sizes': self.tile_sizes, 'tile_trivial': True})
         tile_map2_entry = graph.in_edges(map2_entry)[0].src
 
         # Fuse maps
