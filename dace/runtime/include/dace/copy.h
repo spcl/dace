@@ -3,6 +3,7 @@
 #define __DACE_COPY_H
 
 #include "types.h"
+#include "reduction.h"
 #include "vector.h"
 
 namespace dace
