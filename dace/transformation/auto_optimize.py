@@ -104,9 +104,11 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
         if mapentry in transformed:
             continue
         transformed.add(mapentry)
-        # NOTE: The test below is crafted for Sympy to be "definitely True"
-        if (mapentry.map.range.num_elements() < tile_size) == True:
-            # If smaller than tile size, don't transform and instead make map sequential
+        # NOTE: The test "(x < y) == True" below is crafted for SymPy
+        # to be "definitely True"
+        if all((s < tile_size) == True for s in mapentry.map.range.size()):
+            # If smaller than tile size, don't transform and instead
+            # make map sequential
             if debugprint:
                 print(f'Making map "{mapentry}" sequential due to being '
                       'smaller than tile size')
@@ -132,8 +134,11 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
                                                   map_exit=mapexit,
                                                   outer_map_exit=outer_mapexit)
             else:
-                if e.data.is_empty(
-                ) or e.data.wcr is None or e.data.wcr_nonatomic:
+                if (e.data.is_empty() or e.data.wcr is None
+                        or e.data.wcr_nonatomic
+                        or (e.data.dst_subset is not None
+                            and e.data.dst_subset.num_elements() > 0
+                            and e.data.dynamic)):
                     continue
 
                 dtype = sdfg.arrays[e.data.data].dtype
@@ -143,8 +148,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
                     continue
                 dataflow.AccumulateTransient.apply_to(
                     sdfg,
-                    options=dict(identity=identity,
-                                 array=e.data.data),
+                    options=dict(identity=identity, array=e.data.data),
                     map_exit=mapexit,
                     outer_map_exit=outer_mapexit)
 

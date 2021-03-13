@@ -719,9 +719,21 @@ class CPUCodeGen(TargetCodeGenerator):
                 )
             else:  # Conflicted WCR
                 if dynshape == 1:
-                    raise NotImplementedError(
-                        "Accumulation of dynamically-shaped "
-                        "arrays not yet implemented")
+                    warnings.warn(
+                        'Performance warning: Emitting dynamically-'
+                        'shaped atomic write-conflict resolution of an array.')
+                    stream.write(
+                        """
+                        dace::CopyND{copy_tmpl}::{shape_tmpl}::Accumulate_atomic(
+                        {copy_args});""".format(
+                            copy_tmpl=copy_tmpl,
+                            shape_tmpl=shape_tmpl,
+                            copy_args=", ".join(copy_args),
+                        ),
+                        sdfg,
+                        state_id,
+                        [src_node, dst_node],
+                    )
                 elif copy_shape == [1
                                     ]:  # Special case: accumulating one element
                     dst_expr = self.memlet_view_ctor(sdfg, memlet,
@@ -735,8 +747,21 @@ class CPUCodeGen(TargetCodeGenerator):
                                                     dtype=dst_nodedesc.dtype) +
                         ';', sdfg, state_id, [src_node, dst_node])
                 else:
-                    raise NotImplementedError("Accumulation of arrays "
-                                              "with WCR not yet implemented")
+                    warnings.warn(
+                        'Minor performance warning: Emitting statically-'
+                        'shaped atomic write-conflict resolution of an array.')
+                    stream.write(
+                        """
+                        dace::CopyND{copy_tmpl}::{shape_tmpl}::Accumulate_atomic(
+                        {copy_args});""".format(
+                            copy_tmpl=copy_tmpl,
+                            shape_tmpl=shape_tmpl,
+                            copy_args=", ".join(copy_args),
+                        ),
+                        sdfg,
+                        state_id,
+                        [src_node, dst_node],
+                    )
 
         #############################################################
         # Instrumentation: Post-copy

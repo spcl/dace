@@ -96,8 +96,7 @@ class CUDACodeGen(TargetCodeGenerator):
         # Register additional CUDA dispatchers
         dispatcher.register_map_dispatcher(dtypes.GPU_SCHEDULES, self)
 
-        dispatcher.register_node_dispatcher(self,
-                                            self.node_dispatch_predicate)
+        dispatcher.register_node_dispatcher(self, self.node_dispatch_predicate)
 
         dispatcher.register_state_dispatcher(self,
                                              self.state_dispatch_predicate)
@@ -344,7 +343,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         if isinstance(nodedesc, dace.data.Stream):
             return self.allocate_stream(sdfg, dfg, state_id, node,
                                         function_stream, declaration_stream,
-                                        allocation_stream)                                        
+                                        allocation_stream)
         elif isinstance(nodedesc, dace.data.View):
             return self._cpu_codegen.allocate_view(sdfg, dfg, state_id, node,
                                                    function_stream,
@@ -624,11 +623,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     path = graph.memlet_path(e)
                     # If leading from/to a GPU memory node, keep stream
                     if ((isinstance(path[0].src, nodes.AccessNode)
-                         and path[0].src.desc(
-                             cur_sdfg).storage == dtypes.StorageType.GPU_Global)
+                         and path[0].src.desc(cur_sdfg).storage
+                         == dtypes.StorageType.GPU_Global)
                             or (isinstance(path[-1].dst, nodes.AccessNode)
-                                and path[-1].dst.desc(cur_sdfg).storage ==
-                                dtypes.StorageType.GPU_Global)):
+                                and path[-1].dst.desc(cur_sdfg).storage
+                                == dtypes.StorageType.GPU_Global)):
                         break
                     # If leading from/to a GPU tasklet, keep stream
                     if ((isinstance(path[0].src, nodes.CodeNode)
@@ -695,12 +694,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         if (isinstance(src_node, nodes.AccessNode)
                 and isinstance(dst_node, nodes.AccessNode)
-                and not self._in_device_code and (src_storage in [
-                    dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned
-                ] or dst_storage in [
-                    dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned
-                ]) and not (src_storage in cpu_storage_types
-                            and dst_storage in cpu_storage_types)):
+                and not self._in_device_code and
+            (src_storage
+             in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned]
+             or dst_storage
+             in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned])
+                and not (src_storage in cpu_storage_types
+                         and dst_storage in cpu_storage_types)):
             src_location = 'Device' if src_storage == dtypes.StorageType.GPU_Global else 'Host'
             dst_location = 'Device' if dst_storage == dtypes.StorageType.GPU_Global else 'Host'
 
@@ -1469,20 +1469,29 @@ void  *{kname}_args[] = {{ {kargs} }};
         if len(tb_maps) == 0:
 
             if has_dtbmap:
-                block_size = [
-                    int(b) for b in Config.get(
-                        'compiler', 'cuda', 'dynamic_map_block_size').split(',')
-                ]
+                if (Config.get('compiler', 'cuda',
+                               'dynamic_map_block_size') == 'max'):
+                    block_size = ['max', 1, 1]
+                else:
+                    block_size = [
+                        int(b)
+                        for b in Config.get('compiler', 'cuda',
+                                            'dynamic_map_block_size').split(',')
+                    ]
             else:
                 warnings.warn(
                     'Thread-block maps not found in kernel, assuming ' +
                     'block size of (%s)' %
                     Config.get('compiler', 'cuda', 'default_block_size'))
 
-                block_size = [
-                    int(b) for b in Config.get('compiler', 'cuda',
-                                               'default_block_size').split(',')
-                ]
+                if (Config.get('compiler', 'cuda',
+                               'default_block_size') == 'max'):
+                    block_size = ['max', 1, 1]
+                else:
+                    block_size = [
+                        int(b) for b in Config.get(
+                            'compiler', 'cuda', 'default_block_size').split(',')
+                    ]
             assert (len(block_size) >= 1 and len(block_size) <= 3)
 
             int_ceil = sympy.Function('int_ceil')
