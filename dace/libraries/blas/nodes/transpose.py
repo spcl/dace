@@ -161,7 +161,7 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
         code = (environments.cublas.cuBLAS.handle_setup_code(node) +
                 f"""cublas{func}(
                     __dace_cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N,
-                    {m}, {n}, {alpha}, _inp, {n}, {beta}, _inp, {m}, _out, {m});
+                    {m}, {n}, {alpha}, ({cdtype}*)_inp, {n}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {m});
                 """)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,

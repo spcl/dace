@@ -125,7 +125,7 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
                 f"""
                 cusolverDn{func}(
                     __dace_cusolverDn_handle, CUBLAS_OP_N, {rows_a}, {cols_rhs},
-                    _a, {stride_a}, _ipiv, _rhs_in, {stride_rhs}, _res); 
+                    ({cuda_type}*)_a, {stride_a}, _ipiv, ({cuda_type}*)_rhs_in, {stride_rhs}, _res); 
                 """)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
