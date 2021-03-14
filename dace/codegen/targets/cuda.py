@@ -786,8 +786,39 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # Currently we only support ND copies when they can be represented
             # as a 1D copy or as a 2D strided copy
             if dims > 2:
-                raise NotImplementedError('Copies between CPU and GPU are not'
-                                          ' supported for N-dimensions')
+                if src_strides[-1] != 1 or dst_strides[-1] != 1:
+                    raise NotImplementedError('Copies between CPU and GPU are '
+                                              'not supported for N-dimensions')
+                else:
+                    num_for_loops = dims - 2
+                    # Write for-loop headers
+                    for d in range(dims-2):
+                        callsite_stream.write(
+                            f"for (int __copyidx{d} = 0; "
+                            f"__copyidx{d} < {copy_shape[d]};"
+                            f"++__copyidx{d}) {{"
+                        )
+                    # Write Memcopy2DAsync
+                    current_src_expr = src_expr + " + " + "+".join(
+                        ["__copyidx{} * {}".format(d, s)
+                         for d, s in enumerate(src_strides[:-2])])
+                    current_dst_expr = dst_expr + " + " + "+".join(
+                        ["__copyidx{} * {}".format(d, s)
+                         for d, s in enumerate(dst_strides[:-2])])
+                    callsite_stream.write(
+                        '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n'
+                        % (self.backend, current_dst_expr, _topy(dst_strides[-2]) +
+                            ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
+                            current_src_expr, sym2cpp(src_strides[-2]) + ' * sizeof(%s)' %
+                            src_node.desc(sdfg).dtype.ctype, sym2cpp(copy_shape[-1]) +
+                            ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
+                            sym2cpp(copy_shape[-2]), self.backend, src_location,
+                            dst_location, cudastream), sdfg, state_id,
+                        [src_node, dst_node])
+                    # Write for-loop footers
+                    for d in range(dims-2):
+                        callsite_stream.write("}")
+
 
             if dims == 1 and not (src_strides[-1] != 1 or dst_strides[-1] != 1):
                 copysize = ' * '.join([
