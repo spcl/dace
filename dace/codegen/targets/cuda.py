@@ -765,16 +765,61 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             # Handle unsupported copy types
             if dims == 2 and (src_strides[-1] != 1 or dst_strides[-1] != 1):
-                raise NotImplementedError('2D copy only supported with one '
-                                          'stride')
+                # NOTE: Special case of continuous copy
+                # Example: dcol[0:I, 0:J, k] -> datacol[0:I, 0:J]
+                # with copy shape [I, J] and strides [J*K, K], [J, 1]
+                try:
+                    is_src_cont = src_strides[0]/src_strides[1] == copy_shape[1]
+                    is_dst_cont = dst_strides[0]/dst_strides[1] == copy_shape[1]
+                except (TypeError, ValueError):
+                    is_src_cont = False
+                    is_dst_cont = False
+                if is_src_cont and is_dst_cont:
+                    dims = 1
+                    copy_shape = [copy_shape[0] * copy_shape[1]]
+                    src_strides = [src_strides[1]]
+                    dst_strides = [dst_strides[1]]
+                else:
+                    raise NotImplementedError('2D copy only supported with one '
+                                              'stride')
 
             # Currently we only support ND copies when they can be represented
             # as a 1D copy or as a 2D strided copy
             if dims > 2:
-                raise NotImplementedError('Copies between CPU and GPU are not'
-                                          ' supported for N-dimensions')
+                if src_strides[-1] != 1 or dst_strides[-1] != 1:
+                    raise NotImplementedError('Copies between CPU and GPU are '
+                                              'not supported for N-dimensions')
+                else:
+                    # Write for-loop headers
+                    for d in range(dims-2):
+                        callsite_stream.write(
+                            f"for (int __copyidx{d} = 0; "
+                            f"__copyidx{d} < {copy_shape[d]};"
+                            f"++__copyidx{d}) {{"
+                        )
+                    # Write Memcopy2DAsync
+                    current_src_expr = src_expr + " + " + " + ".join(
+                        ["(__copyidx{} * ({}))".format(d, sym2cpp(s))
+                         for d, s in enumerate(src_strides[:-2])])
+                    current_dst_expr = dst_expr + " + " + "+ " .join(
+                        ["(__copyidx{} * ({}))".format(d, sym2cpp(s))
+                         for d, s in enumerate(dst_strides[:-2])])
+                    callsite_stream.write(
+                        '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n'
+                        % (self.backend, current_dst_expr, _topy(dst_strides[-2]) +
+                            ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
+                            current_src_expr, sym2cpp(src_strides[-2]) + ' * sizeof(%s)' %
+                            src_node.desc(sdfg).dtype.ctype, sym2cpp(copy_shape[-1]) +
+                            ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
+                            sym2cpp(copy_shape[-2]), self.backend, src_location,
+                            dst_location, cudastream), sdfg, state_id,
+                        [src_node, dst_node])
+                    # Write for-loop footers
+                    for d in range(dims-2):
+                        callsite_stream.write("}")
 
-            if dims == 1:
+
+            if dims == 1 and not (src_strides[-1] != 1 or dst_strides[-1] != 1):
                 copysize = ' * '.join([
                     cppunparse.pyexpr2cpp(symbolic.symstr(s))
                     for s in copy_shape
@@ -818,6 +863,17 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                        backend=self.backend), sdfg, state_id,
                                 [src_node, dst_node])
                     callsite_stream.write('}')
+            elif dims == 1 and ((src_strides[-1] != 1 or dst_strides[-1] != 1)):
+                callsite_stream.write(
+                    '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n'
+                    % (self.backend, dst_expr, _topy(dst_strides[0]) +
+                       ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
+                       src_expr, sym2cpp(src_strides[0]) + ' * sizeof(%s)' %
+                       src_node.desc(sdfg).dtype.ctype,
+                       'sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
+                       sym2cpp(copy_shape[0]), self.backend, src_location,
+                       dst_location, cudastream), sdfg, state_id,
+                    [src_node, dst_node])
             elif dims == 2:
                 callsite_stream.write(
                     '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n'

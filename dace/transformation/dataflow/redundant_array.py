@@ -301,6 +301,11 @@ class RedundantArray(pm.Transformation):
                 return False
             elif isinstance(out_desc, data.View):
                 # Case Access -> View
+                # If the View points to the Access (and has a different shape?)
+                # then we should (probably) not remove the Access.
+                e = sdutil.get_view_edge(graph, out_array)
+                if e and e.src is in_array and in_desc.shape != out_desc.shape:
+                    return False
                 # Check that the View's immediate successors are Accesses.
                 # Otherwise, the application of the transformation will result
                 # in an ambiguous View.
@@ -622,9 +627,13 @@ class RedundantSecondArray(pm.Transformation):
         if in_desc.storage != out_desc.storage:
             return False
         if type(in_desc) != type(out_desc):
-            # We may proceed only in the case of View -> Access
             if isinstance(in_desc, data.View):
                 # Case View -> Access
+                # If the View points to the Access (and has a different shape?)
+                # then we should (probably) not remove the Access.
+                e = sdutil.get_view_edge(graph, in_array)
+                if e and e.dst is out_array and in_desc.shape != out_desc.shape:
+                    return False
                 # Check that the View's immediate ancestors are Accesses.
                 # Otherwise, the application of the transformation will result
                 # in an ambiguous View.
