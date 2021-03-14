@@ -15,7 +15,7 @@ jobs:
     strategy:
       matrix:
         python-version: [3.8]
-        strict-xforms: [1,0]
+        strict-xforms: [0,1,autoopt]
 
     steps:
     - uses: actions/checkout@v2
@@ -47,7 +47,13 @@ jobs:
         export DACE_testing_serialization=1
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
-        export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
+        if [ "${{ matrix.strict-xforms }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_strict_transformations=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
+        fi
         pytest --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl"
         codecov
     - name: Run other tests

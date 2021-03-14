@@ -3,6 +3,7 @@
 """
 
 from copy import deepcopy as dcpy
+from dace.sdfg.state import SDFGState
 from dace import data, dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes
 from dace.memlet import Memlet
@@ -171,7 +172,7 @@ class MapFusion(transformation.Transformation):
 
             provided = False
 
-            # Compute second subset with respect to first subset's symbols  
+            # Compute second subset with respect to first subset's symbols
             sbs_permuted = dcpy(second_edge.data.subset)
             if sbs_permuted:
                 sbs_permuted.replace(repldict)
@@ -232,7 +233,7 @@ class MapFusion(transformation.Transformation):
                               if e.data.data in input_data]
             if len(input_accesses) > 1:
                 for i, a in enumerate(input_accesses[:-1]):
-                    for b in input_accesses[i+1:]:
+                    for b in input_accesses[i + 1:]:
                         if isinstance(a, subsets.Indices):
                             c = subsets.Range.from_indices(a)
                             c.offset(b, negative=True)
@@ -298,7 +299,7 @@ class MapFusion(transformation.Transformation):
                 adjacent to the new map entry node post fusion.
 
         """
-        graph = sdfg.nodes()[self.state_id]
+        graph: SDFGState = sdfg.nodes()[self.state_id]
         first_exit = graph.nodes()[self.subgraph[MapFusion.first_map_exit]]
         first_entry = graph.entry_node(first_exit)
         second_entry = graph.nodes()[self.subgraph[MapFusion.second_map_entry]]
@@ -495,8 +496,27 @@ class MapFusion(transformation.Transformation):
             )
             edge.data.data = local_name
             edge.data.subset = "0"
-            local_node = edge.src
-            src_connector = edge.src_conn
+
+            # If source of edge leads to multiple destinations,
+            # redirect all through an access node
+            out_edges = list(graph.out_edges_by_connector(edge.src, edge.src_conn))
+            if len(out_edges) > 1:
+                local_node = graph.add_access(local_name)
+                src_connector = None
+
+                # Add edge that leads to transient node
+                graph.add_edge(edge.src, edge.src_conn, local_node, None,
+                               dcpy(edge.data))
+
+                for other_edge in out_edges:
+                    if other_edge is not edge:
+                        graph.remove_edge(other_edge)
+                        graph.add_edge(local_node, src_connector,
+                                       other_edge.dst, other_edge.dst_conn,
+                                       other_edge.data)
+            else:
+                local_node = edge.src
+                src_connector = edge.src_conn
 
             # Add edge that leads to the second node
             graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
