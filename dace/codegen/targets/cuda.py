@@ -774,7 +774,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 raise NotImplementedError('Copies between CPU and GPU are not'
                                           ' supported for N-dimensions')
 
-            if dims == 1:
+            if dims == 1 and not (src_strides[-1] != 1 or dst_strides[-1] != 1):
                 copysize = ' * '.join([
                     cppunparse.pyexpr2cpp(symbolic.symstr(s))
                     for s in copy_shape
@@ -818,6 +818,17 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                        backend=self.backend), sdfg, state_id,
                                 [src_node, dst_node])
                     callsite_stream.write('}')
+            elif dims == 1 and ((src_strides[-1] != 1 or dst_strides[-1] != 1)):
+                callsite_stream.write(
+                    '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n'
+                    % (self.backend, dst_expr, _topy(dst_strides[0]) +
+                       ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
+                       src_expr, sym2cpp(src_strides[0]) + ' * sizeof(%s)' %
+                       src_node.desc(sdfg).dtype.ctype,
+                       'sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
+                       sym2cpp(copy_shape[0]), self.backend, src_location,
+                       dst_location, cudastream), sdfg, state_id,
+                    [src_node, dst_node])
             elif dims == 2:
                 callsite_stream.write(
                     '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n'
