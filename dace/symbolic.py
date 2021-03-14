@@ -495,7 +495,11 @@ def sympy_numeric_fix(expr):
         Converts the float constants in a given expression to integers. """
     if not isinstance(expr, sympy.Basic):
         try:
-            if int(expr) == expr:
+            # NOTE: If expr is ~ 1.8e308, i.e. infinity, `numpy.int64(expr)`
+            # will throw OverflowError (which we want).
+            # `int(1.8e308) == expr` evaluates unfortunately to True
+            # because Python has variable-bit integers.
+            if numpy.int64(expr) == expr:
                 return int(expr)
         except OverflowError:
             if expr > 0:
