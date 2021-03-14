@@ -223,11 +223,13 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
             CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
             {M}, {N}, {K},
             {alpha},
-            ({dtype}*){x}, {lda}, {stride_a},
-            ({dtype}*){y}, {ldb}, {stride_b},
+            ({dtype}*){array_prefix}{x}, {lda}, {stride_a},
+            ({dtype}*){array_prefix}{y}, {ldb}, {stride_b},
             {beta},
-            ({dtype}*)_c, {ldc}, {stride_c},
+            ({dtype}*){array_prefix}_c, {ldc}, {stride_c},
             {BATCH});'''
+
+        opt['array_prefix'] = ''
 
         code = (environments.cublas.cuBLAS.handle_setup_code(node) +
                 call.format_map(opt))
@@ -238,10 +240,14 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                                           language=dace.dtypes.Language.CPP)
 
         # If buffers are not on the GPU, copy them
+        # TODO: doesn't work when storage is Default and Default=GPU_Global
         if any(desc.storage not in
                [dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned]
                for desc in [adesc, bdesc, cdesc]):
             nsdfg = dace.SDFG('nested_batched_matmul')
+            opt['array_prefix'] = '_'
+            code = (environments.cublas.cuBLAS.handle_setup_code(node) +
+                    call.format_map(opt))
             tasklet = dace.sdfg.nodes.Tasklet(node.name, {
                 '__a': dtypes.pointer(adesc.dtype),
                 '__b': dtypes.pointer(bdesc.dtype)
