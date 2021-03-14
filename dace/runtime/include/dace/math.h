@@ -423,11 +423,19 @@ namespace dace
             return (T)std::exp(a);
         }
 
+#ifdef __CUDACC__
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const T& b)
+        {
+            return (T)thrust::pow(a, b);
+        }
+#else
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const T& b)
         {
             return (T)std::pow(a, b);
         }
+#endif
 
 #ifndef DACE_XILINX
         static DACE_CONSTEXPR DACE_HDFI int pow(const int& a, const int& b)
