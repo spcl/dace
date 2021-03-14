@@ -790,7 +790,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     raise NotImplementedError('Copies between CPU and GPU are '
                                               'not supported for N-dimensions')
                 else:
-                    num_for_loops = dims - 2
                     # Write for-loop headers
                     for d in range(dims-2):
                         callsite_stream.write(
@@ -799,11 +798,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             f"++__copyidx{d}) {{"
                         )
                     # Write Memcopy2DAsync
-                    current_src_expr = src_expr + " + " + "+".join(
-                        ["__copyidx{} * {}".format(d, s)
+                    current_src_expr = src_expr + " + " + " + ".join(
+                        ["(__copyidx{} * ({}))".format(d, sym2cpp(s))
                          for d, s in enumerate(src_strides[:-2])])
-                    current_dst_expr = dst_expr + " + " + "+".join(
-                        ["__copyidx{} * {}".format(d, s)
+                    current_dst_expr = dst_expr + " + " + "+ " .join(
+                        ["(__copyidx{} * ({}))".format(d, sym2cpp(s))
                          for d, s in enumerate(dst_strides[:-2])])
                     callsite_stream.write(
                         '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n'
