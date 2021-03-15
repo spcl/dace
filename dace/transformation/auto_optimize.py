@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Automatic optimization routines for SDFGs. """
 
-from dace.sdfg.state import SDFGState
+from dace.sdfg import SDFG, SDFGState
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
 from typing import Set, Tuple, Union
@@ -240,6 +240,26 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
         print(f'Statically allocating {converted} transient arrays')
 
 
+def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType):
+    """
+    Set fast library node implementations for the given device
+
+    :param sdfg: The SDFG to optimize.
+    :param device: the device to optimize for.
+    :note: Operates in-place on the given SDFG.
+    """
+    implementation_prio = find_fast_library(device)
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.LibraryNode):
+            for impl in implementation_prio:
+                if impl in node.implementations:
+                    node.implementation = impl
+                    break
+            else:
+                warnings.warn('No fast library implementation found for "%s", '
+                              'falling back to default.' % node.name)
+
+
 def auto_optimize(sdfg: SDFG,
                   device: dtypes.DeviceType,
                   validate: bool = True,
@@ -256,6 +276,7 @@ def auto_optimize(sdfg: SDFG,
         * Set all library nodes to expand to ``fast`` expansion, which calls
           the fastest library on the target device
     :param sdfg: The SDFG to optimize.
+    :param device: the device to optimize for.
     :param validate: If True, validates the SDFG after all transformations
                      have been applied.
     :param validate_all: If True, validates the SDFG after every step.
@@ -290,16 +311,7 @@ def auto_optimize(sdfg: SDFG,
             node.map.collapse = len(node.map.range)
 
     # Set all library nodes to expand to fast library calls
-    implementation_prio = find_fast_library(device)
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.LibraryNode):
-            for impl in implementation_prio:
-                if impl in node.implementations:
-                    node.implementation = impl
-                    break
-            else:
-                warnings.warn('No fast library implementation found for "%s", '
-                              'falling back to default.' % node.name)
+    set_fast_implementations(sdfg, device)
 
     # TODO(later): Safe vectorization
 
