@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes and functions that implement the orthogonal
     tiling transformation. """
 
@@ -27,23 +27,13 @@ class MapTiling(transformation.Transformation):
     tile_sizes = ShapeProperty(dtype=tuple,
                                default=(128, 128, 128),
                                desc="Tile size per dimension")
-
     strides = ShapeProperty(
         dtype=tuple,
         default=tuple(),
         desc="Tile stride (enables overlapping tiles). If empty, matches tile")
-
-    tile_offset = ShapeProperty(dtype=tuple,
-                                default=None,
-                                desc="Negative Stride offset per dimension",
-                                allow_none=True)
-
     divides_evenly = Property(dtype=bool,
                               default=False,
                               desc="Tile size divides dimension length evenly")
-    tile_trivial = Property(dtype=bool,
-                              default=False,
-                              desc="Tiles even if tile_size is 1")
 
     @staticmethod
     def annotates_memlets():
@@ -90,14 +80,6 @@ class MapTiling(transformation.Transformation):
                 tile_size = symbolic.pystr_to_symbolic(self.tile_sizes[dim_idx])
                 tile_stride = symbolic.pystr_to_symbolic(tile_strides[dim_idx])
 
-            # handle offsets
-            if self.tile_offset and dim_idx >= len(self.tile_offset):
-                offset = self.tile_offset[-1]
-            elif self.tile_offset:
-                offset = self.tile_offset[dim_idx]
-            else:
-                offset = 0
-
             dim_idx -= removed_maps
             # If tile size is trivial, skip strip-mining map dimension
             if tile_size == map_entry.map.range.size()[dim_idx]:
@@ -107,13 +89,12 @@ class MapTiling(transformation.Transformation):
                                     self.expr_index)
 
             # Special case: Tile size of 1 should be omitted from inner map
-            if tile_size == 1 and tile_stride == 1 and self.tile_trivial == False:
+            if tile_size == 1 and tile_stride == 1:
                 stripmine.dim_idx = dim_idx
                 stripmine.new_dim_prefix = ''
                 stripmine.tile_size = str(tile_size)
                 stripmine.tile_stride = str(tile_stride)
                 stripmine.divides_evenly = True
-                stripmine.tile_offset = str(offset)
                 stripmine.apply(sdfg)
                 removed_maps += 1
             else:
@@ -122,7 +103,6 @@ class MapTiling(transformation.Transformation):
                 stripmine.tile_size = str(tile_size)
                 stripmine.tile_stride = str(tile_stride)
                 stripmine.divides_evenly = self.divides_evenly
-                stripmine.tile_offset = str(offset)
                 stripmine.apply(sdfg)
 
             # apply to the new map the schedule of the original one
@@ -138,4 +118,3 @@ class MapTiling(transformation.Transformation):
                                           mapcollapse_subgraph, 0)
                 mapcollapse.apply(sdfg)
             last_map_entry = graph.in_edges(map_entry)[0].src
-        return last_map_entry
