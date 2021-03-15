@@ -1,5 +1,5 @@
 import dace
-from dace.perf.roofline import PerformanceSpec as Spec
+from dace.transformation.estimator.roofline import PerformanceSpec as Spec
 
 # i5-5257U
 # dual channel

@@ -7,9 +7,9 @@ from dace.properties import make_properties, Property
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
 
-from dace.perf.movement_counter import count_moved_data_state
-from dace.perf.movement_counter import count_moved_data_state_composite
-from dace.perf.movement_counter import count_moved_data_subgraph
+from dace.transformation.estimator.movement_counter import count_moved_data_state
+from dace.transformation.estimator.movement_counter import count_moved_data_state_composite
+from dace.transformation.estimator.movement_counter import count_moved_data_subgraph
 
 import dace.sdfg.propagation as propagation
 import dace.symbolic as symbolic
