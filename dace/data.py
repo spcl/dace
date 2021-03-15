@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import re, json
 import copy as cp
@@ -28,6 +28,7 @@ def create_datadescriptor(obj):
     except AttributeError:
         if isinstance(obj, numpy.ndarray):
             return Array(dtype=dtypes.typeclass(obj.dtype.type),
+                         strides=tuple(s // obj.itemsize for s in obj.strides),
                          shape=obj.shape)
         if symbolic.issymbolic(obj):
             return Scalar(symbolic.symtype(obj))
@@ -193,6 +194,8 @@ class Scalar(Data):
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):
+        if self.storage is dtypes.StorageType.GPU_Global:
+            return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
         if not with_types or for_call:
             return name
         return self.dtype.as_arg(name)

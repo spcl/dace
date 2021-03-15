@@ -1,15 +1,17 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
 import collections
 import copy
+import os
+import networkx as nx
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.sdfg import nodes as nd, graph as gr
-from dace import data as dt, dtypes, memlet as mm, subsets as sbs
+from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from string import ascii_uppercase
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 
 def node_path_graph(*args):
@@ -836,7 +838,9 @@ def local_transients(sdfg, dfg, entry_node):
     return sorted(list(transients - defined_transients))
 
 
-def trace_nested_access(node, state, sdfg):
+def trace_nested_access(
+        node: nd.AccessNode, state: SDFGState,
+        sdfg: SDFG) -> List[Tuple[nd.AccessNode, SDFGState, SDFG]]:
     """
     Given an AccessNode in a nested SDFG, trace the accessed memory
     back to the outermost scope in which it is defined.
@@ -870,14 +874,10 @@ def trace_nested_access(node, state, sdfg):
 
     while curr_sdfg.parent is not None:
         curr_state = curr_sdfg.parent
+
         # Find the nested SDFG containing ourself in the parent state
-        for nested_sdfg in curr_state.nodes():
-            if isinstance(nested_sdfg,
-                          nd.NestedSDFG) and nested_sdfg.sdfg == curr_sdfg:
-                break
-        else:
-            raise ValueError("{} not found in its parent state {}".format(
-                curr_sdfg.name, curr_state.label))
+        nested_sdfg = curr_sdfg.parent_nsdfg_node
+
         if curr_read is not None:
             for e in curr_state.in_edges(nested_sdfg):
                 if e.dst_conn == curr_read.data:
@@ -911,3 +911,58 @@ def trace_nested_access(node, state, sdfg):
             break
         curr_sdfg = curr_state.parent  # Recurse
     return list(reversed(trace))
+
+
+def fuse_states(sdfg: SDFG) -> int:
+    """
+    Fuses all possible states of an SDFG (and all sub-SDFGs) using an optimized
+    routine that uses the structure of the StateFusion transformation.
+    :param sdfg: The SDFG to transform.
+    :return: The total number of states fused.
+    """
+    from dace.transformation.interstate import StateFusion  # Avoid import loop
+    counter = 0
+    for sd in sdfg.all_sdfgs_recursive():
+        id = sd.sdfg_id
+        while True:
+            edges = list(sd.nx.edges)
+            applied = 0
+            skip_nodes = set()
+            for u, v in edges:
+                if u in skip_nodes or v in skip_nodes:
+                    continue
+                candidate = {
+                    StateFusion.first_state: u,
+                    StateFusion.second_state: v
+                }
+                sf = StateFusion(id, -1, candidate, 0, override=True)
+                if sf.can_be_applied(sd, candidate, 0, sd, strict=True):
+                    sf.apply(sd)
+                    applied += 1
+                    counter += 1
+                    skip_nodes.add(u)
+                    skip_nodes.add(v)
+            if applied == 0:
+                break
+    if config.Config.get_bool('debugprint'):
+        print(f'Applied {counter} State Fusions')
+    return counter
+
+
+def load_precompiled_sdfg(folder: str):
+    """ 
+    Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
+    Folder must contain a file called "program.sdfg" and a subfolder called
+    "build" with the shared object.
+
+    :param folder: Path to SDFG output folder.
+    :return: A callable CompiledSDFG object.
+    """
+    from dace.codegen import compiled_sdfg as csdfg
+    sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
+    suffix = config.Config.get('compiler', 'library_extension')
+    return csdfg.CompiledSDFG(
+        sdfg,
+        csdfg.ReloadableDLL(
+            os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'),
+            sdfg.name))

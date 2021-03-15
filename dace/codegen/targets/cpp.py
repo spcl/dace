@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Helper functions for C++ code generation.
 NOTE: The C++ code generator is currently located in cpu.py.
@@ -6,6 +6,7 @@ NOTE: The C++ code generator is currently located in cpu.py.
 import ast
 import copy
 import functools
+import warnings
 
 import sympy as sp
 from six import StringIO
@@ -20,7 +21,7 @@ from dace.codegen.dispatcher import DefinedType
 from dace.config import Config
 from dace.frontend import operations
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.sdfg import nodes
+from dace.sdfg import nodes, graph as gr
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu
 
@@ -202,7 +203,7 @@ def memlet_copy_to_absolute_strides(dispatcher,
 
 
 def ptr(name: str, desc: data.Data) -> str:
-    """ 
+    """
     Returns a string that points to the data based on its name and descriptor.
     :param name: Data name.
     :param desc: Data descriptor.
@@ -230,12 +231,11 @@ def emit_memlet_reference(dispatcher,
     """
     desc = sdfg.arrays[memlet.data]
     typedef = conntype.ctype
-    datadef = memlet.data
+    datadef = ptr(memlet.data, desc)
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ref = ''
-    pointer_name = ptr(pointer_name, desc)
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
@@ -285,8 +285,9 @@ def emit_memlet_reference(dispatcher,
     else:
         raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
 
-    if desc.storage == dace.StorageType.FPGA_Global:
-        # This is a device buffer.
+    if (defined_type != DefinedType.ArrayInterface
+            and desc.storage == dace.StorageType.FPGA_Global):
+        # This is a device buffer accessed on the host.
         # Can not be accessed with offset different than zero. Check this if we can:
         if (isinstance(offset, int) and int(offset) != 0) or (isinstance(
                 offset, str) and offset.isnumeric() and int(offset) != 0):
@@ -299,8 +300,8 @@ def emit_memlet_reference(dispatcher,
         ref = '&'
     else:
         # Cast as necessary
-        expr = make_ptr_vector_cast(sdfg, datadef + offset_expr, memlet,
-                                    conntype, is_scalar, defined_type)
+        expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype,
+                                    is_scalar, defined_type)
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name,
@@ -385,10 +386,10 @@ def ndcopy_to_strided_copy(
     # and shapes to the copy. The second condition is there because sometimes
     # the symbolic math engine fails to produce the same expressions for both
     # arrays.
-    if ((src_copylen == copy_length and dst_copylen == copy_length)
-            or (tuple(src_shape) == tuple(copy_shape)
-                and tuple(dst_shape) == tuple(copy_shape)
-                and tuple(src_strides) == tuple(dst_strides))):
+    if (tuple(src_strides) == tuple(dst_strides)
+            and ((src_copylen == copy_length and dst_copylen == copy_length) or
+                 (tuple(src_shape) == tuple(copy_shape)
+                  and tuple(dst_shape) == tuple(copy_shape)))):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
@@ -399,16 +400,34 @@ def ndcopy_to_strided_copy(
         copydim = next(i for i, c in enumerate(copy_shape) if c != 1)
 
         # In source strides
-        if len(copy_shape) == len(src_shape):
+        src_copy_shape = src_subset.size_exact()
+        if copy_shape == src_copy_shape:
             srcdim = copydim
         else:
-            srcdim = next(i for i, c in enumerate(src_shape) if c != 1)
+            try:
+                srcdim = next(i for i, c in enumerate(src_copy_shape) if c != 1)
+            except StopIteration:
+                # NOTE: This is the old stride computation code for FPGA
+                # compatibility
+                if len(copy_shape) == len(src_shape):
+                    srcdim = copydim
+                else:
+                    srcdim = next(i for i, c in enumerate(src_shape) if c != 1)
 
         # In destination strides
-        if len(copy_shape) == len(dst_shape):
+        dst_copy_shape = dst_subset.size_exact()
+        if copy_shape == dst_copy_shape:
             dstdim = copydim
         else:
-            dstdim = next(i for i, c in enumerate(dst_shape) if c != 1)
+            try:
+                dstdim = next(i for i, c in enumerate(dst_copy_shape) if c != 1)
+            except StopIteration:
+                # NOTE: This is the old stride computation code for FPGA
+                # compatibility
+                if len(copy_shape) == len(dst_shape):
+                    dstdim = copydim
+                else:
+                    dstdim = next(i for i, c in enumerate(dst_shape) if c != 1)
 
         # Return new copy
         return [copy_shape[copydim]], [src_strides[srcdim]
@@ -433,17 +452,12 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    subset = copy.deepcopy(subset_in)
-
-    # Offset according to parameters
+    # Offset according to parameters, then offset according to array
     if offset is not None:
-        if isinstance(offset, subsets.Subset):
-            subset.offset(offset, False)
-        else:
-            subset.offset(subsets.Indices(offset), False)
-
-    # Then, offset according to array
-    subset.offset(subsets.Indices(d.offset), False)
+        subset = subset_in.offset_new(offset, False)
+        subset.offset(d.offset, False)
+    else:
+        subset = subset_in.offset_new(d.offset, False)
 
     # Obtain start range from offsetted subset
     indices = indices or ([0] * len(d.strides))
@@ -477,24 +491,26 @@ def cpp_array_expr(sdfg,
         return offset_cppstr
 
 
-def make_ptr_vector_cast(sdfg, expr, memlet, conntype, is_scalar, defined_type):
+def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar,
+                         defined_type):
     """
     If there is a type mismatch, cast pointer type. Used mostly in vector types.
     """
-    if conntype != sdfg.arrays[memlet.data].dtype:
+    if src_dtype != dst_dtype:
         if is_scalar:
-            expr = '*(%s *)(&%s)' % (conntype.ctype, expr)
-        elif conntype.base_type != sdfg.arrays[memlet.data].dtype:
-            expr = '(%s)(&%s)' % (conntype.ctype, expr)
+            dst_expr = '*(%s *)(&%s)' % (src_dtype.ctype, dst_expr)
+        elif src_dtype.base_type != dst_dtype:
+            dst_expr = '(%s)(&%s)' % (src_dtype.ctype, dst_expr)
         elif defined_type == DefinedType.Pointer:
-            expr = '&' + expr
+            dst_expr = '&' + dst_expr
     elif not is_scalar:
-        expr = '&' + expr
-    return expr
+        dst_expr = '&' + dst_expr
+    return dst_expr
 
 
 def cpp_ptr_expr(sdfg,
                  memlet,
+                 defined_type,
                  offset=None,
                  relative_offset=True,
                  use_other_subset=False,
@@ -510,7 +526,7 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     dname = ptr(memlet.data, desc)
 
-    if isinstance(sdfg.arrays[dname], data.Scalar):
+    if defined_type == DefinedType.Scalar:
         dname = '&' + dname
 
     if offset_cppstr == '0':
@@ -561,24 +577,55 @@ def _check_map_conflicts(map, edge):
     return True
 
 
+def write_conflicted_map_params(map, edge):
+    result = []
+    for itervar, (_, _, mapskip) in zip(map.params, map.range):
+        itersym = symbolic.pystr_to_symbolic(itervar)
+        a = sp.Wild('a', exclude=[itersym])
+        b = sp.Wild('b', exclude=[itersym])
+        if not _check_range_conflicts(edge.data.subset, a, itersym, b, mapskip):
+            result.append(itervar)
+
+    return result
+
+
 def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
-    """ Detects whether a write-conflict-resolving edge can be emitted without
-        using atomics or critical sections. """
+    """
+    Detects whether a write-conflict-resolving edge can be emitted without
+    using atomics or critical sections.
+    """
+    return (is_write_conflicted_with_reason(dfg, edge, datanode, sdfg_schedule)
+            is not None)
+
+
+def is_write_conflicted_with_reason(dfg,
+                                    edge,
+                                    datanode=None,
+                                    sdfg_schedule=None):
+    """
+    Detects whether a write-conflict-resolving edge can be emitted without
+    using atomics or critical sections, returning the node or SDFG that caused
+    the decision.
+    :return: None if the conflict is nonatomic, otherwise returns the scope entry
+             node or SDFG that caused the decision to be made.
+    """
 
     if edge.data.wcr_nonatomic or edge.data.wcr is None:
-        return False
+        return None
 
     # If it's an entire SDFG, it's probably write-conflicted
     if isinstance(dfg, SDFG):
         if datanode is None:
-            return True
+            return dfg
         in_edges = find_incoming_edges(datanode, dfg)
         if len(in_edges) != 1:
-            return True
+            return dfg
         if (isinstance(in_edges[0].src, nodes.ExitNode) and
                 in_edges[0].src.map.schedule == dtypes.ScheduleType.Sequential):
-            return False
-        return True
+            return None
+        return dfg
+    elif isinstance(dfg, gr.SubgraphView):
+        dfg = dfg.graph
 
     # Traverse memlet path to determine conflicts.
     # If no conflicts will occur, write without atomics
@@ -593,20 +640,20 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
                     # print('PAR: Continuing from map')
                     continue
                 # print('SEQ: Map is conflicted')
-                return True
+                return dfg.entry_node(e.dst)
             # Should never happen (no such thing as write-conflicting reads)
             if (isinstance(e.src, nodes.EntryNode)
                     and e.src.map.schedule != dtypes.ScheduleType.Sequential):
                 warnings.warn(
                     'Unexpected WCR path to have write-conflicting reads')
-                return True
+                return e.src
 
         sdfg = dfg.parent
         dst = path[-1].dst
         # Unexpected case
         if not isinstance(dst, nodes.AccessNode):
             warnings.warn('Unexpected WCR path to not end in access node')
-            return True
+            return dst
 
         # If this is a nested SDFG and the access leads outside
         if not sdfg.arrays[dst.data].transient:
@@ -620,9 +667,9 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
             # Memlet path ends here, transient. We can thus safely write here
             edge = None
             # print('PAR: Reached transient')
-            return False
+            return None
 
-    return False
+    return None
 
 
 class LambdaToFunction(ast.NodeTransformer):
@@ -738,6 +785,18 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
 
             memlets[vconn] = (memlet, False, None, conntype)
 
+    # To prevent variables-redefinition, build dictionary with all the previously defined symbols
+    defined_symbols = state_dfg.symbols_defined_at(node)
+
+    defined_symbols.update({
+        k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+        for k, v in sdfg.constants.items()
+    })
+
+    for connector, (memlet, _, _, conntype) in memlets.items():
+        if connector is not None:
+            defined_symbols.update({connector: conntype})
+
     callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg, state_id,
                           node)
     for stmt in body:
@@ -753,7 +812,11 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
             result = StringIO()
-            cppunparse.CPPUnparser(rk, ldepth + 1, locals, result)
+            cppunparse.CPPUnparser(rk,
+                                   ldepth + 1,
+                                   locals,
+                                   result,
+                                   defined_symbols=defined_symbols)
             callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
 
@@ -982,7 +1045,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         # New subscript is created as a name AST object (rather than a
         # subscript), as otherwise the visitor will recursively descend into
         # the new expression and modify it erroneously.
-        newnode = ast.Name(id="%s[%s]" % (target, sym2cpp(subscript)))
+        defined = set(self.memlets.keys()) | set(self.constants.keys())
+        newnode = ast.Name(id="%s[%s]" % (target, sym2cpp(subscript, defined)))
 
         return ast.copy_location(newnode, node)
 

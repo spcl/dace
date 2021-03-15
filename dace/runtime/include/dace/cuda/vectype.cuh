@@ -1,4 +1,4 @@
-// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 ////////////////////////////////////////////////////////////////////////
 // Define some operators on vector types
 
@@ -112,7 +112,29 @@
             if (index == U(0)) return x;                               \
             return y;                                                  \
         }                                                              \
-    };
+    };\
+    template <typename U>                                          \
+        static DACE_HDFI exttype_##T##_##2 operator+(const U &a, const exttype_##T##_##2& b) {  \
+            exttype_##T##_##2 result;                                  \
+            result.x = a + b.x;                                      \
+            result.y = a + b.y;                                      \
+            return result;                                             \
+        }\
+        template <typename U>                                          \
+        static DACE_HDFI exttype_##T##_##2 operator-(const U &a, const exttype_##T##_##2& b) {  \
+            exttype_##T##_##2 result;                                  \
+            result.x = a - b.x;                                      \
+            result.y = a - b.y;                                      \
+            return result;                                             \
+        }\
+        template <typename U>                                          \
+        static DACE_HDFI exttype_##T##_##2 operator*(const U &a, const exttype_##T##_##2& b) {  \
+            exttype_##T##_##2 result;                                  \
+            result.x = a * b.x;                                      \
+            result.y = a * b.y;                                      \
+            return result;                                             \
+        }                                     
+
 #define DEFINE_EXTTYPE3(T, NAME)                                       \
     struct exttype_##T##_##3 : NAME##3 {                               \
         DACE_HDFI exttype_##T##_##3 operator*(const exttype_##T##_##3 &other) const {  \

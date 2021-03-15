@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import collections
 from typing import Any, Dict, List, Tuple
@@ -15,12 +15,11 @@ ScopeDictType = Dict[NodeType, List[NodeType]]
 
 
 class ScopeTree(object):
-    """ A class defining a scope, its parent and children scopes, variables, and
+    """ A class defining a scope, its parent and children scopes, and
         scope entry/exit nodes. """
     def __init__(self, entrynode: EntryNodeType, exitnode: ExitNodeType):
         self.parent: 'ScopeTree' = None
         self.children: List['ScopeTree'] = []
-        self.defined_vars: List[str] = []
         self.entry: EntryNodeType = entrynode
         self.exit: ExitNodeType = exitnode
 
@@ -176,6 +175,8 @@ def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
             parent = sdfg.parent_sdfg
             state = sdfg.parent
             node = sdfg.parent_nsdfg_node
+            if node.schedule in schedules:
+                return True
         else:
             parent = sdfg.parent
         sdfg = parent
@@ -191,7 +192,12 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         :param node: The node in question
         :return: True if node is in device-level code, False otherwise.
     """
-    return is_in_scope(sdfg, state, node, dtypes.GPU_SCHEDULES)
+    return is_in_scope(
+        sdfg,
+        state,
+        node,
+        dtypes.GPU_SCHEDULES,
+    )
 
 
 def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',

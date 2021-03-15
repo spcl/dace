@@ -1,12 +1,13 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
 from dace.dtypes import StorageType
 import os
-from typing import Dict, Union
+from typing import Dict, Tuple, Union
 import warnings
 
 from dace import dtypes
+from dace import symbolic
 
 ###########################################
 # Validation
@@ -283,7 +284,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         ########################################
         # Check for duplicate connector names (unless it's a nested SDFG)
         if (len(node.in_connectors.keys() & node.out_connectors.keys()) > 0
-                and not isinstance(node, nd.NestedSDFG)):
+                and not isinstance(node, (nd.NestedSDFG, nd.LibraryNode))):
             dups = node.in_connectors.keys() & node.out_connectors.keys()
             raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups),
                                        sdfg, state_id, nid)
@@ -523,10 +524,11 @@ def validate_state(state: 'dace.sdfg.SDFGState',
              and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
             (isinstance(dst_node, nd.AccessNode)
              and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
-            if (e.data.src_subset.num_elements() *
-                    sdfg.arrays[src_node.data].veclen !=
-                    e.data.dst_subset.num_elements() *
-                    sdfg.arrays[dst_node.data].veclen):
+            src_expr = (e.data.src_subset.num_elements() *
+                        sdfg.arrays[src_node.data].veclen)
+            dst_expr = (e.data.dst_subset.num_elements() *
+                        sdfg.arrays[dst_node.data].veclen)
+            if symbolic.inequal_symbols(src_expr, dst_expr):
                 raise InvalidSDFGEdgeError(
                     'Dimensionality mismatch between src/dst subsets', sdfg,
                     state_id, eid)

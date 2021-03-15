@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement transformations relating to streams
     and transient nodes. """
 
@@ -28,8 +28,18 @@ class LocalStorage(xf.Transformation, ABC):
         default=None,
         allow_none=True)
 
-    def __init__(self, sdfg_id, state_id, subgraph, expr_index):
-        super().__init__(sdfg_id, state_id, subgraph, expr_index)
+    prefix = Property(dtype=str,
+                      default="trans_",
+                      allow_none=True,
+                      desc='Prefix for new data node')
+
+    create_array = Property(dtype=bool,
+                            default=True,
+                            desc="if false, it does not create a new array.",
+                            allow_none=True)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self._local_name = None
         self._data_node = None
 
@@ -49,6 +59,7 @@ class LocalStorage(xf.Transformation, ABC):
         graph = sdfg.nodes()[self.state_id]
         node_a = self.node_a(sdfg)
         node_b = self.node_b(sdfg)
+        prefix = self.prefix
 
         # Determine direction of new memlet
         scope_dict = graph.scope_dict()
@@ -77,17 +88,20 @@ class LocalStorage(xf.Transformation, ABC):
                 break
         if invariant_memlet is None:
             raise NameError('Array %s not found!' % array)
+        if self.create_array:
+            # Add transient array
+            new_data, _ = sdfg.add_array(
+                prefix + invariant_memlet.data, [
+                    symbolic.overapproximate(r).simplify()
+                    for r in invariant_memlet.bounding_box_size()
+                ],
+                sdfg.arrays[invariant_memlet.data].dtype,
+                transient=True,
+                find_new_name=True)
 
-        # Add transient array
-        new_data, _ = sdfg.add_array('trans_' + invariant_memlet.data, [
-            symbolic.overapproximate(r)
-            for r in invariant_memlet.bounding_box_size()
-        ],
-                                     sdfg.arrays[invariant_memlet.data].dtype,
-                                     transient=True,
-                                     find_new_name=True)
+        else:
+            new_data = prefix + invariant_memlet.data
         data_node = nodes.AccessNode(new_data)
-
         # Store as fields so that other transformations can use them
         self._local_name = new_data
         self._data_node = data_node

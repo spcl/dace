@@ -1,9 +1,10 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement the map fusion transformation.
 """
 
 from copy import deepcopy as dcpy
-from dace import dtypes, registry, symbolic, subsets
+from dace.sdfg.state import SDFGState
+from dace import data, dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes
 from dace.memlet import Memlet
 from dace.sdfg import replace
@@ -94,6 +95,7 @@ class MapFusion(transformation.Transformation):
         first_map_exit = graph.nodes()[candidate[MapFusion.first_map_exit]]
         first_map_entry = graph.entry_node(first_map_exit)
         second_map_entry = graph.nodes()[candidate[MapFusion.second_map_entry]]
+        second_map_exit = graph.exit_node(second_map_entry)
 
         for _in_e in graph.in_edges(first_map_exit):
             if _in_e.data.wcr is not None:
@@ -111,7 +113,7 @@ class MapFusion(transformation.Transformation):
 
                 # If array is used anywhere else in this state.
                 num_occurrences = len([
-                    n for n in graph.nodes()
+                    n for s in sdfg.nodes() for n in s.nodes()
                     if isinstance(n, nodes.AccessNode) and n.data == dst.data
                 ])
                 if num_occurrences > 1:
@@ -138,6 +140,17 @@ class MapFusion(transformation.Transformation):
         params_dict = {}
         for _index, _param in enumerate(first_map_entry.map.params):
             params_dict[_param] = second_map_entry.map.params[perm[_index]]
+        # Create intermediate dicts to avoid conflicts, such as {i:j, j:i}
+        repldict = {
+            symbolic.pystr_to_symbolic(k):
+            symbolic.pystr_to_symbolic('__dacesym_' + str(v))
+            for k, v in params_dict.items()
+        }
+        repldict_inv = {
+            symbolic.pystr_to_symbolic('__dacesym_' + str(v)):
+            symbolic.pystr_to_symbolic(v)
+            for v in params_dict.values()
+        }
 
         out_memlets = [e.data for e in graph.in_edges(first_map_exit)]
 
@@ -161,10 +174,9 @@ class MapFusion(transformation.Transformation):
 
             # Compute second subset with respect to first subset's symbols
             sbs_permuted = dcpy(second_edge.data.subset)
-            sbs_permuted.replace({
-                symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
-                for k, v in params_dict.items()
-            })
+            if sbs_permuted:
+                sbs_permuted.replace(repldict)
+                sbs_permuted.replace(repldict_inv)
 
             for first_memlet in out_memlets:
                 if first_memlet.data != second_edge.data.data:
@@ -179,6 +191,81 @@ class MapFusion(transformation.Transformation):
             # fail.
             if provided is False:
                 return False
+
+        # Checking for stencil pattern and common input/output data
+        # (after fusing the maps)
+        first_map_inputnodes = {e.src: e.src.data
+                                for e in graph.in_edges(first_map_entry)
+                                if isinstance(e.src, nodes.AccessNode)}
+        input_views = set()
+        viewed_inputnodes = dict()
+        for n in first_map_inputnodes.keys():
+            if isinstance(n.desc(sdfg), data.View):
+                input_views.add(n)
+        for v in input_views:
+            del first_map_inputnodes[v]
+            e = sdutil.get_view_edge(graph, v)
+            if e:
+                first_map_inputnodes[e.src] = e.src.data
+                viewed_inputnodes[e.src.data] = v
+        second_map_outputnodes = {e.dst: e.dst.data
+                                  for e in graph.out_edges(second_map_exit)
+                                  if isinstance(e.dst, nodes.AccessNode)}
+        output_views = set()
+        viewed_outputnodes = dict()
+        for n in second_map_outputnodes:
+            if isinstance(n.desc(sdfg), data.View):
+                output_views.add(n)
+        for v in output_views:
+            del second_map_outputnodes[v]
+            e = sdutil.get_view_edge(graph, v)
+            if e:
+                second_map_outputnodes[e.dst] = e.dst.data
+                viewed_outputnodes[e.dst.data] = v
+        common_data = set(first_map_inputnodes.values()).intersection(
+            set(second_map_outputnodes.values()))
+        if common_data:
+            input_data = [viewed_inputnodes[d].data
+                          if d in viewed_inputnodes.keys() else d
+                          for d in common_data]
+            input_accesses = [graph.memlet_path(e)[-1].data.src_subset
+                              for e in graph.out_edges(first_map_entry)
+                              if e.data.data in input_data]
+            if len(input_accesses) > 1:
+                for i, a in enumerate(input_accesses[:-1]):
+                    for b in input_accesses[i + 1:]:
+                        if isinstance(a, subsets.Indices):
+                            c = subsets.Range.from_indices(a)
+                            c.offset(b, negative=True)
+                        else:
+                            c = a.offset_new(b, negative=True)
+                        for r in c:
+                            if r != (0, 0, 1):
+                                return False
+
+            output_data = [viewed_outputnodes[d].data
+                           if d in viewed_outputnodes.keys() else d
+                           for d in common_data]
+            output_accesses = [graph.memlet_path(e)[0].data.dst_subset
+                               for e in graph.in_edges(second_map_exit)
+                               if e.data.data in output_data]
+
+            # Compute output accesses with respect to first map's symbols
+            oacc_permuted = [dcpy(a) for a in output_accesses]
+            for a in oacc_permuted:
+                a.replace(repldict)
+                a.replace(repldict_inv)
+            
+            a = input_accesses[0]
+            for b in oacc_permuted:
+                if isinstance(a, subsets.Indices):
+                    c = subsets.Range.from_indices(a)
+                    c.offset(b, negative=True)
+                else:
+                    c = a.offset_new(b, negative=True)
+                for r in c:
+                    if r != (0, 0, 1):
+                        return False
 
         # Success
         return True
@@ -212,7 +299,7 @@ class MapFusion(transformation.Transformation):
                 adjacent to the new map entry node post fusion.
 
         """
-        graph = sdfg.nodes()[self.state_id]
+        graph: SDFGState = sdfg.nodes()[self.state_id]
         first_exit = graph.nodes()[self.subgraph[MapFusion.first_map_exit]]
         first_entry = graph.entry_node(first_exit)
         second_entry = graph.nodes()[self.subgraph[MapFusion.second_map_entry]]
@@ -409,8 +496,27 @@ class MapFusion(transformation.Transformation):
             )
             edge.data.data = local_name
             edge.data.subset = "0"
-            local_node = edge.src
-            src_connector = edge.src_conn
+
+            # If source of edge leads to multiple destinations,
+            # redirect all through an access node
+            out_edges = list(graph.out_edges_by_connector(edge.src, edge.src_conn))
+            if len(out_edges) > 1:
+                local_node = graph.add_access(local_name)
+                src_connector = None
+
+                # Add edge that leads to transient node
+                graph.add_edge(edge.src, edge.src_conn, local_node, None,
+                               dcpy(edge.data))
+
+                for other_edge in out_edges:
+                    if other_edge is not edge:
+                        graph.remove_edge(other_edge)
+                        graph.add_edge(local_node, src_connector,
+                                       other_edge.dst, other_edge.dst_conn,
+                                       other_edge.data)
+            else:
+                local_node = edge.src
+                src_connector = edge.src_conn
 
             # Add edge that leads to the second node
             graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,

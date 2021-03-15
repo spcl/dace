@@ -1,8 +1,10 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 
 import dace
+from dace import nodes
 from dace.libraries.blas import Transpose
+from dace.transformation.dataflow import RedundantArray, RedundantSecondArray
 
 
 def test_out():
@@ -68,12 +70,19 @@ def test_out_success():
     state.add_edge(D, None, t, '__in2', dace.Memlet.simple("D", "0"))
     state.add_memlet_path(t, mx, E, memlet=dace.Memlet.simple("E", "i, j, k"),
                           src_conn='__out')
-    
+
 
     sdfg.validate()
     sdfg.apply_strict_transformations()
-    assert len(state.nodes()) == 7
-    assert B not in state.nodes()
+    arrays, views = 0, 0
+    for n in state.nodes():
+        if isinstance(n, dace.nodes.AccessNode):
+            if isinstance(n.desc(sdfg), dace.data.View):
+                views += 1
+            else:
+                arrays += 1
+    assert views == 1
+    assert arrays == 4
     sdfg.validate()
 
     A_arr = np.arange(125, dtype=np.float32).reshape(5, 5, 5)
@@ -193,6 +202,87 @@ def test_in():
     assert (A_arr == D_arr.T).all()
 
 
+def test_view_array_array():
+    sdfg = dace.SDFG('redarrtest')
+    sdfg.add_view('v', [2, 10], dace.float64)
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_transient('tmp', [20], dace.float64)
+
+    state = sdfg.add_state()
+    t = state.add_tasklet('something', {}, {'out'}, 'out[1, 1] = 6')
+    v = state.add_access('v')
+    tmp = state.add_access('tmp')
+    w = state.add_write('A')
+    state.add_edge(t, 'out', v, None, dace.Memlet('v[0:2, 0:10]'))
+    state.add_nedge(v, tmp, dace.Memlet('tmp[0:20]'))
+    state.add_nedge(tmp, w, dace.Memlet('A[0:20]'))
+
+    assert sdfg.apply_transformations_repeated(RedundantArray) == 1
+    sdfg.validate()
+
+
+def test_array_array_view():
+    sdfg = dace.SDFG('redarrtest')
+    sdfg.add_view('v', [2, 10], dace.float64)
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_transient('tmp', [20], dace.float64)
+
+    state = sdfg.add_state()
+    a = state.add_read('A')
+    tmp = state.add_access('tmp')
+    v = state.add_access('v')
+    t = state.add_tasklet('something', {'inp'}, {}, 'inp[1, 1] + 6')
+    state.add_nedge(a, tmp, dace.Memlet('A[0:20]'))
+    state.add_nedge(tmp, v, dace.Memlet('tmp[0:20]'))
+    state.add_edge(v, None, t, 'inp', dace.Memlet('v[0:2, 0:10]'))
+
+    assert sdfg.apply_transformations_repeated(RedundantSecondArray) == 1
+    sdfg.validate()
+
+
+def test_reverse_copy():
+    @dace.program
+    def redarrtest(p: dace.float64[20, 20]):
+        p[-1, :] = p[-2, :]
+
+    p = np.random.rand(20, 20)
+    pp = np.copy(p)
+    pp[-1, :] = pp[-2, :]
+    redarrtest(p)
+    assert np.allclose(p, pp)
+
+
+C_in, C_out, H, K, N, W = (dace.symbol(s, dace.int64)
+                           for s in ('C_in', 'C_out', 'H', 'K', 'N', 'W'))
+
+
+# Deep learning convolutional operator (stride = 1)
+@dace.program
+def conv2d(input: dace.float32[N, H, W, C_in],
+           weights: dace.float32[K, K, C_in, C_out]):
+    output = np.ndarray((N, H-K+1, W-K+1, C_out), dtype=np.float32)
+
+    # Loop structure adapted from https://github.com/SkalskiP/ILearnDeepLearning.py/blob/ba0b5ba589d4e656141995e8d1a06d44db6ce58d/01_mysteries_of_neural_networks/06_numpy_convolutional_neural_net/src/layers/convolutional.py#L88
+    # for i, j in dace.map[0:H-K+1, 0:W-K+1]:
+    for i in range(H-K+1):
+        for j in range(W-K+1):
+            output[:, i, j, :] = np.sum(
+                input[:, i:i + K, j:j + K, :, np.newaxis] *
+                weights[np.newaxis, :, :, :],
+                axis=(1, 2, 3),
+            )
+
+    return output
+
+
+def test_conv2d():
+    sdfg = conv2d.to_sdfg(strict=True)
+    access_nodes = [n for n, _ in sdfg.all_nodes_recursive()
+                    if isinstance(n, nodes.AccessNode) and
+                    not isinstance(sdfg.arrays[n.data], dace.data.View)]
+    assert(len(access_nodes) == 4)
+
+
 if __name__ == '__main__':
     test_in()
     test_out()
@@ -200,3 +290,7 @@ if __name__ == '__main__':
     test_out_failure_subset_mismatch()
     test_out_failure_no_overlap()
     test_out_failure_partial_overlap()
+    test_view_array_array()
+    test_array_array_view()
+    test_reverse_copy()
+    test_conv2d()

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes of a single SDFG state and dataflow subgraphs. """
 
 import collections
@@ -220,7 +220,7 @@ class StateGraphView(object):
 
     def in_edges_by_connector(
             self, node: nd.Node,
-            connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+            connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
         """ Returns a generator over edges entering the given connector of the
             given node.
             :param node: Destination node of edges.
@@ -230,7 +230,7 @@ class StateGraphView(object):
 
     def out_edges_by_connector(
             self, node: nd.Node,
-            connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+            connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
         """ Returns a generator over edges exiting the given connector of the
             given node.
             :param node: Source node of edges.
@@ -238,8 +238,9 @@ class StateGraphView(object):
         """
         return (e for e in self.out_edges(node) if e.src_conn == connector)
 
-    def edges_by_connector(self, node: nd.Node,
-                           connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+    def edges_by_connector(
+            self, node: nd.Node,
+            connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
         """ Returns a generator over edges entering or exiting the given
             connector of the given node.
             :param node: Source/destination node of edges.
@@ -283,10 +284,6 @@ class StateGraphView(object):
                 exit_node = next(v for v in scopenodes
                                  if isinstance(v, nd.ExitNode))
             scope = ScopeTree(node, exit_node)
-            scope.defined_vars = set(
-                symbolic.pystr_to_symbolic(s)
-                for s in (self.symbols_defined_at(node).keys()
-                          | sdfg_symbols))
             result[node] = scope
 
         # Scope parents and children
@@ -431,14 +428,12 @@ class StateGraphView(object):
                 freesyms |= set(map(str, n.desc(sdfg).free_symbols))
 
             freesyms |= n.free_symbols
-
         # Free symbols from memlets
         for e in self.edges():
             freesyms |= e.data.free_symbols
 
         # Do not consider SDFG constants as symbols
         new_symbols.update(set(sdfg.constants.keys()))
-
         return freesyms - new_symbols
 
     def defined_symbols(self) -> Dict[str, dt.Data]:
@@ -464,7 +459,7 @@ class StateGraphView(object):
             defined_syms.update(edge.data.new_symbols(defined_syms))
 
         # Add scope symbols all the way to the subgraph
-        sdict = self.scope_dict()
+        sdict = state.scope_dict()
         scope_nodes = []
         for source_node in self.source_nodes():
             curnode = source_node
@@ -473,7 +468,7 @@ class StateGraphView(object):
                 scope_nodes.append(curnode)
 
         for snode in dtypes.deduplicate(list(reversed(scope_nodes))):
-            defined_syms.update(snode.new_symbols(defined_syms))
+            defined_syms.update(snode.new_symbols(sdfg, state, defined_syms))
 
         return defined_syms
 
@@ -505,9 +500,6 @@ class StateGraphView(object):
                         # skip empty memlets
                         if e.data.is_empty():
                             continue
-                        if n.data in ws:
-                            if any(s.covers(e.data.subset) for s in ws[n.data]):
-                                continue
                         rs[n.data].append(e.data.subset)
             # Union all subgraphs, so an array that was excluded from the read
             # set because it was written first is still included if it is read
@@ -748,9 +740,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             :param sdfg: A reference to the parent SDFG.
             :param debuginfo: Source code locator for debugging.
         """
+        from dace.sdfg.sdfg import SDFG  # Avoid import loop
         super(SDFGState, self).__init__()
         self._label = label
-        self._parent = sdfg
+        self._parent: SDFG = sdfg
         self._graph = self  # Allowing MemletTrackingView mixin to work
         self._clear_scopedict_cache()
         self._debuginfo = debuginfo
@@ -1426,6 +1419,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                      init_overlap=False,
                      drain_size=0,
                      drain_overlap=False,
+                     additional_iterators={},
                      schedule=dtypes.ScheduleType.FPGA_Device,
                      debuginfo=None,
                      **kwargs) -> Tuple[nd.PipelineEntry, nd.PipelineExit]:
@@ -1446,6 +1440,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             :param drain_size:    Number of iterations of draining phase.
             :param drain_overlap: Whether the draining phase overlaps with
                                   the "main" streaming phase of the loop.
+            :param additional_iterators: a dictionary containing additional
+                                  iterators that will be created for this scope and that are not
+                                  automatically managed by the scope code.
+                                  The dictionary takes the form 'variable_name' -> init_value
             :return: (map_entry, map_exit) node 2-tuple
         """
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
@@ -1455,6 +1453,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                                init_overlap=init_overlap,
                                drain_size=drain_size,
                                drain_overlap=drain_overlap,
+                               additional_iterators=additional_iterators,
                                schedule=schedule,
                                debuginfo=debuginfo,
                                **kwargs)

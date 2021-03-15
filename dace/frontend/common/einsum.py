@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Classes to handle Einstein-notation sums (einsum) as a library node. """
 from functools import reduce
 from itertools import chain
@@ -144,7 +144,7 @@ def create_batch_gemm_sdfg(dtype, strides):
 
     import dace.libraries.blas as blas  # Avoid import loop
 
-    libnode = blas.MatMul('einsum_gemm', zarr.dtype)
+    libnode = blas.MatMul('einsum_gemm')
     state.add_node(libnode)
     state.add_edge(gX, None, libnode, '_a', Memlet.from_array(gX.data, xarr))
     state.add_edge(gY, None, libnode, '_b', Memlet.from_array(gY.data, yarr))

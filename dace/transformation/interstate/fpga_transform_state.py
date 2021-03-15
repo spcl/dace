@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
 import dace
@@ -93,14 +93,15 @@ class FPGATransformState(transformation.Transformation):
             candidate_map = map_entry.map
 
             # No more than 3 dimensions
-            if candidate_map.range.dims() > 3: return False
+            if candidate_map.range.dims() > 3:
+                return False
 
             # Map schedules that are disallowed to transform to FPGAs
             if (candidate_map.schedule == dtypes.ScheduleType.MPI
                     or candidate_map.schedule == dtypes.ScheduleType.GPU_Device
                     or candidate_map.schedule == dtypes.ScheduleType.FPGA_Device
-                    or candidate_map.schedule ==
-                    dtypes.ScheduleType.GPU_ThreadBlock):
+                    or candidate_map.schedule
+                    == dtypes.ScheduleType.GPU_ThreadBlock):
                 return False
 
             # Recursively check parent for FPGA schedules
@@ -108,10 +109,10 @@ class FPGATransformState(transformation.Transformation):
             current_node = map_entry
             while current_node is not None:
                 if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
-                        or current_node.map.schedule ==
-                        dtypes.ScheduleType.FPGA_Device
-                        or current_node.map.schedule ==
-                        dtypes.ScheduleType.GPU_ThreadBlock):
+                        or current_node.map.schedule
+                        == dtypes.ScheduleType.FPGA_Device
+                        or current_node.map.schedule
+                        == dtypes.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
@@ -158,7 +159,6 @@ class FPGATransformState(transformation.Transformation):
                             continue
                         input_nodes.append(outer_node)
                         wcr_input_nodes.add(outer_node)
-
         if input_nodes:
             # create pre_state
             pre_state = sd.SDFGState('pre_' + state.label, sdfg)
@@ -247,5 +247,4 @@ class FPGATransformState(transformation.Transformation):
         for src, src_conn, dst, dst_conn, mem in state.edges():
             if mem.data is not None and mem.data in fpga_data:
                 mem.data = 'fpga_' + mem.data
-
         fpga_update(sdfg, state, 0)

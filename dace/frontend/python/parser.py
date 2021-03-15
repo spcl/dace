@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ DaCe Python parsing functionality and entry point to Python frontend. """
 from __future__ import print_function
 import inspect
@@ -91,15 +91,18 @@ def parse_from_file(filename, *compilation_args):
     return [parse_function(p, *compilation_args) for p in programs]
 
 
-def parse_from_function(function, *compilation_args, strict=None):
-    """ Try to parse a DaceProgram object and return the `dace.SDFG` object
-        that corresponds to it.
-        :param function: DaceProgram object (obtained from the `@dace.program`
-                         decorator).
-        :param compilation_args: Various compilation arguments e.g. dtypes.
-        :param strict: Whether to apply strict transformations or not (None
-                       uses configuration-defined value). 
-        :return: The generated SDFG object.
+def parse_from_function(function, *compilation_args, strict=None, save=True):
+    """ 
+    Try to parse a DaceProgram object and return the `dace.SDFG` object
+    that corresponds to it.
+    :param function: DaceProgram object (obtained from the ``@dace.program``
+                     decorator).
+    :param compilation_args: Various compilation arguments e.g. dtypes.
+    :param strict: Whether to apply strict transformations or not (None
+                   uses configuration-defined value). 
+    :param save: If True, saves the generated SDFG to 
+                 ``_dacegraphs/program.sdfg`` after parsing.
+    :return: The generated SDFG object.
     """
     # Avoid import loop
     from dace.sdfg.analysis import scalar_to_symbol as scal2sym
@@ -131,7 +134,7 @@ def parse_from_function(function, *compilation_args, strict=None):
 
     # Save the SDFG (again). Skip this step if running from a cached SDFG, as
     # it might overwrite the cached SDFG.
-    if not Config.get_bool('compiler', 'use_cache'):
+    if not Config.get_bool('compiler', 'use_cache') and save:
         sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
     # Validate SDFG
@@ -234,12 +237,14 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
 class DaceProgram:
     """ A data-centric program object, obtained by decorating a function with
         `@dace.program`. """
-    def __init__(self, f, args, kwargs):
+    def __init__(self, f, args, kwargs, auto_optimize, device):
         self.f = f
         self.args = args
         self.kwargs = kwargs
-        self._name = f.__name__
+        self.name = f.__name__
         self.argnames = _get_argnames(f)
+        self.auto_optimize = auto_optimize
+        self.device = device
 
         global_vars = _get_locals_and_globals(f)
 
@@ -250,17 +255,13 @@ class DaceProgram:
         if self.argnames is None:
             self.argnames = []
 
-    @property
-    def name(self):
-        return self._name
-
-    def to_sdfg(self, *args, strict=None) -> SDFG:
+    def to_sdfg(self, *args, strict=None, save=True) -> SDFG:
         """ Parses the DaCe function into an SDFG. """
-        return parse_from_function(self, *args, strict=strict)
+        return parse_from_function(self, *args, strict=strict, save=save)
 
-    def compile(self, *args, strict=None):
+    def compile(self, *args, strict=None, save=True):
         """ Convenience function that parses and compiles a DaCe program. """
-        sdfg = parse_from_function(self, *args, strict=strict)
+        sdfg = parse_from_function(self, *args, strict=strict, save=save)
         return sdfg.compile()
 
     def __call__(self, *args, **kwargs):
@@ -279,11 +280,22 @@ class DaceProgram:
         if Config.get_bool('optimizer', 'transform_on_call'):
             sdfg = sdfg.optimize()
 
+        # Invoke auto-optimization as necessary
+        if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
+            from dace.transformation import auto_optimize as autoopt
+            sdfg = autoopt.auto_optimize(sdfg, self.device)
+
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
         binaryobj = sdfg.compile()
 
-        return binaryobj(**kwargs)
+        # Call SDFG
+        result = binaryobj(**kwargs)
+
+        # Enforce deletion and closure of compiled program
+        del binaryobj
+
+        return result
 
     def generate_pdp(self, *compilation_args, strict=None):
         """ Generates the parsed AST representation of a DaCe program.
@@ -353,6 +365,7 @@ class DaceProgram:
 
         # Parse AST to create the SDFG
         return newast.parse_dace_program(dace_func,
+                                         self.name,
                                          argtypes,
                                          global_vars,
                                          modules,

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ State fusion transformation """
 
 from typing import List, Set
@@ -132,8 +132,15 @@ class StateFusion(transformation.Transformation):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        first_state = graph.nodes()[candidate[StateFusion.first_state]]
-        second_state = graph.nodes()[candidate[StateFusion.second_state]]
+        # Workaround for supporting old and new conventions
+        if isinstance(candidate[StateFusion.first_state], SDFGState):
+            first_state: SDFGState = candidate[StateFusion.first_state]
+            second_state: SDFGState = candidate[StateFusion.second_state]
+        else:
+            first_state: SDFGState = graph.node(
+                candidate[StateFusion.first_state])
+            second_state: SDFGState = graph.node(
+                candidate[StateFusion.second_state])
 
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
@@ -179,12 +186,6 @@ class StateFusion(transformation.Transformation):
                 if dst == second_state:
                     return False
 
-        # No data containers written in the first state can be free symbols in
-        # the second
-        _, write_set = first_state.read_and_write_sets()
-        if len(write_set & second_state.free_symbols) > 0:
-            return False
-
         if strict:
             # If second state has other input edges, there might be issues
             # Exceptions are when none of the states contain dataflow, unless
@@ -214,7 +215,7 @@ class StateFusion(transformation.Transformation):
             }
             first_output = {
                 node
-                for node in first_state.nodes() if
+                for node in first_state.scope_children()[None] if
                 isinstance(node, nodes.AccessNode) and node not in first_input
             }
             second_input = {
@@ -224,7 +225,7 @@ class StateFusion(transformation.Transformation):
             }
             second_output = {
                 node
-                for node in second_state.nodes() if
+                for node in second_state.scope_children()[None] if
                 isinstance(node, nodes.AccessNode) and node not in second_input
             }
 
@@ -326,7 +327,31 @@ class StateFusion(transformation.Transformation):
 
                 first_inout = fused_cc.first_inputs | fused_cc.first_outputs
                 for other_cc in resulting_ccs:
+                    # NOTE: Special handling for `other_cc is fused_cc`
                     if other_cc is fused_cc:
+                        # Checking for potential Read-Write data races
+                        for d in first_inout:
+                            if d in other_cc.second_outputs:
+                                nodes_second = [
+                                    n for n in second_output if n.data == d
+                                ]
+                                # Read-Write race
+                                if d in fused_cc.first_inputs:
+                                    nodes_first = [
+                                        n for n in first_input if n.data == d
+                                    ]
+                                for n2 in nodes_second:
+                                    for e in second_state.in_edges(n2):
+                                        path = second_state.memlet_path(e)
+                                        src = path[0].src
+                                        if src in second_input and src.data in fused_cc.first_outputs:
+                                            for n1 in fused_cc.first_output_nodes:
+                                                if n1.data == src.data:
+                                                    for n0 in nodes_first:
+                                                        if not nx.has_path(
+                                                                first_state._nx,
+                                                                n0, n1):
+                                                            return False
                         continue
                     # If an input/output of a connected component in the first
                     # state is an output of another connected component in the
@@ -397,8 +422,14 @@ class StateFusion(transformation.Transformation):
         return " -> ".join(state.label for state in [first_state, second_state])
 
     def apply(self, sdfg):
-        first_state = sdfg.nodes()[self.subgraph[StateFusion.first_state]]
-        second_state = sdfg.nodes()[self.subgraph[StateFusion.second_state]]
+        if isinstance(self.subgraph[StateFusion.first_state], SDFGState):
+            first_state: SDFGState = self.subgraph[StateFusion.first_state]
+            second_state: SDFGState = self.subgraph[StateFusion.second_state]
+        else:
+            first_state: SDFGState = sdfg.node(
+                self.subgraph[StateFusion.first_state])
+            second_state: SDFGState = sdfg.node(
+                self.subgraph[StateFusion.second_state])
 
         # Remove interstate edge(s)
         edges = sdfg.edges_between(first_state, second_state)
@@ -448,9 +479,10 @@ class StateFusion(transformation.Transformation):
 
         # Merge second state to first state
         # First keep a backup of the topological sorted order of the nodes
+        sdict = first_state.scope_dict()
         order = [
             x for x in reversed(list(nx.topological_sort(first_state._nx)))
-            if isinstance(x, nodes.AccessNode)
+            if isinstance(x, nodes.AccessNode) and sdict[x] is None
         ]
         for node in second_state.nodes():
             first_state.add_node(node)
@@ -467,8 +499,9 @@ class StateFusion(transformation.Transformation):
                 continue
 
             if first_state.in_degree(node) == 0:
-                candidates = [x for x in order
-                              if x.data == node.data and x in top]
+                candidates = [
+                    x for x in order if x.data == node.data and x in top
+                ]
                 if len(candidates) == 0:
                     continue
                 elif len(candidates) == 1:
@@ -478,7 +511,7 @@ class StateFusion(transformation.Transformation):
                     for cand in candidates:
                         if StateFusion.memlets_intersect(
                                 first_state, [cand], False, second_state,
-                                [node], True):
+                            [node], True):
                             n = cand
                             break
                     else:

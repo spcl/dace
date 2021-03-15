@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This sample uses basic grid-search based tuning to adapt memory layouts for
     a simple matrix multiplication. """
 import dace

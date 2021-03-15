@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.memlet import Memlet
 from dace.dtypes import Language, StorageType
 from dace.properties import CodeProperty

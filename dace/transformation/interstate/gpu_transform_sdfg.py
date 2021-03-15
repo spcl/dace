@@ -1,11 +1,13 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
 from dace import data, memlet, dtypes, registry, sdfg as sd
-from dace.sdfg import nodes
+from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
-from dace.transformation import transformation
+from dace.transformation import transformation, helpers as xfh
 from dace.properties import Property, make_properties
+from collections import defaultdict
+from typing import Dict
 
 
 @registry.autoregister
@@ -37,6 +39,11 @@ class GPUTransformSDFG(transformation.Transformation):
         default=True)
 
     sequential_innermaps = Property(desc="Make all internal maps Sequential",
+                                    dtype=bool,
+                                    default=True)
+
+    skip_scalar_tasklets = Property(desc="If True, does not transform tasklets "
+                                    "that manipulate (Default-stored) scalars",
                                     dtype=bool,
                                     default=True)
 
@@ -103,9 +110,9 @@ class GPUTransformSDFG(transformation.Transformation):
         # Find all input and output data descriptors
         input_nodes = []
         output_nodes = []
-        global_code_nodes = [[] for _ in sdfg.nodes()]
+        global_code_nodes: Dict[sd.SDFGState, nodes.Tasklet] = defaultdict(list)
 
-        for i, state in enumerate(sdfg.nodes()):
+        for state in sdfg.nodes():
             sdict = state.scope_dict()
             for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode)
@@ -126,10 +133,6 @@ class GPUTransformSDFG(transformation.Transformation):
                     if (state.in_degree(node) > 0
                             and node.data not in output_nodes):
                         output_nodes.append((node.data, node.desc(sdfg)))
-                elif isinstance(node, nodes.CodeNode) and sdict[node] is None:
-                    if not isinstance(node,
-                                      (nodes.LibraryNode, nodes.NestedSDFG)):
-                        global_code_nodes[i].append(node)
 
             # Input nodes may also be nodes with WCR memlets and no identity
             for e in state.edges():
@@ -227,6 +230,8 @@ class GPUTransformSDFG(transformation.Transformation):
         #######################################################
         # Step 4: Modify transient data storage
 
+        const_syms = xfh.constant_symbols(sdfg)
+
         for state in sdfg.nodes():
             sdict = state.scope_dict()
             for node in state.nodes():
@@ -254,18 +259,47 @@ class GPUTransformSDFG(transformation.Transformation):
                         nodedesc.storage = dtypes.StorageType.GPU_Global
 
                         # Try to move allocation/deallocation out of loops
+                        dsyms = set(map(str, nodedesc.free_symbols))
                         if (self.toplevel_trans
-                                and not isinstance(nodedesc, data.Stream)):
+                                and not isinstance(nodedesc, data.Stream)
+                                and len(dsyms - const_syms) == 0):
                             nodedesc.lifetime = dtypes.AllocationLifetime.SDFG
                     elif nodedesc.storage not in gpu_storage:
                         # Make internal transients registers
                         if self.register_trans:
                             nodedesc.storage = dtypes.StorageType.Register
 
+        
         #######################################################
-        # Step 5: Wrap free tasklets and nested SDFGs with a GPU map
+        # Step 5: Change all top-level maps and library nodes to GPU schedule
 
-        for state, gcodes in zip(sdfg.nodes(), global_code_nodes):
+        for state in sdfg.nodes():
+            sdict = state.scope_dict()
+            for node in state.nodes():
+                if sdict[node] is None:
+                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
+                        node.schedule = dtypes.ScheduleType.GPU_Default
+                    elif isinstance(node, nodes.EntryNode):
+                        node.schedule = dtypes.ScheduleType.GPU_Device
+                else:
+                    if isinstance(
+                            node,
+                        (nodes.EntryNode,
+                         nodes.LibraryNode)) and self.sequential_innermaps:
+                        node.schedule = dtypes.ScheduleType.Sequential
+    
+        #######################################################
+        # Step 6: Wrap free tasklets and nested SDFGs with a GPU map
+        
+        # Collect free tasklets
+        for node, state in sdfg.all_nodes_recursive():
+            if isinstance(node, nodes.Tasklet):
+                if (state.entry_node(node) is None
+                        and not scope.is_devicelevel_gpu(
+                            state.parent, state, node)):
+                    global_code_nodes[state].append(node)
+
+        for state, gcodes in global_code_nodes.items():
             for gcode in gcodes:
                 if gcode.label in self.exclude_tasklets.split(','):
                     continue
@@ -303,21 +337,6 @@ class GPUTransformSDFG(transformation.Transformation):
                 # Map without inputs
                 if len(in_edges) == 0:
                     state.add_nedge(me, gcode, memlet.Memlet())
-        #######################################################
-        # Step 6: Change all top-level maps and library nodes to GPU schedule
-
-        for i, state in enumerate(sdfg.nodes()):
-            sdict = state.scope_dict()
-            for node in state.nodes():
-                if sdict[node] is None:
-                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
-                        node.schedule = dtypes.ScheduleType.GPU_Default
-                    elif isinstance(node, nodes.EntryNode):
-                        node.schedule = dtypes.ScheduleType.GPU_Device
-                else:
-                    if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)) and self.sequential_innermaps:
-                        node.schedule = dtypes.ScheduleType.Sequential
-
         #######################################################
         # Step 7: Introduce copy-out if data used in outgoing interstate edges
 

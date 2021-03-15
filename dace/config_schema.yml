@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 # Schema file for DaCe Preferences
 
 # Metadata fields for elements:
@@ -29,6 +29,33 @@ required:
                 description: >
                     Automatically specialize every SDFG to the symbol values
                     at call-time. Requires all symbols to be set.
+
+            autooptimize:
+                type: bool
+                default: false
+                title: Run auto-optimization heuristics
+                description: >
+                    Automatically runs the set of optimizing transformation
+                    heuristics on any program called via the Python frontend.
+
+            autotile_size:
+                type: int
+                default: 128
+                title: Default tile size in auto-optimization
+                description: >
+                    Sets the default tile size for the optimization heuristics.
+
+            autotile_partial_parallelism:
+                type: bool
+                default: true
+                title: Prefer partial parallelism over write-conflict tiling
+                description: >
+                    If true, sets the auto-optimizer to prefer extracting map
+                    parallel dimensions over tiling for atomic write-conflict
+                    resolution edges. This may be slower in case of small
+                    parallel dimensions vs. conflicted dimensions. This
+                    preference only applies to symbolic ranges or ranges over
+                    the autotile_size parameter.
 
             transform_on_call:
                 type: bool
@@ -105,6 +132,14 @@ required:
                 description: >
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
+
+            library_prefix:
+                type: str
+                default: ""
+                default_Linux: "lib"
+                default_Darwin: "lib"
+                title: Library prefix
+                description: Filename prefix for shared libraries.
 
             library_extension:
                 type: str
@@ -184,6 +219,13 @@ required:
                 description: >
                     If set to true, inlines all nested SDFGs upon code generation by default.
 
+            max_stack_array_size:
+                type: int
+                default: 65536
+                title: Max stack-allocated array size (bytes)
+                description: >
+                    All stack allocated arrays (i.e. StorageType.Register) with
+                    size larger than this will be allocated on the heap.
 
             #############################################
             # CPU compiler
@@ -210,6 +252,15 @@ required:
                         title: Additional libraries
                         description: Additional linked libraries required by target
                         default: ''
+
+                    openmp_sections:
+                        type: bool
+                        default: true
+                        title: Use OpenMP sections
+                        description: >
+                            If set to true, multiple connected components will
+                            generate "#pragma omp parallel sections" code around
+                            them.
 
             #############################################
             # GPU (CUDA/HIP) compiler
@@ -268,6 +319,7 @@ required:
                         description: >
                             Default thread-block size for GPU kernels when
                             explicit GPU block maps are not defined.
+                            Can be set to 'max' to maximize occupancy.
                         default: '32,1,1'
 
                     dynamic_map_block_size:
@@ -275,7 +327,7 @@ required:
                         title: Thread-Block size for GPU_ThreadBlock_Dynamic
                         description: >
                             Thread-Block size for maps using GPU_ThreadBlock_Dynamic
-                            scheduler.
+                            scheduler. Can be set to 'max' to maximize occupancy.
                         default: '128,1,1'
 
                     dynamic_map_fine_grained:

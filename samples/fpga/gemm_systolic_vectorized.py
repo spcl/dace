@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 # Computes C = AB + C
 # This sample build on matrix_multiplication_systolic by adding
 # vectorization. The systolic arrays used data type depends on the used vectorization width
@@ -357,11 +357,11 @@ def make_fpga_state(sdfg, vec_width=1):
 def make_sdfg(specialized, vec_width):
 
     if specialized:
-        sdfg = dace.SDFG("gemm_fpga_systolic_vectorized_{}_{}x{}x{}".format(
-            P.get(), N.get(), K.get(), M.get()))
+        sdfg = dace.SDFG("gemm_fpga_systolic_vectorized_d{}_w{}_{}x{}x{}".format(
+            P.get(), vec_width, N.get(), K.get(), M.get()))
     else:
-        sdfg = dace.SDFG("gemm_fpga_systolic_vectorized_{}_NxKx{}".format(
-            P.get(), M.get()))
+        sdfg = dace.SDFG("gemm_fpga_systolic_vectorized_d{}_w{}_NxKx{}".format(
+            P.get(), vec_width, M.get()))
 
     pre_state = make_copy_to_fpga_state(sdfg, vec_width)
     compute_state = make_fpga_state(sdfg, vec_width)
@@ -377,8 +377,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int)
-    parser.add_argument("M", type=int)
     parser.add_argument("K", type=int)
+    parser.add_argument("M", type=int)
     parser.add_argument("P", type=int, help="Number of processing elements")
     parser.add_argument("W", type=int, help="Vectorization width")
     parser.add_argument("-specialize",
@@ -403,8 +403,8 @@ if __name__ == "__main__":
         sdfg = make_sdfg(True, vec_width)
         sdfg.specialize(dict(P=P, M=M, N=N, K=K))
 
-    print("Matrix multiplication {}x{}x{} with {} PEs ({}specialized)".format(
-        M.get(), N.get(), K.get(), P.get(),
+    print("Matrix multiplication {}x{}x{} with {} PEs and vectorization width {} ({}specialized)".format(
+        N.get(), K.get(), M.get(), P.get(), args["W"],
         "" if args["specialize"] else "not "))
 
     # Initialize arrays: Randomize A and B, zero C
@@ -425,7 +425,7 @@ if __name__ == "__main__":
         sdfg(A=A, B=B, C=C)
     else:
         sdfg(A=A, B=B, C=C, N=N, K=K)
-    diff = np.linalg.norm(C_regression - C) / float(M.get() * K.get())
+    diff = np.linalg.norm(C_regression - C) / float(N.get() * M.get())
     if diff > 1e-6:
         raise ValueError(f"Verification failed, difference: {diff}")
     else:

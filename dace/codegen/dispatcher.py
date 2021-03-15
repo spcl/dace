@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ 
 Contains the DaCe code generator target dispatcher, which is responsible for
 flexible code generation with multiple backends by dispatching certain
@@ -32,7 +32,7 @@ class DefinedMemlets:
         The ones defined in the first (top) scope, refer to global variables.
     """
     def __init__(self):
-        self._scopes = [(None, {}, True)]
+        self._scopes = [(None, {}, True), (None, {}, True)]
 
     def enter_scope(self, parent, can_access_parent=True):
         self._scopes.append((parent, {}, can_access_parent))
@@ -322,7 +322,8 @@ class TargetDispatcher(object):
                           state_id,
                           function_stream,
                           callsite_stream,
-                          skip_entry_node=False):
+                          skip_entry_node=False,
+                          skip_exit_node=False):
         """ Dispatches a code generator for a scope subgraph of an
             `SDFGState`. """
 
@@ -335,6 +336,10 @@ class TargetDispatcher(object):
         if skip_entry_node:
             assert len(start_nodes) == 1
             nodes_to_skip.add(start_nodes[0])
+
+        if skip_exit_node:
+            exit_node = dfg.exit_node(start_nodes[0])
+            nodes_to_skip.add(exit_node)
 
         for v in sdutil.dfs_topological_sort(dfg, start_nodes):
             if v in nodes_to_skip:
@@ -363,9 +368,10 @@ class TargetDispatcher(object):
 
         # Check if the node satisfies any predicates that delegate to a
         # specific code generator
+        state = sdfg.node(state_id)
         satisfied_dispatchers = [
             dispatcher for pred, dispatcher in self._node_dispatchers
-            if pred(sdfg, node)
+            if pred(sdfg, state, node)
         ]
         num_satisfied = len(satisfied_dispatchers)
         if num_satisfied > 1:

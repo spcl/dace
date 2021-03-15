@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes and functions related to optimization of the stateful
     dataflow graph representation. """
 
@@ -6,7 +6,7 @@ import copy
 import os
 import re
 import time
-from typing import Iterator, List, Type
+from typing import Any, Dict, Iterator, List, Optional, Type
 
 import dace
 from dace.config import Config
@@ -45,18 +45,22 @@ class Optimizer(object):
         # Should be implemented by subclass
         raise NotImplementedError
 
-    def set_transformation_metadata(self, patterns: List[Type[Transformation]]):
+    def set_transformation_metadata(self,
+                                    patterns: List[Type[Transformation]],
+                                    options: Optional[List[Dict[str,
+                                                                Any]]] = None):
         """ 
         Caches transformation metadata for a certain set of patterns to match.
         """
         self.transformation_metadata = (
-            pattern_matching.get_transformation_metadata(patterns))
+            pattern_matching.get_transformation_metadata(patterns, options))
 
     def get_pattern_matches(self,
                             strict=False,
                             states=None,
                             patterns=None,
-                            sdfg=None) -> Iterator[Transformation]:
+                            sdfg=None,
+                            options=None) -> Iterator[Transformation]:
         """ Returns all possible transformations for the current SDFG.
             :param strict: Only consider strict transformations (i.e., ones
                            that surely increase performance or enhance
@@ -67,6 +71,7 @@ class Optimizer(object):
                              when matching. If None, considers all registered
                              transformations in ``Transformation``.
             :param sdfg: If not None, searches for patterns on given SDFG.
+            :param options: An optional iterable of transformation parameters.
             :return: List of matching ``Transformation`` objects.
             :see: Transformation.
         """
@@ -78,7 +83,8 @@ class Optimizer(object):
             patterns,
             metadata=self.transformation_metadata,
             strict=strict,
-            states=states)
+            states=states,
+            options=options)
 
     def optimization_space(self):
         """ Returns the optimization space of the current SDFG """

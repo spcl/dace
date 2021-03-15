@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Scalar to symbol promotion functionality. """
 
 import ast
@@ -12,7 +12,7 @@ from dace.sdfg import graph as gr
 from dace.frontend.python import astutils
 from dace.transformation import helpers as xfh
 import re
-from typing import Any, DefaultDict, Dict, List, Set, Tuple, Union
+from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
 
 class AttributedCallDetector(ast.NodeVisitor):
@@ -493,6 +493,12 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                         for ise in dst.sdfg.edges():
                             ise.data.replace(e.dst_conn, tmp_symname)
                             # Remove subscript occurrences as well
+                            for aname, aval in ise.data.assignments.items():
+                                vast = ast.parse(aval)
+                                vast = astutils.RemoveSubscripts({tmp_symname
+                                                                  }).visit(vast)
+                                ise.data.assignments[aname] = astutils.unparse(
+                                    vast)
                             ise.data.replace(tmp_symname + '[0]', tmp_symname)
 
                         # Set symbol mapping
@@ -519,7 +525,8 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
             [n for n in scalar_nodes if len(state.all_edges(n)) == 0])
 
 
-def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
+def promote_scalars_to_symbols(sdfg: sd.SDFG,
+                               ignore: Optional[Set[str]] = None) -> Set[str]:
     """
     Promotes all matching transient scalars to SDFG symbols, changing all
     tasklets to inter-state assignments. This enables the transformed symbols
@@ -528,6 +535,7 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
     optimization.
 
     :param sdfg: The SDFG to run the pass on.
+    :param ignore: An optional set of strings of scalars to ignore.
     :return: Set of promoted scalars.
     :note: Operates in-place.
     """
@@ -544,8 +552,9 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
     # 5. Remove data descriptors and add symbols to SDFG
     # 6. Replace subscripts in all interstate conditions and assignments
     # 7. Make indirections with symbols a single memlet
-
     to_promote = find_promotable_scalars(sdfg)
+    if ignore:
+        to_promote -= ignore
     if len(to_promote) == 0:
         return to_promote
 

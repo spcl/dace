@@ -1,4 +1,4 @@
-// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #ifndef __DACE_REDUCTION_H
 #define __DACE_REDUCTION_H
 
@@ -147,7 +147,7 @@ namespace dace {
         // Non-conflicting version --> no critical section
         template <typename WCR>
         static DACE_HDFI double reduce(WCR wcr, double *ptr, const double& value) {
-            double old;
+            double old = *ptr;
             *ptr = wcr(old, value);
             return old;
         }
