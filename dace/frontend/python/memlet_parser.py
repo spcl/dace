@@ -72,6 +72,13 @@ def _ndslice_to_subset(ndslice):
                 if not is_tuple[i]:
                     ndslice[i] = (ndslice[i], ndslice[i], 1)
         return subsets.Range(ndslice)
+    
+
+def _parse_dim_atom(das, atom):
+    result = pyexpr_to_symbolic(das, atom)
+    if isinstance(result, data.Data):
+        return pystr_to_symbolic(astutils.unparse(atom))
+    return result
 
 
 def _fill_missing_slices(das, ast_ndslice, array, indices):
@@ -85,14 +92,21 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     has_ellipsis = False
     for dim in ast_ndslice:
         if isinstance(dim, tuple):
-            rb = pyexpr_to_symbolic(das, dim[0] or 0)
-            re = pyexpr_to_symbolic(das, dim[1]
+            rb = _parse_dim_atom(das, dim[0] or 0)
+            re = _parse_dim_atom(das, dim[1]
                                     or array.shape[indices[idx]]) - 1
-            rs = pyexpr_to_symbolic(das, dim[2] or 1)
-            if (rb < 0) == True:
-                rb += array.shape[indices[idx]]
-            if (re < 0) == True:
-                re += array.shape[indices[idx]]
+            rs = _parse_dim_atom(das, dim[2] or 1)
+            # NOTE: try/except for cases where rb/re are not symbols/numbers
+            try:
+                if (rb < 0) == True:
+                    rb += array.shape[indices[idx]]
+            except (TypeError, ValueError):
+                pass
+            try:
+                if (re < 0) == True:
+                    re += array.shape[indices[idx]]
+            except (TypeError, ValueError):
+                pass
             ndslice[idx] = (rb, re, rs)
             offsets.append(idx)
             idx += 1

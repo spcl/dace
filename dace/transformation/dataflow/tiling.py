@@ -138,4 +138,4 @@ class MapTiling(transformation.Transformation):
                                           mapcollapse_subgraph, 0)
                 mapcollapse.apply(sdfg)
             last_map_entry = graph.in_edges(map_entry)[0].src
-            return last_map_entry
+        return last_map_entry

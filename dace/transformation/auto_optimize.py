@@ -5,7 +5,7 @@ import dace
 from dace.sdfg.state import SDFGState
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.propagation import propagate_states
-from dace import config, data as dt, dtypes, Memlet
+from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
 from typing import Set, Tuple, Union
 import warnings
@@ -94,11 +94,25 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
 
 
 
-def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
+def tile_wcrs(graph_or_subgraph: GraphViewType,
+              validate_all: bool,
+              prefer_partial_parallelism: bool = None) -> None:
+    """
+    Tiles parallel write-conflict resolution maps in an SDFG, state,
+    or subgraphs thereof. Reduces the number of atomic operations by tiling
+    and introducing transient arrays to accumulate atomics on.
+    :param graph_or_subgraph: The SDFG/state/subgraph to optimize within.
+    :param validate_all: If True, runs SDFG validation after every tiling.
+    :param prefer_partial_parallelism: If set, prefers extracting non-conflicted
+                                       map dimensions over tiling WCR map (may
+                                       not perform well if parallel dimensions
+                                       are small).
+    :note: This function operates in-place.
+    """
     # Avoid import loops
     from dace.codegen.targets import cpp
     from dace.frontend import operations
-    from dace.transformation import dataflow
+    from dace.transformation import dataflow, helpers as xfh
 
     # Determine on which nodes to run the operation
     graph = graph_or_subgraph
@@ -126,26 +140,73 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
                 # Do not consider edges that will not generate atomics or
                 # atomics we cannot transform
                 continue
+            if reason not in graph_or_subgraph.nodes():
+                # Skip if conflict exists outside of nested SDFG
+                continue
+
+            # Check if identity value can be inferred
+            redtype = operations.detect_reduction_type(edge.data.wcr)
+            dtype = sdfg.arrays[edge.data.data].dtype
+            identity = dtypes.reduction_identity(dtype, redtype)
+            if identity is None:  # Cannot infer identity value
+                continue
+
             edges_to_consider.add((edge, reason))
 
     tile_size = config.Config.get('optimizer', 'autotile_size')
     debugprint = config.Config.get_bool('debugprint')
+    if prefer_partial_parallelism is None:
+        prefer_partial_parallelism = config.Config.get_bool(
+            'optimizer', 'autotile_partial_parallelism')
 
-    transformed = set()
+    maps_to_consider: Set[nodes.MapEntry] = set(me
+                                                for _, me in edges_to_consider)
+
+    transformed: Set[nodes.MapEntry] = set()
+
+    # Heuristic: If the map is only partially conflicted, extract
+    # parallel dimensions instead of tiling
+    if prefer_partial_parallelism:
+        for mapentry in maps_to_consider:
+            # Check the write-conflicts of all WCR edges in map
+            conflicts: Set[str] = set()
+            for edge, me in edges_to_consider:
+                if me is not mapentry:
+                    continue
+                conflicts |= set(cpp.write_conflicted_map_params(
+                    mapentry, edge))
+
+            nonconflicted_dims = set(mapentry.params) - conflicts
+            if nonconflicted_dims:
+                dims = [
+                    i for i, p in enumerate(mapentry.params)
+                    if p in nonconflicted_dims
+                ]
+                if ((dt._prod(s for i, s in enumerate(mapentry.range.size())
+                              if i in dims) < tile_size) == True):
+                    # Map has a small range, extracting parallelism may not be
+                    # beneficial
+                    continue
+                xfh.extract_map_dims(sdfg, mapentry, dims)
+                transformed.add(mapentry)
+
+    # Tile and accumulate other not-transformed maps
     for edge, mapentry in edges_to_consider:
         if mapentry in transformed:
             continue
         transformed.add(mapentry)
-        # NOTE: The test below is crafted for Sympy to be "definitely True"
-        if (mapentry.map.range.num_elements() < tile_size) == True:
-            # If smaller than tile size, don't transform and instead make map sequential
+
+        # NOTE: The test "(x < y) == True" below is crafted for SymPy
+        # to be "definitely True"
+        if all((s < tile_size) == True for s in mapentry.map.range.size()):
+            # If smaller than tile size, don't transform and instead
+            # make map sequential
             if debugprint:
                 print(f'Making map "{mapentry}" sequential due to being '
                       'smaller than tile size')
             mapentry.map.schedule = dtypes.ScheduleType.Sequential
             continue
 
-        print('will transform', mapentry)
         # MapTiling -> AccumulateTransient / AccumulateStream
         outer_mapentry = dataflow.MapTiling.apply_to(
             sdfg, dict(tile_sizes=(tile_size, )), _map_entry=mapentry)
@@ -165,17 +226,23 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
                                                   _map_exit=mapexit,
                                                   _outer_map_exit=outer_mapexit)
             else:
-                if e.data.is_empty() or e.data.wcr is None or e.data.wcr_nonatomic:
+                if (e.data.is_empty() or e.data.wcr is None
+                        or e.data.wcr_nonatomic
+                        or (e.data.dst_subset is not None
+                            and e.data.dst_subset.num_elements() > 0
+                            and e.data.dynamic)):
                     continue
 
                 dtype = sdfg.arrays[e.data.data].dtype
                 redtype = operations.detect_reduction_type(e.data.wcr)
+                identity = dtypes.reduction_identity(dtype, redtype)
+                if identity is None:  # Cannot infer identity value
+                    continue
                 dataflow.AccumulateTransient.apply_to(
                     sdfg,
-                    options=dict(identity=dtypes.reduction_identity(dtype, redtype),
-                                 array=e.data.data),
-                    _map_exit=mapexit,
-                    _outer_map_exit=outer_mapexit)
+                    options=dict(identity=identity, array=e.data.data),
+                    map_exit=mapexit,
+                    outer_map_exit=outer_mapexit)
 
     if debugprint and len(transformed) > 0:
         print(f'Optimized {len(transformed)} write-conflicted maps')
@@ -187,18 +254,41 @@ def find_fast_library(device: dtypes.DeviceType) -> str:
     if device is dtypes.DeviceType.GPU:
         return ['cuBLAS', 'CUB', 'pure']
     elif device is dtypes.DeviceType.CPU:
-        # TODO: add "is_installed" checks to environments
         result = []
 
         # BLAS calls
-        # if mkl.IntelMKL.is_installed():
-        #     result.append('MKL')
-        # elif openblas.OpenBLAS.is_installed():
-        #     result.append('OpenBLAS')
+        if mkl.IntelMKL.is_installed():
+            result.append('MKL')
+        elif openblas.OpenBLAS.is_installed():
+            result.append('OpenBLAS')
 
         return result + ['pure']
 
     return ['pure']
+
+
+def move_small_arrays_to_stack(sdfg: SDFG) -> None:
+    """
+    Set all Default storage types that are constant sized and less than 
+    the auto-tile size to the stack (as StorageType.Register).
+    :param sdfg: The SDFG to operate on.
+    :note: Operates in-place on the SDFG.
+    """
+    converted = 0
+    tile_size = config.Config.get('optimizer', 'autotile_size')
+    for sd, aname, array in sdfg.arrays_recursive():
+        if isinstance(array, dt.Stream):
+            continue
+        if (array.transient and array.storage == dtypes.StorageType.Default
+                and array.lifetime == dtypes.AllocationLifetime.Scope):
+            if not symbolic.issymbolic(array.total_size, sd.constants):
+                eval_size = symbolic.evaluate(array.total_size, sd.constants)
+                if eval_size <= tile_size:
+                    array.storage = dtypes.StorageType.Register
+                    converted += 1
+
+    if config.Config.get_bool('debugprint') and converted > 0:
+        print(f'Statically allocating {converted} transient arrays')
 
 
 def auto_optimize(sdfg: SDFG,
@@ -257,7 +347,8 @@ def auto_optimize(sdfg: SDFG,
     #sdfg.apply_transformations(MapTiling)
 
     # Tiled WCR and streams
-    tile_wcrs(sdfg, validate_all)
+    for nsdfg in list(sdfg.all_sdfgs_recursive()):
+        tile_wcrs(nsdfg, validate_all)
 
     
     # Collapse maps
@@ -290,7 +381,10 @@ def auto_optimize(sdfg: SDFG,
     # TODO(later): Set on a per-SDFG basis 
     '''
     config.Config.set('compiler', 'cpu', 'openmp_sections', value=False)
-    
+
+    # Set all Default storage types that are constant sized to registers
+    move_small_arrays_to_stack(sdfg)
+
     # Validate at the end
     if validate or validate_all:
         sdfg.validate()
