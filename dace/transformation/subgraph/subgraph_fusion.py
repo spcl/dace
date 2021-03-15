@@ -242,7 +242,16 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         return False 
 
         # 2.5 Intermediate Arrays must not connect to ArrayViews   
-        
+        for n in intermediate_nodes:
+            for out_edge in graph.out_edges(n):
+                for e in graph.memlet_tree(out_edge):
+                    if isinstance(e.dst, nodes.AccessNode) and isinstance(sdfg.data(e.dst.data), dace.data.View):
+                        return False 
+            for in_edge in graph.in_edges(n):
+                for e in graph.memlet_tree(in_edge):
+                    if isinstance(e.src, nodes.AccessNode) and isinstance(sdfg.data(e.src.data), dace.data.View):
+                        return False 
+
         # 2.6 Check for disjoint accesses for arrays that cannot be augmented 
         '''
         TODO
@@ -987,7 +996,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 transient_to_transform.lifetime = dtypes.AllocationLifetime.Scope
                 transient_to_transform.storage = self.transient_allocation
                 '''
-                
+                '''
                 # check for views and augment them as well
                 for n in all_nodes:
                     for out_edge in graph.out_edges(n):
@@ -1018,7 +1027,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                                 
                                 pass 
-                          
+                '''     
 
             else:
                 # don't modify data container - array is needed outside
