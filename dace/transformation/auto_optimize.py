@@ -208,7 +208,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
 
         # MapTiling -> AccumulateTransient / AccumulateStream
         outer_mapentry = dataflow.MapTiling.apply_to(
-            sdfg, dict(tile_sizes=(tile_size, )), _map_entry=mapentry)
+            sdfg, dict(tile_sizes=(tile_size, )), map_entry=mapentry)
 
         # Transform all outgoing WCR and stream edges
         mapexit = graph.exit_node(mapentry)
@@ -221,9 +221,9 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
                     # TODO(later): Implement StreamTransient independently of tasklet
                     continue
                 dataflow.StreamTransient.apply_to(sdfg,
-                                                  _tasklet=tasklet,
-                                                  _map_exit=mapexit,
-                                                  _outer_map_exit=outer_mapexit)
+                                                  tasklet=tasklet,
+                                                  map_exit=mapexit,
+                                                  outer_map_exit=outer_mapexit)
             else:
                 if (e.data.is_empty() or e.data.wcr is None
                         or e.data.wcr_nonatomic

@@ -108,8 +108,8 @@ def optimize_for_cpu(sdfg: dace.SDFG, m: int, n: int, k: int):
         exit_rti = find_mapexit_by_param(sdfg, 'tile1_i')
         AccumulateTransient.apply_to(sdfg,
                                      dict(array='C', identity=0),
-                                     _map_exit=exit_inner,
-                                     _outer_map_exit=exit_rti)
+                                     map_exit=exit_inner,
+                                     outer_map_exit=exit_rti)
 
         # Vectorize microkernel map
         postamble = n % 4 != 0
