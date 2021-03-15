@@ -240,10 +240,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     if out_node.data in in_data or out_node.data in intermediate_data or out_node.data in view_data:
                         warnings.warn("WCR Special Case")
                         return False 
-                    
-        # 2.4 Check for disjoint accesses for arrays that cannot be augmented 
+
+        # 2.5 Intermediate Arrays must not connect to ArrayViews   
+        
+        # 2.6 Check for disjoint accesses for arrays that cannot be augmented 
         '''
-        TODO: adapt for view_data
+        TODO
         node_data = in_data | intermediate_data | out_data | view_data
         subgraph_contains_data = dict(n: True for n in node_data if sdfg.data(n).transient == True else False)
 
@@ -985,7 +987,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 transient_to_transform.lifetime = dtypes.AllocationLifetime.Scope
                 transient_to_transform.storage = self.transient_allocation
                 '''
-                '''
+                
                 # check for views and augment them as well
                 for n in all_nodes:
                     for out_edge in graph.out_edges(n):
@@ -1016,7 +1018,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                                 
                                 pass 
-                '''              
+                          
 
             else:
                 # don't modify data container - array is needed outside
