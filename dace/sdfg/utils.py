@@ -563,13 +563,27 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
             return True
     return False
 
+def get_view_node(
+    state: SDFGState, view: nd.AccessNode
+) -> nd.AccessNode:
+    """
+    Given a view access node, returns the viewed access node 
+    if existent, else None
+    """
+    view_edge = get_view_edge(state, view)
+    if view_edge is None:
+        return None
+    if view_edge.dst == view:
+        return view_edge.src 
+    else:
+        return view_edge.dst 
 
 def get_view_edge(
     state: SDFGState, view: nd.AccessNode
-) -> Tuple[nd.AccessNode, gr.MultiConnectorEdge[mm.Memlet]]:
+) -> gr.MultiConnectorEdge[mm.Memlet]:
     """
-    Given a view access node, returns the viewed access node and 
-    incoming/outgoing edge which points to it.
+    Given a view access node, returns the 
+    incoming/outgoing edge which points to the viewed access node.
     See the ruleset in the documentation of ``dace.data.View``.
 
     :param state: The state in which the view resides.

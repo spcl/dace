@@ -14,7 +14,7 @@ from dace.symbolic import symstr, overapproximate
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet, propagate_memlets_scope, _propagate_node
 from dace.transformation.subgraph import helpers
 from dace.transformation.dataflow import RedundantArray
-from dace.sdfg.utils import consolidate_edges_scope
+from dace.sdfg.utils import consolidate_edges_scope, get_view_node
 from dace.transformation.helpers import find_contiguous_subsets
 
 from copy import deepcopy as dcpy
@@ -237,7 +237,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         for out_node in out_nodes:
             for in_edge in graph.in_edges(out_node):
                 if in_edge.src in map_exits and in_edge.data.wcr:
-                    if out_node.data in in_data or out_node.data in intermediate_data:
+                    if out_node.data in in_data or out_node.data in intermediate_data or out_node.data in view_data:
+                        warnings.warn("WCR Special Case")
                         return False 
                     
         # 2.4 Check for disjoint accesses for arrays that cannot be augmented 
