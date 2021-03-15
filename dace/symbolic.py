@@ -494,8 +494,18 @@ def sympy_numeric_fix(expr):
     """ Fix for printing out integers as floats with ".00000000".
         Converts the float constants in a given expression to integers. """
     if not isinstance(expr, sympy.Basic):
-        if int(expr) == expr:
-            return int(expr)
+        try:
+            # NOTE: If expr is ~ 1.8e308, i.e. infinity, `numpy.int64(expr)`
+            # will throw OverflowError (which we want).
+            # `int(1.8e308) == expr` evaluates unfortunately to True
+            # because Python has variable-bit integers.
+            if numpy.int64(expr) == expr:
+                return int(expr)
+        except OverflowError:
+            if expr > 0:
+                return sympy.oo
+            else:
+                return -sympy.oo
         return expr
 
     if isinstance(expr, sympy.Number) and expr == int(expr):
@@ -782,6 +792,12 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
     def _print_Not(self, expr):
         return '(not (%s))' % self._print(expr.args[0])
+    
+    def _print_Infinity(self, expr):
+        return 'INFINITY'
+    
+    def _print_NegativeInfinity(self, expr):
+        return '-INFINITY'
 
 
 def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:

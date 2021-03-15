@@ -82,3 +82,7 @@ class IntelMKL:
 
         # If all else fails, let CMake find the library
         return ['mkl_rt']
+
+    @staticmethod
+    def is_installed():
+        return IntelMKL.cmake_libraries() and IntelMKL.cmake_includes()
