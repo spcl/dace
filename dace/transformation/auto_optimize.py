@@ -4,7 +4,7 @@
 from dace.sdfg import SDFG, SDFGState
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union
+from typing import Set, Tuple, Union, List
 import warnings
 
 # Transformations
@@ -240,15 +240,24 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
         print(f'Statically allocating {converted} transient arrays')
 
 
-def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType):
+def set_fast_implementations(sdfg: SDFG,
+                             device: dtypes.DeviceType,
+                             blocklist: List[str] = None):
     """
     Set fast library node implementations for the given device
 
     :param sdfg: The SDFG to optimize.
     :param device: the device to optimize for.
+    :param blocklist: list of disallowed implementations.
     :note: Operates in-place on the given SDFG.
     """
-    implementation_prio = find_fast_library(device)
+    if blocklist is None:
+        implementation_prio = find_fast_library(device)
+    else:
+        implementation_prio = [
+            i for i in find_fast_library(device) if i not in blocklist
+        ]
+
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.LibraryNode):
             for impl in implementation_prio:
