@@ -54,6 +54,37 @@ run_sample() {
     return 0
 }
 
+run_multi_sample(){
+    # Executes a test with multiple Dace programs inside
+    # Args:
+    #  1 - Name of FPGA sample located in samples/fpga
+    #  2 - Boolean flag whether to assert II=1 in all loops
+    #  3-x - Nome of the generated SDFGs
+
+    sdfgs=("${@:3}")
+    TESTS=`expr $TESTS + 1`
+    echo -e "${YELLOW}Running test $1...${NC}"
+    yes | $PYTHON_BINARY $1.py
+    if [ $? -ne 0 ]; then
+      bail "$1 (${RED}simulation failed${NC})"
+      return 1
+    fi
+    for i in "${sdfgs[@]}"; do
+        (cd .dacecache/$i/build && make xilinx_synthesis)
+        if [ $? -ne 0 ]; then
+          bail "$1 (${RED}high-level synthesis failed${NC})"
+          return 1
+        fi
+        if [ $2 -ne 0 ]; then
+          grep -n .dacecache/$2/build/*_hls.log -e "Final II = \([2-9]\|1[0-9]+\)"
+          if [ $? == 0 ]; then
+            bail "$1 (${RED}design was not fully pipelined${NC})"
+          fi
+        fi
+    done
+    return 0
+}
+
 run_all() {
 
     # Args:
@@ -90,6 +121,9 @@ run_all() {
 
     # Multiple gearboxing
     run_sample fpga/multiple_veclen_conversions multiple_veclen_conversions 0
+
+    # Views
+    run_multi_sample fpga/reshape_view_fpga 0 "view_fpga" "reshp_np_1" "reshapedst_1"
 
     # RTL cores
     DACE_compiler_xilinx_mode="hardware_emulation"

@@ -21,7 +21,7 @@ from dace.codegen.dispatcher import DefinedType
 from dace.config import Config
 from dace.frontend import operations
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.sdfg import nodes
+from dace.sdfg import nodes, graph as gr
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu
 
@@ -386,10 +386,10 @@ def ndcopy_to_strided_copy(
     # and shapes to the copy. The second condition is there because sometimes
     # the symbolic math engine fails to produce the same expressions for both
     # arrays.
-    if (tuple(src_strides) == tuple(dst_strides) and (
-        (src_copylen == copy_length and dst_copylen == copy_length)
-            or (tuple(src_shape) == tuple(copy_shape)
-                and tuple(dst_shape) == tuple(copy_shape)))):
+    if (tuple(src_strides) == tuple(dst_strides)
+            and ((src_copylen == copy_length and dst_copylen == copy_length) or
+                 (tuple(src_shape) == tuple(copy_shape)
+                  and tuple(dst_shape) == tuple(copy_shape)))):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
@@ -400,16 +400,34 @@ def ndcopy_to_strided_copy(
         copydim = next(i for i, c in enumerate(copy_shape) if c != 1)
 
         # In source strides
-        if len(copy_shape) == len(src_shape):
+        src_copy_shape = src_subset.size_exact()
+        if copy_shape == src_copy_shape:
             srcdim = copydim
         else:
-            srcdim = next(i for i, c in enumerate(src_shape) if c != 1)
+            try:
+                srcdim = next(i for i, c in enumerate(src_copy_shape) if c != 1)
+            except StopIteration:
+                # NOTE: This is the old stride computation code for FPGA
+                # compatibility
+                if len(copy_shape) == len(src_shape):
+                    srcdim = copydim
+                else:
+                    srcdim = next(i for i, c in enumerate(src_shape) if c != 1)
 
         # In destination strides
-        if len(copy_shape) == len(dst_shape):
+        dst_copy_shape = dst_subset.size_exact()
+        if copy_shape == dst_copy_shape:
             dstdim = copydim
         else:
-            dstdim = next(i for i, c in enumerate(dst_shape) if c != 1)
+            try:
+                dstdim = next(i for i, c in enumerate(dst_copy_shape) if c != 1)
+            except StopIteration:
+                # NOTE: This is the old stride computation code for FPGA
+                # compatibility
+                if len(copy_shape) == len(dst_shape):
+                    dstdim = copydim
+                else:
+                    dstdim = next(i for i, c in enumerate(dst_shape) if c != 1)
 
         # Return new copy
         return [copy_shape[copydim]], [src_strides[srcdim]
@@ -559,24 +577,55 @@ def _check_map_conflicts(map, edge):
     return True
 
 
+def write_conflicted_map_params(map, edge):
+    result = []
+    for itervar, (_, _, mapskip) in zip(map.params, map.range):
+        itersym = symbolic.pystr_to_symbolic(itervar)
+        a = sp.Wild('a', exclude=[itersym])
+        b = sp.Wild('b', exclude=[itersym])
+        if not _check_range_conflicts(edge.data.subset, a, itersym, b, mapskip):
+            result.append(itervar)
+
+    return result
+
+
 def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
-    """ Detects whether a write-conflict-resolving edge can be emitted without
-        using atomics or critical sections. """
+    """
+    Detects whether a write-conflict-resolving edge can be emitted without
+    using atomics or critical sections.
+    """
+    return (is_write_conflicted_with_reason(dfg, edge, datanode, sdfg_schedule)
+            is not None)
+
+
+def is_write_conflicted_with_reason(dfg,
+                                    edge,
+                                    datanode=None,
+                                    sdfg_schedule=None):
+    """
+    Detects whether a write-conflict-resolving edge can be emitted without
+    using atomics or critical sections, returning the node or SDFG that caused
+    the decision.
+    :return: None if the conflict is nonatomic, otherwise returns the scope entry
+             node or SDFG that caused the decision to be made.
+    """
 
     if edge.data.wcr_nonatomic or edge.data.wcr is None:
-        return False
+        return None
 
     # If it's an entire SDFG, it's probably write-conflicted
     if isinstance(dfg, SDFG):
         if datanode is None:
-            return True
+            return dfg
         in_edges = find_incoming_edges(datanode, dfg)
         if len(in_edges) != 1:
-            return True
+            return dfg
         if (isinstance(in_edges[0].src, nodes.ExitNode) and
                 in_edges[0].src.map.schedule == dtypes.ScheduleType.Sequential):
-            return False
-        return True
+            return None
+        return dfg
+    elif isinstance(dfg, gr.SubgraphView):
+        dfg = dfg.graph
 
     # Traverse memlet path to determine conflicts.
     # If no conflicts will occur, write without atomics
@@ -591,20 +640,20 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
                     # print('PAR: Continuing from map')
                     continue
                 # print('SEQ: Map is conflicted')
-                return True
+                return dfg.entry_node(e.dst)
             # Should never happen (no such thing as write-conflicting reads)
             if (isinstance(e.src, nodes.EntryNode)
                     and e.src.map.schedule != dtypes.ScheduleType.Sequential):
                 warnings.warn(
                     'Unexpected WCR path to have write-conflicting reads')
-                return True
+                return e.src
 
         sdfg = dfg.parent
         dst = path[-1].dst
         # Unexpected case
         if not isinstance(dst, nodes.AccessNode):
             warnings.warn('Unexpected WCR path to not end in access node')
-            return True
+            return dst
 
         # If this is a nested SDFG and the access leads outside
         if not sdfg.arrays[dst.data].transient:
@@ -618,9 +667,9 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
             # Memlet path ends here, transient. We can thus safely write here
             edge = None
             # print('PAR: Reached transient')
-            return False
+            return None
 
-    return False
+    return None
 
 
 class LambdaToFunction(ast.NodeTransformer):

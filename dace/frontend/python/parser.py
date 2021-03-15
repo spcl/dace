@@ -237,12 +237,14 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
 class DaceProgram:
     """ A data-centric program object, obtained by decorating a function with
         `@dace.program`. """
-    def __init__(self, f, args, kwargs):
+    def __init__(self, f, args, kwargs, auto_optimize, device):
         self.f = f
         self.args = args
         self.kwargs = kwargs
         self.name = f.__name__
         self.argnames = _get_argnames(f)
+        self.auto_optimize = auto_optimize
+        self.device = device
 
         global_vars = _get_locals_and_globals(f)
 
@@ -277,6 +279,11 @@ class DaceProgram:
         # Allow CLI to prompt for optimizations
         if Config.get_bool('optimizer', 'transform_on_call'):
             sdfg = sdfg.optimize()
+
+        # Invoke auto-optimization as necessary
+        if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
+            from dace.transformation import auto_optimize as autoopt
+            sdfg = autoopt.auto_optimize(sdfg, self.device)
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)

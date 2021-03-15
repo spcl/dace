@@ -2,6 +2,7 @@
 """ Transformation helper API. """
 import copy
 import itertools
+from networkx import MultiDiGraph
 
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
@@ -288,12 +289,11 @@ def nest_state_subgraph(sdfg: SDFG,
         state.add_edge(nested_sdfg, name, node, None, Memlet(data=name,
                                                              wcr=wcr))
 
-
     # Graph was not reconnected, but needs to be
     if state.in_degree(nested_sdfg) == 0 and empty_input is not None:
         state.add_edge(empty_input.src, empty_input.src_conn, nested_sdfg, None,
                        empty_input.data)
-    if state.out_degree(nested_sdfg)  == 0 and empty_output is not None:
+    if state.out_degree(nested_sdfg) == 0 and empty_output is not None:
         state.add_edge(nested_sdfg, None, empty_output.dst,
                        empty_output.dst_conn, empty_output.data)
 
@@ -603,3 +603,122 @@ def constant_symbols(sdfg: SDFG) -> Set[str]:
         for e in sdfg.edges() for k in e.data.assignments.keys()
     }
     return set(sdfg.symbols) - interstate_symbols
+
+
+def simplify_state(state: SDFGState) -> MultiDiGraph:
+    """
+    Returns a networkx MultiDiGraph object that contains all the access nodes
+    and corresponding edges of an SDFG state. The removed code nodes and map
+    scopes are replaced by edges that connect their ancestor and succesor access
+    nodes.
+    :param state: The input SDFG state.
+    :return: The MultiDiGraph object.
+    """
+
+    # Copy the whole state
+    G = MultiDiGraph()
+    for n in state.nodes():
+        G.add_node(n)
+    for n in state.nodes():
+        for e in state.all_edges(n):
+            G.add_edge(e.src, e.dst)
+    # Collapse all mappings and their scopes into one node
+    scope_children = state.scope_children()
+    for n in scope_children[None]:
+        if isinstance(n, nodes.EntryNode):
+            G.add_edges_from([(n, x)
+                              for (y, x) in G.out_edges(state.exit_node(n))])
+            G.remove_nodes_from(scope_children[n])
+    # Remove all nodes that are not AccessNodes or have incoming
+    # wcr edges and connect their predecessors and successors
+    for n in state.nodes():
+        if n in G.nodes():
+            if not isinstance(n, nodes.AccessNode):
+                for p in G.predecessors(n):
+                    for c in G.successors(n):
+                        G.add_edge(p, c)
+                G.remove_node(n)
+            else:
+                for e in state.all_edges(n):
+                    if e.data.wcr is not None:
+                        for p in G.predecessors(n):
+                            for s in G.successors(n):
+                                G.add_edge(p, s)
+                        G.remove_node(n)
+                        break
+
+    return G
+
+
+def tile(sdfg: SDFG, map_entry: nodes.MapEntry, divides_evenly: bool,
+         skew: bool, **tile_sizes: symbolic.SymbolicType):
+    """ 
+    Helper function that tiles a Map scope by the given sizes, in the 
+    given order.
+    :param sdfg: The SDFG where the map resides.
+    :param map_entry: The map entry node to tile.
+    :param divides_evenly: If True, skips pre/postamble for cases
+                           where the map dimension is not a multiplier
+                           of the tile size.
+    :param skew: If True, skews the tiled map to start from zero. Helps
+                 compilers improve performance in certain cases.
+    :param tile_sizes: An ordered dictionary of the map parameter names
+                       to tile and their respective tile size (which can be
+                       symbolic expressions).
+    """
+    # Avoid import loop
+    from dace.transformation.dataflow import StripMining
+
+    for k, v in tile_sizes.items():
+        StripMining.apply_to(sdfg,
+                             dict(dim_idx=map_entry.params.index(k),
+                                  tile_size=str(v),
+                                  divides_evenly=divides_evenly,
+                                  skew=skew),
+                             _map_entry=map_entry)
+
+
+def permute_map(map_entry: nodes.MapEntry, perm: List[int]):
+    """ Permutes indices of a map according to a given list of integers. """
+    map_entry.map.params = [map_entry.map.params[p] for p in perm]
+    map_entry.map.range = [map_entry.map.range[p] for p in perm]
+
+
+def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry,
+                     dims: List[int]) -> Tuple[nodes.MapEntry, nodes.MapEntry]:
+    """ 
+    Helper function that extracts specific map dimensions into an outer map.
+    :param sdfg: The SDFG where the map resides.
+    :param map_entry: Map entry node to extract.
+    :param dims: A list of dimension indices to extract.
+    :return: A 2-tuple containing the extracted map and the remainder map.
+    """
+    # Avoid import loop
+    from dace.transformation.dataflow import MapCollapse, MapExpansion
+
+    # Make extracted dimensions first
+    permute_map(
+        map_entry,
+        dims + [i for i in range(len(map_entry.map.params)) if i not in dims])
+    # Expand map
+    entries = MapExpansion.apply_to(sdfg, map_entry=map_entry)
+
+    # Collapse extracted maps
+    extracted_map = entries[0]
+    for idx in range(len(dims) - 1):
+        extracted_map, _ = MapCollapse.apply_to(
+            sdfg,
+            _outer_map_entry=extracted_map,
+            _inner_map_entry=entries[idx + 1],
+        )
+
+    # Collapse remaining maps
+    map_to_collapse = entries[len(dims)]
+    for idx in range(len(dims), len(entries) - 1):
+        map_to_collapse, _ = MapCollapse.apply_to(
+            sdfg,
+            _outer_map_entry=map_to_collapse,
+            _inner_map_entry=entries[idx + 1],
+        )
+
+    return extracted_map, map_to_collapse

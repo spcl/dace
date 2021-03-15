@@ -20,17 +20,24 @@ def program(f: F) -> parser.DaceProgram:
 
 
 @overload
-def program(*args, **kwargs) -> parser.DaceProgram:
+def program(*args,
+            auto_optimize=False,
+            device=dtypes.DeviceType.CPU,
+            **kwargs) -> parser.DaceProgram:
     ...
 
 
 @paramdec
-def program(f: F, *args, **kwargs) -> parser.DaceProgram:
+def program(f: F,
+            *args,
+            auto_optimize=False,
+            device=dtypes.DeviceType.CPU,
+            **kwargs) -> parser.DaceProgram:
     """ DaCe program, entry point to a data-centric program. """
 
     # Parses a python @dace.program function and returns an object that can
     # be translated
-    return parser.DaceProgram(f, args, kwargs)
+    return parser.DaceProgram(f, args, kwargs, auto_optimize, device)
 
 
 function = program
