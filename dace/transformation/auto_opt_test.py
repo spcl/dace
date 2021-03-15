@@ -61,7 +61,7 @@ def run_scenario(name,
 
 
 #run_scenario("greedy", view = True)  # [OK]
-run_scenario("vadv") # [OK]
+#run_scenario("vadv") # [OK]
 #run_scenario("hdiff_mini") 
 #run_scenario("hdiff")
 

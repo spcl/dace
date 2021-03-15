@@ -123,12 +123,6 @@ class ExecutionScore(ScoringFunction):
                 outputs_local[ok] = ov.copy()
                 outputs_local[ok].fill(0)
 
-        # TODO: remove 
-        for ok, kv in outputs_local.items():
-            print(ok)
-            print(np.linalg.norm(kv))
-            print(np.linalg.norm(self._outputs[ok]))
-
         # execute and instrument
         try:
             # grab all inputs needed
@@ -208,7 +202,6 @@ class ExecutionScore(ScoringFunction):
             path = os.path.join(sdfg.build_folder, 'perf', json_file)
             with open(path) as f:
                 data = json.load(f)['traceEvents']
-                print(data)
                 for runtime_dict in data:
                     runtime += runtime_dict['dur']
                     
@@ -221,12 +214,9 @@ class ExecutionScore(ScoringFunction):
                 sdfg.view()
             if self.exit_on_error:
                 sys.exit(0)
-            print("map_entries", map_entries)
         else:
             os.remove(path)
 
-        print("DONE.")
-        print("RUNTIME", runtime)
         return runtime
 
     def score(self, subgraph: SubgraphView):
@@ -243,8 +233,6 @@ class ExecutionScore(ScoringFunction):
         subgraph_copy = SubgraphView(graph_copy, [
             graph_copy.nodes()[self._graph.nodes().index(n)] for n in subgraph
         ])
-
-        print("SUBGRAPH:", subgraph_copy.nodes())
 
         transformation_function = self._transformation(subgraph_copy)
         # assign properties to transformation

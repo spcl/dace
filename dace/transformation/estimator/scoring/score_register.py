@@ -72,32 +72,7 @@ class RegisterScore(MemletScore):
 
         self._datatype_multiplier = dtypes._BYTES[self.datatype] // 4
 
-        # for debugging purposes
-        self._i = 0
-
-    def propagate_outward(self,
-                          graph: SDFGState,
-                          memlets: List[Memlet],
-                          context: List[Union[nodes.MapEntry,
-                                              nodes.NestedSDFG]],
-                          penetrate_everything=False):
-        '''
-        Propagates Memlets outwards given map entry nodes in context vector. 
-        Assumes that first entry is innermost entry closest to memlet 
-        '''
-        for ctx in context:
-            if isinstance(ctx, nodes.MapEntry):
-                if not penetrate_everything and ctx.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
-                    # we are at thread block level - do not propagate
-                    break
-                for i, memlet in enumerate(memlets):
-                    memlets[i] = propagation.propagate_memlet(
-                        graph, memlet, ctx, False)
-            else:
-                raise NotImplementedError("TODO")
-
-        return memlets
-
+    
     def tasklet_symbols(self, astobj, max_size=12):
         '''
         traverses a tasklet ast and primitively assigns 
@@ -453,8 +428,6 @@ class RegisterScore(MemletScore):
 
         for tasklet_set in active_sets:
             # evaluate score for current tasklet set
-            if scope_node:
-                print(f"----- Active Set: {tasklet_set} -----")
             # 1. calculate score from active registers
 
             # NOTE: once we can calculate subset diffs, we can implement this much
@@ -504,9 +477,6 @@ class RegisterScore(MemletScore):
                         total_size += volume
                     else:
                         # volume too large
-                        print("Volume too large")
-                        print("current_total=", total_size)
-                        print("current_volume=", volume)
                         for reg_node in reg_nodes:
                             discarded_register_nodes.add(reg_node)
 
@@ -530,36 +500,15 @@ class RegisterScore(MemletScore):
             tasklet_score = input_score + output_score + inner_score
             set_score = tasklet_score + array_score
 
-            if scope_node:
-                print("DEBUG -> Input Score", input_score)
-                print("DEBUG -> Output Score", output_score)
-                print("DEBUG -> Inner Score", inner_score)
-                print("DEBUG -> Tasklet Score", tasklet_score)
-                print("DEBUG -> Array Score", array_score)
-                print("DEBUG -> Score", set_score)
-                print("DEBUG -> Discarded Register Nodes", discarded_register_nodes)
 
             active_set_scores.append(set_score)
             previous_tasklet_set = tasklet_set
 
         score = max(active_set_scores) if len(active_set_scores) > 0 else 0
        
-        # return (registers_used, nodes_pushed_to_local)
-        if scope_node:
-            print(f"----- Score: {score} -----")
 
         return (score, discarded_register_nodes)
 
-    def evaluate_available(self, outer_map):
-        ''' FORNOW: get register available count '''
-
-        threads = Config.get('compiler', 'cuda', 'default_block_size')
-        threads = functools.reduce(lambda a, b: a * b,
-                                   [int(e) for e in threads.split(',')])
-        reg_count_available = self.register_per_block / (min(
-            1028, 16 * threads))
-
-        return reg_count_available
 
     def estimate_spill(self, sdfg, graph, scope_node):
         ''' 
@@ -579,9 +528,6 @@ class RegisterScore(MemletScore):
                                                scope_dict=scope_dict)
 
         (reg_count_required, discarded_nodes) = state_evaluation
-        # get register provided count (FORNOW)
-        reg_count_available = self.evaluate_available(outer_map=outer_map)
-        # get register traffic count
 
         discarded_register_traffic = self.evaluate_register_traffic(
             sdfg=sdfg,
@@ -638,7 +584,6 @@ class RegisterScore(MemletScore):
         outer_entry = transformation_function._global_map_entry
         TEST = self.estimate_spill(sdfg_copy, graph_copy,
                                             outer_entry)[0]
-        print("SPILL=", TEST)
         spill_traffic = TEST 
 
         return (current_traffic + spill_traffic) / self._base_traffic

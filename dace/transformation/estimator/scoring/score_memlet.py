@@ -126,7 +126,7 @@ class MemletScore(ScoringFunction):
             if traffic == 0:
                 raise RuntimeError("Traffic is Zero")
         except Exception as e:
-            print("ERROR in score_memlet:")
+            warnings.warn("Error in score_memlet.")
             print(e)
             traffic = 0
             if self.view_on_error:

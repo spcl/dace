@@ -61,7 +61,6 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         applied_transformations = 0
         enumerator = GreedyEnumerator(sdfg, graph, subgraph)
         for map_entries in enumerator:
-            print(f"Processing map subgraph {map_entries}")
             if len(map_entries) > 1:
                 current_subgraph = helpers.subgraph_from_maps(sdfg, graph, map_entries)
                 cf = CompositeFusion(current_subgraph)
