@@ -157,8 +157,11 @@ class InterstateEdge(object):
             newv = astutils.unparse(vast)
             if newv != v:
                 self.assignments[k] = newv
-        condition = self.condition
-        self.condition.as_string = condition.as_string.replace(name, new_name)
+        condition = ast.parse(self.condition.as_string)
+        condition = astutils.ASTFindReplace({name: new_name}).visit(condition)
+        newc = astutils.unparse(condition)
+        if newc != condition:
+            self.condition.as_string = newc
 
     def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
         """
@@ -2046,6 +2049,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Helper function for applying and validating a transformation
         def _apply_and_validate(match):
             sdfg = self.sdfg_list[match.sdfg_id]
+            if validate_all:
+                match_name = match.print_match(sdfg)
 
             match.apply(sdfg)
             applied_transformations[type(match).__name__] += 1
@@ -2055,7 +2060,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 except InvalidSDFGError as err:
                     raise InvalidSDFGError(
                         "Validation failed after applying {}.".format(
-                            match.print_match(sdfg)), sdfg,
+                            match_name), sdfg,
                         match.state_id) from err
 
         if order_by_transformation:

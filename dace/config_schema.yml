@@ -45,6 +45,18 @@ required:
                 description: >
                     Sets the default tile size for the optimization heuristics.
 
+            autotile_partial_parallelism:
+                type: bool
+                default: true
+                title: Prefer partial parallelism over write-conflict tiling
+                description: >
+                    If true, sets the auto-optimizer to prefer extracting map
+                    parallel dimensions over tiling for atomic write-conflict
+                    resolution edges. This may be slower in case of small
+                    parallel dimensions vs. conflicted dimensions. This
+                    preference only applies to symbolic ranges or ranges over
+                    the autotile_size parameter.
+
             transform_on_call:
                 type: bool
                 default: false

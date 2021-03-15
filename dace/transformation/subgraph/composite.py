@@ -61,7 +61,6 @@ class CompositeFusion(transformation.SubgraphTransformation):
                                     default=(1, ),
                                     desc="Tile stride")
 
-
     @staticmethod
     def can_be_applied(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         graph = subgraph.graph

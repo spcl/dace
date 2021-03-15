@@ -264,8 +264,10 @@ class AccumulateTransient(transformation.Transformation):
             outputs={
                 'out':
                 dace.Memlet.simple(data=data_node.data,
-                                   subset_str=','.join(
-                                       ['0:%d' % i for i in temp_array.shape]))
+                                   subset_str=','.join([
+                                       '_o%d' % i
+                                       for i, _ in enumerate(temp_array.shape)
+                                   ]))
             },
             external_edges=True)
 

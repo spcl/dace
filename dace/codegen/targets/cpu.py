@@ -197,10 +197,13 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         dtypes.pointer(
                                                             nodedesc.dtype),
                                                         ancestor=0)
-
-        declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
-        # Casting is already done in emit_memlet_reference
-        allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
+        if declaration_stream == allocation_stream:
+            declaration_stream.write(f'{atype} {aname} = {value};', sdfg,
+                                     state_id, node)
+        else:
+            declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
+            # Casting is already done in emit_memlet_reference
+            allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
                        declaration_stream, allocation_stream):
@@ -294,11 +297,12 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.defined_vars.add(name, DefinedType.Stream,
                                               ctypedef)
 
-        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage == dtypes.StorageType.Register and
-                  ((symbolic.issymbolic(arrsize, sdfg.constants)) or
-                   ((arrsize_bytes > Config.get(
-                       "compiler", "max_stack_array_size")) == True)))):
+        elif (
+                nodedesc.storage == dtypes.StorageType.CPU_Heap or
+            (nodedesc.storage == dtypes.StorageType.Register and
+             ((symbolic.issymbolic(arrsize, sdfg.constants)) or
+              ((arrsize_bytes > Config.get("compiler", "max_stack_array_size"))
+               == True)))):
 
             if nodedesc.storage == dtypes.StorageType.Register:
 
@@ -535,8 +539,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Writing one index
             if (isinstance(memlet.subset, subsets.Indices)
                     and memlet.wcr is None
-                    and self._dispatcher.defined_vars.get(
-                        vconn)[0] == DefinedType.Scalar):
+                    and self._dispatcher.defined_vars.get(vconn)[0]
+                    == DefinedType.Scalar):
                 stream.write(
                     "%s = %s;" %
                     (vconn,
@@ -559,9 +563,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     if is_array_stream_view(sdfg, dfg, src_node):
                         return  # Do nothing (handled by ArrayStreamView)
 
-                    array_subset = (memlet.subset
-                                    if memlet.data == dst_node.data else
-                                    memlet.other_subset)
+                    array_subset = (memlet.subset if memlet.data
+                                    == dst_node.data else memlet.other_subset)
                     if array_subset is None:  # Need to use entire array
                         array_subset = subsets.Range.from_array(dst_nodedesc)
 
@@ -716,9 +719,21 @@ class CPUCodeGen(TargetCodeGenerator):
                 )
             else:  # Conflicted WCR
                 if dynshape == 1:
-                    raise NotImplementedError(
-                        "Accumulation of dynamically-shaped "
-                        "arrays not yet implemented")
+                    warnings.warn(
+                        'Performance warning: Emitting dynamically-'
+                        'shaped atomic write-conflict resolution of an array.')
+                    stream.write(
+                        """
+                        dace::CopyND{copy_tmpl}::{shape_tmpl}::Accumulate_atomic(
+                        {copy_args});""".format(
+                            copy_tmpl=copy_tmpl,
+                            shape_tmpl=shape_tmpl,
+                            copy_args=", ".join(copy_args),
+                        ),
+                        sdfg,
+                        state_id,
+                        [src_node, dst_node],
+                    )
                 elif copy_shape == [1
                                     ]:  # Special case: accumulating one element
                     dst_expr = self.memlet_view_ctor(sdfg, memlet,
@@ -732,8 +747,21 @@ class CPUCodeGen(TargetCodeGenerator):
                                                     dtype=dst_nodedesc.dtype) +
                         ';', sdfg, state_id, [src_node, dst_node])
                 else:
-                    raise NotImplementedError("Accumulation of arrays "
-                                              "with WCR not yet implemented")
+                    warnings.warn(
+                        'Minor performance warning: Emitting statically-'
+                        'shaped atomic write-conflict resolution of an array.')
+                    stream.write(
+                        """
+                        dace::CopyND{copy_tmpl}::{shape_tmpl}::Accumulate_atomic(
+                        {copy_args});""".format(
+                            copy_tmpl=copy_tmpl,
+                            shape_tmpl=shape_tmpl,
+                            copy_args=", ".join(copy_args),
+                        ),
+                        sdfg,
+                        state_id,
+                        [src_node, dst_node],
+                    )
 
         #############################################################
         # Instrumentation: Post-copy
