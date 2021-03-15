@@ -65,10 +65,10 @@ run_all() {
     run_sample fpga/veclen_copy_conversion "\n"
 
     # Test removing degenerate loops that only have a single iteration
-    run_sample fpga/remove_degenerate_loop remove_degenerate_loop_test "\n" 
+    run_sample fpga/remove_degenerate_loop remove_degenerate_loop_test "\n"
 
-    # Test pipeline scopes 
-    run_sample fpga/pipeline_scope pipeline_scope "\n" 
+    # Test pipeline scopes
+    run_sample fpga/pipeline_scope pipeline_scope "\n"
 
     # Test shift register abstraction with stencil code
     run_sample fpga/fpga_stencil fpga_stencil_test "\n"
@@ -104,7 +104,7 @@ run_all() {
     #### MISCELLANEOUS ####
     # Execute some of the compatible tests in samples/fpga (some of them have C++ code in tasklet)
     # They contain streams
-    run_sample intel_fpga/async async_test "\n" 
+    run_sample intel_fpga/async async_test "\n"
     run_sample ../samples/fpga/filter_fpga filter_fpga "\n" 1000 0.2
     run_sample ../samples/fpga/matrix_multiplication_stream mm_fpga_stream_NxKx128 "\n" 128 128 128
     run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream "\n" 128 128 64
@@ -120,8 +120,11 @@ run_all() {
     run_sample blas/nodes/axpy_test axpy_test_fpga_4_w4_1 "\n" --target fpga
     run_sample blas/nodes/dot_test dot_FPGA_Accumulate_float_w16_1 "\n" --target intel_fpga
     run_sample blas/nodes/gemv_test gemv_fpga_test "\n" --target tiles_by_column --transpose --vectorize 4
-    run_sample blas/nodes/gemv_test gemv_FPGA_Accumulate_float_False_w4_1 "\n" --target accumulate --vectorize 4 
-    run_sample blas/nodes/ger_test ger_test_w8_x16_y32 "\n" --target fpga 
+    run_sample blas/nodes/gemv_test gemv_FPGA_Accumulate_float_False_w4_1 "\n" --target accumulate --vectorize 4
+    run_sample blas/nodes/ger_test ger_test_w8_x16_y32 "\n" --target fpga
+
+    ## STD LibNodes
+    run_sample fpga/reduce_fpga reduce_fpga "\n\n\n\n"
 
     # Nested SDFGs generated as FPGA kernels
     run_sample fpga/nested_sdfg_as_kernel nested_sdfg_kernels "\n"
@@ -140,6 +143,8 @@ run_all() {
 
     # Views
     run_sample fpga/reshape_view_fpga reshape_view_fpga "\n\n\n"
+
+
 }
 
 # Check if aoc is vailable
