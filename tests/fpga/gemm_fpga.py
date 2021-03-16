@@ -4,6 +4,8 @@
 import dace
 import numpy as np
 import dace.libraries.blas as blas
+from dace.transformation.interstate import InlineSDFG, FPGATransformSDFG
+from multiprocessing import Process, Queue
 
 
 def create_gemm_sdfg(sdfg_name,
@@ -15,7 +17,8 @@ def create_gemm_sdfg(sdfg_name,
                      dtype,
                      transA=False,
                      transB=False,
-                     vec_width=1):
+                     vec_width=1,
+                     expansion_args=None):
     '''
     Build an SDFG that perform the given GEMM operation along the given axis
     Input data A, B, and C is not vectorized
@@ -123,34 +126,109 @@ def create_gemm_sdfg(sdfg_name,
         src_conn="_c",
         memlet=dace.Memlet(f"C_device[0:{N}, 0:{M}/{vec_width}]"))
 
-
-
     ######################################
     # Interstate edges
     sdfg.add_edge(copy_in_state, fpga_state, dace.sdfg.sdfg.InterstateEdge())
     sdfg.add_edge(fpga_state, copy_out_state, dace.sdfg.sdfg.InterstateEdge())
-    sdfg.save("/tmp/out.sdfg")
     sdfg.validate()
+
+    if expansion_args is not None:
+        gemm_node.expand(sdfg, fpga_state, **expansion_args)
 
     return sdfg
 
 
+def evaluate(sdfg, A, B, C, C_regression):
+    '''
+    Utility function to evaluate the SDFG in a separate process.
+    This is needed to avoid Intel FPGA emulation runtime to segfault, or to leave
+    threads running that will slow down evaluation
+     (which seems to be the case since in these tests we generate autorun kernels).
 
-def test_reduce_gemm():
+    Attention: in this case, trasnform_on_call DACE configuration must be set to false
+    '''
+    sdfg(A=A, B=B, C=C)
+    assert np.allclose(C, C_regression, atol=1e-6)
+
+
+def test_gemm_vectorized():
+    # Test with vectorization
     A = np.random.rand(128, 128).astype(np.float32)
     B = np.random.rand(128, 128).astype(np.float32)
     C = np.random.rand(128, 128).astype(np.float32)
-    sdfg = create_gemm_sdfg("gemm_simple", 1, 1, A, B, C, dace.float32)
+    alpha = 2.1
+    beta = 1.5
+    vec_width = 4
+    sdfg = create_gemm_sdfg("gemm_vectorized",
+                            alpha,
+                            beta,
+                            A,
+                            B,
+                            C,
+                            dace.float32,
+                            vec_width=vec_width)
     sdfg.expand_library_nodes()
-    from dace.transformation.interstate import InlineSDFG
-    # sdfg.apply_transformations_repeated([InlineSDFG])
-    sdfg.save("/tmp/fpga.sdfg")
+    sdfg.apply_transformations_repeated([InlineSDFG])
+    # compute ground truth
+    C_regression = alpha * (A @ B) + beta * C
+
+    p = Process(target=evaluate, args=(sdfg, A, B, C, C_regression))
+    p.start()
+    p.join()
+    del sdfg
+
+
+def test_gemm_size_not_multiples_of():
+
+    # Test with matrix sizes that are not a multiple of #PEs and Tile sizes
+    A = np.random.rand(120, 128).astype(np.float32)
+    B = np.random.rand(128, 128).astype(np.float32)
+    C = np.random.rand(120, 128).astype(np.float32)
+    expansion_args = {"tile_size_m": 50, "num_pes": 7}
+    sdfg = create_gemm_sdfg("gemm_not_multiple_of",
+                            1,
+                            1,
+                            A,
+                            B,
+                            C,
+                            dace.float32,
+                            expansion_args=expansion_args)
+    sdfg.expand_library_nodes()
+    sdfg.apply_transformations_repeated([InlineSDFG])
     # compute ground truth
     C_regression = A @ B + C
+    p = Process(target=evaluate, args=(sdfg, A, B, C, C_regression))
+    p.start()
+    p.join()
+    del sdfg
 
-    sdfg(A=A, B=B, C=C)
 
-    assert np.allclose(C, C_regression, atol=1e-6)
+def test_matmul_np():
+    # Test with numpy matmul, and double precision
+    @dace.program
+    def matmul_np(A: dace.float64[64, 64], B: dace.float64[64, 32],
+                  C: dace.float64[64, 32]):
+        C[:] = A @ B
+
+    A = np.random.rand(64, 64).astype(np.float64)
+    B = np.random.rand(64, 32).astype(np.float64)
+    C = np.random.rand(64, 32).astype(np.float64)
+
+    sdfg = matmul_np.to_sdfg()
+    sdfg.apply_transformations([FPGATransformSDFG])
+    from dace.libraries.blas import Gemm
+    Gemm.default_implementation = "FPGA1DSystolic"
+    # We have to Inline
+    sdfg.expand_library_nodes()
+    sdfg.apply_transformations_repeated([InlineSDFG])
+    C_regression = A @ B
+    p = Process(target=evaluate, args=(sdfg, A, B, C, C_regression))
+    p.start()
+    p.join()
+    del sdfg
+
 
 if __name__ == "__main__":
-    test_reduce_gemm()
+    test_gemm_vectorized()
+    test_gemm_size_not_multiples_of()
+    test_matmul_np()

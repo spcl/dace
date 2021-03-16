@@ -430,7 +430,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
     """
     FPGA based implementation of GEMM, using a 1D systolic array.
 
-    Currently it supports only non-transposed input matrices, and non-vectorized input array A.
+    Currently it supports non-transposed input matrices, and non-vectorized input array A.
     """
 
     environments = []
@@ -439,7 +439,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
     def expansion(node,
                   parent_state,
                   parent_sdfg,
-                  num_pes=16,
+                  num_pes=32,
                   tile_size_m=None):
         '''
         GEMM node expansion.
@@ -447,10 +447,10 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         :param node: Node to expand.
         :param parent_state: State that the node is in.
         :param parent_sdfg: SDFG that the node is in.
-        :param num_pes: Number of used processing elements. By default it is set to 32.
+        :param num_pes: Number of Processing Elements of the systolic array. By default it is set to 32.
 
         :param tile_size_m: tiling size considering columns of the input matrix B and resulting matrix C.
-                            This must be expresed considering vectorization, if any.
+                            If B/C are vectorized, the tile size refers to the vectorized container.
                             If set to None, no tiling is used, corresponding to setting the tile size
                             equal to the number of columns of B/C.
         :return:
@@ -490,9 +490,11 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         if T is None:
             T = M
 
-        # TODO: something else to check? Like M%vec_width? This should come from the fact that M is vect
+        # Safe delay: this will be used in the compute state, pipeline scope, to insert
+        # a delay between accumulation on the same result if needed.
+        # Further explanations are provided in the compute state.
 
-        # safe delay (see explanation later, when the pipeline scope is created)
+        # TODO: this is a platform and type dependent parameter. How we can deal with this?
         L = max(11 - T, 0)
 
         # This implementation uses a flattened nested loop, that overlaps feeding,
@@ -536,10 +538,10 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
 
         if node.beta != 0:
             new_sdfg.add_array("_cin",
-                           shape_c,
-                           dtype_c,
-                           strides=cdata[-1],
-                           storage=cdata[1].storage)
+                               shape_c,
+                               dtype_c,
+                               strides=cdata[-1],
+                               storage=cdata[1].storage)
 
         def make_read_A(state):
 
@@ -584,14 +586,13 @@ to_kernel = from_memory""")
             # Also while reading B, we have to consider that T and P could not divide
             # M and N
 
-            entry, exit = state.add_map(
-                "read_B", {
-                    "n": f"0:ceiling({N}/{P})",
-                    "tm": f"0:ceiling({M}/{T})",
-                    "k": f"0:{K}",
-                    "m": f"0:{T}"
-                },
-                schedule=dace.ScheduleType.FPGA_Device)
+            entry, exit = state.add_map("read_B", {
+                "n": f"0:ceiling({N}/{P})",
+                "tm": f"0:ceiling({M}/{T})",
+                "k": f"0:{K}",
+                "m": f"0:{T}"
+            },
+                                        schedule=dace.ScheduleType.FPGA_Device)
 
             mem = state.add_read("_b")
             pipe = state.add_write("B_pipe")
@@ -604,7 +605,9 @@ to_kernel = data""")
                                   entry,
                                   tasklet,
                                   dst_conn="from_memory",
-                                  memlet=dace.Memlet(f"_b[k, tm*{T} + m]"))
+                                  memlet=dace.Memlet(f"_b[k, tm*{T} + m]",
+                                                     dynamic=True,
+                                                     allow_oob=True))
 
             state.add_memlet_path(tasklet,
                                   exit,
@@ -617,7 +620,8 @@ to_kernel = data""")
             # Receives the results and adds it to C
 
             pipe = state.add_read("C_pipe")
-            mem_read = state.add_read("_cin")
+            if node.beta != 0:
+                mem_read = state.add_read("_cin")
             mem = state.add_write("_c")
 
             entry_map, exit_map = state.add_map(
@@ -630,27 +634,38 @@ to_kernel = data""")
                 schedule=dace.ScheduleType.FPGA_Device)
 
             # write in memory by adding C when we copy that to memory
-            # TODO: avoid reading from C and adding if uneeded
 
             # deal with out-of-bound accesses
+
+            mul_accumulated = f"{node.alpha} * from_kernel" if node.alpha != 1.0 else "from_kernel"
+            if node.beta != 0:
+                if node.beta != 1.0:
+                    add_prev_c = f" + {node.beta} * prev_c"
+                else:
+                    add_prev_c = " + prev_c"
+            else:
+                add_prev_c = ""
+            tasklet_inputs = {"from_kernel", "prev_c"
+                              } if node.beta != 0 else {"from_kernel"}
             tasklet = state.add_tasklet(
-                "write_C", {"from_kernel", "prev_c"}, {"to_memory"}, f"""\
+                "write_C", tasklet_inputs, {"to_memory"}, f"""\
 if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :                                               
-    to_memory = from_kernel + prev_c
+    to_memory = {mul_accumulated}{add_prev_c}
 """)
             state.add_memlet_path(pipe,
                                   entry_map,
                                   tasklet,
                                   dst_conn="from_kernel",
                                   memlet=dace.Memlet(f"C_pipe[{P}-1]"))
-
-            state.add_memlet_path(mem_read,
-                                  entry_map,
-                                  tasklet,
-                                  dst_conn="prev_c",
-                                  memlet=dace.Memlet(
-                                      f"_cin[n0 * {P} + n1, tm * {T} + m]",
-                                      dynamic=True))
+            if node.beta != 0:
+                state.add_memlet_path(mem_read,
+                                      entry_map,
+                                      tasklet,
+                                      dst_conn="prev_c",
+                                      memlet=dace.Memlet(
+                                          f"_cin[n0 * {P} + n1, tm * {T} + m]",
+                                          dynamic=True,
+                                          allow_oob=True))
 
             state.add_memlet_path(tasklet,
                                   exit_map,
@@ -658,7 +673,8 @@ if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :
                                   src_conn="to_memory",
                                   memlet=dace.Memlet(
                                       f"_c[n0 * {P} + n1, tm * {T} + m]",
-                                      dynamic=True))
+                                      dynamic=True,
+                                      allow_oob=True))
 
         def make_compute(sdfg, state):
 
@@ -668,16 +684,22 @@ if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :
             C_pipe_in = state.add_read("C_pipe")
             C_pipe_out = state.add_write("C_pipe")
 
+            # The computation is expressed a single, flattened loop, which is generated by the following
+            # pipeline scope. Each PE accumulates over T partial results. The drain phase last P*T clock cycles.
+            # Draining and compute are overlapped.
+            # We are generating the loop by explicitly ignoring loop carried dependencies. Therefore, we have
+            # to guarantee that the PE will accumulate on the same partial result only when its value is consolidated.
+            # The + L is a safe delay between accumulation between the same partial result.
+            # It must be computed by considering T and the latency needed to consolidate a partial result
+            # (which is the latency of a multiply-add + latency for reading and writing to BRAM).
+
             entry_pipeline, exit_pipeline = state.add_pipeline(
-                "compute_and_drain",
-                {
+                "compute_and_drain", {
                     "n0": f"0:ceiling({N}/{P})",
                     "tm": f"0:ceiling({M}/{T})",
                     "k": f"0:{K}",
                     "m": f"0:{T} + {L}"
-                },  # The + L is a safe delay between computing and drain. It must be computed by
-                # considering the latency for updating the same result (not just the FP32 multiply add, but
-                # also for reading/writing from BRAM)
+                },
                 drain_size=P * T,
                 drain_overlap=False,
                 additional_iterators={
@@ -718,13 +740,11 @@ if m == 0 and not {entry_pipeline.pipeline.drain_condition()}:
             state.add_memlet_path(A_pipe_in,
                                   entry_pipeline,
                                   buffer_a_tasklet,
-                                  memlet=dace.Memlet("A_pipe[p]",
-                                                     dynamic=True),
+                                  memlet=dace.Memlet("A_pipe[p]", dynamic=True),
                                   dst_conn="a_in")
             state.add_memlet_path(buffer_a_tasklet,
                                   A_reg,
-                                  memlet=dace.Memlet("A_reg[0]",
-                                                     dynamic=True),
+                                  memlet=dace.Memlet("A_reg[0]", dynamic=True),
                                   src_conn="a_reg")
 
             # Feed B
@@ -742,19 +762,18 @@ if  m>={L} and not {entry_pipeline.pipeline.drain_condition()}:
             state.add_memlet_path(B_pipe_in,
                                   entry_pipeline,
                                   buffer_b_tasklet,
-                                  memlet=dace.Memlet("B_pipe[p]",
-                                                     dynamic=True),
+                                  memlet=dace.Memlet("B_pipe[p]", dynamic=True),
                                   dst_conn="b_in")
             state.add_memlet_path(buffer_b_tasklet,
                                   B_reg,
-                                  memlet=dace.Memlet("B_reg[0]",
-                                                     dynamic=True),
+                                  memlet=dace.Memlet("B_reg[0]", dynamic=True),
                                   src_conn="b_reg_out")
 
             # Compute, Forward B, and Drain
             compute_tasklet = state.add_tasklet(
                 "compute_and_drain", {"a_in", "b_in", "c_in", "forward_in"},
                 {"b_out", "c_out", "c_pipe_out"}, f"""\
+c_out = c_in       
 if m >= {L} and not {entry_pipeline.pipeline.drain_condition()}:
     c_prev = 0 if k == 0 else c_in     
     c_out =  c_prev + a_in * b_in
@@ -798,8 +817,7 @@ else:
                                   memlet=dace.Memlet("A_reg[0]"))
             state.add_memlet_path(B_reg,
                                   compute_tasklet,
-                                  memlet=dace.Memlet("B_reg[0]",
-                                                     dynamic=False),
+                                  memlet=dace.Memlet("B_reg[0]", dynamic=False),
                                   dst_conn="b_in")
 
             state.add_memlet_path(compute_tasklet,
@@ -832,8 +850,7 @@ else:
             state.add_memlet_path(compute_tasklet,
                                   exit_pipeline,
                                   C_pipe_out,
-                                  memlet=dace.Memlet("C_pipe[p]",
-                                                     dynamic=True),
+                                  memlet=dace.Memlet("C_pipe[p]", dynamic=True),
                                   src_conn="c_pipe_out")
 
             # Unroll processing elements
@@ -868,12 +885,8 @@ else:
                                   entry_pipeline,
                                   memlet=dace.memlet.Memlet())
             b_init = state.add_access("B_reg")
-            state.add_memlet_path(compute_entry,
-                                  b_init,
-                                  memlet=dace.Memlet())
-            state.add_memlet_path(b_init,
-                                  entry_pipeline,
-                                  memlet=dace.Memlet())
+            state.add_memlet_path(compute_entry, b_init, memlet=dace.Memlet())
+            state.add_memlet_path(b_init, entry_pipeline, memlet=dace.Memlet())
             state.add_memlet_path(compute_entry,
                                   C_buffer_in,
                                   memlet=dace.Memlet())
@@ -890,13 +903,13 @@ else:
                             storage=dace.dtypes.StorageType.FPGA_Local,
                             buffer_size=str(P))
         new_sdfg.add_stream("B_pipe",
-                            dtype_b,
+                            vec_type,
                             transient=True,
                             shape=(P + 1, ),
-                            buffer_size=2,
+                            buffer_size=1,
                             storage=dace.dtypes.StorageType.FPGA_Local)
         new_sdfg.add_stream("C_pipe",
-                            dtype_c,
+                            vec_type,
                             transient=True,
                             shape=(P + 1, ),
                             buffer_size=T,

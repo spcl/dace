@@ -144,6 +144,9 @@ run_all() {
     # Views
     run_sample fpga/reshape_view_fpga reshape_view_fpga "\n\n\n"
 
+     # Tests that have to run without transform on call:
+     DACE_optimizer_transform_on_call=0
+     run_sample fpga/gemm_fpga gemm_fpga ""
 
 }
 
