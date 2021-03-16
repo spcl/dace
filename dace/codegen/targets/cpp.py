@@ -13,7 +13,7 @@ from six import StringIO
 from typing import IO, Tuple, Union
 
 import dace
-from dace import data, subsets, symbolic, dtypes, memlet as mmlt
+from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
 from dace.codegen import cppunparse
 from dace.codegen.targets.common import (sym2cpp, find_incoming_edges,
                                          codeblock_to_cpp)
@@ -23,7 +23,7 @@ from dace.frontend import operations
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.sdfg import nodes, graph as gr
 from dace.properties import LambdaProperty
-from dace.sdfg import SDFG, is_devicelevel_gpu
+from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 
 
 def copy_expr(
@@ -720,6 +720,15 @@ def unparse_cr(sdfg, wcr_ast, dtype):
                                          for a in args), body_cpp)
 
 
+def connected_to_gpu_memory(node: nodes.Node, state: SDFGState, sdfg: SDFG):
+    for e in state.all_edges(node):
+        path = state.memlet_path(e)
+        if ((isinstance(path[0].src, nodes.AccessNode) and
+             path[0].src.desc(sdfg).storage is dtypes.StorageType.GPU_Global)):
+            return True
+    return False
+
+
 def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
                     locals, ldepth, toplevel_schedule, codegen):
 
@@ -738,12 +747,14 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
         # set the stream to a local variable.
         max_streams = int(
             Config.get("compiler", "cuda", "max_concurrent_streams"))
-        if not is_devicelevel_gpu(sdfg, state_dfg, node) and hasattr(node, "_cuda_stream"):
+        if not is_devicelevel_gpu(sdfg, state_dfg, node) and (
+                hasattr(node, "_cuda_stream")
+                or connected_to_gpu_memory(node, state_dfg, sdfg)):
             if max_streams >= 0:
                 callsite_stream.write(
                     'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
-                    %
-                    (node._cuda_stream, Config.get('compiler', 'cuda', 'backend')),
+                    % (node._cuda_stream,
+                       Config.get('compiler', 'cuda', 'backend')),
                     sdfg,
                     state_id,
                     node,
