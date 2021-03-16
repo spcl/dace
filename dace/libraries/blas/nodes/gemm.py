@@ -566,7 +566,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
             tasklet = state.add_tasklet(
                 "read_A", {"from_memory"}, {"to_kernel"}, f"""\
 data = from_memory if n0 * {P} + n1 < {N} else 0
-to_kernel = from_memory""")
+to_kernel = data""")
 
             state.add_memlet_path(mem,
                                   entry,
@@ -773,10 +773,11 @@ if  m>={L} and not {entry_pipeline.pipeline.drain_condition()}:
             compute_tasklet = state.add_tasklet(
                 "compute_and_drain", {"a_in", "b_in", "c_in", "forward_in"},
                 {"b_out", "c_out", "c_pipe_out"}, f"""\
-c_out = c_in       
+result = c_in
 if m >= {L} and not {entry_pipeline.pipeline.drain_condition()}:
-    c_prev = 0 if k == 0 else c_in     
-    c_out =  c_prev + a_in * b_in
+    c_prev = 0 if k == 0 else c_in
+    result =  c_prev + a_in * b_in
+    c_out = result
     if p < {P} - 1:
         b_out = b_in
 # Drain
@@ -788,7 +789,7 @@ if m >= {L} and not {entry_pipeline.pipeline.drain_condition()}:
 # - if k = K-1 and m>=L: then the PE drains its own result
 #-  otherwise, if k_drain<p forward data coming from previous PEs (this could happens also in the drain phase)
 if((n0 > 0 or tm > 0)  and k_drain <p and m_drain <{T}) or  (k=={K}-1 and m>= {L}) or ({entry_pipeline.pipeline.drain_condition()} and k_drain < p):
-    c_pipe_out = c_out if (p==0 or (k_drain=={K}-1 and not {entry_pipeline.pipeline.drain_condition()})) else forward_in
+    c_pipe_out = result if (p==0 or (k_drain=={K}-1 and not {entry_pipeline.pipeline.drain_condition()})) else forward_in
 
 # adjust draining iterators
 if not {entry_pipeline.pipeline.drain_condition()}:
