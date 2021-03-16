@@ -346,9 +346,10 @@ def auto_optimize(sdfg: SDFG,
     #sdfg.apply_transformations(MapTiling)
 
     # Tiled WCR and streams
+    '''
     for nsdfg in list(sdfg.all_sdfgs_recursive()):
         tile_wcrs(nsdfg, validate_all)
-
+    '''
     
     # Collapse maps
     sdfg.apply_transformations_repeated(MapCollapse,

@@ -223,15 +223,14 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         out_data = set([n.data for n in out_nodes])
 
         view_nodes = set()
-        for in_node in in_nodes:
-            original_node = get_view_node(graph, in_node)
-            if original_node:
-                view_nodes.add(original_node)
-        for out_node in out_nodes:
-            original_node = get_view_node(graph, out_node)
-            if original_node:
-                view_nodes.add(original_node)
-        
+        for node in chain(in_nodes, out_nodes, intermediate_nodes):
+            for edge in chain(graph.in_edges(node), graph.out_edges(node)):
+                for e in graph.memlet_tree(edge):
+                    if isinstance(e.dst, nodes.AccessNode) and isinstance(sdfg.data(e.dst.data), dace.data.View):
+                        view_nodes.add(e.dst)
+                    if isinstance(e.src, nodes.AccessNode) and isinstance(sdfg.data(e.src.data), dace.data.View):
+                        view_nodes.add(e.src)
+                    
         view_data = set([n.data for n in view_nodes])
 
         for out_node in out_nodes:
@@ -246,10 +245,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             for out_edge in graph.out_edges(n):
                 for e in graph.memlet_tree(out_edge):
                     if isinstance(e.dst, nodes.AccessNode) and isinstance(sdfg.data(e.dst.data), dace.data.View):
+                        warnings.warn("Special Case: Intermediate node connecting to View")
                         return False 
             for in_edge in graph.in_edges(n):
                 for e in graph.memlet_tree(in_edge):
                     if isinstance(e.src, nodes.AccessNode) and isinstance(sdfg.data(e.src.data), dace.data.View):
+                        warnings.warn("Special Case: Intermediate node connecting to View")
                         return False 
 
         # 2.6 Check for disjoint accesses for arrays that cannot be augmented 
