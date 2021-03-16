@@ -31,13 +31,13 @@ class ExpandSendMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (buffer, count_str), dest, tag = node.validate(parent_sdfg, parent_state)
+        (buffer, count_str, buffer_offset), dest, tag = node.validate(parent_sdfg, parent_state)
         mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(buffer.dtype.base_type)
 
         if buffer.dtype.veclen > 1:
             raise(NotImplementedError)
 
-        code = f"MPI_Send(_buffer, {count_str}, {mpi_dtype_str}, _dest, _tag, MPI_COMM_WORLD);"
+        code = f"MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, _dest, _tag, MPI_COMM_WORLD);"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -94,8 +94,15 @@ class Send(dace.sdfg.nodes.LibraryNode):
             if dst_conn == '_buffer':
                 dims = [str(e) for e in data.subset.size_exact()]
                 count_str = "*".join(dims)
+                # compute buffer offset
+                minelem = data.subset.min_element()
+                dims_data = sdfg.arrays[data.data].strides
+                buffer_offsets = []
+                for idx, m in enumerate(minelem):
+                    buffer_offsets += [(str(m) + "*" + str(dims_data[idx]))]
+                buffer_offset = "+".join(buffer_offsets)
             
         #TODO make sure buffer is contiguous!
 
-        return (buffer, count_str), dest, tag
+        return (buffer, count_str, buffer_offset), dest, tag
 
