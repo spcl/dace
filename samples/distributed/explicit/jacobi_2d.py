@@ -3,18 +3,18 @@ import dace as dc
 from mpi4py import MPI
 
 
-N = dc.symbol('N', dtype=dc.int64)
-lN = dc.symbol('lN', dtype=dc.int64)
-Px = dc.symbol('Px', dtype=dc.int32)
-Py = dc.symbol('Py', dtype=dc.int32)
-pi = dc.symbol('pi', dtype=dc.int32)
-pj = dc.symbol('pj', dtype=dc.int32)
-rank = dc.symbol('rank', dtype=dc.int32)
-size = dc.symbol('size', dtype=dc.int32)
-noff = dc.symbol('noff', dtype=dc.int32)
-soff = dc.symbol('soff', dtype=dc.int32)
-woff = dc.symbol('woff', dtype=dc.int32)
-eoff = dc.symbol('eoff', dtype=dc.int32)
+N = dc.symbol('N', dtype=dc.int64, integer=True, positive=True)
+lN = dc.symbol('lN', dtype=dc.int64, integer=True, positive=True)
+Px = dc.symbol('Px', dtype=dc.int32, integer=True, positive=True)
+Py = dc.symbol('Py', dtype=dc.int32, integer=True, positive=True)
+pi = dc.symbol('pi', dtype=dc.int32, integer=True, nonnegative=True)
+pj = dc.symbol('pj', dtype=dc.int32, integer=True, nonnegative=True)
+rank = dc.symbol('rank', dtype=dc.int32, integer=True, nonnegative=True)
+size = dc.symbol('size', dtype=dc.int32, integer=True, positive=True)
+noff = dc.symbol('noff', dtype=dc.int32, integer=True, nonnegative=True)
+soff = dc.symbol('soff', dtype=dc.int32, integer=True, nonnegative=True)
+woff = dc.symbol('woff', dtype=dc.int32, integer=True, nonnegative=True)
+eoff = dc.symbol('eoff', dtype=dc.int32, integer=True, nonnegative=True)
 
 
 def relerr(ref, val):
@@ -140,8 +140,8 @@ if __name__ == "__main__":
         soff = 1
 
     mpi_sdfg = None
-    if size < 2:
-        raise ValueError("This test is supposed to be run with at least two processes!")
+    # if size < 2:
+    #     raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, size):
         if r == rank:
             mpi_sdfg = jacobi_2d_dist.compile()
