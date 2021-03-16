@@ -485,17 +485,40 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         vec_width = outer_array_b.dtype.veclen
         vec_type = dace.vector(dtype_c, vec_width)
         N, K, M = shape_a[0], shape_a[1], shape_b[1]
+
         P = num_pes
         T = tile_size_m
         if T is None:
             T = M
+
+        # we will perform sanity check using T and M. But at this stage, we still
+        # don't know to what outer symbol they will map.
+        # We try to resolve them to constant if they are symbolic, otherwise we skip the checks
+        def resolve_symbol_to_constant(symb: dace.symbolic.symbol, parent_sdfg):
+            if not dace.symbolic.issymbolic(symb):
+                return symb
+            else:
+                sdfg = parent_sdfg
+                while sdfg is not None:
+                    if not dace.symbolic.issymbolic(symb, sdfg.constants):
+                        return dace.symbolic.evaluate(symb, sdfg.constants)
+                    else:
+                        sdfg = sdfg.parent_sdfg
+                # can not be resolved
+                return None
+
+        T_constant = resolve_symbol_to_constant(T, parent_sdfg)
+        K_constant = resolve_symbol_to_constant(K, parent_sdfg)
 
         # Safe delay: this will be used in the compute state, pipeline scope, to insert
         # a delay between accumulation on the same result if needed.
         # Further explanations are provided in the compute state.
 
         # TODO: this is a platform and type dependent parameter. How we can deal with this?
-        L = max(11 - T, 0)
+        if T_constant is not None:
+            L = max(11 - T_constant, 0)
+        else:
+            L = 0
 
         # This implementation uses a flattened nested loop, that overlaps feeding,
         # computing and draining phases. Each PE is responsible for computing one
@@ -507,7 +530,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         # or equal to the number of cycles needed to compute them.
         # That is PT <= KT.
 
-        if P > K:
+        if K_constant is not None and P > K_constant:
             raise ValueError(
                 "GEMM-FPGA: Draining phase too long. Please reduce the number of Processing Elements"
             )
@@ -594,12 +617,33 @@ to_kernel = data""")
             },
                                         schedule=dace.ScheduleType.FPGA_Device)
 
+            # If we are out-of bound, use a dummy value
+            new_sdfg.add_array("B_dummy",
+                               dtype=vec_type,
+                               shape=[1],
+                               transient=True,
+                               storage=dace.dtypes.StorageType.FPGA_Registers)
+            b_dummy = state.add_access("B_dummy")
+            init_tasklet = state.add_tasklet("init_dummy_B", {}, {"init_data"},
+                                             "init_data = 0")
+
+            state.add_memlet_path(init_tasklet,
+                                  b_dummy,
+                                  src_conn="init_data",
+                                  memlet=dace.Memlet("B_dummy[0]"))
+
             mem = state.add_read("_b")
             pipe = state.add_write("B_pipe")
             tasklet = state.add_tasklet(
-                "read_B", {"from_memory"}, {"to_kernel"}, f"""\
-data = from_memory if tm*{T} + m < {M} else 0
+                "read_B", {"from_memory", "dummy_data"}, {"to_kernel"}, f"""\
+data = from_memory if tm*{T} + m < {M} else dummy_data
 to_kernel = data""")
+
+            state.add_memlet_path(b_dummy,
+                                  entry,
+                                  tasklet,
+                                  dst_conn="dummy_data",
+                                  memlet=dace.Memlet("B_dummy[0]"))
 
             state.add_memlet_path(mem,
                                   entry,
@@ -720,13 +764,31 @@ if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :
 
             # Note: for some of the Sacred Mysteries of Intel OpenCL Compiler (TM), if this buffer is smaller
             # than 24 floats, the II of the pipeline will be 5. Therefore we check this and in case we enlarge it
-            buffer_size = max(M, 24)
+            buffer_size = T if T_constant is None else max(T_constant, 24)
             sdfg.add_array("C_buffer", [buffer_size],
                            dtype=vec_type,
                            transient=True,
                            storage=dace.dtypes.StorageType.FPGA_Local)
             C_buffer_in = state.add_read("C_buffer")
             C_buffer_out = state.add_write("C_buffer")
+
+            # Init data to reset partial results
+            new_sdfg.add_array("C_init",
+                               dtype=vec_type,
+                               shape=[1],
+                               transient=True,
+                               storage=dace.dtypes.StorageType.FPGA_Registers)
+            C_init = state.add_access("C_init")
+            C_init_tasklet = state.add_tasklet("C_data_init", {}, {"init_data"},
+                                               "init_data = 0")
+
+            state.add_memlet_path(C_init_tasklet,
+                                  C_init,
+                                  src_conn="init_data",
+                                  memlet=dace.Memlet("C_init[0]"))
+            state.add_memlet_path(entry_pipeline,
+                                  C_init_tasklet,
+                                  memlet=dace.Memlet())
 
             # Feed A
             # every PE: reads input data, buffer the data assigned to it
@@ -771,11 +833,12 @@ if  m>={L} and not {entry_pipeline.pipeline.drain_condition()}:
 
             # Compute, Forward B, and Drain
             compute_tasklet = state.add_tasklet(
-                "compute_and_drain", {"a_in", "b_in", "c_in", "forward_in"},
+                "compute_and_drain",
+                {"a_in", "b_in", "c_in", "forward_in", "c_init_data"},
                 {"b_out", "c_out", "c_pipe_out"}, f"""\
 result = c_in
 if m >= {L} and not {entry_pipeline.pipeline.drain_condition()}:
-    c_prev = 0 if k == 0 else c_in
+    c_prev = c_init_data if k == 0 else c_in
     result =  c_prev + a_in * b_in
     c_out = result
     if p < {P} - 1:
@@ -820,6 +883,10 @@ else:
                                   compute_tasklet,
                                   memlet=dace.Memlet("B_reg[0]", dynamic=False),
                                   dst_conn="b_in")
+            state.add_memlet_path(C_init,
+                                  compute_tasklet,
+                                  memlet=dace.Memlet("C_init[0]"),
+                                  dst_conn="c_init_data")
 
             state.add_memlet_path(compute_tasklet,
                                   exit_pipeline,
@@ -922,6 +989,7 @@ else:
         make_write_C(new_state)
 
         new_sdfg.fill_scope_connectors()
+        new_sdfg.save('/tmp/gemm.sdfg')
         new_sdfg.validate()
         return new_sdfg
 
