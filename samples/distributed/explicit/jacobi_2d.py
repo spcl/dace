@@ -74,19 +74,21 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
 
         # NORTH
         dace.comm.Send(lB[1,:], (pi-1)*Px + pj, t)
+        dace.comm.Send(lB[-2,:], (pi+1)*Px + pj, t)
         dace.comm.Recv(rn, (pi-1)*Px + pj, t)
         lB[0, 1:-1] = rn
         # SOUTH
         dace.comm.Recv(rs, (pi+1)*Px + pj, t)
-        dace.comm.Send(lB[-2,:], (pi+1)*Px + pj, t)
+        # dace.comm.Send(lB[-2,:], (pi+1)*Px + pj, t)
         lB[-1, 1:-1] = rs
         # WEST
         dace.comm.Send(lB[:, 1], pi*Px + (pj-1), t)
+        dace.comm.Send(lB[:, -2], pi*Px + (pj+1), t)
         dace.comm.Recv(rw, pi*Px + (pj-1), t)
         lB[1:-1, 0] = rw
         # EAST
         dace.comm.Recv(re, pi*Px + (pj+1), t)
-        dace.comm.Send(lB[:, -2], pi*Px + (pj+1), t)
+        # dace.comm.Send(lB[:, -2], pi*Px + (pj+1), t)
         lB[1:-1, -1] = re
 
         lA[1+noff:-1-soff, 1+woff:-1-eoff] = 0.2 * (
@@ -117,7 +119,7 @@ def init_data(N, datatype):
 if __name__ == "__main__":
 
     # Initialization
-    TSTEPS, N = 20, 100  # 500, 1300  # 1000, 2800
+    TSTEPS, N = 2, 20  # 500, 1300  # 1000, 2800
     A, B = init_data(N, np.float64)
 
     comm = MPI.COMM_WORLD
