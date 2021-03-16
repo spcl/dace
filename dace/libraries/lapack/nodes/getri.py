@@ -64,8 +64,37 @@ class ExpandGetriMKL(ExpandTransformation):
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
-    def expansion(*args, **kwargs):
-        return ExpandGetriOpenBLAS.expansion(*args, **kwargs)
+    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        (desc_x, stride_x, rows_x, cols_x),  desc_ipiv, desc_result = node.validate(
+            parent_sdfg, parent_state)
+        dtype = desc_x.dtype.base_type
+        lapack_dtype = "X"
+        cast = ""
+        if dtype == dace.dtypes.float32:
+            lapack_dtype = "s"
+        elif dtype == dace.dtypes.float64:
+            lapack_dtype = "d" 
+        elif dtype == dace.dtypes.complex64:
+            lapack_dtype = "c"
+            cast = "(MKL_Complex8*)"
+        elif dtype == dace.dtypes.complex128:
+            lapack_dtype = "z"
+            cast = "(MKL_Complex16*)"
+        else:
+            print("The datatype "+str(dtype)+" is not supported!")
+            raise(NotImplementedError) 
+        if desc_x.dtype.veclen > 1:
+            raise(NotImplementedError)
+
+
+        n = n or node.n
+        code = f"_res = LAPACKE_{lapack_dtype}getri(LAPACK_ROW_MAJOR, {rows_x}, {cast}_xin, {stride_x}, _ipiv);"
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+        return tasklet
 
 
 @dace.library.node
@@ -76,7 +105,7 @@ class Getri(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandGetriOpenBLAS,
         "MKL": ExpandGetriMKL,
     }
-    default_implementation = ExpandGetriOpenBLAS
+    default_implementation = None
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)

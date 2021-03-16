@@ -6,7 +6,7 @@ import dace.library
 class cuSolverDn:
 
     cmake_minimum_version = None
-    cmake_packages = []
+    cmake_packages = ["CUDA"]
     cmake_variables = {}
     cmake_includes = []
     cmake_libraries = ["cusolver"]

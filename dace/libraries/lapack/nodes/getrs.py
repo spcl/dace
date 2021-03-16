@@ -4,6 +4,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.symbolic import symstr
+from dace.libraries.lapack import lapack_helpers
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic
@@ -64,8 +65,80 @@ class ExpandGetrsMKL(ExpandTransformation):
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
-    def expansion(*args, **kwargs):
-        return ExpandGetrsOpenBLAS.expansion(*args, **kwargs)
+    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res = node.validate(
+            parent_sdfg, parent_state)
+        dtype = desc_a.dtype.base_type
+        lapack_dtype = "X"
+        cast = ""
+        if dtype == dace.dtypes.float32:
+            lapack_dtype = "s"
+        elif dtype == dace.dtypes.float64:
+            lapack_dtype = "d" 
+        elif dtype == dace.dtypes.complex64:
+            lapack_dtype = "c"
+            cast = "(MKL_Complex8*)"
+        elif dtype == dace.dtypes.complex128:
+            lapack_dtype = "z"
+            cast = "(MKL_Complex16*)"
+        else:
+            print("The datatype "+str(dtype)+" is not supported!")
+            raise(NotImplementedError) 
+        if desc_a.dtype.veclen > 1:
+            raise(NotImplementedError)
+
+
+        n = n or node.n
+        code = f"_res = LAPACKE_{lapack_dtype}getrs(LAPACK_ROW_MAJOR, 'N', {rows_a}, {cols_rhs}, {cast}_a, {stride_a}, _ipiv, {cast}_rhs_in, {stride_rhs});"
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+        return tasklet
+
+@dace.library.expansion
+class ExpandGetrsCuSolverDn(ExpandTransformation):
+
+    environments = [environments.cusolverdn.cuSolverDn]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res = node.validate(
+            parent_sdfg, parent_state)
+        dtype = desc_a.dtype.base_type
+        veclen = desc_a.dtype.veclen
+
+        func, cuda_type, _ = lapack_helpers.cuda_type_metadata(dtype)
+        func = func + 'getrs'
+
+        n = n or node.n
+        if veclen != 1:
+            n /= veclen
+
+        # NOTE: In the case where the RHS is only a single vector (1D array),
+        # cuSOLVER still expects ldb to be the "number of rows"
+        if len(desc_rhs.shape) == 1:
+            stride_rhs = rows_rhs
+
+        code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) +
+                f"""
+                cusolverDn{func}(
+                    __dace_cusolverDn_handle, CUBLAS_OP_N, {rows_a}, {cols_rhs},
+                    ({cuda_type}*)_a, {stride_a}, _ipiv, ({cuda_type}*)_rhs_in, {stride_rhs}, _res); 
+                """)
+
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+        conn = tasklet.out_connectors
+        conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t)
+                for c, t in conn.items()}
+        tasklet.out_connectors = conn
+
+        return tasklet
 
 
 @dace.library.node
@@ -75,8 +148,9 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "OpenBLAS": ExpandGetrsOpenBLAS,
         "MKL": ExpandGetrsMKL,
+        "cuSolverDn": ExpandGetrsCuSolverDn
     }
-    default_implementation = ExpandGetrsOpenBLAS
+    default_implementation = None
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)

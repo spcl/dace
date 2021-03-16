@@ -10,9 +10,9 @@ from .. import environments
 
 
 @dace.library.expansion
-class ExpandGetrfPure(ExpandTransformation):
+class ExpandPotrfPure(ExpandTransformation):
     """
-    Naive backend-agnostic expansion of LAPACK GETRF.
+    Naive backend-agnostic expansion of LAPACK POTRF.
     """
 
     environments = []
@@ -23,53 +23,25 @@ class ExpandGetrfPure(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandGetrfOpenBLAS(ExpandTransformation):
+class ExpandPotrfOpenBLAS(ExpandTransformation):
 
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_x, stride_x, rows_x,
-         cols_x), desc_ipiv, desc_result = node.validate(
-             parent_sdfg, parent_state)
-        dtype = desc_x.dtype.base_type
-        
-        if desc_x.dtype.veclen > 1:
-            raise (NotImplementedError)
-
-        n = n or node.n
-        code = f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, _xin, {stride_x}, _ipiv);"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
-        return tasklet
-
-
-@dace.library.expansion
-class ExpandGetrfMKL(ExpandTransformation):
-
-    environments = [environments.intel_mkl.IntelMKL]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_x, stride_x, rows_x,
-         cols_x), desc_ipiv, desc_result = node.validate(
+         cols_x), desc_result = node.validate(
              parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         lapack_dtype = "X"
-        cast = ""
         if dtype == dace.dtypes.float32:
             lapack_dtype = "s"
         elif dtype == dace.dtypes.float64:
             lapack_dtype = "d"
         elif dtype == dace.dtypes.complex64:
             lapack_dtype = "c"
-            cast = "(MKL_Complex8*)"
         elif dtype == dace.dtypes.complex128:
             lapack_dtype = "z"
-            cast = "(MKL_Complex16*)"
         else:
             print("The datatype " + str(dtype) + " is not supported!")
             raise (NotImplementedError)
@@ -77,7 +49,8 @@ class ExpandGetrfMKL(ExpandTransformation):
             raise (NotImplementedError)
 
         n = n or node.n
-        code = f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
+        uplo = "'L'" if node._lower else "'U'"
+        code = f"_res = LAPACKE_{lapack_dtype}potrf(LAPACK_ROW_MAJOR, {uplo}, {rows_x}, _xin, {stride_x});"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -87,38 +60,49 @@ class ExpandGetrfMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandGetrfCuSolverDn(ExpandTransformation):
+class ExpandPotrfMKL(ExpandTransformation):
+
+    environments = [environments.intel_mkl.IntelMKL]
+
+    @staticmethod
+    def expansion(*args, **kwargs):
+        return ExpandPotrfOpenBLAS.expansion(*args, **kwargs)
+
+
+@dace.library.expansion
+class ExpandPotrfCuSolverDn(ExpandTransformation):
 
     environments = [environments.cusolverdn.cuSolverDn]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_x, stride_x, rows_x,
-         cols_x), desc_ipiv, desc_result = node.validate(
+         cols_x), desc_result = node.validate(
              parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
         func, cuda_type, _ = lapack_helpers.cuda_type_metadata(dtype)
-        func = func + 'getrf'
+        func = func + 'potrf'
 
         n = n or node.n
         if veclen != 1:
             n /= veclen
+        uplo = "CUBLAS_FILL_MODE_LOWER" if node._lower else "CUBLAS_FILL_MODE_UPPER"
 
         code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) +
                 f"""
                 int __dace_workspace_size = 0;
                 {cuda_type}* __dace_workspace;
                 cusolverDn{func}_bufferSize(
-                    __dace_cusolverDn_handle, {rows_x}, {cols_x}, ({cuda_type}*)_xin,
+                    __dace_cusolverDn_handle, {uplo}, {rows_x}, _xin,
                     {stride_x}, &__dace_workspace_size);
                 cudaMalloc<{cuda_type}>(
                     &__dace_workspace,
                     sizeof({cuda_type}) * __dace_workspace_size);
                 cusolverDn{func}(
-                    __dace_cusolverDn_handle, {rows_x}, {cols_x}, ({cuda_type}*)_xin,
-                    {stride_x}, __dace_workspace, _ipiv, _res);
+                    __dace_cusolverDn_handle, {uplo}, {rows_x}, _xin,
+                    {stride_x}, __dace_workspace, __dace_workspace_size, _res);
                 cudaFree(__dace_workspace);
                 """)
 
@@ -136,61 +120,58 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
 
 
 @dace.library.node
-class Getrf(dace.sdfg.nodes.LibraryNode):
+class Potrf(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        "OpenBLAS": ExpandGetrfOpenBLAS,
-        "MKL": ExpandGetrfMKL,
-        "cuSolverDn": ExpandGetrfCuSolverDn
+        "OpenBLAS": ExpandPotrfOpenBLAS,
+        "MKL": ExpandPotrfMKL,
+        "cuSolverDn": ExpandPotrfCuSolverDn
     }
     default_implementation = None
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
-    def __init__(self, name, n=None, *args, **kwargs):
+    def __init__(self, name, lower=True, n=None, *args, **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_xin"},
-                         outputs={"_xout", "_ipiv", "_res"},
+                         outputs={"_xout", "_res"},
                          **kwargs)
+        self._lower = lower
 
     def validate(self, sdfg, state):
         """
-        :return: A three-tuple (x, ipiv, res) of the three data descriptors in the
+        :return: A two-tuple (x, res) of the two data descriptors in the
                  parent SDFG.
         """
         in_edges = state.in_edges(self)
         if len(in_edges) != 1:
-            raise ValueError("Expected exactly one input to getrf")
+            raise ValueError("Expected exactly one input to potrf")
         in_memlets = [in_edges[0].data]
         out_edges = state.out_edges(self)
-        if len(out_edges) != 3:
+        if len(out_edges) != 2:
             raise ValueError(
-                "Expected exactly three outputs from getrf product")
+                "Expected exactly two outputs from potrf product")
         out_memlet = out_edges[0].data
 
         # Squeeze input memlets
         squeezed1 = copy.deepcopy(in_memlets[0].subset)
         sqdims1 = squeezed1.squeeze()
 
-        desc_xin, desc_xout, desc_ipiv, desc_res = None, None, None, None
+        desc_xin, desc_xout, desc_res = None, None, None
         for e in state.in_edges(self):
             if e.dst_conn == "_xin":
                 desc_xin = sdfg.arrays[e.data.data]
         for e in state.out_edges(self):
             if e.src_conn == "_xout":
                 desc_xout = sdfg.arrays[e.data.data]
-            if e.src_conn == "_ipiv":
-                desc_ipiv = sdfg.arrays[e.data.data]
             if e.src_conn == "_result":
                 desc_res = sdfg.arrays[e.data.data]
 
         if desc_xin.dtype.base_type != desc_xout.dtype.base_type:
             raise ValueError("Basetype of input and output must be equal!")
-        if desc_ipiv.dtype.base_type != dace.dtypes.int32:
-            raise ValueError("Pivot output must be an integer array!")
 
         stride_x = desc_xin.strides[sqdims1[0]]
         shape_x = squeezed1.size()
@@ -199,6 +180,6 @@ class Getrf(dace.sdfg.nodes.LibraryNode):
 
         if len(squeezed1.size()) != 2:
             print(str(squeezed1))
-            raise ValueError("getrf only supported on 2-dimensional arrays")
+            raise ValueError("potrf only supported on 2-dimensional arrays")
 
-        return (desc_xin, stride_x, rows_x, cols_x), desc_ipiv, desc_res
+        return (desc_xin, stride_x, rows_x, cols_x), desc_res

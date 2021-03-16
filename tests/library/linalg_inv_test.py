@@ -5,9 +5,11 @@ from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 from dace.libraries.linalg import Inv
 import numpy as np
 import warnings
+import pytest
 
 
 n = dace.symbol("n", dace.int64)
+id = -1
 
 
 def generate_matrix(size, dtype):
@@ -70,18 +72,78 @@ def make_sdfg(implementation,
     return sdfg
 
 
-def _test_inv(implementation,
+@pytest.mark.parametrize(
+    "implementation, dtype, size, shape, overwrite, getri", [
+        pytest.param('MKL', np.float32, 4,
+                [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                False, True, marks=pytest.mark.mkl),
+        pytest.param('MKL', np.float64, 4,
+                [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                False, True, marks=pytest.mark.mkl),
+        pytest.param('MKL', np.float32, 4,
+                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                False, True, marks=pytest.mark.mkl),
+        pytest.param('MKL', np.float64, 4,
+                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                False, True, marks=pytest.mark.mkl),
+        pytest.param('MKL', np.float32, 4,
+                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                True, True, marks=pytest.mark.mkl),
+        pytest.param('MKL', np.float64, 4,
+                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                True, True, marks=pytest.mark.mkl),
+        pytest.param('MKL', np.float32, 4,
+                [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                False, False,marks=pytest.mark.mkl),
+        pytest.param('MKL', np.float64, 4,
+                [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                False, False, marks=pytest.mark.mkl),
+        pytest.param('MKL', np.float32, 4,
+                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                False, False, marks=pytest.mark.mkl),
+        pytest.param('MKL', np.float64, 4,
+                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                False, False, marks=pytest.mark.mkl),
+        pytest.param('MKL', np.float32, 4,
+                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                True, False, marks=pytest.mark.mkl),
+        pytest.param('MKL', np.float64, 4,
+                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                True, False, marks=pytest.mark.mkl),
+        pytest.param('cuSolverDn', np.float32, 4,
+                [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                False, False, marks=pytest.mark.gpu),
+        pytest.param('cuSolverDn', np.float64, 4,
+                [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                False, False, marks=pytest.mark.gpu),
+        pytest.param('cuSolverDn', np.float32, 4,
+                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                False, False, marks=pytest.mark.gpu),
+        pytest.param('cuSolverDn', np.float64, 4,
+                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                False, False, marks=pytest.mark.gpu),
+        pytest.param('cuSolverDn', np.float32, 4,
+                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                True, False, marks=pytest.mark.gpu),
+        pytest.param('cuSolverDn', np.float64, 4,
+                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                True, False, marks=pytest.mark.gpu)
+])
+def test_inv(implementation,
              dtype,
-             id=0,
-             size=4,
-             in_shape=[4, 4],
-             out_shape=[4, 4],
-             in_offset=[0, 0],
-             out_offset=[0, 0],
-             in_dims=[0, 1],
-             out_dims=[0, 1],
-             overwrite=False,
-             getri=True):
+             size,
+             shape,
+             overwrite,
+             getri):
+    global id
+    id += 1
+
+    in_shape = shape[0]
+    out_shape = shape[1]
+    in_offset = shape[2]
+    out_offset = shape[3]
+    in_dims = shape[4]
+    out_dims = shape[5]
 
     assert np.all(np.array(in_shape)[in_dims] >= size)
     assert np.all(np.array(out_shape)[out_dims] >= size)
@@ -118,6 +180,9 @@ def _test_inv(implementation,
 
     sdfg = make_sdfg(implementation, dtype, id, in_shape, out_shape,
                      in_subset_str, out_subset_str, overwrite, getri)
+    if implementation == 'cuSolverDn':
+        sdfg.apply_gpu_transformations()
+        sdfg.apply_strict_transformations()
     try:
         inv_sdfg = sdfg.compile()
     except (CompilerConfigurationError, CompilationError):
@@ -151,96 +216,60 @@ def _test_inv(implementation,
         assert not np.array_equal(A0, A1)
 
 
-def test_with_getri():
-    _test_inv('MKL', np.float32, id=0)
-    _test_inv('MKL', np.float64, id=0)
-    _test_inv('MKL',
-             np.float32,
-             id=1,
-             in_shape=[5, 5, 5],
-             out_shape=[5, 5, 5],
-             in_offset=[1, 3, 0],
-             out_offset=[2, 0, 1],
-             in_dims=[0, 2],
-             out_dims=[1, 2])
-    _test_inv('MKL',
-             np.float64,
-             id=1,
-             in_shape=[5, 5, 5],
-             out_shape=[5, 5, 5],
-             in_offset=[1, 3, 0],
-             out_offset=[2, 0, 1],
-             in_dims=[0, 2],
-             out_dims=[1, 2])
-    _test_inv('MKL',
-             np.float32,
-             id=2,
-             in_shape=[5, 5, 5],
-             out_shape=[5, 5, 5],
-             in_offset=[1, 3, 0],
-             out_offset=[2, 0, 1],
-             in_dims=[0, 2],
-             out_dims=[1, 2],
-             overwrite=True)
-    _test_inv('MKL',
-             np.float64,
-             id=2,
-             in_shape=[5, 5, 5],
-             out_shape=[5, 5, 5],
-             in_offset=[1, 3, 0],
-             out_offset=[2, 0, 1],
-             in_dims=[0, 2],
-             out_dims=[1, 2],
-             overwrite=True)
-
-
-def test_with_getrs():
-    _test_inv('MKL', np.float32, id=3, getri=False)
-    _test_inv('MKL', np.float64, id=3, getri=False)
-    _test_inv('MKL',
-             np.float32,
-             id=4,
-             in_shape=[5, 5, 5],
-             out_shape=[5, 5, 5],
-             in_offset=[1, 3, 0],
-             out_offset=[2, 0, 1],
-             in_dims=[0, 2],
-             out_dims=[1, 2],
-             getri=False)
-    _test_inv('MKL',
-             np.float64,
-             id=4,
-             in_shape=[5, 5, 5],
-             out_shape=[5, 5, 5],
-             in_offset=[1, 3, 0],
-             out_offset=[2, 0, 1],
-             in_dims=[0, 2],
-             out_dims=[1, 2],
-             getri=False)
-    _test_inv('MKL',
-             np.float32,
-             id=5,
-             in_shape=[5, 5, 5],
-             out_shape=[5, 5, 5],
-             in_offset=[1, 3, 0],
-             out_offset=[2, 0, 1],
-             in_dims=[0, 2],
-             out_dims=[1, 2],
-             overwrite=True,
-             getri=False)
-    _test_inv('MKL',
-             np.float64,
-             id=5,
-             in_shape=[5, 5, 5],
-             out_shape=[5, 5, 5],
-             in_offset=[1, 3, 0],
-             out_offset=[2, 0, 1],
-             in_dims=[0, 2],
-             out_dims=[1, 2],
-             overwrite=True,
-             getri=False)
-
+###############################################################################
 
 if __name__ == "__main__":
-    test_with_getri()
-    test_with_getrs()
+    test_inv('MKL', np.float32, 4,
+             [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+             False, True)
+    test_inv('MKL', np.float64, 4,
+             [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+             False, True)
+    test_inv('MKL', np.float32, 4,
+             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+             False, True)
+    test_inv('MKL', np.float64, 4,
+             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+             False, True)
+    test_inv('MKL', np.float32, 4,
+             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+             True, True)
+    test_inv('MKL', np.float64, 4,
+             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+             True, True)
+    test_inv('MKL', np.float32, 4,
+             [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+             False, False)
+    test_inv('MKL', np.float64, 4,
+             [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+             False, False)
+    test_inv('MKL', np.float32, 4,
+             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+             False, False)
+    test_inv('MKL', np.float64, 4,
+             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+             False, False)
+    test_inv('MKL', np.float32, 4,
+             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+             True, False)
+    test_inv('MKL', np.float64, 4,
+             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+             True, False)
+    test_inv('cuSolverDn', np.float32, 4,
+             [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+             False, False)
+    test_inv('cuSolverDn', np.float64, 4,
+             [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+             False, False)
+    test_inv('cuSolverDn', np.float32, 4,
+             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+             False, False)
+    test_inv('cuSolverDn', np.float64, 4,
+             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+             False, False)
+    test_inv('cuSolverDn', np.float32, 4,
+             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+             True, False)
+    test_inv('cuSolverDn', np.float64, 4,
+             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+             True, False)

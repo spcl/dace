@@ -12,6 +12,11 @@ import pytest
 ###############################################################################
 
 
+def generate_matrix(size, dtype):
+    A = np.random.randn(size, size).astype(dtype)
+    return (0.5 * A @ A.T).copy()
+
+
 def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
     n = dace.symbol("n")
@@ -19,7 +24,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("matrix_lufact_getrf_{}_{}".format(implementation, str(dtype)))
+    sdfg = dace.SDFG("matrix_choleskyfact_potrf_{}_{}".format(implementation, str(dtype)))
     state = sdfg.add_state("dataflow")
 
     xhost_arr = sdfg.add_array("x", [n, n],
@@ -35,10 +40,6 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
                                 dtype,
                                 storage=storage,
                                 transient=transient)
-    sdfg.add_array("pivots" + suffix, [n],
-                   dace.dtypes.int32,
-                   storage=storage,
-                   transient=transient)
     sdfg.add_array("result" + suffix, [1],
                    dace.dtypes.int32,
                    storage=storage,
@@ -78,27 +79,22 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     else:
         xin = state.add_access("x" + suffix)
         xout = state.add_access("x" + suffix)
-    pivots = state.add_access("pivots" + suffix)
     result = state.add_access("result" + suffix)
 
-    getrf_node = lapack.nodes.getrf.Getrf("getrf")
-    getrf_node.implementation = implementation
+    potrf_node = lapack.nodes.potrf.Potrf("potrf")
+    potrf_node.implementation = implementation
 
     state.add_memlet_path(xin,
-                          getrf_node,
+                          potrf_node,
                           dst_conn="_xin",
                           memlet=Memlet.simple(xin,
                                                "0:n, 0:n",
                                                num_accesses=n * n))
-    state.add_memlet_path(getrf_node,
+    state.add_memlet_path(potrf_node,
                           result,
                           src_conn="_res",
                           memlet=Memlet.simple(result, "0", num_accesses=1))
-    state.add_memlet_path(getrf_node,
-                          pivots,
-                          src_conn="_ipiv",
-                          memlet=Memlet.simple(pivots, "0:n", num_accesses=n))
-    state.add_memlet_path(getrf_node,
+    state.add_memlet_path(potrf_node,
                           xout,
                           src_conn="_xout",
                           memlet=Memlet.simple(xout,
@@ -121,31 +117,39 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
                  marks=pytest.mark.gpu),
 ])
 
-def test_getrf(implementation, dtype, storage):
+def test_potrf(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)
-    getrf_sdfg = sdfg.compile()
+    potrf_sdfg = sdfg.compile()
     np_dtype = getattr(np, dtype.to_string())
     
-    from scipy.linalg import lu_factor
     size = 4
     lapack_status = np.array([-1], dtype=np.int32)
-    A = np.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]], dtype=np_dtype)
-    lu_ref, _ = lu_factor(A)
-    pivots = np.ndarray([0,0,0,0], dtype=np.int32)
+    # A = np.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]], dtype=np_dtype)
+    A = generate_matrix(4, np_dtype)
+    cholesky_ref = np.linalg.cholesky(A)
   
     # the x is input AND output, the "result" argument gives the lapack status!
-    getrf_sdfg(x=A, result=lapack_status, pivots=pivots, n=size)
+    potrf_sdfg(x=A, result=lapack_status, n=size)
 
-    if np.allclose(A, lu_ref):
-        print("Test ran successfully for {}.".format(implementation))
+    # if np.allclose(A, cholesky_ref):
+    #     print("Test ran successfully for {}.".format(implementation))
+    # else:
+    #     raise ValueError("Validation error!")
+    if dtype == dace.float32:
+        rtol = 1e-6
+        atol = 1e-6
+    elif dtype == dace.float64:
+        rtol = 1e-12
+        atol = 1e-12
     else:
-        raise ValueError("Validation error!")
+        raise NotImplementedError
+    assert (np.linalg.norm(cholesky_ref - np.tril(A)) / np.linalg.norm(cholesky_ref)) < rtol
 
 ###############################################################################
 
 if __name__ == "__main__":
-    test_getrf("MKL", dace.float32)
-    test_getrf("MKL", dace.float64)
-    test_getrf("cuSolverDn", dace.float32, dace.StorageType.GPU_Global)
-    test_getrf("cuSolverDn", dace.float64, dace.StorageType.GPU_Global)
+    test_potrf("MKL", dace.float32, dace.StorageType.Default)
+    test_potrf("MKL", dace.float64, dace.StorageType.Default)
+    test_potrf("cuSolverDn", dace.float32, dace.StorageType.GPU_Global)
+    test_potrf("cuSolverDn", dace.float64, dace.StorageType.GPU_Global)
 ###############################################################################

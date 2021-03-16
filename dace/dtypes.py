@@ -13,6 +13,13 @@ from dace.registry import extensible_enum
 
 
 @extensible_enum
+class DeviceType(aenum.AutoNumberEnum):
+    CPU = ()  #: Multi-core CPU
+    GPU = ()  #: GPU (AMD or NVIDIA)
+    FPGA = ()  #: FPGA (Intel or Xilinx)
+
+
+@extensible_enum
 class StorageType(aenum.AutoNumberEnum):
     """ Available data storage types in the SDFG. """
 
@@ -420,6 +427,30 @@ def min_value(dtype: typeclass):
         return numpy.finfo(nptype).min
 
     raise TypeError('Unsupported type "%s" for minimum' % dtype)
+
+
+def reduction_identity(dtype: typeclass, red: ReductionType) -> Any:
+    """ 
+    Returns known identity values (which we can safely reset transients to) 
+    for built-in reduction types.
+    :param dtype: Input type.
+    :param red: Reduction type.
+    :return: Identity value in input type, or None if not found.
+    """
+    _VALUE_GENERATORS = {
+        ReductionType.Custom: lambda x: None,
+        ReductionType.Min: max_value,
+        ReductionType.Max: min_value,
+        ReductionType.Sum: lambda x: x(0),
+        ReductionType.Product: lambda x: x(1),
+        ReductionType.Logical_And: lambda x: x(True),
+        ReductionType.Logical_Or: lambda x: x(False),
+        ReductionType.Bitwise_And: lambda x: ~x(0),
+        ReductionType.Bitwise_Or: lambda x: x(0),
+    }
+    if red not in _VALUE_GENERATORS:
+        return None
+    return _VALUE_GENERATORS[red](dtype)
 
 
 def result_type_of(lhs, *rhs):
@@ -968,37 +999,13 @@ TYPECLASS_TO_STRING = {
 }
 
 TYPECLASS_STRINGS = [
-    "int",
-    "float",
-    "complex",
-    "bool",
-    "bool_",
-    "int8",
-    "int16",
-    "int32",
-    "int64",
-    "uint8",
-    "uint16",
-    "uint32",
-    "uint64",
-    "float16",
-    "float32",
-    "float64",
-    "complex64",
-    "complex128"
+    "int", "float", "complex", "bool", "bool_", "int8", "int16", "int32",
+    "int64", "uint8", "uint16", "uint32", "uint64", "float16", "float32",
+    "float64", "complex64", "complex128"
 ]
 
 INTEGER_TYPES = [
-    bool,
-    bool_,
-    int8,
-    int16,
-    int32,
-    int64,
-    uint8,
-    uint16,
-    uint32,
-    uint64
+    bool, bool_, int8, int16, int32, int64, uint8, uint16, uint32, uint64
 ]
 
 #######################################################
@@ -1054,8 +1061,9 @@ def isallowed(var, allow_recursive=False):
         if isinstance(var, (list, tuple)):
             return all(isallowed(v, allow_recursive=False) for v in var)
 
-    return isconstant(var) or ismodule(var) or issymbolic(
-        var) or isinstance(var, typeclass)
+    return isconstant(var) or ismodule(var) or issymbolic(var) or isinstance(
+        var, typeclass)
+
 
 class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
@@ -1153,8 +1161,11 @@ def can_access(schedule: ScheduleType, storage: StorageType):
         return True
 
     if schedule in [
-            ScheduleType.GPU_Device, ScheduleType.GPU_Persistent,
-            ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic, ScheduleType.GPU_Default,
+            ScheduleType.GPU_Device,
+            ScheduleType.GPU_Persistent,
+            ScheduleType.GPU_ThreadBlock,
+            ScheduleType.GPU_ThreadBlock_Dynamic,
+            ScheduleType.GPU_Default,
     ]:
         return storage in [
             StorageType.GPU_Global, StorageType.GPU_Shared,
@@ -1205,10 +1216,8 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
         return schedule in [
-            ScheduleType.GPU_Device,
-            ScheduleType.GPU_ThreadBlock,
-            ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Persistent,
+            ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock,
+            ScheduleType.GPU_ThreadBlock_Dynamic, ScheduleType.GPU_Persistent,
             ScheduleType.GPU_Default
         ]
 
