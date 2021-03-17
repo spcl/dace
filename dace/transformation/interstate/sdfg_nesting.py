@@ -409,9 +409,10 @@ class InlineSDFG(transformation.Transformation):
         # replacing memlets in outgoing/incoming paths
         modified_edges = set()
         modified_edges |= self._modify_memlet_path(new_incoming_edges, nstate,
-                                                   state, True)
+                                                   state, sink_to_outer, True)
         modified_edges |= self._modify_memlet_path(new_outgoing_edges, nstate,
-                                                   state, False)
+                                                   state, source_to_outer,
+                                                   False)
 
         # Reshape: add connections to viewed data
         self._modify_reshape_data(reshapes, repldict, inputs, nstate, state,
