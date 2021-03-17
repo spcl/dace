@@ -458,7 +458,8 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
 
         ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b,
                                                        shape_b, strides_b),
-         cdata) = _get_matmul_operands(node, parent_state, parent_sdfg)
+         (edge_c, outer_array_c, shape_c,
+          strides_c)) = _get_matmul_operands(node, parent_state, parent_sdfg)
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
@@ -478,6 +479,9 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         if len(shape_a) != 2 or len(shape_b) != 2 or shape_a[1] != shape_b[0]:
             raise SyntaxError("Matrix sizes must match")
 
+        if outer_array_b.dtype.veclen != outer_array_c.dtype.veclen:
+            raise SyntaxError("Vectorization lengths of B and C must match")
+
         ######################################################################
         # GEMM Parameters and checks
 
@@ -494,29 +498,16 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         # we will perform sanity check using T and M. But at this stage, we still
         # don't know to what outer symbol they will map.
         # We try to resolve them to constant if they are symbolic, otherwise we skip the checks
-        def resolve_symbol_to_constant(symb: dace.symbolic.symbol, parent_sdfg):
-            if not dace.symbolic.issymbolic(symb):
-                return symb
-            else:
-                sdfg = parent_sdfg
-                while sdfg is not None:
-                    if not dace.symbolic.issymbolic(symb, sdfg.constants):
-                        return dace.symbolic.evaluate(symb, sdfg.constants)
-                    else:
-                        sdfg = sdfg.parent_sdfg
-                # can not be resolved
-                return None
-
-        T_constant = resolve_symbol_to_constant(T, parent_sdfg)
-        K_constant = resolve_symbol_to_constant(K, parent_sdfg)
+        T_constant = dace.symbolic.resolve_symbol_to_constant(T, parent_sdfg)
+        K_constant = dace.symbolic.resolve_symbol_to_constant(K, parent_sdfg)
 
         # Safe delay: this will be used in the compute state, pipeline scope, to insert
         # a delay between accumulation on the same result if needed.
         # Further explanations are provided in the compute state.
 
-        # TODO: this is a platform and type dependent parameter. How we can deal with this?
+        # Note: this is a platform and type dependent parameter.
         if T_constant is not None:
-            L = max(11 - T_constant, 0)
+            L = max(16 - T_constant, 0)
         else:
             L = 0
 
@@ -532,7 +523,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
 
         if K_constant is not None and P > K_constant:
             raise ValueError(
-                "GEMM-FPGA: Draining phase too long. Please reduce the number of Processing Elements"
+                f"GEMM-FPGA: Number of processing elements {P} must be smaller than the K-dimension {K}."
             )
 
         ######################################################################
@@ -556,15 +547,15 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         new_sdfg.add_array("_c",
                            shape_c,
                            dtype_c,
-                           strides=cdata[-1],
-                           storage=cdata[1].storage)
+                           strides=strides_c,
+                           storage=outer_array_c.storage)
 
         if node.beta != 0:
             new_sdfg.add_array("_cin",
                                shape_c,
                                dtype_c,
-                               strides=cdata[-1],
-                               storage=cdata[1].storage)
+                               strides=strides_c,
+                               storage=outer_array_b.storage)
 
         def make_read_A(state):
 
@@ -735,7 +726,7 @@ if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :
             # to guarantee that the PE will accumulate on the same partial result only when its value is consolidated.
             # The + L is a safe delay between accumulation between the same partial result.
             # It must be computed by considering T and the latency needed to consolidate a partial result
-            # (which is the latency of a multiply-add + latency for reading and writing to BRAM).
+            # (which is the latency of the add + latency for reading and writing to BRAM).
 
             entry_pipeline, exit_pipeline = state.add_pipeline(
                 "compute_and_drain", {
@@ -987,10 +978,6 @@ else:
         make_read_B(new_state)
         make_compute(new_sdfg, new_state)
         make_write_C(new_state)
-
-        new_sdfg.fill_scope_connectors()
-        new_sdfg.save('/tmp/gemm.sdfg')
-        new_sdfg.validate()
         return new_sdfg
 
 

@@ -122,6 +122,7 @@ run_all() {
     run_sample blas/nodes/gemv_test gemv_fpga_test "\n" --target tiles_by_column --transpose --vectorize 4
     run_sample blas/nodes/gemv_test gemv_FPGA_Accumulate_float_False_w4_1 "\n" --target accumulate --vectorize 4
     run_sample blas/nodes/ger_test ger_test_w8_x16_y32 "\n" --target fpga
+    run_sample fpga/gemm_fpga gemm_fpga ""
 
     ## STD LibNodes
     run_sample fpga/reduce_fpga reduce_fpga "\n\n\n\n"
@@ -143,10 +144,6 @@ run_all() {
 
     # Views
     run_sample fpga/reshape_view_fpga reshape_view_fpga "\n\n\n"
-
-    # Tests that have to run without transform on call:
-    DACE_optimizer_transform_on_call=0
-    run_sample fpga/gemm_fpga gemm_fpga ""
 
 }
 

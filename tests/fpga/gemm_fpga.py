@@ -6,6 +6,7 @@ import numpy as np
 import dace.libraries.blas as blas
 from dace.transformation.interstate import InlineSDFG, FPGATransformSDFG
 from multiprocessing import Process, Queue
+from dace.config import Config
 
 
 def create_gemm_sdfg(sdfg_name,
@@ -144,8 +145,6 @@ def evaluate(sdfg, A, B, C, C_regression):
     This is needed to avoid Intel FPGA emulation runtime to segfault, or to leave
     threads running that will slow down evaluation
      (which seems to be the case since in these tests we generate autorun kernels).
-
-    Attention: in this case, trasnform_on_call DACE configuration must be set to false
     '''
     sdfg(A=A, B=B, C=C)
     assert np.allclose(C, C_regression, atol=1e-6)
@@ -171,7 +170,6 @@ def test_gemm_vectorized():
     sdfg.apply_transformations_repeated([InlineSDFG])
     # compute ground truth
     C_regression = alpha * (A @ B) + beta * C
-
     p = Process(target=evaluate, args=(sdfg, A, B, C, C_regression))
     p.start()
     p.join()
@@ -206,13 +204,13 @@ def test_gemm_size_not_multiples_of():
 def test_matmul_np():
     # Test with numpy matmul, and double precision
     @dace.program
-    def matmul_np(A: dace.float64[64, 64], B: dace.float64[64, 32],
-                  C: dace.float64[64, 32]):
+    def matmul_np(A: dace.float64[128, 64], B: dace.float64[64, 32],
+                  C: dace.float64[128, 32]):
         C[:] = A @ B
 
-    A = np.random.rand(64, 64).astype(np.float64)
+    A = np.random.rand(128, 64).astype(np.float64)
     B = np.random.rand(64, 32).astype(np.float64)
-    C = np.random.rand(64, 32).astype(np.float64)
+    C = np.random.rand(128, 32).astype(np.float64)
 
     sdfg = matmul_np.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG])
@@ -229,6 +227,9 @@ def test_matmul_np():
 
 
 if __name__ == "__main__":
+    # These tests will be executed on seperate process. The tranfform_on_call DACE configuration must be set to false
+    Config.set('optimizer', 'transform_on_call', value=False)
+
     test_gemm_vectorized()
     test_gemm_size_not_multiples_of()
     test_matmul_np()
