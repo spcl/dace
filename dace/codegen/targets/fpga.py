@@ -1175,10 +1175,12 @@ class FPGACodeGen(TargetCodeGenerator):
                             result, sdfg, state_id, node)
                         self.generate_flatten_loop_post(result, sdfg, state_id,
                                                         node)
-                    # add pragmas for data read/written inside this map
+                    # add pragmas for data read/written inside this map, but only for local arrays
                     for candidate in in_out_data:
-                        self.generate_no_dependence_post(
-                            result, sdfg, state_id, node, candidate)
+                        if sdfg.arrays[
+                                candidate].storage != dace.dtypes.StorageType.FPGA_Global:
+                            self.generate_no_dependence_post(
+                                result, sdfg, state_id, node, candidate)
 
         # Emit internal transient array allocation
         to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id),
