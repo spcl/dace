@@ -4582,11 +4582,11 @@ def _bcast(pv: 'ProgramVisitor',
 
 @oprepo.replaces('dace.comm.Scatter')
 def _scatter(pv: 'ProgramVisitor',
-           sdfg: SDFG,
-           state: SDFGState,
-           in_buffer: str,
-           out_buffer: str,
-           root: Union[str, sp.Expr, Number] = 0):
+             sdfg: SDFG,
+             state: SDFGState,
+             in_buffer: str,
+             out_buffer: str,
+             root: Union[str, sp.Expr, Number] = 0):
 
     from dace.libraries.mpi.nodes.scatter import Scatter
 
@@ -4652,23 +4652,36 @@ def _gather(pv: 'ProgramVisitor',
 
 @oprepo.replaces('dace.comm.Send')
 def _send(pv: 'ProgramVisitor',
-           sdfg: SDFG,
-           state: SDFGState,
-           buffer: str,
-           dst: Union[str, sp.Expr, Number],
-           tag: Union[str, sp.Expr, Number] = 0):
+          sdfg: SDFG,
+          state: SDFGState,
+          buffer: str,
+          dst: Union[str, sp.Expr, Number],
+          tag: Union[str, sp.Expr, Number] = 0):
 
     from dace.libraries.mpi.nodes.send import Send
 
     libnode = Send('_Send_')
-    desc = sdfg.arrays[buffer]
+
+    buf_range = None
+    if isinstance(buffer, tuple):
+        buf_name, buf_range = buffer
+    else:
+        buf_name = buffer
+
+    desc = sdfg.arrays[buf_name]
     conn = libnode.in_connectors
     conn = {c: (dtypes.pointer(desc.dtype) if c == '_buffer' else t)
             for c, t in conn.items()}
     libnode.in_connectors = conn
-    buf_node = state.add_read(buffer)
-    if isinstance(dst, str) and dst in sdfg.arrays.keys():
-        dst_node = state.add_read(dst)
+    buf_node = state.add_write(buf_name)
+
+    dst_range = None
+    if isinstance(dst, tuple):
+        dst_name, dst_range = dst
+        dst_node = state.add_read(dst_name)
+    elif isinstance(dst, str) and dst in sdfg.arrays.keys():
+        dst_name = dst
+        dst_node = state.add_read(dst_name)
     else:
         storage = desc.storage
         dst_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
@@ -4677,7 +4690,13 @@ def _send(pv: 'ProgramVisitor',
                                          '__out = {}'.format(dst))
         state.add_edge(dst_tasklet, '__out', dst_node, None,
                        Memlet.simple(dst_name, '0'))
+
+    tag_range = None
+    if isinstance(tag, tuple):
+        tag_name, tag_range = tag
+        tag_node = state.add_read(tag_name)
     if isinstance(tag, str) and tag in sdfg.arrays.keys():
+        tag_name = tag
         tag_node = state.add_read(tag)
     else:
         storage = desc.storage
@@ -4687,35 +4706,142 @@ def _send(pv: 'ProgramVisitor',
                                          '__out = {}'.format(tag))
         state.add_edge(tag_tasklet, '__out', tag_node, None,
                        Memlet.simple(tag_name, '0'))
-    state.add_edge(buf_node, None, libnode, '_buffer',
-                   Memlet.from_array(buffer, desc))
-    state.add_edge(dst_node, None, libnode, '_dest',
-                   Memlet.simple(dst_node.data, '0'))
-    state.add_edge(tag_node, None, libnode, '_tag',
-                   Memlet.simple(tag_node.data, '0'))
+
+    if buf_range:
+        buf_mem = Memlet.simple(buf_name, buf_range)
+    else:
+        buf_mem = Memlet.from_array(buf_name, desc)
+    if dst_range:
+        dst_mem = Memlet.simple(dst_name, dst_range)
+    else:
+        dst_mem = Memlet.simple(dst_name, '0')
+    if tag_range:
+        tag_mem = Memlet.simple(tag_name, tag_range)
+    else:
+        tag_mem = Memlet.simple(tag_name, '0')
+    
+
+    state.add_edge(buf_node, None, libnode, '_buffer', buf_mem)
+    state.add_edge(dst_node, None, libnode, '_dest', dst_mem)
+    state.add_edge(tag_node, None, libnode, '_tag', tag_mem)
     
     return None
 
 
-@oprepo.replaces('dace.comm.Recv')
-def _recv(pv: 'ProgramVisitor',
+@oprepo.replaces('dace.comm.Isend')
+def _isend(pv: 'ProgramVisitor',
            sdfg: SDFG,
            state: SDFGState,
            buffer: str,
-           src: Union[str, sp.Expr, Number],
+           dst: Union[str, sp.Expr, Number],
            tag: Union[str, sp.Expr, Number] = 0):
+
+    from dace.libraries.mpi.nodes.isend import Isend
+
+    libnode = Isend('_Isend_')
+
+    buf_range = None
+    if isinstance(buffer, tuple):
+        buf_name, buf_range = buffer
+    else:
+        buf_name = buffer
+
+    desc = sdfg.arrays[buf_name]
+    conn = libnode.in_connectors
+    conn = {c: (dtypes.pointer(desc.dtype) if c == '_buffer' else t)
+            for c, t in conn.items()}
+    libnode.in_connectors = conn
+    buf_node = state.add_write(buf_name)
+
+    dst_range = None
+    if isinstance(dst, tuple):
+        dst_name, dst_range = dst
+        dst_node = state.add_read(dst_name)
+    elif isinstance(dst, str) and dst in sdfg.arrays.keys():
+        dst_name = dst
+        dst_node = state.add_read(dst_name)
+    else:
+        storage = desc.storage
+        dst_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        dst_node = state.add_access(dst_name)
+        dst_tasklet = state.add_tasklet('_set_dst_', {}, {'__out'},
+                                         '__out = {}'.format(dst))
+        state.add_edge(dst_tasklet, '__out', dst_node, None,
+                       Memlet.simple(dst_name, '0'))
+
+    tag_range = None
+    if isinstance(tag, tuple):
+        tag_name, tag_range = tag
+        tag_node = state.add_read(tag_name)
+    if isinstance(tag, str) and tag in sdfg.arrays.keys():
+        tag_name = tag
+        tag_node = state.add_read(tag)
+    else:
+        storage = desc.storage
+        tag_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        tag_node = state.add_access(tag_name)
+        tag_tasklet = state.add_tasklet('_set_tag_', {}, {'__out'},
+                                         '__out = {}'.format(tag))
+        state.add_edge(tag_tasklet, '__out', tag_node, None,
+                       Memlet.simple(tag_name, '0'))
+    
+    req = sdfg.add_temp_transient([1], dtypes.opaque("MPI_Request"))
+    req_node = state.add_write(req[0])
+
+    if buf_range:
+        buf_mem = Memlet.simple(buf_name, buf_range)
+    else:
+        buf_mem = Memlet.from_array(buf_name, desc)
+    if dst_range:
+        dst_mem = Memlet.simple(dst_name, dst_range)
+    else:
+        dst_mem = Memlet.simple(dst_name, '0')
+    if tag_range:
+        tag_mem = Memlet.simple(tag_name, tag_range)
+    else:
+        tag_mem = Memlet.simple(tag_name, '0')
+    
+
+    state.add_edge(buf_node, None, libnode, '_buffer', buf_mem)
+    state.add_edge(dst_node, None, libnode, '_dest', dst_mem)
+    state.add_edge(tag_node, None, libnode, '_tag', tag_mem)
+    state.add_edge(libnode, '_request', req_node, None, Memlet.from_array(*req))
+    
+    return req[0]
+
+
+@oprepo.replaces('dace.comm.Recv')
+def _recv(pv: 'ProgramVisitor',
+          sdfg: SDFG,
+          state: SDFGState,
+          buffer: str,
+          src: Union[str, sp.Expr, Number],
+          tag: Union[str, sp.Expr, Number] = 0):
 
     from dace.libraries.mpi.nodes.recv import Recv
 
     libnode = Recv('_Recv_')
-    desc = sdfg.arrays[buffer]
+
+    buf_range = None
+    if isinstance(buffer, tuple):
+        buf_name, buf_range = buffer
+    else:
+        buf_name = buffer
+
+    desc = sdfg.arrays[buf_name]
     conn = libnode.out_connectors
     conn = {c: (dtypes.pointer(desc.dtype) if c == '_buffer' else t)
             for c, t in conn.items()}
     libnode.out_connectors = conn
-    buf_node = state.add_write(buffer)
-    if isinstance(src, str) and src in sdfg.arrays.keys():
-        src_node = state.add_read(src)
+    buf_node = state.add_write(buf_name)
+
+    src_range = None
+    if isinstance(src, tuple):
+        src_name, src_range = src
+        src_node = state.add_read(src_name)
+    elif isinstance(src, str) and src in sdfg.arrays.keys():
+        src_name = src
+        src_node = state.add_read(src_name)
     else:
         storage = desc.storage
         src_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
@@ -4724,7 +4850,13 @@ def _recv(pv: 'ProgramVisitor',
                                          '__out = {}'.format(src))
         state.add_edge(src_tasklet, '__out', src_node, None,
                        Memlet.simple(src_name, '0'))
+
+    tag_range = None
+    if isinstance(tag, tuple):
+        tag_name, tag_range = tag
+        tag_node = state.add_read(tag_name)
     if isinstance(tag, str) and tag in sdfg.arrays.keys():
+        tag_name = tag
         tag_node = state.add_read(tag)
     else:
         storage = desc.storage
@@ -4734,11 +4866,143 @@ def _recv(pv: 'ProgramVisitor',
                                          '__out = {}'.format(tag))
         state.add_edge(tag_tasklet, '__out', tag_node, None,
                        Memlet.simple(tag_name, '0'))
-    state.add_edge(libnode, '_buffer', buf_node, None,
-                   Memlet.from_array(buffer, desc))
-    state.add_edge(src_node, None, libnode, '_src',
-                   Memlet.simple(src_node.data, '0'))
-    state.add_edge(tag_node, None, libnode, '_tag',
-                   Memlet.simple(tag_node.data, '0'))
+
+    if buf_range:
+        buf_mem = Memlet.simple(buf_name, buf_range)
+    else:
+        buf_mem = Memlet.from_array(buf_name, desc)
+    if src_range:
+        src_mem = Memlet.simple(src_name, src_range)
+    else:
+        src_mem = Memlet.simple(src_name, '0')
+    if tag_range:
+        tag_mem = Memlet.simple(tag_name, tag_range)
+    else:
+        tag_mem = Memlet.simple(tag_name, '0')
+
+    state.add_edge(libnode, '_buffer', buf_node, None, buf_mem)
+    state.add_edge(src_node, None, libnode, '_src', src_mem)
+    state.add_edge(tag_node, None, libnode, '_tag', tag_mem)
+    
+    return None
+
+
+@oprepo.replaces('dace.comm.Irecv')
+def _irecv(pv: 'ProgramVisitor',
+           sdfg: SDFG,
+           state: SDFGState,
+           buffer: str,
+           src: Union[str, sp.Expr, Number],
+           tag: Union[str, sp.Expr, Number] = 0):
+
+    from dace.libraries.mpi.nodes.irecv import Irecv
+
+    libnode = Irecv('_Irecv_')
+
+    buf_range = None
+    if isinstance(buffer, tuple):
+        buf_name, buf_range = buffer
+    else:
+        buf_name = buffer
+
+    desc = sdfg.arrays[buf_name]
+    conn = libnode.out_connectors
+    conn = {c: (dtypes.pointer(desc.dtype) if c == '_buffer' else t)
+            for c, t in conn.items()}
+    libnode.out_connectors = conn
+    buf_node = state.add_write(buf_name)
+
+    src_range = None
+    if isinstance(src, tuple):
+        src_name, src_range = src
+        src_node = state.add_read(src_name)
+    elif isinstance(src, str) and src in sdfg.arrays.keys():
+        src_name = src
+        src_node = state.add_read(src_name)
+    else:
+        storage = desc.storage
+        src_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        src_node = state.add_access(src_name)
+        src_tasklet = state.add_tasklet('_set_src_', {}, {'__out'},
+                                         '__out = {}'.format(src))
+        state.add_edge(src_tasklet, '__out', src_node, None,
+                       Memlet.simple(src_name, '0'))
+
+    tag_range = None
+    if isinstance(tag, tuple):
+        tag_name, tag_range = tag
+        tag_node = state.add_read(tag_name)
+    if isinstance(tag, str) and tag in sdfg.arrays.keys():
+        tag_name = tag
+        tag_node = state.add_read(tag)
+    else:
+        storage = desc.storage
+        tag_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        tag_node = state.add_access(tag_name)
+        tag_tasklet = state.add_tasklet('_set_tag_', {}, {'__out'},
+                                         '__out = {}'.format(tag))
+        state.add_edge(tag_tasklet, '__out', tag_node, None,
+                       Memlet.simple(tag_name, '0'))
+
+    req = sdfg.add_temp_transient([1], dtypes.opaque("MPI_Request"))
+    req_node = state.add_write(req[0])
+
+    if buf_range:
+        buf_mem = Memlet.simple(buf_name, buf_range)
+    else:
+        buf_mem = Memlet.from_array(buf_name, desc)
+    if src_range:
+        src_mem = Memlet.simple(src_name, src_range)
+    else:
+        src_mem = Memlet.simple(src_name, '0')
+    if tag_range:
+        tag_mem = Memlet.simple(tag_name, tag_range)
+    else:
+        tag_mem = Memlet.simple(tag_name, '0')
+
+    state.add_edge(libnode, '_buffer', buf_node, None, buf_mem)
+    state.add_edge(src_node, None, libnode, '_src', src_mem)
+    state.add_edge(tag_node, None, libnode, '_tag', tag_mem)
+    state.add_edge(libnode, '_request', req_node, None, Memlet.from_array(*req))
+    
+    return req[0]
+
+
+@oprepo.replaces('dace.comm.Wait')
+def _wait(pv: 'ProgramVisitor',
+          sdfg: SDFG,
+          state: SDFGState,
+          request: str):
+
+    from dace.libraries.mpi.nodes.wait import Wait
+
+    libnode = Wait('_Wait_')
+
+    req_range = None
+    if isinstance(request, tuple):
+        req_name, req_range = request
+    else:
+        req_name = request
+
+    desc = sdfg.arrays[req_name]
+    # conn = libnode.in_connectors
+    # conn = {c: (dtypes.pointer(desc.dtype) if c == '_request' else t)
+    #         for c, t in conn.items()}
+    # libnode.in_connectors = conn
+    req_node = state.add_read(req_name)
+
+    src = sdfg.add_temp_transient([1], dtypes.int32)
+    src_node = state.add_write(src[0])
+    tag = sdfg.add_temp_transient([1], dtypes.int32)
+    tag_node = state.add_write(tag[0])
+
+    if req_range:
+        req_mem = Memlet.simple(req_name, req_range)
+    else:
+        req_mem = Memlet.from_array(req_name, desc)
+
+    state.add_edge(req_node, None, libnode, '_request', req_mem)
+    state.add_edge(libnode, '_stat_source', src_node, None, Memlet.from_array(*src))
+    state.add_edge(libnode, '_stat_tag', tag_node, None, Memlet.from_array(*tag))
     
     return None
