@@ -3756,7 +3756,33 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, node, 'Function "%s" is not registered with an SDFG '
                     'implementation' % funcname)
 
-        args.extend([self._parse_function_arg(arg) for arg in node.args])
+        # NOTE: Temporary fix for MPI library-node replacements
+        # Parsing the arguments with `_parse_function_arg` will generate
+        # slices even for the output arguments.
+        # We make a special exception for MPI calls (`dace.comm` namespace)
+        # and we pass instead the array names and the ranges accessed.
+        # The replacement functions are responsible for generating the correct
+        # subgraph/memlets.
+        if funcname.startswith("dace.comm"):
+            mpi_args = []
+            for arg in node.args:
+                # We are only looking for subscripts on arrays of the current SDFG.
+                # If it is not a subscript, then we just pass the array pointer directly.
+                # If it is not an array of the current SDFG, then the normal
+                # argument parsing will create a connector, i.e. a pointer.
+                if (isinstance(arg, ast.Subscript) and
+                        self.variables[rname(arg)] in self.sdfg.arrays.keys()):
+                    arg.slice = self.visit(arg.slice)
+                    expr: MemletExpr = ParseMemlet(
+                        self,
+                        {**self.sdfg.arrays, **self.defined},
+                        arg)
+                    mpi_args.append((self.variables[rname(arg)], expr.subset))
+                else:
+                    mpi_args.append(self._parse_function_arg(arg))
+            args.extend(mpi_args)
+        else:
+            args.extend([self._parse_function_arg(arg) for arg in node.args])
         keywords = {
             arg.arg: self._parse_function_arg(arg.value)
             for arg in node.keywords
