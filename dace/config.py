@@ -12,7 +12,7 @@ def set_temporary(*path, value):
         :Example:
 
             print(Config.get("compiler", "build_type")
-            with set_temporary("compiler", "build_type", value=Debug):
+            with set_temporary("compiler", "build_type", value="Debug"):
                 print(Config.get("compiler", "build_type")
             print(Config.get("compiler", "build_type")
 

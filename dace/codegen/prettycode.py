@@ -14,9 +14,6 @@ class CodeIOStream(StringIO):
         self._indent = 0
         self._spaces = int(Config.get('compiler', 'indentation_spaces'))
 
-    def __repr__(self):
-        return self.getvalue()
-
     def write(self, contents, sdfg=None, state_id=None, node_id=None):
         # Delete single trailing newline, as this will be implicitly inserted
         # anyway

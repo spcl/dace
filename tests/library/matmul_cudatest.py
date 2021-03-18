@@ -241,6 +241,7 @@ if __name__ == '__main__':
     try:
         test_batchmm()
         test_types()
+        test_default_stream_blas_node()
         for dl in LAYOUTS:
             test_layouts(dl)
     except SystemExit as ex:
