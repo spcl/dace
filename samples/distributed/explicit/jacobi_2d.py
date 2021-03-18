@@ -3,10 +3,11 @@ import dace as dc
 from mpi4py import MPI
 
 
-N = dc.symbol('N', dtype=dc.int64, integer=True, positive=True)
+# N = dc.symbol('N', dtype=dc.int64, integer=True, positive=True)
 lN = dc.symbol('lN', dtype=dc.int64, integer=True, positive=True)
+# Px = Py = N / lN
 Px = dc.symbol('Px', dtype=dc.int32, integer=True, positive=True)
-Py = dc.symbol('Py', dtype=dc.int32, integer=True, positive=True)
+# Py = dc.symbol('Py', dtype=dc.int32, integer=True, positive=True)
 pi = dc.symbol('pi', dtype=dc.int32, integer=True, nonnegative=True)
 pj = dc.symbol('pj', dtype=dc.int32, integer=True, nonnegative=True)
 rank = dc.symbol('rank', dtype=dc.int32, integer=True, nonnegative=True)
@@ -15,6 +16,12 @@ noff = dc.symbol('noff', dtype=dc.int32, integer=True, nonnegative=True)
 soff = dc.symbol('soff', dtype=dc.int32, integer=True, nonnegative=True)
 woff = dc.symbol('woff', dtype=dc.int32, integer=True, nonnegative=True)
 eoff = dc.symbol('eoff', dtype=dc.int32, integer=True, nonnegative=True)
+N = Px * lN
+
+nn = dc.symbol('nn', dtype=dc.int32, integer=True)
+ns = dc.symbol('ns', dtype=dc.int32, integer=True)
+nw = dc.symbol('nw', dtype=dc.int32, integer=True)
+ne = dc.symbol('ne', dtype=dc.int32, integer=True)
 
 
 def relerr(ref, val):
@@ -42,27 +49,32 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
     rw = np.empty((lN,), dtype=A.dtype)
     re = np.empty((lN,), dtype=A.dtype)
 
-    dace.comm.Scatter(A, tAB)
+    Av = np.reshape(A, (Px, lN, Px, lN))
+    A2 = np.transpose(Av, axes=(0, 2, 1, 3))
+    Bv = np.reshape(B, (Px, lN, Px, lN))
+    B2 = np.transpose(Bv, axes=(0, 2, 1, 3))
+
+    dc.comm.Scatter(A2, tAB)
     lA[1:-1, 1:-1] = tAB
-    dace.comm.Scatter(B, tAB)
+    dc.comm.Scatter(B2, tAB)
     lB[1:-1, 1:-1] = tAB
     
     for t in range(1, TSTEPS):
         # NORTH
-        dace.comm.Send(lA[1,:], (pi-1)*Px + pj, t)
-        dace.comm.Recv(rn, (pi-1)*Px + pj, t)
+        dc.comm.Send(lA[1, 1:-1], nn, 0)
+        dc.comm.Send(lA[-2, 1:-1], ns, 1)
+        dc.comm.Recv(rn, nn, 1)
         lA[0, 1:-1] = rn
         # SOUTH
-        dace.comm.Recv(rs, (pi+1)*Px + pj, t)
-        dace.comm.Send(lA[-2,:], (pi+1)*Px + pj, t)
+        dc.comm.Recv(rs, ns, 0)
         lA[-1, 1:-1] = rs
         # WEST
-        dace.comm.Send(lA[:, 1], pi*Px + (pj-1), t)
-        dace.comm.Recv(rw, pi*Px + (pj-1), t)
+        dc.comm.Send(lA[1:-1, 1], nw, 2)
+        dc.comm.Send(lA[1:-1, -2], ne, 3)
+        dc.comm.Recv(rw, nw, 3)
         lA[1:-1, 0] = rw
         # EAST
-        dace.comm.Recv(re, pi*Px + (pj+1), t)
-        dace.comm.Send(lA[:, -2], pi*Px + (pj+1), t)
+        dc.comm.Recv(re, ne, 2)
         lA[1:-1, -1] = re
 
         lB[1+noff:-1-soff, 1+woff:-1-eoff] = 0.2 * (
@@ -73,22 +85,22 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
             lA[noff:-2-soff, 1+woff:-1-eoff])
 
         # NORTH
-        dace.comm.Send(lB[1,:], (pi-1)*Px + pj, t)
-        dace.comm.Send(lB[-2,:], (pi+1)*Px + pj, t)
-        dace.comm.Recv(rn, (pi-1)*Px + pj, t)
+        dc.comm.Send(lB[1, 1:-1], nn, 0)
+        dc.comm.Send(lB[-2, 1:-1], ns, 1)
+        dc.comm.Recv(rn, nn, 1)
         lB[0, 1:-1] = rn
         # SOUTH
-        dace.comm.Recv(rs, (pi+1)*Px + pj, t)
-        # dace.comm.Send(lB[-2,:], (pi+1)*Px + pj, t)
+        dc.comm.Recv(rs, ns, 0)
+        # dc.comm.Send(lB[-2,:], (pi+1)*Px + pj, t)
         lB[-1, 1:-1] = rs
         # WEST
-        dace.comm.Send(lB[:, 1], pi*Px + (pj-1), t)
-        dace.comm.Send(lB[:, -2], pi*Px + (pj+1), t)
-        dace.comm.Recv(rw, pi*Px + (pj-1), t)
+        dc.comm.Send(lB[1:-1, 1], nw, 2)
+        dc.comm.Send(lB[1:-1, -2], ne, 3)
+        dc.comm.Recv(rw, nw, 3)
         lB[1:-1, 0] = rw
         # EAST
-        dace.comm.Recv(re, pi*Px + (pj+1), t)
-        # dace.comm.Send(lB[:, -2], pi*Px + (pj+1), t)
+        dc.comm.Recv(re, ne, 2)
+        # dc.comm.Send(lB[:, -2], pi*Px + (pj+1), t)
         lB[1:-1, -1] = re
 
         lA[1+noff:-1-soff, 1+woff:-1-eoff] = 0.2 * (
@@ -99,9 +111,12 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
             lB[noff:-2-soff, 1+woff:-1-eoff])
     
     tAB[:] = lA[1:-1, 1:-1]
-    dace.comm.Gather(tAB, A)
+    dc.comm.Gather(tAB, A2)
     tAB[:] = lB[1:-1, 1:-1]
-    dace.comm.Gather(tAB, B)
+    dc.comm.Gather(tAB, B2)
+
+    A[:] = np.transpose(A2, (0, 2, 1, 3))
+    B[:] = np.transpose(B2, (0, 2, 1, 3))
 
 
 def init_data(N, datatype):
@@ -127,17 +142,25 @@ if __name__ == "__main__":
     size = comm.Get_size()
     Px = Py = int(np.sqrt(size))
     pi = rank // Px
-    pj = rank % Py
+    pj = rank % Px
     lN = N // Px
     noff = soff = woff = eoff = 0
+    nn = (pi-1)*Px + pj
+    ns = (pi+1)*Px + pj
+    nw = pi*Px + (pj-1)
+    ne = pi*Px + (pj+1)
     if pi == 0:
         noff = 1
+        nn = MPI.PROC_NULL
     if pi == Px - 1:
         soff = 1
+        ns = MPI.PROC_NULL
     if pj == 0:
         woff = 1
+        nw = MPI.PROC_NULL
     if pj == Py - 1:
-        soff = 1
+        eoff = 1
+        ne = MPI.PROC_NULL
 
     mpi_sdfg = None
     # if size < 2:
@@ -148,14 +171,18 @@ if __name__ == "__main__":
         comm.Barrier()
   
     mpi_sdfg(A=A, B=B, TSTEPS=TSTEPS, N=N, lN=lN, rank=rank, size=size,
-             Px=Px, Py=Py, pi=pi, pj=pj, noff=noff, soff=soff, woff=woff, eoff=eoff)
+             Px=Px, Py=Py, pi=pi, pj=pj,
+             noff=noff, soff=soff, woff=woff, eoff=eoff,
+             nn=nn, ns=ns, nw=nw, ne=ne)
 
     if rank == 0:
         refA, refB = init_data(N, np.float64)
         # print(refA)
         # print(refB)
         # print()
-        jacobi_2d_shared(TSTEPS, refA, refB)
+        # jacobi_2d_shared(TSTEPS, refA, refB)
+        shared_sdfg = jacobi_2d_shared.compile()
+        shared_sdfg(A=refA, B=refB, TSTEPS=TSTEPS, N=N, lN=lN, Px=Px)
 
         print(relerr(refA, A))
         print(relerr(refB, B))
