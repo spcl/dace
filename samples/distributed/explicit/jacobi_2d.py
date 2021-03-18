@@ -23,6 +23,8 @@ ns = dc.symbol('ns', dtype=dc.int32, integer=True)
 nw = dc.symbol('nw', dtype=dc.int32, integer=True)
 ne = dc.symbol('ne', dtype=dc.int32, integer=True)
 
+MPI_Request = dc.opaque("MPI_Request")
+
 
 def relerr(ref, val):
     return np.linalg.norm(ref-val) / np.linalg.norm(ref)
@@ -44,10 +46,15 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
     lA = np.zeros((lN + 2, lN + 2), dtype=A.dtype)
     lB = np.zeros((lN + 2, lN + 2), dtype=B.dtype)
     tAB = np.empty((lN, lN), dtype=A.dtype)
-    rn = np.empty((lN,), dtype=A.dtype)
-    rs = np.empty((lN,), dtype=A.dtype)
-    rw = np.empty((lN,), dtype=A.dtype)
-    re = np.empty((lN,), dtype=A.dtype)
+
+    req_sn = np.empty((1,), dtype=MPI_Request)
+    req_ss = np.empty((1,), dtype=MPI_Request)
+    req_sw = np.empty((1,), dtype=MPI_Request)
+    req_se = np.empty((1,), dtype=MPI_Request)
+    req_rn = np.empty((1,), dtype=MPI_Request)
+    req_rs = np.empty((1,), dtype=MPI_Request)
+    req_rw = np.empty((1,), dtype=MPI_Request)
+    req_re = np.empty((1,), dtype=MPI_Request)
 
     Av = np.reshape(A, (Px, lN, Px, lN))
     A2 = np.transpose(Av, axes=(0, 2, 1, 3))
@@ -60,22 +67,24 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
     lB[1:-1, 1:-1] = tAB
     
     for t in range(1, TSTEPS):
-        # NORTH
-        dc.comm.Send(lA[1, 1:-1], nn, 0)
-        dc.comm.Send(lA[-2, 1:-1], ns, 1)
-        dc.comm.Recv(rn, nn, 1)
-        lA[0, 1:-1] = rn
-        # SOUTH
-        dc.comm.Recv(rs, ns, 0)
-        lA[-1, 1:-1] = rs
-        # WEST
-        dc.comm.Send(lA[1:-1, 1], nw, 2)
-        dc.comm.Send(lA[1:-1, -2], ne, 3)
-        dc.comm.Recv(rw, nw, 3)
-        lA[1:-1, 0] = rw
-        # EAST
-        dc.comm.Recv(re, ne, 2)
-        lA[1:-1, -1] = re
+
+        req_sn[0] = dc.comm.Isend(lA[1, 1:-1], nn, 0)
+        req_ss[0] = dc.comm.Isend(lA[-2, 1:-1], ns, 1)
+        req_sw[0] = dc.comm.Isend(lA[1:-1, 1], nw, 2)
+        req_se[0] = dc.comm.Isend(lA[1:-1, -2], ne, 3)
+        req_rn[0] = dc.comm.Irecv(lA[0, 1:-1], nn, 1)
+        req_rs[0] = dc.comm.Irecv(lA[-1, 1:-1], ns, 0)
+        req_rw[0] = dc.comm.Irecv(lA[1:-1, 0], nw, 3)
+        req_re[0] = dc.comm.Irecv(lA[1:-1, -1] , ne, 2)
+
+        dc.comm.Wait(req_sn)
+        dc.comm.Wait(req_ss)
+        dc.comm.Wait(req_sw)
+        dc.comm.Wait(req_se)
+        dc.comm.Wait(req_rn)
+        dc.comm.Wait(req_rs)
+        dc.comm.Wait(req_rw)
+        dc.comm.Wait(req_re)
 
         lB[1+noff:-1-soff, 1+woff:-1-eoff] = 0.2 * (
             lA[1+noff:-1-soff, 1+woff:-1-eoff] +
@@ -84,24 +93,23 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
             lA[2+noff:-soff, 1+woff:-1-eoff] +
             lA[noff:-2-soff, 1+woff:-1-eoff])
 
-        # NORTH
-        dc.comm.Send(lB[1, 1:-1], nn, 0)
-        dc.comm.Send(lB[-2, 1:-1], ns, 1)
-        dc.comm.Recv(rn, nn, 1)
-        lB[0, 1:-1] = rn
-        # SOUTH
-        dc.comm.Recv(rs, ns, 0)
-        # dc.comm.Send(lB[-2,:], (pi+1)*Px + pj, t)
-        lB[-1, 1:-1] = rs
-        # WEST
-        dc.comm.Send(lB[1:-1, 1], nw, 2)
-        dc.comm.Send(lB[1:-1, -2], ne, 3)
-        dc.comm.Recv(rw, nw, 3)
-        lB[1:-1, 0] = rw
-        # EAST
-        dc.comm.Recv(re, ne, 2)
-        # dc.comm.Send(lB[:, -2], pi*Px + (pj+1), t)
-        lB[1:-1, -1] = re
+        req_sn[0] = dc.comm.Isend(lB[1, 1:-1], nn, 0)
+        req_ss[0] = dc.comm.Isend(lB[-2, 1:-1], ns, 1)
+        req_sw[0] = dc.comm.Isend(lB[1:-1, 1], nw, 2)
+        req_se[0] = dc.comm.Isend(lB[1:-1, -2], ne, 3)
+        req_rn[0] = dc.comm.Irecv(lB[0, 1:-1], nn, 1)
+        req_rs[0] = dc.comm.Irecv(lB[-1, 1:-1], ns, 0)
+        req_rw[0] = dc.comm.Irecv(lB[1:-1, 0], nw, 3)
+        req_re[0] = dc.comm.Irecv(lB[1:-1, -1] , ne, 2)
+
+        dc.comm.Wait(req_sn[0])
+        dc.comm.Wait(req_ss[0])
+        dc.comm.Wait(req_sw[0])
+        dc.comm.Wait(req_se[0])
+        dc.comm.Wait(req_rn[0])
+        dc.comm.Wait(req_rs[0])
+        dc.comm.Wait(req_rw[0])
+        dc.comm.Wait(req_re[0])
 
         lA[1+noff:-1-soff, 1+woff:-1-eoff] = 0.2 * (
             lB[1+noff:-1-soff, 1+woff:-1-eoff] +
@@ -114,6 +122,9 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
     dc.comm.Gather(tAB, A2)
     tAB[:] = lB[1:-1, 1:-1]
     dc.comm.Gather(tAB, B2)
+
+    # A[:] = A2
+    # B[:] = B2
 
     A[:] = np.transpose(A2, (0, 2, 1, 3))
     B[:] = np.transpose(B2, (0, 2, 1, 3))
@@ -134,8 +145,11 @@ def init_data(N, datatype):
 if __name__ == "__main__":
 
     # Initialization
-    TSTEPS, N = 2, 20  # 500, 1300  # 1000, 2800
-    A, B = init_data(N, np.float64)
+    TSTEPS, N = 2, 200  # 500, 1300  # 1000, 2800
+    # A, B = init_data(N, np.float64)
+    A = np.arange(0, N*N).reshape(N, N).astype(np.float64)
+    B = np.zeros((N, N), dtype=np.float64)
+    # B = np.arange(0, N*N).reshape(N, N)
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -167,6 +181,10 @@ if __name__ == "__main__":
     #     raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, size):
         if r == rank:
+            print("I am %d" % rank)
+            print(nn, ns, nw, ne)
+            print(noff, soff, woff, eoff)
+            print("=====================")
             mpi_sdfg = jacobi_2d_dist.compile()
         comm.Barrier()
   
@@ -176,19 +194,21 @@ if __name__ == "__main__":
              nn=nn, ns=ns, nw=nw, ne=ne)
 
     if rank == 0:
-        refA, refB = init_data(N, np.float64)
-        # print(refA)
-        # print(refB)
-        # print()
+        # refA, refB = init_data(N, np.float64)
+        refA = np.arange(0, N*N).reshape(N, N).astype(np.float64)
+        refB = np.zeros((N, N), dtype=np.float64)
+        print(refA)
+        print(refB)
+        print()
         # jacobi_2d_shared(TSTEPS, refA, refB)
         shared_sdfg = jacobi_2d_shared.compile()
         shared_sdfg(A=refA, B=refB, TSTEPS=TSTEPS, N=N, lN=lN, Px=Px)
 
         print(relerr(refA, A))
         print(relerr(refB, B))
-        # print()
-        # print(refA)
-        # print(A)
-        # print()
-        # print(refB)
-        # print(B)
+        print()
+        print(refA)
+        print(A)
+        print()
+        print(refB)
+        print(B)
