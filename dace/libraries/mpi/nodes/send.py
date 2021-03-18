@@ -43,6 +43,7 @@ class ExpandSendMPI(ExpandTransformation):
                            MPI_Type_commit(&newtype);
                             """
             mpi_dtype_str = "newtype"
+            count_str = "1"
         code += f"""
                 MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, _dest, _tag, MPI_COMM_WORLD);
                 """
