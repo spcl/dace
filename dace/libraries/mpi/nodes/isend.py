@@ -30,13 +30,24 @@ class ExpandIsendMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        buffer, count_str, dest, tag, req = node.validate(parent_sdfg, parent_state)
+        (buffer, count_str, buffer_offset, ddt), dest, tag, req = node.validate(parent_sdfg, parent_state)
         mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(buffer.dtype.base_type)
 
         if buffer.dtype.veclen > 1:
             raise(NotImplementedError)
+         
+        code = ""
+        if ddt is not None:
+            code = f"""MPI_Datatype newtype;
+                           MPI_Type_vector({ddt['count']}, {ddt['blocklen']}, {ddt['stride']}, {ddt['oldtype']}, &newtype);
+                           MPI_Type_commit(&newtype);
+                            """
+            mpi_dtype_str = "newtype"
+        code = f"MPI_Isend(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, _dest, _tag, MPI_COMM_WORLD, _request);"
+        if ddt is not None:
+            code += f"""MPI_Type_free(&newtype);
+            """
 
-        code = f"MPI_Isend(_buffer, {count_str}, {mpi_dtype_str}, _dest, _tag, MPI_COMM_WORLD, _request);"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -94,7 +105,20 @@ class Isend(dace.sdfg.nodes.LibraryNode):
             if dst_conn == '_buffer':
                 dims = [str(e) for e in data.subset.size_exact()]
                 count_str = "*".join(dims)
+                # compute buffer offset
+                minelem = data.subset.min_element()
+                dims_data = sdfg.arrays[data.data].strides
+                buffer_offsets = []
+                for idx, m in enumerate(minelem):
+                    buffer_offsets += [(str(m) + "*" + str(dims_data[idx]))]
+                buffer_offset = "+".join(buffer_offsets)
             
-        return buffer, count_str, dest, tag, req
+                # create a ddt which describes the buffer layout IFF the sent data is not contiguous
+                ddt = None
+                if dace.libraries.mpi.utils.is_access_contiguous(data, sdfg.arrays[data.data]):
+                    pass
+                else:
+                    ddt = dace.libraries.mpi.utils.create_vector_ddt(data, sdfg.arrays[data.data])
+        return (buffer, count_str, buffer_offset, ddt), dest, tag, req
 
 
