@@ -3,7 +3,7 @@ from .send import Send
 from .isend import Isend
 from .recv import Recv
 from .irecv import Irecv
-from .wait import Wait
+from .wait import Wait, Waitall
 from .bcast import Bcast
 from .scatter import Scatter
 from .gather import Gather
