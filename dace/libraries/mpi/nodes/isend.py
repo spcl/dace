@@ -43,6 +43,7 @@ class ExpandIsendMPI(ExpandTransformation):
                            MPI_Type_commit(&newtype);
                             """
             mpi_dtype_str = "newtype"
+        buffer_offset = 0
         code += f"MPI_Isend(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, _dest, _tag, MPI_COMM_WORLD, _request);"
         if ddt is not None:
             code += f"""MPI_Type_free(&newtype);
