@@ -47,14 +47,7 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
     lB = np.zeros((lN + 2, lN + 2), dtype=B.dtype)
     tAB = np.empty((lN, lN), dtype=A.dtype)
 
-    req_sn = np.empty((1,), dtype=MPI_Request)
-    req_ss = np.empty((1,), dtype=MPI_Request)
-    req_sw = np.empty((1,), dtype=MPI_Request)
-    req_se = np.empty((1,), dtype=MPI_Request)
-    req_rn = np.empty((1,), dtype=MPI_Request)
-    req_rs = np.empty((1,), dtype=MPI_Request)
-    req_rw = np.empty((1,), dtype=MPI_Request)
-    req_re = np.empty((1,), dtype=MPI_Request)
+    req = np.empty((8,), dtype=MPI_Request)
 
     Av = np.reshape(A, (Px, lN, Px, lN))
     A2 = np.transpose(Av, axes=(0, 2, 1, 3))
@@ -68,23 +61,16 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
     
     for t in range(1, TSTEPS):
 
-        req_sn[0] = dc.comm.Isend(lA[1, 1:-1], nn, 0)
-        req_ss[0] = dc.comm.Isend(lA[-2, 1:-1], ns, 1)
-        req_sw[0] = dc.comm.Isend(lA[1:-1, 1], nw, 2)
-        req_se[0] = dc.comm.Isend(lA[1:-1, -2], ne, 3)
-        req_rn[0] = dc.comm.Irecv(lA[0, 1:-1], nn, 1)
-        req_rs[0] = dc.comm.Irecv(lA[-1, 1:-1], ns, 0)
-        req_rw[0] = dc.comm.Irecv(lA[1:-1, 0], nw, 3)
-        req_re[0] = dc.comm.Irecv(lA[1:-1, -1] , ne, 2)
+        dc.comm.Isend(lA[1, 1:-1], nn, 0, req[0])
+        dc.comm.Isend(lA[-2, 1:-1], ns, 1, req[1])
+        dc.comm.Isend(lA[1:-1, 1], nw, 2, req[2])
+        dc.comm.Isend(lA[1:-1, -2], ne, 3, req[3])
+        dc.comm.Irecv(lA[0, 1:-1], nn, 1, req[4])
+        dc.comm.Irecv(lA[-1, 1:-1], ns, 0, req[5])
+        dc.comm.Irecv(lA[1:-1, 0], nw, 3, req[6])
+        dc.comm.Irecv(lA[1:-1, -1], ne, 2, req[7])
 
-        dc.comm.Wait(req_sn)
-        dc.comm.Wait(req_ss)
-        dc.comm.Wait(req_sw)
-        dc.comm.Wait(req_se)
-        dc.comm.Wait(req_rn)
-        dc.comm.Wait(req_rs)
-        dc.comm.Wait(req_rw)
-        dc.comm.Wait(req_re)
+        dc.comm.Waitall(req)
 
         lB[1+noff:-1-soff, 1+woff:-1-eoff] = 0.2 * (
             lA[1+noff:-1-soff, 1+woff:-1-eoff] +
@@ -93,23 +79,16 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
             lA[2+noff:-soff, 1+woff:-1-eoff] +
             lA[noff:-2-soff, 1+woff:-1-eoff])
 
-        req_sn[0] = dc.comm.Isend(lB[1, 1:-1], nn, 0)
-        req_ss[0] = dc.comm.Isend(lB[-2, 1:-1], ns, 1)
-        req_sw[0] = dc.comm.Isend(lB[1:-1, 1], nw, 2)
-        req_se[0] = dc.comm.Isend(lB[1:-1, -2], ne, 3)
-        req_rn[0] = dc.comm.Irecv(lB[0, 1:-1], nn, 1)
-        req_rs[0] = dc.comm.Irecv(lB[-1, 1:-1], ns, 0)
-        req_rw[0] = dc.comm.Irecv(lB[1:-1, 0], nw, 3)
-        req_re[0] = dc.comm.Irecv(lB[1:-1, -1] , ne, 2)
+        dc.comm.Isend(lB[1, 1:-1], nn, 0, req[0])
+        dc.comm.Isend(lB[-2, 1:-1], ns, 1, req[1])
+        dc.comm.Isend(lB[1:-1, 1], nw, 2, req[2])
+        dc.comm.Isend(lB[1:-1, -2], ne, 3, req[3])
+        dc.comm.Irecv(lB[0, 1:-1], nn, 1, req[4])
+        dc.comm.Irecv(lB[-1, 1:-1], ns, 0, req[5])
+        dc.comm.Irecv(lB[1:-1, 0], nw, 3, req[6])
+        dc.comm.Irecv(lB[1:-1, -1], ne, 2, req[7])
 
-        dc.comm.Wait(req_sn[0])
-        dc.comm.Wait(req_ss[0])
-        dc.comm.Wait(req_sw[0])
-        dc.comm.Wait(req_se[0])
-        dc.comm.Wait(req_rn[0])
-        dc.comm.Wait(req_rs[0])
-        dc.comm.Wait(req_rw[0])
-        dc.comm.Wait(req_re[0])
+        dc.comm.Waitall(req)
 
         lA[1+noff:-1-soff, 1+woff:-1-eoff] = 0.2 * (
             lB[1+noff:-1-soff, 1+woff:-1-eoff] +
@@ -122,9 +101,6 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
     dc.comm.Gather(tAB, A2)
     tAB[:] = lB[1:-1, 1:-1]
     dc.comm.Gather(tAB, B2)
-
-    # A[:] = A2
-    # B[:] = B2
 
     A[:] = np.transpose(A2, (0, 2, 1, 3))
     B[:] = np.transpose(B2, (0, 2, 1, 3))
@@ -145,7 +121,7 @@ def init_data(N, datatype):
 if __name__ == "__main__":
 
     # Initialization
-    TSTEPS, N = 2, 200  # 500, 1300  # 1000, 2800
+    TSTEPS, N = 2, 8  # 500, 1300  # 1000, 2800
     # A, B = init_data(N, np.float64)
     A = np.arange(0, N*N).reshape(N, N).astype(np.float64)
     B = np.zeros((N, N), dtype=np.float64)
