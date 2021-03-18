@@ -44,6 +44,7 @@ class ExpandSendMPI(ExpandTransformation):
                             """
             mpi_dtype_str = "newtype"
             count_str = "1"
+        buffer_offset = 0
         code += f"""
                 MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, _dest, _tag, MPI_COMM_WORLD);
                 """
