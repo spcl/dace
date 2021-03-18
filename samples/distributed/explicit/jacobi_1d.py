@@ -27,8 +27,8 @@ def jacobi_1d_dist(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
     lA = np.zeros((lN + 2,), dtype=A.dtype)
     lB = np.zeros((lN + 2,), dtype=B.dtype)
     tAB = np.empty((lN, ), dtype=A.dtype)
-    rl = np.empty((1,), dtype=A.dtype)
-    rr = np.empty((1,), dtype=A.dtype)
+    # rl = np.empty((1,), dtype=A.dtype)
+    # rr = np.empty((1,), dtype=A.dtype)
 
     dace.comm.Scatter(A, tAB)
     lA[1:-1] = tAB
@@ -37,13 +37,15 @@ def jacobi_1d_dist(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
     
     for t in range(1, TSTEPS):
         if rank > 0:
-            dace.comm.Recv(rl, rank - 1, t)
-            lA[0] = rl
+            # dace.comm.Recv(rl, rank - 1, t)
+            # lA[0] = rl
+            dace.comm.Recv(lA[0], rank - 1, t)
             dace.comm.Send(lA[1], rank - 1, t)
         if rank < size - 1:
             dace.comm.Send(lA[-2], rank + 1, t)
-            dace.comm.Recv(rr, rank + 1, t)
-            lA[-1] = rr
+            # dace.comm.Recv(rr, rank + 1, t)
+            # lA[-1] = rr
+            dace.comm.Recv(lA[-1], rank + 1, t)
         if rank == 0:
             lB[2:-1] = 0.33333 * (lA[1:-2] + lA[2:-1] + lA[3:])
         elif rank == size - 1:
@@ -51,13 +53,15 @@ def jacobi_1d_dist(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
         else:
             lB[1:-1] = 0.33333 * (lA[:-2] + lA[1:-1] + lA[2:])
         if rank > 0:
-            dace.comm.Recv(rl, rank - 1, t)
-            lB[0] = rl
+            # dace.comm.Recv(rl, rank - 1, t)
+            # lB[0] = rl
+            dace.comm.Recv(lB[0], rank - 1, t)
             dace.comm.Send(lB[1], rank - 1, t)
         if rank < size - 1:
             dace.comm.Send(lB[-2], rank + 1, t)
-            dace.comm.Recv(rr, rank + 1, t)
-            lB[-1] = rr
+            # dace.comm.Recv(rr, rank + 1, t)
+            # lB[-1] = rr
+            dace.comm.Recv(lB[-1], rank + 1, t)
         if rank == 0:
             lA[2:-1] = 0.33333 * (lB[1:-2] + lB[2:-1] + lB[3:])
         elif rank == size - 1:
@@ -85,8 +89,10 @@ def init_data(N, datatype):
 if __name__ == "__main__":
 
     # Initialization
-    TSTEPS, N = 1000, 4000
-    A, B = init_data(N, np.float64)
+    TSTEPS, N = 50, 1000
+    # A, B = init_data(N, np.float64)
+    A = np.arange(0, N).astype(np.float64)
+    B = np.arange(0, N).astype(np.float64)
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -94,8 +100,8 @@ if __name__ == "__main__":
     lN = N // size
 
     mpi_sdfg = None
-    if size < 2:
-        raise ValueError("This test is supposed to be run with at least two processes!")
+    # if size < 2:
+    #     raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, size):
         if r == rank:
             mpi_sdfg = jacobi_1d_dist.compile()
@@ -104,7 +110,9 @@ if __name__ == "__main__":
     mpi_sdfg(A=A, B=B, TSTEPS=TSTEPS, N=N, lN=lN, rank=rank, size=size)
 
     if rank == 0:
-        refA, refB = init_data(N, np.float64)
+        # refA, refB = init_data(N, np.float64)
+        refA = np.arange(0, N).astype(np.float64)
+        refB = np.arange(0, N).astype(np.float64)
         # print(refA)
         # print(refB)
         # print()
