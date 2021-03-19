@@ -31,7 +31,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                 validate_all: bool,
                 #apply_multi_expansion: bool = False, # run both
                 #apply_stencil_tiling: bool = False, # not now yet
-                recursive: bool = False) -> None:
+                recursive: bool = True) -> None:
 
     #CompositeFusion.allow_expansion = apply_multi_expansion
     #CompositeFusion.allow_tiling = apply_stencil_tiling
@@ -72,8 +72,11 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                     # advanced: for each scope subgraph, 
                     # see whether any parts inside could be fused together
                     global_entry = cf._global_map_entry
-                    greedy_fuse(graph.scope_subgraph(global_entry))
-        
+                    print("************ Inner Fuse")
+                    greedy_fuse(graph.scope_subgraph(global_entry, include_entry = False, include_exit = False), validate_all = validate_all)
+                    print("***********************")
+
+                    
         for node in graph_or_subgraph.nodes():
             if isinstance(node, nodes.NestedSDFG):
                 greedy_fuse(node.sdfg, validate_all = validate_all)
@@ -335,13 +338,20 @@ def auto_optimize(sdfg: SDFG,
                                         validate_all=validate_all)
     
     # Map fusion
-    '''
+    ''' 
     for graph in sdfg.nodes():
         for node in graph.nodes():
             if isinstance(node, dace.libraries.standard.nodes.Reduce):
-                ReduceExpansion.apply_to(sdfg, _reduce = node)
+                if graph.scope_dict()[node] is None:
+                    try:
+                        print("Expanding Reduction")
+                        ReduceExpansion.apply_to(sdfg, _reduce = node)
+                        print("Done.")
+                    except ValueError:
+                        pass
     '''
     greedy_fuse(sdfg, validate_all)
+    
     #sdfg.apply_transformations_repeated(DeduplicateAccess)
     #sdfg.apply_transformations(MapTiling)
 

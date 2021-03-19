@@ -190,13 +190,14 @@ def subgraph_from_maps(sdfg, graph, map_entries, scope_children=None):
     """
     if not scope_children:
         scope_children = graph.scope_children()
-    nodes = set()
+    node_set = set()
     for map_entry in map_entries:
-        nodes |= set(scope_children[map_entry])
-        nodes |= set(e.dst for e in graph.out_edges(graph.exit_node(map_entry)))
-        nodes |= set(e.src for e in graph.in_edges(map_entry))
-        nodes.add(map_entry)
+        node_set |= set(scope_children[map_entry])
+        node_set |= set(e.dst for e in graph.out_edges(graph.exit_node(map_entry)) if isinstance(e.dst, nodes.AccessNode))
+        node_set |= set(e.src for e in graph.in_edges(map_entry) if isinstance(e.src, nodes.AccessNode))
 
-    return SubgraphView(graph, list(nodes))
+        node_set.add(map_entry)
+
+    return SubgraphView(graph, list(node_set))
 
 

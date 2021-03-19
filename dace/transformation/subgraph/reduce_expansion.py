@@ -160,8 +160,9 @@ class ReduceExpansion(transformation.Transformation):
 
         queue = [nsdfg]
         array_closest_ancestor = None
+        '''
         while len(queue) > 0:
-            current = queue.pop(0)
+            current = queue.pop()
             if isinstance(current, nodes.AccessNode):
                 if current.data == out_storage_node.data:
                     # it suffices to find the first node
@@ -169,7 +170,8 @@ class ReduceExpansion(transformation.Transformation):
                     array_closest_ancestor = current
                     break
             queue.extend([in_edge.src for in_edge in graph.in_edges(current)])
-
+        
+        '''
         # if ancestor doesn't exist:
         #           if non-transient: create data node accessing it
         #           if transient: ancestor_node = none, set_zero on outer node

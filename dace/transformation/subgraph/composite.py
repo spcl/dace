@@ -66,11 +66,11 @@ class CompositeFusion(transformation.SubgraphTransformation):
         graph = subgraph.graph
         if CompositeFusion.allow_expansion._default == True:
             if SubgraphFusion.can_be_applied(sdfg, subgraph):
-                print("Success: Pure SGF")
+                print("Pure Subgraph Fusion")
                 return True 
             
             if MultiExpansion.can_be_applied(sdfg, subgraph):
-                print("ME")
+                print("MultiExpansion can be applied")
                 # deepcopy
                 graph_indices = [i for (i,n) in enumerate(graph.nodes()) if n in subgraph]
                 sdfg_copy = SDFG.from_json(sdfg.to_json())
