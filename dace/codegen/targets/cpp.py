@@ -6,6 +6,7 @@ NOTE: The C++ code generator is currently located in cpu.py.
 import ast
 import copy
 import functools
+import itertools
 import warnings
 
 import sympy as sp
@@ -213,8 +214,8 @@ def ptr(name: str, desc: data.Data) -> str:
     # struct to name
     if (desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent
             and desc.storage != dtypes.StorageType.CPU_ThreadLocal):
-        from dace.codegen.targets.cuda import CUDACodeGen # Avoid import loop
-        if not CUDACodeGen._in_device_code: # GPU kernels cannot access state
+        from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
+        if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
             return f'__state->{name}'
 
     return name
@@ -656,6 +657,12 @@ def is_write_conflicted_with_reason(dfg,
         if not isinstance(dst, nodes.AccessNode):
             warnings.warn('Unexpected WCR path to not end in access node')
             return dst
+
+        if dfg.in_degree(dst) > 0:
+            for x, y in itertools.combinations(dfg.in_edges(dst), 2):
+                x, y = x.data.subset, y.data.subset
+                if subsets.intersects(x, y):
+                    return dst
 
         # If this is a nested SDFG and the access leads outside
         if not sdfg.arrays[dst.data].transient:
