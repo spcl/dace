@@ -129,7 +129,7 @@ run_all() {
     run_sample fpga/multiple_veclen_conversions multiple_veclen_conversions 0
 
     # Views
-    run_multi_sample fpga/reshape_view_fpga 0 "view_fpga" "reshp_np_1" "reshapedst_1"
+    run_multi_sample fpga/reshape_view_fpga 0 "view_fpga" "reshp_np_1" "reshapedst_1" "view_slice_1"
 }
 
 # Check if xocc is vailable
