@@ -193,7 +193,7 @@ def configure_and_compile(program_folder,
     if Config.get('compiler', 'linker', 'executable'):
         cmake_command.append("-DCMAKE_LINKER=\"{}\"".format(
             make_absolute(Config.get('compiler', 'linker', 'executable'))))
-    if Config.get('compiler', 'linker', 'args'):
+    if Config.get('compiler', 'linker', 'args') is not None:
         cmake_command.append(
             "-DCMAKE_SHARED_LINKER_FLAGS=\"{}\"".format(
                 Config.get('compiler', 'linker', 'args') + " " +
