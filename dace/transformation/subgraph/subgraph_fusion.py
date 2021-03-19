@@ -219,8 +219,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # 2.3 Check for WCRs in out nodes: If there is one, the corresponding 
         # data must never be accessed anywhere else 
         intermediate_data = set([n.data for n in intermediate_nodes])
-        in_data = set([n.data for n in in_nodes])
-        out_data = set([n.data for n in out_nodes])
+        in_data = set([n.data for n in in_nodes if isinstance(n, nodes.AccessNode)])
+        out_data = set([n.data for n in out_nodes if isinstance(n, nodes.AccessNode)])
 
         view_nodes = set()
         for node in chain(in_nodes, out_nodes, intermediate_nodes):
@@ -509,16 +509,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         if remove_old:
             graph.remove_edge(edge)
-        '''
-        if new_src:
-            ret = graph.add_edge(new_src, new_src_conn, edge.dst, edge.dst_conn,
-                                 data)
-            graph.remove_edge(edge)
-        if new_dst:
-            ret = graph.add_edge(edge.src, edge.src_conn, new_dst, new_dst_conn,
-                                 data)
-            graph.remove_edge(edge)
-        '''
         return ret
 
     def adjust_arrays_nsdfg(self, sdfg, nsdfg, name, nname, memlet):
@@ -757,16 +747,14 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # TODO: dynamic map range -- this is fairly unrealistic in such a setting
             for edge in graph.in_edges(map_entry):
                 src = edge.src
-                mmt = graph.memlet_tree(edge)
-                out_edges = [child.edge for child in mmt.root().children]
+                # TODO 
+                out_edges = [e for e in graph.out_edges(map_entry) if e.src_conn[3:] == edge.dst_conn[2:]]
 
                 if src in in_nodes:
                     in_conn = None
                     out_conn = None
                     if src in inconnectors_dict:
-                        # no need to augment subset of outer edge.
-                        # will do this at the end in one pass.
-
+                        # for access nodes only 
                         in_conn = inconnectors_dict[src][1]
                         out_conn = inconnectors_dict[src][2]
 
@@ -777,7 +765,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         global_map_entry.add_in_connector(in_conn)
                         global_map_entry.add_out_connector(out_conn)
 
-                        inconnectors_dict[src] = (edge, in_conn, out_conn)
+                        if isinstance(src, nodes.AccessNode):
+                            inconnectors_dict[src] = (edge, in_conn, out_conn)
 
                         # reroute in edge via global_map_entry
                         self.copy_edge(graph, edge, new_dst = global_map_entry, \
@@ -847,14 +836,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                         inner_memlet.other_subset = dcpy(inner_memlet.subset)
 
-                        e_inner = graph.add_edge(dst, None, global_map_exit,
-                                                 in_conn, inner_memlet)
-                        #mm_outer = propagate_memlet(graph, inner_memlet, global_map_entry, \
-                        #                            union_inner_edges = False)
-                        outer_memlet = dcpy(out_edge.data)
-                        e_outer = graph.add_edge(global_map_exit, out_conn,
-                                                 dst_transient, None, outer_memlet)
-
                         # remove edge from dst to dst_transient that was created
                         # in intermediate preparation.
                         for e in graph.out_edges(dst):
@@ -886,21 +867,17 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             port_created = (in_conn, out_conn)
 
                         else:
-                            conn_nr = edge.dst_conn[3:]
                             in_conn = port_created.st
                             out_conn = port_created.nd
 
                         # map
-                        graph.add_edge(global_map_exit, out_conn, dst, None,
+                        graph.add_edge(global_map_exit, out_conn, dst, out_edge.dst_conn,
                                        dcpy(out_edge.data))
 
             # maps are now ready to be discarded
             # all connected edges will be finally removed as well
             graph.remove_node(map_entry)
             graph.remove_node(map_exit)
-
-        #_propagate_node(graph, global_map_entry)
-        #_propagate_node(graph, global_map_exit)
 
         # create a mapping from data arrays to offsets
         # for later memlet adjustments later
@@ -934,7 +911,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 in_edge = next(in_edges_iter)
                 target_subset = dcpy(in_edge.data.subset)
                 target_subset.pop(invariant_dimensions[data_name])
-                ######
                 while True:
                     try:  # executed if there are multiple in_edges
                         in_edge = next(in_edges_iter)
@@ -1116,3 +1092,4 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             for node in graph.scope_children()[global_map_entry]:
                 if isinstance(node, nodes.MapEntry):
                     node.map.schedule = self.schedule_innermaps
+        

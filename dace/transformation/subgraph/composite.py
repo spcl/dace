@@ -150,7 +150,6 @@ class CompositeFusion(transformation.SubgraphTransformation):
         #####################################
 
 
-        print("me CBA", MultiExpansion.can_be_applied(sdfg, subgraph))
         print(self.allow_expansion)
         print(self.allow_expansion == True)
         if self.allow_expansion == True and MultiExpansion.can_be_applied(sdfg, subgraph):
@@ -158,7 +157,6 @@ class CompositeFusion(transformation.SubgraphTransformation):
             me = MultiExpansion(subgraph, self.sdfg_id, self.state_id)
             me.debug = self.debug
             me.apply(sdfg)
-        print("sgf CBA", SubgraphFusion.can_be_applied(sdfg, self.subgraph_view(sdfg)))
         if SubgraphFusion.can_be_applied(sdfg, self.subgraph_view(sdfg)):
             sf = SubgraphFusion(subgraph, self.sdfg_id, self.state_id)
             # set SubgraphFusion properties

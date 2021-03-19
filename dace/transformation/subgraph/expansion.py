@@ -20,6 +20,20 @@ import itertools
 import dace.libraries.standard as stdlib
 
 
+def offset_map(state, map_entry):
+    offsets = []
+    subgraph = state.scope_subgraph(map_entry)
+    for i, (p, r) in enumerate(zip(map_entry.map.params, map_entry.map.range.min_element())):
+        if r in [1,2,3,4,5,6,7,8,9]:
+            offsets.append(r)
+            replace(subgraph, str(p), f'{p}+{r}')
+
+        else:
+            offsets.append(0)
+    
+    map_entry.map.range.offset(offsets, negative = True)
+
+
 @registry.autoregister_params(singlestate=True)
 @make_properties
 class MultiExpansion(transformation.SubgraphTransformation):
@@ -52,6 +66,10 @@ class MultiExpansion(transformation.SubgraphTransformation):
 
         # next, get all the maps
         maps = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
+        
+        #for m in maps:
+        #    offset_map(graph, m)
+        
         brng = helpers.common_map_base_ranges(maps)
 
         # if leq than one map found -> fail
@@ -65,10 +83,8 @@ class MultiExpansion(transformation.SubgraphTransformation):
         if MultiExpansion.check_contiguity._default == True:
             reassignment = helpers.find_reassignment(maps, brng)
             for map_entry in maps:
-                print("Analyzing", map_entry)
                 no_common = sum([1 for j in reassignment[map_entry] if j != -1])
                 if no_common != len(map_entry.params):
-                    print("Lengths differ!")
                     # check every memlet for access 
                     for e in itertools.chain(graph.out_edges(map_entry), graph.in_edges(graph.exit_node(map_entry))):
                         subset = dcpy(e.data.subset)
@@ -76,6 +92,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
                         for s in subset.free_symbols:
                             
                             if reassignment[map_entry][map_entry.map.params.index(s)] != -1:
+                                warnings.warn("Contiguity fusion violation detected")
                                 return False 
 
 

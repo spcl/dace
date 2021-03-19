@@ -31,7 +31,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                 validate_all: bool,
                 #apply_multi_expansion: bool = False, # run both
                 #apply_stencil_tiling: bool = False, # not now yet
-                recursive: bool = True) -> None:
+                recursive: bool = False) -> None:
 
     #CompositeFusion.allow_expansion = apply_multi_expansion
     #CompositeFusion.allow_tiling = apply_stencil_tiling
@@ -72,9 +72,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                     # advanced: for each scope subgraph, 
                     # see whether any parts inside could be fused together
                     global_entry = cf._global_map_entry
-                    print("************ Inner Fuse")
                     greedy_fuse(graph.scope_subgraph(global_entry, include_entry = False, include_exit = False), validate_all = validate_all)
-                    print("***********************")
 
                     
         for node in graph_or_subgraph.nodes():
