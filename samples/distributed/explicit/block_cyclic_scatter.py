@@ -41,23 +41,24 @@ def jacobi_2d_shared(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N])
 
 
 @dc.program
-def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
+def bcscatter(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
 
     lA = np.zeros((lN + 2, lN + 2), dtype=A.dtype)
     lB = np.zeros((lN + 2, lN + 2), dtype=B.dtype)
-    tAB = np.empty((lN, lN), dtype=A.dtype)
+
+    bsizes = np.empty((2,), dtype=np.int32)
+    bsizes[0] = lN
+    bsizes[1] = lN
+    context = np.empty((1,), dtype=np.int32)
+    gdescA = np.empty((9,), dtype=np.int32)
+    ldescA = np.empty((9,), dtype=np.int32)
+    gdescB = np.empty((9,), dtype=np.int32)
+    ldescB = np.empty((9,), dtype=np.int32)
 
     req = np.empty((8,), dtype=MPI_Request)
 
-    Av = np.reshape(A, (Px, lN, Px, lN))
-    A2 = np.transpose(Av, axes=(0, 2, 1, 3))
-    Bv = np.reshape(B, (Px, lN, Px, lN))
-    B2 = np.transpose(Bv, axes=(0, 2, 1, 3))
-
-    dc.comm.Scatter(A2, tAB)
-    lA[1:-1, 1:-1] = tAB
-    dc.comm.Scatter(B2, tAB)
-    lB[1:-1, 1:-1] = tAB
+    dc.comm.BCScatter(A, lA[1:-1, 1:-1], bsizes, context, gdescA, ldescA)
+    dc.comm.BCScatter(B, lB[1:-1, 1:-1], bsizes, context, gdescB, ldescB)
     
     for t in range(1, TSTEPS):
 
@@ -96,14 +97,9 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
             lB[1+noff:-1-soff, 2+woff:-eoff] +
             lB[2+noff:-soff, 1+woff:-1-eoff] +
             lB[noff:-2-soff, 1+woff:-1-eoff])
-    
-    tAB[:] = lA[1:-1, 1:-1]
-    dc.comm.Gather(tAB, A2)
-    tAB[:] = lB[1:-1, 1:-1]
-    dc.comm.Gather(tAB, B2)
 
-    A[:] = np.transpose(A2, (0, 2, 1, 3))
-    B[:] = np.transpose(B2, (0, 2, 1, 3))
+    dc.comm.BCGather(lA[1:-1, 1:-1], A, ldescA, gdescA)
+    dc.comm.BCGather(lB[1:-1, 1:-1], B, ldescB, gdescB)
 
 
 def init_data(N, datatype):
@@ -122,9 +118,9 @@ if __name__ == "__main__":
 
     # Initialization
     TSTEPS, N = 100, 1000  # 500, 1300  # 1000, 2800
-    # A, B = init_data(N, np.float64)
-    A = np.arange(0, N*N).reshape(N, N).astype(np.float64)
-    B = np.zeros((N, N), dtype=np.float64)
+    A, B = init_data(N, np.float64)
+    # A = np.arange(0, N*N).reshape(N, N).astype(np.float64)
+    # B = np.zeros((N, N), dtype=np.float64)
     # B = np.arange(0, N*N).reshape(N, N)
 
     comm = MPI.COMM_WORLD
@@ -161,7 +157,7 @@ if __name__ == "__main__":
             print(nn, ns, nw, ne)
             print(noff, soff, woff, eoff)
             print("=====================")
-            mpi_sdfg = jacobi_2d_dist.compile()
+            mpi_sdfg = bcscatter.compile()
         comm.Barrier()
   
     mpi_sdfg(A=A, B=B, TSTEPS=TSTEPS, N=N, lN=lN, rank=rank, size=size,
@@ -169,22 +165,28 @@ if __name__ == "__main__":
              noff=noff, soff=soff, woff=woff, eoff=eoff,
              nn=nn, ns=ns, nw=nw, ne=ne)
 
+    # for r in range(0, size):
+    #     if r == rank:
+    #         print("I am %d" % rank)
+    #         print(A)
+    #     comm.Barrier()
+
     if rank == 0:
-        # refA, refB = init_data(N, np.float64)
-        refA = np.arange(0, N*N).reshape(N, N).astype(np.float64)
-        refB = np.zeros((N, N), dtype=np.float64)
-        print(refA)
-        print(refB)
-        print()
+        refA, refB = init_data(N, np.float64)
+        # refA = np.arange(0, N*N).reshape(N, N).astype(np.float64)
+        # refB = np.zeros((N, N), dtype=np.float64)
+        # print(refA)
+        # print(refB)
+        # print()
         # jacobi_2d_shared(TSTEPS, refA, refB)
         shared_sdfg = jacobi_2d_shared.compile()
         shared_sdfg(A=refA, B=refB, TSTEPS=TSTEPS, N=N, lN=lN, Px=Px)
 
         print(relerr(refA, A))
         print(relerr(refB, B))
-        print()
-        print(refA)
-        print(A)
-        print()
-        print(refB)
-        print(B)
+        # print()
+        # print(refA)
+        # print(A)
+        # print()
+        # print(refB)
+        # print(B)
