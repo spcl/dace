@@ -3770,14 +3770,20 @@ class ProgramVisitor(ExtNodeVisitor):
                 # If it is not a subscript, then we just pass the array pointer directly.
                 # If it is not an array of the current SDFG, then the normal
                 # argument parsing will create a connector, i.e. a pointer.
-                if (isinstance(arg, ast.Subscript) and
-                        self.variables[rname(arg)] in self.sdfg.arrays.keys()):
+                if (isinstance(arg, ast.Subscript) and (
+                        rname(arg) in self.sdfg.arrays.keys() or (
+                            rname(arg) in self.variables.keys() and
+                            self.variables[rname(arg)]
+                            in self.sdfg.arrays.keys()))):
                     arg.slice = self.visit(arg.slice)
                     expr: MemletExpr = ParseMemlet(
                         self,
                         {**self.sdfg.arrays, **self.defined},
                         arg)
-                    mpi_args.append((self.variables[rname(arg)], expr.subset))
+                    name = rname(arg)
+                    if name in self.variables.keys():
+                        name = self.variables[name]
+                    mpi_args.append((name, expr.subset))
                 else:
                     mpi_args.append(self._parse_function_arg(arg))
             args.extend(mpi_args)
