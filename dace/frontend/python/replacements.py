@@ -5073,3 +5073,198 @@ def _wait(pv: 'ProgramVisitor',
     # state.add_edge(libnode, '_stat_tag', tag_node, None, Memlet.from_array(*tag))
     
     return None
+
+
+@oprepo.replaces('dace.comm.BCScatter')
+def _bcscatter(pv: 'ProgramVisitor',
+               sdfg: SDFG,
+               state: SDFGState,
+               in_buffer: str,
+               out_buffer: str,
+               block_sizes: str,
+               context: str,
+               gdescriptor: str,
+               ldescriptor: str):
+
+    from dace.libraries.pblas.nodes.pgeadd import BlockCyclicScatter
+
+    libnode = BlockCyclicScatter('_BCScatter_')
+
+    inbuf_range = None
+    if isinstance(in_buffer, tuple):
+        inbuf_name, inbuf_range = in_buffer
+    else:
+        inbuf_name = in_buffer
+    in_desc = sdfg.arrays[inbuf_name]
+    inbuf_node = state.add_read(inbuf_name)
+
+    bsizes_range = None
+    if isinstance(block_sizes, tuple):
+        bsizes_name, bsizes_range = block_sizes
+    else:
+        bsizes_name = block_sizes
+    bsizes_desc = sdfg.arrays[bsizes_name]
+    bsizes_node = state.add_read(bsizes_name)
+
+    outbuf_range = None
+    if isinstance(out_buffer, tuple):
+        outbuf_name, outbuf_range = out_buffer
+    else:
+        outbuf_name = out_buffer
+    out_desc = sdfg.arrays[outbuf_name]
+    outbuf_node = state.add_write(outbuf_name)
+
+    context_range = None
+    if isinstance(context, tuple):
+        context_name, context_range = context
+    else:
+        context_name = context
+    context_desc = sdfg.arrays[context_name]
+    context_node = state.add_write(context_name)
+
+    gdesc_range = None
+    if isinstance(gdescriptor, tuple):
+        gdesc_name, gdesc_range = gdescriptor
+    else:
+        gdesc_name = gdescriptor
+    global_desc = sdfg.arrays[gdesc_name]
+    gdesc_node = state.add_write(gdesc_name)
+
+    ldesc_range = None
+    if isinstance(ldescriptor, tuple):
+        ldesc_name, ldesc_range = ldescriptor
+    else:
+        ldesc_name = ldescriptor
+    local_desc = sdfg.arrays[ldesc_name]
+    ldesc_node = state.add_write(ldesc_name)
+
+    if inbuf_range:
+        inbuf_mem = Memlet.simple(inbuf_name, inbuf_range)
+    else:
+        inbuf_mem = Memlet.from_array(inbuf_name, in_desc) 
+    if bsizes_range:
+        bsizes_mem = Memlet.simple(bsizes_name, bsizes_range)
+    else:
+        bsizes_mem = Memlet.from_array(bsizes_name, bsizes_desc)
+    if outbuf_range:
+        outbuf_mem = Memlet.simple(outbuf_name, outbuf_range)
+    else:
+        outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
+    if context_range:
+        context_mem = Memlet.simple(context_name, context_range)
+    else:
+        context_mem = Memlet.from_array(context_name, context_desc)
+    if gdesc_range:
+        gdesc_mem = Memlet.simple(gdesc_name, gdesc_range)
+    else:
+        gdesc_mem = Memlet.from_array(gdesc_name, global_desc)
+    if ldesc_range:
+        ldesc_mem = Memlet.simple(ldesc_name, ldesc_range)
+    else:
+        ldesc_mem = Memlet.from_array(ldesc_name, local_desc)
+
+    state.add_edge(inbuf_node, None, libnode, '_inbuffer', inbuf_mem)
+    state.add_edge(bsizes_node, None, libnode, '_block_sizes', bsizes_mem)
+    state.add_edge(libnode, '_outbuffer', outbuf_node, None, outbuf_mem)
+    state.add_edge(libnode, '_context', context_node, None, context_mem)
+    state.add_edge(libnode, '_gdescriptor', gdesc_node, None, gdesc_mem)
+    state.add_edge(libnode, '_ldescriptor', ldesc_node, None, ldesc_mem)
+    
+    return None
+
+
+@oprepo.replaces('dace.comm.BCGather')
+def _bcgather(pv: 'ProgramVisitor',
+              sdfg: SDFG,
+              state: SDFGState,
+              in_buffer: str,
+              out_buffer: str,
+            #   context: str,
+              ldescriptor: str,
+              gdescriptor: str):
+
+    from dace.libraries.pblas.nodes.pgeadd import BlockCyclicGather
+
+    libnode = BlockCyclicGather('_BCGather_')
+
+    inbuf_range = None
+    if isinstance(in_buffer, tuple):
+        inbuf_name, inbuf_range = in_buffer
+    else:
+        inbuf_name = in_buffer
+    in_desc = sdfg.arrays[inbuf_name]
+    inbuf_node = state.add_read(inbuf_name)
+
+    # bsizes_range = None
+    # if isinstance(block_sizes, tuple):
+    #     bsizes_name, bsizes_range = block_sizes
+    # else:
+    #     bsizes_name = block_sizes
+    # bsizes_desc = sdfg.arrays[bsizes_name]
+    # bsizes_node = state.add_read(bsizes_name)
+
+    outbuf_range = None
+    if isinstance(out_buffer, tuple):
+        outbuf_name, outbuf_range = out_buffer
+    else:
+        outbuf_name = out_buffer
+    out_desc = sdfg.arrays[outbuf_name]
+    outbuf_node = state.add_write(outbuf_name)
+
+    # context_range = None
+    # if isinstance(context, tuple):
+    #     context_name, context_range = context
+    # else:
+    #     context_name = context
+    # context_desc = sdfg.arrays[context_name]
+    # context_node = state.add_write(context_name)
+
+    gdesc_range = None
+    if isinstance(gdescriptor, tuple):
+        gdesc_name, gdesc_range = gdescriptor
+    else:
+        gdesc_name = gdescriptor
+    global_desc = sdfg.arrays[gdesc_name]
+    gdesc_node = state.add_write(gdesc_name)
+
+    ldesc_range = None
+    if isinstance(ldescriptor, tuple):
+        ldesc_name, ldesc_range = ldescriptor
+    else:
+        ldesc_name = ldescriptor
+    local_desc = sdfg.arrays[ldesc_name]
+    ldesc_node = state.add_write(ldesc_name)
+
+    if inbuf_range:
+        inbuf_mem = Memlet.simple(inbuf_name, inbuf_range)
+    else:
+        inbuf_mem = Memlet.from_array(inbuf_name, in_desc) 
+    # if bsizes_range:
+    #     bsizes_mem = Memlet.simple(bsizes_name, bsizes_range)
+    # else:
+    #     bsizes_mem = Memlet.from_array(bsizes_name, bsizes_desc)
+    if outbuf_range:
+        outbuf_mem = Memlet.simple(outbuf_name, outbuf_range)
+    else:
+        outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
+    # if context_range:
+    #     context_mem = Memlet.simple(context_name, context_range)
+    # else:
+    #     context_mem = Memlet.from_array(context_name, context_desc)
+    if gdesc_range:
+        gdesc_mem = Memlet.simple(gdesc_name, gdesc_range)
+    else:
+        gdesc_mem = Memlet.from_array(gdesc_name, global_desc)
+    if ldesc_range:
+        ldesc_mem = Memlet.simple(ldesc_name, ldesc_range)
+    else:
+        ldesc_mem = Memlet.from_array(ldesc_name, local_desc)
+
+    state.add_edge(inbuf_node, None, libnode, '_inbuffer', inbuf_mem)
+    # state.add_edge(bsizes_node, None, libnode, '_block_sizes', bsizes_mem)
+    state.add_edge(libnode, '_outbuffer', outbuf_node, None, outbuf_mem)
+    # state.add_edge(context_node, None, libnode, '_context', context_mem)
+    state.add_edge(gdesc_node, None, libnode, '_gdescriptor', gdesc_mem)
+    state.add_edge(ldesc_node, None, libnode, '_ldescriptor', ldesc_mem)
+    
+    return None

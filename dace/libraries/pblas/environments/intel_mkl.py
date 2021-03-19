@@ -7,7 +7,7 @@ import warnings
 
 
 @dace.library.environment
-class IntelMKL:
+class IntelMKLScaLAPACK:
     """ 
     An environment for the Intel Math Kernel Library (MKL), which implements
     the PBLAS library.
@@ -17,14 +17,17 @@ class IntelMKL:
     cmake_packages = []  #["BLAS"]
     cmake_variables = {"BLA_VENDOR": "Intel10_64lp"}
     cmake_compile_flags = []
-    cmake_link_flags = []
+    cmake_link_flags = ["-L /lib/x86_64-linux-gnu -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lpthread -lm -ldl"]
     cmake_files = []
 
-    headers = ["mkl_pblas.h", "../include/dace_blas.h"]
+    headers = ["mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h", "../include/dace_blas.h"]
     state_fields = []
     init_code = ""
     finalize_code = ""
     dependencies = []
+
+    libraries = ["mkl_scalapack_lp64", "mkl_blacs_intelmpi_lp64",
+                 "mkl_intel_lp64", "mkl_sequential", "mkl_core", "mkl_avx2"]
 
     @staticmethod
     def cmake_includes():
@@ -52,22 +55,27 @@ class IntelMKL:
 
     @staticmethod
     def cmake_libraries():
+        libfiles = ["/lib/x86_64-linux-gnu/lib" + name + ".so"
+                    for name in IntelMKLScaLAPACK.libraries + ["mpich"]]
+        return libfiles
         if 'MKLROOT' in os.environ:
             prefix = Config.get('compiler', 'library_prefix')
             suffix = Config.get('compiler', 'library_extension')
-            libfile = os.path.join(os.environ['MKLROOT'], 'lib',
-                                   prefix + 'mkl_rt' + suffix)
-            if os.path.isfile(libfile):
-                return [libfile]
+            libfiles = [os.path.join(os.environ['MKLROOT'], 'lib',
+                        prefix + name + "." + suffix)
+                        for name in IntelMKLScaLAPACK.libraries]
+            if all([os.path.isfile(f) for f in libfiles]):
+                return libfiles + ["/lib/x86_64-linux-gnu/libmpich.so"]
 
-        path = ctypes.util.find_library('mkl_rt')
+        path = ctypes.util.find_library('mkl_scalapack_lp64')
         if path:
             # Attempt to link on Windows
             if path.endswith('.dll'):
-                libfile = os.path.join(os.path.dirname(os.path.abspath(path)),
-                                       '..', 'lib', 'mkl_rt.lib')
-                if os.path.isfile(libfile):
-                    return [libfile]
+                libfiles = [os.path.join(os.path.dirname(os.path.abspath(path)),
+                            '..', 'lib', name + '.lib')
+                            for name in IntelMKLScaLAPACK.libraries]
+                if all([os.path.isfile(f) for f in libfiles]):
+                    return libfiles
                 elif 'CONDA_PREFIX' in os.environ:
                     warnings.warn(
                         'Anaconda Python is installed but the MKL library file '
@@ -81,4 +89,4 @@ class IntelMKL:
             return [path]
 
         # If all else fails, let CMake find the library
-        return ['mkl_rt']
+        return IntelMKLScaLAPACK.libraries + ["mpich"]

@@ -27,7 +27,7 @@ class ExpandPgemmPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandPgemmMKL(ExpandTransformation):
-    environments = [environments.intel_mkl.IntelMKL]
+    environments = [environments.intel_mkl.IntelMKLScaLAPACK]
 
     @staticmethod
     def expansion(*args, **kwargs):
@@ -58,7 +58,7 @@ class Pgemm(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "MKL"
 
-     def __init__(self, name, *args, **kwargs):
+    def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_a_in", "_desca", "_b_in", "_descb" "_c_in", "_descc", "_alpha", "_beta", "_m", "_n", "_k"},
