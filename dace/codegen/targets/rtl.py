@@ -46,6 +46,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
             "compiler", "rtl", "verilator_enable_debug")
         self.code_objects: List[codeobject.CodeObject] = list()
         self.cpp_general_header_added: bool = False
+        self.default_autorun: bool = True
+        self.is_first_autorun: bool = True
 
     def generate_node(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView,
                       state_id: int, node: nodes.Node,
@@ -103,6 +105,10 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 line: str = "{} {} = *({} *)(&{}[0]);".format(
                     dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                     dst_node.in_connectors[edge.dst_conn].ctype, edge.src.data)
+            elif isinstance(dst_node.in_connectors[edge.dst_conn], dtypes.struct) and dst_node.in_connectors[edge.dst_conn].ctype == "stream":  # TODO: change to actual stream class
+                line: str = "dace::Stream<{}> *{} = &{};".format(
+                    dst_node.in_connectors[edge.dst_conn].fields['a'].ctype,
+                    edge.dst_conn, edge.src.data)
             else:  # scalar accessor
                 line: str = "{}* {} = &{}[0];".format(
                     dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
@@ -134,6 +140,11 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 line: str = "{} {} = *({} *)(&{}[0]);".format(
                     src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
                     src_node.out_connectors[edge.src_conn].ctype, edge.dst.data)
+            elif isinstance(src_node.out_connectors[edge.src_conn], dtypes.struct) and src_node.out_connectors[
+                    edge.src_conn].ctype == "stream":  # TODO: change to actual stream class
+                line: str = "dace::Stream<{}> *{} = &{};".format(
+                    src_node.out_connectors[edge.src_conn].fields['a'].ctype,
+                    edge.src_conn, edge.dst.data)
             else:  # scalar accessor
                 line: str = "{}* {} = &{}[0];".format(
                     src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
@@ -333,6 +344,13 @@ for(int i = 0; i < {veclen}; i++){{
                         function_stream: prettycode.CodeIOStream,
                         callsite_stream: prettycode.CodeIOStream):
 
+
+        # TODO: should not be necessary anymore, if exit function is called from somewhere else
+        function_stream.write("DACE_EXPORTED void __dace_exit_{name}({name}_t *__state);".format(name=sdfg.name),
+                              sdfg=sdfg,
+                              state_id=state_id,
+                              node_id=node)
+
         # extract data
         state = sdfg.nodes()[state_id]
         tasklet = node
@@ -345,6 +363,13 @@ for(int i = 0; i < {veclen}; i++){{
         # generate system verilog module components
         parameter_string: str = self.generate_rtl_parameters(sdfg.constants)
         inputs, outputs = self.generate_rtl_inputs_outputs(sdfg, tasklet)
+
+        # set default choice for autorun if the user hasn't actively set the value
+        if not hasattr(tasklet, "is_autorun"):
+            tasklet.is_autorun = self.default_autorun
+
+        # add global struct variables
+        self.frame.statestruct.append("bool autorun_active = true;")
 
         # create rtl code object (that is later written to file)
         self.code_objects.append(
@@ -381,6 +406,12 @@ for(int i = 0; i < {veclen}; i++){{
             cpp_code=RTLCodeGen.CPP_MODEL_HEADER_TEMPLATE.format(
                 name=unique_name))
 
+        # add init and exit code for auto-run kernels
+        if tasklet.is_autorun and self.is_first_autorun:
+            self.is_first_autorun = False
+            sdfg.append_init_code("// start simulation of all free running kernels\n __state->autorun_active = true;\n")
+            sdfg.append_exit_code("// stop simulation of all free running kernels\n__state->autorun_active = false;\n")
+
         # add main cpp code to stream
         callsite_stream.write(contents=RTLCodeGen.CPP_MAIN_TEMPLATE.format(
             name=unique_name,
@@ -390,18 +421,38 @@ for(int i = 0; i < {veclen}; i++){{
             vector_init=vector_init,
             internal_state_str=internal_state_str,
             internal_state_var=internal_state_var,
-            debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;"
+            feed_element="""\
+    if(model->valid_i == 0 && in_ptr < num_elements {stream_condition}){{
+        {debug_feed_element}
+        {inputs}
+        model->valid_i = 1;
+    }}
+""".format(debug_feed_element="std::cout << \"feed new element\" << std::endl;"
+            if self.verilator_debug else "",
+           inputs="\n".join(["model->{name} = {name}->pop();".format(name=x) for x in tasklet.in_connectors]) if tasklet.is_autorun else inputs,
+           stream_condition="&& " + " && ".join(["!{}->is_empty()".format(x) for x in tasklet.in_connectors]) if tasklet.is_autorun else ""),
+            export_element="""\
+if(model->valid_o == 1 {stream_condition}){{
+    {debug_export_element}
+    {outputs}
+    model->ready_i = 1;
+}}      
+            """.format(debug_export_element="std::cout << \"export element\" << std::endl;",
+                       outputs="\n".join(["{name}->push(model->{name});".format(name=x) for x in tasklet.out_connectors]) if tasklet.is_autorun else outputs,
+                       stream_condition="&& " + " && ".join(["!{}->is_full()".format(x) for x in tasklet.out_connectors]) if tasklet.is_autorun else ""),
+            running_condition="__state->autorun_active && out_ptr < num_elements" if tasklet.is_autorun else "out_ptr < num_elements",
+            debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;".format(name=unique_name)
             if self.verilator_debug else "",
             debug_feed_element="std::cout << \"feed new element\" << std::endl;"
             if self.verilator_debug else "",
             debug_export_element="std::cout << \"export element\" << std::endl;"
             if self.verilator_debug else "",
-            debug_internal_state="""
+            debug_internal_state="""\
 // report internal state 
 VL_PRINTF("[t=%lu] clk_i=%u rst_i=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->clk_i, model->rst_i, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
 VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
 std::cout << std::flush;
-""".format(internal_state_str=internal_state_str,
+""".format(internal_state_str=internal_state_str if self.verilator_debug else "",
            internal_state_var=internal_state_var)
             if self.verilator_debug else "",
             debug_read_input_hs=
@@ -410,7 +461,7 @@ std::cout << std::flush;
             debug_output_hs=
             "std::cout << \"remove write_output_hs flag\" << std::endl;"
             if self.verilator_debug else "",
-            debug_sim_end="std::cout << \"SIM {name} END\" << std::endl;"
+            debug_sim_end="std::cout << \"SIM {name} END\" << std::endl;".format(name=unique_name)
             if self.verilator_debug else ""),
                               sdfg=sdfg,
                               state_id=state_id,
@@ -424,7 +475,7 @@ std::cout << std::flush;
 
     CPP_MODEL_HEADER_TEMPLATE = """\
 // include model header, generated from verilating the sv design
-#include "V{name}.h"
+#include "V{name}.h"\n
 """
 
     CPP_MAIN_TEMPLATE = """\
@@ -461,7 +512,7 @@ bool read_input_hs = false, write_output_hs = false;
 int in_ptr = 0, out_ptr = 0;
 {num_elements}
 
-while (out_ptr < num_elements) {{
+while ({running_condition}) {{
 
     // increment time
     main_time++;
@@ -471,18 +522,11 @@ while (out_ptr < num_elements) {{
         read_input_hs = true;
     }} 
     // feed new element
-    if(model->valid_i == 0 && in_ptr < num_elements){{
-        {debug_feed_element}
-        {inputs}
-        model->valid_i = 1;
-    }}
+    {feed_element}
 
     // export element
-    if(model->valid_o == 1){{
-        {debug_export_element}
-        {outputs}
-        model->ready_i = 1;
-    }}
+    {export_element}
+    
     // check if valid_o and ready_i have been asserted at the rising clock edge -> output write handshake
     if (model->ready_i == 1 && model->valid_o == 1){{
         write_output_hs = true;

@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
-    Pipelined, AXI-handshake compliant example that increments b from a up to 100.
+    Free running (autorun) tasklet example.
 """
 
 import dace
@@ -8,11 +8,13 @@ import argparse
 
 import numpy as np
 
+from dace.transformation.interstate import FPGATransformSDFG
+
 # add symbol
 N = dace.symbol('N')
 
 # add sdfg
-sdfg = dace.SDFG('rtl_tasklet_pipeline')
+sdfg = dace.SDFG('rtl_tasklet_streaming')
 
 # add state
 state = sdfg.add_state()
@@ -24,13 +26,27 @@ sdfg.specialize(dict(N=4))
 sdfg.add_constant("SYSTEMVERILOG_DEBUG", False)
 
 # add arrays
-sdfg.add_array('A', [N], dtype=dace.int32)
-sdfg.add_array('B', [N], dtype=dace.int32)
+sdfg.add_array('A', dtype=dace.int32, shape=[N])
+sdfg.add_array('B', dtype=dace.int32, shape=[N])
+
+# add streams
+sdfg.add_stream("PIPE_IN", dtype=dace.int32, transient=True, buffer_size=1)
+sdfg.add_stream("PIPE_OUT", dtype=dace.int32, transient=True, buffer_size=1)
 
 # add custom cpp tasklet
-tasklet = state.add_tasklet(name='rtl_tasklet',
+tasklet_read = state.add_tasklet(name='tasklet_read',
                             inputs={'a'},
-                            outputs={'b'},
+                            outputs={'pipe_in'},  # TODO: change to stream class
+                            code='''
+for(int i = 0; i < N; i++){
+    PIPE_IN.push(a[i]);
+}
+                            ''',
+                            language=dace.Language.CPP)
+
+tasklet_rtl = state.add_tasklet(name='tasklet_rtl',
+                            inputs={'pipe_in': dace.struct("stream", a=dace.int32)},  # TODO: change to stream class
+                            outputs={'pipe_out': dace.struct("stream", a=dace.int32)},  # TODO: change to stream class
                             code='''
     /*
         Convention:
@@ -64,7 +80,7 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
         state_next = state;
         case(state)
             READY: if(valid_i) state_next = BUSY;
-            BUSY: if(b >= 99) state_next = DONE;
+            BUSY: if(pipe_out >= 99) state_next = DONE;
             DONE: if(ready_i) state_next = READY;
             default: state_next = state;
         endcase
@@ -93,10 +109,10 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
     always@(posedge clk_i)
     begin
         case(state)
-            READY: if(valid_i) b <= a;
-            BUSY: b <= b + 1;
-            DONE: b <= b;
-            default: b <= b;
+            READY: if(valid_i) pipe_out <= pipe_in;
+            BUSY: pipe_out <= pipe_out + 1;
+            DONE: pipe_out <= pipe_out;
+            default: pipe_out <= pipe_out;
         endcase
     end
 
@@ -116,18 +132,39 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
         end
     end
     ''',
-                            language=dace.Language.SystemVerilog)
+        language=dace.Language.SystemVerilog)
 
-# override default autorun
-tasklet.is_autorun = False
+tasklet_write = state.add_tasklet(name='tasklet_write',
+                            inputs={'pipe_out'}, # TODO: change to stream class
+                            outputs={'b'},
+                            code='''
+for(int i = 0; i < N; i++){
+    b[i] = PIPE_OUT.pop();
+}
+
+__dace_exit_rtl_tasklet_streaming(__state); // TODO: should be called from elsewhere
+                            ''',
+                            language=dace.Language.CPP)
+
 
 # add input/output array
 A = state.add_read('A')
+PIPE_IN_W = state.add_write('PIPE_IN')
+PIPE_IN_R = state.add_read('PIPE_IN')
+PIPE_OUT_W = state.add_write('PIPE_OUT')
+PIPE_OUT_R = state.add_read('PIPE_OUT')
 B = state.add_write('B')
 
 # connect input/output array with the tasklet
-state.add_edge(A, None, tasklet, 'a', dace.Memlet.simple('A', '0:N-1'))
-state.add_edge(tasklet, 'b', B, None, dace.Memlet.simple('B', '0:N-1'))
+state.add_edge(A, None, tasklet_read, 'a', dace.Memlet.simple('A', '0:N-1'))  # array -> read tasklet
+state.add_edge(tasklet_read, 'pipe_in', PIPE_IN_W, None, dace.Memlet.simple('PIPE_IN', '0:N-1'))  # read tasklet -> pipe
+state.add_edge(PIPE_IN_R, None, tasklet_rtl, 'pipe_in', dace.Memlet.simple('PIPE_IN', '0:N-1'))  # pipe -> rtl tasklet
+state.add_edge(tasklet_rtl, 'pipe_out', PIPE_OUT_W, None, dace.Memlet.simple('PIPE_OUT', '0:N-1'))  # rtl tasklet -> pipe
+state.add_edge(PIPE_OUT_R, None, tasklet_write, 'pipe_out', dace.Memlet.simple('PIPE_OUT', '0'))  # pipe -> write tasklet
+state.add_edge(tasklet_write, 'b', B, None, dace.Memlet.simple('B', '0:N-1'))  # write tasklet -> array
+
+# convert SDFG to FPGA using a transformation
+sdfg.apply_transformations(FPGATransformSDFG)
 
 # validate sdfg
 sdfg.validate()
@@ -150,8 +187,4 @@ if __name__ == '__main__':
     # show result
     print("a={}, b={}".format(a, b))
 
-    assert b[
-        0] == 100  # TODO: implement detection of #elements to process, s.t. we can extend the assertion to the whole array
-    assert np.all(map(
-        (lambda x: x == 0),
-        b[1:-1]))  # should still be at the init value (for the moment)
+    assert np.all(map((lambda x: x == 0), b))

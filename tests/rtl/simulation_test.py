@@ -62,6 +62,9 @@ def test_tasklet_scalar():
         ''',
                                 language=dace.Language.SystemVerilog)
 
+    # override default autorun
+    tasklet.is_autorun = False
+
     # add input/output array
     A = state.add_read('A')
     B = state.add_write('B')
@@ -145,6 +148,9 @@ def test_tasklet_parameter():
         assign valid_o = (b >= MAX_VAL) ? 1'b1:1'b0;
         ''',
                                 language=dace.Language.SystemVerilog)
+
+    # override default autorun
+    tasklet.is_autorun = False
 
     # add input/output array
     A = state.add_read('A')
@@ -233,6 +239,9 @@ def test_tasklet_vector():
         assign valid_o = (b >= a[0] + a[1] && (state == BUSY || state == DONE)) ? 1'b1:1'b0; 
         ''',
                                 language=dace.Language.SystemVerilog)
+
+    # override default autorun
+    tasklet.is_autorun = False
 
     # add input/output array
     A = state.add_read('A')
@@ -330,6 +339,10 @@ def test_multi_tasklet():
         assign valid_o = (c >= 100) ? 1'b1:1'b0;  
         ''',
                                  language=dace.Language.SystemVerilog)
+
+    # override default autorun
+    tasklet0.is_autorun = False
+    tasklet1.is_autorun = False
 
     # add input/output array
     A = state.add_read('A')
