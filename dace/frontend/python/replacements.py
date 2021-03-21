@@ -5081,10 +5081,10 @@ def _bcscatter(pv: 'ProgramVisitor',
                state: SDFGState,
                in_buffer: str,
                out_buffer: str,
-               block_sizes: str,
-               context: str,
-               gdescriptor: str,
-               ldescriptor: str):
+               block_sizes: str):
+            #    context: str,
+            #    gdescriptor: str,
+            #    ldescriptor: str):
 
     from dace.libraries.pblas.nodes.pgeadd import BlockCyclicScatter
 
@@ -5114,29 +5114,31 @@ def _bcscatter(pv: 'ProgramVisitor',
     out_desc = sdfg.arrays[outbuf_name]
     outbuf_node = state.add_write(outbuf_name)
 
-    context_range = None
-    if isinstance(context, tuple):
-        context_name, context_range = context
-    else:
-        context_name = context
-    context_desc = sdfg.arrays[context_name]
-    context_node = state.add_write(context_name)
+    # context_range = None
+    # if isinstance(context, tuple):
+    #     context_name, context_range = context
+    # else:
+    #     context_name = context
+    # context_desc = sdfg.arrays[context_name]
+    # context_node = state.add_write(context_name)
 
-    gdesc_range = None
-    if isinstance(gdescriptor, tuple):
-        gdesc_name, gdesc_range = gdescriptor
-    else:
-        gdesc_name = gdescriptor
-    global_desc = sdfg.arrays[gdesc_name]
-    gdesc_node = state.add_write(gdesc_name)
+    # gdesc_range = None
+    # if isinstance(gdescriptor, tuple):
+    #     gdesc_name, gdesc_range = gdescriptor
+    # else:
+    #     gdesc_name = gdescriptor
+    # global_desc = sdfg.arrays[gdesc_name]
+    gdesc = sdfg.add_temp_transient((9,), dtype=dace.int32)
+    gdesc_node = state.add_write(gdesc[0])
 
-    ldesc_range = None
-    if isinstance(ldescriptor, tuple):
-        ldesc_name, ldesc_range = ldescriptor
-    else:
-        ldesc_name = ldescriptor
-    local_desc = sdfg.arrays[ldesc_name]
-    ldesc_node = state.add_write(ldesc_name)
+    # ldesc_range = None
+    # if isinstance(ldescriptor, tuple):
+    #     ldesc_name, ldesc_range = ldescriptor
+    # else:
+    #     ldesc_name = ldescriptor
+    # local_desc = sdfg.arrays[ldesc_name]
+    ldesc = sdfg.add_temp_transient((9,), dtype=dace.int32)
+    ldesc_node = state.add_write(ldesc[0])
 
     if inbuf_range:
         inbuf_mem = Memlet.simple(inbuf_name, inbuf_range)
@@ -5150,27 +5152,27 @@ def _bcscatter(pv: 'ProgramVisitor',
         outbuf_mem = Memlet.simple(outbuf_name, outbuf_range)
     else:
         outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
-    if context_range:
-        context_mem = Memlet.simple(context_name, context_range)
-    else:
-        context_mem = Memlet.from_array(context_name, context_desc)
-    if gdesc_range:
-        gdesc_mem = Memlet.simple(gdesc_name, gdesc_range)
-    else:
-        gdesc_mem = Memlet.from_array(gdesc_name, global_desc)
-    if ldesc_range:
-        ldesc_mem = Memlet.simple(ldesc_name, ldesc_range)
-    else:
-        ldesc_mem = Memlet.from_array(ldesc_name, local_desc)
+    # if context_range:
+    #     context_mem = Memlet.simple(context_name, context_range)
+    # else:
+    #     context_mem = Memlet.from_array(context_name, context_desc)
+    # if gdesc_range:
+    #     gdesc_mem = Memlet.simple(gdesc_name, gdesc_range)
+    # else:
+    gdesc_mem = Memlet.from_array(*gdesc)
+    # if ldesc_range:
+    #     ldesc_mem = Memlet.simple(ldesc_name, ldesc_range)
+    # else:
+    ldesc_mem = Memlet.from_array(*ldesc)
 
     state.add_edge(inbuf_node, None, libnode, '_inbuffer', inbuf_mem)
     state.add_edge(bsizes_node, None, libnode, '_block_sizes', bsizes_mem)
     state.add_edge(libnode, '_outbuffer', outbuf_node, None, outbuf_mem)
-    state.add_edge(libnode, '_context', context_node, None, context_mem)
+    # state.add_edge(libnode, '_context', context_node, None, context_mem)
     state.add_edge(libnode, '_gdescriptor', gdesc_node, None, gdesc_mem)
     state.add_edge(libnode, '_ldescriptor', ldesc_node, None, ldesc_mem)
     
-    return None
+    return [gdesc[0], ldesc[0]]
 
 
 @oprepo.replaces('dace.comm.BCGather')
@@ -5268,3 +5270,47 @@ def _bcgather(pv: 'ProgramVisitor',
     state.add_edge(ldesc_node, None, libnode, '_ldescriptor', ldesc_mem)
     
     return None
+
+
+@oprepo.replaces('distr.MatMult')
+def _distr_matmult(pv: 'ProgramVisitor',
+                   sdfg: SDFG,
+                   state: SDFGState,
+                   opa: str,
+                   desca: str,
+                   opb: str,
+                   descb: str):
+
+    from dace.libraries.pblas.nodes.pgemm import Pgemm
+
+    tasklet = Pgemm("__DistrMatMult")
+    arra = sdfg.arrays[opa]
+    arrdesca = sdfg.arrays[desca]
+    arrb = sdfg.arrays[opb]
+    arrdescb = sdfg.arrays[descb]
+
+    m = arra.shape[0]
+    k = arra.shape[-1]
+    n = arrb.shape[-1]
+
+    out = sdfg.add_temp_transient((m, n), dtype=arra.dtype)
+    gdescout = sdfg.add_temp_transient((9,), dtype=dace.int32)
+    ldescout = sdfg.add_temp_transient((9,), dtype=dace.int32)
+
+    anode = state.add_read(opa)
+    bnode = state.add_read(opb)
+    danode = state.add_read(desca)
+    dbnode = state.add_read(descb)
+    cnode = state.add_write(out[0])
+    gdcnode = state.add_write(gdescout[0])
+    ldcnode = state.add_write(ldescout[0])
+
+    state.add_edge(anode, None, tasklet, '_a', Memlet.from_array(opa, arra))
+    state.add_edge(bnode, None, tasklet, '_b', Memlet.from_array(opb, arrb))
+    state.add_edge(danode, None, tasklet, '_desca', Memlet.from_array(desca, arrdesca))
+    state.add_edge(dbnode, None, tasklet, '_descb', Memlet.from_array(descb, arrdescb))
+    state.add_edge(tasklet, '_c', cnode, None, Memlet.from_array(*out))
+    state.add_edge(tasklet, '_gdescc', gdcnode, None, Memlet.from_array(*gdescout))
+    state.add_edge(tasklet, '_ldescc', ldcnode, None, Memlet.from_array(*ldescout))
+
+    return [out[0], gdescout[0], ldescout[0]]

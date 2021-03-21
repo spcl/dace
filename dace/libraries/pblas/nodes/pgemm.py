@@ -30,15 +30,28 @@ class ExpandPgemmMKL(ExpandTransformation):
     environments = [environments.intel_mkl.IntelMKLScaLAPACK]
 
     @staticmethod
-    def expansion(*args, **kwargs):
-        (a_in, m, k), (b_in, k, n), (c_in, m, n), alpha, beta, desca, descb, descc = node.validate(parent_sdfg, parent_state)
-        lapack_dtype_str = dace.libraries.lapack.utils.LAPACK_DTYPE_CHR(inA.dtype.base_type)
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        a, b, c, desca, descb, gdescc, ldesc = node.validate(parent_sdfg, parent_state)
+        from dace.libraries.lapack import utils
+        lapack_dtype_str = utils.LAPACK_DTYPE_CHR(a.dtype.base_type)
         
-        if inbuffer.dtype.veclen > 1:
-            raise(NotImplementedError)
+        # if inbuffer.dtype.veclen > 1:
+        #     raise(NotImplementedError)
  
         # mkl does not have an actual c interface for 
-        code = f"p{lapack_dtype_str}gemm('N', 'N', _m, _n, _k, _alpha, _A, 1, 1, _desca, b, 1, 1, _descb, beta, _c, 1, 1, _descc);"
+        code = (f"const double  zero = 0.0E+0, one = 1.0E+0;\n"
+                f"const char trans = 'N';\n"
+                f"MKL_INT grows = _desca[2];\n"
+                f"MKL_INT gcols = _descb[3];\n"
+                f"MKL_INT gld = _descb[3];\n"
+                f"MKL_INT lld = _descb[5];\n"
+                f"MKL_INT info;\n"
+                f"descinit(_gdescc, &grows, &gcols, &grows, &gcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
+                f"descinit(_ldescc, &grows, &gcols, &_desca[4], &_descb[5], &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
+                f"MKL_INT _m = grows, _n = gcols, _k = _desca[3];\n"
+                f"p{lapack_dtype_str}gemm(\n"
+                f"    &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _descb,\n"
+                f"    _a, &__state->__mkl_int_one, &__state->__mkl_int_one, _desca, &zero, _c, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescc);")
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -61,8 +74,8 @@ class Pgemm(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={"_a_in", "_desca", "_b_in", "_descb" "_c_in", "_descc", "_alpha", "_beta", "_m", "_n", "_k"},
-                         outputs={"_a", "_b", "_c"},
+                         inputs={"_a", "_desca", "_b", "_descb"},
+                         outputs={"_c", "_gdescc", "_ldescc"},
                          **kwargs)
 
     def validate(self, sdfg, state):
@@ -70,70 +83,70 @@ class Pgemm(dace.sdfg.nodes.LibraryNode):
         :return: A three-tuple inbuffer, outbuffer of the data descriptors in the
                  parent SDFG.
         """
-        a_in, b_in, c_in, alpha, beta, desca, descb, descc, m, n, k = None, None, None, None, None, None, None, None, None, None, None
+        a, b, c, desca, descb, gdescc, ldesc = None, None, None, None, None, None, None
    
         for e in state.in_edges(self):
-            if e.dst_conn == "_a_in":
-                a_in = sdfg.arrays[e.data.data]
-            if e.dst_conn == "_b_in":
-                b_in = sdfg.arrays[e.data.data]
-            if e.dst_conn == "_c_in":
-                c_in = sdfg.arrays[e.data.data]
+            if e.dst_conn == "_a":
+                a = sdfg.arrays[e.data.data]
+            if e.dst_conn == "_b":
+                b = sdfg.arrays[e.data.data]
             if e.dst_conn == "_desca":
                 desca = sdfg.arrays[e.data.data]
             if e.dst_conn == "_descb":
                 descb = sdfg.arrays[e.data.data]
-            if e.dst_conn == "_descc":
-                descc = sdfg.arrays[e.data.data]
-            if e.dst_conn == "_alpha":
-                alpha = sdfg.arrays[e.data.data]
-            if e.dst_conn == "_beta":
-                beta = sdfg.arrays[e.data.data]
-            if e.dst_conn == "_m":
-                m = sdfg.arrays[e.data.data]
-            if e.dst_conn == "_n":
-                n = sdfg.arrays[e.data.data]
-            if e.dst_conn == "_k":
-                k = sdfg.arrays[e.data.data]
-        for e in state.out_edges(self):
-            if e.src_conn == "_a_out":
-                a_out = sdfg.arrays[e.data.data]
-            if e.src_conn == "_b_out":
-                b_out = sdfg.arrays[e.data.data]
-            if e.src_conn == "_c_out":
-                c_out = sdfg.arrays[e.data.data]
+            # if e.dst_conn == "_alpha":
+            #     alpha = sdfg.arrays[e.data.data]
+            # if e.dst_conn == "_beta":
+            #     beta = sdfg.arrays[e.data.data]
 
-        if a_out != a_in:
-            raise ValueError("A is modified in-place, thus A_in and A_out need to point to the same memory.")
-        if b_out != b_in:
-            raise ValueError("B is modified in-place, thus B_in and B_out need to point to the same memory.")
-        if c_out != c_in:
-            raise ValueError("C is modified in-place, thus C_in and C_out need to point to the same memory.")
+        for e in state.out_edges(self):
+            if e.src_conn == "_gdescc":
+                gdescc = sdfg.arrays[e.data.data]
+            if e.src_conn == "_ldescc":
+                ldescc = sdfg.arrays[e.data.data]
+            if e.src_conn == "_c":
+                c = sdfg.arrays[e.data.data]
+
+        # if a_out != a_in:
+        #     raise ValueError("A is modified in-place, thus A_in and A_out need to point to the same memory.")
+        # if b_out != b_in:
+        #     raise ValueError("B is modified in-place, thus B_in and B_out need to point to the same memory.")
+        # if c_out != c_in:
+        #     raise ValueError("C is modified in-place, thus C_in and C_out need to point to the same memory.")
         
-        if a_in.dtype.base_type != b_in.dtype.base_type:
+        if a.dtype.base_type != b.dtype.base_type:
             raise ValueError("The type of A and B does not match!")
-        if c_in.dtype.base_type != b_in.dtype.base_type:
+        if c.dtype.base_type != b.dtype.base_type:
             raise ValueError("The type of B and C does not match!")
-        if c_in.dtype.base_type != alpha.dtype.base_type:
-            raise ValueError("The type of C and alpha does not match!")
-        if alpha.dtype.base_type != beta.dtype.base_type:
-            raise ValueError("The type of alpha and beta does not match!")
+        # if c.dtype.base_type != alpha.dtype.base_type:
+        #     raise ValueError("The type of C and alpha does not match!")
+        # if alpha.dtype.base_type != beta.dtype.base_type:
+        #     raise ValueError("The type of alpha and beta does not match!")
         
         if desca.dtype.base_type != dace.dtypes.int32:
             raise ValueError("desca must be an integer array")
         if descb.dtype.base_type != dace.dtypes.int32:
             raise ValueError("descb must be an integer array")
-        if descc.dtype.base_type != dace.dtypes.int32:
+        if gdescc.dtype.base_type != dace.dtypes.int32:
+            raise ValueError("descc must be an integer array")
+        if ldescc.dtype.base_type != dace.dtypes.int32:
             raise ValueError("descc must be an integer array")
 
-        if m.dtype.base_type != dace.dtypes.int32:
-            raise ValueError("m must be an integer")
-        if n.dtype.base_type != dace.dtypes.int32:
-            raise ValueError("n must be an integer")
-        if k.dtype.base_type != dace.dtypes.int32:
-            raise ValueError("k must be an integer")
+        # if m.dtype.base_type != dace.dtypes.int32:
+        #     raise ValueError("m must be an integer")
+        # if n.dtype.base_type != dace.dtypes.int32:
+        #     raise ValueError("n must be an integer")
+        # if k.dtype.base_type != dace.dtypes.int32:
+        #     raise ValueError("k must be an integer")
 
-        return a_in, b_in, c_in, alpha, beta, desca, descb, descc, m, n, k
+        # m = a.shape[0]
+        # assert(m == c.shape[0])
+        # k = a.shape[-1]
+        # assert(k == b.shape[0])
+        # n = b.shape[-1]
+        # assert(n == c.shape[0])
+
+        return a, b, c, desca, descb, gdescc, ldesc
 
 
 

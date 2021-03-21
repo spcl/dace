@@ -21,9 +21,24 @@ class IntelMKLScaLAPACK:
     cmake_files = []
 
     headers = ["mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h", "../include/dace_blas.h"]
-    state_fields = []
-    init_code = ""
-    finalize_code = ""
+    state_fields = [
+        "MKL_INT __mkl_scalapack_context;",
+        "MKL_INT __mkl_scalapack_rank, __mkl_scalapack_size;",
+        "MKL_INT __mkl_scalapack_prows = 0, __mkl_scalapack_pcols = 0;",
+        "MKL_INT __mkl_scalapack_myprow = 0, __mkl_scalapack_mypcol = 0;",
+        "MKL_INT __mkl_int_zero = 0, __mkl_int_one = 1, __mkl_int_negone = -1;",
+        "bool __mkl_scalapack_grid_init = false;"
+    ]
+    init_code = """
+    blacs_pinfo(&__state->__mkl_scalapack_rank, &__state->__mkl_scalapack_size);
+    blacs_get(&__state->__mkl_int_negone, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context);
+    """
+    finalize_code = """
+    if (__state->__mkl_scalapack_grid_init) {{
+        blacs_gridexit(&__state->__mkl_scalapack_context);
+    }}
+    // blacs_exit(&__state->__mkl_int_zero);
+    """ # actually if we finalize in the dace program we break pytest :)
     dependencies = []
 
     libraries = ["mkl_scalapack_lp64", "mkl_blacs_intelmpi_lp64",

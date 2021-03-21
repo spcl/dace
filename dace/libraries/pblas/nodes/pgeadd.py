@@ -33,33 +33,32 @@ class ExpandBlockCyclicScatterMKL(ExpandTransformation):
         in_shape, in_ld, out_shape, out_ld = node.validate(parent_sdfg, parent_state)
 
 
-        code = (f"const MKL_INT i_zero = 0, i_one = 1, i_negone = -1;\n"
+        code = (f"if (!__state->__mkl_scalapack_grid_init) {{\n"
+                f"    __state->__mkl_scalapack_prows = Px;\n"
+                f"    __state->__mkl_scalapack_pcols = Py;\n"
+                f"    blacs_gridinit(&__state->__mkl_scalapack_context, \"C\", &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols);\n"
+                f"    blacs_gridinfo(&__state->__mkl_scalapack_context, &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols, &__state->__mkl_scalapack_myprow, &__state->__mkl_scalapack_mypcol);\n"
+                f"    __state->__mkl_scalapack_grid_init = true;\n"
+                f"}}\n"
                 f"const double  zero = 0.0E+0, one = 1.0E+0;\n"
                 f"const char trans = 'N';\n"
-                f"MKL_INT iam, nprocs, nprow, npcol, myrow, mycol, info;\n"
-                f"nprow = Px; npcol = Px;\n"
-                f"blacs_pinfo(&iam, &nprocs);\n"
-                f"blacs_get(&i_negone, &i_zero, _context);\n"
-                f"blacs_gridinit(_context, \"C\", &nprow, &npcol);\n"
-                f"blacs_gridinfo(_context, &nprow, &npcol, &myrow, &mycol);\n"
                 f"MKL_INT grows = {in_shape[0]};\n"
                 f"MKL_INT gcols = {in_shape[1]};\n"
                 f"MKL_INT gld = {in_ld};\n"
-                # f"MKL_INT lrows = {out_shape[0]};\n"
-                # f"MKL_INT lcols = {out_shape[1]};\n"
                 f"MKL_INT lld = {out_ld};\n"
-                f"descinit(_gdescriptor, &grows, &gcols, &grows, &gcols, &i_zero, &i_zero, _context, &gld, &info);\n"
-                f"descinit(_ldescriptor, &grows, &gcols, &_block_sizes[0], &_block_sizes[1], &i_zero, &i_zero, _context, &lld, &info);\n"
-                f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &i_one, &i_one, _gdescriptor, &zero, _outbuffer, &i_one, &i_one, _ldescriptor);")
+                f"MKL_INT info;\n"
+                f"descinit(_gdescriptor, &grows, &gcols, &grows, &gcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
+                f"descinit(_ldescriptor, &grows, &gcols, &_block_sizes[0], &_block_sizes[1], &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
+                f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor);")
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)
-        conn = tasklet.out_connectors
-        conn = {c: (dtypes.pointer(dace.int32) if c == '_context' else t) for c, t in conn.items()}
-        tasklet.out_connectors = conn
+        # conn = tasklet.out_connectors
+        # conn = {c: (dtypes.pointer(dace.int32) if c == '_context' else t) for c, t in conn.items()}
+        # tasklet.out_connectors = conn
         return tasklet
 
 
@@ -76,7 +75,7 @@ class BlockCyclicScatter(dace.sdfg.nodes.LibraryNode):
         super().__init__(name,
                          *args,
                          inputs={"_inbuffer", "_block_sizes"},
-                         outputs={"_outbuffer", "_context", "_gdescriptor", "_ldescriptor"},
+                         outputs={"_outbuffer", "_gdescriptor", "_ldescriptor"},
                          **kwargs)
 
     def validate(self, sdfg, state):
@@ -126,12 +125,18 @@ class ExpandBlockCyclicGatherMKL(ExpandTransformation):
         in_shape, in_ld, out_shape, out_ld = node.validate(parent_sdfg, parent_state)
 
 
-        code = (f"const MKL_INT i_one = 1;\n"
+        code = (f"if (!__state->__mkl_scalapack_grid_init) {{\n"
+                f"    __state->__mkl_scalapack_prows = Px;\n"
+                f"    __state->__mkl_scalapack_pcols = Py;\n"
+                f"    blacs_gridinit(&__state->__mkl_scalapack_context, \"C\", &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols);\n"
+                f"    blacs_gridinfo(&__state->__mkl_scalapack_context, &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols, &__state->__mkl_scalapack_myprow, &__state->__mkl_scalapack_mypcol);\n"
+                f"    __state->__mkl_scalapack_grid_init = true;\n"
+                f"}}\n"
                 f"const double  zero = 0.0E+0, one = 1.0E+0;\n"
                 f"const char trans = 'N';\n"
                 f"MKL_INT grows = {out_shape[0]};\n"
                 f"MKL_INT gcols = {out_shape[1]};\n"
-                f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &i_one, &i_one, _ldescriptor, &zero, _outbuffer, &i_one, &i_one, _gdescriptor);")
+                f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor);")
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
