@@ -379,6 +379,27 @@ def overapproximate(expr):
     return expr
 
 
+def resolve_symbol_to_constant(symb, start_sdfg):
+    """
+    Tries to resolve a symbol to constant, by looking up into SDFG's constants,
+    following nested SDFGs hierarchy if necessary.
+    :param symb: symbol to resolve to constant
+    :param start_sdfg: starting SDFG
+    :return: the constant value if the symbol is resolved, None otherwise
+    """
+    if not issymbolic(symb):
+        return symb
+    else:
+        sdfg = start_sdfg
+        while sdfg is not None:
+            if not issymbolic(symb, sdfg.constants):
+                return evaluate(symb, sdfg.constants)
+            else:
+                sdfg = sdfg.parent_sdfg
+        # can not be resolved
+        return None
+
+
 def symbols_in_ast(tree):
     """ Walks an AST and finds all names, excluding function names. """
     to_visit = list(tree.__dict__.items())
@@ -798,10 +819,10 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
     def _print_Not(self, expr):
         return '(not (%s))' % self._print(expr.args[0])
-    
+
     def _print_Infinity(self, expr):
         return 'INFINITY'
-    
+
     def _print_NegativeInfinity(self, expr):
         return '-INFINITY'
 
@@ -878,7 +899,7 @@ class SympyAwareUnpickler(pickle.Unpickler):
             return _sunpickle(value)
         else:
             raise pickle.UnpicklingError("unsupported persistent object")
-    
+
 
 def equalize_symbol(sym: sympy.Expr) -> sympy.Expr:
     """
@@ -891,8 +912,8 @@ def equalize_symbol(sym: sympy.Expr) -> sympy.Expr:
     return sym.subs(repldict)
 
 
-def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr,
-                                                            sympy.Expr]:
+def equalize_symbols(a: sympy.Expr,
+                     b: sympy.Expr) -> Tuple[sympy.Expr, sympy.Expr]:
     """
     If the 2 input expressions use different symbols but with the same name,
     it substitutes the symbols of the second expressions with those of the
@@ -911,8 +932,8 @@ def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr,
     return a, b
 
 
-def inequal_symbols(a: Union[sympy.Expr, Any],
-                    b: Union[sympy.Expr, Any]) -> bool:
+def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr,
+                                                        Any]) -> bool:
     """
     Compares 2 symbolic expressions and returns True if they are not equal.
     """
