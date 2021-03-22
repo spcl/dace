@@ -309,7 +309,7 @@ endif() # DACE_ENABLE_HIP
 
 # create verilator RTL simulation objects
 if(DACE_ENABLE_RTL)
-  if (DACE_ENABLE_XILINX)
+  if (DACE_ENABLE_XILINX AND (NOT (DACE_XILINX_MODE STREQUAL "simulation")))
     # Get all of the kernel names
     list(APPEND RTL_KERNELS "")
     foreach(RTL_FILE ${DACE_RTL_FILES})
@@ -548,10 +548,6 @@ if(DACE_ENABLE_XILINX)
     # Since with Vitis only one kernel can be compiled at a time,
     # for the general case we have to first compile each kernel
     # and then link together the generated .xo files
-    set(DACE_VITIS_KERNELS_SW_EMU)
-    # TODO These overwrites the kernels added by the RTL back-end. Double check if they are required.
-    #set(DACE_VITIS_KERNELS_HW_EMU)
-    #set(DACE_VITIS_KERNELS_HW)
 
     foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
       # Compile .xo files
