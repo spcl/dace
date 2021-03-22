@@ -488,11 +488,19 @@ class MapFusion(transformation.Transformation):
         # Add intermediate memory between subgraphs. If a scalar,
         # uses direct connection. If an array, adds a transient node
         if edge.data.subset.num_elements() == 1:
+            node_desc = access_node.desc(graph)
+
+            # If we are on FPGA, use FPGA registers
+            if node_desc.storage == dtypes.StorageType.FPGA_Global or node_desc.storage == dtypes.StorageType.FPGA_Local:
+                storage_type = dtypes.StorageType.FPGA_Registers
+            else:
+                storage_type = dtypes.StorageType.Register
+
             sdfg.add_scalar(
                 local_name,
                 dtype=access_node.desc(graph).dtype,
                 transient=True,
-                storage=dtypes.StorageType.Register,
+                storage=storage_type,
             )
             edge.data.data = local_name
             edge.data.subset = "0"
