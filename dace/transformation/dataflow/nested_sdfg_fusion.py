@@ -17,17 +17,22 @@ def add_nsdfg_array_prefix(parent_sdfg_state: dace_state.SDFGState,
                            nested_sdfg: dace_nodes.NestedSDFG, prefix: str):
     """ Prepends prefix to all array, connector, and memlet names of given nested_sdfg. Operates inplace. """
 
-    def process_connectors_and_arrays(connectors):
-        new_in_connectors = {}
-        for name, dtype in connectors.items():
-            new_name = prefix + name
-            nested_sdfg.sdfg.replace(name, prefix + name)
-            new_in_connectors[new_name] = dtype
-        connectors.clear()
-        connectors.update(new_in_connectors)
+    # process arrays
+    array_names = list(nested_sdfg.sdfg.arrays.keys())
+    for name in array_names:
+        new_name = prefix + name
+        nested_sdfg.sdfg.replace(name, prefix + name)
 
-    process_connectors_and_arrays(nested_sdfg.in_connectors)
-    process_connectors_and_arrays(nested_sdfg.out_connectors)
+    # process connectors
+    def process_connectors(connectors):
+        new_connectors = {prefix + name: value for name, value in connectors.items()}
+        connectors.clear()
+        connectors.update(new_connectors)
+
+    process_connectors(nested_sdfg.in_connectors)
+    process_connectors(nested_sdfg.out_connectors)
+
+    # process external edges
 
     for edge in parent_sdfg_state.in_edges(nested_sdfg):
         edge.dst_conn = prefix + edge.dst_conn
@@ -107,19 +112,6 @@ class NestedSDFGFusion(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(sdfg_state: dace_state.SDFGState,
-                     candidate: Dict[dace_nodes.Node, int]):
-
-        nested_sdfg1 = sdfg_state.nodes()[candidate[
-            NestedSDFGFusion._nested_sdfg1]]
-        access_node = sdfg_state.nodes()[candidate[
-            NestedSDFGFusion._access_node]]
-        nested_sdfg2 = sdfg_state.nodes()[candidate[
-            NestedSDFGFusion._nested_sdfg2]]
-
-        return nested_sdfg1 + '->' + access_node + '->' + nested_sdfg2
-
     def apply(self, sdfg: dace_sdfg.SDFG):
         sdfg_state = sdfg.nodes()[self.state_id]
 
@@ -142,40 +134,23 @@ class NestedSDFGFusion(transformation.Transformation):
         out_edges1 = sdfg_state.out_edges(nested_sdfg1)
         out_edges2 = sdfg_state.out_edges(nested_sdfg2)
 
+        # split nested sdfgs by creating additional copies of access nodes between them
+
+        intermediate_nodes = {e.dst for e in out_edges1}.intersection({e.src for e in in_edges2})
+        for n in intermediate_nodes:
+            node_copy = sdfg_state.add_access(n.data)
+            # use original copy as output and new node as input
+            original_input_edges = list(sdfg_state.edges_between(n, nested_sdfg2))
+            for e in original_input_edges:
+                edge_copy = sdfg_state.add_edge(node_copy, None, nested_sdfg2, e.dst_conn, e.data)
+                sdfg_state.remove_edge(e)
+                in_edges2.remove(e)
+                in_edges2.append(edge_copy)
+
+        # build lists of edges after splitting nested sdfgs
+
         new_out_edges = out_edges1 + out_edges2
-
-        # separate in_edges2 into two groups
-        # - edges that go from outside should be inputs to new nested sdfg (new_in_edges)
-        # - all other edges should be removed
-
-        new_in_edges = []
-
-        # if some edge is input to the second nested sdfg, then it should be input to the new sdfg only
-        # when it is not output of the first nested sdfg
-        for in_edge2 in in_edges2:
-            if not isinstance(in_edge2.src, dace_nodes.AccessNode):
-                new_in_edges.append(in_edge2)
-                continue
-
-            temp_node: dace_nodes.AccessNode = in_edge2.src
-
-            node_in_edges = sdfg_state.in_edges(temp_node)
-
-            assert len(node_in_edges) == 1
-
-            node_in_edge: dace_graph.MultiConnectorEdge = node_in_edges[0]
-
-            if node_in_edge not in out_edges1:
-
-                new_in_edges.append(in_edge2)
-                continue
-
-            # If we are here, then in_edge2 originates from output of the first SDFG.
-            # We need to change array name that is used in the second SDFG to refer to the array from the first SDFG.
-
-            nested_sdfg2.sdfg.replace(in_edge2.dst_conn, node_in_edge.src_conn)
-
-        new_in_edges += in_edges1
+        new_in_edges = in_edges1 + in_edges2
 
         # create new sdfg that replaces existing ones
 
