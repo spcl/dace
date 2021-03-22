@@ -1019,6 +1019,69 @@ class NestSDFG(transformation.Transformation):
                     if (isinstance(node, nodes.AccessNode)
                             and node.desc(nested_sdfg).transient and
                             not isinstance(node.desc(nested_sdfg), data.View)):
+                        nodedesc = node.desc(nested_sdfg)
+                        import copy
+                        from dace.sdfg import propagation
+                        import math
+                        real_shape = copy.deepcopy(nodedesc.shape)
+                        overapprox_shape = []
+                        propagation.propagate_states(nested_sdfg)
+                        if not isinstance(nodedesc,
+                                          data.Scalar) and state.ranges:
+                            for sz in nodedesc.shape:
+                                newsz = sz
+                                # if symbolic.issymbolic(sz):
+                                #     for s in sz.free_symbols:
+                                #         if str(s) in state.ranges.keys():
+                                #             repldict = {s: state.ranges[str(s)][0][1] + 1}
+                                #             newsz = newsz.subs(repldict)
+                                if symbolic.issymbolic(sz):
+                                    for s in newsz.free_symbols:
+                                        # import pdb
+                                        # pdb.set_trace()
+                                        replacement_limit_value = None
+                                        to_solve_limit_value = copy.deepcopy(s)
+                                        replacement_initial_value = None
+
+                                        to_solve_initial_value = copy.deepcopy(
+                                            s)
+                                        # This probably comes from a slice, e.g. array[:i] or array[i:]
+                                        # We should detect the maximal size, therefore we consider the
+                                        # state ranges, by looking both at the initial and the final value
+
+                                        # Range Limit value
+                                        while str(to_solve_limit_value
+                                                  ) in state.ranges.keys():
+                                            replacement_limit_value = state.ranges[
+                                                str(to_solve_limit_value
+                                                    )][0][1] + 1
+                                            to_solve_limit_value = replacement_limit_value
+
+                                        # Range Initial value
+                                        while str(to_solve_initial_value
+                                                  ) in state.ranges.keys():
+                                            replacement_initial_value = state.ranges[
+                                                str(to_solve_initial_value
+                                                    )][0][0]
+                                            to_solve_initial_value = replacement_initial_value
+
+                                        if replacement_initial_value is not None and replacement_limit_value is not None:
+
+                                            # Note we can evaluate the maximum, since we don't know the value of symbols
+                                            # TODO: this is not robust
+                                            newsz_limit = newsz.subs(
+                                                {s: replacement_limit_value})
+                                            if newsz_limit.is_negative:
+                                                newsz = newsz.subs({
+                                                    s:
+                                                    replacement_initial_value
+                                                })
+                                            else:
+                                                newsz = newsz_limit
+                                overapprox_shape.append(newsz)
+                            nodedesc.shape = overapprox_shape
+                            nodedesc.total_size = math.prod(nodedesc.shape)
+
                         arrname = node.data
                         if arrname not in transients and not scope_dict[node]:
                             arrobj = nested_sdfg.arrays[arrname]

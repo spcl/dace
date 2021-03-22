@@ -966,8 +966,7 @@ __kernel void \\
                                                             name,
                                                             dtypes.pointer(
                                                                 nodedesc.dtype),
-                                                            ancestor=0,
-                                                            nodedesc=nodedesc)
+                                                            ancestor=0)
         declaration_stream.write(f'{qualifier}{atype} {aname}  = {value};',
                                  sdfg, state_id, node)
 
