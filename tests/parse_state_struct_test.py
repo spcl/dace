@@ -22,10 +22,10 @@ def cuda_helper():
     
     extern "C" {
         int host_to_gpu(void* gpu, void* host, size_t size) {
-            cudaMemcpy(gpu, host, size, cudaMemcpyHostToDevice);
+            auto result = cudaMemcpy(gpu, host, size, cudaMemcpyHostToDevice);
             DACE_CUDA_CHECK(cudaGetLastError());
             DACE_CUDA_CHECK(cudaDeviceSynchronize());
-            return 0;
+            return result;
         } 
     } 
     """
