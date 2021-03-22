@@ -936,7 +936,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                                             memlet,
                                                             with_brackets=False)
                             write_expr = (
-                                f"*({memlet.data} + {array_expr}).ptr_out() "
+                                f"*(__{memlet.data}_out + {array_expr}) "
                                 f"= {in_local_name};")
                         else:
                             desc_dtype = sdfg.arrays[memlet.data].dtype
@@ -1116,20 +1116,15 @@ class CPUCodeGen(TargetCodeGenerator):
                     DefinedType.ArrayInterface
                 ] else ptr)
 
-        # Special case: ArrayInterface - get input/output pointers from array
-        if var_type == DefinedType.ArrayInterface and not is_scalar:
-            if output:
-                expr = '(%s + %s).ptr_out()' % (ptr, expr)
-                ctypedef = memlet_type
-            else:
-                expr = '(%s + %s).ptr_in()' % (ptr, expr)
-                ctypedef = 'const ' + memlet_type
-        else:  # Otherwise, "&arr[ind]" syntax can be used
-            if expr != ptr:
-                expr = '%s[%s]' % (ptr, expr)
-            # If there is a type mismatch, cast pointer
-            expr = codegen.make_ptr_vector_cast(expr, desc.dtype, conntype,
-                                                is_scalar, var_type)
+        # Special case: ArrayInterface, append _in or _out
+        _ptr = ptr
+        if var_type == DefinedType.ArrayInterface:
+            ptr = f"__{ptr}_out" if output else f"__{ptr}_in"
+        if expr != _ptr:
+            expr = '%s[%s]' % (ptr, expr)
+        # If there is a type mismatch, cast pointer
+        expr = codegen.make_ptr_vector_cast(expr, desc.dtype, conntype,
+                                            is_scalar, var_type)
 
         defined = None
 
