@@ -162,7 +162,7 @@ def make_compute(sdfg, state):
     sdfg.add_scalar("A_reg",
                     dtype=dace.float32,
                     transient=True,
-                    storage=dace.dtypes.StorageType.FPGA_Registers)
+                    storage=dace.dtypes.StorageType.Register)
     A_reg = state.add_write("A_reg")
     sdfg.add_array("C_buffer", [M],
                    dtype=dace.float32,

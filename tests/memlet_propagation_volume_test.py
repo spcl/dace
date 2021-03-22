@@ -87,7 +87,7 @@ def make_nested_sdfg():
                                             storage=StorageType.FPGA_Local)
     loop_bound = assign_loop_bound.add_scalar('loop_bound', dace.int32,
                                               transient=True,
-                                              storage=StorageType.FPGA_Registers)
+                                              storage=StorageType.Register)
     assign_loop_bound.add_memlet_path(
         in_bound,
         loop_bound,

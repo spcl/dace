@@ -176,7 +176,7 @@ def make_iteration_space(sdfg):
     row_end_first = pre_state.add_scalar("row_end",
                                          itype,
                                          transient=True,
-                                         storage=StorageType.FPGA_Registers)
+                                         storage=StorageType.Register)
     row_pipe_first = pre_state.add_stream("row_pipe",
                                           itype,
                                           storage=StorageType.FPGA_Local)
@@ -187,13 +187,13 @@ def make_iteration_space(sdfg):
     row_end_shift = shift_rowptr.add_scalar("row_end",
                                             itype,
                                             transient=True,
-                                            storage=StorageType.FPGA_Registers)
+                                            storage=StorageType.Register)
     row_begin_shift = shift_rowptr.add_scalar(
         "row_begin",
         itype,
         transient=True,
         lifetime=AllocationLifetime.SDFG,
-        storage=StorageType.FPGA_Registers)
+        storage=StorageType.Register)
     shift_rowptr.add_memlet_path(row_end_shift,
                                  row_begin_shift,
                                  memlet=Memlet.simple(row_begin_shift, "0"))
@@ -204,7 +204,7 @@ def make_iteration_space(sdfg):
     row_end = read_rowptr.add_scalar("row_end",
                                      itype,
                                      transient=True,
-                                     storage=StorageType.FPGA_Registers)
+                                     storage=StorageType.Register)
     read_rowptr.add_memlet_path(row_pipe,
                                 row_end,
                                 memlet=Memlet.simple(row_end, "0"))
@@ -234,14 +234,14 @@ def make_compute_nested_sdfg():
 
     a_in = if_state.add_scalar("a_in",
                                dtype,
-                               storage=StorageType.FPGA_Registers)
+                               storage=StorageType.Register)
     x_in = if_state.add_scalar("x_in",
                                dtype,
-                               storage=StorageType.FPGA_Registers)
+                               storage=StorageType.Register)
     b_tmp_out = if_state.add_scalar("b_tmp",
                                     dtype,
                                     transient=True,
-                                    storage=StorageType.FPGA_Registers)
+                                    storage=StorageType.Register)
     tasklet = if_state.add_tasklet("compute", {"_a_in", "_x_in"}, {"_b_out"},
                                    "_b_out = _a_in * _x_in")
     if_state.add_memlet_path(a_in,
@@ -260,10 +260,10 @@ def make_compute_nested_sdfg():
     b_tmp_then_in = then_state.add_scalar("b_tmp",
                                           dtype,
                                           transient=True,
-                                          storage=StorageType.FPGA_Registers)
+                                          storage=StorageType.Register)
     b_then_out = then_state.add_scalar("b_out",
                                        dtype,
-                                       storage=StorageType.FPGA_Registers)
+                                       storage=StorageType.Register)
     then_state.add_memlet_path(b_tmp_then_in,
                                b_then_out,
                                memlet=Memlet.simple(b_then_out, "0"))
@@ -271,13 +271,13 @@ def make_compute_nested_sdfg():
     b_tmp_else_in = else_state.add_scalar("b_tmp",
                                           dtype,
                                           transient=True,
-                                          storage=StorageType.FPGA_Registers)
+                                          storage=StorageType.Register)
     b_else_in = else_state.add_scalar("b_in",
                                       dtype,
-                                      storage=StorageType.FPGA_Registers)
+                                      storage=StorageType.Register)
     b_else_out = else_state.add_scalar("b_out",
                                        dtype,
-                                       storage=StorageType.FPGA_Registers)
+                                       storage=StorageType.Register)
     else_tasklet = else_state.add_tasklet("b_wcr", {"_b_in", "b_prev"},
                                           {"_b_out"}, "_b_out = b_prev + _b_in")
     else_state.add_memlet_path(b_tmp_else_in,
@@ -307,11 +307,11 @@ def make_compute_sdfg():
     b_buffer_in = body.add_scalar("b_buffer",
                                   dtype,
                                   transient=True,
-                                  storage=StorageType.FPGA_Registers)
+                                  storage=StorageType.Register)
     b_buffer_out = body.add_scalar("b_buffer",
                                    dtype,
                                    transient=True,
-                                   storage=StorageType.FPGA_Registers)
+                                   storage=StorageType.Register)
     nested_sdfg = make_compute_nested_sdfg()
     tasklet = body.add_nested_sdfg(nested_sdfg, sdfg, {"a_in", "x_in", "b_in"},
                                    {"b_out"})
@@ -335,7 +335,7 @@ def make_compute_sdfg():
     b_buffer_post_in = post_state.add_scalar("b_buffer",
                                              dtype,
                                              transient=True,
-                                             storage=StorageType.FPGA_Registers)
+                                             storage=StorageType.Register)
     b_pipe = post_state.add_stream("b_pipe",
                                    dtype,
                                    storage=StorageType.FPGA_Local)
@@ -755,11 +755,11 @@ def make_nested_compute_state(sdfg):
 
     rowptr = state.add_scalar("rowptr",
                               itype,
-                              storage=StorageType.FPGA_Registers,
+                              storage=StorageType.Register,
                               transient=True)
     rowend = state.add_scalar("rowend",
                               itype,
-                              storage=StorageType.FPGA_Registers,
+                              storage=StorageType.Register,
                               transient=True)
 
     nested_sdfg = make_nested_sdfg(sdfg)

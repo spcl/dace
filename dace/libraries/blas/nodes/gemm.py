@@ -618,7 +618,7 @@ to_kernel = data""")
                                dtype=vec_type,
                                shape=[1],
                                transient=True,
-                               storage=dace.dtypes.StorageType.FPGA_Registers)
+                               storage=dace.dtypes.StorageType.Register)
             b_dummy = state.add_access("B_dummy")
             init_tasklet = state.add_tasklet("init_dummy_B", {}, {"init_data"},
                                              "init_data = 0")
@@ -752,7 +752,7 @@ if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :
             sdfg.add_scalar("A_reg",
                             dtype=dtype_a,
                             transient=True,
-                            storage=dace.dtypes.StorageType.FPGA_Registers)
+                            storage=dace.dtypes.StorageType.Register)
             A_reg = state.add_write("A_reg")
             A_reg_init = state.add_access("A_reg")
 
@@ -773,7 +773,7 @@ if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :
                                dtype=vec_type,
                                shape=[1],
                                transient=True,
-                               storage=dace.dtypes.StorageType.FPGA_Registers)
+                               storage=dace.dtypes.StorageType.Register)
             C_init = state.add_access("C_init")
             C_init_tasklet = state.add_tasklet("C_data_init", {}, {"init_data"},
                                                "init_data = 0")

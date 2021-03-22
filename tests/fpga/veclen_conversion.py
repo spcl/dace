@@ -65,11 +65,11 @@ def make_fpga_state(sdfg, vectorize_connector):
     sdfg.add_array("input_buffer", (VECTOR_LENGTH.get(), ),
                    DTYPE,
                    transient=True,
-                   storage=dace.StorageType.FPGA_Registers)
+                   storage=dace.StorageType.Register)
     sdfg.add_array("output_buffer", (VECTOR_LENGTH.get(), ),
                    DTYPE,
                    transient=True,
-                   storage=dace.StorageType.FPGA_Registers)
+                   storage=dace.StorageType.Register)
 
     read_input = state.add_read("A_device")
     read_buffer = state.add_access("input_buffer")

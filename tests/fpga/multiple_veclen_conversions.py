@@ -88,12 +88,12 @@ def make_sdfg(dtype=dace.float32, vec_width=4):
                    shape=[vec_width],
                    dtype=dtype,
                    transient=True,
-                   storage=dace.dtypes.StorageType.FPGA_Registers)
+                   storage=dace.dtypes.StorageType.Register)
     sdfg.add_array('inc_data',
                    shape=[vec_width],
                    dtype=dtype,
                    transient=True,
-                   storage=dace.dtypes.StorageType.FPGA_Registers)
+                   storage=dace.dtypes.StorageType.Register)
     vect_data = fpga_state_0.add_access("vec_data")
     inc_data = fpga_state_0.add_access("inc_data")
     # Read the data
@@ -169,12 +169,12 @@ def make_sdfg(dtype=dace.float32, vec_width=4):
                    shape=[vec_width],
                    dtype=dtype,
                    transient=True,
-                   storage=dace.dtypes.StorageType.FPGA_Registers)
+                   storage=dace.dtypes.StorageType.Register)
     sdfg.add_array('inc_data_B',
                    shape=[vec_width],
                    dtype=dtype,
                    transient=True,
-                   storage=dace.dtypes.StorageType.FPGA_Registers)
+                   storage=dace.dtypes.StorageType.Register)
 
     map_entry, map_exit = fpga_state_1.add_map(
         "read_B", {
@@ -236,7 +236,7 @@ def make_sdfg(dtype=dace.float32, vec_width=4):
                    shape=[vec_width],
                    dtype=dtype,
                    transient=True,
-                   storage=dace.dtypes.StorageType.FPGA_Registers)
+                   storage=dace.dtypes.StorageType.Register)
 
     map_entry, map_exit = fpga_state_2.add_map(
         "read_C", {

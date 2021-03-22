@@ -34,7 +34,7 @@ _CPU_STORAGE_TYPES = {
 }
 _FPGA_STORAGE_TYPES = {
     dace.dtypes.StorageType.FPGA_Global, dace.dtypes.StorageType.FPGA_Local,
-    dace.dtypes.StorageType.FPGA_Registers,
+    dace.dtypes.StorageType.Register,
     dace.dtypes.StorageType.FPGA_ShiftRegister
 }
 
@@ -97,7 +97,7 @@ class FPGACodeGen(TargetCodeGenerator):
                  n.desc(sdfg).storage in [
                      dace.dtypes.StorageType.FPGA_Global, dace.dtypes.
                      StorageType.FPGA_Local, dace.dtypes.StorageType.
-                     FPGA_Registers, dace.dtypes.StorageType.FPGA_ShiftRegister
+                     Register, dace.dtypes.StorageType.FPGA_ShiftRegister
                  ] for n in state.data_nodes()
              ]))
 
@@ -107,19 +107,14 @@ class FPGACodeGen(TargetCodeGenerator):
         fpga_storage = [
             dace.dtypes.StorageType.FPGA_Global,
             dace.dtypes.StorageType.FPGA_Local,
-            dace.dtypes.StorageType.FPGA_Registers,
+            dace.dtypes.StorageType.Register,
             dace.dtypes.StorageType.FPGA_ShiftRegister,
         ]
         self._dispatcher.register_array_dispatcher(fpga_storage, self)
 
         # Register permitted copies
-        for storage_from in itertools.chain(fpga_storage,
-                                            [dace.dtypes.StorageType.Register]):
-            for storage_to in itertools.chain(
-                    fpga_storage, [dace.dtypes.StorageType.Register]):
-                if (storage_from == dace.dtypes.StorageType.Register
-                        and storage_to == dace.dtypes.StorageType.Register):
-                    continue
+        for storage_from in fpga_storage:
+            for storage_to in fpga_storage:
                 self._dispatcher.register_copy_dispatcher(
                     storage_from, storage_to, None, self)
         self._dispatcher.register_copy_dispatcher(
@@ -321,7 +316,7 @@ class FPGACodeGen(TargetCodeGenerator):
                             global_data_names.add(dataname)
                     elif (data.storage
                           in (dace.dtypes.StorageType.FPGA_Local,
-                              dace.dtypes.StorageType.FPGA_Registers,
+                              dace.dtypes.StorageType.Register,
                               dace.dtypes.StorageType.FPGA_ShiftRegister)):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
@@ -500,7 +495,7 @@ class FPGACodeGen(TargetCodeGenerator):
                             .format(nodedesc.dtype.ctype))
             elif (nodedesc.storage
                   in (dace.dtypes.StorageType.FPGA_Local,
-                      dace.dtypes.StorageType.FPGA_Registers,
+                      dace.dtypes.StorageType.Register,
                       dace.dtypes.StorageType.FPGA_ShiftRegister)):
 
                 if not self._in_device_code:
@@ -678,11 +673,11 @@ class FPGACodeGen(TargetCodeGenerator):
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data and
               (((src_storage in (dace.dtypes.StorageType.FPGA_Local,
-                                 dace.dtypes.StorageType.FPGA_Registers,
+                                 dace.dtypes.StorageType.Register,
                                  dace.dtypes.StorageType.FPGA_ShiftRegister))
                 and dst_storage not in _FPGA_STORAGE_TYPES) or
                ((dst_storage in (dace.dtypes.StorageType.FPGA_Local,
-                                 dace.dtypes.StorageType.FPGA_Registers,
+                                 dace.dtypes.StorageType.Register,
                                  dace.dtypes.StorageType.FPGA_ShiftRegister))
                 and src_storage not in _FPGA_STORAGE_TYPES))):
             raise NotImplementedError(
@@ -752,9 +747,9 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # TODO: detect in which cases we shouldn't unroll
             register_to_register = (src_node.desc(sdfg).storage
-                                    == dace.dtypes.StorageType.FPGA_Registers
+                                    == dace.dtypes.StorageType.Register
                                     or dst_node.desc(sdfg).storage
-                                    == dace.dtypes.StorageType.FPGA_Registers)
+                                    == dace.dtypes.StorageType.Register)
 
             num_loops = len([dim for dim in copy_shape if dim != 1])
             if num_loops > 0:
@@ -770,7 +765,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     if (isinstance(node.desc(sdfg), dace.data.Array)
                             and node.desc(sdfg).storage in [
                                 dace.dtypes.StorageType.FPGA_Local,
-                                dace.StorageType.FPGA_Registers
+                                dace.StorageType.Register
                             ]):
                         # Language-specific
                         self.generate_no_dependence_pre(callsite_stream, sdfg,
@@ -848,7 +843,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 if (isinstance(node.desc(sdfg), dace.data.Array)
                         and node.desc(sdfg).storage in [
                             dace.dtypes.StorageType.FPGA_Local,
-                            dace.StorageType.FPGA_Registers
+                            dace.StorageType.Register
                         ]):
                     # Language-specific
                     self.generate_no_dependence_post(callsite_stream, sdfg,
@@ -1437,7 +1432,7 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
             datadesc = sdfg.arrays[edge.data.data]
             if (isinstance(datadesc, dace.data.Array)
                     and (datadesc.storage == dace.StorageType.FPGA_Local
-                         or datadesc.storage == dace.StorageType.FPGA_Registers)
+                         or datadesc.storage == dace.StorageType.Register)
                     and not cpp.is_write_conflicted(dfg, edge)
                     and self._dispatcher.defined_vars.has(edge.src_conn)):
 

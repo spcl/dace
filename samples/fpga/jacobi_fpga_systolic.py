@@ -141,31 +141,31 @@ def make_compute_sdfg():
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Registers,
+        storage=dace.dtypes.StorageType.Register,
         lifetime=dace.dtypes.AllocationLifetime.SDFG)
     window_buffer_out = pre_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Registers,
+        storage=dace.dtypes.StorageType.Register,
         lifetime=dace.dtypes.AllocationLifetime.SDFG)
     window_compute_in = loop_body.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Registers,
+        storage=dace.dtypes.StorageType.Register,
         lifetime=dace.dtypes.AllocationLifetime.SDFG)
     window_shift_in = post_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Registers,
+        storage=dace.dtypes.StorageType.Register,
         lifetime=dace.dtypes.AllocationLifetime.SDFG)
     window_shift_out = post_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Registers,
+        storage=dace.dtypes.StorageType.Register,
         lifetime=dace.dtypes.AllocationLifetime.SDFG)
 
     code = """\

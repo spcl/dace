@@ -241,7 +241,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
     def define_local_array(self, var_name, desc, array_size, function_stream,
                            kernel_stream, sdfg, state_id, node):
         vec_type = self.make_vector_type(desc.dtype, False)
-        if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
+        if desc.storage == dace.dtypes.StorageType.Register:
             attributes = " __attribute__((register))"
         else:
             attributes = ""

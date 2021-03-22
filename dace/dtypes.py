@@ -32,7 +32,6 @@ class StorageType(aenum.AutoNumberEnum):
     GPU_Shared = ()  #: Shared memory
     FPGA_Global = ()  #: Off-chip global memory (DRAM)
     FPGA_Local = ()  #: On-chip memory (bulk storage)
-    FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
     FPGA_ShiftRegister = ()  #: Only accessible at constant indices
 
 
@@ -1153,7 +1152,7 @@ def can_access(schedule: ScheduleType, storage: StorageType):
     elif schedule in [ScheduleType.FPGA_Device]:
         return storage in [
             StorageType.FPGA_Local, StorageType.FPGA_Global,
-            StorageType.FPGA_Registers, StorageType.FPGA_ShiftRegister,
+            StorageType.Register, StorageType.FPGA_ShiftRegister,
             StorageType.CPU_Pinned
         ]
     elif schedule == ScheduleType.Sequential:
@@ -1184,7 +1183,7 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
         ]
 
     # FPGA-local memory
-    if storage in [StorageType.FPGA_Local, StorageType.FPGA_Registers]:
+    if storage in [StorageType.FPGA_Local, StorageType.Register]:
         return schedule == ScheduleType.FPGA_Device
 
     # GPU-local memory
