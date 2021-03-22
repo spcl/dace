@@ -9,7 +9,7 @@ class CUDA:
     cmake_packages = ["CUDA"]
     cmake_variables = {}
     cmake_includes = []
-    cmake_libraries = ["cudart"]
+    cmake_libraries = []
     cmake_compile_flags = []
     cmake_link_flags = []
     cmake_files = []

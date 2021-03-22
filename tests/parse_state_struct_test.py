@@ -9,7 +9,6 @@ import pytest
 import numpy as np
 
 import dace
-import dace.libraries.standard
 from dace import dtypes
 from dace.codegen import codeobject, targets, compiler, compiled_sdfg
 
@@ -29,15 +28,16 @@ def cuda_helper():
         } 
     } 
     """
-    program = codeobject.CodeObject("cuda_helper",
-                                    helper_code,
-                                    "cpp",
-                                    targets.cpu.CPUCodeGen,
-                                    "CudaHelper",
-                                    environments={"CUDA"})
+    program = codeobject.CodeObject("cuda_helper", helper_code, "cpp",
+                                    targets.cpu.CPUCodeGen, "CudaHelper")
+
+    dummy_cuda_target = codeobject.CodeObject("dummy", "", "cu",
+                                              targets.cuda.CUDACodeGen,
+                                              "CudaDummy")
 
     BUILD_PATH = os.path.join('.dacecache', "cuda_helper")
-    compiler.generate_program_folder(None, [program], BUILD_PATH)
+    compiler.generate_program_folder(None, [program, dummy_cuda_target],
+                                     BUILD_PATH)
     compiler.configure_and_compile(BUILD_PATH)
 
     checker_dll = compiled_sdfg.ReloadableDLL(
