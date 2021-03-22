@@ -183,6 +183,8 @@ class WarpAllReduceDetection(transformation.Transformation):
             e: dace_sdfg.Edge
             sdfg.add_edge(all_reduce_init_state, e.dst, e.data)
 
+        sdfg.add_edge(all_reduce_init_state, all_reduce_write_state, dace_sdfg.InterstateEdge())
+
         for n in exit_states:
             sdfg.add_edge(n, all_reduce_write_state, dace_sdfg.InterstateEdge())
 
