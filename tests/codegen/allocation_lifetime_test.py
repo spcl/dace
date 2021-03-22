@@ -59,6 +59,27 @@ def test_persistent_gpu_copy_regression():
     assert np.all(result == np.ones((2, 2)))
 
 
+@pytest.mark.gpu
+def test_persistent_gpu_transpose_regression():
+    @dace.program
+    def test_persistent_transpose(A: dace.float64[5, 3]):
+        return np.transpose(A)
+
+    sdfg = test_persistent_transpose.to_sdfg()
+
+    sdfg.expand_library_nodes()
+    sdfg.apply_strict_transformations()
+    sdfg.apply_gpu_transformations()
+
+    for _, _, arr in sdfg.arrays_recursive():
+        if arr.transient and arr.storage == dace.StorageType.GPU_Global:
+            arr.lifetime = dace.AllocationLifetime.Persistent
+    sdfg.view()
+    A = np.random.rand(5, 3)
+    result = sdfg(A=A)
+    assert np.allclose(np.transpose(A), result)
+
+
 def test_alloc_persistent_register():
     """ Tries to allocate persistent register array. Should fail. """
     @dace.program
@@ -136,6 +157,7 @@ def test_alloc_persistent_threadlocal():
 
 if __name__ == '__main__':
     test_persistent_gpu_copy_regression()
+    test_persistent_gpu_transpose_regression()
     test_alloc_persistent_register()
     test_alloc_persistent()
     test_alloc_persistent_threadlocal()

@@ -24,6 +24,11 @@ import networkx as nx
 import numpy as np
 
 
+def _get_or_eval_sdfg_first_arg(func, sdfg):
+    if callable(func):
+        return func(sdfg)
+    return func
+
 class DaCeCodeGenerator(object):
     """ DaCe code generator class that writes the generated code for SDFG
         state machines, and uses a dispatcher to generate code for
@@ -221,10 +226,11 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
                     '__result |= __dace_init_%s(__state%s);' %
                     (target.target_name, initparamnames_comma), sdfg)
         for env in self.environments:
-            if env.init_code:
+            init_code = _get_or_eval_sdfg_first_arg(env.init_code, sdfg)
+            if init_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,
                                       sdfg)
-                callsite_stream.write(env.init_code)
+                callsite_stream.write(init_code)
                 callsite_stream.write("}")
 
         for sd in sdfg.all_sdfgs_recursive():
@@ -267,10 +273,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 callsite_stream.write(
                     '__dace_exit_%s(__state);' % target.target_name, sdfg)
         for env in reversed(self.environments):
-            if env.finalize_code:
+            finalize_code = _get_or_eval_sdfg_first_arg(env.finalize_code, sdfg)
+            if finalize_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,
                                       sdfg)
-                callsite_stream.write(env.finalize_code)
+                callsite_stream.write(finalize_code)
                 callsite_stream.write("}")
 
         callsite_stream.write('delete __state;\n}\n', sdfg)
