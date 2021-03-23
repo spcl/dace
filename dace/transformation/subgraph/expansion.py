@@ -26,7 +26,7 @@ def offset_map(state, map_entry):
     offsets = []
     subgraph = state.scope_subgraph(map_entry)
     for i, (p, r) in enumerate(zip(map_entry.map.params, map_entry.map.range.min_element())):
-        if r in [1,2,3,4,5,6,7,8,9]:
+        if r != 0:
             offsets.append(r)
             replace(subgraph, str(p), f'{p}+{r}')
 
@@ -57,7 +57,15 @@ class MultiExpansion(transformation.SubgraphTransformation):
     check_contiguity = Property(dtype=bool,
                                 desc="Don't allow MultiExpansion if contiguous"
                                 "dimension is partially split",
-                                default = True)
+                                default = False)
+
+    permutation_only = Property(dtype = bool, 
+                                desc="Only allow permutations without inner splits",
+                                default = False)
+    
+    allow_offset = Property(dtype = bool,
+                            desc="Offset ranges to 0", 
+                            default = True)
     @staticmethod
     def can_be_applied(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         # get lowest scope maps of subgraph
@@ -67,24 +75,31 @@ class MultiExpansion(transformation.SubgraphTransformation):
         graph = subgraph.graph
 
         # next, get all the maps
-        maps = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
-        
+        map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
         #for m in maps:
         #    offset_map(graph, m)
-        
-        brng = helpers.common_map_base_ranges(maps)
+        ranges = [dcpy(map_entry.range) for map_entry in map_entries]
+        if MultiExpansion.allow_offset._default == True:
+            for r in ranges:
+                r.offset(r.min_element(), negative = True)
 
+        brng = helpers.common_map_base_ranges(ranges)
         # if leq than one map found -> fail
-        if len(maps) <= 1:
+        if len(map_entries) <= 1:
             return False
 
         # see whether they have common parameters; if not -> fail
         if len(brng) == 0:
             return False
-
-        if MultiExpansion.check_contiguity._default == True:
-            reassignment = helpers.find_reassignment(maps, brng)
-            for map_entry in maps:
+        
+        if MultiExpansion.permutation_only._default == True: 
+            for map_entry in map_entries:
+                if len(map_entry.params) != len(brng):
+                    return False 
+             
+        if MultiExpansion.check_contiguity._default == True: #and MultiExpansion.permutation_only._default == False:
+            reassignment = helpers.find_reassignment(map_entries, brng, offset = MultiExpansion.allow_offset._default)
+            for map_entry in map_entries:
                 no_common = sum([1 for j in reassignment[map_entry] if j != -1])
                 if no_common != len(map_entry.params):
                     # check every memlet for access 
@@ -135,11 +150,16 @@ class MultiExpansion(transformation.SubgraphTransformation):
         if all([map.params == maps[0].params for map in maps]) and all([map.range == maps[0].range for map in maps]):
             return
 
+        if self.allow_offset:
+            for map_entry in map_entries:
+                offset_map(graph, map_entry)
+
         if not map_base_variables:
             # find the maximal subset of variables to expand
             # greedy if there exist multiple ranges that are equal in a map
 
-            map_base_ranges = helpers.common_map_base_ranges(maps)
+            ranges = [map_entry.range for map_entry in map_entries]
+            map_base_ranges = helpers.common_map_base_ranges(ranges)
             reassignments = helpers.find_reassignment(maps, map_base_ranges)
 
             # first, regroup and reassign
