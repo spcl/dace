@@ -827,7 +827,7 @@ class ExpandReduceFPGAPartialReduction(pm.ExpandTransformation):
     def expansion(node: 'Reduce',
                   state: SDFGState,
                   sdfg: SDFG,
-                  partial_width=16):
+                  partial_width=32):
         '''
 
         :param node: the node to expand
