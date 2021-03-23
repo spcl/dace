@@ -56,7 +56,7 @@ class IntelMKL:
             prefix = Config.get('compiler', 'library_prefix')
             suffix = Config.get('compiler', 'library_extension')
             libfile = os.path.join(os.environ['MKLROOT'], 'lib',
-                                   prefix + 'mkl_rt' + suffix)
+                                   prefix + 'mkl_rt.' + suffix)
             if os.path.isfile(libfile):
                 return [libfile]
 

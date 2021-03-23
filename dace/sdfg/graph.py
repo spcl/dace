@@ -167,6 +167,9 @@ class MultiConnectorEdge(MultiEdge, Generic[T]):
     def __len__():
         return 5
 
+    def __repr__(self):
+        return f"{self.src}:{self.src_conn}  -({self.data})->  {self.dst}:{self.dst_conn}"
+
 
 @dace.serialize.serializable
 class Graph(Generic[NodeT, EdgeT]):
