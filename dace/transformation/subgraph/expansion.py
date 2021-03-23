@@ -48,7 +48,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
     Map access variables and memlets are changed accordingly
     '''
 
-    debug = Property(dtype=bool, desc="Debug Mode", default=False)
+    debug = Property(dtype=bool, desc="Debug Mode", default=True)
     sequential_innermaps = Property(dtype=bool,
                                     desc="Make all inner maps that are"
                                     "created during expansion sequential",
@@ -57,7 +57,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
     check_contiguity = Property(dtype=bool,
                                 desc="Don't allow MultiExpansion if contiguous"
                                 "dimension is partially split",
-                                default = True)
+                                default = False)
 
     permutation_only = Property(dtype = bool, 
                                 desc="Only allow permutations without inner splits",
@@ -111,7 +111,6 @@ class MultiExpansion(transformation.SubgraphTransformation):
                             if reassignment[map_entry][map_entry.map.params.index(s)] != -1:
                                 warnings.warn("Contiguity fusion violation detected")
                                 return False 
-
 
         return True
 
@@ -190,6 +189,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
                         # nothing to do
                         pass
                     else:
+                        
                         current_var = map.params[i]
                         current_assignment = params_dict_map[current_var]
                         target_assignment = map_base_variables[reassignment]
@@ -203,8 +203,8 @@ class MultiExpansion(transformation.SubgraphTransformation):
 
                                 value1 = params_dict_map[key1]
                                 value2 = params_dict_map[key2]
-                                params_dict_map[key1] = key2
-                                params_dict_map[key2] = key1
+                                params_dict_map[key1] = value2
+                                params_dict_map[key2] = value1
                             else:
                                 # just reassign
                                 params_dict_map[current_var] = target_assignment
@@ -242,7 +242,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
             for map in maps:
                 for var, rng in zip(map_base_variables, map_base_ranges):
                     assert map.range[map.params.index(var)] == rng
-
+        
         # then expand all the maps
         for map, map_entry in zip(maps, map_entries):
             if map.get_param_num() == len(map_base_variables):
