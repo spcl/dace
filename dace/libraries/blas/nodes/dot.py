@@ -208,11 +208,11 @@ class ExpandDotFpgaPartialSums(ExpandTransformation):
         input_y_access = stream_state.add_access(input_y_name)
 
         entry, exit = stream_state.add_map(
-            "stream", {"i": f"0:{n}/{veclen}"},
+            "stream", {"dot_i": f"0:{n}/{veclen}"},
             schedule=dtypes.ScheduleType.FPGA_Device)
 
-        index_x = "0" if isinstance(desc_x, dt.Stream) else "i"
-        index_y = "0" if isinstance(desc_y, dt.Stream) else "i"
+        index_x = "0" if isinstance(desc_x, dt.Stream) else "dot_i"
+        index_y = "0" if isinstance(desc_y, dt.Stream) else "dot_i"
 
         stream_state.add_memlet_path(x_read,
                                      entry,
@@ -264,13 +264,13 @@ class ExpandDotFpgaPartialSums(ExpandTransformation):
         collapse_access = stream_state.add_access(collapse_name)
 
         unroll_entry, unroll_exit = stream_state.add_map(
-            "unroll", {"j": f"0:{veclen}"},
+            "unroll", {"dot_j": f"0:{veclen}"},
             unroll=True,
             schedule=dtypes.ScheduleType.FPGA_Device)
 
         collapse_tasklet = stream_state.add_tasklet(
             "reduce_vector", {"val_in", "reduce_in"}, {"reduce_out"}, """\
-prev = reduce_in if j > 0 else 0
+prev = reduce_in if dot_j > 0 else 0
 reduce_out = prev + val_in""")
 
         stream_state.add_memlet_path(collapse_read,
@@ -284,23 +284,43 @@ reduce_out = prev + val_in""")
                                      collapse_access,
                                      src_conn="reduce_out",
                                      memlet=dace.Memlet(f"{collapse_name}[0]"))
-        stream_state.add_memlet_path(product_access,
-                                     unroll_entry,
-                                     collapse_tasklet,
-                                     dst_conn="val_in",
-                                     memlet=dace.Memlet(f"{product_name}[j]"))
+        stream_state.add_memlet_path(
+            product_access,
+            unroll_entry,
+            collapse_tasklet,
+            dst_conn="val_in",
+            memlet=dace.Memlet(f"{product_name}[dot_j]"))
 
         buffer_name = "partial_sums"
         sdfg.add_array(buffer_name, (partial_width, ),
                        dtype,
                        transient=True,
                        storage=dtypes.StorageType.FPGA_Local)
-        buffer_read = stream_state.add_read(buffer_name)
+
+        # partial sums must be initialized in case we are executing this multiple time
+        # and we don't touch all its element while computing
+        init_tasklet = stream_state.add_tasklet("init_dummy_ps", {},
+                                                {"init_data"}, "init_data = 0")
+        init_ps_entry, init_ps_exit = stream_state.add_map(
+            "init_unroll", {"dot_j": f"0:{partial_width}"},
+            unroll=True,
+            schedule=dtypes.ScheduleType.FPGA_Device)
+        buffer_read = stream_state.add_access(buffer_name)
+        stream_state.add_memlet_path(init_ps_entry,
+                                     init_tasklet,
+                                     memlet=dace.Memlet())
+        stream_state.add_memlet_path(
+            init_tasklet,
+            init_ps_exit,
+            buffer_read,
+            src_conn="init_data",
+            memlet=dace.Memlet(f"{buffer_name}[dot_j]"))
+
         buffer_write = stream_state.add_write(buffer_name)
 
         partial_sum_tasklet = stream_state.add_tasklet(
             "partial_sum", {"result_in", "buffer_in"}, {"buffer_out"}, f"""\
-prev = buffer_in if i >= {partial_width} else 0
+prev = buffer_in if dot_i >= {partial_width} else 0
 buffer_out = prev + result_in""")
 
         stream_state.add_memlet_path(
@@ -313,29 +333,30 @@ buffer_out = prev + result_in""")
             entry,
             partial_sum_tasklet,
             dst_conn=f"buffer_in",
-            memlet=dace.Memlet(f"{buffer_name}[i%{partial_width}]"))
+            memlet=dace.Memlet(f"{buffer_name}[dot_i%{partial_width}]"))
         stream_state.add_memlet_path(
             partial_sum_tasklet,
             exit,
             buffer_write,
             src_conn=f"buffer_out",
-            memlet=dace.Memlet(f"{buffer_name}[i%{partial_width}]"))
+            memlet=dace.Memlet(f"{buffer_name}[dot_i%{partial_width}]"))
 
         reduce_entry, reduce_exit = stream_state.add_map(
-            "reduce", {"i": f"0:{partial_width}"},
+            "reduce", {"dot_i": f"0:{partial_width}"},
             schedule=dtypes.ScheduleType.FPGA_Device,
             unroll=True)
 
         reduce_tasklet = stream_state.add_tasklet(
             "reduce", {"reduce_in", "result_in"}, {"reduce_out"}, """\
-prev = reduce_in if i > 0 else 0
+prev = reduce_in if dot_i > 0 else 0
 reduce_out = prev + result_in""")
 
-        stream_state.add_memlet_path(buffer_write,
-                                     reduce_entry,
-                                     reduce_tasklet,
-                                     dst_conn="result_in",
-                                     memlet=dace.Memlet(f"{buffer_name}[i]"))
+        stream_state.add_memlet_path(
+            buffer_write,
+            reduce_entry,
+            reduce_tasklet,
+            dst_conn="result_in",
+            memlet=dace.Memlet(f"{buffer_name}[dot_i]"))
 
         reduce_name = "reduce"
         sdfg.add_array(reduce_name, (1, ),
@@ -425,11 +446,11 @@ class ExpandDotFpgaAccumulate(ExpandTransformation):
                        storage=dtypes.StorageType.FPGA_Local)
         input_y_access = state.add_access(input_y_name)
 
-        entry, exit = state.add_map("stream", {"i": f"0:{n}/{veclen}"},
+        entry, exit = state.add_map("stream", {"dot_i": f"0:{n}/{veclen}"},
                                     schedule=dtypes.ScheduleType.FPGA_Device)
 
-        index_x = "0" if isinstance(desc_x, dt.Stream) else "i"
-        index_y = "0" if isinstance(desc_y, dt.Stream) else "i"
+        index_x = "0" if isinstance(desc_x, dt.Stream) else "dot_i"
+        index_y = "0" if isinstance(desc_y, dt.Stream) else "dot_i"
 
         state.add_memlet_path(x_read,
                               entry,
@@ -478,13 +499,13 @@ class ExpandDotFpgaAccumulate(ExpandTransformation):
         collapse_access = state.add_access(collapse_name)
 
         unroll_entry, unroll_exit = state.add_map(
-            "unroll", {"j": f"0:{veclen}"},
+            "unroll", {"dot_j": f"0:{veclen}"},
             unroll=True,
             schedule=dtypes.ScheduleType.FPGA_Device)
 
         collapse_tasklet = state.add_tasklet(
             "reduce_vector", {"val_in", "reduce_in"}, {"reduce_out"}, """\
-prev = reduce_in if j > 0 else 0
+prev = reduce_in if dot_j > 0 else 0
 reduce_out = prev + val_in""")
 
         state.add_memlet_path(collapse_read,
@@ -502,7 +523,7 @@ reduce_out = prev + val_in""")
                               unroll_entry,
                               collapse_tasklet,
                               dst_conn="val_in",
-                              memlet=dace.Memlet(f"{product_name}[j]"))
+                              memlet=dace.Memlet(f"{product_name}[dot_j]"))
 
         buffer_name = "reduce_buffer"
         sdfg.add_array(buffer_name, (1, ),
@@ -520,7 +541,7 @@ reduce_out = prev + val_in""")
 
         reduce_tasklet = state.add_tasklet(
             "sum", {"buffer_in", "result_in"}, {"buffer_out"}, """\
-prev = buffer_in if i > 0 else 0
+prev = buffer_in if dot_i > 0 else 0
 buffer_out = prev + result_in""")
 
         state.add_memlet_path(collapse_access,
