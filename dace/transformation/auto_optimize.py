@@ -1,14 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Automatic optimization routines for SDFGs. """
 
-<<<<<<< HEAD
 import dace
 from dace.sdfg.state import SDFGState
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.propagation import propagate_states
-=======
-from dace.sdfg import SDFG, SDFGState
->>>>>>> upstream/master
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
 from typing import Set, Tuple, Union, List
@@ -33,9 +29,10 @@ GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
 def greedy_fuse(graph_or_subgraph: GraphViewType, 
                 validate_all: bool,
-                #apply_multi_expansion: bool = False, # run both
-                #apply_stencil_tiling: bool = False, # not now yet
-                recursive: bool = False) -> None:
+                device: dace.dtypes.DeviceType = dace.dtypes.DeviceType.CPU,
+                #apply_multi_expansion: bool = False, # TODO: push as option here
+                #apply_stencil_tiling: bool = False, # TODO: push as option
+                recursive: bool = True) -> None:
 
     #CompositeFusion.allow_expansion = apply_multi_expansion
     #CompositeFusion.allow_tiling = apply_stencil_tiling
@@ -68,15 +65,16 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             if len(map_entries) > 1:
                 current_subgraph = helpers.subgraph_from_maps(sdfg, graph, map_entries)
                 cf = CompositeFusion(current_subgraph)
+
                 #cf.allow_expansion = apply_multi_expansion
                 #cf.allow_tiling = apply_stencil_tiling
                 cf.apply(sdfg)
                 applied_transformations += 1
-                if recursive:
-                    # advanced: for each scope subgraph, 
-                    # see whether any parts inside could be fused together
-                    global_entry = cf._global_map_entry
-                    greedy_fuse(graph.scope_subgraph(global_entry, include_entry = False, include_exit = False), validate_all = validate_all)
+            if recursive:
+                # advanced: for each scope subgraph, 
+                # see whether any parts inside could be fused together
+                global_entry = cf._global_map_entry if len(map_entries) > 1 else map_entries[0]
+                greedy_fuse(graph.scope_subgraph(global_entry, include_entry = False, include_exit = False), validate_all = validate_all)
 
                     
         for node in graph_or_subgraph.nodes():
@@ -362,23 +360,21 @@ def auto_optimize(sdfg: SDFG,
                                         strict=True,
                                         validate=False,
                                         validate_all=validate_all)
-
     # TEST: Collapse maps
     sdfg.apply_transformations_repeated(MapCollapse,
                                         strict=True,
                                         validate=False,
                                         validate_all=validate_all)
-    
     # Map fusion
-    ''' 
+    '''
     for graph in sdfg.nodes():
         for node in graph.nodes():
             if isinstance(node, dace.libraries.standard.nodes.Reduce):
                 if graph.scope_dict()[node] is None:
                     try:
                         print("Expanding Reduction")
-                        ReduceExpansion.apply_to(sdfg, _reduce = node)
-                        print("Done.")
+                        ReduceExpansion.apply_to(sdfg, _reduce = node, reduce_implementation = 'CUDA (block allreduce)')
+
                     except ValueError:
                         pass
     '''
