@@ -46,27 +46,37 @@ def matmult_dist(A: dc.float64[M, K], B: dc.float64[K, N], C: dc.float64[M, N]):
     dc.comm.BCGather(lC, C, ldescC, gdescC)
 
 
-def init_data(N, datatype):
+def init_data(NI, NJ, NK, datatype):
 
-    A = np.empty((N, N), dtype=datatype)
-    B = np.empty((N, N), dtype=datatype)
-    for i in range(N):
-        for j in range(N):
-            A[i, j] = i * (j + 2) / N
-            B[i, j] = i * (j + 3) / N
+    from dace.libraries.standard.memory import aligned_ndarray
 
-    return A, B
+    alpha = datatype(1.5)
+    beta = datatype(1.2)
+    C = aligned_ndarray(np.empty((NI, NJ), dtype=datatype), alignment=4096)
+    for i in range(NI):
+        for j in range(NJ):
+            C[i, j] = ((i * j + 1) % NI) / NI
+    A = aligned_ndarray(np.empty((NI, NK), dtype=datatype), alignment=4096)
+    for i in range(NI):
+        for k in range(NK):
+            A[i, k] = (i * (k + 1) % NK) / NK
+    B = aligned_ndarray(np.empty((NK, NJ), dtype=datatype), alignment=4096)
+    for k in range(NK):
+        for j in range(NJ):
+            C[i, j] = (k * (j + 2) % NJ) / NJ
+
+    return alpha, beta, C, A, B
 
 
 if __name__ == "__main__":
 
     # Initialization
-    M, N, K = 1000, 1000, 1000
-    A, B = init_data(N, np.float64)
-    C = np.zeros((N, N), dtype=np.float64)
-    # A = np.arange(0, N*N).reshape(N, N).astype(np.float64)
-    # B = np.ones((N, N), dtype=np.float64)
-    # B = np.arange(0, N*N).reshape(N, N)
+    M, N, K = 2000, 1000, 3000
+    # _, _, C, A, B = init_data(M, N, K, np.float64)
+    # M, N, K = 8, 4, 16
+    A = np.arange(0, M*K).reshape(M, K).astype(np.float64)
+    B = np.arange(0, K*N).reshape(K, N).astype(np.float64)
+    C = np.zeros((M, N), dtype=np.float64)
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -94,14 +104,10 @@ if __name__ == "__main__":
     #     comm.Barrier()
 
     if rank == 0:
-        refA, refB = init_data(N, np.float64)
-        refC = np.zeros((N, N), dtype=np.float64)
-        # refA = np.arange(0, N*N).reshape(N, N).astype(np.float64)
-        # refB = np.ones((N, N), dtype=np.float64)
-        # print(refA)
-        # print(refB)
-        # print()
-        # jacobi_2d_shared(TSTEPS, refA, refB)
+        # _, _, refC, refA, refB = init_data(M, N, K, np.float64)
+        refA = np.arange(0, M*K).reshape(M, K).astype(np.float64)
+        refB = np.arange(0, K*N).reshape(K, N).astype(np.float64)
+        refC = np.zeros((M, N), dtype=np.float64)
         shared_sdfg = matmult_shared.compile()
         shared_sdfg(A=refA, B=refB, C=refC, M=M, N=N, K=K, lM=lM, lKa=lKa, lKb=lKb, lN=lN, Px=Px, Py=Py)
 

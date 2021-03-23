@@ -20,7 +20,7 @@ class IntelMKLScaLAPACK:
     cmake_link_flags = ["-L /lib/x86_64-linux-gnu -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lpthread -lm -ldl"]
     cmake_files = []
 
-    headers = ["mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h", "../include/dace_blas.h"]
+    headers = ["mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h", "../include/dace_blas.h"]
     state_fields = [
         "MKL_INT __mkl_scalapack_context;",
         "MKL_INT __mkl_scalapack_rank, __mkl_scalapack_size;",

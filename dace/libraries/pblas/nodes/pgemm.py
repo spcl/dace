@@ -43,15 +43,20 @@ class ExpandPgemmMKL(ExpandTransformation):
                 f"const char trans = 'N';\n"
                 f"MKL_INT grows = _desca[2];\n"
                 f"MKL_INT gcols = _descb[3];\n"
-                f"MKL_INT gld = _descb[3];\n"
-                f"MKL_INT lld = _descb[5];\n"
+                f"MKL_INT gld = _desca[2];\n"
+                f"MKL_INT lld = _desca[4];\n"
+                # f"MKL_INT gld = _descb[2];\n"
+                # f"MKL_INT lld = _descb[4];\n"
                 f"MKL_INT info;\n"
                 f"descinit(_gdescc, &grows, &gcols, &grows, &gcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
                 f"descinit(_ldescc, &grows, &gcols, &_desca[4], &_descb[5], &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
                 f"MKL_INT _m = grows, _n = gcols, _k = _desca[3];\n"
+                # f"MKL_INT _m = grows, _n = gcols, _k = _desca[2];\n"
                 f"p{lapack_dtype_str}gemm(\n"
-                f"    &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _descb,\n"
-                f"    _a, &__state->__mkl_int_one, &__state->__mkl_int_one, _desca, &zero, _c, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescc);")
+                # f"    &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _descb,\n"
+                # f"    _a, &__state->__mkl_int_one, &__state->__mkl_int_one, _desca, &zero, _c, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescc);")
+                f"    &trans, &trans, &_m, &_n, &_k, &one, _a, &__state->__mkl_int_one, &__state->__mkl_int_one, _desca,\n"
+                f"    _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _descb, &zero, _c, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescc);")
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
