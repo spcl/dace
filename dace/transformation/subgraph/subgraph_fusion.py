@@ -835,7 +835,15 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                 inner_memlet.subset[i] = union[i]
 
                         inner_memlet.other_subset = dcpy(inner_memlet.subset)
-
+                        
+                        e_inner = graph.add_edge(dst, None, global_map_exit,
+                                                 in_conn, inner_memlet)
+                        
+                        
+                        outer_memlet = dcpy(out_edge.data)
+                        e_outer = graph.add_edge(global_map_exit, out_conn,
+                                                 dst_transient, None, outer_memlet)
+                        
                         # remove edge from dst to dst_transient that was created
                         # in intermediate preparation.
                         for e in graph.out_edges(dst):
@@ -856,6 +864,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     if dst in (out_nodes - intermediate_nodes):
                         if edge.dst != global_map_exit:
                             next_conn = global_map_exit.next_connector()
+
                             in_conn = 'IN_' + next_conn
                             out_conn = 'OUT_' + next_conn
                             global_map_exit.add_in_connector(in_conn)
