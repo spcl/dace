@@ -1024,14 +1024,15 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 cppunparse.cppunparse(value,
                                                       expr_semicolon=False),
                             ))
-                        elif var_type != DefinedType.ArrayInterface:
+                        elif (var_type != DefinedType.ArrayInterface
+                              or isinstance(desc, data.View)):
                             newnode = ast.Name(id="%s = %s;" % (
                                 cpp_array_expr(self.sdfg, memlet),
                                 cppunparse.cppunparse(value,
                                                       expr_semicolon=False),
                             ))
                         else:
-                            newnode = ast.Name(id="%s_out[%s] = %s;" % (
+                            newnode = ast.Name(id="__%s_out[%s] = %s;" % (
                                 memlet.data,
                                 cpp_array_expr(
                                     self.sdfg, memlet, with_brackets=False),
