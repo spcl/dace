@@ -953,10 +953,9 @@ __kernel void \\
             # derive the declaration/definition
 
             qualifier = "__global volatile "
-            atype = dtypes.pointer(nodedesc.dtype).ctype
+            atype = dtypes.pointer(nodedesc.dtype).ctype + " restrict"
             aname = name
             viewed_desc = sdfg.arrays[edge.data.data]
-            value = cpp.ptr(edge.data.data, viewed_desc)
             defined_type, _ = self._dispatcher.defined_vars.get(
                 edge.data.data, 0)
             # Register defined variable
@@ -964,6 +963,13 @@ __kernel void \\
                                               defined_type,
                                               atype,
                                               allow_shadowing=True)
+            _, _, value = cpp.emit_memlet_reference(self._dispatcher,
+                                                            sdfg,
+                                                            edge.data,
+                                                            name,
+                                                            dtypes.pointer(
+                                                                nodedesc.dtype),
+                                                            ancestor=0, device_code=self._in_device_code)
         else:
             qualifier = ""
             atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,

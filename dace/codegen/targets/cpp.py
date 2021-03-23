@@ -226,10 +226,12 @@ def emit_memlet_reference(dispatcher,
                           memlet: mmlt.Memlet,
                           pointer_name: str,
                           conntype: dtypes.typeclass,
-                          ancestor: int = 1) -> Tuple[str, str, str]:
+                          ancestor: int = 1,
+                          device_code=False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
+    :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
     :return: A tuple of the form (type, name, value).
     """
     desc = sdfg.arrays[memlet.data]
@@ -288,7 +290,7 @@ def emit_memlet_reference(dispatcher,
     else:
         raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
 
-    if (defined_type != DefinedType.ArrayInterface
+    if (not device_code and defined_type != DefinedType.ArrayInterface
             and desc.storage == dace.StorageType.FPGA_Global):
         # This is a device buffer accessed on the host.
         # Can not be accessed with offset different than zero. Check this if we can:
@@ -297,7 +299,6 @@ def emit_memlet_reference(dispatcher,
             raise TypeError(
                 "Can not offset device buffers from host code ({}, offset {})".
                 format(datadef, offset))
-
         # Device buffers are passed by reference
         expr = datadef
         ref = '&'
