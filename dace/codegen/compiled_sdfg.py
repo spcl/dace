@@ -182,7 +182,7 @@ class CompiledSDFG(object):
         code_flat = code.replace("\n", " ")
 
         # try to find the first struct definition that matches the name we are looking for in the sdfg file
-        match = re.search(f"struct {self._sdfg.name}_t {{(.*)}};", code_flat)
+        match = re.search(f"struct {self._sdfg.name}_t {{(.*?)}};", code_flat)
         if match is None or len(match.groups()) != 1:
             return None
 
@@ -193,8 +193,9 @@ class CompiledSDFG(object):
         for field_str in struct_defn.split(";"):
             field_str = field_str.strip()
 
-            match_name = re.match('(.*)\s+\*\s+([a-zA-Z_][a-zA-Z_0-9]*)$',
-                                  field_str)
+            match_name = re.match(
+                '(?:const)?\s*(.*)(?:\s+\*\s*|\s*\*\s+)([a-zA-Z_][a-zA-Z_0-9]*)$',
+                field_str)
             if match_name is None:
                 # reached a non-ptr field or something unparsable, we have to abort here
                 break
