@@ -30,7 +30,7 @@ class ExpandBlockCyclicScatterMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
 
-        in_shape, in_ld, out_shape, out_ld = node.validate(parent_sdfg, parent_state)
+        rows, cols = node.validate(parent_sdfg, parent_state)
 
 
         code = (f"if (!__state->__mkl_scalapack_grid_init) {{\n"
@@ -42,17 +42,18 @@ class ExpandBlockCyclicScatterMKL(ExpandTransformation):
                 f"}}\n"
                 f"const double  zero = 0.0E+0, one = 1.0E+0;\n"
                 f"const char trans = 'N';\n"
-                # f"const char trans = 'T';\n"
-                f"MKL_INT grows = {in_shape[0]};\n"
-                f"MKL_INT gcols = {in_shape[1]};\n"
-                # f"MKL_INT gld = {in_ld};\n"
-                # f"MKL_INT lld = {out_ld};\n"
-                f"MKL_INT gld = {in_shape[0]};\n"
-                f"MKL_INT lld = _block_sizes[0];\n"
+                f"MKL_INT grows = {rows};\n"
+                f"MKL_INT gcols = {cols};\n"
+                f"MKL_INT brows = _block_sizes[0];\n"
+                f"MKL_INT bcols = (gcols > 1 ? _block_sizes[1]: 1);\n"
+                f"MKL_INT mloc = numroc( &grows, &brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
+                f"MKL_INT nloc = numroc( &gcols, &bcols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);\n"
+                f"MKL_INT gld = grows;\n"
+                f"MKL_INT lld = mloc;\n"
                 f"MKL_INT info;\n"
                 f"descinit(_gdescriptor, &grows, &gcols, &grows, &gcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
-                f"descinit(_ldescriptor, &grows, &gcols, &_block_sizes[0], &_block_sizes[1], &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
-                f"mkl_dimatcopy('R', 'T', grows, gcols, 1.0, _inbuffer, gcols, grows);\n"
+                f"descinit(_ldescriptor, &grows, &gcols, &brows, &bcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
+                f"if (gcols > 1) {{ mkl_dimatcopy('R', 'T', grows, gcols, 1.0, _inbuffer, gcols, grows); }}\n"
                 f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor);")
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
@@ -60,9 +61,11 @@ class ExpandBlockCyclicScatterMKL(ExpandTransformation):
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)
-        # conn = tasklet.out_connectors
-        # conn = {c: (dtypes.pointer(dace.int32) if c == '_context' else t) for c, t in conn.items()}
-        # tasklet.out_connectors = conn
+        conn = tasklet.in_connectors
+        conn = {c: (dtypes.pointer(t)
+                    if c == '_block_sizes' and not isinstance(t, dtypes.pointer)
+                    else t) for c, t in conn.items()}
+        tasklet.in_connectors = conn
         return tasklet
 
 
@@ -93,17 +96,23 @@ class BlockCyclicScatter(dace.sdfg.nodes.LibraryNode):
             if e.src_conn == "_outbuffer":
                 outbuffer = sdfg.arrays[e.data.data]
                 out_shape = e.data.subset.size_exact()
-                out_ld = outbuffer.strides[-2]
+                # out_ld = outbuffer.strides[-2]
         for e in state.in_edges(self):
             if e.dst_conn == "_inbuffer":
                 inbuffer = sdfg.arrays[e.data.data]
                 in_shape = e.data.subset.size_exact()
-                in_ld = inbuffer.strides[-2]
+                # in_ld = inbuffer.strides[-2]
             if e.dst_conn == "_block_sizes":
                 block_sizes = sdfg.arrays[e.data.data]
 
+        if len(in_shape) == 2:
+            rows = in_shape[0]
+            cols = in_shape[1]
+        else:
+            rows = in_shape[0]
+            cols = 1
 
-        return in_shape, in_ld, out_shape, out_ld
+        return rows, cols
 
 
 @dace.library.expansion
@@ -126,7 +135,7 @@ class ExpandBlockCyclicGatherMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
 
-        in_shape, in_ld, out_shape, out_ld = node.validate(parent_sdfg, parent_state)
+        in_shape, out_shape = node.validate(parent_sdfg, parent_state)
 
 
         code = (f"if (!__state->__mkl_scalapack_grid_init) {{\n"
@@ -142,7 +151,7 @@ class ExpandBlockCyclicGatherMKL(ExpandTransformation):
                 f"MKL_INT grows = {out_shape[0]};\n"
                 f"MKL_INT gcols = {out_shape[1]};\n"
                 f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor);\n"
-                f"mkl_dimatcopy('R', 'T', gcols, grows, 1.0, _outbuffer, grows, gcols);")
+                f"if (gcols > 1) {{ mkl_dimatcopy('R', 'T', gcols, grows, 1.0, _outbuffer, grows, gcols); }}")
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -182,12 +191,16 @@ class BlockCyclicGather(dace.sdfg.nodes.LibraryNode):
             if e.src_conn == "_outbuffer":
                 outbuffer = sdfg.arrays[e.data.data]
                 out_shape = e.data.subset.size_exact()
-                out_ld = outbuffer.strides[-2]
+                if len(out_shape) == 1:
+                    out_shape = [out_shape[0], 1]
+                # out_ld = outbuffer.strides[-2]
         for e in state.in_edges(self):
             if e.dst_conn == "_inbuffer":
                 inbuffer = sdfg.arrays[e.data.data]
                 in_shape = e.data.subset.size_exact()
-                in_ld = inbuffer.strides[-2]
+                # in_ld = inbuffer.strides[-2]
+                if len(in_shape) == 1:
+                    in_shape = [in_shape[0], 1]
 
 
-        return in_shape, in_ld, out_shape, out_ld
+        return in_shape, out_shape

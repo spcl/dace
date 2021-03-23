@@ -5281,19 +5281,37 @@ def _distr_matmult(pv: 'ProgramVisitor',
                    opb: str,
                    descb: str):
 
-    from dace.libraries.pblas.nodes.pgemm import Pgemm
-
-    tasklet = Pgemm("__DistrMatMult")
     arra = sdfg.arrays[opa]
     arrdesca = sdfg.arrays[desca]
     arrb = sdfg.arrays[opb]
     arrdescb = sdfg.arrays[descb]
 
-    m = arra.shape[0]
-    k = arra.shape[-1]
-    n = arrb.shape[-1]
 
-    out = sdfg.add_temp_transient((m, n), dtype=arra.dtype)
+    if len(arra.shape) == 2 and len(arrb.shape) == 2:
+        # Gemm
+        from dace.libraries.pblas.nodes.pgemm import Pgemm
+        tasklet = Pgemm("__DistrMatMult__")
+        m = arra.shape[0]
+        n = arrb.shape[-1]
+        out = sdfg.add_temp_transient((m, n), dtype=arra.dtype)
+    elif len(arra.shape) == 2 and len(arrb.shape) == 1:
+        # Gemv
+        from dace.libraries.pblas.nodes.pgemv import Pgemv
+        tasklet = Pgemv("__DistrMatVecMult__")
+        m = arra.shape[0]
+        out = sdfg.add_temp_transient((m,), dtype=arra.dtype)
+    elif len(arra.shape) == 1 and len(arrb.shape) == 2:
+        # Gemv transposed
+        # Swap a and b
+        opa, opb = opb, opa
+        arra, arrb = arrb, arra
+        desca, descb = descb, desca
+        arrdesca, arrdescb = arrdescb, arrdesca
+        from dace.libraries.pblas.nodes.pgemv import Pgemv
+        tasklet = Pgemv("__DistrMatVecMult__", transa='T')
+        n = arra.shape[1]
+        out = sdfg.add_temp_transient((n,), dtype=arra.dtype)
+
     gdescout = sdfg.add_temp_transient((9,), dtype=dace.int32)
     ldescout = sdfg.add_temp_transient((9,), dtype=dace.int32)
 
