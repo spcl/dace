@@ -620,8 +620,15 @@ class RedundantSecondArray(pm.Transformation):
                         # If there is a forward path then a must not be a direct
                         # successor of in_array.
                         if has_fward_path and a in G.successors(in_array):
-                            return False
-
+                            #return False
+                            # NOTE: Fix
+                            
+                            for src, _ in G.in_edges(a):
+                                if src is in_array:
+                                    continue
+                                if not nx.has_path(G, in_array, src):
+                                    return False
+                            
         # Make sure that both arrays are using the same storage location
         # and are of the same type (e.g., Stream->Stream)
         if in_desc.storage != out_desc.storage:
