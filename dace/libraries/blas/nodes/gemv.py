@@ -163,7 +163,7 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
                   parent_sdfg,
                   tile_size_x=None,
                   tile_size_y=None,
-                  num_partial_sums=16):
+                  num_partial_sums=32):
         """
         :param node: Node to expand.
         :param parent_state: State that the node is in.
@@ -373,7 +373,7 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
         # Partial sums
         sdfg.add_array("partial_sums", (num_partial_sums, ),
                        desc_y.dtype,
-                       storage=dace.StorageType.FPGA_Registers,
+                       storage=dace.StorageType.FPGA_Local,
                        transient=True)
         partial_sum_read = state.add_read("partial_sums")
         partial_sum_write = state.add_access("partial_sums")

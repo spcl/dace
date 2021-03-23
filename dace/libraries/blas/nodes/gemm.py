@@ -444,7 +444,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
     def expansion(node,
                   parent_state,
                   parent_sdfg,
-                  num_pes=32,
+                  num_pes=64,
                   tile_size_m=None):
         '''
         GEMM node expansion.
