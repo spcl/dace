@@ -267,11 +267,12 @@ def emit_memlet_reference(dispatcher,
         if is_write is None:
             raise ValueError("is_write must be defined for ArrayInterface.")
         else:
+            base_ctype = conntype.base_type.ctype
             if is_write:
-                typedef = typedef
+                typedef = f"{base_ctype}*"
                 datadef = f"__{datadef}_out"
             else:
-                typedef = f"const {typedef}"
+                typedef = f"const {base_ctype}*"
                 datadef = f"__{datadef}_in"
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
