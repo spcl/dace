@@ -521,6 +521,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
   auto kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {kernel_args});
   const std::pair<double, double> elapsed = kernel.ExecuteTask();
   std::cout << "Kernel executed in " << elapsed.second << " seconds.\\n" << std::flush;
+  // Save execution time in file
+  std::ofstream out_file;
+  out_file.open("dace_times.dat", std::ios::app);
+  out_file << elapsed.second <<std::endl;
+  out_file.close();
 }}""".format(kernel_function_name=kernel_function_name,
              kernel_args=", ".join(kernel_args)), sdfg, sdfg.node_id(state))
 

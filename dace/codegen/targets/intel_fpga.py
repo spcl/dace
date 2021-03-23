@@ -126,7 +126,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         host_code = CodeIOStream()
         host_code.write("""\
 #include "dace/intel_fpga/host.h"
-#include <iostream>\n\n""")
+#include <iostream>
+#include <fstream>\n\n""")
 
         self._frame.generate_fileheader(self._global_sdfg, host_code,
                                         'intelfpga_host')
@@ -564,6 +565,11 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
   const auto end = std::chrono::high_resolution_clock::now();
   const double elapsedChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
   std::cout << "Kernel executed in " << elapsedChrono << " seconds.\\n" << std::flush;
+  // Save execution time in file
+  std::ofstream out_file;
+  out_file.open("dace_times.dat", std::ios::app);
+  out_file << elapsedChrono <<std::endl;
+  out_file.close();
 }""", sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
