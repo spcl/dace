@@ -9,6 +9,7 @@ import pytest
 import numpy as np
 
 import dace
+import dace.library
 from dace import dtypes
 from dace.codegen import codeobject, targets, compiler, compiled_sdfg
 
@@ -87,11 +88,10 @@ def test_preallocate_transients_in_state_struct(cuda_helper):
     compiledsdfg = sdfg.compile()
     compiledsdfg.initialize()
 
-    state_struct = ctypes.cast(
-        compiledsdfg._libhandle,
-        ctypes.POINTER(compiledsdfg.try_parse_state_struct()))
-    transient_gpu_ptr = state_struct.contents.persistent_transient
-    cuda_helper.host_to_gpu(transient_gpu_ptr, B.copy())
+    state_struct = compiledsdfg.get_state_struct()
+
+    # copy the B array into the transient ptr
+    cuda_helper.host_to_gpu(state_struct.persistent_transient, B.copy())
     result = np.zeros_like(B)
     compiledsdfg(A=A, __return=result)
 

@@ -160,7 +160,7 @@ class CompiledSDFG(object):
         self._exit = lib.get_symbol('__dace_exit_{}'.format(sdfg.name))
         self._cfunc = lib.get_symbol('__program_{}'.format(sdfg.name))
 
-    def try_parse_state_struct(self) -> Optional[Type[ctypes.Structure]]:
+    def get_state_struct(self) -> ctypes.Structure:
         """ Attempt to parse the SDFG source code and extract the state struct. This method will parse the first
             consecutive entries in the struct that are pointers. As soon as a non-pointer or other unparseable field is
             encountered, the method exits early. All fields defined until then will nevertheless be available in the
@@ -168,6 +168,11 @@ class CompiledSDFG(object):
             :returns: the ctypes.Structure representation of the state struct.
         """
 
+        return ctypes.cast(self._libhandle,
+                           ctypes.POINTER(
+                               self._try_parse_state_struct())).contents
+
+    def _try_parse_state_struct(self) -> Optional[Type[ctypes.Structure]]:
         # the path of the main sdfg file containing the state struct
         main_src_path = os.path.join(
             os.path.dirname(os.path.dirname(self._lib._library_filename)),
