@@ -292,7 +292,7 @@ class CleanNestedSDFGConnectors(transformation.Transformation):
 
         for orig_conn, edge_list in duplicate_out_connectors.items():
             for e in edge_list:
-                dup_conn = e.dst_conn
+                dup_conn = e.src_conn
                 state.remove_edge(e)
                 nested_sdfg.remove_out_connector(dup_conn)
                 merge_symbols(nested_sdfg.sdfg, orig_conn, dup_conn)

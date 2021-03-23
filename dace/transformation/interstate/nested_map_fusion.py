@@ -36,7 +36,8 @@ def add_connector_prefixes(state: dace_state.SDFGState, nsdfg: nodes.NestedSDFG,
         nsdfg.in_connectors[new_name] = old_in_connectors[ic]
         nsdfg.sdfg.replace(ic, new_name)
     for e in state.in_edges(nsdfg):
-        e.dst_conn = prefix + e.dst_conn
+        if not e.data.is_empty():
+            e.dst_conn = prefix + e.dst_conn
     old_out_connectors = nsdfg.out_connectors
     nsdfg.out_connectors = {}
     for ic in old_out_connectors:
@@ -44,7 +45,8 @@ def add_connector_prefixes(state: dace_state.SDFGState, nsdfg: nodes.NestedSDFG,
         nsdfg.out_connectors[new_name] = old_out_connectors[ic]
         nsdfg.sdfg.replace(ic, new_name)
     for e in state.out_edges(nsdfg):
-        e.src_conn = prefix + e.src_conn
+        if not e.data.is_empty():
+            e.src_conn = prefix + e.src_conn
 
 
 def add_transient_prefixes(sdfg: dace_sdfg.SDFG, prefix: str):
@@ -162,15 +164,28 @@ class NestedMapFusion(transformation.Transformation):
         inputs1: List[nodes.AccessNode] = [e.dst for e in first_state.out_edges(map_entry1)]
         outputs1: List[nodes.AccessNode] = [e.src for e in first_state.in_edges(map_exit1)]
 
+        if len(inputs1) == 1 and not isinstance(inputs1[0], nodes.AccessNode):
+            inputs1 = []
+
+        if len(outputs1) == 1 and not isinstance(outputs1[0], nodes.AccessNode):
+            outputs1 = []
+
         inputs2: List[nodes.AccessNode] = [e.dst for e in second_state.out_edges(map_entry2)]
         outputs2: List[nodes.AccessNode] = [e.src for e in second_state.in_edges(map_exit2)]
+
+        if len(inputs2) == 1 and not isinstance(inputs2[0], nodes.AccessNode):
+            inputs2 = []
+
+        if len(outputs2) == 1 and not isinstance(outputs2[0], nodes.AccessNode):
+            outputs2 = []
 
         map1: Map = map_entry1.map
         map2: Map = map_entry2.map
 
         # get nested sdfgs
-        nsdfg1: nodes.NestedSDFG = first_state.out_edges(inputs1[0])[0].dst
-        nsdfg2: nodes.NestedSDFG = second_state.out_edges(inputs2[0])[0].dst
+
+        nsdfg1: nodes.NestedSDFG = first_state.in_edges(outputs1[0])[0].src
+        nsdfg2: nodes.NestedSDFG = second_state.in_edges(outputs2[0])[0].src
 
         # rename parameter name in the second state to match the first state
         for p1, p2 in zip(map1.params, map2.params):

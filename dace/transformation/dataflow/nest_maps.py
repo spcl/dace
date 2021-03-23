@@ -103,13 +103,21 @@ class NestMapContent(transformation.Transformation):
         entry_access_nodes = [e.dst for e in state.out_edges(map_entry)]
         exit_access_nodes = [e.src for e in state.in_edges(map_exit)]
 
-        for an in entry_access_nodes:
-            if not isinstance(an, nodes.AccessNode):
-                return False # unsupported case
+        if len(entry_access_nodes) == 1 and not isinstance(entry_access_nodes[0], nodes.AccessNode):
+            # check case when no input access nodes present
+            entry_access_nodes = []
+        else:
+            for an in entry_access_nodes:
+                if not isinstance(an, nodes.AccessNode):
+                    return False # unsupported case
 
-        for an in exit_access_nodes:
-            if not isinstance(an, nodes.AccessNode):
-                return False # unsupported case
+        if len(exit_access_nodes) == 1 and not isinstance(exit_access_nodes[0], nodes.AccessNode):
+            # check case when no output access nodes present
+            exit_access_nodes = []
+        else:
+            for an in exit_access_nodes:
+                if not isinstance(an, nodes.AccessNode):
+                    return False # unsupported case
 
         inner_nodes = list(set(internal_nodes) - set(entry_access_nodes) - set(exit_access_nodes))
 
@@ -117,12 +125,6 @@ class NestMapContent(transformation.Transformation):
             return True
 
         return False
-
-    @staticmethod
-    def match_to_str(state: dace_state.SDFGState, candidate):
-        map_entry: nodes.MapEntry = state.nodes()[candidate[NestMapContent.map_entry]]
-
-        return f"{map_entry.map.label} : {str(map_entry.map.params)}"
 
     def apply(self, sdfg: dace_sdfg.SDFG):
 
@@ -134,7 +136,14 @@ class NestMapContent(transformation.Transformation):
         internal_nodes = state.all_nodes_between(map_entry, map_exit)
 
         entry_access_nodes = [e.dst for e in state.out_edges(map_entry)]
+        if len(entry_access_nodes) == 1 and not isinstance(entry_access_nodes[0], nodes.AccessNode):
+            # check case when no input access nodes present
+            entry_access_nodes = []
+
         exit_access_nodes = [e.src for e in state.in_edges(map_exit)]
+        if len(exit_access_nodes) == 1 and not isinstance(exit_access_nodes[0], nodes.AccessNode):
+            # check case when no output access nodes present
+            exit_access_nodes = []
 
         inner_nodes = list(set(internal_nodes) - set(entry_access_nodes) - set(exit_access_nodes))
 
