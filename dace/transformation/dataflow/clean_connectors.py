@@ -27,6 +27,10 @@ def find_duplicate_in_connectors(state: dace_state.SDFGState, nested_sdfg: nodes
 
     checked_connectors = {}
 
+    if len(in_edges) == 1 and in_edges[0].data.is_empty():
+        # empty memlet, no duplicates
+        return input_duplicates
+
     for e in in_edges:
         access_node = e.src
         conn_name = e.dst_conn
@@ -51,6 +55,10 @@ def find_duplicate_out_connectors(state: dace_state.SDFGState, nested_sdfg: node
     out_edges = state.out_edges(nested_sdfg)
 
     checked_connectors = {}
+
+    if len(out_edges) == 1 and out_edges[0].data.is_empty():
+        # empty memlet, no duplicates
+        return output_duplicates
 
     for e in out_edges:
         access_node = e.dst
@@ -81,21 +89,23 @@ def build_access_maps(state: dace_state.SDFGState, nested_sdfg: nodes.NestedSDFG
     in_edges = state.in_edges(nested_sdfg)
     out_edges = state.out_edges(nested_sdfg)
 
-    for e in in_edges:
-        access_node = e.src
-        conn_name = e.dst_conn
-        memlet: Memlet = e.data
-        range = memlet.subset
-        inp = (access_node.data, range)
-        input_map[inp] = (conn_name, e)
+    if len(in_edges) != 1 or not in_edges[0].data.is_empty():
+        for e in in_edges:
+            access_node = e.src
+            conn_name = e.dst_conn
+            memlet: Memlet = e.data
+            range = memlet.subset
+            inp = (access_node.data, range)
+            input_map[inp] = (conn_name, e)
 
-    for e in out_edges:
-        access_node = e.dst
-        conn_name = e.src_conn
-        memlet: Memlet = e.data
-        range = memlet.subset
-        inp = (access_node.data, range)
-        output_map[inp] = (conn_name, e)
+    if len(out_edges) != 1 or not out_edges[0].data.is_empty():
+        for e in out_edges:
+            access_node = e.dst
+            conn_name = e.src_conn
+            memlet: Memlet = e.data
+            range = memlet.subset
+            inp = (access_node.data, range)
+            output_map[inp] = (conn_name, e)
 
     return input_map, output_map
 
