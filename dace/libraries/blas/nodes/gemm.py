@@ -1,15 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
-from dace.data import Array
-from dace import dtypes, memlet as mm, properties
+from dace import dtypes, memlet as mm, properties, data as dt
 from dace.symbolic import symstr
 import dace.library
 from dace import SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts
+from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts, check_access
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands,
                                               _get_codegen_gemm_opts)
 from .. import environments
@@ -209,6 +208,8 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
 
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
 
+        check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
+
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
                                      alpha, beta, dtype.ctype, func)
 
@@ -263,16 +264,16 @@ class ExpandGemmCuBLAS(ExpandTransformation):
             if e.dst_conn == '_a':
                 anode = state.memlet_path(e)[0].src
                 if isinstance(anode, dace.sdfg.nodes.AccessNode):
-                    adesc: Array = sdfg.arrays[anode.data]
+                    adesc: dt.Array = sdfg.arrays[anode.data]
             elif e.dst_conn == '_b':
                 bnode = state.memlet_path(e)[0].src
                 if isinstance(bnode, dace.sdfg.nodes.AccessNode):
-                    bdesc: Array = sdfg.arrays[bnode.data]
+                    bdesc: dt.Array = sdfg.arrays[bnode.data]
         for e in state.out_edges(node):
             if e.src_conn == '_c':
                 cnode = state.memlet_path(e)[-1].dst
                 if isinstance(cnode, dace.sdfg.nodes.AccessNode):
-                    cdesc: Array = sdfg.arrays[cnode.data]
+                    cdesc: dt.Array = sdfg.arrays[cnode.data]
         if not adesc or not bdesc or not cdesc:
             raise ValueError('Unsupported input/output arrays')
 
@@ -361,10 +362,14 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
                for desc in [adesc, bdesc, cdesc]):
             nsdfg = dace.SDFG('nested_gemm')
             for name, desc in [('_a', adesc), ('_b', bdesc), ('_c', cdesc)]:
-                dcopy = dc(desc)
+                if isinstance(desc, dt.View):
+                    dcopy = desc.as_array()
+                else:
+                    dcopy = dc(desc)
+                dcopy.lifetime = dtypes.AllocationLifetime.Scope
+                dcopy_gpu = dc(dcopy)
                 dcopy.transient = False
                 nsdfg.add_datadesc(name, dcopy)
-                dcopy_gpu = dc(desc)
                 dcopy_gpu.transient = True
                 dcopy_gpu.storage = dace.StorageType.GPU_Global
                 nsdfg.add_datadesc(name + '_gpu', dcopy_gpu)
