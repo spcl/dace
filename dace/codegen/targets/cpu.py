@@ -175,6 +175,7 @@ class CPUCodeGen(TargetCodeGenerator):
         Allocates (creates pointer and refers to original) a view of an
         existing array, scalar, or view.
         """
+
         name = node.data
         nodedesc = node.desc(sdfg)
         if self._dispatcher.defined_vars.has(name):
@@ -189,6 +190,15 @@ class CPUCodeGen(TargetCodeGenerator):
         self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, viewed_dnode,
                                            global_stream, allocation_stream)
 
+        # When emitting ArrayInterface, we need to know if this is a read or
+        # write variation
+        if viewed_dnode in dfg.source_nodes():
+            is_write = False
+        elif viewed_dnode in dfg.sink_nodes():
+            is_write = True
+        else:
+            is_write = None
+
         # Emit memlet as a reference and register defined variable
         atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
                                                         sdfg,
@@ -196,7 +206,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         name,
                                                         dtypes.pointer(
                                                             nodedesc.dtype),
-                                                        ancestor=0)
+                                                        ancestor=0,
+                                                        is_write=is_write)
         if declaration_stream == allocation_stream:
             declaration_stream.write(f'{atype} {aname} = {value};', sdfg,
                                      state_id, node)
@@ -919,10 +930,12 @@ class CPUCodeGen(TargetCodeGenerator):
                             continue
                         defined_type, _ = self._dispatcher.defined_vars.get(
                             memlet.data)
+                        desc = sdfg.arrays[memlet.data]
 
                         if defined_type == DefinedType.Scalar:
                             write_expr = f"{memlet.data} = {in_local_name};"
-                        elif defined_type == DefinedType.ArrayInterface:
+                        elif (defined_type == DefinedType.ArrayInterface
+                              and not isinstance(desc, data.View)):
                             # Special case: No need to write anything between
                             # array interfaces going out
                             try:
@@ -939,7 +952,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                 f"*(__{memlet.data}_out + {array_expr}) "
                                 f"= {in_local_name};")
                         else:
-                            desc_dtype = sdfg.arrays[memlet.data].dtype
+                            desc_dtype = desc.dtype
                             expr = cpp.cpp_array_expr(sdfg, memlet)
                             write_expr = codegen.make_ptr_assignment(
                                 in_local_name, conntype, expr, desc_dtype)
@@ -1119,7 +1132,9 @@ class CPUCodeGen(TargetCodeGenerator):
         # Special case: ArrayInterface, append _in or _out
         _ptr = ptr
         if var_type == DefinedType.ArrayInterface:
-            ptr = f"__{ptr}_out" if output else f"__{ptr}_in"
+            # Views have already been renamed
+            if not isinstance(desc, data.View):
+                ptr = f"__{ptr}_out" if output else f"__{ptr}_in"
         if expr != _ptr:
             expr = '%s[%s]' % (ptr, expr)
         # If there is a type mismatch, cast pointer

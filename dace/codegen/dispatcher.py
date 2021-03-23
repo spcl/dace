@@ -420,10 +420,9 @@ class TargetDispatcher(object):
         else:
             declaration_stream = allocation_stream
 
-        self._array_dispatchers[storage].allocate_array(sdfg, dfg, state_id,
-                                                        node, function_stream,
-                                                        declaration_stream,
-                                                        allocation_stream)
+        dispatcher = self._array_dispatchers[storage]
+        dispatcher.allocate_array(sdfg, dfg, state_id, node, function_stream,
+                                  declaration_stream, allocation_stream)
 
         # TODO: Move to central allocator (see PR #434)
         if nodedesc.lifetime is dtypes.AllocationLifetime.Persistent:

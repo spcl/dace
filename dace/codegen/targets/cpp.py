@@ -31,7 +31,7 @@ def copy_expr(
     sdfg,
     dataname,
     memlet,
-    is_write,  # Otherwise it's a read
+    is_write=None,  # Otherwise it's a read
     offset=None,
     relative_offset=True,
     packed_types=False,
@@ -62,7 +62,11 @@ def copy_expr(
 
     if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
         if def_type == DefinedType.ArrayInterface:
-            expr = f"__{expr}_out" if is_write else f"__{expr}_in"
+            # If this is a view, it has already been renamed
+            if not isinstance(datadesc, data.View):
+                if is_write is None:
+                    raise ValueError("is_write must be set for ArrayInterface.")
+                expr = f"__{expr}_out" if is_write else f"__{expr}_in"
         return "{}{}{}".format(
             dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
 
@@ -260,12 +264,14 @@ def emit_memlet_reference(dispatcher,
             defined_type = DefinedType.Scalar
             ref = '&'
     elif defined_type == DefinedType.ArrayInterface:
-        if is_write is not None:
+        if is_write is None:
+            raise ValueError("is_write must be defined for ArrayInterface.")
+        else:
             if is_write:
-                typedef = defined_ctype
+                typedef = typedef
                 datadef = f"__{datadef}_out"
             else:
-                typedef = f"const {defined_ctype}"
+                typedef = f"const {typedef}"
                 datadef = f"__{datadef}_in"
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
