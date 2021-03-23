@@ -219,6 +219,8 @@ class ConstantPropagation(transformation.Transformation):
             nsdfg: nodes.NestedSDFG = nest_if_not_nested(sdfg, read_state)
 
             # find input corresponding to the read and remove it with connector
+            connector_name = None
+
             for e in read_state.in_edges(nsdfg):
                 an: nodes.AccessNode = e.src
                 if an.data != data_desc:
@@ -228,8 +230,22 @@ class ConstantPropagation(transformation.Transformation):
                 connector_name = e.dst_conn
                 read_state.remove_node(an)
 
-            # remove connector
-            nsdfg.remove_in_connector(connector_name)
+            if connector_name:
+                # remove connector
+                nsdfg.remove_in_connector(connector_name)
+            else:
+                for e in read_state.out_edges(nsdfg):
+                    an: nodes.AccessNode = e.dst
+                    if an.data != data_desc:
+                        continue
+
+                    # this edge has WCR, this is why it is detected as one of the reads for this variable
+                    assert e.data.wcr
+
+                    connector_name = e.src_conn
+
+                    # after transformation WCR is not requires since Array is written only
+                    e.data.wcr = None
 
             # make data object inside nested sdfg transient if it is not written
             if connector_name not in nsdfg.out_connectors:
