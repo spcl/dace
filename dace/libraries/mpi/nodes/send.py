@@ -38,9 +38,13 @@ class ExpandSendMPI(ExpandTransformation):
             raise(NotImplementedError)
         code = ""
         if ddt is not None:
-            code = f"""MPI_Datatype newtype;
+            code = f"""static MPI_Datatype newtype;
+                        static int init=1;
+                        if (init) {{
                            MPI_Type_vector({ddt['count']}, {ddt['blocklen']}, {ddt['stride']}, {ddt['oldtype']}, &newtype);
                            MPI_Type_commit(&newtype);
+                           init=0;
+                        }}
                             """
             mpi_dtype_str = "newtype"
             count_str = "1"
@@ -49,7 +53,7 @@ class ExpandSendMPI(ExpandTransformation):
                 MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, _dest, _tag, MPI_COMM_WORLD);
                 """
         if ddt is not None:
-            code += f"""MPI_Type_free(&newtype);
+            code += f"""// MPI_Type_free(&newtype);
             """
     
         tasklet = dace.sdfg.nodes.Tasklet(node.name,

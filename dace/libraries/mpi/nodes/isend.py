@@ -38,16 +38,20 @@ class ExpandIsendMPI(ExpandTransformation):
          
         code = ""
         if ddt is not None:
-            code = f"""MPI_Datatype newtype;
+            code = f"""static MPI_Datatype newtype;
+                        static int init=1;
+                        if (init) {{
                            MPI_Type_vector({ddt['count']}, {ddt['blocklen']}, {ddt['stride']}, {ddt['oldtype']}, &newtype);
                            MPI_Type_commit(&newtype);
+                           init=0;
+                        }}
                             """
             mpi_dtype_str = "newtype"
             count_str = "1"
         buffer_offset = 0
         code += f"MPI_Isend(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, _dest, _tag, MPI_COMM_WORLD, _request);"
         if ddt is not None:
-            code += f"""MPI_Type_free(&newtype);
+            code += f"""// MPI_Type_free(&newtype);
             """
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
