@@ -784,11 +784,24 @@ class FPGACodeGen(TargetCodeGenerator):
                         # Language-specific
                         self.generate_unroll_loop_pre(callsite_stream, None,
                                                       sdfg, state_id, dst_node)
+                    # If we are copying from a container to itself, and the memlet subsets do not intersect,
+                    # then we can safely ignore loop carried dependencies
+
+                    ignore_dependencies = src_node.data == dst_node.data and not dace.subsets.intersects(
+                        memlet.src_subset, memlet.dst_subset)
+                    if ignore_dependencies:
+                        self.generate_no_dependence_pre(callsite_stream, sdfg, state_id,
+                                                        dst_node)
                     callsite_stream.write(
                         "for (int __dace_copy{} = 0; __dace_copy{} < {}; "
                         "++__dace_copy{}) {{".format(i, i,
                                                      cpp.sym2cpp(copy_dim), i),
                         sdfg, state_id, dst_node)
+
+                    if ignore_dependencies:
+                        self.generate_no_dependence_post(callsite_stream, sdfg, state_id,
+                                                         dst_node)
+                        
                     if register_to_register:
                         # Language-specific
                         self.generate_unroll_loop_post(callsite_stream, None,
