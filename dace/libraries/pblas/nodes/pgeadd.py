@@ -61,9 +61,12 @@ class ExpandBlockCyclicScatterMKL(ExpandTransformation):
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)
+        # NOTE: The commented out part does not work properly when expanding
+        # from regular BLAS GEMV (somehow `_block_sizes` stays a scalar for the
+        # vector input).
         conn = tasklet.in_connectors
-        conn = {c: (dtypes.pointer(t)
-                    if c == '_block_sizes' and not isinstance(t, dtypes.pointer)
+        conn = {c: (dtypes.pointer(dace.int32)
+                    if c == '_block_sizes' # and not isinstance(t, dtypes.pointer)
                     else t) for c, t in conn.items()}
         tasklet.in_connectors = conn
         return tasklet

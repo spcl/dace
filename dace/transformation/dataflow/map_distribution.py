@@ -12,6 +12,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedMultiDiConnectorGraph
 from dace.transformation import transformation as pm
+from functools import reduce
 
 
 @registry.autoregister_params(singlestate=True)
@@ -35,6 +36,9 @@ class ElementWiseArrayOperation(pm.Transformation):
         map_entry = graph.node(candidate[ElementWiseArrayOperation._map_entry])
         map_exit = graph.exit_node(map_entry)
         params = [dace.symbol(p) for p in map_entry.map.params]
+
+        if "commsize" in map_entry.map.range.free_symbols:
+            return False
 
         inputs = dict()
         for _, _, _, _, m in graph.out_edges(map_entry):
@@ -98,15 +102,28 @@ class ElementWiseArrayOperation(pm.Transformation):
         map_entry = graph.node(candidate[ElementWiseArrayOperation._map_entry])
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 
+
     def apply(self, sdfg: dace.SDFG):
         graph = sdfg.nodes()[self.state_id]
         map_entry = graph.nodes()[self.subgraph[self._map_entry]]
         map_exit = graph.exit_node(map_entry)
 
-        if len(map_entry.map.params) > 1:
-            raise NotImplementedError
-
         sz = dace.symbol('commsize', dtype=dace.int32)
+
+        def _prod(sequence):
+            return reduce(lambda a, b: a * b, sequence, 1)
+
+        # NOTE: Maps with step in their ranges are currently not supported
+        if len(map_entry.map.params) == 1:
+            params = map_entry.map.params
+            ranges = [(0, (e-b+1)/sz - 1, 1) for b, e, _ in map_entry.map.range]
+            strides = [1]
+        else:
+            params = ['__iflat']
+            sizes = map_entry.map.range.size_exact()
+            total_size = _prod(sizes)
+            ranges = [(0, (total_size)/sz - 1, 1)]
+            strides = [_prod(sizes[i + 1:]) for i in range(len(sizes))]
 
         root_name = sdfg.temp_data_name()
         sdfg.add_scalar(root_name, dace.int32, transient=True)
@@ -116,28 +133,47 @@ class ElementWiseArrayOperation(pm.Transformation):
         graph.add_edge(root_tasklet, '__out', root_node, None,
                        dace.Memlet.simple(root_name, '0'))
 
-        from dace.libraries.mpi import Scatter, Gather
+        from dace.libraries.mpi import Bcast, Scatter, Gather
 
         inputs = set()
         for src, _, _, _, m in graph.in_edges(map_entry):
             if not isinstance(src, nodes.AccessNode):
                 raise NotImplementedError
             desc = src.desc(sdfg)
-            if not isinstance(desc, data.Array):
+            if not isinstance(desc, (data.Scalar, data.Array)):
                 raise NotImplementedError
             if list(desc.shape) != m.src_subset.size_exact():
-                raise NotImplementedError
+                # Second attempt
+                # TODO: We need a solution for symbols not matching
+                if str(list(desc.shape)) != str(m.src_subset.size_exact()):
+                    raise NotImplementedError
             inputs.add(src)
 
         for inp in inputs:
             desc = inp.desc(sdfg)
+
             if isinstance(desc, data.Scalar):
-                raise NotImplementedError
+                local_access = graph.add_access(inp.data)
+                bcast_node = Bcast('_Bcast_')
+                graph.add_edge(inp, None, bcast_node, '_inbuffer',
+                               dace.Memlet.from_array(inp.data, desc))
+                graph.add_edge(root_node, None, bcast_node, '_root',
+                               dace.Memlet.simple(root_name, '0'))
+                graph.add_edge(bcast_node, '_outbuffer', local_access, None,
+                               dace.Memlet.from_array(inp.data, desc))
+                for e in graph.edges_between(inp, map_entry):
+                    graph.add_edge(local_access, None, map_entry, e.dst_conn,
+                                   dace.Memlet.from_array(inp.data, desc))
+                    graph.remove_edge(e)
+                continue
+
             if isinstance(desc, data.Array):
-                if len(desc.shape) > 1:
-                    raise NotImplementedError
+                # if len(desc.shape) > 1:
+                #     raise NotImplementedError
+
                 local_name, local_arr = sdfg.add_temp_transient(
-                    [desc.shape[0] // sz], dtype=desc.dtype, storage=desc.storage)
+                    [(desc.total_size) // sz], dtype=desc.dtype,
+                    storage=desc.storage)
                 local_access = graph.add_access(local_name)
                 scatter_node = Scatter('_Scatter_')
                 graph.add_edge(inp, None, scatter_node, '_inbuffer',
@@ -152,8 +188,9 @@ class ElementWiseArrayOperation(pm.Transformation):
                     graph.remove_edge(e)
                 for e in graph.out_edges(map_entry):
                     if e.data.data == inp.data:
-                        e.data.data = local_name
+                        e.data = dace.Memlet.simple(local_name, params[0])
                 continue
+
             raise NotImplementedError
 
         outputs = set()
@@ -163,8 +200,18 @@ class ElementWiseArrayOperation(pm.Transformation):
             desc = dst.desc(sdfg)
             if not isinstance(desc, data.Array):
                 raise NotImplementedError
-            if list(desc.shape) != m.dst_subset.size_exact():
-                raise NotImplementedError
+            try:
+                if list(desc.shape) != m.dst_subset.size_exact():
+                    # Second attempt
+                    # TODO: We need a solution for symbols not matching
+                    if str(list(desc.shape)) != str(m.dst_subset.size_exact()):
+                        raise NotImplementedError
+            except AttributeError:
+                if list(desc.shape) != m.subset.size_exact():
+                    # Second attempt
+                    # TODO: We need a solution for symbols not matching
+                    if str(list(desc.shape)) != str(m.subset.size_exact()):
+                        raise NotImplementedError
             outputs.add(dst)
 
         for out in outputs:
@@ -172,10 +219,11 @@ class ElementWiseArrayOperation(pm.Transformation):
             if isinstance(desc, data.Scalar):
                 raise NotImplementedError
             if isinstance(desc, data.Array):
-                if len(desc.shape) > 1:
-                    raise NotImplementedError
+                # if len(desc.shape) > 1:
+                #     raise NotImplementedError
                 local_name, local_arr = sdfg.add_temp_transient(
-                    [desc.shape[0] // sz], dtype=desc.dtype, storage=desc.storage)
+                    [(desc.total_size) // sz], dtype=desc.dtype,
+                    storage=desc.storage)
                 local_access = graph.add_access(local_name)
                 scatter_node = Gather('_Gather_')
                 graph.add_edge(local_access, None, scatter_node, '_inbuffer',
@@ -190,13 +238,12 @@ class ElementWiseArrayOperation(pm.Transformation):
                     graph.remove_edge(e)
                 for e in graph.in_edges(map_exit):
                     if e.data.data == out.data:
-                        e.data.data = local_name
+                        e.data = dace.Memlet.simple(local_name, params[0])
                 continue
             raise NotImplementedError
 
-        new_ranges = [(0, (e + 1) / sz - 1, 1)
-                      for _, e, _ in map_entry.map.range]
-        map_entry.range = subsets.Range(new_ranges)
+        map_entry.map.params = params
+        map_entry.map.range = subsets.Range(ranges)
 
 
 @registry.autoregister_params(singlestate=True)

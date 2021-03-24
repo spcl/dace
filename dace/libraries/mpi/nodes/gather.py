@@ -40,7 +40,7 @@ class ExpandGatherMPI(ExpandTransformation):
         if root.dtype.base_type != dace.dtypes.int32:
             raise ValueError("Gather root must be an integer!")
 
-        code = f"int _commsize;\nMPI_Comm_size(MPI_COMM_WORLD, &_commsize);\nMPI_Gather(_inbuffer, {in_count_str}, {in_mpi_dtype_str}, _outbuffer, {out_count_str}/_commsize, {out_mpi_dtype_str}, _root, MPI_COMM_WORLD);"
+        code = f"int _commsize;\nMPI_Comm_size(MPI_COMM_WORLD, &_commsize);\nMPI_Gather(_inbuffer, {in_count_str}, {in_mpi_dtype_str}, _outbuffer, ({out_count_str})/_commsize, {out_mpi_dtype_str}, _root, MPI_COMM_WORLD);"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -88,11 +88,11 @@ class Gather(dace.sdfg.nodes.LibraryNode):
         out_count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):  
             if src_conn == '_outbuffer':
-                dims = [str(e) for e in data.subset.size_exact()]
+                dims = [symstr(e) for e in data.subset.size_exact()]
                 out_count_str = "*".join(dims)        
         for _, _, _, dst_conn, data in state.in_edges(self): 
             if dst_conn == '_inbuffer':
-                dims = [str(e) for e in data.subset.size_exact()]
+                dims = [symstr(e) for e in data.subset.size_exact()]
                 in_count_str = "*".join(dims)
 
         return (inbuffer, in_count_str), (outbuffer, out_count_str), root

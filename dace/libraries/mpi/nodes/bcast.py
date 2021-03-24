@@ -51,8 +51,13 @@ class ExpandBcastMPI(ExpandTransformation):
             raise(NotImplementedError)
         if root.dtype.base_type != dace.dtypes.int32:
             raise ValueError("Bcast root must be an integer!")
+        
+        ref = ""
+        if isinstance(buffer, dace.data.Scalar):
+            ref = "&"
 
-        code = f"MPI_Bcast(_inbuffer, {count_str}, {mpi_dtype_str}, _root, MPI_COMM_WORLD);"
+        code = (f"MPI_Bcast({ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, MPI_COMM_WORLD);\n"
+                f"_outbuffer = _inbuffer;")
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -101,7 +106,7 @@ class Bcast(dace.sdfg.nodes.LibraryNode):
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):  
             if src_conn == '_outbuffer':
-                dims = [str(e) for e in data.subset.size_exact()]
+                dims = [symstr(e) for e in data.subset.size_exact()]
                 count_str = "*".join(dims)
 
         return (inbuffer, count_str), root

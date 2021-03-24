@@ -425,6 +425,51 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
         return tasklet
 
 
+@dace.library.expansion
+class ExpandGemmPBLAS(ExpandTransformation):
+
+    environments = []
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
+        (_, adesc, ashape,
+         astrides), (_, bdesc, bshape,
+                     bstrides), _ = _get_matmul_operands(node, state, sdfg)
+        dtype = adesc.dtype.base_type
+
+        if node.beta != 0:
+            raise NotImplementedError
+
+        M = ashape[0]
+        K = ashape[1]
+        N = bshape[1]
+        Px = dace.symbol('Px', dtype=dace.int32, integer=True, positive=True)
+        Py = dace.symbol('Py', dtype=dace.int32, integer=True, positive=True)
+        try:
+            sdfg.add_symbol('Px', dace.int32)
+            sdfg.add_symbol('Py', dace.int32)
+        except FileExistsError:
+            pass
+
+        @dace.program
+        def _gemm_pblas(_a: dtype[M, K], _b: dtype[K, N], _c: dtype[M, N]):
+            lA = np.zeros((M // Px, K // Py), dtype=_a.dtype)
+            lB = np.zeros((K // Px, N // Py), dtype=_b.dtype)
+            bsizesA = np.empty((2,), dtype=np.int32)
+            bsizesA[0] = M // Px
+            bsizesA[1] = K // Py
+            bsizesB = np.empty((2,), dtype=np.int32)
+            bsizesB[0] = K // Px
+            bsizesB[1] = N // Py
+            gdescA, ldescA = dace.comm.BCScatter(_a, lA, bsizesA)
+            gdescB, ldescB = dace.comm.BCScatter(_b, lB, bsizesB)
+            lC, gdescC, ldescC = distr.MatMult(lA, ldescA, lB, ldescB)
+            dace.comm.BCGather(lC, _c, ldescC, gdescC)
+
+        return _gemm_pblas.to_sdfg()
+
+
 @dace.library.node
 class Gemm(dace.sdfg.nodes.LibraryNode):
     """Executes alpha * (A @ B) + beta * C. C should be unidirectionally
@@ -436,7 +481,8 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         "pure": ExpandGemmPure,
         "MKL": ExpandGemmMKL,
         "OpenBLAS": ExpandGemmOpenBLAS,
-        "cuBLAS": ExpandGemmCuBLAS
+        "cuBLAS": ExpandGemmCuBLAS,
+        "PBLAS": ExpandGemmPBLAS
     }
     default_implementation = None
 
