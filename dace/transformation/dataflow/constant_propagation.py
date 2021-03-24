@@ -17,7 +17,7 @@ from dace import dtypes
 from dace import data as dace_data
 import itertools
 from dace.transformation.dataflow.clean_connectors import find_read_write_states
-from typing import Dict, Set
+from typing import Dict, Set, Tuple
 
 
 def detect_read_data_dependencies(sdfg: dace_sdfg.SDFG):
@@ -54,14 +54,10 @@ def detect_read_data_dependencies(sdfg: dace_sdfg.SDFG):
 
                 # special case: write propagates outside from nested sdfg
                 if (e.dst in sink_states) and (e.dst not in write_states) and (not sdfg.arrays[data_desc].transient):
-                    if data_desc == 'n1_n1__out':
-                        print('Here 1')
                     reads[data_desc][None].add(write_state)
 
             # special case: write propagates outside from nested sdfg
             if (write_state in sink_states) and (not sdfg.arrays[data_desc].transient):
-                if data_desc == 'n1_n1__out':
-                    print('Here 2')
                 reads[data_desc][None].add(write_state)
 
         # special case: source state uses value from input to sdfg
@@ -79,7 +75,21 @@ def detect_read_data_dependencies(sdfg: dace_sdfg.SDFG):
     return reads
 
 
-def detect_data_dependencies(sdfg: dace_sdfg.SDFG):
+def detect_data_dependencies(sdfg: dace_sdfg.SDFG) -> Tuple[
+    Dict[str, Dict[dace_state.SDFGState, Set[dace_state.SDFGState]]],
+    Dict[str, Dict[dace_state.SDFGState, Set[dace_state.SDFGState]]]]:
+    """
+    Returns two maps (read_deps, write_deps): one with read dependencies and the other with write dependencies.
+
+    read_deps: array name -> read_deps_map
+    read_deps_map: state where read happens -> states that may write this value
+    write_deps: array name -> write_deps_map
+    write_deps_map: state where write happens -> states that may read this value
+
+    read_deps_map, write_deps_map can contain None value instead of states both in keys and values.
+    They represent when read or write goes from/to of current sdfg.
+    """
+
     read_deps = detect_read_data_dependencies(sdfg)
     write_deps: Dict[str, Dict[dace_state.SDFGState, Set[dace_state.SDFGState]]] = {}
 

@@ -164,6 +164,11 @@ def merge_symbols(sdfg: dace_sdfg.SDFG, name: str, dup_name: str):
 
 
 def find_read_write_states(sdfg: dace_sdfg.SDFG, array: str):
+    """
+    For given sdfg and name of array this function returns two sets of states:
+    set with reads from array and set with writes into array.
+    """
+
     read_states = set() # states that contain reads
     write_states = set() # states that contain writes
 
@@ -192,6 +197,10 @@ def find_read_write_states(sdfg: dace_sdfg.SDFG, array: str):
 
 
 def find_writes_without_reads(sdfg: dace_sdfg.SDFG, array: str):
+    """
+    Finds writes to array that will never be read.
+    They are useless writes and can be removed.
+    """
     read_states, write_states = find_read_write_states(sdfg, array)
 
     write_without_read = set()
@@ -252,7 +261,8 @@ def replace_accesses(state: dace_state.SDFGState, old_name: str, new_name: str):
 @registry.autoregister_params(singlestate=True)
 class CleanNestedSDFGConnectors(transformation.Transformation):
     """
-    Removes duplicate connectors.
+    Removes duplicate connectors that are connected to the same array range.
+    Works independenty for input connectors and output connectors
     """
 
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
@@ -361,6 +371,69 @@ class UnifyInOutNestedSDFGConnectors(transformation.Transformation):
             state.remove_edge(out_edge)
 
             merge_symbols(nested_sdfg.sdfg, in_conn, out_conn)
+
+
+@registry.autoregister_params(singlestate=True)
+class RemoveReadSDFGConnectors(transformation.Transformation):
+    """
+    Detect SDFG connectors that exist both in input and output connectors, but doesn't use input value.
+    In such case remove input connector and leave only output connector.
+    """
+    access_node = transformation.PatternNode(nodes.AccessNode)
+    nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
+
+    @staticmethod
+    def expressions():
+        return [
+            sdutil.node_path_graph(
+                RemoveReadSDFGConnectors.access_node,
+                RemoveReadSDFGConnectors.nested_sdfg,
+            )
+        ]
+
+    @staticmethod
+    def can_be_applied(state: dace_state.SDFGState, candidate, expr_index, sdfg: dace_sdfg.SDFG, strict=False):
+        access_node: nodes.AccessNode = state.nodes()[candidate[RemoveReadSDFGConnectors.access_node]]
+        nested_sdfg: nodes.NestedSDFG = state.nodes()[candidate[RemoveReadSDFGConnectors.nested_sdfg]]
+
+        from dace.transformation.dataflow.constant_propagation import detect_data_dependencies # avoid import loop
+        read_deps, write_deps = detect_data_dependencies(nested_sdfg.sdfg)
+
+        in_out_connectors = set(nested_sdfg.in_connectors).intersection(set(nested_sdfg.out_connectors))
+
+        edge = state.edges_between(access_node, nested_sdfg)[0]
+
+        target_conn = edge.dst_conn
+
+        if target_conn not in in_out_connectors:
+            return False
+
+        print(target_conn)
+        print(read_deps[target_conn])
+        print(write_deps[target_conn])
+
+        if None in write_deps[target_conn]:
+
+            # value written in outer scope has some reads in this SDFG, so transformation can't be applied here
+            return False
+
+        return True
+
+    def apply(self, sdfg: dace_sdfg.SDFG):
+
+        state: dace_state.SDFGState = sdfg.nodes()[self.state_id]
+        candidate = self.subgraph
+        access_node: nodes.AccessNode = state.nodes()[candidate[RemoveReadSDFGConnectors.access_node]]
+        nested_sdfg: nodes.NestedSDFG = state.nodes()[candidate[RemoveReadSDFGConnectors.nested_sdfg]]
+
+        edge = state.edges_between(access_node, nested_sdfg)[0]
+
+        nested_sdfg.remove_in_connector(edge.dst_conn)
+        state.remove_edge(edge)
+
+        # if access node became isolated, then remove it
+        if not access_node.has_reads(state) and not access_node.has_writes(state):
+            state.remove_node(access_node)
 
 
 @registry.autoregister_params(singlestate=True)
