@@ -254,7 +254,7 @@ def replace_accesses(state: dace_state.SDFGState, old_name: str, new_name: str):
             state.add_edge(e.src, e.src_conn, new_node, None, new_memlet)
         for e in state.out_edges(node):
             new_memlet = Memlet() if e.data.is_empty() else Memlet(data=new_name, subset=e.data.subset)
-            state.add_edge(new_node, None, e.dst, e.dst_conn, Memlet(data=new_name, subset=e.data.subset))
+            state.add_edge(new_node, None, e.dst, e.dst_conn, new_memlet)
         state.remove_node(node)
 
 
@@ -407,10 +407,6 @@ class RemoveReadSDFGConnectors(transformation.Transformation):
 
         if target_conn not in in_out_connectors:
             return False
-
-        print(target_conn)
-        print(read_deps[target_conn])
-        print(write_deps[target_conn])
 
         if None in write_deps[target_conn]:
 
