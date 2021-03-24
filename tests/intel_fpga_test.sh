@@ -82,6 +82,7 @@ run_all() {
     #### WCR ####
     # simple WCR (accumulates on scalar)
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\n"
+    run_sample fpga/conflict_resolution fpga_conflict_resolution "\n"
 
     #### REDUCE ####
     # Simple reduce

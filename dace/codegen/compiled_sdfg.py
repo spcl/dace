@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional, Type
 import warnings
 
 import numpy as np
@@ -159,6 +159,55 @@ class CompiledSDFG(object):
         self._init.restype = ctypes.c_void_p
         self._exit = lib.get_symbol('__dace_exit_{}'.format(sdfg.name))
         self._cfunc = lib.get_symbol('__program_{}'.format(sdfg.name))
+
+    def get_state_struct(self) -> ctypes.Structure:
+        """ Attempt to parse the SDFG source code and extract the state struct. This method will parse the first
+            consecutive entries in the struct that are pointers. As soon as a non-pointer or other unparseable field is
+            encountered, the method exits early. All fields defined until then will nevertheless be available in the
+            structure.
+            :returns: the ctypes.Structure representation of the state struct.
+        """
+
+        return ctypes.cast(self._libhandle,
+                           ctypes.POINTER(
+                               self._try_parse_state_struct())).contents
+
+    def _try_parse_state_struct(self) -> Optional[Type[ctypes.Structure]]:
+        # the path of the main sdfg file containing the state struct
+        main_src_path = os.path.join(
+            os.path.dirname(os.path.dirname(self._lib._library_filename)),
+            "src", "cpu", self._sdfg.name + ".cpp")
+        code = open(main_src_path, 'r').read()
+
+        code_flat = code.replace("\n", " ")
+
+        # try to find the first struct definition that matches the name we are looking for in the sdfg file
+        match = re.search(f"struct {self._sdfg.name}_t {{(.*?)}};", code_flat)
+        if match is None or len(match.groups()) != 1:
+            return None
+
+        # get the definitions from the struct
+        struct_defn = match[1]
+
+        fields = []
+        for field_str in struct_defn.split(";"):
+            field_str = field_str.strip()
+
+            match_name = re.match(
+                '(?:const)?\s*(.*)(?:\s+\*\s*|\s*\*\s+)([a-zA-Z_][a-zA-Z_0-9]*)$',
+                field_str)
+            if match_name is None:
+                # reached a non-ptr field or something unparsable, we have to abort here
+                break
+
+            # we have a ptr field
+            name = match_name[2]
+            fields.append((name, ctypes.c_void_p))
+
+        class State(ctypes.Structure):
+            _fields_ = fields
+
+        return State
 
     @property
     def filename(self):

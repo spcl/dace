@@ -403,13 +403,16 @@ class InlineSDFG(transformation.Transformation):
         #######################################################
         # Reconnect inlined SDFG
 
+        source_to_outer = {n: e.src for n, e in new_incoming_edges.items()}
+        sink_to_outer = {n: e.dst for n, e in new_outgoing_edges.items()}
         # If a source/sink node is one of the inputs/outputs, reconnect it,
         # replacing memlets in outgoing/incoming paths
         modified_edges = set()
         modified_edges |= self._modify_memlet_path(new_incoming_edges, nstate,
-                                                   state, True)
+                                                   state, sink_to_outer, True)
         modified_edges |= self._modify_memlet_path(new_outgoing_edges, nstate,
-                                                   state, False)
+                                                   state, source_to_outer,
+                                                   False)
 
         # Reshape: add connections to viewed data
         self._modify_reshape_data(reshapes, repldict, inputs, nstate, state,
@@ -499,6 +502,8 @@ class InlineSDFG(transformation.Transformation):
     def _modify_memlet_path(self, new_edges: Dict[nodes.Node,
                                                   MultiConnectorEdge],
                             nstate: SDFGState, state: SDFGState,
+                            inner_to_outer: Dict[nodes.Node,
+                                                 MultiConnectorEdge],
                             inputs: bool) -> Set[MultiConnectorEdge]:
         """ Modifies memlet paths in an inlined SDFG. Returns set of modified
             edges.
@@ -511,11 +516,20 @@ class InlineSDFG(transformation.Transformation):
                 new_memlet = helpers.unsqueeze_memlet(inner_edge.data,
                                                       top_edge.data)
                 if inputs:
+                    if inner_edge.dst in inner_to_outer:
+                        dst = inner_to_outer[inner_edge.dst]
+                    else:
+                        dst = inner_edge.dst
+
                     new_edge = state.add_edge(top_edge.src, top_edge.src_conn,
-                                              inner_edge.dst,
-                                              inner_edge.dst_conn, new_memlet)
+                                              dst, inner_edge.dst_conn,
+                                              new_memlet)
                     mtree = state.memlet_tree(new_edge)
                 else:
+                    if inner_edge.src in inner_to_outer:
+                        # don't add edges twice
+                        continue
+
                     new_edge = state.add_edge(inner_edge.src,
                                               inner_edge.src_conn, top_edge.dst,
                                               top_edge.dst_conn, new_memlet)
@@ -554,8 +568,8 @@ class InlineSDFG(transformation.Transformation):
 @registry.autoregister_params(singlestate=True)
 @make_properties
 class InlineTransients(transformation.Transformation):
-    """ 
-    Inlines all transient arrays that are not used anywhere else into a 
+    """
+    Inlines all transient arrays that are not used anywhere else into a
     nested SDFG.
     """
 
@@ -686,7 +700,7 @@ class InlineTransients(transformation.Transformation):
 
 
 class ASTRefiner(ast.NodeTransformer):
-    """ 
+    """
     Python AST transformer used in ``RefineNestedAccess`` to reduce (refine) the
     subscript ranges based on the specification given in the transformation.
     """
@@ -716,9 +730,9 @@ class ASTRefiner(ast.NodeTransformer):
 @registry.autoregister_params(singlestate=True)
 @make_properties
 class RefineNestedAccess(transformation.Transformation):
-    """ 
+    """
     Reduces memlet shape when a memlet is connected to a nested SDFG, but not
-    using all of the contents. Makes the outer memlet smaller in shape and 
+    using all of the contents. Makes the outer memlet smaller in shape and
     ensures that the offsets in the nested SDFG start with zero.
     This helps with subsequent transformations on the outer SDFGs.
 
@@ -727,12 +741,12 @@ class RefineNestedAccess(transformation.Transformation):
         @dace.program
         def func_a(y):
             return y[1:5] + 1
-        
+
         @dace.program
         def main(x: dace.float32[N]):
             return func_a(x)
 
-    The memlet pointing to ``func_a`` will contain all of ``x`` (``x[0:N]``), 
+    The memlet pointing to ``func_a`` will contain all of ``x`` (``x[0:N]``),
     and it is offset to ``y[1:5]`` in the function, with ``y``'s size being
     ``N``. After the transformation, the memlet connected to the nested SDFG of
     ``func_a`` would contain ``x[1:5]`` directly and the internal ``y`` array
