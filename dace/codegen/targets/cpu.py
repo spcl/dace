@@ -184,20 +184,15 @@ class CPUCodeGen(TargetCodeGenerator):
         # Check directionality of view (referencing dst or src)
         edge = sdutils.get_view_edge(dfg, node)
 
-        # Allocate the viewed data before the view, if necessary
-        mpath = dfg.memlet_path(edge)
-        viewed_dnode = mpath[0].src if edge.dst is node else mpath[-1].dst
-        self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, viewed_dnode,
-                                           global_stream, allocation_stream)
-
         # When emitting ArrayInterface, we need to know if this is a read or
         # write variation
-        if viewed_dnode in dfg.source_nodes():
-            is_write = False
-        elif viewed_dnode in dfg.sink_nodes():
-            is_write = True
-        else:
-            is_write = None
+        is_write = edge.src is node
+
+        # Allocate the viewed data before the view, if necessary
+        mpath = dfg.memlet_path(edge)
+        viewed_dnode = mpath[-1].dst if is_write else mpath[0].src
+        self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, viewed_dnode,
+                                           global_stream, allocation_stream)
 
         # Emit memlet as a reference and register defined variable
         atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
