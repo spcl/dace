@@ -32,6 +32,7 @@ def copy_expr(
     sdfg,
     dataname,
     memlet,
+    is_write=None,  # Otherwise it's a read
     offset=None,
     relative_offset=True,
     packed_types=False,
@@ -61,6 +62,12 @@ def copy_expr(
     add_offset = offset_cppstr != "0"
 
     if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
+        if def_type == DefinedType.ArrayInterface:
+            # If this is a view, it has already been renamed
+            if not isinstance(datadesc, data.View):
+                if is_write is None:
+                    raise ValueError("is_write must be set for ArrayInterface.")
+                expr = f"__{expr}_out" if is_write else f"__{expr}_in"
         return "{}{}{}".format(
             dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
 
@@ -102,13 +109,15 @@ def memlet_copy_to_absolute_strides(dispatcher,
                              sdfg,
                              src_node.data,
                              memlet,
+                             is_write=False,
                              packed_types=packed_types)
         dst_expr = copy_expr(dispatcher,
                              sdfg,
                              dst_node.data,
                              memlet,
-                             None,
-                             False,
+                             is_write=True,
+                             offset=None,
+                             relative_offset=False,
                              packed_types=packed_types)
         if memlet.other_subset is not None:
             dst_expr = copy_expr(
@@ -116,8 +125,9 @@ def memlet_copy_to_absolute_strides(dispatcher,
                 sdfg,
                 dst_node.data,
                 memlet,
-                memlet.other_subset,
-                False,
+                is_write=True,
+                offset=memlet.other_subset,
+                relative_offset=False,
                 packed_types=packed_types,
             )
             dst_subset = memlet.other_subset
@@ -130,13 +140,15 @@ def memlet_copy_to_absolute_strides(dispatcher,
                              sdfg,
                              src_node.data,
                              memlet,
-                             None,
-                             False,
+                             is_write=False,
+                             offset=None,
+                             relative_offset=False,
                              packed_types=packed_types)
         dst_expr = copy_expr(dispatcher,
                              sdfg,
                              dst_node.data,
                              memlet,
+                             is_write=True,
                              packed_types=packed_types)
         if memlet.other_subset is not None:
             src_expr = copy_expr(
@@ -144,8 +156,9 @@ def memlet_copy_to_absolute_strides(dispatcher,
                 sdfg,
                 src_node.data,
                 memlet,
-                memlet.other_subset,
-                False,
+                is_write=False,
+                offset=memlet.other_subset,
+                relative_offset=False,
                 packed_types=packed_types,
             )
             src_subset = memlet.other_subset
@@ -226,7 +239,8 @@ def emit_memlet_reference(dispatcher,
                           memlet: mmlt.Memlet,
                           pointer_name: str,
                           conntype: dtypes.typeclass,
-                          ancestor: int = 1) -> Tuple[str, str, str]:
+                          ancestor: int = 1,
+                          is_write=None) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -240,6 +254,7 @@ def emit_memlet_reference(dispatcher,
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ref = ''
 
+
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
     defined_type, defined_ctype = dispatcher.defined_vars.get(
@@ -251,6 +266,18 @@ def emit_memlet_reference(dispatcher,
         if is_scalar:
             defined_type = DefinedType.Scalar
             ref = '&'
+    elif defined_type == DefinedType.ArrayInterface:
+        if is_write is None:
+            raise ValueError("is_write must be defined for ArrayInterface.")
+        else:
+            base_ctype = conntype.base_type.ctype
+            if is_write:
+                typedef = f"{base_ctype}*"
+                datadef = f"__{datadef}_out"
+            else:
+                typedef = f"const {base_ctype}*"
+                datadef = f"__{datadef}_in"
+        is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
         ref = '&' if is_scalar else ''
@@ -263,12 +290,6 @@ def emit_memlet_reference(dispatcher,
         if not is_scalar:
             conntype = conntype.base_type
             is_scalar = True
-    elif defined_type == DefinedType.ArrayInterface:
-        ref = ''
-        typedef = defined_ctype
-        is_scalar = True  # Avoid "&" in expression below
-        offset_expr = ' + ' + offset_expr[1:-1]  # Trim brackets
-        conntype = conntype.base_type  # Avoid vector-esque casts
     elif defined_type == DefinedType.StreamArray:
         # Stream array to stream (reference)
         if memlet.subset.num_elements() == 1:
@@ -504,7 +525,7 @@ def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar,
             dst_expr = '*(%s *)(&%s)' % (src_dtype.ctype, dst_expr)
         elif src_dtype.base_type != dst_dtype:
             dst_expr = '(%s)(&%s)' % (src_dtype.ctype, dst_expr)
-        elif defined_type == DefinedType.Pointer:
+        elif defined_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
             dst_expr = '&' + dst_expr
     elif not is_scalar:
         dst_expr = '&' + dst_expr
@@ -517,7 +538,8 @@ def cpp_ptr_expr(sdfg,
                  offset=None,
                  relative_offset=True,
                  use_other_subset=False,
-                 indices=None):
+                 indices=None,
+                 is_write=None):
     """ Converts a memlet to a C++ pointer expression. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
@@ -528,6 +550,11 @@ def cpp_ptr_expr(sdfg,
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     dname = ptr(memlet.data, desc)
+
+    if defined_type == DefinedType.ArrayInterface:
+        if is_write is None:
+            raise ValueError("is_write must be set for ArrayInterface.")
+        dname = f"__{dname}_out" if is_write else f"__{dname}_in"
 
     if defined_type == DefinedType.Scalar:
         dname = '&' + dname
@@ -1031,14 +1058,15 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 cppunparse.cppunparse(value,
                                                       expr_semicolon=False),
                             ))
-                        elif var_type != DefinedType.ArrayInterface:
+                        elif (var_type != DefinedType.ArrayInterface
+                              or isinstance(desc, data.View)):
                             newnode = ast.Name(id="%s = %s;" % (
                                 cpp_array_expr(self.sdfg, memlet),
                                 cppunparse.cppunparse(value,
                                                       expr_semicolon=False),
                             ))
                         else:
-                            newnode = ast.Name(id="%s_out[%s] = %s;" % (
+                            newnode = ast.Name(id="__%s_out[%s] = %s;" % (
                                 memlet.data,
                                 cpp_array_expr(
                                     self.sdfg, memlet, with_brackets=False),
