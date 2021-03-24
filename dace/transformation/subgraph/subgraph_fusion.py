@@ -224,14 +224,17 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         view_nodes = set()
         for node in chain(in_nodes, out_nodes, intermediate_nodes):
+            is_view = isinstance(sdfg.data(node.data), dace.data.View)
             for edge in chain(graph.in_edges(node), graph.out_edges(node)):
                 for e in graph.memlet_tree(edge):
-                    if isinstance(e.dst, nodes.AccessNode) and isinstance(sdfg.data(e.dst.data), dace.data.View):
+                    if isinstance(e.dst, nodes.AccessNode) and (is_view or isinstance(sdfg.data(e.dst.data), dace.data.View)):
                         view_nodes.add(e.dst)
-                    if isinstance(e.src, nodes.AccessNode) and isinstance(sdfg.data(e.src.data), dace.data.View):
+                    if isinstance(e.src, nodes.AccessNode) and (is_view or isinstance(sdfg.data(e.src.data), dace.data.View)):
                         view_nodes.add(e.src)
+                
                     
         view_data = set([n.data for n in view_nodes])
+        print("VIEW DATA=", view_data)
 
         for out_node in out_nodes:
             for in_edge in graph.in_edges(out_node):
