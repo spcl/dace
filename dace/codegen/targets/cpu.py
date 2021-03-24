@@ -1129,7 +1129,14 @@ class CPUCodeGen(TargetCodeGenerator):
         if var_type == DefinedType.ArrayInterface:
             # Views have already been renamed
             if not isinstance(desc, data.View):
-                ptr = f"__{ptr}_out" if output else f"__{ptr}_in"
+                ptr_in = f"__{ptr}_in"
+                # DaCe allows reading from an output connector, even though it
+                # is not an input connector. If this occurs, panic and read
+                # from the output interface instead
+                if output or not self._dispatcher.defined_vars.has(ptr_in):
+                    ptr = f"__{ptr}_out"
+                else:
+                    ptr = ptr_in
         if expr != _ptr:
             expr = '%s[%s]' % (ptr, expr)
         # If there is a type mismatch, cast pointer
