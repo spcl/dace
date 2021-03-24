@@ -251,7 +251,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         if isinstance(data, dace.data.Array):
             var_name = f"__{var_name}_out" if is_output else f"__{var_name}_in"
             if interface_id is not None:
-                var_name = var_name=f"{var_name}_{interface_id}"
+                var_name = var_name = f"{var_name}_{interface_id}"
             if with_vectorization:
                 dtype = data.dtype
             else:
@@ -316,10 +316,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         redtype = operations.detect_reduction_type(memlet.wcr)
         defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet,
-                                                defined_type), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(
+                sdfg, memlet, defined_type, is_write=True), indices)
         else:
-            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices)
+            ptr = cpp.cpp_ptr_expr(sdfg,
+                                   memlet,
+                                   defined_type,
+                                   indices=indices,
+                                   is_write=True)
 
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type

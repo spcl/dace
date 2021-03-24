@@ -538,7 +538,8 @@ def cpp_ptr_expr(sdfg,
                  offset=None,
                  relative_offset=True,
                  use_other_subset=False,
-                 indices=None):
+                 indices=None,
+                 is_write=None):
     """ Converts a memlet to a C++ pointer expression. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
@@ -549,6 +550,11 @@ def cpp_ptr_expr(sdfg,
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     dname = ptr(memlet.data, desc)
+
+    if defined_type == DefinedType.ArrayInterface:
+        if is_write is None:
+            raise ValueError("is_write must be set for ArrayInterface.")
+        dname = f"__{dname}_out" if is_write else f"__{dname}_in"
 
     if defined_type == DefinedType.Scalar:
         dname = '&' + dname
