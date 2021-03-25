@@ -350,6 +350,14 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
     return newstate
 
 
+def _get_internal_subset(internal_memlet: Memlet,
+                         external_memlet: Memlet) -> subsets.Subset:
+    if (internal_memlet.data != external_memlet.data
+            and internal_memlet.other_subset is not None):
+        return internal_memlet.other_subset
+    return internal_memlet.subset
+
+
 def unsqueeze_memlet(internal_memlet: Memlet,
                      external_memlet: Memlet,
                      preserve_minima: bool = False) -> Memlet:
@@ -361,25 +369,28 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         :param preserve_minima: Do not change the subset's minimum elements.
         :return: Offset Memlet to set on the resulting graph.
     """
+    internal_subset = _get_internal_subset(internal_memlet, external_memlet)
     result = copy.deepcopy(internal_memlet)
     result.data = external_memlet.data
+    result.other_subset = None
+    result.subset = copy.deepcopy(internal_subset)
 
     shape = external_memlet.subset.size()
-    if len(internal_memlet.subset) < len(external_memlet.subset):
+    if len(internal_subset) < len(external_memlet.subset):
         ones = [i for i, d in enumerate(shape) if d == 1]
 
         # Special case: If internal memlet is one element and the top
         # memlet uses all its dimensions, ignore the internal element
         # TODO: There must be a better solution
-        if (len(internal_memlet.subset) == 1 and ones == list(range(len(shape)))
-                and (internal_memlet.subset[0] == (0, 0, 1)
-                     or internal_memlet.subset[0] == 0)):
+        if (len(internal_subset) == 1 and ones == list(range(len(shape)))
+                and (internal_subset[0] == (0, 0, 1)
+                     or internal_subset[0] == 0)):
             to_unsqueeze = ones[1:]
         else:
             to_unsqueeze = ones
 
         result.subset.unsqueeze(to_unsqueeze)
-    elif len(internal_memlet.subset) > len(external_memlet.subset):
+    elif len(internal_subset) > len(external_memlet.subset):
         # Try to squeeze internal memlet
         result.subset.squeeze()
         if len(result.subset) != len(external_memlet.subset):

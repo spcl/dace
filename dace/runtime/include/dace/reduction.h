@@ -198,6 +198,20 @@ namespace dace {
     };
 #endif
 
+#if defined(DACE_USE_GPU_ATOMICS)
+    template <>
+    struct _wcr_fixed<ReductionType::Sum, long long> {
+       
+        static DACE_HDFI long long reduce_atomic(long long *ptr, const long long& value) {
+            return _wcr_fixed<ReductionType::Sum, unsigned long long>::reduce_atomic((
+                unsigned long long *)ptr, 
+                static_cast<unsigned long long>(value));
+        }
+
+        DACE_HDFI long long operator()(const long long &a, const long long &b) const { return a + b; }
+    };
+#endif
+
     template <typename T>
     struct _wcr_fixed<ReductionType::Product, T> {
 
