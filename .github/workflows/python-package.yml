@@ -102,7 +102,7 @@ jobs:
         . /opt/setupenv
         pytest --cov-report=xml --cov=dace --tb=short -m "papi"
         codecov
-    
+
     - name: Run extra GPU tests
       run: |
         export NOSTATUSBAR=1
@@ -129,7 +129,7 @@ jobs:
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
         ./tests/xilinx_test.sh 0
-    
+
     - name: Run Intel FPGA tests
       run: |
         export NOSTATUSBAR=1
@@ -139,7 +139,7 @@ jobs:
         . /opt/setupenv
         export DACE_compiler_default_data_types=C
         ./tests/intel_fpga_test.sh
-        
+
     - name: Report overall coverage
       run: |
         export COVERAGE_RCFILE=`pwd`/.coveragerc
