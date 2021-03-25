@@ -5,7 +5,7 @@
 import math
 
 import dace
-from dace import registry, symbolic
+from dace import dtypes, registry, symbolic
 from dace.properties import make_properties, Property, ShapeProperty
 from dace.sdfg import nodes
 from dace.transformation import transformation
@@ -538,7 +538,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 stripmine = StripMining(sdfg_id, self.state_id,
                                         stripmine_subgraph, 0)
 
-                stripmine.tiling_type = 'ceilrange'
+                stripmine.tiling_type = dtypes.TilingType.CeilRange
                 stripmine.dim_idx = dim_idx
                 stripmine.new_dim_prefix = self.prefix if not trivial else ''
                 # use tile_stride for both -- we will extend
