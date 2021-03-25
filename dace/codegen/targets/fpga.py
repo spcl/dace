@@ -1446,10 +1446,11 @@ class FPGACodeGen(TargetCodeGenerator):
         scalars += ((False, k, v) for k, v in symbol_parameters.items())
         scalars = list(sorted(scalars, key=lambda t: t[1]))
         for is_output, argname, arg in itertools.chain(arrays, scalars):
+            # This "should" be useless
             # Only pass each array once from the host code
-            if arg in seen:
-                continue
-            seen.add(arg)
+            # if arg in seen:
+            #     continue
+            # seen.add(arg)
             # Streams and Views are not passed as arguments
             if not isinstance(arg, dace.data.Stream) and not isinstance(
                     arg, dace.data.View):
