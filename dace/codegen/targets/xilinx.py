@@ -260,7 +260,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                              with_vectorization,
                              interface_id=None):
         if isinstance(data, dace.data.Array):
-            var_name = f"__{var_name}_out" if is_output else f"__{var_name}_in"
+            var_name = cpp.array_interface_variable(var_name, is_output, None)
             if interface_id is not None:
                 var_name = var_name = f"{var_name}_{interface_id}"
             if with_vectorization:
@@ -642,7 +642,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         for is_output, pname, p, interface_id in itertools.chain(
                 arrays, scalars):
             if isinstance(p, dace.data.Array):
-                arr_name = f"__{pname}_out" if is_output else f"__{pname}_in"
+                arr_name = cpp.array_interface_variable(pname, is_output, None)
                 # Add interface ID to called module, but not to the module
                 # arguments
                 argname = arr_name
@@ -860,7 +860,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         seen = set()
         for is_output, name, arg, if_id in itertools.chain(arrays, scalars):
             if isinstance(arg, dace.data.Array):
-                argname = f"__{name}_out" if is_output else f"__{name}__in"
+                argname = cpp.array_interface_variable(name, is_output, None)
                 if if_id is not None:
                     argname += "_%d" % if_id
 
@@ -913,7 +913,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                    and desc.storage
                                    == dtypes.StorageType.FPGA_Global)
             if is_memory_interface:
-                interface_name = f"__{vconn}_in"
+                interface_name = cpp.array_interface_variable(
+                    vconn, False, None)
                 self._dispatcher.defined_vars.add(
                     interface_name, DefinedType.Pointer,
                     node.in_connectors[vconn].ctype)
@@ -951,7 +952,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                    and desc.storage
                                    == dtypes.StorageType.FPGA_Global)
             if is_memory_interface:
-                interface_name = f"__{uconn}_out"
+                interface_name = cpp.array_interface_variable(
+                    uconn, False, None)
                 self._dispatcher.defined_vars.add(
                     interface_name, DefinedType.Pointer,
                     node.out_connectors[uconn].ctype)

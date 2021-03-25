@@ -275,7 +275,8 @@ def emit_memlet_reference(dispatcher,
         else:
             base_ctype = conntype.base_type.ctype
             typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
-            datadef = array_interface_variable(datadef, is_write, dispatcher)
+            datadef = array_interface_variable(datadef, is_write, dispatcher,
+                                               ancestor)
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
@@ -1253,7 +1254,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
 
 
 def array_interface_variable(var_name: str, is_write: bool,
-                             dispatcher: Optional["TargetDispatcher"]):
+                             dispatcher: Optional["TargetDispatcher"],
+                             ancestor: int = 0):
     """
     Generates the variable name of an ArrayInterface variable.
     """
@@ -1263,9 +1265,9 @@ def array_interface_variable(var_name: str, is_write: bool,
         # DaCe allows reading from an output connector, even though it
         # is not an input connector. If this occurs, panic and read
         # from the output interface instead
-        if is_write or not dispatcher.defined_vars.has(ptr_in):
+        if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
             # Throw a KeyError if this pointer also doesn't exist
-            dispatcher.defined_vars.get(ptr_out)
+            dispatcher.defined_vars.get(ptr_out, ancestor)
             # Otherwise use it
             return ptr_out
         else:

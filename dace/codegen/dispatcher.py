@@ -44,9 +44,9 @@ class DefinedMemlets:
                 "Exited scope {} mismatched current scope {}".format(
                     parent.name, expected.name))
 
-    def has(self, name):
+    def has(self, name, ancestor: int = 0):
         try:
-            self.get(name)
+            self.get(name, ancestor)
             return True
         except KeyError:
             return False
