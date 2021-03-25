@@ -734,10 +734,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                      and arg.storage == dace.dtypes.StorageType.FPGA_Global)):
                 continue
             ctype = dtypes.pointer(arg.dtype).ctype
-            if is_output:
-                ptr_name = f"__{argname}_out"
-            else:
-                ptr_name = f"__{argname}_in"
+            ptr_name = cpp.array_interface_variable(argname, is_output, None)
+            if not is_output:
                 ctype = f"const {ctype}"
             self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer,
                                               ctype)
@@ -917,7 +915,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
             if is_memory_interface:
                 interface_name = f"__{vconn}_in"
                 self._dispatcher.defined_vars.add(
-                    interface_name, DefinedType.ArrayInterface,
+                    interface_name, DefinedType.Pointer,
                     node.in_connectors[vconn].ctype)
                 interface_ref = cpp.emit_memlet_reference(
                     self._dispatcher,
@@ -955,7 +953,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
             if is_memory_interface:
                 interface_name = f"__{uconn}_out"
                 self._dispatcher.defined_vars.add(
-                    interface_name, DefinedType.ArrayInterface,
+                    interface_name, DefinedType.Pointer,
                     node.out_connectors[uconn].ctype)
                 memlet_references.append(
                     cpp.emit_memlet_reference(

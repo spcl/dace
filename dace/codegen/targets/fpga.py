@@ -858,7 +858,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     if ignore_dependencies:
                         self.generate_no_dependence_post(callsite_stream, sdfg, state_id,
                                                          dst_node)
-                        
+
                     if register_to_register:
                         # Language-specific
                         self.generate_unroll_loop_post(callsite_stream, None,
