@@ -9,7 +9,8 @@ import itertools
 import networkx as nx
 from typing import Callable, Dict, Iterable, List, Set, Optional, Tuple
 import warnings
-
+from functools import reduce
+import operator
 from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.sdfg import nodes, propagation
@@ -1080,7 +1081,8 @@ class NestSDFG(transformation.Transformation):
                                                 newsz = newsz_limit
                                 overapprox_shape.append(newsz)
                             nodedesc.shape = overapprox_shape
-                            nodedesc.total_size = math.prod(nodedesc.shape)
+                            nodedesc.total_size = reduce(operator.mul, nodedesc.shape, 1)
+                            # nodedesc.total_size = math.prod(nodedesc.shape)
 
                         arrname = node.data
                         if arrname not in transients and not scope_dict[node]:
