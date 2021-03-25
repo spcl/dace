@@ -640,10 +640,17 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             if (not (isinstance(arg, dace.data.Array)
                      and arg.storage == dace.dtypes.StorageType.FPGA_Global)):
                 continue
+            ctype = dtypes.pointer(arg.dtype).ctype
+            if is_output:
+                ptr_name = f"__{argname}_out"
+            else:
+                ptr_name = f"__{argname}_in"
+                ctype = f"const {ctype}"
+            self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer,
+                                              ctype)
             if argname in interfaces_added:
                 continue
             interfaces_added.add(argname)
-            ctype = dtypes.pointer(arg.dtype).ctype
             self._dispatcher.defined_vars.add(argname,
                                               DefinedType.ArrayInterface,
                                               ctype,
