@@ -131,6 +131,10 @@ run_all() {
 
     # Views
     run_multi_sample fpga/reshape_view_fpga 0 "view_fpga" "reshp_np_1" "reshapedst_1"
+
+    # RTL cores
+    DACE_compiler_xilinx_mode="hardware_emulation"
+    LIBRARY_PATH=$LIBRARY_PATH:/usr/lib/x86_64-linux-gnu run_sample rtl/hardware_test floating_point_vector_plus_scalar 0 1
 }
 
 # Check if xocc is vailable

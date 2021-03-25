@@ -411,6 +411,32 @@ class Tasklet(CodeNode):
             return self.label
 
 
+@make_properties
+class RTLTasklet(Tasklet):
+    """ A specialized tasklet, which is a functional computation procedure
+        that can only access external data specified using connectors.
+
+        This tasklet is specialized for tasklets implemented in System Verilog
+        in that it adds support for adding metadata about the IP cores in use.
+    """
+    # TODO to be replaced when enums have embedded properties
+    ip_cores = DictProperty(key_type=str,
+                            value_type=dict,
+                            desc="A set of IP cores used by the tasklet.")
+
+    @property
+    def __jsontype__(self):
+        return 'Tasklet'
+
+    def add_ip_core(self, module_name, name, vendor, version, params):
+        self.ip_cores[module_name] = {
+            'name': name,
+            'vendor': vendor,
+            'version': version,
+            'params': params
+        }
+
+
 # ------------------------------------------------------------------------------
 
 
