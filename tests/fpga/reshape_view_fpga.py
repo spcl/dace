@@ -134,7 +134,46 @@ def test_reshape_dst_explicit():
     assert np.allclose(A + 1, np.reshape(B, [2, 3, 4]))
 
 
+def test_view_slice():
+    """
+        In this test we use slice. In this case a view is used to access
+        the desired portion of the original array
+        (this is part of symm polybench kernel)
+    """
+    N = dace.symbol('N', dace.int32)
+    M = dace.symbol('M', dace.int32)
+
+    @dace.program
+    def view_slice(alpha: dace.float32, beta: dace.float32, C: dace.float32[M,N],
+                   A: dace.float32[M, M], B: dace.float32[M, N]):
+
+        C *= beta
+        for i in range(M):
+            for j in range(N):
+                C[:i, j] += alpha * B[i, j] * A[i, :i]
+
+    def kernel_numpy(M, N, alpha, beta, C, A, B):
+        C *= beta
+        for i in range(M):
+            for j in range(N):
+                C[:i, j] += alpha * B[i, j] * A[i, :i]
+
+    M, N = 16, 32
+    alpha = 2
+    beta = 3
+    A = np.random.rand(M, M).astype(np.float32)
+    B = np.random.rand(M, N).astype(np.float32)
+    C = np.random.rand(M, N).astype(np.float32)
+    np_C = np.copy(C)
+    kernel_numpy(M, N, alpha, beta, np_C, A, B)
+    sdfg = view_slice.to_sdfg()
+    sdfg.apply_transformations([FPGATransformSDFG])
+    sdfg(A=A, B=B, C=C, alpha=alpha, beta=beta, M=M, N=N)
+    assert np.allclose(C, np_C, atol=1e-06)
+
+
 if __name__ == "__main__":
     test_reshape_np()
     test_view_fpga_sdfg()
     test_reshape_dst_explicit()
+    test_view_slice()
