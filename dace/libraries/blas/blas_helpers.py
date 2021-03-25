@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
-from dace import dtypes
+from dace import dtypes, data
 from dace.data import Array
 from typing import Any, Dict, Tuple
 
@@ -164,3 +164,15 @@ def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
         raise Exception("sCM or sCN should be 1")
 
     return opts[optA + optB + optC]
+
+
+def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
+    """ If schedule cannot access all passed descriptors, through an error.
+
+        :param schedule: the schedule.
+        :param descs: the descriptors to check.
+    """
+    for desc in descs:
+        if not dtypes.can_access(schedule, desc.storage):
+            raise ValueError(
+                f"Schedule mismatch: {schedule} cannot access {desc.storage}")

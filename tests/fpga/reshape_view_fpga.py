@@ -81,7 +81,6 @@ def test_view_fpga_sdfg():
 
     A = np.random.rand(2, 3, 4).astype(np.float32)
     B = np.random.rand(8, 3).astype(np.float32)
-    sdfg.save('/tmp/out.sdfg')
     sdfg(A=A, B=B)
     assert np.allclose(A, np.reshape(B, [2, 3, 4]))
 
@@ -100,9 +99,6 @@ def test_reshape_np():
 
     sdfg = reshp_np.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG])
-    # sdfg.apply_transformations([GPUTransformSDFG], validate=False)
-    # sdfg.apply_transformations([NestSDFG])
-    sdfg.save('/tmp/out.sdfg')
     sdfg(A=A, B=B)
     assert np.allclose(np.reshape(A, [2, 6]), B)
 

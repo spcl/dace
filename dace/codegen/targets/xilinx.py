@@ -260,9 +260,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                              with_vectorization,
                              interface_id=None):
         if isinstance(data, dace.data.Array):
-            var_name += "_" + ("out" if is_output else "in")
+            var_name = f"__{var_name}_out" if is_output else f"__{var_name}_in"
             if interface_id is not None:
-                var_name += "_%d" % interface_id
+                var_name = var_name = f"{var_name}_{interface_id}"
             if with_vectorization:
                 dtype = data.dtype
             else:
@@ -332,10 +332,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         redtype = operations.detect_reduction_type(memlet.wcr)
         defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet,
-                                                defined_type), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(
+                sdfg, memlet, defined_type, is_write=True), indices)
         else:
-            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices)
+            ptr = cpp.cpp_ptr_expr(sdfg,
+                                   memlet,
+                                   defined_type,
+                                   indices=indices,
+                                   is_write=True)
 
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
@@ -638,12 +642,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         for is_output, pname, p, interface_id in itertools.chain(
                 arrays, scalars):
             if isinstance(p, dace.data.Array):
-                arr_name = "{}_{}".format(pname, "out" if is_output else "in")
+                arr_name = f"__{pname}_out" if is_output else f"__{pname}_in"
                 # Add interface ID to called module, but not to the module
                 # arguments
                 argname = arr_name
                 if interface_id is not None:
-                    argname = arr_name + "_%d" % interface_id
+                    argname = f"{arr_name}_{interface_id}"
 
                 kernel_args_call.append(argname)
                 dtype = p.dtype
@@ -721,45 +725,23 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                     ", ".join(kernel_args_module)), sdfg,
             state_id)
 
-        # Construct ArrayInterface wrappers to pack input and output pointers
-        # to the same global array
-        in_args = {
-            argname
-            for out, argname, arg, _ in parameters
-            if isinstance(arg, dace.data.Array)
-            and arg.storage == dace.dtypes.StorageType.FPGA_Global and not out
-        }
-        out_args = {
-            argname
-            for out, argname, arg, _ in parameters
-            if isinstance(arg, dace.data.Array)
-            and arg.storage == dace.dtypes.StorageType.FPGA_Global and out
-        }
 
-        if len(in_args) > 0 or len(out_args) > 0:
-            # Add ArrayInterface objects to wrap input and output pointers to
-            # the same array
-            module_body_stream.write("\n")
-            interfaces_added = set()
-            for _, argname, arg, _ in parameters:
-                if argname in interfaces_added:
-                    continue
-                interfaces_added.add(argname)
-                has_in_ptr = argname in in_args
-                has_out_ptr = argname in out_args
-                if not has_in_ptr and not has_out_ptr:
-                    continue
-                in_ptr = ("{}_in".format(argname) if has_in_ptr else "nullptr")
-                out_ptr = ("{}_out".format(argname)
-                           if has_out_ptr else "nullptr")
-                ctype = "dace::ArrayInterface<{}>".format(arg.dtype.ctype)
-                module_body_stream.write("{} {}({}, {});".format(
-                    ctype, argname, in_ptr, out_ptr))
-                self._dispatcher.defined_vars.add(argname,
-                                                  DefinedType.ArrayInterface,
-                                                  ctype,
-                                                  allow_shadowing=True)
-            module_body_stream.write("\n")
+        # Register the array interface as a naked pointer for use inside the
+        # FPGA kernel
+        interfaces_added = set()
+        for _, argname, arg, is_output in parameters:
+            if (not (isinstance(arg, dace.data.Array)
+                     and arg.storage == dace.dtypes.StorageType.FPGA_Global)):
+                continue
+            if argname in interfaces_added:
+                continue
+            interfaces_added.add(argname)
+            ctype = dtypes.pointer(arg.dtype).ctype
+            self._dispatcher.defined_vars.add(argname,
+                                              DefinedType.ArrayInterface,
+                                              ctype,
+                                              allow_shadowing=True)
+        module_body_stream.write("\n")
 
         # Allocate local transients
         data_to_allocate = (set(subgraph.top_level_transients()) -
@@ -873,7 +855,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         seen = set()
         for is_output, name, arg, if_id in itertools.chain(arrays, scalars):
             if isinstance(arg, dace.data.Array):
-                argname = name + ("_out" if is_output else "_in")
+                argname = f"__{name}_out" if is_output else f"__{name}__in"
                 if if_id is not None:
                     argname += "_%d" % if_id
 
@@ -909,6 +891,77 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                                global_stream,
                                                declaration_stream,
                                                allocation_stream)
+
+    def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
+        # Connectors that are both input and output share the same name, unless
+        # they are pointers to global memory in device code, in which case they
+        # are split into explicit input and output interfaces
+        inout = set(node.in_connectors.keys() & node.out_connectors.keys())
+
+        memlet_references = []
+        for _, _, _, vconn, in_memlet in sorted(state.in_edges(node),
+                                                key=lambda e: e.dst_conn or ""):
+            if in_memlet.data is None:
+                continue
+            desc = sdfg.arrays[in_memlet.data]
+            is_memory_interface = (isinstance(desc, dace.data.Array)
+                                   and desc.storage
+                                   == dtypes.StorageType.FPGA_Global)
+            if is_memory_interface:
+                interface_name = f"__{vconn}_in"
+                self._dispatcher.defined_vars.add(
+                    interface_name, DefinedType.ArrayInterface,
+                    node.in_connectors[vconn].ctype)
+                interface_ref = cpp.emit_memlet_reference(
+                    self._dispatcher,
+                    sdfg,
+                    in_memlet,
+                    interface_name,
+                    conntype=node.in_connectors[vconn],
+                    is_write=False)
+                memlet_references.append(interface_ref)
+            if vconn in inout:
+                continue
+            ref = cpp.emit_memlet_reference(self._dispatcher,
+                                            sdfg,
+                                            in_memlet,
+                                            vconn,
+                                            conntype=node.in_connectors[vconn],
+                                            is_write=False)
+            if not is_memory_interface:
+                memlet_references.append(ref)
+
+        for _, uconn, _, _, out_memlet in sorted(
+                state.out_edges(node), key=lambda e: e.src_conn or ""):
+            if out_memlet.data is None:
+                continue
+            ref = cpp.emit_memlet_reference(self._dispatcher,
+                                            sdfg,
+                                            out_memlet,
+                                            uconn,
+                                            conntype=node.out_connectors[uconn],
+                                            is_write=True)
+            desc = sdfg.arrays[out_memlet.data]
+            is_memory_interface = (isinstance(desc, dace.data.Array)
+                                   and desc.storage
+                                   == dtypes.StorageType.FPGA_Global)
+            if is_memory_interface:
+                interface_name = f"__{uconn}_out"
+                self._dispatcher.defined_vars.add(
+                    interface_name, DefinedType.ArrayInterface,
+                    node.out_connectors[uconn].ctype)
+                memlet_references.append(
+                    cpp.emit_memlet_reference(
+                        self._dispatcher,
+                        sdfg,
+                        out_memlet,
+                        interface_name,
+                        conntype=node.out_connectors[uconn],
+                        is_write=True))
+            else:
+                memlet_references.append(ref)
+
+        return memlet_references
 
     def unparse_tasklet(self, *args, **kwargs):
         # Pass this object for callbacks into the Xilinx codegen

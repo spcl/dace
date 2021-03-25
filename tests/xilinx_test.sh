@@ -111,6 +111,7 @@ run_all() {
     run_sample fpga/unique_nested_sdfg_fpga two_vecAdd 0
     run_sample fpga/nested_sdfg_as_kernel nested_sdfg_kernels 0
     run_sample fpga/streaming_memory streamingcomp_1 1
+    run_sample fpga/conflict_resolution fpga_conflict_resolution 0
 
     ## BLAS
     run_sample blas/nodes/axpy_test axpy_test_fpga_1_w4_1 1 --target fpga
@@ -118,6 +119,12 @@ run_all() {
     run_sample blas/nodes/gemv_test gemv_FPGA_TilesByColumn_float_True_w4_1 1 --target tiles_by_column --transpose --vectorize 4
     run_sample blas/nodes/gemv_test gemv_FPGA_Accumulate_float_False_w4_1 1 --target accumulate --vectorize 4
     run_sample blas/nodes/ger_test ger_test_1 1 --target fpga
+
+    # This test contains three SDFGs: full check only the first one for the sake of testing time
+    run_multi_sample fpga/gemm_fpga 1 "gemm_vectorized"
+
+    ## STD LibNodes
+    run_multi_sample fpga/reduce_fpga 1 "reduction_sum_one_axis" "reduction_sum_all_axis" "reduction_sum_4D" "reduction_max"
 
     # Multiple gearboxing
     run_sample fpga/multiple_veclen_conversions multiple_veclen_conversions 0

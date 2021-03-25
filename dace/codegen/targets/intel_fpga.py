@@ -34,7 +34,9 @@ REDUCTION_TYPE_TO_HLSLIB = {
     dace.dtypes.ReductionType.Min: "min",
     dace.dtypes.ReductionType.Max: "max",
     dace.dtypes.ReductionType.Sum: "+",
+    dace.dtypes.ReductionType.Sub: "-",
     dace.dtypes.ReductionType.Product: "*",
+    dace.dtypes.ReductionType.Div: "/",
     dace.dtypes.ReductionType.Logical_And: " && ",
     dace.dtypes.ReductionType.Bitwise_And: "&",
     dace.dtypes.ReductionType.Logical_Or: "||",
@@ -333,7 +335,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
         Creates write expression, taking into account wcr if present
         """
         if wcr is not None:
-            redtype = operations.detect_reduction_type(wcr)
+            redtype = operations.detect_reduction_type(wcr, openmp=True)
 
         if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             #mangle name
@@ -1400,8 +1402,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
     Removes Dace Keywords and enforces OpenCL compliance
     """
 
-    nptypes_to_ctypes = {'float64': 'double', 'float32': 'float'}
-    nptypes = ['float64', 'float32']
+    nptypes_to_ctypes = {'float64': 'double', 'float32': 'float', 'int32': 'int', 'int64': 'long'}
+    nptypes = ['float64', 'float32', 'int32', 'int64']
     ctypes = [
         'bool', 'char', 'cl_char', 'unsigned char', 'uchar', 'cl_uchar',
         'short', 'cl_short', 'unsigned short', 'ushort', 'int', 'unsigned int',

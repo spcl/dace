@@ -3,12 +3,13 @@ import inspect
 import sys
 import types
 from typing import Set, List
+import contextlib
 import networkx as nx
 
 import dace.properties
 from dace.sdfg.nodes import LibraryNode
 from dace.transformation.transformation import (Transformation,
-                                                  ExpandTransformation)
+                                                ExpandTransformation)
 
 
 def register_implementation(implementation_name, expansion_cls, node_cls):
@@ -36,8 +37,8 @@ def register_implementation(implementation_name, expansion_cls, node_cls):
     if implementation_name in node_cls.implementations:
         if node_cls.implementations[implementation_name] != expansion_cls:
             raise ValueError(
-                "Implementation {} registered with multiple expansions.".
-                format(implementation_name))
+                "Implementation {} registered with multiple expansions.".format(
+                    implementation_name))
     else:
         node_cls.implementations[implementation_name] = expansion_cls
     library = _DACE_REGISTERED_LIBRARIES[node_cls._dace_library_name]
@@ -130,9 +131,8 @@ def node(n):
         raise ValueError("Library node class \"" + n.__name__ +
                          "\" must define implementations.")
     if not hasattr(n, "default_implementation"):
-        raise ValueError(
-            "Library node class \"" + n.__name__ +
-            "\" must define default_implementation (can be None).")
+        raise ValueError("Library node class \"" + n.__name__ +
+                         "\" must define default_implementation (can be None).")
     # Remove and re-register each implementation
     implementations = n.implementations
     n.implementations = type(n.implementations)()
@@ -162,19 +162,10 @@ def expansion(exp):
 def environment(env):
     env = dace.properties.make_properties(env)
     for field in [
-            "cmake_minimum_version",
-            "cmake_packages",
-            "cmake_variables",
-            "cmake_includes",
-            "cmake_libraries",
-            "cmake_compile_flags",
-            "cmake_link_flags",
-            "cmake_files",
-            "headers",
-            "state_fields",
-            "init_code",
-            "finalize_code",
-            "dependencies"
+            "cmake_minimum_version", "cmake_packages", "cmake_variables",
+            "cmake_includes", "cmake_libraries", "cmake_compile_flags",
+            "cmake_link_flags", "cmake_files", "headers", "state_fields",
+            "init_code", "finalize_code", "dependencies"
     ]:
         if not hasattr(env, field):
             raise ValueError(
@@ -242,3 +233,11 @@ def get_library(lib_name):
 
 _DACE_REGISTERED_LIBRARIES = {}
 _DACE_REGISTERED_ENVIRONMENTS = {}
+
+
+@contextlib.contextmanager
+def change_default(library, implementation):
+    old_default = library.default_implementation
+    library.default_implementation = implementation
+    yield
+    library.default_implementation = old_default
