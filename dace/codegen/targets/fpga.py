@@ -84,6 +84,7 @@ class FPGACodeGen(TargetCodeGenerator):
         # any other kind of generated file if any (name, code object)
         self._other_codes = {}
         self._bank_assignments = {}  # {(data name, sdfg): (type, id)}
+        self._stream_connections = {}  # { name: [src, dst] }
 
         # Register additional FPGA dispatchers
         self._dispatcher.register_map_dispatcher(
@@ -102,7 +103,10 @@ class FPGACodeGen(TargetCodeGenerator):
              ]))
 
         self._dispatcher.register_node_dispatcher(
-            self, predicate=lambda *_: self._in_device_code)
+            self,
+            predicate=lambda sdfg, state, node: self._in_device_code and not (
+                isinstance(node, nodes.Tasklet) and node.language == dace.dtypes
+                .Language.SystemVerilog))
 
         fpga_storage = [
             dace.dtypes.StorageType.FPGA_Global,
@@ -188,6 +192,13 @@ class FPGACodeGen(TargetCodeGenerator):
             # Generate kernel code
             self.generate_kernel(sdfg, state, kernel_name, subgraphs,
                                  function_stream, callsite_stream)
+            # Emit the connections ini file
+            if len(self._stream_connections) > 0:
+                ini_stream = CodeIOStream()
+                ini_stream.write('[connectivity]')
+                for _, (src, dst) in self._stream_connections.items():
+                    ini_stream.write('stream_connect={}:{}'.format(src, dst))
+                self._other_codes['link.ini'] = ini_stream
         else:  # self._in_device_code == True
 
             to_allocate = dace.sdfg.local_transients(sdfg, state, None)
@@ -254,6 +265,8 @@ class FPGACodeGen(TargetCodeGenerator):
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = []
         nested_global_transients_seen = set()
+        # [(Is an output, dataname string, data object, interface)]
+        external_streams: list[tuple[bool, str, dt, dict[str, int]]] = []
 
         for subgraph in subgraphs:
             data_to_node.update({
@@ -265,11 +278,49 @@ class FPGACodeGen(TargetCodeGenerator):
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
             for n in subgraph.source_nodes():
-                candidates += [(False, e.data.data, subsdfg.arrays[e.data.data])
-                               for e in state.in_edges(n)]
+                # Check if the node is connected to an RTL tasklet, in which
+                # case it should be an external stream
+                dsts = [e.dst for e in state.out_edges(n)]
+                srcs = [e.src for e in state.in_edges(n)]
+                tasks = [
+                    t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)
+                ]
+                external = any([
+                    t.language == dace.dtypes.Language.SystemVerilog
+                    for t in tasks
+                ])
+                if external:
+                    external_streams += [
+                        (True, e.data.data, subsdfg.arrays[e.data.data], None)
+                        for e in state.out_edges(n)
+                        if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
+                    ]
+                else:
+                    candidates += [(False, e.data.data,
+                                    subsdfg.arrays[e.data.data])
+                                   for e in state.in_edges(n)]
             for n in subgraph.sink_nodes():
-                candidates += [(True, e.data.data, subsdfg.arrays[e.data.data])
-                               for e in state.out_edges(n)]
+                # Check if the node is connected to an RTL tasklet, in which
+                # case it should be an external stream
+                dsts = [e.dst for e in state.out_edges(n)]
+                srcs = [e.src for e in state.in_edges(n)]
+                tasks = [
+                    t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)
+                ]
+                external = any([
+                    t.language == dace.dtypes.Language.SystemVerilog
+                    for t in tasks
+                ])
+                if external:
+                    external_streams += [
+                        (False, e.data.data, subsdfg.arrays[e.data.data], None)
+                        for e in state.in_edges(n)
+                        if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
+                    ]
+                else:
+                    candidates += [(True, e.data.data,
+                                    subsdfg.arrays[e.data.data])
+                                   for e in state.out_edges(n)]
             # Find other data nodes that are used internally
             for n, scope in subgraph.all_nodes_recursive():
                 if isinstance(n, dace.sdfg.nodes.AccessNode):
@@ -344,7 +395,13 @@ class FPGACodeGen(TargetCodeGenerator):
         # Deduplicate
         global_data_parameters = dace.dtypes.deduplicate(global_data_parameters)
         top_level_local_data = dace.dtypes.deduplicate(top_level_local_data)
-        top_level_local_data = [data_to_node[n] for n in top_level_local_data]
+        external_streams = dace.dtypes.deduplicate(external_streams)
+
+        stream_names = [sname for _, sname, _, _ in external_streams]
+        top_level_local_data = [
+            data_to_node[name] for name in top_level_local_data
+            if name not in stream_names
+        ]
 
         symbol_parameters = {
             k: dt.Scalar(v)
@@ -353,7 +410,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         return (global_data_parameters, top_level_local_data,
                 subgraph_parameters, scalar_parameters, symbol_parameters,
-                nested_global_transients)
+                nested_global_transients, external_streams)
 
     def generate_nested_state(self, sdfg, state, nest_name, subgraphs,
                               function_stream, callsite_stream):
@@ -784,11 +841,24 @@ class FPGACodeGen(TargetCodeGenerator):
                         # Language-specific
                         self.generate_unroll_loop_pre(callsite_stream, None,
                                                       sdfg, state_id, dst_node)
+                    # If we are copying from a container to itself, and the memlet subsets do not intersect,
+                    # then we can safely ignore loop carried dependencies
+
+                    ignore_dependencies = src_node.data == dst_node.data and not dace.subsets.intersects(
+                        memlet.src_subset, memlet.dst_subset)
+                    if ignore_dependencies:
+                        self.generate_no_dependence_pre(callsite_stream, sdfg, state_id,
+                                                        dst_node)
                     callsite_stream.write(
                         "for (int __dace_copy{} = 0; __dace_copy{} < {}; "
                         "++__dace_copy{}) {{".format(i, i,
                                                      cpp.sym2cpp(copy_dim), i),
                         sdfg, state_id, dst_node)
+
+                    if ignore_dependencies:
+                        self.generate_no_dependence_post(callsite_stream, sdfg, state_id,
+                                                         dst_node)
+                        
                     if register_to_register:
                         # Language-specific
                         self.generate_unroll_loop_post(callsite_stream, None,

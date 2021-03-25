@@ -240,8 +240,7 @@ def emit_memlet_reference(dispatcher,
                           pointer_name: str,
                           conntype: dtypes.typeclass,
                           ancestor: int = 1,
-                          is_write=None,
-                          device_code=False) -> Tuple[str, str, str]:
+                          is_write=None, device_code=False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
