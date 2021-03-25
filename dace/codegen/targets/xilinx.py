@@ -636,7 +636,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # Register the array interface as a naked pointer for use inside the
         # FPGA kernel
         interfaces_added = set()
-        for _, argname, arg, is_output in parameters:
+        for is_output, argname, arg, _ in parameters:
             if (not (isinstance(arg, dace.data.Array)
                      and arg.storage == dace.dtypes.StorageType.FPGA_Global)):
                 continue
