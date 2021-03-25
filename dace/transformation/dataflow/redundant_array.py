@@ -8,7 +8,7 @@ import networkx as nx
 import typing
 
 from dace import data, registry, subsets, symbolic, dtypes, memlet as mm
-from dace.sdfg import nodes, SDFGState
+from dace.sdfg import nodes, SDFGState, SDFG
 from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
 from dace.transformation import transformation as pm, helpers
@@ -846,10 +846,10 @@ class SqueezeViewRemove(pm.Transformation):
         ]
 
     def can_be_applied(self,
-                       state: dace.SDFGState,
+                       state: SDFGState,
                        candidate,
                        expr_index: int,
-                       sdfg: dace.SDFG,
+                       sdfg: SDFG,
                        strict: bool = False):
         in_array = self.in_array(sdfg)
         out_array = self.out_array(sdfg)
@@ -890,8 +890,8 @@ class SqueezeViewRemove(pm.Transformation):
 
         return True
 
-    def apply(self, sdfg: dace.SDFG):
-        state: dace.SDFGState = sdfg.nodes()[self.state_id]
+    def apply(self, sdfg: SDFG):
+        state: SDFGState = sdfg.node(self.state_id)
         in_array = self.in_array(sdfg)
         out_array = self.out_array(sdfg)
         out_desc = out_array.desc(sdfg)
