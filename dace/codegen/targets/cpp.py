@@ -1274,6 +1274,6 @@ def array_interface_variable(var_name: str, is_write: bool,
             return ptr_in
     else:
         # We might call this before the variable is even defined (e.g., because
-        # we are about to define it, so if the dispatcher is not passed, just
+        # we are about to define it), so if the dispatcher is not passed, just
         # return the appropriate string
         return ptr_out if is_write else ptr_in
