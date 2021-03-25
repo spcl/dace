@@ -253,14 +253,20 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         return False 
 
         # 2.6 Check for disjoint accesses for arrays that cannot be augmented 
-        '''
-        TODO
+        
+        
         node_data = in_data | intermediate_data | out_data | view_data
-        subgraph_contains_data = dict(n: True for n in node_data if sdfg.data(n).transient == True else False)
+        #subgraph_contains_data = {n: True for n in node_data if sdfg.data(n).transient == True else False}
+        subgraph_contains_data = dict() 
+        for n in node_data:
+            if sdfg.data(n).transient:
+                subgraph_contains_data[n] = True 
+            else:
+                subgraph_contains_data[n] = False
 
         for graph_it in sdfg.nodes():
             for node_it in graph_it.nodes():
-                if isinstance(node_it, nodes.AcccessNode) and node_it.data in subgraph_contains_data and node not in intermediate_nodes:
+                if isinstance(node_it, nodes.AcccessNode) and node_it.data in subgraph_contains_data and node_it not in intermediate_nodes:
                     subgraph_contains_data[node_it.data] = False
 
         container_dict = defaultdict(list)
@@ -282,7 +288,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                 return False 
                     
                     subset_plus = access_set 
-                    subset_minus.replace{param: f'{param}-1' for param in map_entries[0].params}
+                    subset_minus.replace({param: f'{param}-1' for param in map_entries[0].params})
                     try:
                         if subset_plus.interesects(subset_minus):
                             warnings.warn("Disjoint Accesses found!")
@@ -290,7 +296,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     except TypeError:
                         warnings.warn("Disjoint Accesses found!")
                         return False 
-        '''
+        
 
         return True
 
@@ -809,7 +815,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     # no destination connector, path ends here.
                     self.copy_edge(graph, edge, new_dst=global_map_exit)
                     continue
-                # find corresponding out_edges for current edge, cannot use mmt anymore
+                # find corresponding out_edges for current edge
                 out_edges = [
                     oedge for oedge in graph.out_edges(map_exit)
                     if oedge.src_conn[3:] == edge.dst_conn[2:]
