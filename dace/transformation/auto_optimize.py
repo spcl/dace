@@ -7,7 +7,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.propagation import propagate_states
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union
+from typing import Set, Tuple, Union, List
 import warnings
 
 
@@ -29,9 +29,10 @@ GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
 def greedy_fuse(graph_or_subgraph: GraphViewType, 
                 validate_all: bool,
-                #apply_multi_expansion: bool = False, # run both
-                #apply_stencil_tiling: bool = False, # not now yet
-                recursive: bool = False) -> None:
+                device: dace.dtypes.DeviceType = dace.dtypes.DeviceType.CPU,
+                #apply_multi_expansion: bool = False, # TODO: push as option here
+                #apply_stencil_tiling: bool = False, # TODO: push as option
+                recursive: bool = True) -> None:
 
     #CompositeFusion.allow_expansion = apply_multi_expansion
     #CompositeFusion.allow_tiling = apply_stencil_tiling
@@ -64,16 +65,18 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             if len(map_entries) > 1:
                 current_subgraph = helpers.subgraph_from_maps(sdfg, graph, map_entries)
                 cf = CompositeFusion(current_subgraph)
+
                 #cf.allow_expansion = apply_multi_expansion
                 #cf.allow_tiling = apply_stencil_tiling
                 cf.apply(sdfg)
                 applied_transformations += 1
-                if recursive:
-                    # advanced: for each scope subgraph, 
-                    # see whether any parts inside could be fused together
-                    global_entry = cf._global_map_entry
-                    greedy_fuse(graph.scope_subgraph(global_entry))
-        
+            if recursive:
+                # advanced: for each scope subgraph, 
+                # see whether any parts inside could be fused together
+                global_entry = cf._global_map_entry if len(map_entries) > 1 else map_entries[0]
+                greedy_fuse(graph.scope_subgraph(global_entry, include_entry = False, include_exit = False), validate_all = validate_all)
+
+                    
         for node in graph_or_subgraph.nodes():
             if isinstance(node, nodes.NestedSDFG):
                 greedy_fuse(node.sdfg, validate_all = validate_all)
@@ -290,6 +293,35 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
         print(f'Statically allocating {converted} transient arrays')
 
 
+def set_fast_implementations(sdfg: SDFG,
+                             device: dtypes.DeviceType,
+                             blocklist: List[str] = None):
+    """
+    Set fast library node implementations for the given device
+
+    :param sdfg: The SDFG to optimize.
+    :param device: the device to optimize for.
+    :param blocklist: list of disallowed implementations.
+    :note: Operates in-place on the given SDFG.
+    """
+    if blocklist is None:
+        implementation_prio = find_fast_library(device)
+    else:
+        implementation_prio = [
+            i for i in find_fast_library(device) if i not in blocklist
+        ]
+
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.LibraryNode):
+            for impl in implementation_prio:
+                if impl in node.implementations:
+                    node.implementation = impl
+                    break
+            else:
+                warnings.warn('No fast library implementation found for "%s", '
+                              'falling back to default.' % node.name)
+
+
 def auto_optimize(sdfg: SDFG,
                   device: dtypes.DeviceType,
                   validate: bool = True,
@@ -306,6 +338,7 @@ def auto_optimize(sdfg: SDFG,
         * Set all library nodes to expand to ``fast`` expansion, which calls
           the fastest library on the target device
     :param sdfg: The SDFG to optimize.
+    :param device: the device to optimize for.
     :param validate: If True, validates the SDFG after all transformations
                      have been applied.
     :param validate_all: If True, validates the SDFG after every step.
@@ -327,28 +360,34 @@ def auto_optimize(sdfg: SDFG,
                                         strict=True,
                                         validate=False,
                                         validate_all=validate_all)
-
     # TEST: Collapse maps
     sdfg.apply_transformations_repeated(MapCollapse,
                                         strict=True,
                                         validate=False,
                                         validate_all=validate_all)
-    
     # Map fusion
     '''
     for graph in sdfg.nodes():
         for node in graph.nodes():
             if isinstance(node, dace.libraries.standard.nodes.Reduce):
-                ReduceExpansion.apply_to(sdfg, _reduce = node)
+                if graph.scope_dict()[node] is None:
+                    try:
+                        print("Expanding Reduction")
+                        ReduceExpansion.apply_to(sdfg, _reduce = node, reduce_implementation = 'CUDA (block allreduce)')
+
+                    except ValueError:
+                        pass
     '''
     greedy_fuse(sdfg, validate_all)
+    
     #sdfg.apply_transformations_repeated(DeduplicateAccess)
     #sdfg.apply_transformations(MapTiling)
 
     # Tiled WCR and streams
+    '''
     for nsdfg in list(sdfg.all_sdfgs_recursive()):
         tile_wcrs(nsdfg, validate_all)
-
+    '''
     
     # Collapse maps
     sdfg.apply_transformations_repeated(MapCollapse,
@@ -361,19 +400,8 @@ def auto_optimize(sdfg: SDFG,
             pass
 
     # Set all library nodes to expand to fast library calls
-    
-    
-    implementation_prio = find_fast_library(device)
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.LibraryNode):
-            for impl in implementation_prio:
-                if impl in node.implementations:
-                    node.implementation = impl
-                    break
-            else:
-                warnings.warn('No fast library implementation found for "%s", '
-                              'falling back to default.' % node.name)
-    
+    set_fast_implementations(sdfg, device)
+
     # TODO(later): Safe vectorization
     
     # Disable OpenMP parallel sections

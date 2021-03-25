@@ -622,3 +622,8 @@ class View(Array):
         if self.lifetime != dtypes.AllocationLifetime.Scope:
             raise ValueError('Only Scope allocation lifetime is supported for '
                              'Views')
+
+    def as_array(self):
+        copy = cp.deepcopy(self)
+        copy.__class__ = Array
+        return copy

@@ -19,6 +19,22 @@ from typing import List, Union
 import itertools
 import dace.libraries.standard as stdlib
 
+import warnings
+
+
+def offset_map(state, map_entry):
+    offsets = []
+    subgraph = state.scope_subgraph(map_entry)
+    for i, (p, r) in enumerate(zip(map_entry.map.params, map_entry.map.range.min_element())):
+        if r != 0:
+            offsets.append(r)
+            replace(subgraph, str(p), f'{p}+{r}')
+
+        else:
+            offsets.append(0)
+    
+    map_entry.map.range.offset(offsets, negative = True)
+
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
@@ -32,7 +48,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
     Map access variables and memlets are changed accordingly
     '''
 
-    debug = Property(dtype=bool, desc="Debug Mode", default=False)
+    debug = Property(dtype=bool, desc="Debug Mode", default=True)
     sequential_innermaps = Property(dtype=bool,
                                     desc="Make all inner maps that are"
                                     "created during expansion sequential",
@@ -41,7 +57,15 @@ class MultiExpansion(transformation.SubgraphTransformation):
     check_contiguity = Property(dtype=bool,
                                 desc="Don't allow MultiExpansion if contiguous"
                                 "dimension is partially split",
-                                default = True)
+                                default = False)
+
+    permutation_only = Property(dtype = bool, 
+                                desc="Only allow permutations without inner splits",
+                                default = False)
+    
+    allow_offset = Property(dtype = bool,
+                            desc="Offset ranges to 0", 
+                            default = True)
     @staticmethod
     def can_be_applied(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         # get lowest scope maps of subgraph
@@ -51,24 +75,33 @@ class MultiExpansion(transformation.SubgraphTransformation):
         graph = subgraph.graph
 
         # next, get all the maps
-        maps = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
-        brng = helpers.common_map_base_ranges(maps)
+        map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
+        #for m in maps:
+        #    offset_map(graph, m)
+        ranges = [dcpy(map_entry.range) for map_entry in map_entries]
+        if MultiExpansion.allow_offset._default == True:
+            for r in ranges:
+                r.offset(r.min_element(), negative = True)
 
+        brng = helpers.common_map_base_ranges(ranges)
         # if leq than one map found -> fail
-        if len(maps) <= 1:
+        if len(map_entries) <= 1:
             return False
 
         # see whether they have common parameters; if not -> fail
         if len(brng) == 0:
             return False
-
-        if MultiExpansion.check_contiguity._default == True:
-            reassignment = helpers.find_reassignment(maps, brng)
-            for map_entry in maps:
-                print("Analyzing", map_entry)
+        
+        if MultiExpansion.permutation_only._default == True: 
+            for map_entry in map_entries:
+                if len(map_entry.params) != len(brng):
+                    return False 
+             
+        if MultiExpansion.check_contiguity._default == True: #and MultiExpansion.permutation_only._default == False:
+            reassignment = helpers.find_reassignment(map_entries, brng, offset = MultiExpansion.allow_offset._default)
+            for map_entry in map_entries:
                 no_common = sum([1 for j in reassignment[map_entry] if j != -1])
                 if no_common != len(map_entry.params):
-                    print("Lengths differ!")
                     # check every memlet for access 
                     for e in itertools.chain(graph.out_edges(map_entry), graph.in_edges(graph.exit_node(map_entry))):
                         subset = dcpy(e.data.subset)
@@ -76,8 +109,8 @@ class MultiExpansion(transformation.SubgraphTransformation):
                         for s in subset.free_symbols:
                             
                             if reassignment[map_entry][map_entry.map.params.index(s)] != -1:
+                                warnings.warn("Contiguity fusion violation detected")
                                 return False 
-
 
         return True
 
@@ -116,11 +149,16 @@ class MultiExpansion(transformation.SubgraphTransformation):
         if all([map.params == maps[0].params for map in maps]) and all([map.range == maps[0].range for map in maps]):
             return
 
+        if self.allow_offset:
+            for map_entry in map_entries:
+                offset_map(graph, map_entry)
+
         if not map_base_variables:
             # find the maximal subset of variables to expand
             # greedy if there exist multiple ranges that are equal in a map
 
-            map_base_ranges = helpers.common_map_base_ranges(maps)
+            ranges = [map_entry.range for map_entry in map_entries]
+            map_base_ranges = helpers.common_map_base_ranges(ranges)
             reassignments = helpers.find_reassignment(maps, map_base_ranges)
 
             # first, regroup and reassign
@@ -151,6 +189,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
                         # nothing to do
                         pass
                     else:
+                        
                         current_var = map.params[i]
                         current_assignment = params_dict_map[current_var]
                         target_assignment = map_base_variables[reassignment]
@@ -164,8 +203,8 @@ class MultiExpansion(transformation.SubgraphTransformation):
 
                                 value1 = params_dict_map[key1]
                                 value2 = params_dict_map[key2]
-                                params_dict_map[key1] = key2
-                                params_dict_map[key2] = key1
+                                params_dict_map[key1] = value2
+                                params_dict_map[key2] = value1
                             else:
                                 # just reassign
                                 params_dict_map[current_var] = target_assignment
@@ -203,7 +242,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
             for map in maps:
                 for var, rng in zip(map_base_variables, map_base_ranges):
                     assert map.range[map.params.index(var)] == rng
-
+        
         # then expand all the maps
         for map, map_entry in zip(maps, map_entries):
             if map.get_param_num() == len(map_base_variables):
