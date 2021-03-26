@@ -329,7 +329,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         """
         Emits a conflict resolution call from a memlet.
         """
-        redtype = operations.detect_reduction_type(memlet.wcr)
+        redtype = operations.detect_reduction_type(memlet.wcr, openmp=True)
         defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
         if isinstance(indices, str):
             ptr = '%s + %s' % (cpp.cpp_ptr_expr(
