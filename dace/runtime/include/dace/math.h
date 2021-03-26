@@ -435,6 +435,14 @@ namespace dace
         {
             return (T)std::pow(a, b);
         }
+        DACE_HDFI double pow(const double& a, const float& b)
+        {
+            return std::pow(a, b);
+        }
+        DACE_HDFI double pow(const double& a, const double& b)
+        {
+            return std::pow(a, b);
+        }
 
 #ifndef DACE_XILINX
         static DACE_CONSTEXPR DACE_HDFI int pow(const int& a, const int& b)
