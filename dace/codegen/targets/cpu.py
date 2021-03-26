@@ -1129,18 +1129,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if var_type == DefinedType.ArrayInterface:
             # Views have already been renamed
             if not isinstance(desc, data.View):
-                ptr_in = f"__{ptr}_in"
-                ptr_out = f"__{ptr}_out"
-                # DaCe allows reading from an output connector, even though it
-                # is not an input connector. If this occurs, panic and read
-                # from the output interface instead
-                if output or not self._dispatcher.defined_vars.has(ptr_in):
-                    # Throw a KeyError if this pointer also doesn't exist
-                    self._dispatcher.defined_vars.get(ptr_out)
-                    # Otherwise use it
-                    ptr = ptr_out
-                else:
-                    ptr = ptr_in
+                ptr = cpp.array_interface_variable(ptr, output,
+                                                   self._dispatcher)
         if expr != _ptr:
             expr = '%s[%s]' % (ptr, expr)
         # If there is a type mismatch, cast pointer
