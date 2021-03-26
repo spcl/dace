@@ -537,10 +537,15 @@ class NestTransients(transformation.Transformation):
         # remove access node
         state.remove_node(access_node)
 
-        # make existing data object inside nested sdfg transient
-        nested_data_obj = nested_sdfg.sdfg.data(connector_name)
+        # replace existing data object inside nested sdfg by the transient
+        old_data_obj = nested_sdfg.sdfg.arrays[connector_name]
 
-        nested_data_obj.transient = True
+        new_data_obj = dace_data.Array(dtype=old_data_obj.dtype,
+                                       shape=old_data_obj.shape,
+                                       transient=True)
+
+        nested_sdfg.sdfg.arrays[connector_name] = new_data_obj
+
 
 
 @registry.autoregister_params(singlestate=True)
