@@ -915,6 +915,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
             if is_memory_interface:
                 interface_name = cpp.array_interface_variable(
                     vconn, False, None)
+                # Register the raw pointer as a defined variable
                 self._dispatcher.defined_vars.add(
                     interface_name, DefinedType.Pointer,
                     node.in_connectors[vconn].ctype)
@@ -953,7 +954,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                    == dtypes.StorageType.FPGA_Global)
             if is_memory_interface:
                 interface_name = cpp.array_interface_variable(
-                    uconn, False, None)
+                    uconn, True, None)
+                # Register the raw pointer as a defined variable
                 self._dispatcher.defined_vars.add(
                     interface_name, DefinedType.Pointer,
                     node.out_connectors[uconn].ctype)
