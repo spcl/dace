@@ -977,6 +977,10 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 # accumulate the total volume between them.
                 memlets = []
                 for edge in edges:
+                    if edge.data.is_empty():
+                        # skip empty memlets
+                        continue
+
                     inside_memlet = edge.data
                     memlets.append(inside_memlet)
 
