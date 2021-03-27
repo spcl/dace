@@ -565,7 +565,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             """\
   const auto end = std::chrono::high_resolution_clock::now();
   const double elapsedChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-  std::cout << "Kernel executed in " << elapsedChrono << " seconds.\\n" << std::flush;
+  // Do not print to avoid overhead
+  //std::cout << "Kernel executed in " << elapsedChrono << " seconds.\\n" << std::flush;
   // Save execution time in file
   std::ofstream out_file;
   out_file.open("dace_times.dat", std::ios::app);
