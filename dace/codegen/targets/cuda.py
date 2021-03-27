@@ -216,17 +216,17 @@ int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
 
     // Initialize {backend} before we run the application
     float *dev_X;
-    {backend}Malloc((void **) &dev_X, 1);
-    {backend}Free(dev_X);
+    DACE_CUDA_CHECK({backend}Malloc((void **) &dev_X, 1));
+    DACE_CUDA_CHECK({backend}Free(dev_X));
 
     __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        {backend}StreamCreateWithFlags(&__state->gpu_context->streams[i], {backend}StreamNonBlocking);
+        DACE_CUDA_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->streams[i], {backend}StreamNonBlocking));
     }}
     for(int i = 0; i < {nevents}; ++i) {{
-        {backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming);
+        DACE_CUDA_CHECK({backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming));
     }}
 
     {initcode}
@@ -239,10 +239,10 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
     // Destroy {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        {backend}StreamDestroy(__state->gpu_context->streams[i]);
+        DACE_CUDA_CHECK({backend}StreamDestroy(__state->gpu_context->streams[i]));
     }}
     for(int i = 0; i < {nevents}; ++i) {{
-        {backend}EventDestroy(__state->gpu_context->events[i]);
+        DACE_CUDA_CHECK({backend}EventDestroy(__state->gpu_context->events[i]));
     }}
 
     delete __state->gpu_context;
@@ -368,10 +368,10 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                                               ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('%sMalloc(&%s, %s);\n' %
+            result_alloc.write('DACE_CUDA_CHECK(%sMalloc(&%s, %s));\n' %
                                (self.backend, allocname, arrsize_malloc))
             if node.setzero:
-                result_alloc.write('%sMemset(%s, 0, %s);\n' %
+                result_alloc.write('DACE_CUDA_CHECK(%sMemset(%s, 0, %s));\n' %
                                    (self.backend, allocname, arrsize_malloc))
 
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
@@ -380,7 +380,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                                               ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('%sMallocHost(&%s, %s);\n' %
+            result_alloc.write('DACE_CUDA_CHECK(%sMallocHost(&%s, %s));\n' %
                                (self.backend, allocname, arrsize_malloc))
             if node.setzero:
                 result_alloc.write('memset(%s, 0, %s);\n' %
@@ -515,11 +515,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             return
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            callsite_stream.write('%sFree(%s);\n' % (self.backend, dataname),
+            callsite_stream.write('DACE_CUDA_CHECK(%sFree(%s));\n' % (self.backend, dataname),
                                   sdfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
             callsite_stream.write(
-                '%sFreeHost(%s);\n' % (self.backend, dataname), sdfg, state_id,
+                'DACE_CUDA_CHECK(%sFreeHost(%s));\n' % (self.backend, dataname), sdfg, state_id,
                 node)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
              nodedesc.storage == dtypes.StorageType.Register:
@@ -829,7 +829,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 copysize += ' * sizeof(%s)' % dtype.ctype
 
                 callsite_stream.write(
-                    '%sMemcpyAsync(%s, %s, %s, %sMemcpy%sTo%s, %s);\n' %
+                    'DACE_CUDA_CHECK(%sMemcpyAsync(%s, %s, %s, %sMemcpy%sTo%s, %s));\n' %
                     (self.backend, dst_expr, src_expr, copysize, self.backend,
                      src_location, dst_location, cudastream), sdfg, state_id,
                     [src_node, dst_node])
@@ -845,15 +845,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             size = 'sizeof({})*{}[__idx].{}'.format(
                                 dtypes._CTYPES[tclass], str(src_node), length)
                             callsite_stream.write(
-                                '{backend}Malloc(&{dst}[__idx].{fname}, '
-                                '{sz});'.format(dst=str(dst_node),
+                                'DACE_CUDA_CHECK({backend}Malloc(&{dst}[__idx].{fname}, '
+                                '{sz}));'.format(dst=str(dst_node),
                                                 fname=field_name,
                                                 sz=size,
                                                 backend=self.backend))
                             callsite_stream.write(
-                                '{backend}MemcpyAsync({dst}[__idx].{fname}, '
+                                'DACE_CUDA_CHECK({backend}MemcpyAsync({dst}[__idx].{fname}, '
                                 '{src}[__idx].{fname}, {sz}, '
-                                '{backend}Memcpy{sloc}To{dloc}, {stream});'.
+                                '{backend}Memcpy{sloc}To{dloc}, {stream}));'.
                                 format(dst=str(dst_node),
                                        src=str(src_node),
                                        fname=field_name,
@@ -866,7 +866,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     callsite_stream.write('}')
             elif dims == 1 and ((src_strides[-1] != 1 or dst_strides[-1] != 1)):
                 callsite_stream.write(
-                    '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n'
+                    'DACE_CUDA_CHECK(%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s));\n'
                     % (self.backend, dst_expr, _topy(dst_strides[0]) +
                        ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
                        src_expr, sym2cpp(src_strides[0]) +
@@ -877,7 +877,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     [src_node, dst_node])
             elif dims == 2:
                 callsite_stream.write(
-                    '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n'
+                    'DACE_CUDA_CHECK(%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s));\n'
                     % (self.backend, dst_expr, _topy(dst_strides[0]) +
                        ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
                        src_expr, sym2cpp(src_strides[0]) + ' * sizeof(%s)' %
@@ -897,8 +897,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     syncstream = '__state->gpu_context->streams[%d]' % streamid
                     callsite_stream.write(
                         '''
-    {backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
-    {backend}StreamWaitEvent({dst_stream}, __state->gpu_context->events[{ev}], 0);
+    DACE_CUDA_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
+    DACE_CUDA_CHECK({backend}StreamWaitEvent({dst_stream}, __state->gpu_context->events[{ev}], 0));
                     '''.format(ev=event,
                                src_stream=cudastream,
                                dst_stream=syncstream,
@@ -1048,7 +1048,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                 streams_to_sync.add(e.src._cuda_stream)
                 for stream in streams_to_sync:
                     callsite_stream.write(
-                        '%sStreamSynchronize(__state->gpu_context->streams[%d]);'
+                        'DACE_CUDA_CHECK(%sStreamSynchronize(__state->gpu_context->streams[%d]));'
                         % (self.backend, stream), sdfg, sdfg.node_id(state))
 
             # After synchronizing streams, generate state footer normally
@@ -1352,7 +1352,7 @@ void __dace_runkernel_{fname}({fargs})
         if is_persistent:
             self._localcode.write('''
 int dace_number_SMs;
-{backend}DeviceGetAttribute(&dace_number_SMs, {backend}DevAttrMultiProcessorCount, 0);
+DACE_CUDA_CHECK({backend}DeviceGetAttribute(&dace_number_SMs, {backend}DevAttrMultiProcessorCount, 0));
 int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy};
                 '''.format(fraction=Config.get('compiler', 'cuda',
                                                'persistent_map_SM_fraction'),
@@ -1410,7 +1410,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         self._localcode.write(
             '''
 void  *{kname}_args[] = {{ {kargs} }};
-{backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''
+DACE_CUDA_CHECK({backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream}));'''
             .format(kname=kernel_name,
                     kargs=', '.join(['(void *)&' + arg for arg in kernel_args] +
                                     extra_kernel_args),
