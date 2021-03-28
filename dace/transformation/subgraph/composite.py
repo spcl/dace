@@ -66,11 +66,9 @@ class CompositeFusion(transformation.SubgraphTransformation):
         graph = subgraph.graph
         if CompositeFusion.allow_expansion._default == True:
             if SubgraphFusion.can_be_applied(sdfg, subgraph):
-                print("Pure Subgraph Fusion")
                 return True 
             
             if MultiExpansion.can_be_applied(sdfg, subgraph):
-                print("MultiExpansion can be applied")
                 # deepcopy
                 graph_indices = [i for (i,n) in enumerate(graph.nodes()) if n in subgraph]
                 sdfg_copy = SDFG.from_json(sdfg.to_json())
@@ -84,22 +82,19 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 expansion.apply(sdfg_copy)
 
                 if SubgraphFusion.can_be_applied(sdfg_copy, subgraph_copy):
-                    print("Success: ME -> SGF")
+                    print("SGF CBA")
                     return True 
                 
             elif CompositeFusion.allow_tiling._default == True:
                 if StencilTiling.can_be_applied(sdfg, subgraph):
-                    print("Success: ME -> ST")
                     return True 
 
 
         else:
             if SubgraphFusion.can_be_applied(sdfg, subgraph):
-                print("Success: SGF")
                 return True
             if CompositeFusion.allow_tiling._default == True:
                 if StencilTiling.can_be_applied(sdfg, subgraph):
-                    print("Success: ST")
                     return True
                 
         return False
@@ -150,8 +145,6 @@ class CompositeFusion(transformation.SubgraphTransformation):
         #####################################
 
 
-        print(self.allow_expansion)
-        print(self.allow_expansion == True)
         if self.allow_expansion == True and MultiExpansion.can_be_applied(sdfg, subgraph):
             # expand first 
             me = MultiExpansion(subgraph, self.sdfg_id, self.state_id)
