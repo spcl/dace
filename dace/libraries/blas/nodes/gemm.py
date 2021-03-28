@@ -454,8 +454,8 @@ class ExpandGemmPBLAS(ExpandTransformation):
 
         @dace.program
         def _gemm_pblas(_a: dtype[M, K], _b: dtype[K, N], _c: dtype[M, N]):
-            lA = np.zeros((M // Px, K // Py), dtype=_a.dtype)
-            lB = np.zeros((K // Px, N // Py), dtype=_b.dtype)
+            lA = np.empty((M // Px, K // Py), dtype=_a.dtype)
+            lB = np.empty((K // Px, N // Py), dtype=_b.dtype)
             bsizesA = np.empty((2,), dtype=np.int32)
             bsizesA[0] = M // Px
             bsizesA[1] = K // Py

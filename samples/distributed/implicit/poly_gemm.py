@@ -3,7 +3,7 @@ import dace as dc
 from mpi4py import MPI
 
 from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
-from dace.transformation.dataflow import ElementWiseArrayOperation
+from dace.transformation.dataflow import ElementWiseArrayOperation2D, RedundantComm2D
 
 
 NI, NJ, NK = (
@@ -109,7 +109,11 @@ if __name__ == "__main__":
     if rank == 0:
         mpi_sdfg = gemm.to_sdfg(strict=False)
         mpi_sdfg.apply_strict_transformations()
-        mpi_sdfg.apply_transformations_repeated(ElementWiseArrayOperation)
+        mpi_sdfg.apply_transformations_repeated(ElementWiseArrayOperation2D)
+        mpi_sdfg.expand_library_nodes()
+        mpi_sdfg.apply_strict_transformations()
+        # mpi_sdfg.apply_transformations_repeated(RedundantComm2D)
+        # mpi_sdfg.apply_strict_transformations()
         mpi_func = mpi_sdfg.compile()
 
         # print("----A-----")

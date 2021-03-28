@@ -47,4 +47,6 @@ from .mpi import MPITransformMap
 from .matrix_product_transpose import MatrixProductTranspose
 
 # Distributions
-from .map_distribution import ElementWiseArrayOperation
+from .map_distribution import (ElementWiseArrayOperation,
+                               ElementWiseArrayOperation2D,
+                               RedundantComm2D)
