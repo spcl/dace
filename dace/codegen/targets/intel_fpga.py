@@ -79,6 +79,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         # Channel mangles
         self.channel_mangle = defaultdict(dict)
 
+        self.module_mange = defaultdict(dict)
+
         super().__init__(*args, **kwargs)
 
     @staticmethod
@@ -193,7 +195,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
 
     def create_mangled_channel_name(self, var_name, kernel_id):
         '''
-        Memorize and returns  the mangled name of a global channel
+        Memorize and returns the mangled name of a global channel
         The dictionary is organized as (var_name) : {kernel_id: mangled_name)
         '''
 
@@ -213,6 +215,19 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
             return self.channel_mangle[var_name][kernel_id]
         else:
             return var_name
+
+    def create_mangled_module_name(self, module_name, kernel_id):
+        '''
+        Memorize and returns the mangled name of a module (OpenCL kernel)
+        The dictionary is organized as (module_name) : {kernel_id: mangled_name)
+        '''
+
+        if kernel_id not in self.module_mange[module_name]:
+            existing_count = len(self.module_mange[module_name])
+            suffix = f"_{existing_count}" if existing_count > 0 else ""
+            mangled_name = f"{module_name}{suffix}"
+            self.module_mange[module_name][kernel_id] = mangled_name
+        return self.module_mange[module_name][kernel_id]
 
     def define_stream(self, dtype, buffer_size, var_name, array_size,
                       function_stream, kernel_stream):
@@ -614,8 +629,10 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # 61 - 15 = 46, and round down to 36 to be conservative, since
         # internally could still fail while dealing with RTL.
         # Therefore we cut down names longer than that
-        module_function_name = module_function_name[0:36]
 
+        # But tha is no more sufficient: indeed, if we two almost identical NestedSDFG, it could happen
+        # that we have module name clashes. Therefore we also take care of this
+        module_function_name = self.create_mangled_module_name(module_function_name[0:36],self._kernel_count)
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
         scope_children = subgraph.scope_children()
