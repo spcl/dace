@@ -470,9 +470,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_header_stream.write("\n", sdfg)
 
         (global_data_parameters, top_level_local_data, subgraph_parameters,
-         scalar_parameters, symbol_parameters,
-         nested_global_transients) = self.make_parameters(
-             sdfg, state, subgraphs)
+         scalar_parameters, symbol_parameters, nested_global_transients,
+         external_streams) = self.make_parameters(sdfg, state, subgraphs)
 
         # Ignore interface ID in this backend
         global_data_parameters = [tuple(p[:3]) for p in global_data_parameters]
@@ -947,10 +946,9 @@ __kernel void \\
             # derive the declaration/definition
 
             qualifier = "__global volatile "
-            atype = dtypes.pointer(nodedesc.dtype).ctype
+            atype = dtypes.pointer(nodedesc.dtype).ctype + " restrict"
             aname = name
             viewed_desc = sdfg.arrays[edge.data.data]
-            value = cpp.ptr(edge.data.data, viewed_desc)
             defined_type, _ = self._dispatcher.defined_vars.get(
                 edge.data.data, 0)
             # Register defined variable
@@ -958,6 +956,13 @@ __kernel void \\
                                               defined_type,
                                               atype,
                                               allow_shadowing=True)
+            _, _, value = cpp.emit_memlet_reference(self._dispatcher,
+                                                            sdfg,
+                                                            edge.data,
+                                                            name,
+                                                            dtypes.pointer(
+                                                                nodedesc.dtype),
+                                                            ancestor=0, device_code=self._in_device_code)
         else:
             qualifier = ""
             atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
@@ -966,8 +971,7 @@ __kernel void \\
                                                             name,
                                                             dtypes.pointer(
                                                                 nodedesc.dtype),
-                                                            ancestor=0,
-                                                            nodedesc=nodedesc)
+                                                            ancestor=0)
         declaration_stream.write(f'{qualifier}{atype} {aname}  = {value};',
                                  sdfg, state_id, node)
 
