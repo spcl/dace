@@ -111,6 +111,7 @@ run_all() {
     run_sample fpga/unique_nested_sdfg_fpga two_vecAdd 0
     run_sample fpga/nested_sdfg_as_kernel nested_sdfg_kernels 0
     run_sample fpga/streaming_memory streamingcomp_1 1
+    run_sample fpga/conflict_resolution fpga_conflict_resolution 0
 
     ## BLAS
     run_sample blas/nodes/axpy_test axpy_test_fpga_1_w4_1 1 --target fpga
@@ -130,6 +131,10 @@ run_all() {
 
     # Views
     run_multi_sample fpga/reshape_view_fpga 0 "view_fpga" "reshp_np_1" "reshapedst_1"
+
+    # RTL cores
+    DACE_compiler_xilinx_mode="hardware_emulation"
+    LIBRARY_PATH=$LIBRARY_PATH:/usr/lib/x86_64-linux-gnu run_sample rtl/hardware_test floating_point_vector_plus_scalar 0 1
 }
 
 # Check if xocc is vailable
