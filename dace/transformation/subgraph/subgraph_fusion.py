@@ -257,9 +257,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         warnings.warn("Special Case: Intermediate node connecting to View")
                         return False 
 
+        #if len(intermediate_nodes & out_nodes) > 0:
+        #    return False
         # 2.6 Check for disjoint accesses for arrays that cannot be augmented 
         
-        
+        '''
         node_data = in_data | intermediate_data | out_data | view_data
         #subgraph_contains_data = {n: True for n in node_data if sdfg.data(n).transient == True else False}
         subgraph_contains_data = dict() 
@@ -276,9 +278,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         container_dict = defaultdict(list)
         for node in chain(in_nodes, intermediate_nodes, out_nodes):
-            container_dict[node.data].append(node)
+            if isinstance(node, nodes.AccessNode):
+                container_dict[node.data].append(node) # BUG: 'MapEntry object has no attribute data'
 
-        '''
+        
         for (node_data, contained) in subgraph_contains_data.items():
             if not contained:
                 if len(container_dict[node_data]) > 1:
@@ -778,8 +781,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # TODO: dynamic map range -- this is fairly unrealistic in such a setting
             for edge in graph.in_edges(map_entry):
                 src = edge.src
-                # TODO 
-                out_edges = [e for e in graph.out_edges(map_entry) if e.src_conn[3:] == edge.dst_conn[2:]]
+                out_edges = [e for e in graph.out_edges(map_entry) if (e.src_conn and e.src_conn[3:] == edge.dst_conn[2:])]
 
                 if src in in_nodes:
                     in_conn = None
