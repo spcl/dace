@@ -1379,16 +1379,12 @@ __kernel void \\
                     const_str = "extern " + const_str + ";\n"
                 callsite_stream.write(const_str, sdfg)
             else:
-                if cstname not in self.generated_constants:
-                    # First time, define it
-                    self.generated_constants.add(cstname)
-                    callsite_stream.write(
-                        f"__constant {csttype.dtype.ctype} {cstname} = {sym2cpp(cstval)};\n",
-                        sdfg)
-                else:
-                    callsite_stream.write(
-                        f"extern __constant {csttype.dtype.ctype} {cstname};\n",
-                        sdfg)
+                # this is a scalar. Now, definining this as an exter has the drawback
+                # that it is not resolved at compile time, preventing us to allocate fast memory
+                # Therefore, we will stick here a nice #define
+                callsite_stream.write(
+                    f"#define {cstname} {sym2cpp(cstval)}\n",
+                    sdfg)
 
     def generate_tasklet_postamble(self, sdfg, dfg, state_id, node,
                                    function_stream, callsite_stream,
