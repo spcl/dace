@@ -258,45 +258,72 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         return False 
 
         # 2.6 Check for disjoint accesses for arrays that cannot be augmented 
-        '''
-        TODO
+        
+        
         node_data = in_data | intermediate_data | out_data | view_data
-        subgraph_contains_data = dict(n: True for n in node_data if sdfg.data(n).transient == True else False)
+        #subgraph_contains_data = {n: True for n in node_data if sdfg.data(n).transient == True else False}
+        subgraph_contains_data = dict() 
+        for n in node_data:
+            if sdfg.data(n).transient:
+                subgraph_contains_data[n] = True 
+            else:
+                subgraph_contains_data[n] = False
 
         for graph_it in sdfg.nodes():
             for node_it in graph_it.nodes():
-                if isinstance(node_it, nodes.AcccessNode) and node_it.data in subgraph_contains_data and node not in intermediate_nodes:
+                if isinstance(node_it, nodes.AccessNode) and node_it.data in subgraph_contains_data and node_it not in intermediate_nodes:
                     subgraph_contains_data[node_it.data] = False
 
         container_dict = defaultdict(list)
-        for node in itertools.chain(in_nodes, intermediate_nodes, out_nodes):
+        for node in chain(in_nodes, intermediate_nodes, out_nodes):
             container_dict[node.data].append(node)
 
+        '''
         for (node_data, contained) in subgraph_contains_data.items():
             if not contained:
-                if len(container_dict[data]) > 1:
+                if len(container_dict[node_data]) > 1:
                     # check for disjoint accesses 
                     # TODO 
                     access_set = None 
-                    for node in container_dict[data]:
-                        for e in itertools.chain(graph.out_edges(node), graph.in_edges(node)):
-                            access_set = subsets.union(access_set, e.data.subset)
-                            if access_set is None:
-                                # cannot evaluate truth value of relational 
-                                warnings.warn("Disjoint Accesses found!")
-                                return False 
-                    
+                    for node in container_dict[node_data]:
+                        for e in graph.out_edges(node):
+                            if e.dst in map_entries:
+                                for oe in graph.out_edges(e.dst):
+                                    if oe.src_conn[3:] == e.dst_conn[2:]:
+                                        access_set = subsets.union(access_set, oe.data.subset)
+                                        if access_set is None:
+                                            warnings.warn("Disjoint Access found")
+                                            return False
+                        for e in graph.in_edges(node):
+                            if e.src in map_exits:
+                                for ie in graph.in_edges(e.src):
+                                    if ie.dst_conn[2:] == e.src_conn[3:]:
+                                        access_set = subsets.union(access_set, ie.data.subset)
+                                        if access_set is None:
+                                            warnings.warn("Disjoint Access found")
+                                            return False
+                                        
+                        #for e in chain(graph.out_edges(node), graph.in_edges(node)):
+                        #    access_set = subsets.union(access_set, e.data.subset)
+                        #    if access_set is None:
+                        #        # cannot evaluate truth value of relational 
+                        #        warnings.warn("Disjoint Accesses found!")
+                        #        return False 
+                        
                     subset_plus = access_set 
-                    subset_minus.replace{param: f'{param}-1' for param in map_entries[0].params}
+                    subset_minus = dcpy(subset_plus)
+                    subset_minus.replace({f'{param}': f'{param}-1' for param in map_entries[0].params})
                     try:
-                        if subset_plus.interesects(subset_minus):
+                        if subset_plus.intersects(subset_minus):
                             warnings.warn("Disjoint Accesses found!")
+                            print(node_data)
+                            print(subset_plus, subset_minus)
                             return False 
                     except TypeError:
                         warnings.warn("Disjoint Accesses found!")
                         return False 
+        
         '''
-
         return True
 
     @staticmethod
@@ -803,7 +830,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     # no destination connector, path ends here.
                     self.copy_edge(graph, edge, new_dst=global_map_exit)
                     continue
-                # find corresponding out_edges for current edge, cannot use mmt anymore
+                # find corresponding out_edges for current edge
                 out_edges = [
                     oedge for oedge in graph.out_edges(map_exit)
                     if oedge.src_conn[3:] == edge.dst_conn[2:]
