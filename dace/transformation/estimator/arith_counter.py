@@ -53,7 +53,7 @@ def count_arithmetic_ops(sdfg: dace.SDFG,
     result = 0
     symbols = symbols or {}
     for state in sdfg.nodes():
-        result += count_arithmetic_ops_state(state, symbols)
+        result += count_arithmetic_ops_state(state, symbols) * state.executions
     return result
 
 
@@ -108,7 +108,7 @@ def count_arithmetic_ops_state(state: dace.SDFGState,
             elif isinstance(node, dace.nodes.Tasklet):
                 if node.code.language == dace.Language.CPP:
                     for oedge in state.out_edges(node):
-                        node_result += bigo(oedge.data.num_accesses)
+                        node_result += 1#bigo(oedge.data.num_accesses)
                 else:
                     node_result += count_arithmetic_ops_code(
                         node.code.code)
@@ -187,7 +187,7 @@ def count_arithmetic_ops_subgraph(subgraph: SubgraphView, state: dace.SDFGState,
                 elif isinstance(node, dace.nodes.Tasklet):
                     if node._code['language'] == dace.Language.CPP:
                         for oedge in state.out_edges(node):
-                            node_result += bigo(oedge.data.num_accesses)
+                            node_result += 1#bigo(oedge.data.num_accesses)
                     else:
                         node_result += count_arithmetic_ops_code(
                             node._code['code_or_block'])
