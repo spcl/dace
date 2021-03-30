@@ -313,11 +313,20 @@ def set_fast_implementations(sdfg: SDFG,
         ]
 
     # pre_expand all specialized nodes 
+    for current_sdfg in sdfg.all_sdfgs_recursive():
+        for state in current_sdfg.nodes():
+            for node in state.nodes():
+                if isinstance(node, nodes.LibraryNode):
+                    if node.default_implementation == 'specialize':
+                        print("Expanding node", node)
+                        node.expand(current_sdfg, state)
+    '''
     for node, state in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.LibraryNode):
             if node.default_implementation == 'specialize':
                 print("Expanding node", node)
                 node.expand(sdfg, state)
+    '''
 
     print("IMPLEMENTATION PRIO=", implementation_prio)
     for node, _ in sdfg.all_nodes_recursive():
