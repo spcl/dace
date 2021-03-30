@@ -25,7 +25,7 @@ def count_moved_data(sdfg: dace.SDFG, symbols: Dict[str, Any] = None) -> int:
     result = 0
     symbols = symbols or {}
     for state in sdfg.nodes():
-        result += count_moved_data_state(state, symbols)
+        result += count_moved_data_state(state, symbols) * state.executions
     return result
 
 
@@ -128,7 +128,7 @@ def count_moved_data_state_composite(state: dace.SDFGState, symbols: Dict[str,
     sdict = state.scope_children()
     result = 0
     symbols = symbols or {}
-
+    warings.warn("COMPOSITE")
     # determine which scopes to search for
     # we restrict ourselves to scopes that are a direct
     # child from the outermost scope
