@@ -296,7 +296,7 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
 
 def set_fast_implementations(sdfg: SDFG,
                              device: dtypes.DeviceType,
-                             blocklist: List[str] = ["MKL"]):
+                             blocklist: List[str] = []):
     """
     Set fast library node implementations for the given device
 
