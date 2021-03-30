@@ -26,7 +26,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
         it tries to resorts to StencilTiling followed by SubgraphFusion.
     """
 
-    debug = Property(desc="Debug mode", dtype=bool, default = True)
+    debug = Property(desc="Debug mode", dtype=bool, default = False)
 
     allow_expansion = Property(desc="Allow MultiExpansion before",
                                dtype = bool,

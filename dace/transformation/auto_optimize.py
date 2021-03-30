@@ -69,6 +69,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                 #cf.allow_expansion = apply_multi_expansion
                 #cf.allow_tiling = apply_stencil_tiling
                 cf.apply(sdfg)
+                sdfg.validate()
                 applied_transformations += 1
             if recursive:
                 # advanced: for each scope subgraph, 
@@ -295,7 +296,7 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
 
 def set_fast_implementations(sdfg: SDFG,
                              device: dtypes.DeviceType,
-                             blocklist: List[str] = None):
+                             blocklist: List[str] = []):
     """
     Set fast library node implementations for the given device
 
@@ -311,15 +312,26 @@ def set_fast_implementations(sdfg: SDFG,
             i for i in find_fast_library(device) if i not in blocklist
         ]
 
+    # pre_expand all specialized nodes 
+    for current_sdfg in sdfg.all_sdfgs_recursive():
+        for state in current_sdfg.nodes():
+            for node in state.nodes():
+                if isinstance(node, nodes.LibraryNode):
+                    if node.default_implementation == 'specialize':
+                        print("Specializing node", node)
+                        node.expand(current_sdfg, state)
+
+
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.LibraryNode):
-            for impl in implementation_prio:
-                if impl in node.implementations:
-                    node.implementation = impl
-                    break
-            else:
-                warnings.warn('No fast library implementation found for "%s", '
-                              'falling back to default.' % node.name)
+            if not isinstance(node, dace.libraries.standard.nodes.Reduce):
+                for impl in implementation_prio:
+                    if impl in node.implementations:
+                        node.implementation = impl
+                        break
+                else:
+                    warnings.warn('No fast library implementation found for "%s", '
+                                'falling back to default.' % node.name)
 
 
 def auto_optimize(sdfg: SDFG,
@@ -360,11 +372,37 @@ def auto_optimize(sdfg: SDFG,
                                         strict=True,
                                         validate=False,
                                         validate_all=validate_all)
-    # TEST: Collapse maps
+    # Collapse maps
     sdfg.apply_transformations_repeated(MapCollapse,
                                         strict=True,
                                         validate=False,
                                         validate_all=validate_all)
+    
+    
+    
+    # GPU Expansions 
+    if device == dtypes.DeviceType.GPU:
+   
+        # set arrays
+        for k, v in sdfg.arrays.items():
+            if not v.transient and isinstance(v, dace.data.Array):
+                v.storage = dace.dtypes.StorageType.GPU_Global
+
+        # Set library nodes
+        for node, state in sdfg.all_nodes_recursive():
+            if isinstance(node, dace.nodes.LibraryNode):
+                from dace.sdfg.scope import is_devicelevel_gpu
+                # Use CUB for device-level reductions
+                if ('CUDA (device)' in node.implementations
+                        and not is_devicelevel_gpu(state.parent, state, node)):
+                    node.implementation = 'CUDA (device)'
+
+        # apply gpu transformations 
+        sdfg.apply_gpu_transformations()
+
+        # apply strict transformations
+        sdfg.apply_strict_transformations()
+    
     # Map fusion
     '''
     for graph in sdfg.nodes():
@@ -380,7 +418,9 @@ def auto_optimize(sdfg: SDFG,
     '''
     greedy_fuse(sdfg, validate_all)
     
-    #sdfg.apply_transformations_repeated(DeduplicateAccess)
+
+    
+    sdfg.apply_transformations_repeated(DeduplicateAccess)
     #sdfg.apply_transformations(MapTiling)
 
     # Tiled WCR and streams
@@ -398,7 +438,7 @@ def auto_optimize(sdfg: SDFG,
         if isinstance(node, nodes.MapEntry):
             #node.map.collapse = len(node.map.range) # TODO: try without as well :) 
             pass
-
+    
     # Set all library nodes to expand to fast library calls
     set_fast_implementations(sdfg, device)
 

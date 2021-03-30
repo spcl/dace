@@ -270,7 +270,6 @@ class GPUTransformSDFG(transformation.Transformation):
                         if self.register_trans:
                             nodedesc.storage = dtypes.StorageType.Register
 
-        
         #######################################################
         # Step 5: Change all top-level maps and library nodes to GPU schedule
 
@@ -282,16 +281,18 @@ class GPUTransformSDFG(transformation.Transformation):
                         node.schedule = dtypes.ScheduleType.GPU_Default
                     elif isinstance(node, nodes.EntryNode):
                         node.schedule = dtypes.ScheduleType.GPU_Device
-                else:
-                    if isinstance(
-                            node,
-                        (nodes.EntryNode,
-                         nodes.LibraryNode)) and self.sequential_innermaps:
+                elif self.sequential_innermaps:
+                    if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
                         node.schedule = dtypes.ScheduleType.Sequential
-    
+                    elif isinstance(node, nodes.NestedSDFG):
+                        for nnode, _ in node.sdfg.all_nodes_recursive():
+                            if isinstance(nnode,
+                                          (nodes.EntryNode, nodes.LibraryNode)):
+                                nnode.schedule = dtypes.ScheduleType.Sequential
+
         #######################################################
         # Step 6: Wrap free tasklets and nested SDFGs with a GPU map
-        
+
         # Collect free tasklets
         for node, state in sdfg.all_nodes_recursive():
             if isinstance(node, nodes.Tasklet):
