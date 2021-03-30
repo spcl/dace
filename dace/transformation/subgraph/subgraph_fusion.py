@@ -235,7 +235,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 
                     
         view_data = set([n.data for n in view_nodes])
-        print("VIEW DATA=", view_data)
 
         for out_node in out_nodes:
             for in_edge in graph.in_edges(out_node):

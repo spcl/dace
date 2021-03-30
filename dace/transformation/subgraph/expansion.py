@@ -48,7 +48,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
     Map access variables and memlets are changed accordingly
     '''
 
-    debug = Property(dtype=bool, desc="Debug Mode", default=True)
+    debug = Property(dtype=bool, desc="Debug Mode", default=False)
     sequential_innermaps = Property(dtype=bool,
                                     desc="Make all inner maps that are"
                                     "created during expansion sequential",
@@ -61,7 +61,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
 
     permutation_only = Property(dtype = bool, 
                                 desc="Only allow permutations without inner splits",
-                                default = False)
+                                default = True)
     
     allow_offset = Property(dtype = bool,
                             desc="Offset ranges to 0", 

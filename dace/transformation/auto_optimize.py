@@ -318,20 +318,12 @@ def set_fast_implementations(sdfg: SDFG,
             for node in state.nodes():
                 if isinstance(node, nodes.LibraryNode):
                     if node.default_implementation == 'specialize':
-                        print("Expanding node", node)
+                        print("Specializing node", node)
                         node.expand(current_sdfg, state)
-    '''
-    for node, state in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.LibraryNode):
-            if node.default_implementation == 'specialize':
-                print("Expanding node", node)
-                node.expand(sdfg, state)
-    '''
 
-    print("IMPLEMENTATION PRIO=", implementation_prio)
+
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.LibraryNode):
-            print("current", node)
             if not isinstance(node, dace.libraries.standard.nodes.Reduce):
                 for impl in implementation_prio:
                     if impl in node.implementations:
@@ -426,7 +418,9 @@ def auto_optimize(sdfg: SDFG,
     '''
     greedy_fuse(sdfg, validate_all)
     
-    #sdfg.apply_transformations_repeated(DeduplicateAccess)
+
+    
+    sdfg.apply_transformations_repeated(DeduplicateAccess)
     #sdfg.apply_transformations(MapTiling)
 
     # Tiled WCR and streams
