@@ -420,7 +420,7 @@ def auto_optimize(sdfg: SDFG,
     
 
     
-    sdfg.apply_transformations_repeated(DeduplicateAccess)
+    #sdfg.apply_transformations_repeated(DeduplicateAccess)
     #sdfg.apply_transformations(MapTiling)
 
     # Tiled WCR and streams
