@@ -2,6 +2,8 @@ import numpy as np
 import dace as dc
 from mpi4py import MPI
 
+from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
+
 
 # NI, NJ, NK = (dc.symbol(s, dtype=dc.int64) for s in ('NI', 'NJ', 'NK'))
 
@@ -32,31 +34,36 @@ def gemm_shared(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
 def gemm_distr(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
                A: dc.float64[NI, NK], B: dc.float64[NK, NJ]):
 
-    lA = np.zeros((lNI, lNKa), dtype=A.dtype)
-    lB = np.zeros((lNKb, lNJ), dtype=B.dtype)
-    lC = np.zeros((lNI, lNJ), dtype=A.dtype)
+    lA = np.empty((lNI, lNKa), dtype=A.dtype)
+    lB = np.empty((lNKb, lNJ), dtype=B.dtype)
+    lC = np.empty((lNI, lNJ), dtype=A.dtype)
 
-    bsizesA = np.empty((2,), dtype=np.int32)
-    bsizesA[0] = lNI
-    bsizesA[1] = lNKa
+    # bsizesA = np.empty((2,), dtype=np.int32)
+    # bsizesA[0] = lNI
+    # bsizesA[1] = lNKa
 
-    bsizesB = np.empty((2,), dtype=np.int32)
-    bsizesB[0] = lNKb
-    bsizesB[1] = lNJ
+    # bsizesB = np.empty((2,), dtype=np.int32)
+    # bsizesB[0] = lNKb
+    # bsizesB[1] = lNJ
 
-    bsizesC = np.empty((2,), dtype=np.int32)
-    bsizesC[0] = lNI
-    bsizesC[1] = lNJ
+    # bsizesC = np.empty((2,), dtype=np.int32)
+    # bsizesC[0] = lNI
+    # bsizesC[1] = lNJ
 
-    gdescA, ldescA = dc.comm.BCScatter(A, lA, bsizesA)
-    gdescB, ldescB = dc.comm.BCScatter(B, lB, bsizesB)
-    gdescC, ldescC = dc.comm.BCScatter(C, lC, bsizesC)
+    # gdescA, ldescA = dc.comm.BCScatter(A, lA, bsizesA)
+    # gdescB, ldescB = dc.comm.BCScatter(B, lB, bsizesB)
+    # gdescC, ldescC = dc.comm.BCScatter(C, lC, bsizesC)
+    dc.comm.BCScatter(A, lA, (lNI, lNKa))
+    dc.comm.BCScatter(B, lB, (lNKb, lNJ))
+    dc.comm.BCScatter(C, lC, (lNI, lNJ))
 
-    tmp, gdesctmp, ldesctmp = distr.MatMult(lA, ldescA, lB, ldescB)
+    # tmp, gdesctmp, ldesctmp = distr.MatMult(lA, ldescA, lB, ldescB)
+    tmp  = distr.MatMult(A, B, lA, lB, (lNI, lNKa), (lNKb, lNJ))
 
     lC[:] = alpha * tmp + beta * lC
 
-    dc.comm.BCGather(lC, C, ldescC, gdescC)
+    # dc.comm.BCGather(lC, C, ldescC, gdescC)
+    dc.comm.BCGather(lC, C, (lNI, lNJ))
 
 
 def init_data(NI, NJ, NK, datatype):
@@ -84,7 +91,7 @@ def init_data(NI, NJ, NK, datatype):
 if __name__ == "__main__":
 
     # Initialization
-    NI, NJ, NK = 4000, 4600, 5200
+    NI, NJ, NK = 2000, 2300, 2600  # 4000, 4600, 5200
     alpha, beta, C, A, B = init_data(NI, NJ, NK, np.float64)
 
     comm = MPI.COMM_WORLD
@@ -99,17 +106,25 @@ if __name__ == "__main__":
     mpi_sdfg = None
     # if size < 2:
     #     raise ValueError("This test is supposed to be run with at least two processes!")
-    for r in range(0, size):
-        if r == rank:
-            mpi_sdfg = gemm_distr.to_sdfg(strict=False)
-            mpi_sdfg.apply_strict_transformations()
-            mpi_sdfg = mpi_sdfg.compile()
-        comm.Barrier()
+    if rank == 0:
+        mpi_sdfg = gemm_distr.to_sdfg(strict=False)
+        mpi_sdfg.apply_strict_transformations()
+        mpi_func = mpi_sdfg.compile()
+    comm.Barrier()
+    if rank > 0:
+        mpi_sdfg = dc.SDFG.from_file(".dacecache/{n}/program.sdfg".format(
+            n=gemm_distr.name))
+        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
+            ".dacecache/{n}/build/lib{n}.so".format(n=gemm_distr.name),
+            gemm_distr.name))
+    comm.Barrier()
   
-    mpi_sdfg(A=A, B=B, C=C, alpha=alpha, beta=beta,
+    mpi_func(A=A, B=B, C=C, alpha=alpha, beta=beta,
              NI=NI, NJ=NJ, NK=NK,
              lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb,
              Px=Px, Py=Py)
+
+    comm.Barrier()
 
     if rank == 0:
         alpha, beta, refC, refA, refB = init_data(NI, NJ, NK, np.float64)

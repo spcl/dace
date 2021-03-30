@@ -5081,7 +5081,7 @@ def _bcscatter(pv: 'ProgramVisitor',
                state: SDFGState,
                in_buffer: str,
                out_buffer: str,
-               block_sizes: str):
+               block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]]):
             #    context: str,
             #    gdescriptor: str,
             #    ldescriptor: str):
@@ -5099,12 +5099,27 @@ def _bcscatter(pv: 'ProgramVisitor',
     inbuf_node = state.add_read(inbuf_name)
 
     bsizes_range = None
-    if isinstance(block_sizes, tuple):
-        bsizes_name, bsizes_range = block_sizes
+    if isinstance(block_sizes, (list, tuple)):
+        if isinstance(block_sizes[0], str):
+            bsizes_name, bsizes_range = block_sizes
+            bsizes_desc = sdfg.arrays[bsizes_name]
+            bsizes_node = state.add_read(bsizes_name)
+        else:
+            bsizes_name, bsizes_desc = sdfg.add_temp_transient(
+                (len(block_sizes),),
+                dtype=dace.int32)    
+            bsizes_node = state.add_access(bsizes_name)
+            bsizes_tasklet = state.add_tasklet(
+                '_set_bsizes_',
+                {}, {'__out'},
+                ";".join(["__out[{}] = {}".format(i, sz)
+                          for i, sz in enumerate(block_sizes)]))
+            state.add_edge(bsizes_tasklet, '__out', bsizes_node, None,
+                           Memlet.from_array(bsizes_name, bsizes_desc))
     else:
         bsizes_name = block_sizes
-    bsizes_desc = sdfg.arrays[bsizes_name]
-    bsizes_node = state.add_read(bsizes_name)
+        bsizes_desc = sdfg.arrays[bsizes_name]
+        bsizes_node = state.add_read(bsizes_name)
 
     outbuf_range = None
     if isinstance(out_buffer, tuple):
@@ -5181,9 +5196,10 @@ def _bcgather(pv: 'ProgramVisitor',
               state: SDFGState,
               in_buffer: str,
               out_buffer: str,
+              block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]]):
             #   context: str,
-              ldescriptor: str,
-              gdescriptor: str):
+            #   ldescriptor: str,
+            #   gdescriptor: str):
 
     from dace.libraries.pblas.nodes.pgeadd import BlockCyclicGather
 
@@ -5197,13 +5213,28 @@ def _bcgather(pv: 'ProgramVisitor',
     in_desc = sdfg.arrays[inbuf_name]
     inbuf_node = state.add_read(inbuf_name)
 
-    # bsizes_range = None
-    # if isinstance(block_sizes, tuple):
-    #     bsizes_name, bsizes_range = block_sizes
-    # else:
-    #     bsizes_name = block_sizes
-    # bsizes_desc = sdfg.arrays[bsizes_name]
-    # bsizes_node = state.add_read(bsizes_name)
+    bsizes_range = None
+    if isinstance(block_sizes, (list, tuple)):
+        if isinstance(block_sizes[0], str):
+            bsizes_name, bsizes_range = block_sizes
+            bsizes_desc = sdfg.arrays[bsizes_name]
+            bsizes_node = state.add_read(bsizes_name)
+        else:
+            bsizes_name, bsizes_desc = sdfg.add_temp_transient(
+                (len(block_sizes),),
+                dtype=dace.int32)    
+            bsizes_node = state.add_access(bsizes_name)
+            bsizes_tasklet = state.add_tasklet(
+                '_set_bsizes_',
+                {}, {'__out'},
+                ";".join(["__out[{}] = {}".format(i, sz)
+                          for i, sz in enumerate(block_sizes)]))
+            state.add_edge(bsizes_tasklet, '__out', bsizes_node, None,
+                           Memlet.from_array(bsizes_name, bsizes_desc))
+    else:
+        bsizes_name = block_sizes
+        bsizes_desc = sdfg.arrays[bsizes_name]
+        bsizes_node = state.add_read(bsizes_name)
 
     outbuf_range = None
     if isinstance(out_buffer, tuple):
@@ -5221,30 +5252,30 @@ def _bcgather(pv: 'ProgramVisitor',
     # context_desc = sdfg.arrays[context_name]
     # context_node = state.add_write(context_name)
 
-    gdesc_range = None
-    if isinstance(gdescriptor, tuple):
-        gdesc_name, gdesc_range = gdescriptor
-    else:
-        gdesc_name = gdescriptor
-    global_desc = sdfg.arrays[gdesc_name]
-    gdesc_node = state.add_write(gdesc_name)
+    # gdesc_range = None
+    # if isinstance(gdescriptor, tuple):
+    #     gdesc_name, gdesc_range = gdescriptor
+    # else:
+    #     gdesc_name = gdescriptor
+    # global_desc = sdfg.arrays[gdesc_name]
+    # gdesc_node = state.add_write(gdesc_name)
 
-    ldesc_range = None
-    if isinstance(ldescriptor, tuple):
-        ldesc_name, ldesc_range = ldescriptor
-    else:
-        ldesc_name = ldescriptor
-    local_desc = sdfg.arrays[ldesc_name]
-    ldesc_node = state.add_write(ldesc_name)
+    # ldesc_range = None
+    # if isinstance(ldescriptor, tuple):
+    #     ldesc_name, ldesc_range = ldescriptor
+    # else:
+    #     ldesc_name = ldescriptor
+    # local_desc = sdfg.arrays[ldesc_name]
+    # ldesc_node = state.add_write(ldesc_name)
 
     if inbuf_range:
         inbuf_mem = Memlet.simple(inbuf_name, inbuf_range)
     else:
         inbuf_mem = Memlet.from_array(inbuf_name, in_desc) 
-    # if bsizes_range:
-    #     bsizes_mem = Memlet.simple(bsizes_name, bsizes_range)
-    # else:
-    #     bsizes_mem = Memlet.from_array(bsizes_name, bsizes_desc)
+    if bsizes_range:
+        bsizes_mem = Memlet.simple(bsizes_name, bsizes_range)
+    else:
+        bsizes_mem = Memlet.from_array(bsizes_name, bsizes_desc)
     if outbuf_range:
         outbuf_mem = Memlet.simple(outbuf_name, outbuf_range)
     else:
@@ -5253,21 +5284,21 @@ def _bcgather(pv: 'ProgramVisitor',
     #     context_mem = Memlet.simple(context_name, context_range)
     # else:
     #     context_mem = Memlet.from_array(context_name, context_desc)
-    if gdesc_range:
-        gdesc_mem = Memlet.simple(gdesc_name, gdesc_range)
-    else:
-        gdesc_mem = Memlet.from_array(gdesc_name, global_desc)
-    if ldesc_range:
-        ldesc_mem = Memlet.simple(ldesc_name, ldesc_range)
-    else:
-        ldesc_mem = Memlet.from_array(ldesc_name, local_desc)
+    # if gdesc_range:
+    #     gdesc_mem = Memlet.simple(gdesc_name, gdesc_range)
+    # else:
+    #     gdesc_mem = Memlet.from_array(gdesc_name, global_desc)
+    # if ldesc_range:
+    #     ldesc_mem = Memlet.simple(ldesc_name, ldesc_range)
+    # else:
+    #     ldesc_mem = Memlet.from_array(ldesc_name, local_desc)
 
     state.add_edge(inbuf_node, None, libnode, '_inbuffer', inbuf_mem)
-    # state.add_edge(bsizes_node, None, libnode, '_block_sizes', bsizes_mem)
+    state.add_edge(bsizes_node, None, libnode, '_block_sizes', bsizes_mem)
     state.add_edge(libnode, '_outbuffer', outbuf_node, None, outbuf_mem)
     # state.add_edge(context_node, None, libnode, '_context', context_mem)
-    state.add_edge(gdesc_node, None, libnode, '_gdescriptor', gdesc_mem)
-    state.add_edge(ldesc_node, None, libnode, '_ldescriptor', ldesc_mem)
+    # state.add_edge(gdesc_node, None, libnode, '_gdescriptor', gdesc_mem)
+    # state.add_edge(ldesc_node, None, libnode, '_ldescriptor', ldesc_mem)
     
     return None
 
@@ -5276,28 +5307,85 @@ def _bcgather(pv: 'ProgramVisitor',
 def _distr_matmult(pv: 'ProgramVisitor',
                    sdfg: SDFG,
                    state: SDFGState,
+                   origA: str,
+                   origB: str,
                    opa: str,
-                   desca: str,
+                #    desca: str,
                    opb: str,
-                   descb: str):
+                #    descb: str):
+                   a_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]],
+                   b_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]]):
 
+    ashape = sdfg.arrays[origA].shape
     arra = sdfg.arrays[opa]
-    arrdesca = sdfg.arrays[desca]
+    # arrdesca = sdfg.arrays[desca]
+    bshape = sdfg.arrays[origB].shape
     arrb = sdfg.arrays[opb]
-    arrdescb = sdfg.arrays[descb]
+    # arrdescb = sdfg.arrays[descb]
+
+    a_bsizes_range = None
+    if isinstance(a_block_sizes, (list, tuple)):
+        if isinstance(a_block_sizes[0], str):
+            a_bsizes_name, a_bsizes_range = a_block_sizes
+            a_bsizes_desc = sdfg.arrays[a_bsizes_name]
+            a_bsizes_node = state.add_read(a_bsizes_name)
+        else:
+            a_bsizes_name, a_bsizes_desc = sdfg.add_temp_transient(
+                (len(a_block_sizes),),
+                dtype=dace.int32)    
+            a_bsizes_node = state.add_access(a_bsizes_name)
+            a_bsizes_tasklet = state.add_tasklet(
+                '_set_a_bsizes_',
+                {}, {'__out'},
+                ";".join(["__out[{}] = {}".format(i, sz)
+                          for i, sz in enumerate(a_block_sizes)]))
+            state.add_edge(a_bsizes_tasklet, '__out', a_bsizes_node, None,
+                           Memlet.from_array(a_bsizes_name, a_bsizes_desc))
+    else:
+        a_bsizes_name = a_block_sizes
+        a_bsizes_desc = sdfg.arrays[a_bsizes_name]
+        a_bsizes_node = state.add_read(a_bsizes_name)
+    
+    b_bsizes_range = None
+    if isinstance(a_block_sizes, (list, tuple)):
+        if isinstance(a_block_sizes[0], str):
+            b_bsizes_name, b_sizes_range = b_block_sizes
+            b_bsizes_desc = sdfg.arrays[b_bsizes_name]
+            b_bsizes_node = state.add_read(b_bsizes_name)
+        else:
+            b_bsizes_name, b_bsizes_desc = sdfg.add_temp_transient(
+                (len(b_block_sizes),),
+                dtype=dace.int32)    
+            b_bsizes_node = state.add_access(b_bsizes_name)
+            b_bsizes_tasklet = state.add_tasklet(
+                '_set_b_sizes_',
+                {}, {'__out'},
+                ";".join(["__out[{}] = {}".format(i, sz)
+                          for i, sz in enumerate(b_block_sizes)]))
+            state.add_edge(b_bsizes_tasklet, '__out', b_bsizes_node, None,
+                           Memlet.from_array(b_bsizes_name, b_bsizes_desc))
+    else:
+        b_bsizes_name = b_block_sizes
+        b_bsizes_desc = sdfg.arrays[b_bsizes_name]
+        b_bsizes_node = state.add_read(b_bsizes_name)
 
 
     if len(arra.shape) == 2 and len(arrb.shape) == 2:
         # Gemm
         from dace.libraries.pblas.nodes.pgemm import Pgemm
-        tasklet = Pgemm("__DistrMatMult__")
+        gm = ashape[0]
+        gn = bshape[-1]
+        gk = ashape[-1]
+        tasklet = Pgemm("__DistrMatMult__", gm, gn, gk)
         m = arra.shape[0]
         n = arrb.shape[-1]
         out = sdfg.add_temp_transient((m, n), dtype=arra.dtype)
     elif len(arra.shape) == 2 and len(arrb.shape) == 1:
         # Gemv
         from dace.libraries.pblas.nodes.pgemv import Pgemv
-        tasklet = Pgemv("__DistrMatVecMult__")
+        gm = ashape[0]
+        gn = ashape[1]
+        tasklet = Pgemv("__DistrMatVecMult__", m=gm, n=gn)
         m = arra.shape[0]
         out = sdfg.add_temp_transient((m,), dtype=arra.dtype)
     elif len(arra.shape) == 1 and len(arrb.shape) == 2:
@@ -5305,30 +5393,44 @@ def _distr_matmult(pv: 'ProgramVisitor',
         # Swap a and b
         opa, opb = opb, opa
         arra, arrb = arrb, arra
-        desca, descb = descb, desca
-        arrdesca, arrdescb = arrdescb, arrdesca
+        # desca, descb = descb, desca
+        # arrdesca, arrdescb = arrdescb, arrdesca
         from dace.libraries.pblas.nodes.pgemv import Pgemv
-        tasklet = Pgemv("__DistrMatVecMult__", transa='T')
+        gm = ashape[0]
+        gn = ashape[1]
+        tasklet = Pgemv("__DistrMatVecMult__", transa='T', m=gm, n=gn)
         n = arra.shape[1]
         out = sdfg.add_temp_transient((n,), dtype=arra.dtype)
 
-    gdescout = sdfg.add_temp_transient((9,), dtype=dace.int32)
-    ldescout = sdfg.add_temp_transient((9,), dtype=dace.int32)
+    # gdescout = sdfg.add_temp_transient((9,), dtype=dace.int32)
+    # ldescout = sdfg.add_temp_transient((9,), dtype=dace.int32)
 
     anode = state.add_read(opa)
     bnode = state.add_read(opb)
-    danode = state.add_read(desca)
-    dbnode = state.add_read(descb)
+    # danode = state.add_read(desca)
+    # dbnode = state.add_read(descb)
     cnode = state.add_write(out[0])
-    gdcnode = state.add_write(gdescout[0])
-    ldcnode = state.add_write(ldescout[0])
+    # gdcnode = state.add_write(gdescout[0])
+    # ldcnode = state.add_write(ldescout[0])
+
+    if a_bsizes_range:
+        a_bsizes_mem = Memlet.simple(a_bsizes_name, a_bsizes_range)
+    else:
+        a_bsizes_mem = Memlet.from_array(a_bsizes_name, a_bsizes_desc)
+    if b_bsizes_range:
+        b_bsizes_mem = Memlet.simple(b_bsizes_name, b_bsizes_range)
+    else:
+        b_bsizes_mem = Memlet.from_array(b_bsizes_name, b_bsizes_desc)
 
     state.add_edge(anode, None, tasklet, '_a', Memlet.from_array(opa, arra))
     state.add_edge(bnode, None, tasklet, '_b', Memlet.from_array(opb, arrb))
-    state.add_edge(danode, None, tasklet, '_desca', Memlet.from_array(desca, arrdesca))
-    state.add_edge(dbnode, None, tasklet, '_descb', Memlet.from_array(descb, arrdescb))
+    state.add_edge(a_bsizes_node, None, tasklet, '_a_block_sizes', a_bsizes_mem)
+    state.add_edge(b_bsizes_node, None, tasklet, '_b_block_sizes', b_bsizes_mem)
+    # state.add_edge(danode, None, tasklet, '_desca', Memlet.from_array(desca, arrdesca))
+    # state.add_edge(dbnode, None, tasklet, '_descb', Memlet.from_array(descb, arrdescb))
     state.add_edge(tasklet, '_c', cnode, None, Memlet.from_array(*out))
-    state.add_edge(tasklet, '_gdescc', gdcnode, None, Memlet.from_array(*gdescout))
-    state.add_edge(tasklet, '_ldescc', ldcnode, None, Memlet.from_array(*ldescout))
+    # state.add_edge(tasklet, '_gdescc', gdcnode, None, Memlet.from_array(*gdescout))
+    # state.add_edge(tasklet, '_ldescc', ldcnode, None, Memlet.from_array(*ldescout))
 
-    return [out[0], gdescout[0], ldescout[0]]
+    # return [out[0], gdescout[0], ldescout[0]]
+    return out[0]

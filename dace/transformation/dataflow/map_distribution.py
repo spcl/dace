@@ -39,6 +39,10 @@ class ElementWiseArrayOperation(pm.Transformation):
 
         if "commsize" in map_entry.map.range.free_symbols:
             return False
+        if "Px" in map_entry.map.range.free_symbols:
+            return False
+        if "Py" in map_entry.map.range.free_symbols:
+            return False
 
         inputs = dict()
         for _, _, _, _, m in graph.out_edges(map_entry):
@@ -510,16 +514,18 @@ class ElementWiseArrayOperation2D(pm.Transformation):
                 # gdesc_access = graph.add_access(gdesc_name)
                 # ldesc_name, ldesc_arr = sdfg.add_temp_transient(
                 #     (9,), dtype=dace.int32)
-                ldesc_access = graph.add_access(ldesc_name)
+                # ldesc_access = graph.add_access(ldesc_name)
                 scatter_node = BlockCyclicGather('_Gather_')
                 graph.add_edge(local_access, None, scatter_node, '_inbuffer',
                                dace.Memlet.from_array(local_name, local_arr))
+                graph.add_edge(bsizes_access, None, scatter_node, '_block_sizes',
+                               dace.Memlet.from_array(bsizes_name, bsizes_arr))
                 graph.add_edge(scatter_node, '_outbuffer', out, None,
                                dace.Memlet.from_array(out.data, desc))
-                graph.add_edge(gdesc_access, None, scatter_node, '_gdescriptor',
-                               dace.Memlet.from_array(gdesc_name, gdesc_arr))
-                graph.add_edge(ldesc_access, None, scatter_node, '_ldescriptor',
-                               dace.Memlet.from_array(ldesc_name, ldesc_arr))
+                # graph.add_edge(gdesc_access, None, scatter_node, '_gdescriptor',
+                #                dace.Memlet.from_array(gdesc_name, gdesc_arr))
+                # graph.add_edge(ldesc_access, None, scatter_node, '_ldescriptor',
+                #                dace.Memlet.from_array(ldesc_name, ldesc_arr))
 
                 for e in graph.edges_between(map_exit, out):
                     graph.add_edge(map_exit, e.src_conn, local_access, None,
@@ -566,7 +572,7 @@ class RedundantComm2D(pm.Transformation):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         # from dace.libraries.pblas import BlockCyclicScatter, BlockCyclicGather
         gather = graph.nodes()[candidate[RedundantComm2D.gather]]
-        if '_gdescriptor' not in gather.in_connectors:
+        if '_block_sizes' not in gather.in_connectors:
             return False
         scatter = graph.nodes()[candidate[RedundantComm2D.scatter]]
         if '_gdescriptor' not in scatter.out_connectors:

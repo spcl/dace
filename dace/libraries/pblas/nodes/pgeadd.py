@@ -150,11 +150,25 @@ class ExpandBlockCyclicGatherMKL(ExpandTransformation):
                 f"}}\n"
                 f"const double  zero = 0.0E+0, one = 1.0E+0;\n"
                 f"const char trans = 'N';\n"
-                # f"const char trans = 'T';\n"
                 f"MKL_INT grows = {out_shape[0]};\n"
                 f"MKL_INT gcols = {out_shape[1]};\n"
+                f"MKL_INT brows = _block_sizes[0];\n"
+                f"MKL_INT bcols = (gcols > 1 ? _block_sizes[1]: 1);\n"
+                f"MKL_INT mloc = numroc( &grows, &brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
+                f"MKL_INT nloc = numroc( &gcols, &bcols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);\n"
+                f"MKL_INT gld = grows;\n"
+                f"MKL_INT lld = mloc;\n"
+                f"MKL_INT info;\n"
+                f"MKL_INT _gdescriptor[9], _ldescriptor[9];\n"
+                f"descinit(_gdescriptor, &grows, &gcols, &grows, &gcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
+                f"descinit(_ldescriptor, &grows, &gcols, &brows, &bcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
                 f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor);\n"
                 f"if (gcols > 1) {{ mkl_dimatcopy('R', 'T', gcols, grows, 1.0, _outbuffer, grows, gcols); }}")
+                
+                # f"MKL_INT grows = {out_shape[0]};\n"
+                # f"MKL_INT gcols = {out_shape[1]};\n"
+                # f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor);\n"
+                # f"if (gcols > 1) {{ mkl_dimatcopy('R', 'T', gcols, grows, 1.0, _outbuffer, grows, gcols); }}")
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -179,7 +193,7 @@ class BlockCyclicGather(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={"_inbuffer", "_gdescriptor", "_ldescriptor"},
+                         inputs={"_inbuffer", "_block_sizes"},  #, "_gdescriptor", "_ldescriptor"},
                          outputs={"_outbuffer"},
                          **kwargs)
 

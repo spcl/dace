@@ -2,6 +2,8 @@ import numpy as np
 import dace as dc
 from mpi4py import MPI
 
+from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
+
 
 # NI, NJ, NK = (dc.symbol(s, dtype=dc.int64) for s in ('NI', 'NJ', 'NK'))
 
@@ -27,24 +29,24 @@ def gesummv_shared(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N],
 def gesummv_distr(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N],
                   B: dc.float64[N, N], x: dc.float64[N], y: dc.float64[N]):
 
-    lA = np.zeros((lNx, lNy), dtype=A.dtype)
-    lB = np.zeros((lNx, lNy), dtype=B.dtype)
-    lx = np.zeros((lNx,), dtype=x.dtype)
+    lA = np.empty((lNx, lNy), dtype=A.dtype)
+    lB = np.empty((lNx, lNy), dtype=B.dtype)
+    lx = np.empty((lNx,), dtype=x.dtype)
 
-    bsizes = np.empty((2,), dtype=np.int32)
-    bsizes[0] = lNx
-    bsizes[1] = N // Py
+    # bsizes = np.empty((2,), dtype=np.int32)
+    # bsizes[0] = lNx
+    # bsizes[1] = N // Py
 
-    gdescA, ldescA = dc.comm.BCScatter(A, lA, bsizes)
-    gdescB, ldescB = dc.comm.BCScatter(B, lB, bsizes)
-    gdescx, ldescx = dc.comm.BCScatter(x, lx, bsizes[0])
+    dc.comm.BCScatter(A, lA, (lNx, N//Py))
+    dc.comm.BCScatter(B, lB, (lNx, N//Py))
+    dc.comm.BCScatter(x, lx, (lNx, 1))
 
-    tmp1, gdesctmp1, ldesctmp1 = distr.MatMult(lA, ldescA, lx, ldescx)
-    tmp2, gdesctmp2, ldesctmp2 = distr.MatMult(lB, ldescB, lx, ldescx)
+    tmp1 = distr.MatMult(A, x, lA, lx, (lNx, N//Py), (lNx, 1))
+    tmp2 = distr.MatMult(B, x, lB, lx, (lNx, N//Py), (lNx, 1))
 
     tmp1[:] = alpha * tmp1 + beta * tmp2
 
-    dc.comm.BCGather(tmp1, y, ldesctmp1, gdesctmp1)
+    dc.comm.BCGather(tmp1, y, (lNx, 1))
 
 
 def init_data(N, datatype):
@@ -81,14 +83,20 @@ if __name__ == "__main__":
     mpi_sdfg = None
     # if size < 2:
     #     raise ValueError("This test is supposed to be run with at least two processes!")
-    for r in range(0, size):
-        if r == rank:
-            mpi_sdfg = gesummv_distr.to_sdfg(strict=False)
-            mpi_sdfg.apply_strict_transformations()
-            mpi_sdfg = mpi_sdfg.compile()
-        comm.Barrier()
+    if rank == 0:
+        mpi_sdfg = gesummv_distr.to_sdfg(strict=False)
+        mpi_sdfg.apply_strict_transformations()
+        mpi_func= mpi_sdfg.compile()
+    comm.Barrier()
+    if rank > 0:
+        mpi_sdfg = dc.SDFG.from_file(".dacecache/{n}/program.sdfg".format(
+            n=gesummv_distr.name))
+        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
+            ".dacecache/{n}/build/lib{n}.so".format(n=gesummv_distr.name),
+            gesummv_distr.name))
+    comm.Barrier()
   
-    mpi_sdfg(A=A, B=B, x=x, alpha=alpha, beta=beta, y=y, 
+    mpi_func(A=A, B=B, x=x, alpha=alpha, beta=beta, y=y, 
              N=N, lNx=lNx, lNy=lNy, Px=Px, Py=Py)
 
     if rank == 0:

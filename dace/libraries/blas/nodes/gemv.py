@@ -912,31 +912,31 @@ class ExpandGemvPBLAS(ExpandTransformation):
 
         @dace.program
         def _gemNv_pblas(_A: dtype[m, n], _x: dtype[n], _y: dtype[m]):
-            lA = np.zeros((m // Px, n // Py), dtype=_A.dtype)
-            lx = np.zeros((n // Px,), dtype=_x.dtype)
-            bsizesA = np.empty((2,), dtype=np.int32)
-            bsizesA[0] = m // Px
-            bsizesA[1] = n // Py
-            bsizesx = np.empty((1,), dtype=np.int32)
-            bsizesx[0] = n // (Px * Py)
-            gdescA, ldescA = dace.comm.BCScatter(_A, lA, bsizesA)
-            gdescx, ldescx = dace.comm.BCScatter(_x, lx, bsizesx)
-            ly, gdescy, ldescy = distr.MatMult(lA, ldescA, lx, ldescx)
-            dace.comm.BCGather(ly, _y, ldescy, gdescy)
+            lA = np.empty((m // Px, n // Py), dtype=_A.dtype)
+            lx = np.empty((n // Px,), dtype=_x.dtype)
+            # bsizesA = np.empty((2,), dtype=np.int32)
+            # bsizesA[0] = m // Px
+            # bsizesA[1] = n // Py
+            # bsizesx = np.empty((1,), dtype=np.int32)
+            # bsizesx[0] = n // (Px * Py)
+            dace.comm.BCScatter(_A, lA, (m//Px, n//Py))
+            dace.comm.BCScatter(_x, lx, (n//Px, 1))
+            ly = distr.MatMult(_A, _x, lA, lx, (m//Px, n//Py), (n//Px, 1))
+            dace.comm.BCGather(ly, _y, (m//Px, 1))
         
         @dace.program
         def _gemTv_pblas(_A: dtype[m, n], _x: dtype[m], _y: dtype[n]):
-            lA = np.zeros((m // Px, n // Py), dtype=_A.dtype)
-            lx = np.zeros((m // Px,), dtype=_x.dtype)
-            bsizesA = np.empty((1,), dtype=np.int32)
-            bsizesA[0] = m // Px
-            bsizesA[1] = n // Py
-            bsizesx = np.empty((1,), dtype=np.int32)
-            bsizesx[0] = m // (Px * Py)
-            gdescA, ldescA = dace.comm.BCScatter(_A, lA, bsizesA)
-            gdescx, ldescx = dace.comm.BCScatter(_x, lx, bsizesx)
-            ly, gdescy, ldescy = distr.MatMult(lx, ldescx, lA, ldescA)
-            dace.comm.BCGather(ly, _y, ldescy, gdescy)
+            lA = np.empty((m // Px, n // Py), dtype=_A.dtype)
+            lx = np.empty((m // Px,), dtype=_x.dtype)
+            # bsizesA = np.empty((1,), dtype=np.int32)
+            # bsizesA[0] = m // Px
+            # bsizesA[1] = n // Py
+            # bsizesx = np.empty((1,), dtype=np.int32)
+            # bsizesx[0] = m // (Px * Py)
+            dace.comm.BCScatter(_A, lA, (m//Px, n//Py))
+            dace.comm.BCScatter(_x, lx, (m//Px, 1))
+            ly = distr.MatMult(_x, _A, lx, lA, (m//Px, 1), (m//Px, n//Py))
+            dace.comm.BCGather(ly, _y, (n//Px, 1))
 
         # NOTE: The following is done to avoid scalar promotion, which results
         # in ValueError: Node type "BlockCyclicScatter" not supported for

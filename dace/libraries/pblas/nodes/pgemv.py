@@ -41,25 +41,47 @@ class ExpandPgemvMKL(ExpandTransformation):
         # mkl does not have an actual c interface for 
         code = (f"const double  zero = 0.0E+0, one = 1.0E+0;\n"
                 f"const char trans = '{node._transa}';\n"
-                f"MKL_INT grows = (trans == 'N' ? _desca[2] : _desca[3]);\n"
+                # f"MKL_INT grows = (trans == 'N' ? _desca[2] : _desca[3]);\n"
+                # f"MKL_INT gcols = 1;\n"
+
+                f"MKL_INT grows = (trans == 'N' ? {node._m} : {node._n});\n"
                 f"MKL_INT gcols = 1;\n"
-                # f"MKL_INT brows = _descb[4];\n"
-                # f"MKL_INT bcols = _descb[5];\n"
+                f"MKL_INT a_rows = {node._m};\n"
+                f"MKL_INT a_cols = {node._n};\n"
+                f"MKL_INT b_rows = (trans == 'N' ? {node._n} : {node._m});\n"
+                f"MKL_INT b_cols = 1;\n"
                 f"MKL_INT brows = grows / __state->__mkl_scalapack_size;\n"
                 f"MKL_INT bcols = 1;\n"
+                f"MKL_INT a_brows = _a_block_sizes[0];\n"
+                f"MKL_INT a_bcols = (a_cols > 1 ? _a_block_sizes[1]: 1);\n"
+                f"MKL_INT b_brows = _b_block_sizes[0];\n"
+                f"MKL_INT b_bcols = 1;\n"
                 f"MKL_INT mloc = numroc( &grows, &brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
-                f"MKL_INT nloc = numroc( &gcols, &bcols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);\n"
-                f"MKL_INT gld = grows;\n"
-                f"MKL_INT lld = mloc;\n"
+                f"MKL_INT a_mloc = numroc( &a_rows, &a_brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
+                f"MKL_INT b_mloc = numroc( &b_rows, &b_brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
                 f"MKL_INT info;\n"
-                f"descinit(_gdescc, &grows, &gcols, &grows, &gcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
-                # f"descinit(_ldescc, &grows, &gcols, &_desca[4], &_descb[5], &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
-                f"descinit(_ldescc, &grows, &gcols, &brows, &bcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
-                f"MKL_INT _m = _desca[2], _n = _desca[3];\n"
+                f"MKL_INT _a_ldesc[9],  _b_ldesc[9], _c_ldesc[9];\n"
+                f"MKL_INT a_lld = a_mloc;\n"
+                f"descinit(_a_ldesc, &a_rows, &a_cols, &a_brows, &a_bcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &a_lld, &info);\n"
+                f"MKL_INT b_lld = b_mloc;\n"
+                f"descinit(_b_ldesc, &b_rows, &b_cols, &b_mloc, &b_bcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &b_lld, &info);\n"
+                f"MKL_INT c_lld = mloc;\n"
+                f"descinit(_c_ldesc, &grows, &gcols, &mloc, &bcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &c_lld, &info);\n"
+
+                # f"MKL_INT brows = grows / __state->__mkl_scalapack_size;\n"
+                # f"MKL_INT bcols = 1;\n"
+                # f"MKL_INT mloc = numroc( &grows, &brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
+                # f"MKL_INT nloc = numroc( &gcols, &bcols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);\n"
+                # f"MKL_INT gld = grows;\n"
+                # f"MKL_INT lld = mloc;\n"
+                # f"MKL_INT info;\n"
+                # f"descinit(_ldescc, &grows, &gcols, &brows, &bcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
+                # f"MKL_INT _m = _desca[2], _n = _desca[3];\n"
+                f"MKL_INT _m = a_rows, _n = a_cols;\n"
                 f"p{lapack_dtype_str}gemv(\n"
-                f"    &trans, &_m, &_n, &one, _a, &__state->__mkl_int_one, &__state->__mkl_int_one, _desca,\n"
-                f"    _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _descb, &__state->__mkl_int_one,\n"
-                f"    &zero, _c, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescc, &__state->__mkl_int_one);")
+                f"    &trans, &_m, &_n, &one, _a, &__state->__mkl_int_one, &__state->__mkl_int_one, _a_ldesc,\n"
+                f"    _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _b_ldesc, &__state->__mkl_int_one,\n"
+                f"    &zero, _c, &__state->__mkl_int_one, &__state->__mkl_int_one, _c_ldesc, &__state->__mkl_int_one);")
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -79,13 +101,17 @@ class Pgemv(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "MKL"
 
-    def __init__(self, name, transa='N', *args, **kwargs):
+    def __init__(self, name, transa='N', m=None, n=None, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={"_a", "_desca", "_b", "_descb"},
-                         outputs={"_c", "_gdescc", "_ldescc"},
+                        #  inputs={"_a", "_desca", "_b", "_descb"},
+                        #  outputs={"_c", "_gdescc", "_ldescc"},
+                         inputs={"_a", "_b", "_a_block_sizes", "_b_block_sizes"},
+                         outputs={"_c"},
                          **kwargs)
         self._transa = transa
+        self._m = m
+        self._n = n
 
     def validate(self, sdfg, state):
         """
@@ -132,14 +158,14 @@ class Pgemv(dace.sdfg.nodes.LibraryNode):
         # if alpha.dtype.base_type != beta.dtype.base_type:
         #     raise ValueError("The type of alpha and beta does not match!")
         
-        if desca.dtype.base_type != dace.dtypes.int32:
-            raise ValueError("desca must be an integer array")
-        if descb.dtype.base_type != dace.dtypes.int32:
-            raise ValueError("descb must be an integer array")
-        if gdescc.dtype.base_type != dace.dtypes.int32:
-            raise ValueError("descc must be an integer array")
-        if ldescc.dtype.base_type != dace.dtypes.int32:
-            raise ValueError("descc must be an integer array")
+        # if desca.dtype.base_type != dace.dtypes.int32:
+        #     raise ValueError("desca must be an integer array")
+        # if descb.dtype.base_type != dace.dtypes.int32:
+        #     raise ValueError("descb must be an integer array")
+        # if gdescc.dtype.base_type != dace.dtypes.int32:
+        #     raise ValueError("descc must be an integer array")
+        # if ldescc.dtype.base_type != dace.dtypes.int32:
+        #     raise ValueError("descc must be an integer array")
 
         # if m.dtype.base_type != dace.dtypes.int32:
         #     raise ValueError("m must be an integer")

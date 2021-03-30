@@ -17,7 +17,8 @@ class IntelMKLScaLAPACK:
     cmake_packages = []  #["BLAS"]
     cmake_variables = {"BLA_VENDOR": "Intel10_64lp"}
     cmake_compile_flags = []
-    cmake_link_flags = ["-L /lib/x86_64-linux-gnu -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lpthread -lm -ldl"]
+    # cmake_link_flags = ["-L /lib/x86_64-linux-gnu -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lpthread -lm -ldl"]
+    cmake_link_flags = ["-lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lpthread -lm -ldl"]
     cmake_files = []
 
     headers = ["mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h", "../include/dace_blas.h"]
@@ -70,9 +71,9 @@ class IntelMKLScaLAPACK:
 
     @staticmethod
     def cmake_libraries():
-        libfiles = ["/lib/x86_64-linux-gnu/lib" + name + ".so"
-                    for name in IntelMKLScaLAPACK.libraries + ["mpich"]]
-        return libfiles
+        # libfiles = ["/lib/x86_64-linux-gnu/lib" + name + ".so"
+        #             for name in IntelMKLScaLAPACK.libraries + ["mpich"]]
+        # return libfiles
         if 'MKLROOT' in os.environ:
             prefix = Config.get('compiler', 'library_prefix')
             suffix = Config.get('compiler', 'library_extension')
@@ -80,7 +81,8 @@ class IntelMKLScaLAPACK:
                         prefix + name + "." + suffix)
                         for name in IntelMKLScaLAPACK.libraries]
             if all([os.path.isfile(f) for f in libfiles]):
-                return libfiles + ["/lib/x86_64-linux-gnu/libmpich.so"]
+                # return libfiles + ["/lib/x86_64-linux-gnu/libmpich.so"]
+                return libfiles + ["libmpich.so"]
 
         path = ctypes.util.find_library('mkl_scalapack_lp64')
         if path:

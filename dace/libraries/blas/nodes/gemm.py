@@ -456,16 +456,10 @@ class ExpandGemmPBLAS(ExpandTransformation):
         def _gemm_pblas(_a: dtype[M, K], _b: dtype[K, N], _c: dtype[M, N]):
             lA = np.empty((M // Px, K // Py), dtype=_a.dtype)
             lB = np.empty((K // Px, N // Py), dtype=_b.dtype)
-            bsizesA = np.empty((2,), dtype=np.int32)
-            bsizesA[0] = M // Px
-            bsizesA[1] = K // Py
-            bsizesB = np.empty((2,), dtype=np.int32)
-            bsizesB[0] = K // Px
-            bsizesB[1] = N // Py
-            gdescA, ldescA = dace.comm.BCScatter(_a, lA, bsizesA)
-            gdescB, ldescB = dace.comm.BCScatter(_b, lB, bsizesB)
-            lC, gdescC, ldescC = distr.MatMult(lA, ldescA, lB, ldescB)
-            dace.comm.BCGather(lC, _c, ldescC, gdescC)
+            dace.comm.BCScatter(_a, lA, (M//Px, K//Py))
+            dace.comm.BCScatter(_b, lB, (K//Px, N//Py))
+            lC = distr.MatMult(_a, _b, lA, lB, (M//Px, K//Py), (K//Px, N//Py))
+            dace.comm.BCGather(lC, _c, (M//Px, N//Py))
 
         return _gemm_pblas.to_sdfg()
 
