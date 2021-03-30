@@ -299,23 +299,52 @@ class CleanNestedSDFGConnectors(transformation.Transformation):
         candidate = self.subgraph
         nested_sdfg: dace_nodes.NestedSDFG = state.nodes()[candidate[CleanNestedSDFGConnectors.nested_sdfg]]
 
+        modified_accesses = set()
+
         duplicate_in_connectors = find_duplicate_in_connectors(state, nested_sdfg)
-        duplicate_out_connectors = find_duplicate_out_connectors(state, nested_sdfg)
 
         # remove duplicate connectors
         for orig_conn, edge_list in duplicate_in_connectors.items():
             for e in edge_list:
                 dup_conn = e.dst_conn
                 state.remove_edge(e)
+                modified_accesses.add(e.src)
                 nested_sdfg.remove_in_connector(dup_conn)
                 merge_symbols(nested_sdfg.sdfg, orig_conn, dup_conn)
+                # fix names of output connectors that have the same name as removed input connector
+                if dup_conn in nested_sdfg.out_connectors:
+                    if orig_conn not in nested_sdfg.out_connectors:
+                        nested_sdfg.out_connectors[orig_conn] = nested_sdfg.out_connectors[dup_conn]
+                    del nested_sdfg.out_connectors[dup_conn]
+                    for edge in state.out_edges(nested_sdfg):
+                        if edge.src_conn == dup_conn:
+                            edge.src_conn = orig_conn
+
+
+        duplicate_out_connectors = find_duplicate_out_connectors(state, nested_sdfg)
 
         for orig_conn, edge_list in duplicate_out_connectors.items():
             for e in edge_list:
                 dup_conn = e.src_conn
                 state.remove_edge(e)
+                modified_accesses.add(e.dst)
                 nested_sdfg.remove_out_connector(dup_conn)
                 merge_symbols(nested_sdfg.sdfg, orig_conn, dup_conn)
+                # fix names of input connectors that have the same name as removed output connector
+                if dup_conn in nested_sdfg.in_connectors:
+                    if orig_conn not in nested_sdfg.in_connectors:
+                        nested_sdfg.in_connectors[orig_conn] = nested_sdfg.in_connectors[dup_conn]
+                    del nested_sdfg.in_connectors[dup_conn]
+                    for edge in state.in_edges(nested_sdfg):
+                        if edge.dst_conn == dup_conn:
+                            edge.dst_conn = orig_conn
+
+        # remove access nodes that became dangling after the edge removal
+        # TODO: consider that if all entry nodes in front of map entry removed it can cause break later
+        for an in modified_accesses:
+            if not an.has_reads(state) and not an.has_writes(state):
+                state.remove_node(an)
+
 
 
 @registry.autoregister_params(singlestate=True)

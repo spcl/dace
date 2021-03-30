@@ -193,7 +193,7 @@ def nest_state_subgraph(sdfg: SDFG,
     # Add subgraph nodes and edges to nested state
     nstate.add_nodes_from(subgraph.nodes())
     for e in subgraph.edges():
-        nstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+        nstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
 
     # Modify nested SDFG parents in subgraph
     for node in subgraph.nodes():
