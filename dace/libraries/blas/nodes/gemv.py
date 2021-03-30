@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from dace import properties, symbolic
+from dace import config, properties, symbolic
 import dace.library
 import dace.sdfg.nodes
 from dace.sdfg import SDFG, SDFGState
@@ -371,9 +371,11 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
                               memlet=dace.Memlet(f"accumulate_product[0]"))
 
         # Partial sums
+        is_intel = config.Config.get("compiler", "fpga_vendor") == "intel_fpga"
         sdfg.add_array("partial_sums", (num_partial_sums, ),
                        desc_y.dtype,
-                       storage=dace.StorageType.FPGA_Local,
+                       storage=(dace.StorageType.FPGA_Local if is_intel else
+                                dace.StorageType.FPGA_Registers),
                        transient=True)
         partial_sum_read = state.add_read("partial_sums")
         partial_sum_write = state.add_access("partial_sums")
