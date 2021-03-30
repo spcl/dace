@@ -330,17 +330,17 @@ class StateGraphView(object):
 
             # Sanity checks
             if validate and len(eq) != 0:
-                cycles = self.find_cycles()
+                cycles = list(self.find_cycles())
                 if cycles:
                     raise ValueError('Found cycles in state %s: %s' %
-                                     (self.label, list(cycles)))
+                                     (self.label, cycles))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
 
             if validate and len(result) != self.number_of_nodes():
-                cycles = self.find_cycles()
+                cycles = list(self.find_cycles())
                 if cycles:
                     raise ValueError('Found cycles in state %s: %s' %
-                                     (self.label, list(cycles)))
+                                     (self.label, cycles))
                 leftover_nodes = set(self.nodes()) - result.keys()
                 raise RuntimeError(
                     "Some nodes were not processed: {}".format(leftover_nodes))
