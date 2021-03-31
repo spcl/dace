@@ -431,12 +431,15 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                    var_name=None):
         pass
 
-    @staticmethod
-    def generate_no_dependence_post(kernel_stream, sdfg, state_id, node,
+    def generate_no_dependence_post(self, kernel_stream, sdfg, state_id, node,
                                     var_name):
         '''
         Adds post loop pragma for ignoring loop carried dependencies on a given variable
         '''
+        defined_type, _ = self._dispatcher.defined_vars.get(var_name)
+        if defined_type == DefinedType.ArrayInterface:
+            var_name = cpp.array_interface_variable(var_name, True,
+                                                    self._dispatcher)
         kernel_stream.write(
             "#pragma HLS DEPENDENCE variable={} false".format(var_name), sdfg,
             state_id, node)
