@@ -48,13 +48,16 @@ class ExpandBlockCyclicScatterMKL(ExpandTransformation):
                 f"MKL_INT bcols = (gcols > 1 ? _block_sizes[1]: 1);\n"
                 f"MKL_INT mloc = numroc( &grows, &brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
                 f"MKL_INT nloc = numroc( &gcols, &bcols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);\n"
-                f"MKL_INT gld = grows;\n"
+                # f"MKL_INT gld = grows;\n"
+                f"MKL_INT gld = gcols;\n"
                 f"MKL_INT lld = mloc;\n"
                 f"MKL_INT info;\n"
-                f"descinit(_gdescriptor, &grows, &gcols, &grows, &gcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
+                # f"descinit(_gdescriptor, &grows, &gcols, &grows, &gcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
+                f"descinit(_gdescriptor, &gcols, &grows, &gcols, &grows, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
                 f"descinit(_ldescriptor, &grows, &gcols, &brows, &bcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
-                f"if (gcols > 1) {{ mkl_dimatcopy('R', 'T', grows, gcols, 1.0, _inbuffer, gcols, grows); }}\n"
-                f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor);")
+                # f"if (gcols > 1) {{ mkl_dimatcopy('R', 'T', grows, gcols, 1.0, _inbuffer, gcols, grows); }}\n"
+                # f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor);")
+                f"pdtran(&grows, &gcols, &one, _inbuffer,  &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor);")
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -156,14 +159,16 @@ class ExpandBlockCyclicGatherMKL(ExpandTransformation):
                 f"MKL_INT bcols = (gcols > 1 ? _block_sizes[1]: 1);\n"
                 f"MKL_INT mloc = numroc( &grows, &brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
                 f"MKL_INT nloc = numroc( &gcols, &bcols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);\n"
-                f"MKL_INT gld = grows;\n"
+                # f"MKL_INT gld = grows;\n"
+                f"MKL_INT gld = gcols;\n"
                 f"MKL_INT lld = mloc;\n"
                 f"MKL_INT info;\n"
                 f"MKL_INT _gdescriptor[9], _ldescriptor[9];\n"
-                f"descinit(_gdescriptor, &grows, &gcols, &grows, &gcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
+                f"descinit(_gdescriptor, &gcols, &grows, &gcols, &grows, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
                 f"descinit(_ldescriptor, &grows, &gcols, &brows, &bcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
-                f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor);\n"
-                f"if (gcols > 1) {{ mkl_dimatcopy('R', 'T', gcols, grows, 1.0, _outbuffer, grows, gcols); }}")
+                # f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor);\n"
+                # f"if (gcols > 1) {{ mkl_dimatcopy('R', 'T', gcols, grows, 1.0, _outbuffer, grows, gcols); }}")
+                f"pdtran(&gcols, &grows, &one, _inbuffer,  &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor);")
                 
                 # f"MKL_INT grows = {out_shape[0]};\n"
                 # f"MKL_INT gcols = {out_shape[1]};\n"

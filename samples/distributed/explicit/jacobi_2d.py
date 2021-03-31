@@ -142,7 +142,7 @@ if __name__ == "__main__":
 
     # Initialization
     # TSTEPS, N = 100, 1000  # 500, 1300  # 1000, 2800
-    TSTEPS, N = 500, 1300
+    TSTEPS, N = 1000, 2800
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
