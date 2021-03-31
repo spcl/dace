@@ -1,11 +1,9 @@
 import numpy as np
 import dace as dc
+import timeit
 from mpi4py import MPI
 
 from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
-
-
-# NI, NJ, NK = (dc.symbol(s, dtype=dc.int64) for s in ('NI', 'NJ', 'NK'))
 
 lNI = dc.symbol('lNI', dtype=dc.int64, integer=True, positive=True)
 lNJ = dc.symbol('lNJ', dtype=dc.int64, integer=True, positive=True)
@@ -38,66 +36,56 @@ def gemm_distr(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
     lB = np.empty((lNKb, lNJ), dtype=B.dtype)
     lC = np.empty((lNI, lNJ), dtype=A.dtype)
 
-    # bsizesA = np.empty((2,), dtype=np.int32)
-    # bsizesA[0] = lNI
-    # bsizesA[1] = lNKa
-
-    # bsizesB = np.empty((2,), dtype=np.int32)
-    # bsizesB[0] = lNKb
-    # bsizesB[1] = lNJ
-
-    # bsizesC = np.empty((2,), dtype=np.int32)
-    # bsizesC[0] = lNI
-    # bsizesC[1] = lNJ
-
-    # gdescA, ldescA = dc.comm.BCScatter(A, lA, bsizesA)
-    # gdescB, ldescB = dc.comm.BCScatter(B, lB, bsizesB)
-    # gdescC, ldescC = dc.comm.BCScatter(C, lC, bsizesC)
     dc.comm.BCScatter(A, lA, (lNI, lNKa))
     dc.comm.BCScatter(B, lB, (lNKb, lNJ))
     dc.comm.BCScatter(C, lC, (lNI, lNJ))
 
-    # tmp, gdesctmp, ldesctmp = distr.MatMult(lA, ldescA, lB, ldescB)
     tmp  = distr.MatMult(A, B, lA, lB, (lNI, lNKa), (lNKb, lNJ))
 
     lC[:] = alpha * tmp + beta * lC
 
-    # dc.comm.BCGather(lC, C, ldescC, gdescC)
     dc.comm.BCGather(lC, C, (lNI, lNJ))
 
 
 def init_data(NI, NJ, NK, datatype):
 
-    from dace.libraries.standard.memory import aligned_ndarray
-
     alpha = datatype(1.5)
     beta = datatype(1.2)
-    C = aligned_ndarray(np.empty((NI, NJ), dtype=datatype), alignment=4096)
-    for i in range(NI):
-        for j in range(NJ):
-            C[i, j] = ((i * j + 1) % NI) / NI
-    A = aligned_ndarray(np.empty((NI, NK), dtype=datatype), alignment=4096)
-    for i in range(NI):
-        for k in range(NK):
-            A[i, k] = (i * (k + 1) % NK) / NK
-    B = aligned_ndarray(np.empty((NK, NJ), dtype=datatype), alignment=4096)
-    for k in range(NK):
-        for j in range(NJ):
-            C[i, j] = (k * (j + 2) % NJ) / NJ
+    rng = np.random.default_rng(42)
+    C = rng.random((NI, NJ), dtype=datatype)
+    A = rng.random((NI, NK), dtype=datatype)
+    B = rng.random((NK, NJ), dtype=datatype)
 
     return alpha, beta, C, A, B
+
+
+def time_to_ms(raw):
+    return int(round(raw * 1000))
+
+
+grid = {
+    1: (1, 1),
+    2: (2, 1),
+    4: (2, 2),
+    8: (4, 2),
+    16: (4, 4)
+}
 
 
 if __name__ == "__main__":
 
     # Initialization
     NI, NJ, NK = 2000, 2300, 2600  # 4000, 4600, 5200
-    alpha, beta, C, A, B = init_data(NI, NJ, NK, np.float64)
+    alpha = beta = 0.0
+    C = np.empty((NI, NJ), dtype=np.float64)
+    A = np.empty((NI, NK), dtype=np.float64)
+    B = np.empty((NK, NJ), dtype=np.float64)
+    # alpha, beta, C, A, B = init_data(NI, NJ, NK, np.float64)
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
-    Px = Py = int(np.sqrt(size))
+    Px, Py = grid[size]
     lNI = NI // Px
     lNJ = NJ // Py
     lNKa = NK // Py
@@ -117,21 +105,48 @@ if __name__ == "__main__":
         mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
             ".dacecache/{n}/build/lib{n}.so".format(n=gemm_distr.name),
             gemm_distr.name))
+
+    ldict = locals()
+    
     comm.Barrier()
+
+    stmt = ("mpi_func(A=A, B=B, C=C, alpha=alpha, beta=beta, "
+            "NI=NI, NJ=NJ, NK=NK, lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb, "
+            "Px=Px, Py=Py)")
+    setup = ("if rank == 0:\n"
+             "    alpha, beta, C, A, B = init_data(NI, NJ, NK, np.float64)\n"
+             "else:\n"
+             "    alpha = beta = 0.0\n"
+             "    C = np.empty((NI, NJ), dtype=np.float64)\n"
+             "    A = np.empty((NI, NK), dtype=np.float64)\n"
+             "    B = np.empty((NK, NJ), dtype=np.float64)\n"
+             "comm.Barrier()")
+    repeat = 10
+
+    raw_time_list = timeit.repeat(stmt,
+                                  setup=setup,
+                                  repeat=repeat,
+                                  number=1,
+                                  globals=ldict)
+    raw_time = np.median(raw_time_list)
   
-    mpi_func(A=A, B=B, C=C, alpha=alpha, beta=beta,
-             NI=NI, NJ=NJ, NK=NK,
-             lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb,
-             Px=Px, Py=Py)
+    # mpi_func(A=A, B=B, C=C, alpha=alpha, beta=beta,
+    #          NI=NI, NJ=NJ, NK=NK,
+    #          lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb,
+    #          Px=Px, Py=Py)
 
     comm.Barrier()
 
     if rank == 0:
-        alpha, beta, refC, refA, refB = init_data(NI, NJ, NK, np.float64)
-        shared_sdfg = gemm_shared.compile()
-        shared_sdfg(A=refA, B=refB, C=refC, alpha=alpha, beta=beta,
-                    NI=NI, NJ=NJ, NK=NK,
-                    lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb,
-                    Px=Px, Py=Py)
+        ms_time = time_to_ms(raw_time)
+        print("Median is {}ms".format(ms_time))
 
-        print(relerr(refC, C))
+    # if rank == 0:
+    #     alpha, beta, refC, refA, refB = init_data(NI, NJ, NK, np.float64)
+    #     shared_sdfg = gemm_shared.compile()
+    #     shared_sdfg(A=refA, B=refB, C=refC, alpha=alpha, beta=beta,
+    #                 NI=NI, NJ=NJ, NK=NK,
+    #                 lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb,
+    #                 Px=Px, Py=Py)
+
+    #     print(relerr(refC, ldict["C"]))
