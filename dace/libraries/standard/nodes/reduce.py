@@ -907,10 +907,12 @@ class ExpandReduceFPGAPartialReduction(pm.ExpandTransformation):
 
         # TODO support vectorization
         buffer_name = 'partial_results'
+        is_intel = dace.Config.get("compiler", "fpga_vendor") == "intel_fpga"
         nsdfg.add_array(buffer_name, (partial_width, ),
                         input_data.dtype,
                         transient=True,
-                        storage=dtypes.StorageType.FPGA_Local)
+                        storage=dtypes.StorageType.FPGA_Local
+                        if is_intel else dtypes.StorageType.FPGA_Registers)
         buffer = nstate.add_access(buffer_name)
         buffer_write = nstate.add_write(buffer_name)
 
@@ -942,13 +944,13 @@ class ExpandReduceFPGAPartialReduction(pm.ExpandTransformation):
         if redtype not in ExpandReduceFPGAPartialReduction._REDUCTION_TYPE_EXPR:
             raise ValueError('Reduction type not supported for "%s"' % node.wcr)
         else:
-            reduction_expr = ExpandReduceFPGAPartialReduction._REDUCTION_TYPE_EXPR[redtype]
+            reduction_expr = ExpandReduceFPGAPartialReduction._REDUCTION_TYPE_EXPR[
+                redtype]
 
         # generate flatten index considering inner map: will be used for indexing into partial results
         ranges_size = ime.range.size()
-        inner_index = '+'.join([
-            f'_i{i} * {ranges_size[i + 1]}' for i in range(len(axes) - 1)
-        ])
+        inner_index = '+'.join(
+            [f'_i{i} * {ranges_size[i + 1]}' for i in range(len(axes) - 1)])
         inner_op = ' + ' if len(axes) > 1 else ''
         inner_index = inner_index + f'{inner_op}_i{(len(axes) - 1)}'
         partial_reduce_tasklet = nstate.add_tasklet(
