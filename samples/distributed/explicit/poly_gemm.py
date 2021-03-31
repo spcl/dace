@@ -75,12 +75,8 @@ grid = {
 if __name__ == "__main__":
 
     # Initialization
-    NI, NJ, NK = 2000, 2300, 2600  # 4000, 4600, 5200
-    alpha = beta = 0.0
-    C = np.empty((NI, NJ), dtype=np.float64)
-    A = np.empty((NI, NK), dtype=np.float64)
-    B = np.empty((NK, NJ), dtype=np.float64)
-    # alpha, beta, C, A, B = init_data(NI, NJ, NK, np.float64)
+    # NI, NJ, NK = 2000, 2300, 2600  # 4000, 4600, 5200
+    NI, NJ, NK = 4000, 4600, 5200
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -90,6 +86,18 @@ if __name__ == "__main__":
     lNJ = NJ // Py
     lNKa = NK // Py
     lNKb = NK // Px
+
+    def setup_func(rank):
+        if rank == 0:
+            return init_data(NI, NJ, NK, np.float64)
+        else:
+            return (
+                1.5, 1.2,
+                np.empty((NI, NJ), dtype=np.float64),
+                np.empty((NI, NK), dtype=np.float64),
+                np.empty((NK, NJ), dtype=np.float64))
+    
+    alpha, beta, C, A, B = setup_func(rank)
 
     mpi_sdfg = None
     # if size < 2:
@@ -110,17 +118,17 @@ if __name__ == "__main__":
     
     comm.Barrier()
 
+    mpi_func(A=A, B=B, C=C, alpha=alpha, beta=beta,
+             NI=NI, NJ=NJ, NK=NK,
+             lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb,
+             Px=Px, Py=Py)
+
+    comm.Barrier()
+
     stmt = ("mpi_func(A=A, B=B, C=C, alpha=alpha, beta=beta, "
             "NI=NI, NJ=NJ, NK=NK, lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb, "
             "Px=Px, Py=Py)")
-    setup = ("if rank == 0:\n"
-             "    alpha, beta, C, A, B = init_data(NI, NJ, NK, np.float64)\n"
-             "else:\n"
-             "    alpha = beta = 0.0\n"
-             "    C = np.empty((NI, NJ), dtype=np.float64)\n"
-             "    A = np.empty((NI, NK), dtype=np.float64)\n"
-             "    B = np.empty((NK, NJ), dtype=np.float64)\n"
-             "comm.Barrier()")
+    setup = "alpha, beta, C, A, B = setup_func(rank); comm.Barrier()"
     repeat = 10
 
     raw_time_list = timeit.repeat(stmt,
@@ -129,11 +137,6 @@ if __name__ == "__main__":
                                   number=1,
                                   globals=ldict)
     raw_time = np.median(raw_time_list)
-  
-    # mpi_func(A=A, B=B, C=C, alpha=alpha, beta=beta,
-    #          NI=NI, NJ=NJ, NK=NK,
-    #          lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb,
-    #          Px=Px, Py=Py)
 
     comm.Barrier()
 
@@ -141,12 +144,12 @@ if __name__ == "__main__":
         ms_time = time_to_ms(raw_time)
         print("Median is {}ms".format(ms_time))
 
-    # if rank == 0:
-    #     alpha, beta, refC, refA, refB = init_data(NI, NJ, NK, np.float64)
-    #     shared_sdfg = gemm_shared.compile()
-    #     shared_sdfg(A=refA, B=refB, C=refC, alpha=alpha, beta=beta,
-    #                 NI=NI, NJ=NJ, NK=NK,
-    #                 lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb,
-    #                 Px=Px, Py=Py)
+        alpha, beta, refC, refA, refB = init_data(NI, NJ, NK, np.float64)
+        shared_sdfg = gemm_shared.compile()
+        shared_sdfg(A=refA, B=refB, C=refC, alpha=alpha, beta=beta,
+                    NI=NI, NJ=NJ, NK=NK,
+                    lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb,
+                    Px=Px, Py=Py)
 
-    #     print(relerr(refC, ldict["C"]))
+        print("=======Validation=======")
+        print(relerr(refC, C))
