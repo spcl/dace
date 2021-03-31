@@ -141,8 +141,8 @@ grid = {
 if __name__ == "__main__":
 
     # Initialization
-    # TSTEPS, N = 100, 1000  # 500, 1300  # 1000, 2800
-    TSTEPS, N = 500, 1300
+    TSTEPS, N = 100, 1000  # 500, 1300  # 1000, 2800
+    # TSTEPS, N = 500, 1300
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -155,8 +155,8 @@ if __name__ == "__main__":
     noff = soff = woff = eoff = 0
     nn = (pi-1)*Py + pj
     ns = (pi+1)*Py + pj
-    nw = pi*Px + (pj-1)
-    ne = pi*Px + (pj+1)
+    nw = pi*Py + (pj-1)
+    ne = pi*Py + (pj+1)
     if pi == 0:
         noff = 1
         nn = MPI.PROC_NULL
@@ -169,6 +169,14 @@ if __name__ == "__main__":
     if pj == Py - 1:
         eoff = 1
         ne = MPI.PROC_NULL
+
+    # for r in range(size):
+    #     if r == rank:
+    #         print("===== Rank {} =====".format(rank), flush=True)
+    #         print(pi, pj, flush=True)
+    #         print(nn, ns, nw, ne, flush=True)
+    #         print(noff, soff, woff, eoff, flush=True)
+    #     comm.Barrier()
 
     def setup_func(rank):
         if rank == 0:
