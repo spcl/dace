@@ -7,7 +7,7 @@ from copy import deepcopy as dc
 from dace.frontend.python.ndloop import ndrange
 import itertools
 import networkx as nx
-from typing import Callable, Dict, Iterable, List, Set, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Set, Optional, Tuple, Union
 import warnings
 from functools import reduce
 import operator
@@ -363,11 +363,14 @@ class InlineSDFG(transformation.Transformation):
                                        find_new_name=True)
             repldict[dname] = newname
 
+        orig_data: Dict[Union[nodes.AccessNode, MultiConnectorEdge], str] = {}
         for node in nstate.nodes():
             if isinstance(node, nodes.AccessNode) and node.data in repldict:
+                orig_data[node] = node.data
                 node.data = repldict[node.data]
         for edge in nstate.edges():
             if edge.data.data in repldict:
+                orig_data[edge] = edge.data.data
                 edge.data.data = repldict[edge.data.data]
 
         # Add extra access nodes for out/in view nodes
@@ -404,16 +407,22 @@ class InlineSDFG(transformation.Transformation):
         #######################################################
         # Reconnect inlined SDFG
 
+        # If both source and sink nodes are inputs/outputs, reconnect once
+        edges_to_ignore = self._modify_access_to_access(new_incoming_edges,
+                                                        nsdfg, nstate, state,
+                                                        orig_data)
+
         source_to_outer = {n: e.src for n, e in new_incoming_edges.items()}
         sink_to_outer = {n: e.dst for n, e in new_outgoing_edges.items()}
         # If a source/sink node is one of the inputs/outputs, reconnect it,
         # replacing memlets in outgoing/incoming paths
         modified_edges = set()
         modified_edges |= self._modify_memlet_path(new_incoming_edges, nstate,
-                                                   state, sink_to_outer, True)
+                                                   state, sink_to_outer, True,
+                                                   edges_to_ignore)
         modified_edges |= self._modify_memlet_path(new_outgoing_edges, nstate,
                                                    state, source_to_outer,
-                                                   False)
+                                                   False, edges_to_ignore)
 
         # Reshape: add connections to viewed data
         self._modify_reshape_data(reshapes, repldict, inputs, nstate, state,
@@ -500,12 +509,53 @@ class InlineSDFG(transformation.Transformation):
         # Remove nested SDFG node
         state.remove_node(nsdfg_node)
 
-    def _modify_memlet_path(self, new_edges: Dict[nodes.Node,
-                                                  MultiConnectorEdge],
-                            nstate: SDFGState, state: SDFGState,
-                            inner_to_outer: Dict[nodes.Node,
-                                                 MultiConnectorEdge],
-                            inputs: bool) -> Set[MultiConnectorEdge]:
+    def _modify_access_to_access(
+        self,
+        input_edges: Dict[nodes.Node, MultiConnectorEdge],
+        nsdfg: SDFG,
+        nstate: SDFGState,
+        state: SDFGState,
+        orig_data: Dict[Union[nodes.AccessNode, MultiConnectorEdge], str],
+    ) -> Set[MultiConnectorEdge]:
+        """ 
+        Deals with access->access edges where both sides are non-transient.
+        """
+        result = set()
+        for node, top_edge in input_edges.items():
+            for inner_edge in nstate.out_edges(node):
+                if inner_edge.dst not in orig_data:
+                    continue
+                inner_data = orig_data[inner_edge.dst]
+                if (isinstance(inner_edge.dst, nodes.AccessNode)
+                        and not nsdfg.arrays[inner_data].transient):
+                    matching_edge: MultiConnectorEdge = next(
+                        state.out_edges_by_connector(top_edge.dst, inner_data))
+                    # Create memlet by unsqueezing both w.r.t. src and dst
+                    # subsets
+                    in_memlet = helpers.unsqueeze_memlet(
+                        inner_edge.data, top_edge.data)
+                    out_memlet = helpers.unsqueeze_memlet(
+                        inner_edge.data, matching_edge.data)
+                    new_memlet = in_memlet
+                    new_memlet.other_subset = out_memlet.subset
+
+                    # Connect with new edge
+                    state.add_edge(top_edge.src, top_edge.src_conn,
+                                   matching_edge.dst, matching_edge.dst_conn,
+                                   new_memlet)
+                    result.add(inner_edge)
+
+        return result
+
+    def _modify_memlet_path(
+        self,
+        new_edges: Dict[nodes.Node, MultiConnectorEdge],
+        nstate: SDFGState,
+        state: SDFGState,
+        inner_to_outer: Dict[nodes.Node, MultiConnectorEdge],
+        inputs: bool,
+        edges_to_ignore: Set[MultiConnectorEdge],
+    ) -> Set[MultiConnectorEdge]:
         """ Modifies memlet paths in an inlined SDFG. Returns set of modified
             edges.
         """
@@ -514,6 +564,8 @@ class InlineSDFG(transformation.Transformation):
             inner_edges = (nstate.out_edges(node)
                            if inputs else nstate.in_edges(node))
             for inner_edge in inner_edges:
+                if inner_edge in edges_to_ignore:
+                    continue
                 new_memlet = helpers.unsqueeze_memlet(inner_edge.data,
                                                       top_edge.data)
                 if inputs:
