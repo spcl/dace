@@ -167,6 +167,7 @@ class FPGACodeGen(TargetCodeGenerator):
         shared_transients = set(sdfg.shared_transients())
 
         if not self._in_device_code:
+
             # Allocate global memory transients, unless they are shared with
             # other states
             all_transients = set(state.all_transients())
@@ -182,6 +183,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                    function_stream,
                                                    callsite_stream)
+
             # Create a unique kernel name to avoid name clashes
             # If this kernels comes from a Nested SDFG, use that name also
             if sdfg.parent_nsdfg_node is not None:
@@ -189,6 +191,16 @@ class FPGACodeGen(TargetCodeGenerator):
                                                 state.label, sdfg.sdfg_id)
             else:
                 kernel_name = "{}_{}".format(state.label, sdfg.sdfg_id)
+            # Vitis HLS removes double underscores, which leads to a compilation
+            # error down the road due to kernel name mismatch. Remove them here
+            # to prevent this
+            while True:
+                _kernel_name = kernel_name.replace("__", "_")
+                if kernel_name == _kernel_name:
+                    break
+                else:
+                    kernel_name = _kernel_name
+
             # Generate kernel code
             self.generate_kernel(sdfg, state, kernel_name, subgraphs,
                                  function_stream, callsite_stream)
@@ -199,6 +211,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 for _, (src, dst) in self._stream_connections.items():
                     ini_stream.write('stream_connect={}:{}'.format(src, dst))
                 self._other_codes['link.ini'] = ini_stream
+
         else:  # self._in_device_code == True
 
             to_allocate = dace.sdfg.local_transients(sdfg, state, None)
@@ -218,6 +231,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                    function_stream,
                                                    callsite_stream)
+
             self.generate_nested_state(sdfg, state, state.label, subgraphs,
                                        function_stream, callsite_stream)
 
