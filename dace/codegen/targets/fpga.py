@@ -192,8 +192,8 @@ class FPGACodeGen(TargetCodeGenerator):
             else:
                 kernel_name = "{}_{}".format(state.label, sdfg.sdfg_id)
             # Vitis HLS removes double underscores, which leads to a compilation
-            # error down the road due to kernel name mismatch. Remove them here to
-            # prevent this
+            # error down the road due to kernel name mismatch. Remove them here
+            # to prevent this
             while True:
                 _kernel_name = kernel_name.replace("__", "_")
                 if kernel_name == _kernel_name:
