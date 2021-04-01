@@ -1113,6 +1113,16 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
         return ast.copy_location(newnode, node)
 
+    def visit_Name(self, node: ast.Name):
+        name = rname(node)
+        if name not in self.memlets:
+            return self.generic_visit(node)
+        memlet, nc, wcr, dtype = self.memlets[name]
+        if isinstance(dtype, dtypes.pointer):
+            return ast.Name(id="(*{})".format(name), ctx=node.ctx)
+        else:
+            return self.generic_visit(node)
+
     def visit_Expr(self, node):
         # Check for DaCe function calls
         if isinstance(node.value, ast.Call):
