@@ -346,15 +346,21 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         # Special call for detected reduction types
         if redtype != dtypes.ReductionType.Custom:
-            credtype = "dace::ReductionType::" + str(
-                redtype)[str(redtype).find(".") + 1:]
+            if redtype == dace.dtypes.ReductionType.Sub:
+                # write this as an addition
+                credtype = "dace::ReductionType::Sum"
+                is_sub = True
+            else:
+                credtype = "dace::ReductionType::" + str(
+                    redtype)[str(redtype).find(".") + 1:]
+                is_sub = False
             if isinstance(dtype, dtypes.vector):
                 return (f'dace::xilinx_wcr_fixed_vec<{credtype}, '
                         f'{dtype.vtype.ctype}, {dtype.veclen}>::reduce('
-                        f'{ptr}, {inname})')
+                        f'{ptr}, {"-" if is_sub else ""}{inname})')
             return (
                 f'dace::xilinx_wcr_fixed<{credtype}, {dtype.ctype}>::reduce('
-                f'{ptr}, {inname})')
+                f'{ptr}, {"-" if is_sub else ""}{inname})')
 
         # General reduction
         raise NotImplementedError('General reductions not yet implemented')
@@ -425,12 +431,15 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                    var_name=None):
         pass
 
-    @staticmethod
-    def generate_no_dependence_post(kernel_stream, sdfg, state_id, node,
+    def generate_no_dependence_post(self, kernel_stream, sdfg, state_id, node,
                                     var_name):
         '''
         Adds post loop pragma for ignoring loop carried dependencies on a given variable
         '''
+        defined_type, _ = self._dispatcher.defined_vars.get(var_name)
+        if defined_type == DefinedType.ArrayInterface:
+            var_name = cpp.array_interface_variable(var_name, True,
+                                                    self._dispatcher)
         kernel_stream.write(
             "#pragma HLS DEPENDENCE variable={} false".format(var_name), sdfg,
             state_id, node)
@@ -725,7 +734,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                     ", ".join(kernel_args_module)), sdfg,
             state_id)
 
-
         # Register the array interface as a naked pointer for use inside the
         # FPGA kernel
         interfaces_added = set()
@@ -953,8 +961,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                    and desc.storage
                                    == dtypes.StorageType.FPGA_Global)
             if is_memory_interface:
-                interface_name = cpp.array_interface_variable(
-                    uconn, True, None)
+                interface_name = cpp.array_interface_variable(uconn, True, None)
                 # Register the raw pointer as a defined variable
                 self._dispatcher.defined_vars.add(
                     interface_name, DefinedType.Pointer,
