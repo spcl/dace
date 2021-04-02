@@ -89,7 +89,7 @@ class ReduceExpansion(transformation.Transformation):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         reduce_node = graph.nodes()[candidate[ReduceExpansion._reduce]]
         inedge = graph.in_edges(reduce_node)[0]
-        input_dims = inedge.data.subset.data_dims()
+        input_dims = inedge.data.subset.dims()
         axes = reduce_node.axes
         if axes is None:
             # axes = None -> full reduction, can't expand
@@ -177,8 +177,7 @@ class ReduceExpansion(transformation.Transformation):
         #           if transient: ancestor_node = none, set_zero on outer node
 
         shortcut = False
-        if (not array_closest_ancestor and sdfg.data(out_storage_node.data).transient) \
-                                        or identity is not None:
+        if True:
             if self.debug:
                 print("ReduceExpansion::Expanding Reduction into Map")
             # we are lucky

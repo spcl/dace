@@ -404,21 +404,20 @@ def auto_optimize(sdfg: SDFG,
         sdfg.apply_strict_transformations()
     
     # Map fusion
-    '''
+    
     for graph in sdfg.nodes():
         for node in graph.nodes():
             if isinstance(node, dace.libraries.standard.nodes.Reduce):
-                if graph.scope_dict()[node] is None:
+                if True: #graph.scope_dict()[node] is None:
                     try:
                         print("Expanding Reduction")
-                        ReduceExpansion.apply_to(sdfg, _reduce = node, reduce_implementation = 'CUDA (block allreduce)')
+                        ReduceExpansion.apply_to(sdfg, _reduce = node, reduce_implementation = 'sequential')
 
                     except ValueError:
                         pass
-    '''
+    
     greedy_fuse(sdfg, validate_all)
     
-
     
     #sdfg.apply_transformations_repeated(DeduplicateAccess)
     #sdfg.apply_transformations(MapTiling)
@@ -434,10 +433,10 @@ def auto_optimize(sdfg: SDFG,
                                         strict=True,
                                         validate=False,
                                         validate_all=validate_all)
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.MapEntry):
-            #node.map.collapse = len(node.map.range) # TODO: try without as well :) 
-            pass
+    #for node, _ in sdfg.all_nodes_recursive():
+    #    if isinstance(node, nodes.MapEntry):
+    #        node.map.collapse = len(node.map.range) # TODO: try without as well :) 
+    #        pass
     
     # Set all library nodes to expand to fast library calls
     set_fast_implementations(sdfg, device)
