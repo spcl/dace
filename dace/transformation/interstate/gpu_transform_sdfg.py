@@ -297,7 +297,7 @@ class GPUTransformSDFG(transformation.Transformation):
             if isinstance(node, nodes.Tasklet):
                 if (state.entry_node(node) is None
                         and not scope.is_devicelevel_gpu(
-                            state.parent, state, node)):
+                            state.parent, state, node, with_gpu_default=True)):
                     global_code_nodes[state].append(node)
 
         for state, gcodes in global_code_nodes.items():
