@@ -1107,7 +1107,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return result
 
-    def shared_transients(self):
+    def shared_transients(self) -> List[str]:
         """ Returns a list of transient data that appears in more than one
             state. """
         seen = {}
@@ -1303,13 +1303,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return name + ('_%d' % index)
 
     def find_new_constant(self, name: str):
-        """ 
+        """
         Tries to find a new constant name by adding an underscore and a number.
         """
         constants = self.constants
         if name not in constants:
             return name
-            
+
         index = 0
         while (name + ('_%d' % index)) in constants:
             index += 1
@@ -2060,8 +2060,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 except InvalidSDFGError as err:
                     raise InvalidSDFGError(
                         "Validation failed after applying {}.".format(
-                            match_name), sdfg,
-                        match.state_id) from err
+                            match_name), sdfg, match.state_id) from err
 
         if order_by_transformation:
             applied_anything = True
@@ -2088,11 +2087,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             while applied:
                 applied = False
                 # Find and apply one of the chosen transformations
-                for match in opt.get_pattern_matches(
-                        strict=strict,
-                        patterns=xforms,
-                        states=states,
-                        options=options):
+                for match in opt.get_pattern_matches(strict=strict,
+                                                     patterns=xforms,
+                                                     states=states,
+                                                     options=options):
                     _apply_and_validate(match)
                     applied = True
                     break
