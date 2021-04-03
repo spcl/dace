@@ -36,16 +36,35 @@ def gemm_distr(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
     lB = np.empty((lNKb, lNJ), dtype=B.dtype)
     lC = np.empty((lNI, lNJ), dtype=A.dtype)
 
-    dc.comm.BCScatter(A, lA, (lNI, lNKa))
-    dc.comm.BCScatter(B, lB, (lNKb, lNJ))
-    dc.comm.BCScatter(C, lC, (lNI, lNJ))
+    # dc.comm.BCScatter(A, lA, (lNI, lNKa))
+    # dc.comm.BCScatter(B, lB, (lNKb, lNJ))
+    # dc.comm.BCScatter(C, lC, (lNI, lNJ))
+    Av = np.reshape(A, (Px, lNI, Py, lNKa))
+    A2 = np.transpose(Av, axes=(0, 2, 1, 3))
+    Bv = np.reshape(B, (Px, lNKb, Py, lNJ))
+    B2 = np.transpose(Bv, axes=(0, 2, 1, 3))
+    Cv = np.reshape(C, (Px, lNI, Py, lNJ))
+    C2 = np.transpose(Cv, axes=(0, 2, 1, 3))
+    dc.comm.Scatter(A2, lA)
+    dc.comm.Scatter(B2, lB)
+    dc.comm.Scatter(C2, lC)
 
     tmp  = distr.MatMult(lA, lB, (NI, NJ, NK))
 
     lC[:] = alpha * tmp + beta * lC
 
-    dc.comm.BCGather(lC, C, (lNI, lNJ))
 
+    # dc.comm.BCGather(lC, C, (lNI, lNJ))
+    dc.comm.Gather(lC, C2)
+    C[:] = np.transpose(C2, (0, 2, 1, 3))
+
+
+@dc.program
+def gemm_distr2(alpha: dc.float64, beta: dc.float64, C: dc.float64[lNI, lNJ],
+                A: dc.float64[lNI, lNKa], B: dc.float64[lNKb, lNJ]):
+
+    tmp  = distr.MatMult(A, B, (NI, NJ, NK))
+    C[:] = alpha * tmp + beta * C
 
 def init_data(NI, NJ, NK, datatype):
 
@@ -55,6 +74,9 @@ def init_data(NI, NJ, NK, datatype):
     C = rng.random((NI, NJ), dtype=datatype)
     A = rng.random((NI, NK), dtype=datatype)
     B = rng.random((NK, NJ), dtype=datatype)
+    # C = np.zeros((NI, NJ), dtype=datatype)
+    # A = np.arange(0, NI*NK, dtype=datatype).reshape(NI, NK)
+    # B = np.arange(NI*NK, NI*NK+NK*NJ, dtype=datatype).reshape(NK, NJ)
 
     return alpha, beta, C, A, B
 
@@ -77,6 +99,7 @@ if __name__ == "__main__":
     # Initialization
     # NI, NJ, NK = 2000, 2300, 2600  # 4000, 4600, 5200
     NI, NJ, NK = 4000, 4600, 5200
+    # NI, NJ, NK = 4, 4, 4
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -153,3 +176,8 @@ if __name__ == "__main__":
 
         print("=======Validation=======")
         print(relerr(refC, C))
+
+        # print(A)
+        # print(B)
+        # print(refC)
+        # print(C)
