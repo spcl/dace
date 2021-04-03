@@ -5307,21 +5307,22 @@ def _bcgather(pv: 'ProgramVisitor',
 def _distr_matmult(pv: 'ProgramVisitor',
                    sdfg: SDFG,
                    state: SDFGState,
-                   origA: str,
-                   origB: str,
                    opa: str,
-                #    desca: str,
                    opb: str,
-                #    descb: str):
-                   a_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]],
-                   b_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]]):
+                   shape: Sequence[Union[sp.Expr, Number]],
+                   a_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None,
+                   b_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None):
 
-    ashape = sdfg.arrays[origA].shape
     arra = sdfg.arrays[opa]
-    # arrdesca = sdfg.arrays[desca]
-    bshape = sdfg.arrays[origB].shape
     arrb = sdfg.arrays[opb]
-    # arrdescb = sdfg.arrays[descb]
+
+    if len(shape) == 3:
+        gm, gn, gk = shape
+    else:
+        gm, gn = shape
+
+    a_block_sizes = a_block_sizes or arra.shape
+    b_block_sizes = b_block_sizes or arrb.shape
 
     a_bsizes_range = None
     if isinstance(a_block_sizes, (list, tuple)):
@@ -5373,9 +5374,9 @@ def _distr_matmult(pv: 'ProgramVisitor',
     if len(arra.shape) == 2 and len(arrb.shape) == 2:
         # Gemm
         from dace.libraries.pblas.nodes.pgemm import Pgemm
-        gm = ashape[0]
-        gn = bshape[-1]
-        gk = ashape[-1]
+        # gm = ashape[0]
+        # gn = bshape[-1]
+        # gk = ashape[-1]
         tasklet = Pgemm("__DistrMatMult__", gm, gn, gk)
         m = arra.shape[0]
         n = arrb.shape[-1]
@@ -5383,8 +5384,8 @@ def _distr_matmult(pv: 'ProgramVisitor',
     elif len(arra.shape) == 2 and len(arrb.shape) == 1:
         # Gemv
         from dace.libraries.pblas.nodes.pgemv import Pgemv
-        gm = ashape[0]
-        gn = ashape[1]
+        # gm = ashape[0]
+        # gn = ashape[1]
         tasklet = Pgemv("__DistrMatVecMult__", m=gm, n=gn)
         m = arra.shape[0]
         out = sdfg.add_temp_transient((m,), dtype=arra.dtype)
@@ -5396,8 +5397,8 @@ def _distr_matmult(pv: 'ProgramVisitor',
         # desca, descb = descb, desca
         # arrdesca, arrdescb = arrdescb, arrdesca
         from dace.libraries.pblas.nodes.pgemv import Pgemv
-        gm = ashape[0]
-        gn = ashape[1]
+        # gm = ashape[0]
+        # gn = ashape[1]
         tasklet = Pgemv("__DistrMatVecMult__", transa='T', m=gm, n=gn)
         n = arra.shape[1]
         out = sdfg.add_temp_transient((n,), dtype=arra.dtype)
