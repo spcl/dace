@@ -63,7 +63,7 @@ def gemm_distr(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
 def gemm_distr2(alpha: dc.float64, beta: dc.float64, C: dc.float64[lNI, lNJ],
                 A: dc.float64[lNI, lNKa], B: dc.float64[lNKb, lNJ]):
 
-    tmp  = distr.MatMult(A, B, (NI, NJ, NK))
+    tmp  = distr.MatMult(A, B, (lNI * Px, lNJ * Py, NK))
     C[:] = alpha * tmp + beta * C
 
 def init_data(NI, NJ, NK, datatype):
@@ -115,43 +115,66 @@ if __name__ == "__main__":
             return init_data(NI, NJ, NK, np.float64)
         else:
             return (
-                1.5, 1.2,
-                np.empty((NI, NJ), dtype=np.float64),
-                np.empty((NI, NK), dtype=np.float64),
-                np.empty((NK, NJ), dtype=np.float64))
+                1.5, 1.2, None, None, None)
+                # np.empty((NI, NJ), dtype=np.float64),
+                # np.empty((NI, NK), dtype=np.float64),
+                # np.empty((NK, NJ), dtype=np.float64))
     
     alpha, beta, C, A, B = setup_func(rank)
+
+    lA = np.empty((lNI, lNKa), dtype=np.float64)
+    lB = np.empty((lNKb, lNJ), dtype=np.float64)
+    lC = np.empty((lNI, lNJ), dtype=np.float64)
+
+    A2, B2, C2 = None, None, None
+    if rank == 0:
+        Av = np.reshape(A, (Px, lNI, Py, lNKa))
+        A2 = np.transpose(Av, axes=(0, 2, 1, 3)).copy()
+        Bv = np.reshape(B, (Px, lNKb, Py, lNJ))
+        B2 = np.transpose(Bv, axes=(0, 2, 1, 3)).copy()
+        Cv = np.reshape(C, (Px, lNI, Py, lNJ))
+        C2 = np.transpose(Cv, axes=(0, 2, 1, 3)).copy()
+    comm.Scatter(A2, lA)
+    comm.Scatter(B2, lB)
+    comm.Scatter(C2, lC)
+
+    tC = np.copy(lC)
 
     mpi_sdfg = None
     # if size < 2:
     #     raise ValueError("This test is supposed to be run with at least two processes!")
     if rank == 0:
-        mpi_sdfg = gemm_distr.to_sdfg(strict=False)
+        mpi_sdfg = gemm_distr2.to_sdfg(strict=False)
         mpi_sdfg.apply_strict_transformations()
         mpi_func = mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:
         mpi_sdfg = dc.SDFG.from_file(".dacecache/{n}/program.sdfg".format(
-            n=gemm_distr.name))
+            n=gemm_distr2.name))
         mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
-            ".dacecache/{n}/build/lib{n}.so".format(n=gemm_distr.name),
-            gemm_distr.name))
+            ".dacecache/{n}/build/lib{n}.so".format(n=gemm_distr2.name),
+            gemm_distr2.name))
 
     ldict = locals()
     
     comm.Barrier()
 
-    mpi_func(A=A, B=B, C=C, alpha=alpha, beta=beta,
+    mpi_func(A=lA, B=lB, C=tC, alpha=alpha, beta=beta,
              NI=NI, NJ=NJ, NK=NK,
              lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb,
              Px=Px, Py=Py)
 
+    comm.Gather(tC, C2)
+    if rank == 0:
+        C[:] = np.transpose(C2, (0, 2, 1, 3)).reshape(NI, NJ)
+
     comm.Barrier()
 
-    stmt = ("mpi_func(A=A, B=B, C=C, alpha=alpha, beta=beta, "
+    stmt = ("mpi_func(A=lA, B=lB, C=tC, alpha=alpha, beta=beta, "
             "NI=NI, NJ=NJ, NK=NK, lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb, "
             "Px=Px, Py=Py)")
-    setup = "alpha, beta, C, A, B = setup_func(rank); comm.Barrier()"
+    # setup = "alpha, beta, C, A, B = setup_func(rank); comm.Barrier()"
+    setup = "tC = np.copy(lC); comm.Barrier()"
     repeat = 10
 
     raw_time_list = timeit.repeat(stmt,
