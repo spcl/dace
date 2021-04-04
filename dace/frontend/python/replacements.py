@@ -5311,7 +5311,8 @@ def _distr_matmult(pv: 'ProgramVisitor',
                    opb: str,
                    shape: Sequence[Union[sp.Expr, Number]],
                    a_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None,
-                   b_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None):
+                   b_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None,
+                   c_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None):
 
     arra = sdfg.arrays[opa]
     arrb = sdfg.arrays[opb]
@@ -5322,7 +5323,14 @@ def _distr_matmult(pv: 'ProgramVisitor',
         gm, gn = shape
 
     a_block_sizes = a_block_sizes or arra.shape
+    if len(a_block_sizes) < 2:
+        a_block_sizes = (a_block_sizes[0], 1)
     b_block_sizes = b_block_sizes or arrb.shape
+    if len(b_block_sizes) < 2:
+        b_block_sizes = (b_block_sizes[0], 1)
+
+    if len(arra.shape) == 1 and len(arrb.shape) == 2:
+        a_block_sizes, b_block_sizes = b_block_sizes, a_block_sizes
 
     a_bsizes_range = None
     if isinstance(a_block_sizes, (list, tuple)):
@@ -5387,7 +5395,10 @@ def _distr_matmult(pv: 'ProgramVisitor',
         # gm = ashape[0]
         # gn = ashape[1]
         tasklet = Pgemv("__DistrMatVecMult__", m=gm, n=gn)
-        m = arra.shape[0]
+        if c_block_sizes:
+            m = c_block_sizes[0]
+        else:
+            m = arra.shape[0]
         out = sdfg.add_temp_transient((m,), dtype=arra.dtype)
     elif len(arra.shape) == 1 and len(arrb.shape) == 2:
         # Gemv transposed
@@ -5400,7 +5411,10 @@ def _distr_matmult(pv: 'ProgramVisitor',
         # gm = ashape[0]
         # gn = ashape[1]
         tasklet = Pgemv("__DistrMatVecMult__", transa='T', m=gm, n=gn)
-        n = arra.shape[1]
+        if c_block_sizes:
+            n = c_block_sizes[0]
+        else:
+            n = arra.shape[1]
         out = sdfg.add_temp_transient((n,), dtype=arra.dtype)
 
     # gdescout = sdfg.add_temp_transient((9,), dtype=dace.int32)
