@@ -12,6 +12,7 @@ from dace.properties import make_properties, Property
 from dace.symbolic import symstr
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.transformation.subgraph import helpers
+from collections import defaultdict
 
 from copy import deepcopy as dcpy
 from typing import List, Union
@@ -20,6 +21,7 @@ import itertools
 import dace.libraries.standard as stdlib
 
 import warnings
+import sys
 
 
 def offset_map(state, map_entry):
@@ -57,11 +59,11 @@ class MultiExpansion(transformation.SubgraphTransformation):
     check_contiguity = Property(dtype=bool,
                                 desc="Don't allow MultiExpansion if contiguous"
                                 "dimension is partially split",
-                                default = True)
+                                default = False)
 
     permutation_only = Property(dtype = bool, 
                                 desc="Only allow permutations without inner splits",
-                                default = True)
+                                default = False)
     
     allow_offset = Property(dtype = bool,
                             desc="Offset ranges to 0", 
@@ -215,7 +217,19 @@ class MultiExpansion(transformation.SubgraphTransformation):
             for map, map_entry in zip(maps, map_entries):
                 map_scope = graph.scope_subgraph(map_entry)
                 params_dict_map = params_dict[map]
+                inner_params = defaultdict(set)
+                for other_entry in graph.scope_subgraph(map_entry, include_entry = False, include_exit = False):
+                    if isinstance(other_entry, nodes.MapEntry):
+                        for param in other_entry.map.params:
+                            inner_params[param].add(other_entry)
+
                 for firstp, secondp in params_dict_map.items():
+                    if secondp in inner_params:
+                        replace(map_scope, secondp, secondp + '_inner')
+                        for other_entry in inner_params[secondp]:
+                            for (i,p) in enumerate(other_entry.map.params):
+                                if p == secondp:
+                                    other_entry.map.params[i] = secondp + '_inner'
                     if firstp != secondp:
                         replace(map_scope, firstp, '__' + firstp + '_fused')
                 for firstp, secondp in params_dict_map.items():
@@ -316,3 +330,4 @@ class MultiExpansion(transformation.SubgraphTransformation):
                                       memlet=edge.data,
                                       src_conn=edge.src_conn,
                                       dst_conn=edge.dst_conn)
+    
