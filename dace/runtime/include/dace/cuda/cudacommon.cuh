@@ -23,7 +23,7 @@ typedef cudaEvent_t gpuEvent_t;
     cudaError_t errr = (err);                                                \
     if(errr != (cudaError_t)0)                                               \
     {                                                                        \
-        printf("CUDA ERROR at %s:%d %s\n", __FILE__, __LINE__, cudaGetErrorString(errr)); \
+        printf("CUDA ERROR at %s:%d, code: %d\n", __FILE__, __LINE__, errr); \
     }                                                                        \
 } while(0)
 #endif
