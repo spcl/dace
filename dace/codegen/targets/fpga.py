@@ -288,10 +288,13 @@ class FPGACodeGen(TargetCodeGenerator):
         nested_global_transients = set()
         # [(Is an output, dataname string, data object, interface)]
         external_streams: Set[tuple[bool, str, dt, dict[str, int]]] = set()
-        global_symbols = {
+        # Mapping from symbol to a unique parameter tuple
+        all_symbols = {
             k: (False, k, dt.Scalar(v), None)
-            for k, v in sdfg.symbols.items()
+            for k, v in sdfg.symbols.items() if k not in sdfg.constants
         }
+        # Symbols that will be passed as parameters to the top-level kernel
+        global_symbols = set()
 
         for subgraph in subgraphs:
             data_to_node.update({
@@ -409,13 +412,15 @@ class FPGACodeGen(TargetCodeGenerator):
                 sorted(subgraph_parameters[subgraph], key=lambda t: t[1]))
             # Append symbols used in this subgraph
             for k in sorted(subgraph.free_symbols):
-                subgraph_parameters[subgraph].append(global_symbols[k])
+                if k not in sdfg.constants:
+                    param = all_symbols[k]
+                    subgraph_parameters[subgraph].append(param)
+                    global_symbols.add(param)
 
         # Order by name
         global_data_parameters = list(
             sorted(global_data_parameters, key=lambda t: t[1]))
-        global_data_parameters += sorted(global_symbols.values(),
-                                         key=lambda t: t[1])
+        global_data_parameters += sorted(global_symbols, key=lambda t: t[1])
         external_streams = list(sorted(external_streams, key=lambda t: t[1]))
         nested_global_transients = list(sorted(nested_global_transients))
 
