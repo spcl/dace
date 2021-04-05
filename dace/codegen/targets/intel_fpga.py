@@ -488,19 +488,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_header_stream.write("\n", sdfg)
 
         (global_data_parameters, top_level_local_data, subgraph_parameters,
-         scalar_parameters, symbol_parameters, nested_global_transients,
+         nested_global_transients,
          external_streams) = self.make_parameters(sdfg, state, subgraphs)
-
-        # Ignore interface ID in this backend
-        global_data_parameters = [tuple(p[:3]) for p in global_data_parameters]
-        subgraph_parameters = {
-            k: [tuple(vv[:3]) for vv in v]
-            for k, v in subgraph_parameters.items()
-        }
-
-        # Scalar parameters are never output
-        sc_parameters = [(False, pname, param)
-                         for pname, param in scalar_parameters]
 
         host_code_header_stream = CodeIOStream()
         host_code_body_stream = CodeIOStream()
@@ -515,16 +504,16 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
         # Generate host code
         self.generate_host_function_boilerplate(
-            sdfg, state, kernel_name, global_data_parameters + sc_parameters,
-            symbol_parameters, nested_global_transients, host_code_body_stream,
-            function_stream, callsite_stream)
+            sdfg, state, kernel_name, global_data_parameters,
+            nested_global_transients, host_code_body_stream, function_stream,
+            callsite_stream)
 
         self.generate_host_function_prologue(sdfg, state, host_code_body_stream)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
-                              subgraph_parameters, sc_parameters,
-                              symbol_parameters, kernel_body_stream,
-                              host_code_header_stream, host_code_body_stream)
+                              subgraph_parameters,
+                              kernel_body_stream, host_code_header_stream,
+                              host_code_body_stream)
 
         kernel_body_stream.write("\n")
 
@@ -590,7 +579,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 }""", sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
-                        symbol_parameters, module_stream, host_header_stream,
+                        module_stream, host_header_stream,
                         host_body_stream):
 
         state_id = sdfg.node_id(state)
@@ -599,18 +588,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_args_opencl = []
         kernel_args_host = []
         kernel_args_call = []
-        added = set()
-        # Split into arrays and scalars
-        arrays = sorted(
-            [t for t in parameters if not isinstance(t[2], dace.data.Scalar)],
-            key=lambda t: t[1])
-        scalars = [t for t in parameters if isinstance(t[2], dace.data.Scalar)]
-        scalars += [(False, k, v) for k, v in symbol_parameters.items()]
-        scalars = list(sorted(scalars, key=lambda t: t[1]))
-        for is_output, pname, p in itertools.chain(arrays, scalars):
-            if pname in added or isinstance(p, dace.data.View):
+        for is_output, pname, p, _ in parameters:
+            if isinstance(p, dace.data.View):
                 continue
-            added.add(pname)
             arg = self.make_kernel_argument(p, pname, is_output, True)
             if arg is not None:
                 kernel_args_opencl.append(arg)
@@ -632,7 +612,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
         # But tha is no more sufficient: indeed, if we two almost identical NestedSDFG, it could happen
         # that we have module name clashes. Therefore we also take care of this
-        module_function_name = self.create_mangled_module_name(module_function_name[0:36],self._kernel_count)
+        module_function_name = self.create_mangled_module_name(
+            module_function_name[0:36], self._kernel_count)
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
         scope_children = subgraph.scope_children()
@@ -1382,9 +1363,8 @@ __kernel void \\
                 # this is a scalar. Now, definining this as an exter has the drawback
                 # that it is not resolved at compile time, preventing us to allocate fast memory
                 # Therefore, we will stick here a nice #define
-                callsite_stream.write(
-                    f"#define {cstname} {sym2cpp(cstval)}\n",
-                    sdfg)
+                callsite_stream.write(f"#define {cstname} {sym2cpp(cstval)}\n",
+                                      sdfg)
 
     def generate_tasklet_postamble(self, sdfg, dfg, state_id, node,
                                    function_stream, callsite_stream,

@@ -445,10 +445,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             state_id, node)
 
     def generate_kernel_boilerplate_pre(self, sdfg, state_id, kernel_name,
-                                        global_data_parameters,
-                                        scalar_parameters, symbol_parameters,
-                                        module_stream, kernel_stream,
-                                        external_streams):
+                                        parameters, module_stream,
+                                        kernel_stream, external_streams):
 
         # Write header
         module_stream.write(
@@ -458,28 +456,20 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         self._frame.generate_fileheader(sdfg, module_stream, 'xilinx_device')
         module_stream.write("\n", sdfg)
 
-        symbol_params = [
-            v.as_arg(with_types=True, name=k)
-            for k, v in symbol_parameters.items()
-        ]
-        arrays = list(sorted(global_data_parameters, key=lambda t: t[1]))
-        scalars = scalar_parameters + list(symbol_parameters.items())
-        scalars = list(sorted(scalars, key=lambda t: t[0]))
-
         # Build kernel signature
+        kernel_args = []
         array_args = []
-        for is_output, dataname, data, interface in arrays:
+        for is_output, dataname, data, interface in parameters:
             kernel_arg = self.make_kernel_argument(data, dataname, is_output,
                                                    True, interface)
             if kernel_arg:
-                array_args.append(kernel_arg)
-        kernel_args = array_args + [
-            v.as_arg(with_types=True, name=k) for k, v in scalars
-        ]
-        kernel_args = dace.dtypes.deduplicate(kernel_args)
+                kernel_args.append(kernel_arg)
+                if isinstance(data, dace.data.Array):
+                    array_args.append((kernel_arg, dataname))
 
         stream_args = []
-        for is_output, dataname, data, interface in external_streams:
+        for is_output, dataname, data, interface in sorted(external_streams,
+                                                           key=lambda t: t[1]):
             kernel_arg = self.make_kernel_argument(data, dataname, is_output,
                                                    True, interface)
             if kernel_arg:
@@ -493,7 +483,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         # Insert interface pragmas
         num_mapped_args = 0
-        for arg, (_, dataname, _, _) in zip(array_args, arrays):
+        for arg, dataname in array_args:
             var_name = re.findall(r"\w+", arg)[-1]
             if "*" in arg:
                 interface_name = "gmem{}".format(num_mapped_args)
@@ -534,24 +524,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_stream.write("HLSLIB_DATAFLOW_FINALIZE();\n}\n", sdfg, state_id)
 
     def generate_host_function_body(self, sdfg, state, kernel_name, parameters,
-                                    symbol_parameters, kernel_stream,
-                                    rtl_tasklets):
+                                    kernel_stream, rtl_tasklets):
 
-        # Just collect all variable names for calling the kernel function
-        added = set()
-        arrays = list(
-            sorted([
-                p for p in parameters if not isinstance(p[2], dace.data.Scalar)
-            ],
-                   key=lambda t: t[1]))
-        scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
-        scalars += ((False, k, v, None) for k, v in symbol_parameters.items())
-        scalars = dace.dtypes.deduplicate(sorted(scalars, key=lambda t: t[1]))
         kernel_args = []
-        for _, name, p, _ in itertools.chain(arrays, scalars):
-            if not isinstance(p, dace.data.Array) and name in added:
-                continue
-            added.add(name)
+        for _, name, p, _ in parameters:
             kernel_args.append(p.as_arg(False, name=name))
 
         kernel_function_name = kernel_name
@@ -582,8 +558,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
              rtl_waits="\n  ".join(rtl_waits)), sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
-                        symbol_parameters, module_stream, entry_stream,
-                        host_stream):
+                        module_stream, entry_stream, host_stream):
         """Generates a module that will run as a dataflow function in the FPGA
            kernel."""
 
@@ -592,7 +567,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         kernel_args_call = []
         kernel_args_module = []
-        added = set()
 
         # Check if we are generating an RTL module, in which case only the
         # accesses to the streams should be handled
@@ -647,14 +621,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                skip_entry_node=False)
             return
 
-        parameters = list(sorted(parameters, key=lambda t: t[1]))
-        arrays = dtypes.deduplicate(
-            [p for p in parameters if not isinstance(p[2], dace.data.Scalar)])
-        scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
-        scalars += ((False, k, v, None) for k, v in symbol_parameters.items())
-        scalars = dace.dtypes.deduplicate(sorted(scalars, key=lambda t: t[1]))
-        for is_output, pname, p, interface_id in itertools.chain(
-                arrays, scalars):
+        for is_output, pname, p, interface_id in parameters:
             if isinstance(p, dace.data.Array):
                 arr_name = cpp.array_interface_variable(pname, is_output, None)
                 # Add interface ID to called module, but not to the module
@@ -668,10 +635,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 kernel_args_module.append("{} {}*{}".format(
                     dtype.ctype, "const " if not is_output else "", arr_name))
             else:
-                # Don't make duplicate arguments for other types than arrays
-                if pname in added:
-                    continue
-                added.add(pname)
                 if isinstance(p, dace.data.Stream):
                     kernel_args_call.append(
                         p.as_arg(with_types=False, name=pname))
@@ -794,12 +757,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         """Main entry function for generating a Xilinx kernel."""
 
         (global_data_parameters, top_level_local_data, subgraph_parameters,
-         scalar_parameters, symbol_parameters, nested_global_transients,
+         nested_global_transients,
          external_streams) = self.make_parameters(sdfg, state, subgraphs)
-
-        # Scalar parameters are never output
-        sc_parameters = [(False, pname, param, None)
-                         for pname, param in scalar_parameters]
 
         host_code_stream = CodeIOStream()
         rtl_tasklets = [
@@ -809,17 +768,17 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         ]
 
         # Generate host code
-        self.generate_host_header(sdfg, kernel_name,
-                                  global_data_parameters + sc_parameters,
-                                  symbol_parameters, host_code_stream)
-        self.generate_host_function_boilerplate(
-            sdfg, state, kernel_name, global_data_parameters + sc_parameters,
-            symbol_parameters, nested_global_transients, host_code_stream,
-            function_stream, callsite_stream)
+        self.generate_host_header(sdfg, kernel_name, global_data_parameters,
+                                  host_code_stream)
+        self.generate_host_function_boilerplate(sdfg, state, kernel_name,
+                                                global_data_parameters,
+                                                nested_global_transients,
+                                                host_code_stream,
+                                                function_stream,
+                                                callsite_stream)
         self.generate_host_function_body(sdfg, state, kernel_name,
-                                         global_data_parameters + sc_parameters,
-                                         symbol_parameters, host_code_stream,
-                                         rtl_tasklets)
+                                         global_data_parameters,
+                                         host_code_stream, rtl_tasklets)
         # Store code to be passed to compilation phase
         self._host_codes.append((kernel_name, host_code_stream.getvalue()))
 
@@ -831,9 +790,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         self.generate_kernel_boilerplate_pre(sdfg, state_id, kernel_name,
                                              global_data_parameters,
-                                             scalar_parameters,
-                                             symbol_parameters, module_stream,
-                                             entry_stream, external_streams)
+                                             module_stream, entry_stream,
+                                             external_streams)
 
         # Emit allocations
         for node in top_level_local_data:
@@ -848,8 +806,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 0 if is_output else 1] = '{}_1.{}'.format(kernel_name, name)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
-                              subgraph_parameters, sc_parameters,
-                              symbol_parameters, module_stream, entry_stream,
+                              subgraph_parameters, module_stream, entry_stream,
                               host_code_stream)
 
         kernel_stream.write(module_stream.getvalue())
@@ -858,30 +815,17 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         self.generate_kernel_boilerplate_post(kernel_stream, sdfg, state_id)
 
     def generate_host_header(self, sdfg, kernel_function_name, parameters,
-                             symbol_parameters, host_code_stream):
-
-        arrays = [
-            p for p in parameters if not isinstance(p[2], dace.data.Scalar)
-        ]
-        arrays = list(sorted(arrays, key=lambda t: t[1]))
-        scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
-        scalars += ((False, k, v, None) for k, v in symbol_parameters.items())
-        scalars = list(sorted(scalars, key=lambda t: t[1]))
+                             host_code_stream):
 
         kernel_args = []
-
-        seen = set()
-        for is_output, name, arg, if_id in itertools.chain(arrays, scalars):
+        for is_output, name, arg, if_id in parameters:
             if isinstance(arg, dace.data.Array):
                 argname = cpp.array_interface_variable(name, is_output, None)
                 if if_id is not None:
-                    argname += "_%d" % if_id
+                    argname = f"{argname}_{if_id}"
 
                 kernel_args.append(arg.as_arg(with_types=True, name=argname))
             else:
-                if name in seen:
-                    continue
-                seen.add(name)
                 kernel_args.append(arg.as_arg(with_types=True, name=name))
 
         host_code_stream.write(
