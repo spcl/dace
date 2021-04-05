@@ -468,8 +468,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     array_args.append((kernel_arg, dataname))
 
         stream_args = []
-        for is_output, dataname, data, interface in sorted(external_streams,
-                                                           key=lambda t: t[1]):
+        for is_output, dataname, data, interface in external_streams:
             kernel_arg = self.make_kernel_argument(data, dataname, is_output,
                                                    True, interface)
             if kernel_arg:
