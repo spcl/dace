@@ -109,7 +109,7 @@ def write_time(bench, sz, time_list, append=True):
 
 # ===== atax =====
 
-atax_sizes = [[1800, 2200]]#[[20000, 25000]]  #[[1800, 2200], [3600, 4400], [7200, 8800], [14400, 17600]]
+atax_sizes = [[20000, 25000]]  #[[1800, 2200], [3600, 4400], [7200, 8800], [14400, 17600]]
 
 @dc.program
 def atax_shmem(A: dc.float64[M, N], x: dc.float64[N], y:dc.float64[N]):
@@ -147,6 +147,7 @@ def atax(sizes, validate=True):
     # Fix for grid issue with gemv
     if Px != Py:
         Px, Py = 1, size
+    # Px, Py = 1, size
     pi = rank // Py
     pj = rank % Py
 
@@ -243,7 +244,7 @@ def atax(sizes, validate=True):
 
 # ===== bicg =====
 
-bicg_sizes = [[2200, 1800], [4400, 3600], [7200, 8800]]
+bicg_sizes = [[25000, 20000]]  # [[2200, 1800], [4400, 3600], [7200, 8800]]
 
 @dc.program
 def bicg_shmem(A: dc.float64[M, N], p: dc.float64[N], r: dc.float64[M],
@@ -282,6 +283,11 @@ def bicg(sizes, validate=True):
     rank = comm.Get_rank()
     size = comm.Get_size()
     Px, Py = grid[size]
+
+    # Fix for grid issue with gemv
+    if Px != Py:
+        Px, Py = 1, size
+    # Px, Py = 1, size
     pi = rank // Py
     pj = rank % Py
 
@@ -382,7 +388,7 @@ def bicg(sizes, validate=True):
 
 # ===== doitgen =====
 
-doitgen_sizes = [[256, 250, 270], [512, 500, 540]]
+doitgen_sizes = [[128, 512, 512]]  #[[256, 250, 270], [512, 500, 540]]
 
 lR, NQ, NP = (dc.symbol(s, dtype=dc.int32, integer=True, positive=True)
               for s in ('lR', 'NQ', 'NP'))
@@ -507,7 +513,7 @@ def doitgen(sizes, validate=True):
 
 # ===== gemm =====
 
-gemm_sizes = [[2000, 2300, 2600], [4000, 4600, 5200]]  #, [8000, 9200, 5200]]
+gemm_sizes = [[8000, 9200, 5200]]  # [[2000, 2300, 2600], [4000, 4600, 5200]]  #, [8000, 9200, 5200]]
 
 @dc.program
 def gemm_shmem(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
@@ -645,7 +651,7 @@ def gemm(sizes, validate=True):
 
 # ==== gemver ====
 
-gemver_sizes = [4000, 8000]
+gemver_sizes = [10000]  #[4000, 8000]
 
 @dc.program
 def gemver_shmem(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N],
@@ -706,6 +712,9 @@ def gemver(sizes, validate=True):
     rank = comm.Get_rank()
     size = comm.Get_size()
     Px, Py = grid[size]
+    # Fix for grid issue with gemv
+    if Px != Py:
+        Px, Py = 1, size
     pi = rank // Py
     pj = rank % Py
 
@@ -819,7 +828,7 @@ def gemver(sizes, validate=True):
 
 # ===== gesummv =====
 
-gesummv_sizes = [2800, 5600, 11200]
+gesummv_sizes = [22400] #[2800, 5600, 11200]
 
 @dc.program
 def gesummv_shmem(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N],
@@ -863,6 +872,9 @@ def gesummv(sizes, validate=True):
     rank = comm.Get_rank()
     size = comm.Get_size()
     Px, Py = grid[size]
+    # Fix for grid issue with gemv
+    if Px != Py:
+        Px, Py = 1, size
     pi = rank // Py
     pj = rank % Py
 
@@ -954,7 +966,7 @@ def gesummv(sizes, validate=True):
 
 # ===== 2mm =====
 
-k2mm_sizes = [[1600, 1800, 2200, 2400], [3200, 3600, 4400, 4800]]  #, [6400, 7200, 8800, 4800]]
+k2mm_sizes = [[6400, 7200, 4400, 4800]]  # [[1600, 1800, 2200, 2400], [3200, 3600, 4400, 4800]]  #, [6400, 7200, 8800, 4800]]
 
 @dc.program
 def k2mm_shmem(alpha: dc.float64, beta: dc.float64, A: dc.float64[NI, NK],
@@ -1102,7 +1114,7 @@ def k2mm(sizes, validate=True):
 
 # ===== 3mm =====
 
-k3mm_sizes = [[1600, 1800, 2000, 2200, 2400], [3200, 3600, 4000, 4400, 4800]]  #, [6400, 3600, 8000, 8800, 9600]]
+k3mm_sizes = [[6400, 7200, 4000, 4400, 4800]]  # [[1600, 1800, 2000, 2200, 2400], [3200, 3600, 4000, 4400, 4800]]  #, [6400, 3600, 8000, 8800, 9600]]
 
 @dc.program
 def k3mm_shmem(A: dc.float64[NI, NK], B: dc.float64[NK, NJ],
@@ -1254,7 +1266,7 @@ def k3mm(sizes, validate=True):
 
 # ===== mvt =====
 
-mvt_sizes = [4000, 8000, 16000]
+mvt_sizes = [22000]  # [4000, 8000, 16000]
 
 @dc.program
 def mvt_shmem(x1: dc.float64[N], x2: dc.float64[N], y_1: dc.float64[N],
@@ -1293,6 +1305,9 @@ def mvt(sizes, validate=True):
     rank = comm.Get_rank()
     size = comm.Get_size()
     Px, Py = grid[size]
+    # Fix for grid issue with gemv
+    if Px != Py:
+        Px, Py = 1, size
     pi = rank // Py
     pj = rank % Py
 
@@ -1391,7 +1406,7 @@ def mvt(sizes, validate=True):
 
 # ===== jacobi_1d =====
 
-jacobi_1d_sizes = [[1000, 4000], [2000, 8000], [4000, 16000]]
+jacobi_1d_sizes = [[1000, 24000]] #[[1000, 4000], [2000, 8000], [4000, 16000]]
 
 @dc.program
 def jacobi_1d_shmem(TSTEPS: dc.int32, A: dc.float64[NR], B: dc.float64[NR]):   
@@ -1527,7 +1542,7 @@ def jacobi_1d(sizes, validate=True):
 
 # ===== jacobi_2d =====
 
-jacobi_2d_sizes = [[10, 2800], [10, 5600], [10, 11200]]
+jacobi_2d_sizes = [[1000, 500]]  # [[10, 2800], [10, 5600], [10, 11200]]
 
 @dc.program
 def jacobi_2d_shmem(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
@@ -1916,25 +1931,25 @@ if __name__ == "__main__":
 
     for sizes in atax_sizes:
         atax(sizes, validate=False)
-    # for sizes in bicg_sizes:
-    #     bicg(sizes)
-    # for sizes in doitgen_sizes:
-    #     doitgen(sizes)
-    # for sizes in gemm_sizes:
-    #     gemm(sizes)
-    # for sizes in gemver_sizes:
-    #     gemver(sizes)
-    # for sizes in gesummv_sizes:
-    #     gesummv(sizes)
-    # for sizes in k2mm_sizes:
-    #     k2mm(sizes)
-    # for sizes in k3mm_sizes:
-    #     k3mm(sizes)
-    # for sizes in mvt_sizes:
-    #     mvt(sizes)
-    # for sizes in jacobi_1d_sizes:
-    #     jacobi_1d(sizes)
-    # for sizes in jacobi_2d_sizes:
-    #     jacobi_2d(sizes, validate=False)
+    for sizes in bicg_sizes:
+        bicg(sizes, validate=False)
+    for sizes in doitgen_sizes:
+        doitgen(sizes, validate=False)
+    for sizes in gemm_sizes:
+        gemm(sizes, validate=False)
+    for sizes in gemver_sizes:
+        gemver(sizes, validate=False)
+    for sizes in gesummv_sizes:
+        gesummv(sizes, validate=False)
+    for sizes in k2mm_sizes:
+        k2mm(sizes, validate=False)
+    for sizes in k3mm_sizes:
+        k3mm(sizes, validate=False)
+    for sizes in mvt_sizes:
+        mvt(sizes, validate=False)
+    for sizes in jacobi_1d_sizes:
+        jacobi_1d(sizes, validate=False)
+    for sizes in jacobi_2d_sizes:
+        jacobi_2d(sizes, validate=False)
     # for sizes in heat_3d_sizes:
     #     heat_3d(sizes, validate=True)
