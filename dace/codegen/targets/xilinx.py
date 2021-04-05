@@ -561,6 +561,38 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         kernel_args_call = []
         kernel_args_module = []
+        for is_output, pname, p, interface_id in parameters:
+            if isinstance(p, dace.data.Array):
+                arr_name = cpp.array_interface_variable(pname, is_output, None)
+                # Add interface ID to called module, but not to the module
+                # arguments
+                argname = arr_name
+                if interface_id is not None:
+                    argname = f"{arr_name}_{interface_id}"
+
+                kernel_args_call.append(argname)
+                dtype = p.dtype
+                kernel_args_module.append("{} {}*{}".format(
+                    dtype.ctype, "const " if not is_output else "", arr_name))
+            else:
+                if isinstance(p, dace.data.Stream):
+                    kernel_args_call.append(
+                        p.as_arg(with_types=False, name=pname))
+                    if p.is_stream_array():
+                        kernel_args_module.append(
+                            "dace::FIFO<{}, {}, {}> {}[{}]".format(
+                                p.dtype.base_type.ctype, p.veclen,
+                                p.buffer_size, pname, p.size_string()))
+                    else:
+                        kernel_args_module.append(
+                            "dace::FIFO<{}, {}, {}> &{}".format(
+                                p.dtype.base_type.ctype, p.veclen,
+                                p.buffer_size, pname))
+                else:
+                    kernel_args_call.append(
+                        p.as_arg(with_types=False, name=pname))
+                    kernel_args_module.append(
+                        p.as_arg(with_types=True, name=pname))
 
         # Check if we are generating an RTL module, in which case only the
         # accesses to the streams should be handled
@@ -573,10 +605,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 break
         if rtl_module:
             entry_stream.write(
-                f'// Placeholder for RTL module: HLSLIB_DATAFLOW_FUNCTION({name})'
+                f'// [RTL] HLSLIB_DATAFLOW_FUNCTION({name}, {", ".join(kernel_args_call)});'
             )
             module_stream.write(
-                f'// Placeholder for RTL module: void {name}() {{ }}\n\n')
+                f'// [RTL] void {name}({", ".join(kernel_args_module)});\n\n')
 
             # _1 in names are due to vitis
             for node in subgraph.source_nodes():
@@ -614,39 +646,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                ignore_stream,
                                                skip_entry_node=False)
             return
-
-        for is_output, pname, p, interface_id in parameters:
-            if isinstance(p, dace.data.Array):
-                arr_name = cpp.array_interface_variable(pname, is_output, None)
-                # Add interface ID to called module, but not to the module
-                # arguments
-                argname = arr_name
-                if interface_id is not None:
-                    argname = f"{arr_name}_{interface_id}"
-
-                kernel_args_call.append(argname)
-                dtype = p.dtype
-                kernel_args_module.append("{} {}*{}".format(
-                    dtype.ctype, "const " if not is_output else "", arr_name))
-            else:
-                if isinstance(p, dace.data.Stream):
-                    kernel_args_call.append(
-                        p.as_arg(with_types=False, name=pname))
-                    if p.is_stream_array():
-                        kernel_args_module.append(
-                            "dace::FIFO<{}, {}, {}> {}[{}]".format(
-                                p.dtype.base_type.ctype, p.veclen,
-                                p.buffer_size, pname, p.size_string()))
-                    else:
-                        kernel_args_module.append(
-                            "dace::FIFO<{}, {}, {}> &{}".format(
-                                p.dtype.base_type.ctype, p.veclen,
-                                p.buffer_size, pname))
-                else:
-                    kernel_args_call.append(
-                        p.as_arg(with_types=False, name=pname))
-                    kernel_args_module.append(
-                        p.as_arg(with_types=True, name=pname))
 
         # create a unique module name to prevent name clashes
         module_function_name = f"module_{name}_{sdfg.sdfg_id}"
