@@ -560,7 +560,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
                                shape_c,
                                dtype_c,
                                strides=strides_c,
-                               storage=outer_array_b.storage)
+                               storage=outer_array_c.storage)
 
         def make_read_A(state):
 

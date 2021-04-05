@@ -262,8 +262,6 @@ class FPGACodeGen(TargetCodeGenerator):
                  - A dictionary mapping from each processing element subgraph
                    to which parameters it needs (from the total list of
                    parameters).
-                 - Symbol parameters that must be passed from the host to the
-                   kernel.
                  - Parameters that must be passed to the kernel from the host,
                    but that do not exist before the CPU calls the kernel
                    wrapper.
