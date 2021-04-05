@@ -40,13 +40,14 @@ class ExpandPgemvMKL(ExpandTransformation):
  
         # mkl does not have an actual c interface for 
         transa = 'N' if node._transa == 'T' else 'T'
-        code = (f"if (!__state->__mkl_scalapack_grid_init) {{\n"
-                f"    __state->__mkl_scalapack_prows = Py;\n"
-                f"    __state->__mkl_scalapack_pcols = Px;\n"
-                f"    blacs_gridinit(&__state->__mkl_scalapack_context, \"C\", &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols);\n"
-                f"    blacs_gridinfo(&__state->__mkl_scalapack_context, &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols, &__state->__mkl_scalapack_myprow, &__state->__mkl_scalapack_mypcol);\n"
-                f"    __state->__mkl_scalapack_grid_init = true;\n"
-                f"}}\n"
+        code = (
+                # f"if (!__state->__mkl_scalapack_grid_init) {{\n"
+                # f"    __state->__mkl_scalapack_prows = Py;\n"
+                # f"    __state->__mkl_scalapack_pcols = Px;\n"
+                # f"    blacs_gridinit(&__state->__mkl_scalapack_context, \"C\", &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols);\n"
+                # f"    blacs_gridinfo(&__state->__mkl_scalapack_context, &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols, &__state->__mkl_scalapack_myprow, &__state->__mkl_scalapack_mypcol);\n"
+                # f"    __state->__mkl_scalapack_grid_init = true;\n"
+                # f"}}\n"
                 f"const double  zero = 0.0E+0, one = 1.0E+0;\n"
                 f"const char trans = '{transa}';\n"
 
@@ -66,10 +67,14 @@ class ExpandPgemvMKL(ExpandTransformation):
                 f"MKL_INT a_bcols = _a_block_sizes[0];\n"
                 f"MKL_INT b_brows = _b_block_sizes[0];\n"
                 f"MKL_INT b_bcols = 1;\n"
+                # f"MKL_INT mloc = brows;\n"
                 f"MKL_INT mloc = numroc( &grows, &brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
+                # f"MKL_INT a_mloc = a_brows;\n"
                 f"MKL_INT a_mloc = numroc( &a_rows, &a_brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
+                # f"MKL_INT a_nloc = a_bcols;\n"
                 f"MKL_INT a_nloc = numroc( &a_cols, &a_bcols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);\n"
-                f"MKL_INT b_mloc = numroc( &b_rows, &b_brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
+                # f"MKL_INT b_mloc = b_brows;\n"
+                 f"MKL_INT b_mloc = numroc( &b_rows, &b_brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
                 # f"printf(\"brows=%d, mloc=%d, b_brows=%d, b_mloc=%d\\n\", brows, mloc, b_brows, b_mloc);\n"
                 f"MKL_INT info;\n"
                 f"MKL_INT _a_ldesc[9],  _b_ldesc[9], _c_ldesc[9];\n"
@@ -98,6 +103,7 @@ class ExpandPgemvMKL(ExpandTransformation):
                 f"    &trans, &_m, &_n, &one, _a, &__state->__mkl_int_one, &__state->__mkl_int_one, _a_ldesc,\n"
                 f"    _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _b_ldesc, &__state->__mkl_int_one,\n"
                 f"    &zero, _c, &__state->__mkl_int_one, &__state->__mkl_int_one, _c_ldesc, &__state->__mkl_int_one);")
+                # f"printf(\"((%d, %d))\\n\", __state->__mkl_scalapack_myprow, __state->__mkl_scalapack_mypcol);")
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
