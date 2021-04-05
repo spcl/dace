@@ -18,7 +18,7 @@ class IntelMKLScaLAPACK:
     cmake_variables = {"BLA_VENDOR": "Intel10_64lp"}
     cmake_compile_flags = []
     # cmake_link_flags = ["-L /lib/x86_64-linux-gnu -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lpthread -lm -ldl"]
-    cmake_link_flags = ["-lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lpthread -lm -ldl"]
+    cmake_link_flags = ["-L $MKLROOT/lib -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 -L /usr/lib64/mpich/lib -lmpich -lgomp -lpthread -lm -ldl"]
     cmake_files = []
 
     headers = ["mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h", "../include/dace_blas.h"]
