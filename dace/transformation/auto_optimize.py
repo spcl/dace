@@ -201,7 +201,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
 
         # NOTE: The test "(x < y) == True" below is crafted for SymPy
         # to be "definitely True"
-        if all((s < tile_size) == True for s in mapentry.map.range.size()):
+        if True: #all((s < tile_size) == True for s in mapentry.map.range.size()):
             # If smaller than tile size, don't transform and instead
             # make map sequential
             if debugprint:
@@ -232,7 +232,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
                 if (e.data.is_empty() or e.data.wcr is None
                         or e.data.wcr_nonatomic
                         or (e.data.dst_subset is not None
-                            and e.data.dst_subset.num_elements() > 0
+                            and e.data.dst_subset.num_elements() != 0
                             and e.data.dynamic)):
                     continue
 
@@ -421,12 +421,6 @@ def auto_optimize(sdfg: SDFG,
     
     #sdfg.apply_transformations_repeated(DeduplicateAccess)
     #sdfg.apply_transformations(MapTiling)
-
-    # Tiled WCR and streams
-    '''
-    for nsdfg in list(sdfg.all_sdfgs_recursive()):
-        tile_wcrs(nsdfg, validate_all)
-    ''' 
     
     # Collapse maps
     sdfg.apply_transformations_repeated(MapCollapse,
@@ -436,22 +430,35 @@ def auto_optimize(sdfg: SDFG,
     
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.MapEntry):
-            node.map.collapse = len(node.map.range) # TODO: try without as well :) 
+            #node.map.collapse = len(node.map.range) # TODO: try with as well
             pass
     
 
     # Set all library nodes to expand to fast library calls
     set_fast_implementations(sdfg, device)
 
+    sdfg.expand_library_nodes()
+    
+    # Tiled WCR and streams
+    for nsdfg in list(sdfg.all_sdfgs_recursive()):
+        tile_wcrs(nsdfg, validate_all)
+    
+    
     # TODO(later): Safe vectorization
     
-    # Disable OpenMP parallel sections
-    # TODO(later): Set on a per-SDFG basis 
-    
-    config.Config.set('compiler', 'cpu', 'openmp_sections', value=False)
+    # Disable OpenMP parallel sections on a per-SDFG basis
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        nsdfg.openmp_sections = False
     
     # Set all Default storage types that are constant sized to registers
     move_small_arrays_to_stack(sdfg)
+
+    '''
+    for arr in sdfg.arrays.values():
+        if arr.transient: #and size only depends on SDFG params
+            if arr.storage != dtypes.StorageType.Register:
+                arr.lifetime = dtypes.AllocationLifetime.Persistent
+    '''
 
     # Validate at the end
     if validate or validate_all:
