@@ -160,6 +160,11 @@ class CompiledSDFG(object):
         self._exit = lib.get_symbol('__dace_exit_{}'.format(sdfg.name))
         self._cfunc = lib.get_symbol('__program_{}'.format(sdfg.name))
 
+        # Cache SDFG argument properties
+        self._sig = self._sdfg.signature_arglist(with_types=False)
+        self._typedict = self._sdfg.arglist()
+
+
     def get_state_struct(self) -> ctypes.Structure:
         """ Attempt to parse the SDFG source code and extract the state struct. This method will parse the first
             consecutive entries in the struct that are pointers. As soon as a non-pointer or other unparseable field is
@@ -223,7 +228,7 @@ class CompiledSDFG(object):
             if res == ctypes.c_void_p(0):
                 raise RuntimeError('DaCe application failed to initialize')
 
-            self._libhandle = res
+            self._libhandle = res            
             self._initialized = True
 
     def finalize(self):
@@ -238,7 +243,7 @@ class CompiledSDFG(object):
             if self._initialized is False:
                 self._lib.load()
                 self.initialize(*initargtuple)
-
+                
             # PROFILING
             if Config.get_bool('profiling'):
                 operations.timethis(self._sdfg, 'DaCe', 0, self._cfunc,
@@ -274,8 +279,8 @@ class CompiledSDFG(object):
         })
 
         # Argument construction
-        sig = self._sdfg.signature_arglist(with_types=False)
-        typedict = self._sdfg.arglist()
+        sig = self._sig
+        typedict = self._typedict
         if len(kwargs) > 0:
             # Construct mapping from arguments to signature
             arglist = []
@@ -293,7 +298,7 @@ class CompiledSDFG(object):
             argtypes = []
             argnames = []
             sig = []
-
+            
         # Type checking
         for a, arg, atype in zip(argnames, arglist, argtypes):
             if not dtypes.is_array(arg) and isinstance(atype, dt.Array):
