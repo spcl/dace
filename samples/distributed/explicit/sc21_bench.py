@@ -66,20 +66,26 @@ grid = {
     1: (1, 1),
     2: (1, 2),
     4: (2, 2),
-    8: (2, 4),
+    8: (4, 2),  # (2, 4)
     16: (4, 4),
-    32: (4, 8),
+    32: (8, 4),  # (4, 8)
     64: (8, 8),
     128: (8, 16),
     256: (16, 16)
 }
+
+def adjust_size(size, scal_func, comm_size, divisor):
+    candidate = size * scal_func(comm_size)
+    if candidate // divisor != candidate:
+        candidate = np.ceil(candidate / divisor) * divisor
+    return int(candidate)
 
 
 # ===== Programs ==============================================================
 
 # ===== atax =====
 
-atax_sizes = [[1800, 2200], [3600, 4400], [7200, 8800], [14400, 17600]]
+atax_sizes = [[20000, 25000]]  #[[1800, 2200], [3600, 4400], [7200, 8800], [14400, 17600]]
 
 @dc.program
 def atax_shmem(A: dc.float64[M, N], x: dc.float64[N], y:dc.float64[N]):
@@ -122,6 +128,10 @@ def atax(sizes, validate=True):
         print("sizes: {}".format(sizes), flush=True)
 
     M, N = sizes
+    M = adjust_size(M, lambda x: np.sqrt(x), size, max(Px, Py))
+    N = adjust_size(N, lambda x: np.sqrt(x), size, max(Px, Py))
+    if rank == 0:
+        print("adjusted sizes: {}".format((M, N)), flush=True)
 
     # Symbolic sizes
     lM = M // Px
@@ -130,6 +140,8 @@ def atax(sizes, validate=True):
     lMy = M // Py
 
     lA, lx, ly = atax_distr_init(M, N, lM, lN, np.float64, pi, pj)
+    if rank == 0:
+        print("data initialized", flush=True)
 
     mpi_sdfg = None
     if rank == 0:
@@ -1796,26 +1808,26 @@ def heat_3d(sizes, validate=True):
 if __name__ == "__main__":
 
     for sizes in atax_sizes:
-        atax(sizes)
-    for sizes in bicg_sizes:
-        bicg(sizes)
-    for sizes in doitgen_sizes:
-        doitgen(sizes)
-    for sizes in gemm_sizes:
-        gemm(sizes)
-    for sizes in gemver_sizes:
-        gemver(sizes)
-    for sizes in gesummv_sizes:
-        gesummv(sizes)
-    for sizes in k2mm_sizes:
-        k2mm(sizes)
-    for sizes in k3mm_sizes:
-        k3mm(sizes)
-    for sizes in mvt_sizes:
-        mvt(sizes)
-    for sizes in jacobi_1d_sizes:
-        jacobi_1d(sizes)
-    for sizes in jacobi_2d_sizes:
-        jacobi_2d(sizes, validate=False)
+        atax(sizes, validate=False)
+    # for sizes in bicg_sizes:
+    #     bicg(sizes)
+    # for sizes in doitgen_sizes:
+    #     doitgen(sizes)
+    # for sizes in gemm_sizes:
+    #     gemm(sizes)
+    # for sizes in gemver_sizes:
+    #     gemver(sizes)
+    # for sizes in gesummv_sizes:
+    #     gesummv(sizes)
+    # for sizes in k2mm_sizes:
+    #     k2mm(sizes)
+    # for sizes in k3mm_sizes:
+    #     k3mm(sizes)
+    # for sizes in mvt_sizes:
+    #     mvt(sizes)
+    # for sizes in jacobi_1d_sizes:
+    #     jacobi_1d(sizes)
+    # for sizes in jacobi_2d_sizes:
+    #     jacobi_2d(sizes, validate=False)
     # for sizes in heat_3d_sizes:
     #     heat_3d(sizes, validate=True)
