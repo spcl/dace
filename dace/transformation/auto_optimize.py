@@ -404,7 +404,7 @@ def auto_optimize(sdfg: SDFG,
         sdfg.apply_strict_transformations()
     
     # Map fusion
-    
+    ''' 
     for graph in sdfg.nodes():
         for node in graph.nodes():
             if isinstance(node, dace.libraries.standard.nodes.Reduce):
@@ -415,7 +415,7 @@ def auto_optimize(sdfg: SDFG,
 
                     except ValueError:
                         pass
-    
+    '''
     greedy_fuse(sdfg, validate_all)
     
     

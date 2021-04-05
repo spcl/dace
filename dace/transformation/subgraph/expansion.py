@@ -59,11 +59,11 @@ class MultiExpansion(transformation.SubgraphTransformation):
     check_contiguity = Property(dtype=bool,
                                 desc="Don't allow MultiExpansion if contiguous"
                                 "dimension is partially split",
-                                default = False)
+                                default = True)
 
     permutation_only = Property(dtype = bool, 
                                 desc="Only allow permutations without inner splits",
-                                default = False)
+                                default = True)
     
     allow_offset = Property(dtype = bool,
                             desc="Offset ranges to 0", 
