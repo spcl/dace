@@ -39,13 +39,14 @@ class ExpandPgemmMKL(ExpandTransformation):
         #     raise(NotImplementedError)
  
         # mkl does not have an actual c interface for 
-        code = (f"if (!__state->__mkl_scalapack_grid_init) {{\n"
-                f"    __state->__mkl_scalapack_prows = Py;\n"
-                f"    __state->__mkl_scalapack_pcols = Px;\n"
-                f"    blacs_gridinit(&__state->__mkl_scalapack_context, \"C\", &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols);\n"
-                f"    blacs_gridinfo(&__state->__mkl_scalapack_context, &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols, &__state->__mkl_scalapack_myprow, &__state->__mkl_scalapack_mypcol);\n"
-                f"    __state->__mkl_scalapack_grid_init = true;\n"
-                f"}}\n"
+        code = (
+                # f"if (!__state->__mkl_scalapack_grid_init) {{\n"
+                # f"    __state->__mkl_scalapack_prows = Py;\n"
+                # f"    __state->__mkl_scalapack_pcols = Px;\n"
+                # f"    blacs_gridinit(&__state->__mkl_scalapack_context, \"C\", &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols);\n"
+                # f"    blacs_gridinfo(&__state->__mkl_scalapack_context, &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols, &__state->__mkl_scalapack_myprow, &__state->__mkl_scalapack_mypcol);\n"
+                # f"    __state->__mkl_scalapack_grid_init = true;\n"
+                # f"}}\n"
                 f"const double  zero = 0.0E+0, one = 1.0E+0;\n"
                 f"const char trans = 'N';\n"
 
