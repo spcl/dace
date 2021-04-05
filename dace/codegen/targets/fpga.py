@@ -367,59 +367,39 @@ class FPGACodeGen(TargetCodeGenerator):
             # from the host and passed to the device code, while the latter are
             # (statically) allocated on the device side.
             for is_output, dataname, desc in candidates:
-                # Ignore views, as these never need to explicitly passed
+                # Ignore views, as these never need to be explicitly passed
                 if isinstance(desc, dt.View):
                     continue
                 # Only distinguish between inputs and outputs for arrays
                 if not isinstance(desc, dt.Array):
                     is_output = None
-                if isinstance(desc, (dt.Array, dt.Scalar, dt.Stream)):
-                    if desc.storage == dtypes.StorageType.FPGA_Global:
-                        # If this is a global array, assign the correct
-                        # interface ID
-                        if isinstance(desc, dt.Array):
-                            if dataname in data_to_interface:
-                                interface_id = data_to_interface[dataname]
-                            else:
-                                # Get and update global memory interface ID
-                                interface_id = global_interfaces[dataname]
-                                global_interfaces[dataname] += 1
-                                data_to_interface[dataname] = interface_id
-                        else:
-                            interface_id = None
-                        # Add the data as a parameter to this PE
-                        subgraph_parameters[subgraph].add(
-                            (is_output, dataname, desc, interface_id))
-                        # TODO: Find a way to handle scalar outputs?
-                        if (isinstance(desc, dt.Scalar) and is_output
-                                and (dataname in used_outside
-                                     or dataname in shared_data)):
-                            raise ValueError(
-                                "Scalar containers are not supported as "
-                                "outputs from FPGA kernels. You can replace"
-                                f" {dataname} with an array of shape [1].")
-                        # Global data is passed from outside the kernel
-                        global_data_parameters.add(
-                            (is_output, dataname, desc, interface_id))
-                    elif (desc.storage
-                          in (dtypes.StorageType.FPGA_Local,
-                              dtypes.StorageType.FPGA_Registers,
-                              dtypes.StorageType.FPGA_ShiftRegister)):
-                        if dataname in shared_data:
-                            # Only transients shared across multiple components
-                            # need to be allocated outside and passed as
-                            # parameters
-                            subgraph_parameters[subgraph].add(
-                                (is_output, dataname, desc, None))
-                            # Resolve the desc to some corresponding node to be
-                            # passed to the allocator
-                            top_level_local_data.add(dataname)
+                # If this is a global array, assign the correct interface ID
+                if (isinstance(desc, dt.Array)
+                        and desc.storage == dtypes.StorageType.FPGA_Global):
+                    if dataname in data_to_interface:
+                        interface_id = data_to_interface[dataname]
                     else:
-                        raise ValueError("Unsupported storage type for "
-                                         f"{dataname}: {desc.storage}")
+                        # Get and update global memory interface ID
+                        interface_id = global_interfaces[dataname]
+                        global_interfaces[dataname] += 1
+                        data_to_interface[dataname] = interface_id
                 else:
-                    raise TypeError("Unsupported desc type: {}".format(
-                        type(desc).__name__))
+                    interface_id = None
+                if (not desc.transient
+                        or desc.storage == dtypes.StorageType.FPGA_Global
+                        or dataname in used_outside):
+                    # Add the data as a parameter to this PE
+                    subgraph_parameters[subgraph].add(
+                        (is_output, dataname, desc, interface_id))
+                    # Global data is passed from outside the kernel
+                    global_data_parameters.add(
+                        (is_output, dataname, desc, interface_id))
+                elif dataname in shared_data:
+                    # Add the data as a parameter to this PE
+                    subgraph_parameters[subgraph].add(
+                        (is_output, dataname, desc, interface_id))
+                    # Must be allocated outside PEs and passed to them
+                    top_level_local_data.add(dataname)
             # Order by name
             subgraph_parameters[subgraph] = list(
                 sorted(subgraph_parameters[subgraph], key=lambda t: t[1]))
