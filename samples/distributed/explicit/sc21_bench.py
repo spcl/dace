@@ -135,6 +135,8 @@ def atax(sizes, validate=True):
     if rank == 0:
         mpi_sdfg = atax_distr.to_sdfg(strict=False)
         mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_transformations_repeated([MapFusion])
+        mpi_sdfg.apply_strict_transformations()
         mpi_func= mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:
@@ -257,6 +259,8 @@ def bicg(sizes, validate=True):
     mpi_sdfg = None
     if rank == 0:
         mpi_sdfg = bicg_distr.to_sdfg(strict=False)
+        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_transformations_repeated([MapFusion])
         mpi_sdfg.apply_strict_transformations()
         mpi_func= mpi_sdfg.compile()
     comm.Barrier()
@@ -381,6 +385,8 @@ def doitgen(sizes, validate=True):
     mpi_sdfg = None
     if rank == 0:
         mpi_sdfg = doitgen_distr.to_sdfg(strict=False)
+        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_transformations_repeated([MapFusion])
         mpi_sdfg.apply_strict_transformations()
         mpi_func= mpi_sdfg.compile()
     comm.Barrier()
@@ -510,14 +516,11 @@ def gemm(sizes, validate=True):
 
     alpha, beta, lC, lA, lB = gemm_distr_init(NI, NJ, NK, lNI, lNJ, lNKa, lNKb, np.float64, pi, pj)
 
-    mpi_sdfg = None@dc.program
-def kernel(x1: dc.float64[N], x2: dc.float64[N], y_1: dc.float64[N],
-           y_2: dc.float64[N], A: dc.float64[N, N]):
-
-    x1 += A @ y_1
-    x2 += y_2 @ A
+    mpi_sdfg = None
     if rank == 0:
         mpi_sdfg = gemm_distr.to_sdfg(strict=False)
+        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_transformations_repeated([MapFusion])
         mpi_sdfg.apply_strict_transformations()
         mpi_func= mpi_sdfg.compile()
     comm.Barrier()
@@ -659,6 +662,8 @@ def gemver(sizes, validate=True):
     mpi_sdfg = None
     if rank == 0:
         mpi_sdfg = gemver_distr.to_sdfg(strict=False)
+        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_transformations_repeated([MapFusion])
         mpi_sdfg.apply_strict_transformations()
         mpi_func= mpi_sdfg.compile()
     comm.Barrier()
@@ -808,6 +813,8 @@ def gesummv(sizes, validate=True):
     if rank == 0:
         mpi_sdfg = gesummv_distr.to_sdfg(strict=False)
         mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_transformations_repeated([MapFusion])
+        mpi_sdfg.apply_strict_transformations()
         mpi_func= mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:
@@ -949,6 +956,8 @@ def k2mm(sizes, validate=True):
     if rank == 0:
         mpi_sdfg = k2mm_distr.to_sdfg(strict=False)
         mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_transformations_repeated([MapFusion])
+        mpi_sdfg.apply_strict_transformations()
         mpi_func= mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:
@@ -1086,6 +1095,8 @@ def k3mm(sizes, validate=True):
     if rank == 0:
         mpi_sdfg = k3mm_distr.to_sdfg(strict=False)
         mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_transformations_repeated([MapFusion])
+        mpi_sdfg.apply_strict_transformations()
         mpi_func= mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:
@@ -1206,6 +1217,8 @@ def mvt(sizes, validate=True):
     mpi_sdfg = None
     if rank == 0:
         mpi_sdfg = mvt_distr.to_sdfg(strict=False)
+        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_transformations_repeated([MapFusion])
         mpi_sdfg.apply_strict_transformations()
         mpi_func= mpi_sdfg.compile()
     comm.Barrier()
