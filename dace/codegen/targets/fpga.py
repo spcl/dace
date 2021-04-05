@@ -367,6 +367,9 @@ class FPGACodeGen(TargetCodeGenerator):
             # from the host and passed to the device code, while the latter are
             # (statically) allocated on the device side.
             for is_output, dataname, desc in candidates:
+                # Ignore views, as these never need to explicitly passed
+                if isinstance(desc, dt.View):
+                    continue
                 # Only distinguish between inputs and outputs for arrays
                 if not isinstance(desc, dt.Array):
                     is_output = None
