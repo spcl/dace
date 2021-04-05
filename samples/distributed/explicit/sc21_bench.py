@@ -6,6 +6,7 @@ import timeit
 
 from mpi4py import MPI
 from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
+from dace.transformation.dataflow import MapFusion
 
 
 # ===== Symbols =====
@@ -37,6 +38,17 @@ lMy = dc.symbol('lMy', dtype=dc.int64, integer=True, positive=True)
 lNx = dc.symbol('lNx', dtype=dc.int64, integer=True, positive=True)
 M = lM * Px  # == lMy * Py
 N = lN * Py  # == lNx * Px
+
+# Stencils
+noff = dc.symbol('noff', dtype=dc.int32, integer=True, nonnegative=True)
+soff = dc.symbol('soff', dtype=dc.int32, integer=True, nonnegative=True)
+woff = dc.symbol('woff', dtype=dc.int32, integer=True, nonnegative=True)
+eoff = dc.symbol('eoff', dtype=dc.int32, integer=True, nonnegative=True)
+nn = dc.symbol('nn', dtype=dc.int32, integer=True)
+ns = dc.symbol('ns', dtype=dc.int32, integer=True)
+nw = dc.symbol('nw', dtype=dc.int32, integer=True)
+ne = dc.symbol('ne', dtype=dc.int32, integer=True)
+MPI_Request = dc.opaque("MPI_Request")
 
 
 # ===== Helper methods =====
@@ -498,7 +510,12 @@ def gemm(sizes, validate=True):
 
     alpha, beta, lC, lA, lB = gemm_distr_init(NI, NJ, NK, lNI, lNJ, lNKa, lNKb, np.float64, pi, pj)
 
-    mpi_sdfg = None
+    mpi_sdfg = None@dc.program
+def kernel(x1: dc.float64[N], x2: dc.float64[N], y_1: dc.float64[N],
+           y_2: dc.float64[N], A: dc.float64[N, N]):
+
+    x1 += A @ y_1
+    x2 += y_2 @ A
     if rank == 0:
         mpi_sdfg = gemm_distr.to_sdfg(strict=False)
         mpi_sdfg.apply_strict_transformations()
@@ -572,16 +589,6 @@ def gemver_shmem(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N],
     x += beta * y @ A + z
     w += alpha * A @ x
 
-# @dc.program
-# def gemver_distr(alpha: dc.float64, beta: dc.float64, A: dc.float64[lNx, lN],
-#                  u1: dc.float64[lNx], v1: dc.float64[lN], u2: dc.float64[lNx],
-#                  v2: dc.float64[lN], w: dc.float64[lNx], x: dc.float64[lN],
-#                  y: dc.float64[lNx], z: dc.float64[lN]):
-#     A += np.multiply.outer(u1, v1) + np.multiply.outer(u2, v2)
-#     tmp1 = distr.MatMult(y, A, (Px*lNx, Py*lN))
-#     x += beta * tmp1 + z
-#     tmp2 = distr.MatMult(A, x, (N, N), c_block_sizes=(lNx, 1))
-#     w += alpha * tmp2
 @dc.program
 def gemver_distr(alpha: dc.float64, beta: dc.float64, A: dc.float64[lM, lN],
                  u1: dc.float64[lM], v1: dc.float64[lN], u2: dc.float64[lM],
@@ -609,21 +616,6 @@ def gemver_shmem_init(N, datatype):
     z = np.fromfunction(lambda i: ((i + 1) / fn) / 9.0, shape=(N,), dtype=datatype)
     return alpha, beta, A, u1, u2, v1, v2, w, x, y, z
 
-# def gemver_distr_init(N, lNx, lN, datatype, pi, pj):
-#     alpha = datatype(1.5)
-#     beta = datatype(1.2)
-#     fn = datatype(N)
-#     A = np.fromfunction(lambda i, j: (l2g(i, pi, lNx) * l2g(j, pj, lN) % N) / N,
-#                         shape=(lNx, lN), dtype=datatype)
-#     u1 = np.fromfunction(lambda i: l2g(i, pi, lNx), shape=(lNx,), dtype=datatype)
-#     u2 = np.fromfunction(lambda i: ((l2g(i, pi, lNx) + 1) / fn) / 2.0, shape=(lNx,), dtype=datatype)
-#     v1 = np.fromfunction(lambda i: ((l2g(i, pj, lN) + 1) / fn) / 4.0, shape=(lN,), dtype=datatype)
-#     v2 = np.fromfunction(lambda i: ((l2g(i, pj, lN) + 1) / fn) / 6.0, shape=(lN,), dtype=datatype)
-#     w = np.zeros((lNx,), dtype=datatype)
-#     x = np.zeros((lN,), dtype=datatype)
-#     y = np.fromfunction(lambda i: ((l2g(i, pi, lNx) + 1) / fn) / 8.0, shape=(lNx,), dtype=datatype)
-#     z = np.fromfunction(lambda i: ((l2g(i, pj, lN) + 1) / fn) / 9.0, shape=(lN,), dtype=datatype)
-#     return alpha, beta, A, u1, u2, v1, v2, w, x, y, z
 def gemver_distr_init(N, lM, lN, lMy, datatype, pi, pj):
     alpha = datatype(1.5)
     beta = datatype(1.2)
@@ -1154,21 +1146,663 @@ def k3mm(sizes, validate=True):
             print("validation: {} ({})".format(error < 1e-12, error), flush=True)
 
 
+# ===== mvt =====
+
+mvt_sizes = [4000, 8000, 16000]
+
+@dc.program
+def mvt_shmem(x1: dc.float64[N], x2: dc.float64[N], y_1: dc.float64[N],
+              y_2: dc.float64[N], A: dc.float64[N, N]):
+    x1 += A @ y_1
+    x2 += y_2 @ A
+
+@dc.program
+def mvt_distr(x1: dc.float64[lMy], x2: dc.float64[lN], y_1: dc.float64[lN],
+              y_2: dc.float64[lMy], A: dc.float64[lM, lN]):
+    tmp1 = distr.MatMult(A, y_1, (Px*lM, Py*lN), c_block_sizes=(lMy, 1))
+    tmp2 = distr.MatMult(y_2, A, (M, N))
+    x1 += tmp1
+    x2 += tmp2
+
+def mvt_shmem_init(N, datatype):
+    x1 = np.fromfunction(lambda i: (i % N) / N, shape=(N,), dtype=datatype)
+    x2 = np.fromfunction(lambda i: ((i + 1) % N) / N, shape=(N,), dtype=datatype)
+    y_1 = np.fromfunction(lambda i: ((i + 3) % N) / N, shape=(N,), dtype=datatype)
+    y_2 = np.fromfunction(lambda i: ((i + 4) % N) / N, shape=(N,), dtype=datatype)
+    A = np.fromfunction(lambda i, j: (i * j % N) / N, shape=(N,N), dtype=datatype)
+    return x1, x2, y_1, y_2, A
+
+def mvt_distr_init(N, lM, lN, lMy, datatype, pi, pj):
+    x1 = np.fromfunction(lambda i: (l2g(i, pj, lMy) % N) / N, shape=(lMy,), dtype=datatype)
+    x2 = np.fromfunction(lambda i: ((l2g(i, pj, lN) + 1) % N) / N, shape=(lN,), dtype=datatype)
+    y_1 = np.fromfunction(lambda i: ((l2g(i, pj, lN) + 3) % N) / N, shape=(lN,), dtype=datatype)
+    y_2 = np.fromfunction(lambda i: ((l2g(i, pj, lMy) + 4) % N) / N, shape=(lMy,), dtype=datatype)
+    A = np.fromfunction(lambda i, j: (l2g(i, pi, lM) * l2g(j, pj, lN) % N) / N, shape=(lM,lN), dtype=datatype)
+    return x1, x2, y_1, y_2, A
+
+def mvt(sizes, validate=True):
+
+    # MPI
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    Px, Py = grid[size]
+    pi = rank // Py
+    pj = rank % Py
+
+    if rank == 0:
+        print("===== mvt =====")
+        print("sizes: {}".format(sizes), flush=True)
+
+    M = N = sizes
+
+    # Symbolic sizes
+    lM = M // Px
+    lN = N // Py
+    lMy = M // Py
+
+    lx1, lx2, ly_1, ly_2, lA = mvt_distr_init(N, lM, lN, lMy, np.float64, pi, pj)
+
+    mpi_sdfg = None
+    if rank == 0:
+        mpi_sdfg = mvt_distr.to_sdfg(strict=False)
+        mpi_sdfg.apply_strict_transformations()
+        mpi_func= mpi_sdfg.compile()
+    comm.Barrier()
+    if rank > 0:
+        mpi_sdfg = dc.SDFG.from_file(".dacecache/{n}/program.sdfg".format(
+            n=mvt_distr.name))
+        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
+            ".dacecache/{n}/build/lib{n}.so".format(n=mvt_distr.name),
+            mvt_distr.name))
+
+    ldict = locals()
+
+    comm.Barrier()
+
+    mpi_func(x1=lx1, x2=lx2, y_1=ly_1, y_2=ly_2, A=lA,
+             lM=lM, lN=lN, lMy=lMy, Px=Px, Py=Py)
+    
+    comm.Barrier()
+
+    if validate:
+
+        if rank == 0:
+            x1 = np.empty((N,), dtype=np.float64)
+            x2 = np.empty((N,), dtype=np.float64)
+            x1[0:lMy] = lx1
+            x2[0:lN] = lx2
+            for i in range(Py):
+                if i == pj:
+                    continue
+                else:
+                    comm.Recv(lx1, source=i, tag=i)
+                    x1[i*lMy:(i+1)*lMy] = lx1
+                    comm.Recv(lx2, source=i, tag=i+Py)
+                    x2[i*lN:(i+1)*lN] = lx2
+        elif pi == 0:
+            comm.Send(lx1, dest=0, tag=pj)
+            comm.Send(lx2, dest=0, tag=pj+Py)
+        
+        comm.Barrier()
+
+    stmt = ("mpi_func(x1=lx1, x2=lx2, y_1=ly_1, y_2=ly_2, A=lA, "
+            "lM=lM, lN=lN, lMy=lMy, Px=Px, Py=Py)")
+    setup = "comm.Barrier()"
+    repeat = 10
+
+    raw_time_list = timeit.repeat(stmt,
+                                  setup=setup,
+                                  repeat=repeat,
+                                  number=1,
+                                  globals=ldict)
+    raw_time = np.median(raw_time_list)
+
+    if rank == 0:
+        ms_time = time_to_ms(raw_time)
+        print("Median is {}ms".format(ms_time), flush=True)
+
+    if validate:
+
+        if rank == 0:
+            refx1, refx2, refy_1, refy_2, refA = mvt_shmem_init(N, np.float64)
+            shared_sdfg = mvt_shmem.compile()
+            shared_sdfg(x1=refx1, x2=refx2, y_1=refy_1, y_2=refy_2, A=refA,
+                        lM=lM, lN=lN, lMy=lMy, Px=Px, Py=Py)
+            error = relerr(refx1, x1)
+            print("validation: {} ({})".format(error < 1e-12, error), flush=True)
+            error = relerr(refx2, x2)
+            print("validation: {} ({})".format(error < 1e-12, error), flush=True)
+
+
+# ===== jacobi_1d =====
+
+jacobi_1d_sizes = [[1000, 4000], [2000, 8000], [4000, 16000]]
+
+@dc.program
+def jacobi_1d_shmem(TSTEPS: dc.int32, A: dc.float64[NR], B: dc.float64[NR]):   
+    for t in range(1, TSTEPS):
+        B[1:-1] = 0.33333 * (A[:-2] + A[1:-1] + A[2:])
+        A[1:-1] = 0.33333 * (B[:-2] + B[1:-1] + B[2:])
+
+@dc.program
+def jacobi_1d_distr(TSTEPS: dc.int32, A: dc.float64[lR+2], B: dc.float64[lR+2]):   
+    req = np.empty((4,), dtype=MPI_Request)
+    for t in range(1, TSTEPS):
+        dc.comm.Isend(A[1], nw, 3, req[0])
+        dc.comm.Isend(A[-2], ne, 2, req[1])
+        dc.comm.Irecv(A[0], nw, 2, req[2])
+        dc.comm.Irecv(A[-1], ne, 3, req[3])
+        dc.comm.Waitall(req)
+        B[1+woff:-1-eoff] = 0.33333 * (A[woff:-2-eoff] + A[1+woff:-1-eoff] +
+                                       A[2+woff:-eoff])
+        dc.comm.Isend(B[1], nw, 3, req[0])
+        dc.comm.Isend(B[-2], ne, 2, req[1])
+        dc.comm.Irecv(B[0], nw, 2, req[2])
+        dc.comm.Irecv(B[-1], ne, 3, req[3])
+        dc.comm.Waitall(req)
+        A[1+woff:-1-eoff] = 0.33333 * (B[woff:-2-eoff] + B[1+woff:-1-eoff] +
+                                       B[2+woff:-eoff])
+
+def jacobi_1d_shmem_init(N, datatype):
+    A = np.fromfunction(lambda i: (i + 2) / N, shape=(N,), dtype=datatype)
+    B = np.fromfunction(lambda i: (i + 3) / N, shape=(N,), dtype=datatype)
+    return A, B
+
+def jacobi_1d_distr_init(N, lN, datatype, p):
+    A = np.zeros((lN+2,), dtype=datatype)
+    B = np.zeros((lN+2,), dtype=datatype)
+    A[1:-1] = np.fromfunction(lambda i: (l2g(i, p, lN) + 2) / N,
+                              shape=(lN,), dtype=datatype)
+    B[1:-1] = np.fromfunction(lambda i: (l2g(i, p, lN) + 3) / N,
+                              shape=(lN,), dtype=datatype)
+    return A, B
+
+def jacobi_1d(sizes, validate=True):
+
+    # MPI
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    woff = eoff = 0
+    nw = rank - 1
+    ne = rank + 1
+    if rank == 0:
+        woff = 1
+        nw = MPI.PROC_NULL
+    if rank == size - 1:
+        eoff = 1
+        ne = MPI.PROC_NULL
+
+    if rank == 0:
+        print("===== jacobi_1d =====")
+        print("sizes: {}".format(sizes), flush=True)
+
+    TSTEPS, NR = sizes
+
+    # Symbolic sizes
+    lR = NR // size
+
+    lA, lB = jacobi_1d_distr_init(NR, lR, np.float64, rank)
+
+    mpi_sdfg = jacobi_1d_distr.to_sdfg(strict=False)
+    if rank == 0:
+        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_transformations_repeated([MapFusion])
+        mpi_sdfg.apply_strict_transformations()
+        mpi_func= mpi_sdfg.compile()
+    comm.Barrier()
+    if rank > 0:
+        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
+            ".dacecache/{n}/build/lib{n}.so".format(n=jacobi_1d_distr.name),
+            jacobi_1d_distr.name))
+
+    ldict = locals()
+
+    comm.Barrier()
+
+    mpi_func(A=lA, B=lB, TSTEPS=TSTEPS, lR=lR, P=size,
+             nw=nw, ne=ne, woff=woff, eoff=eoff)
+    
+    comm.Barrier()
+
+    if validate:
+
+        tA = lA[1:-1]
+        tB = lB[1:-1]
+        A = B = None
+        if rank == 0:
+            A = np.empty((NR,), dtype=np.float64)
+            B = np.empty((NR,), dtype=np.float64)
+        comm.Gather(tA, A)
+        comm.Gather(tB, B)
+
+    stmt = ("mpi_func(A=lA, B=lB, TSTEPS=TSTEPS, lR=lR, P=size, "
+            "nw=nw, ne=ne, woff=woff, eoff=eoff)")
+    setup = "comm.Barrier()"
+    repeat = 10
+
+    raw_time_list = timeit.repeat(stmt,
+                                  setup=setup,
+                                  repeat=repeat,
+                                  number=1,
+                                  globals=ldict)
+    raw_time = np.median(raw_time_list)
+
+    if rank == 0:
+        ms_time = time_to_ms(raw_time)
+        print("Median is {}ms".format(ms_time), flush=True)
+
+    if validate:
+
+        if rank == 0:
+            refA, refB = jacobi_1d_shmem_init(NR, np.float64)
+            shared_sdfg = jacobi_1d_shmem.compile()
+            shared_sdfg(A=refA, B=refB, TSTEPS=TSTEPS, lR=lR, P=size)
+            error = relerr(refA, A)
+            print("validation: {} ({})".format(error < 1e-12, error), flush=True)
+            error = relerr(refB, B)
+            print("validation: {} ({})".format(error < 1e-12, error), flush=True)
+
+
+# ===== jacobi_2d =====
+
+jacobi_2d_sizes = [[10, 2800], [10, 5600], [10, 11200]]
+
+@dc.program
+def jacobi_2d_shmem(TSTEPS: dc.int64, A: dc.float64[N, N], B: dc.float64[N, N]):
+    for t in range(1, TSTEPS):
+        B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] +
+                                 A[1:-1, 2:] + A[2:, 1:-1] + A[:-2, 1:-1])
+        A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] +
+                                 B[1:-1, 2:] + B[2:, 1:-1] + B[:-2, 1:-1])
+@dc.program
+def jacobi_2d_distr(TSTEPS: dc.int32, A: dc.float64[lM+2, lN+2], B: dc.float64[lM+2, lN+2]):   
+    req = np.empty((8,), dtype=MPI_Request)
+    for t in range(1, TSTEPS):
+        dc.comm.Isend(A[1, 1:-1], nn, 0, req[0])
+        dc.comm.Isend(A[-2, 1:-1], ns, 1, req[1])
+        dc.comm.Isend(A[1:-1, 1], nw, 2, req[2])
+        dc.comm.Isend(A[1:-1, -2], ne, 3, req[3])
+        dc.comm.Irecv(A[0, 1:-1], nn, 1, req[4])
+        dc.comm.Irecv(A[-1, 1:-1], ns, 0, req[5])
+        dc.comm.Irecv(A[1:-1, 0], nw, 3, req[6])
+        dc.comm.Irecv(A[1:-1, -1], ne, 2, req[7])
+        dc.comm.Waitall(req)
+
+        B[1+noff:-1-soff, 1+woff:-1-eoff] = 0.2 * (
+            A[1+noff:-1-soff, 1+woff:-1-eoff] +
+            A[1+noff:-1-soff, woff:-2-eoff] +
+            A[1+noff:-1-soff, 2+woff:-eoff] +
+            A[2+noff:-soff, 1+woff:-1-eoff] +
+            A[noff:-2-soff, 1+woff:-1-eoff])
+
+        dc.comm.Isend(B[1, 1:-1], nn, 0, req[0])
+        dc.comm.Isend(B[-2, 1:-1], ns, 1, req[1])
+        dc.comm.Isend(B[1:-1, 1], nw, 2, req[2])
+        dc.comm.Isend(B[1:-1, -2], ne, 3, req[3])
+        dc.comm.Irecv(B[0, 1:-1], nn, 1, req[4])
+        dc.comm.Irecv(B[-1, 1:-1], ns, 0, req[5])
+        dc.comm.Irecv(B[1:-1, 0], nw, 3, req[6])
+        dc.comm.Irecv(B[1:-1, -1], ne, 2, req[7])
+        dc.comm.Waitall(req)
+
+        A[1+noff:-1-soff, 1+woff:-1-eoff] = 0.2 * (
+            B[1+noff:-1-soff, 1+woff:-1-eoff] +
+            B[1+noff:-1-soff, woff:-2-eoff] +
+            B[1+noff:-1-soff, 2+woff:-eoff] +
+            B[2+noff:-soff, 1+woff:-1-eoff] +
+            B[noff:-2-soff, 1+woff:-1-eoff])
+
+def jacobi_2d_shmem_init(N, datatype):
+    A = np.fromfunction(lambda i, j: i * (j + 2) / N, shape=(N, N), dtype=datatype)
+    B = np.fromfunction(lambda i, j: i * (j + 3) / N, shape=(N, N), dtype=datatype)
+    return A, B
+
+def jacobi_2d_distr_init(N, lM, lN, datatype, pi, pj):
+    A = np.zeros((lM+2, lN+2), dtype=datatype)
+    B = np.zeros((lM+2, lN+2), dtype=datatype)
+    A[1:-1, 1:-1] = np.fromfunction(lambda i, j: l2g(i, pi, lM) * (l2g(j, pj, lN) + 2) / N,
+                                    shape=(lM, lN), dtype=datatype)
+    B[1:-1, 1:-1] = np.fromfunction(lambda i, j: l2g(i, pi, lM) * (l2g(j, pj, lN) + 3) / N,
+                                    shape=(lM, lN), dtype=datatype)
+    return A, B
+
+def jacobi_2d(sizes, validate=True):
+
+    # MPI
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    Px, Py = grid[size]
+    pi = rank // Py
+    pj = rank % Py
+    noff = soff = woff = eoff = 0
+    nn = (pi-1)*Py + pj
+    ns = (pi+1)*Py + pj
+    nw = pi*Py + (pj-1)
+    ne = pi*Py + (pj+1)
+    if pi == 0:
+        noff = 1
+        nn = MPI.PROC_NULL
+    if pi == Px - 1:
+        soff = 1
+        ns = MPI.PROC_NULL
+    if pj == 0:
+        woff = 1
+        nw = MPI.PROC_NULL
+    if pj == Py - 1:
+        eoff = 1
+        ne = MPI.PROC_NULL
+
+    if rank == 0:
+        print("===== jacobi_2d =====")
+        print("sizes: {}".format(sizes), flush=True)
+
+    TSTEPS, N = sizes
+    M = N
+
+    # Symbolic sizes
+    lM = M // Px
+    lN = N // Py
+
+    lA, lB = jacobi_2d_distr_init(N, lM, lN, np.float64, pi, pj)
+
+    mpi_sdfg = jacobi_2d_distr.to_sdfg(strict=False)
+    if rank == 0:
+        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_transformations_repeated([MapFusion])
+        mpi_sdfg.apply_strict_transformations()
+        mpi_func= mpi_sdfg.compile()
+    comm.Barrier()
+    if rank > 0:
+        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
+            ".dacecache/{n}/build/lib{n}.so".format(n=jacobi_2d_distr.name),
+            jacobi_2d_distr.name))
+
+    ldict = locals()
+
+    comm.Barrier()
+
+    mpi_func(A=lA, B=lB, TSTEPS=TSTEPS, lM=lM, lN=lN, Px=Px, Py=Py,
+             noff=noff, soff=soff, woff=woff, eoff=eoff,
+             nn=nn, ns=ns, nw=nw, ne=ne)
+    
+    comm.Barrier()
+
+    if validate:
+
+        tA = lA[1:-1, 1:-1].copy()
+        tB = lB[1:-1, 1:-1].copy()
+        A = B = None
+        if rank == 0:
+            A = np.empty((Px, Py, lM, lN), dtype=np.float64)
+            B = np.empty((Px, Py, lM, lN), dtype=np.float64)
+        comm.Gather(tA, A)
+        comm.Gather(tB, B)
+        if rank == 0:
+            A = np.transpose(A, (0, 2, 1, 3)).reshape(N, N).copy()
+            B = np.transpose(B, (0, 2, 1, 3)).reshape(N, N).copy()
+
+
+    stmt = ("mpi_func(A=lA, B=lB, TSTEPS=TSTEPS, lM=lM, lN=lN, Px=Px, Py=Py, "
+            "noff=noff, soff=soff, woff=woff, eoff=eoff, "
+            "nn=nn, ns=ns, nw=nw, ne=ne)")
+    setup = "comm.Barrier()"
+    repeat = 10
+
+    raw_time_list = timeit.repeat(stmt,
+                                  setup=setup,
+                                  repeat=repeat,
+                                  number=1,
+                                  globals=ldict)
+    raw_time = np.median(raw_time_list)
+
+    if rank == 0:
+        ms_time = time_to_ms(raw_time)
+        print("Median is {}ms".format(ms_time), flush=True)
+
+    if validate:
+
+        if rank == 0:
+            refA, refB = jacobi_2d_shmem_init(N, np.float64)
+            shared_sdfg = jacobi_2d_shmem.compile()
+            shared_sdfg(A=refA, B=refB, TSTEPS=TSTEPS, lM=lM, lN=lN, Px=Px, Py=Py)
+            error = relerr(refA, A)
+            print("validation: {} ({})".format(error < 1e-12, error), flush=True)
+            error = relerr(refB, B)
+            print("validation: {} ({})".format(error < 1e-12, error), flush=True)
+
+
+# ===== heat_3d =====
+
+heat_3d_sizes = [[10, 200], [10, 300], [10, 450]]
+
+S = dc.symbol('S', dtype=dc.int32, integer=True, positive=True)
+@dc.program
+def heat_3d_shmem(TSTEPS: dc.int32, A: dc.float64[S, S, S], B: dc.float64[S, S, S]):
+    for t in range(1, TSTEPS):
+        B[1:-1, 1:-1, 1:-1] = (
+            0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] +
+                     A[:-2, 1:-1, 1:-1]) +
+            0.125 * (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] +
+                     A[1:-1, :-2, 1:-1]) +
+            0.125 * (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] +
+                     A[1:-1, 1:-1, 0:-2]) +
+            A[1:-1, 1:-1, 1:-1])
+        A[1:-1, 1:-1, 1:-1] = (
+            0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] +
+                     B[:-2, 1:-1, 1:-1]) +
+            0.125 * (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] +
+                     B[1:-1, :-2, 1:-1]) +
+            0.125 * (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] +
+                     B[1:-1, 1:-1, 0:-2]) +
+            B[1:-1, 1:-1, 1:-1])
+
+@dc.program
+def heat_3d_distr(TSTEPS: dc.int32, A: dc.float64[lM+2, lN+2, N], B: dc.float64[lM+2, lN+2, N]):   
+    req = np.empty((8,), dtype=MPI_Request)
+    for t in range(1, TSTEPS):
+        dc.comm.Isend(A[1, 1:-1], nn, 0, req[0])
+        dc.comm.Isend(A[-2, 1:-1], ns, 1, req[1])
+        dc.comm.Isend(A[1:-1, 1], nw, 2, req[2])
+        dc.comm.Isend(A[1:-1, -2], ne, 3, req[3])
+        dc.comm.Irecv(A[0, 1:-1], nn, 1, req[4])
+        dc.comm.Irecv(A[-1, 1:-1], ns, 0, req[5])
+        dc.comm.Irecv(A[1:-1, 0], nw, 3, req[6])
+        dc.comm.Irecv(A[1:-1, -1], ne, 2, req[7])
+        dc.comm.Waitall(req)
+
+        B[1+noff:-1-soff, 1+woff:-1-eoff, 1:-1] = (
+            0.125 * (A[2+noff:-soff, 1+woff:-1-eoff, 1:-1] - 2.0 *
+                     A[1+noff:-1-soff, 1+woff:-1-eoff, 1:-1] +
+                     A[noff:-2-soff, 1+woff:-1-eoff, 1:-1]) +
+            0.125 * (A[1+noff:-1-soff, 2+woff:-eoff, 1:-1] - 2.0 *
+                     A[1+noff:-1-soff, 1+woff:-1-eoff, 1:-1] +
+                     A[1+noff:-1-soff, woff:-2-eoff, 1:-1]) +
+            0.125 * (A[1+noff:-1-soff, 1+woff:-1-eoff, 2:] - 2.0 *
+                     A[1+noff:-1-soff, 1+woff:-1-eoff, 1:-1] +
+                     A[1+noff:-1-soff, 1+woff:-1-eoff, 0:-2]) +
+                     A[1+noff:-1-soff, 1+woff:-1-eoff, 1:-1])
+
+        dc.comm.Isend(B[1, 1:-1], nn, 0, req[0])
+        dc.comm.Isend(B[-2, 1:-1], ns, 1, req[1])
+        dc.comm.Isend(B[1:-1, 1], nw, 2, req[2])
+        dc.comm.Isend(B[1:-1, -2], ne, 3, req[3])
+        dc.comm.Irecv(B[0, 1:-1], nn, 1, req[4])
+        dc.comm.Irecv(B[-1, 1:-1], ns, 0, req[5])
+        dc.comm.Irecv(B[1:-1, 0], nw, 3, req[6])
+        dc.comm.Irecv(B[1:-1, -1], ne, 2, req[7])
+        dc.comm.Waitall(req)
+
+        A[1+noff:-1-soff, 1+woff:-1-eoff, 1:-1] = (
+            0.125 * (B[2+noff:-soff, 1+woff:-1-eoff, 1:-1] - 2.0 *
+                     B[1+noff:-1-soff, 1+woff:-1-eoff, 1:-1] +
+                     B[noff:-2-soff, 1+woff:-1-eoff, 1:-1]) +
+            0.125 * (B[1+noff:-1-soff, 2+woff:-eoff, 1:-1] - 2.0 *
+                     B[1+noff:-1-soff, 1+woff:-1-eoff, 1:-1] +
+                     B[1+noff:-1-soff, woff:-2-eoff, 1:-1]) +
+            0.125 * (B[1+noff:-1-soff, 1+woff:-1-eoff, 2:] - 2.0 *
+                     B[1+noff:-1-soff, 1+woff:-1-eoff, 1:-1] +
+                     B[1+noff:-1-soff, 1+woff:-1-eoff, 0:-2]) +
+                     B[1+noff:-1-soff, 1+woff:-1-eoff, 1:-1])
+
+def heat_3d_shmem_init(N, datatype):
+    # A = np.fromfunction(lambda i, j, k: (i + j + (N - k)) * 10 / N, shape=(N, N, N), dtype=datatype)
+    # B = np.fromfunction(lambda i, j, k: (i + j + (N - k)) * 10 / N, shape=(N, N, N), dtype=datatype)
+    A = np.empty((N, N, N), dtype=datatype)
+    B = np.empty((N, N, N), dtype=datatype)
+    for i in range(N):
+        for j in range(N):
+            for k in range(N):
+                A[i, j, k] = B[i, j, k] = (i + j + (N - k)) * 10 / N
+    return A, B
+
+def heat_3d_distr_init(N, lM, lN, datatype, pi, pj):
+    A = np.zeros((lM+2, lN+2, N), dtype=datatype)
+    B = np.zeros((lM+2, lN+2, N), dtype=datatype)
+    A[1:-1, 1:-1] = np.fromfunction(lambda i, j, k: (l2g(i, pi, lM) + l2g(j, pj, lN) + (N - k)) * 10 / N,
+                                    shape=(lM, lN, N), dtype=datatype)
+    B[1:-1, 1:-1] = np.fromfunction(lambda i, j, k: (l2g(i, pi, lM) + l2g(j, pj, lN) + (N - k)) * 10 / N,
+                                    shape=(lM, lN, N), dtype=datatype)
+    return A, B
+
+def heat_3d(sizes, validate=True):
+
+    # MPI
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    Px, Py = grid[size]
+    pi = rank // Py
+    pj = rank % Py
+    noff = soff = woff = eoff = 0
+    nn = (pi-1)*Py + pj
+    ns = (pi+1)*Py + pj
+    nw = pi*Py + (pj-1)
+    ne = pi*Py + (pj+1)
+    if pi == 0:
+        noff = 1
+        nn = MPI.PROC_NULL
+    if pi == Px - 1:
+        soff = 1
+        ns = MPI.PROC_NULL
+    if pj == 0:
+        woff = 1
+        nw = MPI.PROC_NULL
+    if pj == Py - 1:
+        eoff = 1
+        ne = MPI.PROC_NULL
+
+    if rank == 0:
+        print("===== heat_3d =====")
+        print("sizes: {}".format(sizes), flush=True)
+
+    TSTEPS, N = sizes
+    S = M = N
+
+    # Symbolic sizes
+    lM = M // Px
+    lN = N // Py
+
+    lA, lB = heat_3d_distr_init(N, lM, lN, np.float64, pi, pj)
+
+    mpi_sdfg = heat_3d_distr.to_sdfg(strict=False)
+    if rank == 0:
+        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_transformations_repeated([MapFusion])
+        mpi_sdfg.apply_strict_transformations()
+        mpi_func= mpi_sdfg.compile()
+    comm.Barrier()
+    if rank > 0:
+        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
+            ".dacecache/{n}/build/lib{n}.so".format(n=heat_3d_distr.name),
+            heat_3d_distr.name))
+
+    ldict = locals()
+
+    comm.Barrier()
+
+    mpi_func(A=lA, B=lB, TSTEPS=TSTEPS, lM=lM, lN=lN, Px=Px, Py=Py,
+             noff=noff, soff=soff, woff=woff, eoff=eoff,
+             nn=nn, ns=ns, nw=nw, ne=ne)
+    
+    comm.Barrier()
+
+    if validate:
+
+        tA = lA[1:-1, 1:-1].copy()
+        tB = lB[1:-1, 1:-1].copy()
+        A = B = None
+        if rank == 0:
+            A = np.empty((Px, Py, lM, lN, N), dtype=np.float64)
+            B = np.empty((Px, Py, lM, lN, N), dtype=np.float64)
+        comm.Gather(tA, A)
+        comm.Gather(tB, B)
+        if rank == 0:
+            A = np.transpose(A, (0, 2, 1, 3, 4)).reshape(N, N, N).copy()
+            B = np.transpose(B, (0, 2, 1, 3, 4)).reshape(N, N, N).copy()
+
+    stmt = ("mpi_func(A=lA, B=lB, TSTEPS=TSTEPS, lM=lM, lN=lN, Px=Px, Py=Py, "
+            "noff=noff, soff=soff, woff=woff, eoff=eoff, "
+            "nn=nn, ns=ns, nw=nw, ne=ne)")
+    setup = "comm.Barrier()"
+    repeat = 10
+
+    raw_time_list = timeit.repeat(stmt,
+                                  setup=setup,
+                                  repeat=repeat,
+                                  number=1,
+                                  globals=ldict)
+    raw_time = np.median(raw_time_list)
+
+    if rank == 0:
+        ms_time = time_to_ms(raw_time)
+        print("Median is {}ms".format(ms_time), flush=True)
+
+    if validate:
+
+        if rank == 0:
+            # refA, refB = heat_3d_shmem_init(S, np.float64)
+            # shared_sdfg = heat_3d_shmem.to_sdfg()
+            # shared_sdfg.apply_strict_transformations()
+            # shared_sdfg.apply_transformations_repeated([MapFusion])
+            # shared_sdfg.apply_strict_transformations()
+            # shared_func= shared_sdfg.compile()
+            # shared_func(A=refA, B=refB, TSTEPS=TSTEPS, S=S)
+            refA, refB = heat_3d_distr_init(N, N, N, np.float64, 0, 0)
+            mpi_func(A=refA, B=refB, TSTEPS=TSTEPS, lM=N, lN=N, Px=1, Py=1,
+             noff=1, soff=1, woff=1, eoff=1,
+             nn=MPI.PROC_NULL, ns=MPI.PROC_NULL, nw=MPI.PROC_NULL, ne=MPI.PROC_NULL)
+            error = relerr(refA[1:-1, 1:-1], A)
+            print("validation: {} ({})".format(error < 1e-12, error), flush=True)
+            error = relerr(refB[1:-1, 1:-1], B)
+            print("validation: {} ({})".format(error < 1e-12, error), flush=True)
+
+
 if __name__ == "__main__":
 
-    # for sizes in atax_sizes:
-    #     atax(sizes)
-    # for sizes in bicg_sizes:
-    #     bicg(sizes)
-    # for sizes in doitgen_sizes:
-    #     doitgen(sizes)
-    # for sizes in gemm_sizes:
-    #     gemm(sizes)
-    # for sizes in gemver_sizes:
-    #     gemver(sizes)
-    # for sizes in gesummv_sizes:
-    #     gesummv(sizes)
-    # for sizes in k2mm_sizes:
-    #     k2mm(sizes)
+    for sizes in atax_sizes:
+        atax(sizes)
+    for sizes in bicg_sizes:
+        bicg(sizes)
+    for sizes in doitgen_sizes:
+        doitgen(sizes)
+    for sizes in gemm_sizes:
+        gemm(sizes)
+    for sizes in gemver_sizes:
+        gemver(sizes)
+    for sizes in gesummv_sizes:
+        gesummv(sizes)
+    for sizes in k2mm_sizes:
+        k2mm(sizes)
     for sizes in k3mm_sizes:
         k3mm(sizes)
+    for sizes in mvt_sizes:
+        mvt(sizes)
+    for sizes in jacobi_1d_sizes:
+        jacobi_1d(sizes)
+    for sizes in jacobi_2d_sizes:
+        jacobi_2d(sizes, validate=False)
+    # for sizes in heat_3d_sizes:
+    #     heat_3d(sizes, validate=True)
