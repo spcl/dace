@@ -466,16 +466,21 @@ class InlineSDFG(transformation.Transformation):
 
         # Remove all unused external inputs/output memlet paths, as well as
         # resulting isolated nodes
-        removed_in_edges = self._remove_edge_path(state,
-                                                  inputs,
-                                                  set(inputs.keys()) -
-                                                  source_accesses,
-                                                  reverse=True)
-        removed_out_edges = self._remove_edge_path(state,
-                                                   outputs,
-                                                   set(outputs.keys()) -
-                                                   sink_accesses,
-                                                   reverse=False)
+        inverse_repldict = {v: k for k, v in repldict.items()}
+        removed_in_edges = self._remove_edge_path(
+            state,
+            inputs,
+            set(inputs.keys()) -
+            {inverse_repldict[n.data]
+             for n in source_accesses},
+            reverse=True)
+        removed_out_edges = self._remove_edge_path(
+            state,
+            outputs,
+            set(outputs.keys()) -
+            {inverse_repldict[n.data]
+             for n in sink_accesses},
+            reverse=False)
 
         # Re-add in/out edges to first/last nodes in subgraph
         order = [
