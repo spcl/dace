@@ -1142,24 +1142,24 @@ if __name__ == "__main__":
     sockets = args["sockets"]
     file_name = "legate_cpu_{}_sockets.csv".format(sockets)
 
-    # for sizes in atax_sizes:
-    #     atax(sockets, sizes)
-    # for sizes in bicg_sizes:
-    #     bicg(sockets, sizes)
-    # for sizes in doitgen_sizes:
-    #     doitgen(sockets, sizes)
-    # for sizes in gemm_sizes:
-    #     gemm(sockets, sizes)
-    # for sizes in gemver_sizes:
-    #     gemver(sockets, sizes)
-    # for sizes in gesummv_sizes:
-    #     gesummv(sockets, sizes)
-    # for sizes in k2mm_sizes:
-    #     k2mm(sockets, sizes)
+    for sizes in atax_sizes:
+        atax(sockets, sizes)
+    for sizes in bicg_sizes:
+        bicg(sockets, sizes)
+    for sizes in doitgen_sizes:
+        doitgen(sockets, sizes)
+    for sizes in gemm_sizes:
+        gemm(sockets, sizes)
+    for sizes in gemver_sizes:
+        gemver(sockets, sizes)
+    for sizes in gesummv_sizes:
+        gesummv(sockets, sizes)
+    for sizes in k2mm_sizes:
+        k2mm(sockets, sizes)
     # for sizes in k3mm_sizes:
     #     k3mm(sockets, sizes)
-    # for sizes in mvt_sizes:
-    #     mvt(sockets, sizes)
+    for sizes in mvt_sizes:
+        mvt(sockets, sizes)
     for sizes in jacobi_1d_sizes:
         jacobi_1d(sockets, sizes)
     for sizes in jacobi_2d_sizes:
