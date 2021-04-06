@@ -296,6 +296,9 @@ class FPGACodeGen(TargetCodeGenerator):
         # Symbols that will be passed as parameters to the top-level kernel
         global_symbols = set()
 
+        # Sorting by name, then by interface id
+        sort_func = lambda t: f"{t[1]}{t[3]}"
+
         for subgraph in subgraphs:
             data_to_node.update({
                 node.data: node
@@ -409,7 +412,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     top_level_local_data.add(dataname)
             # Order by name
             subgraph_parameters[subgraph] = list(
-                sorted(subgraph_parameters[subgraph], key=lambda t: t[1]))
+                sorted(subgraph_parameters[subgraph], key=sort_func))
             # Append symbols used in this subgraph
             for k in sorted(subgraph.free_symbols):
                 if k not in sdfg.constants:
@@ -419,14 +422,14 @@ class FPGACodeGen(TargetCodeGenerator):
 
         # Order by name
         global_data_parameters = list(
-            sorted(global_data_parameters, key=lambda t: t[1]))
-        global_data_parameters += sorted(global_symbols, key=lambda t: t[1])
-        external_streams = list(sorted(external_streams, key=lambda t: t[1]))
+            sorted(global_data_parameters, key=sort_func))
+        global_data_parameters += sorted(global_symbols, key=sort_func)
+        external_streams = list(sorted(external_streams, key=sort_func))
         nested_global_transients = list(sorted(nested_global_transients))
 
         stream_names = {sname for _, sname, _, _ in external_streams}
         top_level_local_data = [
-            data_to_node[name] for name in top_level_local_data
+            data_to_node[name] for name in sorted(top_level_local_data)
             if name not in stream_names
         ]
 
