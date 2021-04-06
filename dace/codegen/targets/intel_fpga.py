@@ -807,13 +807,16 @@ __kernel void \\
             desc = sdfg.arrays[in_memlet.data]
             defined_type, defined_ctype = self._dispatcher.defined_vars.get(
                 in_memlet.data, 1)
+
             if isinstance(desc, dace.data.Array) and (
                     desc.storage == dtypes.StorageType.FPGA_Global
                     or desc.storage == dtypes.StorageType.FPGA_Local):
                 # special case: in intel FPGA this must be handled properly to guarantee OpenCL compatibility
+                # (no pass by reference)
+                # The defined type can be a scalar, and therefore we get its address
                 vec_type = desc.dtype.ocltype
                 offset = cpp.cpp_offset_expr(desc, in_memlet.subset, None)
-                offset_expr = '[' + offset + ']'
+                offset_expr = '[' + offset + ']' if defined_type is not DefinedType.Scalar else ''
 
                 expr = self.make_ptr_vector_cast(in_memlet.data + offset_expr,
                                                  desc.dtype,
@@ -823,11 +826,12 @@ __kernel void \\
                     typedef = "__global volatile  {}* restrict".format(vec_type)
                 else:
                     typedef = "{} *".format(vec_type)
-                memlet_references.append((typedef, vconn, expr))
+                ref = '&' if defined_type is DefinedType.Scalar else ''
+                memlet_references.append((typedef, vconn, ref+expr))
                 # get the defined type (as defined in the parent)
                 # Register defined variable
                 self._dispatcher.defined_vars.add(vconn,
-                                                  defined_type,
+                                                  DefinedType.Pointer,
                                                   typedef,
                                                   allow_shadowing=True)
             elif isinstance(desc, dace.data.Stream):
@@ -837,9 +841,12 @@ __kernel void \\
                 # if this is a scalar and the argument passed is also a scalar
                 # then we have to pass it by value, as references do not exist in C99
                 typedef = defined_ctype
-                memlet_references.append((typedef, vconn, in_memlet.data))
+                if defined_type is not DefinedType.Pointer:
+                    typedef = typedef + "*"
+
+                memlet_references.append((typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type)))
                 self._dispatcher.defined_vars.add(vconn,
-                                                  defined_type,
+                                                  DefinedType.Pointer,
                                                   typedef,
                                                   allow_shadowing=True)
             else:
@@ -861,22 +868,24 @@ __kernel void \\
                 if isinstance(desc, dace.data.Array) and (
                         desc.storage == dtypes.StorageType.FPGA_Global
                         or desc.storage == dtypes.StorageType.FPGA_Local):
-                    # special case: in intel FPGA this must be handled properly
+                    # special case: in intel FPGA this must be handled properly.
+                    # The defined type can be scalar, and therefore we get its address
                     vec_type = desc.dtype.ocltype
                     offset = cpp.cpp_offset_expr(desc, out_memlet.subset, None)
-                    offset_expr = '[' + offset + ']'
+                    offset_expr = '[' + offset + ']' if defined_type is not DefinedType.Scalar else ''
                     if desc.storage == dtypes.StorageType.FPGA_Global:
                         typedef = "__global volatile  {}* restrict".format(
                             vec_type)
                     else:
                         typedef = "{}*".format(vec_type)
+                    ref = '&' if defined_type is DefinedType.Scalar else ''
                     expr = self.make_ptr_vector_cast(
                         out_memlet.data + offset_expr, desc.dtype,
                         node.out_connectors[uconn], False, defined_type)
-                    memlet_references.append((typedef, uconn, expr))
+                    memlet_references.append((typedef, uconn, ref+expr))
                     # Register defined variable
                     self._dispatcher.defined_vars.add(uconn,
-                                                      defined_type,
+                                                      DefinedType.Pointer,
                                                       typedef,
                                                       allow_shadowing=True)
                 elif isinstance(desc, dace.data.Stream):
@@ -922,7 +931,6 @@ __kernel void \\
                     # if this is not already a mapped symbol, add it
                     if p not in node.symbol_mapping.keys():
                         memlet_references.append((typedef, p, p))
-
         return memlet_references
 
     def allocate_view(self, sdfg: dace.SDFG, dfg: SDFGState, state_id: int,
@@ -955,6 +963,7 @@ __kernel void \\
             qualifier = "__global volatile "
             atype = dtypes.pointer(nodedesc.dtype).ctype + " restrict"
             aname = name
+
             viewed_desc = sdfg.arrays[edge.data.data]
             defined_type, _ = self._dispatcher.defined_vars.get(
                 edge.data.data, 0)
