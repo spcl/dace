@@ -462,7 +462,7 @@ def gemver(sockets, sizes, validate=True):
 
 # ===== gesummv =====
 
-gesummv_sizes = [11200] #[22400] #[2800, 5600, 11200]
+gesummv_sizes = [22400] #[2800, 5600, 11200]
 
 def gesummv_legate(alpha, beta, A, B, x, y):
     y[:] = alpha * A @ x + beta * B @ x
@@ -705,7 +705,7 @@ def k3mm(sockets, sizes, validate=True):
 
 # ===== mvt =====
 
-mvt_sizes = [11000] #[22000]  # [4000, 8000, 16000]
+mvt_sizes = [22000]  # [4000, 8000, 16000]
 
 def mvt_legate(x1, x2, y_1, y_2, A):
     x1 += A @ y_1
@@ -773,7 +773,7 @@ def mvt(sockets, sizes, validate=True):
 
 # ===== jacobi_1d =====
 
-jacobi_1d_sizes = [[1000, 12000]] #[[1000, 24000]] #[[1000, 4000], [2000, 8000], [4000, 16000]]
+jacobi_1d_sizes = [[100, 24000]] #[[1000, 4000], [2000, 8000], [4000, 16000]]
 
 def jacobi_1d_legate(TSTEPS, A, B): 
     cA = A[1:-1]
@@ -844,7 +844,7 @@ def jacobi_1d(sockets, sizes, validate=True):
 
 # ===== jacobi_2d =====
 
-jacobi_2d_sizes = [[1000, 500]]  #[[1000, 500]]  # [[10, 2800], [10, 5600], [10, 11200]]
+jacobi_2d_sizes = [[100, 500]]  #[[1000, 500]]  # [[10, 2800], [10, 5600], [10, 11200]]
 
 def jacobi_2d_legate(TSTEPS, A, B):
     cA = A[1:-1, 1:-1]
