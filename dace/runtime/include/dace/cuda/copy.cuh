@@ -826,6 +826,26 @@ namespace dace
                 ptr, 1, src_ystride, src_xstride, smem, 1, COPY_YLEN, COPY_XLEN);
     }
 
+    template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
+              int COPY_XLEN, int DST_XSTRIDE,
+              bool ASYNC>
+    static DACE_DFI void GlobalToGlobal1D(
+            const T *src, int src_xstride, T *dst)
+    {
+        if (src_xstride == 1)
+        {
+	    __DACE_UNROLL
+	    for (int i = 0; i < COPY_XLEN; ++i)
+	        dst[i*DST_XSTRIDE] = src[i];
+        }
+        else
+	{
+	    __DACE_UNROLL
+	    for (int i = 0; i < COPY_XLEN; ++i)
+	        dst[i*DST_XSTRIDE] = src[i*src_xstride];
+	}
+    }
+  
 }  // namespace dace
 
 

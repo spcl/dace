@@ -319,7 +319,9 @@ def set_fast_implementations(sdfg: SDFG,
         for state in current_sdfg.nodes():
             for node in state.nodes():
                 if isinstance(node, nodes.LibraryNode) :
-                    if node.default_implementation == 'specialize' and len(set(node.imlementations) & set(implementation_prio)) == 0:
+                    if (node.default_implementation == 'specialize' 
+                        and (len(set(node.implementations) 
+                               & set(implementation_prio))) == 0):
                         print("Specializing node", node)
                         node.expand(current_sdfg, state)
 
@@ -364,7 +366,9 @@ def auto_optimize(sdfg: SDFG,
     sdfg.apply_strict_transformations(validate=False, validate_all=validate_all)
 
     # Try to eliminate trivial maps 
-    sdfg.apply_transformations_repeated(TrivialMapElimination, validate = validate, validate_all = validate_all)
+    sdfg.apply_transformations_repeated(TrivialMapElimination, 
+                                        validate = validate, 
+                                        validate_all = validate_all)
     # Try to parallelize loops
     for sd in sdfg.all_sdfgs_recursive():
         propagate_states(sd)
@@ -390,7 +394,8 @@ def auto_optimize(sdfg: SDFG,
                 from dace.sdfg.scope import is_devicelevel_gpu
                 # Use CUB for device-level reductions
                 if ('CUDA (device)' in node.implementations
-                        and not is_devicelevel_gpu(state.parent, state, node) and state.scope_dict()[node] is None):
+                        and not is_devicelevel_gpu(state.parent, state, node) 
+                        and state.scope_dict()[node] is None):
                     node.implementation = 'CUDA (device)'
                     ignore_types.add(type(node))
 
@@ -402,12 +407,6 @@ def auto_optimize(sdfg: SDFG,
 
         
        
-
-        for arr in sdfg.arrays.values():
-            if arr.transient and not isinstance(arr, dt.View): #and size only depends on SDFG params
-                if arr.storage == dtypes.StorageType.GPU_Global:
-                    arr.lifetime = dtypes.AllocationLifetime.Persistent
-
         
     ''' 
     for graph in sdfg.nodes():
@@ -416,7 +415,8 @@ def auto_optimize(sdfg: SDFG,
                 if True: #graph.scope_dict()[node] is None:
                     try:
                         print("Expanding Reduction")
-                        ReduceExpansion.apply_to(sdfg, _reduce = node, reduce_implementation = 'sequential')
+                        ReduceExpansion.apply_to(sdfg, _reduce = node, 
+                            reduce_implementation = 'sequential')
 
                     except ValueError:
                         pass
@@ -459,6 +459,14 @@ def auto_optimize(sdfg: SDFG,
     # Set all Default storage types that are constant sized to registers
     move_small_arrays_to_stack(sdfg)
 
+    if device == dtypes.DeviceType.GPU:
+        for aname, arr in sdfg.arrays.items():
+            if arr.transient and not isinstance(arr, dt.View): #and size only depends on SDFG params
+                if arr.storage == dtypes.StorageType.GPU_Global:
+                    arr.lifetime = dtypes.AllocationLifetime.Persistent
+
+
+    
     # Validate at the end
     if validate or validate_all:
         sdfg.validate()
