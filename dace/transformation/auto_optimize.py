@@ -340,7 +340,8 @@ def set_fast_implementations(sdfg: SDFG,
 def auto_optimize(sdfg: SDFG,
                   device: dtypes.DeviceType,
                   validate: bool = True,
-                  validate_all: bool = False) -> SDFG:
+                  validate_all: bool = False,
+                  symbols: dict = {}) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -392,12 +393,13 @@ def auto_optimize(sdfg: SDFG,
         for node, state in sdfg.all_nodes_recursive():
             if isinstance(node, dace.nodes.LibraryNode):
                 from dace.sdfg.scope import is_devicelevel_gpu
-                # Use CUB for device-level reductions
+                # Use CUB for device-level reductions    
                 if ('CUDA (device)' in node.implementations
                         and not is_devicelevel_gpu(state.parent, state, node) 
                         and state.scope_dict()[node] is None):
                     node.implementation = 'CUDA (device)'
                     ignore_types.add(type(node))
+
 
         # apply gpu transformations 
         sdfg.apply_gpu_transformations()
@@ -405,8 +407,6 @@ def auto_optimize(sdfg: SDFG,
         # apply strict transformations
         sdfg.apply_strict_transformations()
 
-        
-       
         
     ''' 
     for graph in sdfg.nodes():
@@ -449,13 +449,19 @@ def auto_optimize(sdfg: SDFG,
     for nsdfg in list(sdfg.all_sdfgs_recursive()):
         tile_wcrs(nsdfg, validate_all)
     
-    
     # TODO(later): Safe vectorization
     
     # Disable OpenMP parallel sections on a per-SDFG basis
     for nsdfg in sdfg.all_sdfgs_recursive():
         nsdfg.openmp_sections = False
     
+    # Specialize for all known symbols 
+    known_symbols = {s:v for (s,v) in symbols.items() if s in sdfg.free_symbols}
+    if len(known_symbols) > 0:
+        print("Specializing the SDFG for symbols", known_symbols)
+    sdfg.specialize(known_symbols)
+
+
     # Set all Default storage types that are constant sized to registers
     move_small_arrays_to_stack(sdfg)
 
@@ -465,8 +471,7 @@ def auto_optimize(sdfg: SDFG,
                 if arr.storage == dtypes.StorageType.GPU_Global:
                     arr.lifetime = dtypes.AllocationLifetime.Persistent
 
-
-    
+ 
     # Validate at the end
     if validate or validate_all:
         sdfg.validate()
