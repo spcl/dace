@@ -5,9 +5,10 @@ import csv
 import legate.numpy as np
 import timeit
 
-from mpi4py import MPI
-comm = MPI.COMM_WORLD
-rank = comm.Get_rank()
+# from mpi4py import MPI
+# comm = MPI.COMM_WORLD
+# rank = comm.Get_rank()
+rank = 0
 setup = ""
 
 
