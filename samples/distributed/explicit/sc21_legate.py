@@ -5,6 +5,11 @@ import csv
 import legate.numpy as np
 import timeit
 
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+setup = ""
+
 
 # ===== Helper methods =====
 
@@ -86,7 +91,7 @@ def atax_distr_init(M, N, lM, lN, datatype, pi, pj):
 
 def atax(sockets, sizes, validate=True):
 
-    rank = 0
+    # rank = 0
     size = sockets
     Px, Py = grid[size]
     # Fix for grid issue with gemv
@@ -119,7 +124,7 @@ def atax(sockets, sizes, validate=True):
     ldict = {**globals(), **locals()}
 
     stmt = "atax_legate(A, x, y); assert not np.isnan(np.sum(y))"
-    setup = "A, x, y = atax_shmem_init(M, N, np.float64)"
+    # setup = "A, x, y = atax_shmem_init(M, N, np.float64)"
     repeat = 10
 
     raw_time_list = timeit.repeat(stmt,
@@ -163,7 +168,7 @@ def bicg_distr_init(M, N, lM, lN, lMy, datatype, pi, pj):
 
 def bicg(sockets, sizes, validate=True):
 
-    rank = 0
+    # rank = 0
     size = sockets
     Px, Py = grid[size]
     # Fix for grid issue with gemv
@@ -196,7 +201,7 @@ def bicg(sockets, sizes, validate=True):
     stmt = ("bicg_legate(A, p, r, o1, o2); "
             "assert not np.isnan(np.sum(o1)); "
             "assert not np.isnan(np.sum(o2));")
-    setup = "A, p, r, o1, o2 = bicg_shmem_init(M, N, np.float64)"
+    # setup = "A, p, r, o1, o2 = bicg_shmem_init(M, N, np.float64)"
     repeat = 10
 
     raw_time_list = timeit.repeat(stmt,
@@ -239,7 +244,7 @@ def doitgen_distr_init(NR, NQ, NP, lR, datatype, p):
 
 def doitgen(sockets, sizes, validate=True):
 
-    rank = 0
+    # rank = 0
     size = sockets
 
     if rank == 0:
@@ -266,7 +271,7 @@ def doitgen(sockets, sizes, validate=True):
     ldict = {**globals(), **locals()}
 
     stmt = "doitgen_legate(NR, NQ, NP, A, C4); assert not np.isnan(np.sum(A))"
-    setup = "A, C4 = doitgen_shmem_init(NR, NQ, NP, np.float64)"
+    # setup = "A, C4 = doitgen_shmem_init(NR, NQ, NP, np.float64)"
     repeat = 10
 
     raw_time_list = timeit.repeat(stmt,
@@ -315,7 +320,7 @@ def gemm_distr_init(NI, NJ, NK, lNI, lNJ, lNKa, lNKb, datatype, pi, pj):
 
 def gemm(sockets, sizes, validate=True):
 
-    rank = 0
+    # rank = 0
     size = sockets
     Px, Py = grid[size]
     # Tmp fix for gemm and non-square grids
@@ -349,7 +354,7 @@ def gemm(sockets, sizes, validate=True):
     ldict = {**globals(), **locals()}
 
     stmt = "gemm_legate(alpha, beta, C, A, B); assert not np.isnan(np.sum(C))"
-    setup = "alpha, beta, C, A, B = gemm_shmem_init(NI, NJ, NK, np.float64)"
+    # setup = "alpha, beta, C, A, B = gemm_shmem_init(NI, NJ, NK, np.float64)"
     repeat = 10
 
     raw_time_list = timeit.repeat(stmt,
@@ -408,7 +413,7 @@ def gemver_distr_init(N, lM, lN, lMy, datatype, pi, pj):
 
 def gemver(sockets, sizes, validate=True):
 
-    rank = 0
+    # rank = 0
     size = sockets
     Px, Py = grid[size]
     # Fix for grid issue with gemv
@@ -438,7 +443,7 @@ def gemver(sockets, sizes, validate=True):
 
     stmt = ("gemver_legate(alpha, beta, A, u1, v1, u2, v2, w, x, y, z); "
             "assert not np.isnan(np.sum(w))")
-    setup = "alpha, beta, A, u1, u2, v1, v2, w, x, y, z = gemver_shmem_init(N, np.float64)"
+    # setup = "alpha, beta, A, u1, u2, v1, v2, w, x, y, z = gemver_shmem_init(N, np.float64)"
     repeat = 10
 
     raw_time_list = timeit.repeat(stmt,
@@ -485,7 +490,7 @@ def gesummv_distr_init(N, lM, lN, lMy, datatype, pi, pj):
 
 def gesummv(sockets, sizes, validate=True):
 
-    rank = 0
+    # rank = 0
     size = sockets
     Px, Py = grid[size]
     # Fix for grid issue with gemv
@@ -515,7 +520,7 @@ def gesummv(sockets, sizes, validate=True):
 
     stmt = ("gesummv_legate(alpha, beta, A, B, x, y); "
             "assert not np.isnan(np.sum(y))")
-    setup = "alpha, beta, A, B, x, y = gesummv_shmem_init(N, np.float64)"
+    # setup = "alpha, beta, A, B, x, y = gesummv_shmem_init(N, np.float64)"
     repeat = 10
 
     raw_time_list = timeit.repeat(stmt,
@@ -568,7 +573,7 @@ def k2mm_distr_init(NI, NJ, NK, NL, lNI, lNJ, lNJx, lNKa, lNKb, lNL, datatype, p
 
 def k2mm(sockets, sizes, validate=True):
 
-    rank = 0
+    # rank = 0
     size = sockets
     Px, Py = grid[size]
     # Tmp fix for gemm and non-square grids
@@ -599,7 +604,7 @@ def k2mm(sockets, sizes, validate=True):
 
     stmt = ("k2mm_legate(alpha, beta, A, B, C, D); "
             "assert not np.isnan(np.sum(D))")
-    setup = "alpha, beta, A, B, C, D = k2mm_shmem_init(NI, NJ, NK, NL, np.float64)"
+    # setup = "alpha, beta, A, B, C, D = k2mm_shmem_init(NI, NJ, NK, NL, np.float64)"
     repeat = 10
 
     raw_time_list = timeit.repeat(stmt,
@@ -650,7 +655,7 @@ def k3mm_distr_init(NI, NJ, NK, NM, NL, lNI, lNJ, lNJx, lNKa, lNKb, lNMx, lNMy, 
 
 def k3mm(sockets, sizes, validate=True):
 
-    rank = 0
+    # rank = 0
     size = sockets
     Px, Py = grid[size]
     # Tmp fix for gemm and non-square grids
@@ -681,7 +686,7 @@ def k3mm(sockets, sizes, validate=True):
 
     stmt = ("k3mm_legate(A, B, C, D, E); "
             "assert not np.isnan(np.sum(E));")
-    setup = "A, B, C, D, E = k3mm_shmem_init(NI, NJ, NK, NM, NL, np.float64)"
+    # setup = "A, B, C, D, E = k3mm_shmem_init(NI, NJ, NK, NM, NL, np.float64)"
     repeat = 10
 
     raw_time_list = timeit.repeat(stmt,
@@ -723,7 +728,7 @@ def mvt_distr_init(N, lM, lN, lMy, datatype, pi, pj):
 
 def mvt(sockets, sizes, validate=True):
 
-    rank = 0
+    # rank = 0
     size = sockets
     Px, Py = grid[size]
     # Fix for grid issue with gemv
@@ -749,7 +754,7 @@ def mvt(sockets, sizes, validate=True):
 
     stmt = ("mvt_legate(x1, x2, y_1, y_2, A); "
             "assert not np.isnan(np.sum(A))")
-    setup = "x1, x2, y_1, y_2, A = mvt_shmem_init(N, np.float64)"
+    # setup = "x1, x2, y_1, y_2, A = mvt_shmem_init(N, np.float64)"
     repeat = 10
 
     raw_time_list = timeit.repeat(stmt,
@@ -790,7 +795,7 @@ def jacobi_1d_distr_init(N, lN, datatype, p):
 
 def jacobi_1d(sockets, sizes, validate=True):
 
-    rank = 0
+    # rank = 0
     size = sockets
 
     if rank == 0:
@@ -812,7 +817,7 @@ def jacobi_1d(sockets, sizes, validate=True):
 
     stmt = ("jacobi_1d_legate(TSTEPS, A, B); "
             "assert not np.isnan(np.sum(A))")
-    setup = "A, B = jacobi_1d_shmem_init(NR, np.float64)"
+    # setup = "A, B = jacobi_1d_shmem_init(NR, np.float64)"
     repeat = 10
 
     raw_time_list = timeit.repeat(stmt,
@@ -855,7 +860,7 @@ def jacobi_2d_distr_init(N, lM, lN, datatype, pi, pj):
 
 def jacobi_2d(sockets, sizes, validate=True):
 
-    rank = 0
+    # rank = 0
     size = sockets
     Px, Py = grid[size]
 
@@ -879,7 +884,7 @@ def jacobi_2d(sockets, sizes, validate=True):
 
     stmt = ("jacobi_2d_legate(TSTEPS, A, B); "
             "assert not np.isnan(np.sum(A))")
-    setup = "A, B = jacobi_2d_shmem_init(N, np.float64)"
+    # setup = "A, B = jacobi_2d_shmem_init(N, np.float64)"
     repeat = 10
 
     raw_time_list = timeit.repeat(stmt,
