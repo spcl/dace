@@ -15,7 +15,7 @@ from dace.codegen.targets import cpp
 from dace import subsets, data as dt, dtypes
 from dace.config import Config
 from dace.frontend import operations
-from dace.sdfg import nodes, SDFG
+from dace.sdfg import SDFG, nodes, utils
 from dace.sdfg import ScopeSubgraphView, find_input_arraynode, find_output_arraynode
 from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
@@ -35,11 +35,6 @@ _FPGA_STORAGE_TYPES = {
     dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
     dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister
 }
-
-
-class MemoryType(enum.Enum):
-    DDR = enum.auto()
-    HBM = enum.auto()
 
 
 def vector_element_type_of(dtype):
@@ -265,6 +260,8 @@ class FPGACodeGen(TargetCodeGenerator):
                  - Parameters that must be passed to the kernel from the host,
                    but that do not exist before the CPU calls the kernel
                    wrapper.
+                 - A dictionary of which memory interfaces should be assigned to
+                   which memory banks.
                  - External streams that connect different FPGA kernels, and
                    must be defined during the compilation flow.
         """
@@ -274,10 +271,10 @@ class FPGACodeGen(TargetCodeGenerator):
         # Transients that are accessed in other states in this SDFG
         used_outside = sdfg.shared_transients()
 
-        # For some reason the array allocation dispatcher takes nodes, not
-        # arrays. Build a dictionary of arrays to arbitrary data nodes
-        # referring to them.
-        data_to_node = {}
+        # Build a dictionary of arrays to arbitrary data nodes referring to
+        # them, needed to trace memory bank assignments and to pass to the array
+        # allocator
+        data_to_node: Dict[str: dace.nodes.Node] = {}
 
         global_data_parameters = set()
         # Count appearances of each global array to create multiple interfaces
@@ -288,6 +285,10 @@ class FPGACodeGen(TargetCodeGenerator):
         nested_global_transients = set()
         # [(Is an output, dataname string, data object, interface)]
         external_streams: Set[tuple[bool, str, dt, dict[str, int]]] = set()
+
+        # Mapping from global arrays to memory interfaces
+        bank_assignments: Dict[str, str] = {}
+
         # Mapping from symbol to a unique parameter tuple
         all_symbols = {
             k: (False, k, dt.Scalar(v), None)
@@ -383,7 +384,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 # Only distinguish between inputs and outputs for arrays
                 if not isinstance(desc, dt.Array):
                     is_output = None
-                # If this is a global array, assign the correct interface ID
+                # If this is a global array, assign the correct interface ID and
+                # memory interface (e.g., DDR or HBM bank)
                 if (isinstance(desc, dt.Array)
                         and desc.storage == dtypes.StorageType.FPGA_Global):
                     if dataname in data_to_interface:
@@ -393,6 +395,38 @@ class FPGACodeGen(TargetCodeGenerator):
                         interface_id = global_interfaces[dataname]
                         global_interfaces[dataname] += 1
                         data_to_interface[dataname] = interface_id
+                    # Collect the memory bank specification, if present, by
+                    # traversing outwards to where the data container is
+                    # actually allocated
+                    inner_node = data_to_node[dataname]
+                    trace = utils.trace_nested_access(inner_node, subgraph,
+                                                      sdfg)
+                    bank = None
+                    for (trace_in, trace_out), _, _, trace_sdfg in trace:
+                        trace_node = trace_in or trace_out
+                        trace_name = trace_node.data
+                        trace_desc = trace_node.desc(trace_sdfg)
+                        if "bank" in trace_desc.location:
+                            trace_bank = trace_desc.location["bank"]
+                            if (bank is not None
+                                    and bank != trace_bank):
+                                raise cgx.CodegenError(
+                                    "Found inconsistent memory bank "
+                                    f"specifier for {trace_name}.")
+                            bank = trace_bank
+                    # Make sure the array has been allocated on this bank in the
+                    # outermost scope
+                    if bank is not None:
+                        outer_node = trace[0][0][0] or trace[0][0][1]
+                        outer_desc = outer_node.desc(trace[0][2])
+                        if ("bank" not in outer_desc.location
+                                or str(outer_desc.location["bank"]) !=
+                                str(bank)):
+                            raise cgx.CodegenError(
+                                "Memory bank allocation must be present on "
+                                f"outermost data descriptor {outer_node.data} "
+                                "to be allocated correctly.")
+                    bank_assignments[dataname] = bank
                 else:
                     interface_id = None
                 if (not desc.transient
@@ -434,7 +468,8 @@ class FPGACodeGen(TargetCodeGenerator):
         ]
 
         return (global_data_parameters, top_level_local_data,
-                subgraph_parameters, nested_global_transients, external_streams)
+                subgraph_parameters, nested_global_transients, bank_assignments,
+                external_streams)
 
     def generate_nested_state(self, sdfg, state, nest_name, subgraphs,
                               function_stream, callsite_stream):
@@ -556,14 +591,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                     "must be an integer: {}".format(
                                         nodedesc.location["bank"]))
                             memory_bank_arg = (
-                                "hlslib::ocl::MemoryBank::bank{}, ".format(bank)
-                            )
-                            # (memory type, bank id)
-                            self._bank_assignments[(dataname,
-                                                    sdfg)] = (MemoryType.DDR,
-                                                              bank)
-                        else:
-                            self._bank_assignments[(dataname, sdfg)] = None
+                                f"hlslib::ocl::MemoryBank::bank{bank}, ")
 
                         # Define buffer, using proper type
                         result_decl.write(
