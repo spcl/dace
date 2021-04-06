@@ -775,10 +775,18 @@ def mvt(sockets, sizes, validate=True):
 
 jacobi_1d_sizes = [[1000, 12000]] #[[1000, 24000]] #[[1000, 4000], [2000, 8000], [4000, 16000]]
 
-def jacobi_1d_legate(TSTEPS, A, B):   
+def jacobi_1d_legate(TSTEPS, A, B): 
+    cA = A[1:-1]
+    wA = A[:-2]
+    eA = A[2:]  
+    cB = B[1:-1]
+    wB = B[:-2]
+    eB = B[2:]  
     for t in range(1, TSTEPS):
-        B[1:-1] = 0.33333 * (A[:-2] + A[1:-1] + A[2:])
-        A[1:-1] = 0.33333 * (B[:-2] + B[1:-1] + B[2:])
+        cB[:] = 0.3333 * (wA + cA + eA)
+        cA[:] = 0.3333 * (wB + cB + eB)
+        # B[1:-1] = 0.33333 * (A[:-2] + A[1:-1] + A[2:])
+        # A[1:-1] = 0.33333 * (B[:-2] + B[1:-1] + B[2:])
 
 def jacobi_1d_shmem_init(N, datatype):
     A = np.fromfunction(lambda i: (i + 2) / N, shape=(N,), dtype=datatype)
@@ -839,11 +847,24 @@ def jacobi_1d(sockets, sizes, validate=True):
 jacobi_2d_sizes = [[1000, 500]]  #[[1000, 500]]  # [[10, 2800], [10, 5600], [10, 11200]]
 
 def jacobi_2d_legate(TSTEPS, A, B):
+    cA = A[1:-1, 1:-1]
+    nA = A[:-2, 1:-1]
+    sA = A[2:, 1:-1]
+    wA = A[1:-1, :-2]
+    eA = A[1:-1, 2:]
+    cB = B[1:-1, 1:-1]
+    nB = B[:-2, 1:-1]
+    sB = B[2:, 1:-1]
+    wB = B[1:-1, :-2]
+    eB = B[1:-1, 2:]
     for t in range(1, TSTEPS):
-        B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] +
-                                 A[1:-1, 2:] + A[2:, 1:-1] + A[:-2, 1:-1])
-        A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] +
-                                 B[1:-1, 2:] + B[2:, 1:-1] + B[:-2, 1:-1])
+        cB[:] = 0.2 * (cA + wA + eA + sA + nA)
+        cA[:] = 0.2 * (cB + wB + eB + sB + nB)
+    # for t in range(1, TSTEPS):
+    #     B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] +
+    #                              A[1:-1, 2:] + A[2:, 1:-1] + A[:-2, 1:-1])
+    #     A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] +
+    #                              B[1:-1, 2:] + B[2:, 1:-1] + B[:-2, 1:-1])
 
 def jacobi_2d_shmem_init(N, datatype):
     A = np.fromfunction(lambda i, j: i * (j + 2) / N, shape=(N, N), dtype=datatype)
