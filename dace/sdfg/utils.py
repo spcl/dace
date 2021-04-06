@@ -581,7 +581,7 @@ def get_view_edge(
     state: SDFGState, view: nd.AccessNode
 ) -> Tuple[nd.AccessNode, gr.MultiConnectorEdge[mm.Memlet]]:
     """
-    Given a view access node, returns the viewed access node and 
+    Given a view access node, returns the viewed access node and
     incoming/outgoing edge which points to it.
     See the ruleset in the documentation of ``dace.data.View``.
 
@@ -963,7 +963,7 @@ def fuse_states(sdfg: SDFG) -> int:
 
 
 def load_precompiled_sdfg(folder: str):
-    """ 
+    """
     Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
     Folder must contain a file called "program.sdfg" and a subfolder called
     "build" with the shared object.
