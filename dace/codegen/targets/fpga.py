@@ -429,7 +429,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         stream_names = {sname for _, sname, _, _ in external_streams}
         top_level_local_data = [
-            data_to_node[name] for name in top_level_local_data
+            data_to_node[name] for name in sorted(top_level_local_data)
             if name not in stream_names
         ]
 
