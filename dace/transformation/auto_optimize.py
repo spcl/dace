@@ -7,7 +7,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.propagation import propagate_states
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union, List
+from typing import Set, Tuple, Union, List, Iterable
 import warnings
 
 
@@ -296,13 +296,15 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
 
 def set_fast_implementations(sdfg: SDFG,
                              device: dtypes.DeviceType,
-                             blocklist: List[str] = []):
+                             blocklist: List[str] = [],
+                             ignore_types: Iterable[type] = []):
     """
     Set fast library node implementations for the given device
 
     :param sdfg: The SDFG to optimize.
     :param device: the device to optimize for.
     :param blocklist: list of disallowed implementations.
+    :param ignore_types: list of library node types to ignore
     :note: Operates in-place on the given SDFG.
     """
     if blocklist is None:
@@ -316,28 +318,30 @@ def set_fast_implementations(sdfg: SDFG,
     for current_sdfg in sdfg.all_sdfgs_recursive():
         for state in current_sdfg.nodes():
             for node in state.nodes():
-                if isinstance(node, nodes.LibraryNode):
-                    if node.default_implementation == 'specialize':
+                if isinstance(node, nodes.LibraryNode) :
+                    if (node.default_implementation == 'specialize' 
+                        and (len(set(node.implementations) 
+                               & set(implementation_prio))) == 0):
                         print("Specializing node", node)
                         node.expand(current_sdfg, state)
 
 
     for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.LibraryNode):
-            if not isinstance(node, dace.libraries.standard.nodes.Reduce):
-                for impl in implementation_prio:
-                    if impl in node.implementations:
-                        node.implementation = impl
-                        break
-                else:
-                    warnings.warn('No fast library implementation found for "%s", '
-                                'falling back to default.' % node.name)
+        if isinstance(node, nodes.LibraryNode) and type(node) not in ignore_types:
+            for impl in implementation_prio:
+                if impl in node.implementations:
+                    node.implementation = impl
+                    break
+            else:
+                warnings.warn('No fast library implementation found for "%s", '
+                            'falling back to default.' % node.name)
 
 
 def auto_optimize(sdfg: SDFG,
                   device: dtypes.DeviceType,
                   validate: bool = True,
-                  validate_all: bool = False) -> SDFG:
+                  validate_all: bool = False,
+                  symbols: dict = {}) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -363,7 +367,9 @@ def auto_optimize(sdfg: SDFG,
     sdfg.apply_strict_transformations(validate=False, validate_all=validate_all)
 
     # Try to eliminate trivial maps 
-    sdfg.apply_transformations_repeated(TrivialMapElimination, validate = validate, validate_all = validate_all)
+    sdfg.apply_transformations_repeated(TrivialMapElimination, 
+                                        validate = validate, 
+                                        validate_all = validate_all)
     # Try to parallelize loops
     for sd in sdfg.all_sdfgs_recursive():
         propagate_states(sd)
@@ -380,22 +386,20 @@ def auto_optimize(sdfg: SDFG,
     
     
     
-    # GPU Expansions 
+    # Apply GPU transformations and set library node implementations 
+    ignore_types = set()
     if device == dtypes.DeviceType.GPU:
-   
-        # set arrays
-        for k, v in sdfg.arrays.items():
-            if not v.transient and isinstance(v, dace.data.Array):
-                v.storage = dace.dtypes.StorageType.GPU_Global
-
         # Set library nodes
         for node, state in sdfg.all_nodes_recursive():
             if isinstance(node, dace.nodes.LibraryNode):
                 from dace.sdfg.scope import is_devicelevel_gpu
-                # Use CUB for device-level reductions
+                # Use CUB for device-level reductions    
                 if ('CUDA (device)' in node.implementations
-                        and not is_devicelevel_gpu(state.parent, state, node)):
+                        and not is_devicelevel_gpu(state.parent, state, node) 
+                        and state.scope_dict()[node] is None):
                     node.implementation = 'CUDA (device)'
+                    ignore_types.add(type(node))
+
 
         # apply gpu transformations 
         sdfg.apply_gpu_transformations()
@@ -404,7 +408,6 @@ def auto_optimize(sdfg: SDFG,
         sdfg.apply_strict_transformations()
 
         
-    # Map fusion
     ''' 
     for graph in sdfg.nodes():
         for node in graph.nodes():
@@ -412,11 +415,13 @@ def auto_optimize(sdfg: SDFG,
                 if True: #graph.scope_dict()[node] is None:
                     try:
                         print("Expanding Reduction")
-                        ReduceExpansion.apply_to(sdfg, _reduce = node, reduce_implementation = 'sequential')
+                        ReduceExpansion.apply_to(sdfg, _reduce = node, 
+                            reduce_implementation = 'sequential')
 
                     except ValueError:
                         pass
     '''
+    # fuse greedily 
     greedy_fuse(sdfg, validate_all)
     
     
@@ -436,7 +441,7 @@ def auto_optimize(sdfg: SDFG,
     
 
     # Set all library nodes to expand to fast library calls
-    set_fast_implementations(sdfg, device)
+    set_fast_implementations(sdfg, device, ignore_types=ignore_types)
 
     sdfg.expand_library_nodes()
     
@@ -444,13 +449,19 @@ def auto_optimize(sdfg: SDFG,
     for nsdfg in list(sdfg.all_sdfgs_recursive()):
         tile_wcrs(nsdfg, validate_all)
     
-    
     # TODO(later): Safe vectorization
     
     # Disable OpenMP parallel sections on a per-SDFG basis
     for nsdfg in sdfg.all_sdfgs_recursive():
         nsdfg.openmp_sections = False
     
+    # Specialize for all known symbols 
+    known_symbols = {s:v for (s,v) in symbols.items() if s in sdfg.free_symbols}
+    if len(known_symbols) > 0:
+        print("Specializing the SDFG for symbols", known_symbols)
+    sdfg.specialize(known_symbols)
+
+
     # Set all Default storage types that are constant sized to registers
     move_small_arrays_to_stack(sdfg)
 
@@ -460,8 +471,7 @@ def auto_optimize(sdfg: SDFG,
                 if arr.storage == dtypes.StorageType.GPU_Global:
                     arr.lifetime = dtypes.AllocationLifetime.Persistent
 
-
-    
+ 
     # Validate at the end
     if validate or validate_all:
         sdfg.validate()
