@@ -9,7 +9,7 @@ import dace
 from dace import data as dt, registry, dtypes
 from dace.config import Config
 from dace.frontend import operations
-from dace.sdfg import nodes
+from dace.sdfg import nodes, utils
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
@@ -41,8 +41,9 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             # Don't register this code generator
             return
         super().__init__(*args, **kwargs)
-        # {(kernel name, interface name): (memory type, memory bank)}
-        self._interface_assignments = {}
+        # Used to pass memory bank assignments from kernel generation code to
+        # where they are written to file
+        self._bank_assignments = {}
 
     @staticmethod
     def cmake_options():
@@ -160,28 +161,26 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         ]
 
         # Configuration file with interface assignments
-        are_assigned = [
-            v is not None for v in self._interface_assignments.values()
-        ]
-        bank_assignment_code = []
+        are_assigned = [v is not None for v in self._bank_assignments.values()]
         if any(are_assigned):
             if not all(are_assigned):
                 raise RuntimeError("Some, but not all global memory arrays "
                                    "were assigned to memory banks: {}".format(
-                                       self._interface_assignments))
+                                       self._bank_assignments))
             are_assigned = True
         else:
             are_assigned = False
+        bank_assignment_code = []
         for name, _ in self._host_codes:
             # Only iterate over assignments if any exist
             if are_assigned:
-                for (kernel_name, interface_name), (
-                        memory_type,
-                        memory_bank) in self._interface_assignments.items():
+                for (kernel_name, interface_name
+                     ), memory_bank in self._bank_assignments.items():
                     if kernel_name != name:
                         continue
-                    bank_assignment_code.append("{},{},{}".format(
-                        interface_name, memory_type.name, memory_bank))
+                    # TODO: Support HBM
+                    bank_assignment_code.append(
+                        f"{interface_name},DDR,{memory_bank}")
             # Create file even if there are no assignments
             kernel_code_objs.append(
                 CodeObject("{}_memory_interfaces".format(name),
@@ -445,8 +444,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             state_id, node)
 
     def generate_kernel_boilerplate_pre(self, sdfg, state_id, kernel_name,
-                                        parameters, module_stream,
-                                        kernel_stream, external_streams):
+                                        parameters, bank_assignments,
+                                        module_stream, kernel_stream,
+                                        external_streams):
 
         # Write header
         module_stream.write(
@@ -493,16 +493,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     sdfg, state_id)
                 # Map this interface to the corresponding location
                 # specification to be passed to the Xilinx compiler
-                assignment = self._bank_assignments[(dataname, sdfg)] if (
-                    dataname, sdfg) in self._bank_assignments else None
-                if assignment is not None:
-                    mem_type, mem_bank = assignment
-                    self._interface_assignments[(kernel_name,
-                                                 interface_name)] = (mem_type,
-                                                                     mem_bank)
-                else:
-                    self._interface_assignments[(kernel_name,
-                                                 interface_name)] = None
+                bank = bank_assignments[dataname]
+                self._bank_assignments[(kernel_name, interface_name)] = bank
                 num_mapped_args += 1
 
         for arg in kernel_args + ["return"]:
@@ -765,7 +757,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         """Main entry function for generating a Xilinx kernel."""
 
         (global_data_parameters, top_level_local_data, subgraph_parameters,
-         nested_global_transients,
+         nested_global_transients, bank_assignments,
          external_streams) = self.make_parameters(sdfg, state, subgraphs)
 
         # Detect RTL tasklets, which will be launched as individual kernels
@@ -794,8 +786,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         self.generate_kernel_boilerplate_pre(sdfg, state_id, kernel_name,
                                              global_data_parameters,
-                                             module_stream, entry_stream,
-                                             external_streams)
+                                             bank_assignments, module_stream,
+                                             entry_stream, external_streams)
 
         # Emit allocations
         for node in top_level_local_data:
