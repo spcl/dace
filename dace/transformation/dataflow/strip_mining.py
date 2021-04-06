@@ -410,10 +410,10 @@ class StripMining(transformation.Transformation):
         dim_idx = self.dim_idx
         target_dim = map_entry.map.params[dim_idx]
 
-        if self.tiling_type == 'ceilrange':
+        if self.tiling_type == dtypes.TilingType.CeilRange:
             new_dim, new_map, td_rng = self._create_ceil_range(
                 sdfg, graph, map_entry)
-        elif self.tiling_type == 'number_of_tiles':
+        elif self.tiling_type == dtypes.TilingType.NumberOfTiles:
             new_dim, new_map, td_rng = self._create_from_tile_numbers(
                 sdfg, graph, map_entry)
         else:

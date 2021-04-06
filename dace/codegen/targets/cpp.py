@@ -11,7 +11,7 @@ import warnings
 
 import sympy as sp
 from six import StringIO
-from typing import IO, Tuple, Union
+from typing import IO, Optional, Tuple, Union
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
@@ -67,7 +67,7 @@ def copy_expr(
             if not isinstance(datadesc, data.View):
                 if is_write is None:
                     raise ValueError("is_write must be set for ArrayInterface.")
-                expr = f"__{expr}_out" if is_write else f"__{expr}_in"
+                expr = array_interface_variable(expr, is_write, dispatcher)
         return "{}{}{}".format(
             dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
 
@@ -240,7 +240,8 @@ def emit_memlet_reference(dispatcher,
                           pointer_name: str,
                           conntype: dtypes.typeclass,
                           ancestor: int = 1,
-                          is_write=None, device_code=False) -> Tuple[str, str, str]:
+                          is_write=None,
+                          device_code=False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -255,12 +256,13 @@ def emit_memlet_reference(dispatcher,
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ref = ''
 
-
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
     defined_type, defined_ctype = dispatcher.defined_vars.get(
         memlet.data, ancestor)
-    if defined_type == DefinedType.Pointer:
+    if (defined_type == DefinedType.Pointer
+            or (defined_type == DefinedType.ArrayInterface
+                and isinstance(desc, data.View))):
         if not is_scalar and desc.dtype == conntype.base_type:
             # Cast potential consts
             typedef = defined_ctype
@@ -272,12 +274,9 @@ def emit_memlet_reference(dispatcher,
             raise ValueError("is_write must be defined for ArrayInterface.")
         else:
             base_ctype = conntype.base_type.ctype
-            if is_write:
-                typedef = f"{base_ctype}*"
-                datadef = f"__{datadef}_out"
-            else:
-                typedef = f"const {base_ctype}*"
-                datadef = f"__{datadef}_in"
+            typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
+            datadef = array_interface_variable(datadef, is_write, dispatcher,
+                                               ancestor)
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
@@ -554,7 +553,7 @@ def cpp_ptr_expr(sdfg,
     if defined_type == DefinedType.ArrayInterface:
         if is_write is None:
             raise ValueError("is_write must be set for ArrayInterface.")
-        dname = f"__{dname}_out" if is_write else f"__{dname}_in"
+        dname = array_interface_variable(dname, is_write, None)
 
     if defined_type == DefinedType.Scalar:
         dname = '&' + dname
@@ -1252,3 +1251,29 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                         [e.src, e.dst],
                     )
                 # Otherwise, no synchronization necessary
+
+
+def array_interface_variable(var_name: str, is_write: bool,
+                             dispatcher: Optional["TargetDispatcher"],
+                             ancestor: int = 0):
+    """
+    Generates the variable name of an ArrayInterface variable.
+    """
+    ptr_in = f"__{var_name}_in"
+    ptr_out = f"__{var_name}_out"
+    if dispatcher is not None:
+        # DaCe allows reading from an output connector, even though it
+        # is not an input connector. If this occurs, panic and read
+        # from the output interface instead
+        if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
+            # Throw a KeyError if this pointer also doesn't exist
+            dispatcher.defined_vars.get(ptr_out, ancestor)
+            # Otherwise use it
+            return ptr_out
+        else:
+            return ptr_in
+    else:
+        # We might call this before the variable is even defined (e.g., because
+        # we are about to define it), so if the dispatcher is not passed, just
+        # return the appropriate string
+        return ptr_out if is_write else ptr_in
