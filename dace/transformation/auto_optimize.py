@@ -403,11 +403,6 @@ def auto_optimize(sdfg: SDFG,
         # apply strict transformations
         sdfg.apply_strict_transformations()
 
-        for arr in sdfg.arrays.values():
-            if arr.transient and not isinstance(arr, dt.View): #and size only depends on SDFG params
-                if arr.storage == dtypes.StorageType.GPU_Global:
-                    arr.lifetime = dtypes.AllocationLifetime.Persistent
-
         
     # Map fusion
     ''' 
@@ -459,6 +454,14 @@ def auto_optimize(sdfg: SDFG,
     # Set all Default storage types that are constant sized to registers
     move_small_arrays_to_stack(sdfg)
 
+    if device == dtypes.DeviceType.GPU:
+        for aname, arr in sdfg.arrays.items():
+            if arr.transient and not isinstance(arr, dt.View): #and size only depends on SDFG params
+                if arr.storage == dtypes.StorageType.GPU_Global:
+                    arr.lifetime = dtypes.AllocationLifetime.Persistent
+
+
+    
     # Validate at the end
     if validate or validate_all:
         sdfg.validate()
