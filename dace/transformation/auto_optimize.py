@@ -30,8 +30,7 @@ GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 def greedy_fuse(graph_or_subgraph: GraphViewType, 
                 validate_all: bool,
                 device: dace.dtypes.DeviceType = dace.dtypes.DeviceType.CPU,
-                #apply_multi_expansion: bool = False, # TODO: push as option here
-                #apply_stencil_tiling: bool = False, # TODO: push as option
+                #apply_reduce_expansion: bool = False, # TODO: push as option here
                 recursive: bool = True,
                 tile = False) -> None:
 
@@ -40,7 +39,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
     
     if isinstance(graph_or_subgraph, SDFG):
         # If we have an SDFG, recurse into graphs 
-        #graph_or_subgraph.apply_transformations_repeated(ReduceExpansion)
+        #graph_or_subgraph.apply_transformations_repeated(ReduceExpansion)  
         graph_or_subgraph.apply_strict_transformations()
         graph_or_subgraph.apply_transformations_repeated(MapFusion)
         for graph in graph_or_subgraph.nodes():
@@ -364,7 +363,8 @@ def auto_optimize(sdfg: SDFG,
                   device: dtypes.DeviceType,
                   validate: bool = True,
                   validate_all: bool = False,
-                  symbols: dict = {}) -> SDFG:
+                  symbols: dict = {},
+                  nofuse = False) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -381,6 +381,7 @@ def auto_optimize(sdfg: SDFG,
     :param validate: If True, validates the SDFG after all transformations
                      have been applied.
     :param validate_all: If True, validates the SDFG after every step.
+    :param nofuse: Temporary Parameter to disable fusion in durbin/floyd
     :return: The optimized SDFG.
     :note: Operates in-place on the given SDFG.
     :note: This function is still experimental and may harm correctness in
@@ -444,18 +445,19 @@ def auto_optimize(sdfg: SDFG,
                     except ValueError:
                         pass
     '''
-    # fuse greedily 
-    greedy_fuse(sdfg, 
-                device = device,
-                validate_all = validate_all)
+    if not nofuse:
+        # fuse greedily 
+        greedy_fuse(sdfg, 
+                    device = device,
+                    validate_all = validate_all)
 
-    # tile greedily
-    greedy_fuse(sdfg, 
-                device = device, 
-                validate_all = validate_all, 
-                recursive = False, 
-                tile = True)
-
+        # tile greedily
+        greedy_fuse(sdfg, 
+                    device = device, 
+                    validate_all = validate_all, 
+                    recursive = False, 
+                    tile = True)
+        
     #sdfg.apply_transformations_repeated(DeduplicateAccess)
     #sdfg.apply_transformations(MapTiling)
     
