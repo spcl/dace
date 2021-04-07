@@ -128,7 +128,7 @@ jobs:
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
-        ./tests/xilinx_test.py
+        python tests/xilinx_test.py
 
     - name: Run Intel FPGA tests
       run: |
