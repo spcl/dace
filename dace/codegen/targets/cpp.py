@@ -1224,8 +1224,13 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                 )
                 continue
 
+            # If a view, get the relevant access node
+            dstnode = edge.dst
+            while isinstance(sdfg.arrays[dstnode.data], data.View):
+                dstnode = dfg.out_edges(dstnode)[0].dst
+
             # We need the streams leading out of the output data
-            for e in dfg.out_edges(edge.dst):
+            for e in dfg.out_edges(dstnode):
                 if isinstance(e.dst, nodes.AccessNode):
                     continue
                 # If no stream at destination: synchronize stream with host.
@@ -1253,7 +1258,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                 # Otherwise, no synchronization necessary
 
 
-def array_interface_variable(var_name: str, is_write: bool,
+def array_interface_variable(var_name: str,
+                             is_write: bool,
                              dispatcher: Optional["TargetDispatcher"],
                              ancestor: int = 0):
     """
