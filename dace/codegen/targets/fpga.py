@@ -297,8 +297,8 @@ class FPGACodeGen(TargetCodeGenerator):
         # Symbols that will be passed as parameters to the top-level kernel
         global_symbols = set()
 
-        # Sorting by name, then by interface id
-        sort_func = lambda t: f"{t[1]}{t[3]}"
+        # Sorting by name, then by input/output, then by interface id
+        sort_func = lambda t: f"{t[1]}{t[0]}{t[3]}"
 
         for subgraph in subgraphs:
             data_to_node.update({
