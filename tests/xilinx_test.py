@@ -13,8 +13,8 @@ import subprocess as sp
 import sys
 from typing import Any, Iterable, Union
 
-DACE_DIR = Path(__file__).absolute().parent.parent
 TEST_DIR = Path(__file__).absolute().parent
+DACE_DIR = TEST_DIR.parent
 
 # (relative path, sdfg name(s), run synthesis, assert II=1, args to executable)
 TESTS = [
@@ -96,25 +96,24 @@ def print_error(message):
     print(f"{Colors.ERROR}{Colors.BOLD}[{timestamp}]{Colors.END} {message}")
 
 
-# Find Xilinx compiler
-xilinx_compiler = Config.get("compiler", "xilinx", "path")
-if not xilinx_compiler.strip():
-    xilinx_compiler = shutil.which("v++")
-if not xilinx_compiler:
-    xilinx_compiler = shutil.which("xocc")
-if not xilinx_compiler:
-    raise RuntimeError("Cannot find Xilinx compiler executable v++/xocc.")
-
-# Set environment variables
-master_env = os.environ.copy()
-master_env["DACE_compiler_fpga_vendor"] = "xilinx"
-master_env["DACE_compiler_use_cache"] = "0"
-master_env["DACE_testing_single_cache"] = "0"
-master_env["DACE_compiler_xilinx_mode"] = "simulation"
-
-
 def run_test(path: Path, sdfg_names: Union[str, Iterable[str]],
              run_synthesis: bool, assert_ii_1: bool, args: Iterable[Any]):
+
+    # Find Xilinx compiler
+    xilinx_compiler = Config.get("compiler", "xilinx", "path")
+    if not xilinx_compiler.strip():
+        xilinx_compiler = shutil.which("v++")
+    if not xilinx_compiler:
+        xilinx_compiler = shutil.which("xocc")
+    if not xilinx_compiler:
+        raise RuntimeError("Cannot find Xilinx compiler executable v++/xocc.")
+
+    # Set environment variables
+    env = os.environ.copy()
+    env["DACE_compiler_fpga_vendor"] = "xilinx"
+    env["DACE_compiler_use_cache"] = "0"
+    env["DACE_testing_single_cache"] = "0"
+    env["DACE_compiler_xilinx_mode"] = "simulation"
 
     path = DACE_DIR / path
     if not path.exists():
@@ -124,7 +123,6 @@ def run_test(path: Path, sdfg_names: Union[str, Iterable[str]],
 
     # Simulation in software
     print_status(f"{base_name}: Running simulation.")
-    env = master_env.copy()
     if "rtl" in path.parts:
         env["DACE_compiler_xilinx_mode"] = "hardware_emulation"
         if "LIBRARY_PATH" not in env:
@@ -223,7 +221,7 @@ def run_tests_parallel(tests):
             num_tests = len(results)
             num_failed = num_tests - num_passed
             print_error(f"{num_passed} / {num_tests} Xilinx tests passed "
-                        f"({num_failed} tests failed)")
+                        f"({num_failed} tests failed).")
             sys.exit(1)
 
 
