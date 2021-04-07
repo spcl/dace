@@ -96,8 +96,8 @@ def print_error(message):
     print(f"{Colors.ERROR}{Colors.BOLD}[{timestamp}]{Colors.END} {message}")
 
 
-def run_test(path: Path, sdfg_names: Union[str, Iterable[str]],
-             run_synthesis: bool, assert_ii_1: bool, args: Iterable[Any]):
+def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
+        assert_ii_1: bool, args: Iterable[Any]):
 
     # Find Xilinx compiler
     xilinx_compiler = Config.get("compiler", "xilinx", "path")
@@ -205,10 +205,10 @@ def run_test(path: Path, sdfg_names: Union[str, Iterable[str]],
     return True
 
 
-def run_tests_parallel(tests):
+def run_parallel(tests):
     # Run tests in parallel using default number of workers
     with mp.Pool() as pool:
-        results = pool.starmap(run_test, tests)
+        results = pool.starmap(run, tests)
         if all(results):
             print_success("All tests passed.")
             sys.exit(0)
@@ -255,7 +255,7 @@ def cli(tests):
     else:
         # Otherwise run them all
         to_run = TESTS
-    run_tests_parallel(to_run)
+    run_parallel(to_run)
 
 
 if __name__ == "__main__":
