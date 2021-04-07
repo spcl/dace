@@ -3,7 +3,6 @@ from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import FPGATransformSDFG
 from mapfusion_test import multiple_fusions, fusion_with_transient
 import numpy as np
-from dace.sdfg import nodes
 
 
 def multiple_fusions_fpga():
