@@ -521,7 +521,7 @@ class InlineSDFG(transformation.Transformation):
         state: SDFGState,
         orig_data: Dict[Union[nodes.AccessNode, MultiConnectorEdge], str],
     ) -> Set[MultiConnectorEdge]:
-        """ 
+        """
         Deals with access->access edges where both sides are non-transient.
         """
         result = set()
@@ -1082,7 +1082,7 @@ class NestSDFG(transformation.Transformation):
                             nested_sdfg.arrays['__' + arrname + '_out'] = arrobj
                             outer_sdfg.arrays[arrname] = dc(arrobj)
                             transients[arrname] = '__' + arrname + '_out'
-                        node.data = '__' + arrname + '_out'
+                            node.data = '__' + arrname + '_out'
         for arrname in inputs.keys():
             nested_sdfg.arrays.pop(arrname)
         for arrname in outputs.keys():
