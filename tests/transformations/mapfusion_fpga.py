@@ -1,25 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import FPGATransformSDFG
-from mapfusion_test import (fusion, multiple_fusions, fusion_chain,
-                            fusion_with_transient)
+from mapfusion_test import multiple_fusions, fusion_with_transient
 import numpy as np
 from dace.sdfg import nodes
-
-
-def simple_fpga():
-    sdfg = fusion.to_sdfg()
-    sdfg.apply_strict_transformations()
-    assert sdfg.apply_transformations_repeated(MapFusion) >= 1
-    assert sdfg.apply_transformations_repeated(FPGATransformSDFG) == 1
-
-    A = np.random.rand(10, 20).astype(np.float32)
-    B = np.random.rand(10, 20).astype(np.float32)
-    out = np.zeros(shape=1, dtype=np.float32)
-    sdfg(A=A, B=B, out=out)
-
-    diff = abs(np.sum(A * A + B) - out)
-    assert diff <= 1e-3
 
 
 def multiple_fusions_fpga():
@@ -38,31 +22,17 @@ def multiple_fusions_fpga():
     assert diff2 <= 1e-4
 
 
-def fusion_chain_fpga():
-    sdfg = fusion_chain.to_sdfg()
-    sdfg.apply_strict_transformations()
-    assert sdfg.apply_transformations_repeated(MapFusion) >= 2
-    assert sdfg.apply_transformations_repeated(FPGATransformSDFG) == 1
-    A = np.random.rand(10, 20).astype(np.float32)
-    B = np.zeros_like(A)
-    sdfg(A=A, B=B)
-    diff = np.linalg.norm(A * 8 + 5 - B)
-    assert diff <= 1e-4
-
-
 def fusion_with_transient_fpga():
     A = np.random.rand(2, 20)
     expected = A * A * 2
     sdfg = fusion_with_transient.to_sdfg()
     sdfg.apply_strict_transformations()
-    assert sdfg.apply_transformations_repeated(MapFusion) >= 1
+    assert sdfg.apply_transformations_repeated(MapFusion) >= 2
     assert sdfg.apply_transformations_repeated(FPGATransformSDFG) == 1
     sdfg(A=A)
     assert np.allclose(A, expected)
 
 
 if __name__ == "__main__":
-    simple_fpga()
     multiple_fusions_fpga()
-    fusion_chain_fpga()
     fusion_with_transient_fpga()
