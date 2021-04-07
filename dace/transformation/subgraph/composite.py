@@ -82,20 +82,20 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 expansion.apply(sdfg_copy)
 
                 if SubgraphFusion.can_be_applied(sdfg_copy, subgraph_copy):
-                    print("SGF CBA")
                     return True 
                 
-            elif CompositeFusion.allow_tiling._default == True:
-                if StencilTiling.can_be_applied(sdfg, subgraph):
-                    return True 
+            #elif CompositeFusion.allow_tiling._default == True:
+            #    if StencilTiling.can_be_applied(sdfg, subgraph):
+            #        return True 
 
 
         else:
             if SubgraphFusion.can_be_applied(sdfg, subgraph):
                 return True
-            if CompositeFusion.allow_tiling._default == True:
-                if StencilTiling.can_be_applied(sdfg, subgraph):
-                    return True
+        
+        if CompositeFusion.allow_tiling._default == True:
+            if StencilTiling.can_be_applied(sdfg, subgraph):
+                return True
                 
         return False
 
@@ -177,8 +177,6 @@ class CompositeFusion(transformation.SubgraphTransformation):
             sf.apply(sdfg)
 
         else:
-            sdfg.save('wtf.sdfg')
-
             raise NotImplementedError("Error")
         self._global_map_entry = sf._global_map_entry
 

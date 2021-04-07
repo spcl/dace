@@ -15,7 +15,7 @@ import warnings
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, MapTiling, DeduplicateAccess
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.subgraph.composite import CompositeFusion
-from dace.transformation.subgraph import helpers, ReduceExpansion
+from dace.transformation.subgraph import helpers, ReduceExpansion, StencilTiling
 
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
@@ -32,7 +32,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                 device: dace.dtypes.DeviceType = dace.dtypes.DeviceType.CPU,
                 #apply_multi_expansion: bool = False, # TODO: push as option here
                 #apply_stencil_tiling: bool = False, # TODO: push as option
-                recursive: bool = True) -> None:
+                recursive: bool = True,
+                tile = False) -> None:
 
     #CompositeFusion.allow_expansion = apply_multi_expansion
     #CompositeFusion.allow_tiling = apply_stencil_tiling
@@ -43,7 +44,11 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         graph_or_subgraph.apply_strict_transformations()
         graph_or_subgraph.apply_transformations_repeated(MapFusion)
         for graph in graph_or_subgraph.nodes():
-            greedy_fuse(graph, validate_all)
+            greedy_fuse(graph, 
+                        validate_all = validate_all,
+                        device = device,
+                        recursive = recursive,
+                        tile=tile)
     else:
         # we are in graph or subgraph
         sdfg, graph, subgraph = None, None, None 
@@ -60,7 +65,17 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         # greedily enumerate fusible components 
         # and apply transformation
         applied_transformations = 0
-        enumerator = GreedyEnumerator(sdfg, graph, subgraph)
+        reverse = True if tile else False
+        enumerator = GreedyEnumerator(sdfg, graph, subgraph, reverse= reverse)
+
+        if tile:
+            CompositeFusion.allow_tiling._default = True 
+            CompositeFusion.schedule_innermaps._default = dtypes.ScheduleType.Sequential
+            if device == dtypes.DeviceType.GPU:
+                CompositeFusion.stencil_unroll_loops._default = True 
+        else:
+            CompositeFusion.allow_tiling._default = False 
+
         for map_entries in enumerator:
             if len(map_entries) > 1:
                 current_subgraph = helpers.subgraph_from_maps(sdfg, graph, map_entries)
@@ -75,16 +90,20 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                 # advanced: for each scope subgraph, 
                 # see whether any parts inside could be fused together
                 global_entry = cf._global_map_entry if len(map_entries) > 1 else map_entries[0]
-                greedy_fuse(graph.scope_subgraph(global_entry, include_entry = False, include_exit = False), validate_all = validate_all)
+                greedy_fuse(graph.scope_subgraph(global_entry, include_entry = False, include_exit = False), 
+                            validate_all = validate_all)
 
                     
         for node in graph_or_subgraph.nodes():
             if isinstance(node, nodes.NestedSDFG):
-                greedy_fuse(node.sdfg, validate_all = validate_all)
+                greedy_fuse(node.sdfg, validate_all = validate_all, device = device, tile = tile, recursive = recursive)
 
         if applied_transformations > 0:
-            print(f"Applied {applied_transformations} SubgraphFusion")
-           
+            if tile:
+                print(f"Applied {applied_transformations} TileFusion")
+            else:
+                print(f"Applied {applied_transformations} SubgraphFusion")
+
 
         # TODO [OK]: If two maps share connected nodes (horizontal/vertical), fuse -> fuse directly after enumerator pass
         # TODO [OK]: run multiexpansion first -> this is actually an option you can trigger 
@@ -286,9 +305,13 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
                 and array.lifetime == dtypes.AllocationLifetime.Scope):
             if not symbolic.issymbolic(array.total_size, sd.constants):
                 eval_size = symbolic.evaluate(array.total_size, sd.constants)
-                if eval_size <= tile_size:
-                    array.storage = dtypes.StorageType.Register
-                    converted += 1
+                try:
+                    if eval_size <= tile_size:
+                        array.storage = dtypes.StorageType.Register
+                        converted += 1
+                except TypeError:
+                    # cannot determine truth value of relational
+                    pass 
 
     if config.Config.get_bool('debugprint') and converted > 0:
         print(f'Statically allocating {converted} transient arrays')
@@ -422,9 +445,17 @@ def auto_optimize(sdfg: SDFG,
                         pass
     '''
     # fuse greedily 
-    greedy_fuse(sdfg, validate_all)
-    
-    
+    greedy_fuse(sdfg, 
+                device = device,
+                validate_all = validate_all)
+
+    # tile greedily
+    greedy_fuse(sdfg, 
+                device = device, 
+                validate_all = validate_all, 
+                recursive = False, 
+                tile = True)
+
     #sdfg.apply_transformations_repeated(DeduplicateAccess)
     #sdfg.apply_transformations(MapTiling)
     

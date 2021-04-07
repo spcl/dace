@@ -19,12 +19,16 @@ import heapq
 
 
 class QueuedEntry:
-    def __init__(self, map_entry, index):
+    def __init__(self, map_entry, index, reverse = False):
         self.map_entry = map_entry 
         self.index = index 
+        self.reverse = reverse 
     
     def __lt__(self, other):
-        return self.index < other.index 
+        if not self.reverse:
+            return self.index < other.index 
+        else:
+            return self.index > other.index
 
 
 @make_properties
@@ -39,13 +43,15 @@ class GreedyEnumerator(Enumerator):
                  sdfg: SDFG,
                  graph: SDFGState,
                  subgraph: SubgraphView = None,
-                 condition_function: Callable = CompositeFusion.can_be_applied):
+                 condition_function: Callable = CompositeFusion.can_be_applied,
+                 reverse = False):
     
 
         super().__init__(sdfg, graph, subgraph, condition_function)
         
         # need topology information 
         self.calculate_topology(subgraph) 
+        self._reverse = reverse
 
 
     def iterator(self):
@@ -61,7 +67,7 @@ class GreedyEnumerator(Enumerator):
         # for the next inner iterations 
         added = set() 
         outer_queued = set(self._source_maps)
-        outer_queue = [QueuedEntry(me, self._labels[me]) for me in self._source_maps]
+        outer_queue = [QueuedEntry(me, self._labels[me], reverse = self._reverse) for me in self._source_maps]
         while len(outer_queue) > 0:
             
             # current iteration: define queue / set with which we are going 
@@ -107,11 +113,11 @@ class GreedyEnumerator(Enumerator):
                         # add to outer queue and set 
                         if current_neighbor_map not in added:
                             if current_neighbor_map not in outer_queued:
-                                heapq.heappush(outer_queue, QueuedEntry(current_neighbor_map, self._labels[current_neighbor_map])) 
+                                heapq.heappush(outer_queue, QueuedEntry(current_neighbor_map, self._labels[current_neighbor_map], reverse = self._reverse)) 
                                 outer_queued.add(current_neighbor_map)
                             # add to inner queue and set 
                             if current_neighbor_map not in inner_queued:
-                                heapq.heappush(inner_queue, QueuedEntry(current_neighbor_map, self._labels[current_neighbor_map]))
+                                heapq.heappush(inner_queue, QueuedEntry(current_neighbor_map, self._labels[current_neighbor_map], reverse = self._reverse))
                                 inner_queued.add(current_neighbor_map)
 
             # yield 
