@@ -978,7 +978,7 @@ def fuse_states(sdfg: SDFG) -> int:
 
 
 def load_precompiled_sdfg(folder: str):
-    """ 
+    """
     Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
     Folder must contain a file called "program.sdfg" and a subfolder called
     "build" with the shared object.
