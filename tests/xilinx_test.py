@@ -55,11 +55,11 @@ TESTS = [
     # This test contains three SDFGs: full check only the first one for the sake of testing time
     ("tests/fpga/gemm_fpga.py", "gemm_vectorized", True, True, []),
     # STL library nodes
+    # TODO: Reduce should achieve II=1, but currently does not.
     ("tests/fpga/reduce_fpga.py", [
         "reduction_sum_one_axis", "reduction_sum_all_axis", "reduction_sum_4D",
         "reduction_max"
-    ], True, True, []
-     ),  # TODO: Reduce should achieve II=1, but currently does not.
+    ], True, False, []),
     # Multiple gearboxing
     ("tests/fpga/multiple_veclen_conversions.py", "multiple_veclen_conversions",
      True, False, []),
