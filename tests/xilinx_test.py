@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import click
 from collections import OrderedDict
 from dace import Config
 from datetime import datetime
@@ -12,8 +13,8 @@ import subprocess as sp
 import sys
 from typing import Any, Iterable, Union
 
-DACE_DIR = Path(__file__).parent.parent.absolute()
-TEST_DIR = Path(__file__).parent.absolute()
+DACE_DIR = Path(__file__).absolute().parent.parent
+TEST_DIR = Path(__file__).absolute().parent
 
 # (relative path, sdfg name(s), run synthesis, assert II=1, args to executable)
 TESTS = [
@@ -57,7 +58,8 @@ TESTS = [
     ("tests/fpga/reduce_fpga.py", [
         "reduction_sum_one_axis", "reduction_sum_all_axis", "reduction_sum_4D",
         "reduction_max"
-    ], True, True, []),
+    ], True, True, []
+     ),  # TODO: Reduce should achieve II=1, but currently does not.
     # Multiple gearboxing
     ("tests/fpga/multiple_veclen_conversions.py", "multiple_veclen_conversions",
      True, False, []),
@@ -113,11 +115,14 @@ master_env["DACE_compiler_xilinx_mode"] = "simulation"
 
 def run_test(path: Path, sdfg_names: Union[str, Iterable[str]],
              run_synthesis: bool, assert_ii_1: bool, args: Iterable[Any]):
+
     path = DACE_DIR / path
     if not path.exists():
         print_error(f"Path {path} does not exist.")
         return False
     base_name = f"{Colors.UNDERLINE}{path.stem}{Colors.END}"
+
+    # Simulation in software
     print_status(f"{base_name}: Running simulation.")
     env = master_env.copy()
     if "rtl" in path.parts:
@@ -141,6 +146,7 @@ def run_test(path: Path, sdfg_names: Union[str, Iterable[str]],
         print_error(f"{base_name}: Simulation failed.")
         return False
     print_success(f"{base_name}: Simulation successful.")
+
     if isinstance(sdfg_names, str):
         sdfg_names = [sdfg_names]
     for sdfg_name in sdfg_names:
@@ -150,8 +156,10 @@ def run_test(path: Path, sdfg_names: Union[str, Iterable[str]],
             return False
         open(build_folder / "simulation.out", "w").write(sim_out)
         open(build_folder / "simulation.err", "w").write(sim_err)
-        print_status(f"{base_name}: Running synthesis for {sdfg_name}.")
+
+        # High-level synthesis
         if run_synthesis:
+            print_status(f"{base_name}: Running synthesis for {sdfg_name}.")
             proc = sp.run(["make", "xilinx_synthesis"],
                           env=env,
                           cwd=build_folder,
@@ -166,9 +174,19 @@ def run_test(path: Path, sdfg_names: Union[str, Iterable[str]],
             print_success(f"{base_name}: Synthesis successful for {sdfg_name}.")
             open(build_folder / "synthesis.out", "w").write(syn_out)
             open(build_folder / "synthesis.err", "w").write(syn_err)
+
+            # Check if loops were pipelined with II=1
             if assert_ii_1:
                 loops_found = False
-                for m in re.finditer(r"Final II = ([0-9]+)", str(proc.stdout)):
+                for f in build_folder.iterdir():
+                    if "hls.log" in f.name:
+                        hls_log = f
+                        break
+                else:
+                    print_error(f"{base_name}: HLS log file not found.")
+                    return False
+                hls_log = open(hls_log, "r").read()
+                for m in re.finditer(r"Final II = ([0-9]+)", hls_log):
                     loops_found = True
                     if int(m.group(1)) != 1:
                         if syn_out:
@@ -185,13 +203,62 @@ def run_test(path: Path, sdfg_names: Union[str, Iterable[str]],
                     print_error("{base_name}: No pipelined loops found.")
                     return False
                 print_success(f"{base_name}: II=1 achieved.")
+
     return True
 
 
-# Run tests in parallel using default number of workers
-with mp.Pool() as pool:
-    results = pool.starmap(run_test, TESTS)
-    if all(results):
-        sys.exit(0)
+def run_tests_parallel(tests):
+    # Run tests in parallel using default number of workers
+    with mp.Pool() as pool:
+        results = pool.starmap(run_test, tests)
+        if all(results):
+            print_success("All tests passed.")
+            sys.exit(0)
+        else:
+            print_error("Failed Xilinx tests:")
+            for test, result in zip(tests, results):
+                if result == False:
+                    print_error(f"- {test[0]}")
+            num_passed = sum(results, 0)
+            num_tests = len(results)
+            num_failed = num_tests - num_passed
+            print_error(f"{num_passed} / {num_tests} Xilinx tests passed "
+                        f"({num_failed} tests failed)")
+            sys.exit(1)
+
+
+@click.command()
+@click.argument("tests", nargs=-1)
+def cli(tests):
+    """
+    If no arguments are specified, runs all Xilinx tests. If any arguments are
+    specified, runs only the tests specified (matching on file name or SDFG
+    name).
+    """
+    if tests:
+        # If tests are specified on the command line, run only those tests, if
+        # their name matches either the file or SDFG name of any known test
+        test_dict = {t: False for t in tests}
+        to_run = []
+        for t in TESTS:
+            stem = Path(t[0]).stem
+            if stem in test_dict:
+                to_run.append(t)
+                test_dict[stem] = True
+            else:
+                sdfgs = t[1] if not isinstance(t[1], str) else [t[1]]
+                for sdfg in sdfgs:
+                    if sdfg in test_dict:
+                        to_run.append(t)
+                        test_dict[sdfg] = True
+        for k, v in test_dict.items():
+            if not v:
+                raise ValueError(f"Test \"{k}\" not found.")
     else:
-        sys.exit(1)
+        # Otherwise run them all
+        to_run = TESTS
+    run_tests_parallel(to_run)
+
+
+if __name__ == "__main__":
+    cli()
