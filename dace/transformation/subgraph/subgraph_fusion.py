@@ -54,7 +54,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     schedule_innermaps = Property(desc="Schedule of inner maps. If none, "
                                   "keeps schedule.",
                                   dtype=dtypes.ScheduleType,
-                                  default=dtypes.ScheduleType.Default,
+                                  default=None,
                                   allow_none=True)
     consolidate = Property(
         desc="Consolidate edges that enter and exit the fused map.",
@@ -239,7 +239,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         for out_node in out_nodes:
             for in_edge in graph.in_edges(out_node):
                 if in_edge.src in map_exits and in_edge.data.wcr:
-                    if out_node.data in in_data or out_node.data in intermediate_data or out_node.data in view_data:
+                    if in_edge.data.data in in_data or in_edge.data.data in intermediate_data or in_edge.data.data in view_data:
                         warnings.warn("WCR Special Case")
                         return False 
 
