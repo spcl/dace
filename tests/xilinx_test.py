@@ -99,15 +99,6 @@ def print_error(message):
 def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
         assert_ii_1: bool, args: Iterable[Any]):
 
-    # Find Xilinx compiler
-    xilinx_compiler = Config.get("compiler", "xilinx", "path")
-    if not xilinx_compiler.strip():
-        xilinx_compiler = shutil.which("v++")
-    if not xilinx_compiler:
-        xilinx_compiler = shutil.which("xocc")
-    if not xilinx_compiler:
-        raise RuntimeError("Cannot find Xilinx compiler executable v++/xocc.")
-
     # Set environment variables
     env = os.environ.copy()
     env["DACE_compiler_fpga_vendor"] = "xilinx"
