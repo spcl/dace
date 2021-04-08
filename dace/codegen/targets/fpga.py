@@ -15,7 +15,7 @@ from dace.codegen.targets import cpp
 from dace import subsets, data as dt, dtypes
 from dace.config import Config
 from dace.frontend import operations
-from dace.sdfg import SDFG, nodes, utils
+from dace.sdfg import SDFG, nodes, utils, dynamic_map_inputs
 from dace.sdfg import ScopeSubgraphView, find_input_arraynode, find_output_arraynode
 from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
@@ -1118,6 +1118,16 @@ class FPGACodeGen(TargetCodeGenerator):
             # Add extra opening brace (dynamic map ranges, closed in MapExit
             # generator)
             callsite_stream.write('{', sdfg, state_id, node)
+
+            # Define dynamic loop bounds variables (dynamic input memlets to
+            # the MapEntry node)
+            for e in dynamic_map_inputs(sdfg.node(state_id), node):
+                if e.data.data != e.dst_conn:
+                    callsite_stream.write(
+                        self._cpu_codegen.memlet_definition(
+                            sdfg, e.data, False, e.dst_conn,
+                            e.dst.in_connectors[e.dst_conn]), sdfg, state_id,
+                        node)
 
             # Pipeline innermost loops
             scope_children = dfg.scope_children()
