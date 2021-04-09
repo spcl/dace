@@ -501,8 +501,16 @@ def auto_optimize(sdfg: SDFG,
     if device == dtypes.DeviceType.GPU:
         for aname, arr in sdfg.arrays.items():
             if arr.transient and not isinstance(arr, dt.View): #and size only depends on SDFG params
+                #if len(sdfg.symbols.keys() - arr.free_symbols) > 0:
+                #    continue
                 if arr.storage == dtypes.StorageType.GPU_Global:
                     arr.lifetime = dtypes.AllocationLifetime.Persistent
+
+        # Reset nonatomic WCR edges
+        for n, _ in sdfg.all_nodes_recursive():
+            if isinstance(n, SDFGState):
+                for edge in n.edges():
+                    edge.data.wcr_nonatomic = False
 
  
     # Validate at the end
