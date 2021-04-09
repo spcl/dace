@@ -715,6 +715,10 @@ class ExpandGemvCuBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node: 'Gemv', state, sdfg, m=None, n=None, **kwargs):
+        from dace.sdfg.scope import is_devicelevel_gpu
+        if is_devicelevel_gpu(sdfg, state, node):
+            return ExpandGemvPure.expansion(node, state, sdfg)
+
         node.validate(sdfg, state)
 
         ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x,
