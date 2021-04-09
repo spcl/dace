@@ -845,6 +845,27 @@ namespace dace
 	        dst[i*DST_XSTRIDE] = src[i*src_xstride];
 	}
     }
+
+    template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
+              int DST_XSTRIDE,
+              bool ASYNC>
+    static DACE_DFI void GlobalToGlobal1DDynamic(
+            const T *src, int src_xstride, T *dst, int COPY_XLEN)
+    {
+        if (src_xstride == 1)
+        {
+	    __DACE_UNROLL
+	    for (int i = 0; i < COPY_XLEN; ++i)
+	        dst[i*DST_XSTRIDE] = src[i];
+        }
+        else
+	{
+	    __DACE_UNROLL
+	    for (int i = 0; i < COPY_XLEN; ++i)
+	        dst[i*DST_XSTRIDE] = src[i*src_xstride];
+	}
+    }
+
   
 }  // namespace dace
 
