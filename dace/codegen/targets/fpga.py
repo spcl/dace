@@ -46,6 +46,27 @@ def vector_element_type_of(dtype):
     return dtype
 
 
+def is_fpga_kernel(sdfg, state):
+    """
+    Returns whether the given state is an FPGA kernel and should be dispatched
+    to the FPGA code generator.
+    :return: True if this is an FPGA kernel, False otherwise.
+    """
+    if ("is_FPGA_kernel" in state.location
+            and state.location["is_FPGA_kernel"] == False):
+        return False
+    data_nodes = state.data_nodes()
+    if len(data_nodes) == 0:
+        return False
+    for n in data_nodes:
+        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global,
+                                        dtypes.StorageType.FPGA_Local,
+                                        dtypes.StorageType.FPGA_Registers,
+                                        dtypes.StorageType.FPGA_ShiftRegister):
+            return False
+    return True
+
+
 class FPGACodeGen(TargetCodeGenerator):
     # Set by deriving class
     target_name = None
@@ -85,15 +106,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._dispatcher.register_state_dispatcher(
             self,
-            predicate=lambda sdfg, state: len(state.data_nodes()) > 0 and
-            ("is_FPGA_kernel" not in state.location or state.location[
-                "is_FPGA_kernel"] is True) and all([
-                    n.desc(sdfg).storage in [
-                        dtypes.StorageType.FPGA_Global, dtypes.StorageType.
-                        FPGA_Local, dtypes.StorageType.FPGA_Registers, dtypes.
-                        StorageType.FPGA_ShiftRegister
-                    ] for n in state.data_nodes()
-                ]))
+            predicate=is_fpga_kernel)
 
         self._dispatcher.register_node_dispatcher(
             self,
