@@ -17,8 +17,8 @@ class IntelMKLScaLAPACK:
     cmake_packages = []  #["BLAS"]
     cmake_variables = {"BLA_VENDOR": "Intel10_64lp"}
     cmake_compile_flags = []
-    # cmake_link_flags = ["-L /lib/x86_64-linux-gnu -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lpthread -lm -ldl"]
-    cmake_link_flags = ["-L $MKLROOT/lib -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 -L /usr/lib64/mpich/lib -lmpich -lgomp -lpthread -lm -ldl"]
+    # cmake_link_flags = ["-L $MKLROOT/lib -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 -L /usr/lib64/mpich/lib -lmpich -lgomp -lpthread -lm -ldl"]
+    cmake_link_flags = ["-L $MKLROOT/lib -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lgomp -lpthread -lm -ldl"]
     cmake_files = []
 
     headers = ["mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h", "../include/dace_blas.h"]
@@ -33,6 +33,13 @@ class IntelMKLScaLAPACK:
     init_code = """
     blacs_pinfo(&__state->__mkl_scalapack_rank, &__state->__mkl_scalapack_size);
     blacs_get(&__state->__mkl_int_negone, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context);
+    if (!__state->__mkl_scalapack_grid_init) {{\n
+        __state->__mkl_scalapack_prows = Py;\n
+        __state->__mkl_scalapack_pcols = Px;\n
+        blacs_gridinit(&__state->__mkl_scalapack_context, \"C\", &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols);\n
+        blacs_gridinfo(&__state->__mkl_scalapack_context, &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols, &__state->__mkl_scalapack_myprow, &__state->__mkl_scalapack_mypcol);\n
+        __state->__mkl_scalapack_grid_init = true;\n
+    }}\n
     """
     finalize_code = """
     if (__state->__mkl_scalapack_grid_init) {{
@@ -43,7 +50,7 @@ class IntelMKLScaLAPACK:
     dependencies = []
 
     libraries = ["mkl_scalapack_lp64", "mkl_blacs_intelmpi_lp64",
-                 "mkl_intel_lp64", "mkl_sequential", "mkl_core", "mkl_avx2"]
+                 "mkl_intel_lp64", "mkl_gnu_thread", "mkl_core", "mkl_avx2"]
 
     @staticmethod
     def cmake_includes():
