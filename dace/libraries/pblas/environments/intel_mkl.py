@@ -14,11 +14,12 @@ class IntelMKLScaLAPACK:
     """
 
     cmake_minimum_version = None
-    cmake_packages = []  #["BLAS"]
+    cmake_packages = ["MPI"]  #["BLAS"]
     cmake_variables = {"BLA_VENDOR": "Intel10_64lp"}
     cmake_compile_flags = []
-    # cmake_link_flags = ["-L $MKLROOT/lib -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 -L /usr/lib64/mpich/lib -lmpich -lgomp -lpthread -lm -ldl"]
-    cmake_link_flags = ["-L $MKLROOT/lib -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lgomp -lpthread -lm -ldl"]
+    cmake_libraries = ["${MPI_LIBRARIES}"]
+    cmake_link_flags = ["-L $MKLROOT/lib -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 -L /usr/lib64/mpich/lib -lmpich -lgomp -lpthread -lm -ldl"]
+    #cmake_link_flags = ["-L $MKLROOT/lib -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 ${MPI_CXX_LINK_FLAGS} -lgomp -lpthread -lm -ldl"]
     cmake_files = []
 
     headers = ["mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h", "../include/dace_blas.h"]
@@ -48,9 +49,10 @@ class IntelMKLScaLAPACK:
     // blacs_exit(&__state->__mkl_int_zero);
     """ # actually if we finalize in the dace program we break pytest :)
     dependencies = []
-
     libraries = ["mkl_scalapack_lp64", "mkl_blacs_intelmpi_lp64",
-                 "mkl_intel_lp64", "mkl_gnu_thread", "mkl_core", "mkl_avx2"]
+                 "mkl_intel_lp64", "mkl_gnu_thread", "mkl_core", "mkl_avx512"]
+    #libraries = ["mkl_scalapack_lp64", "mkl_blacs_intelmpi_lp64",
+    #             "mkl_intel_lp64", "mkl_gnu_thread", "mkl_core", "mkl_avx2"]
 
     @staticmethod
     def cmake_includes():
@@ -89,7 +91,7 @@ class IntelMKLScaLAPACK:
                         for name in IntelMKLScaLAPACK.libraries]
             if all([os.path.isfile(f) for f in libfiles]):
                 # return libfiles + ["/lib/x86_64-linux-gnu/libmpich.so"]
-                return libfiles + ["libmpich.so"]
+                return libfiles + ["${MPI_mpicxx_LIBRARY}"]
 
         path = ctypes.util.find_library('mkl_scalapack_lp64')
         if path:
@@ -113,4 +115,4 @@ class IntelMKLScaLAPACK:
             return [path]
 
         # If all else fails, let CMake find the library
-        return IntelMKLScaLAPACK.libraries + ["mpich"]
+        return IntelMKLScaLAPACK.libraries + ["${MPI_mpicxx_LIBRARY}"]
