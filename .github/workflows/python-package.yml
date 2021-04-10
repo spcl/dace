@@ -124,11 +124,11 @@ jobs:
     - name: Run Xilinx tests
       run: |
         export NOSTATUSBAR=1
-        export DACE_testing_single_cache=1
+        export DACE_testing_single_cache=0
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
-        ./tests/xilinx_test.sh 0
+        python tests/xilinx_test.py
 
     - name: Run Intel FPGA tests
       run: |
