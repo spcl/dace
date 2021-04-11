@@ -364,7 +364,9 @@ def auto_optimize(sdfg: SDFG,
                   validate: bool = True,
                   validate_all: bool = False,
                   symbols: dict = {},
-                  nofuse = False) -> SDFG:
+                  trivial_fuse = True,
+                  subgraph_fuse = True,
+                  auto_parallelize = True) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -394,14 +396,15 @@ def auto_optimize(sdfg: SDFG,
     sdfg.apply_transformations_repeated(TrivialMapElimination, 
                                         validate = validate, 
                                         validate_all = validate_all)
-    # Try to parallelize loops
-    for sd in sdfg.all_sdfgs_recursive():
-        propagate_states(sd)
-    strict_transformations = dace.transformation.strict_transformations()
-    sdfg.apply_transformations_repeated([LoopToMap] + strict_transformations,
-                                        strict=True,
-                                        validate=False,
-                                        validate_all=validate_all)
+    if auto_parallelize:
+        # Try to parallelize loops
+        for sd in sdfg.all_sdfgs_recursive():
+            propagate_states(sd)
+        strict_transformations = dace.transformation.strict_transformations()
+        sdfg.apply_transformations_repeated([LoopToMap] + strict_transformations,
+                                            strict=True,
+                                            validate=False,
+                                            validate_all=validate_all)
     # Collapse maps
     sdfg.apply_transformations_repeated(MapCollapse,
                                         strict=True,
@@ -417,7 +420,7 @@ def auto_optimize(sdfg: SDFG,
         for node, state in sdfg.all_nodes_recursive():
             if isinstance(node, dace.nodes.LibraryNode):
                 from dace.sdfg.scope import is_devicelevel_gpu
-                # Use CUB for device-level reductions    
+                # Use CUB for device-level reductions
                 if ('CUDA (device)' in node.implementations
                         and not is_devicelevel_gpu(state.parent, state, node) 
                         and state.scope_dict()[node] is None):
@@ -432,20 +435,23 @@ def auto_optimize(sdfg: SDFG,
         sdfg.apply_strict_transformations()
 
         
-    ''' 
-    for graph in sdfg.nodes():
-        for node in graph.nodes():
-            if isinstance(node, dace.libraries.standard.nodes.Reduce):
-                if True: #graph.scope_dict()[node] is None:
-                    try:
-                        print("Expanding Reduction")
-                        ReduceExpansion.apply_to(sdfg, _reduce = node, 
-                            reduce_implementation = 'sequential')
+    
+    if subgraph_fuse:
+        '''
+        # expand reductions
+        for graph in sdfg.nodes():
+            for node in graph.nodes():
+                if isinstance(node, dace.libraries.standard.nodes.Reduce):
+                    if True: #graph.scope_dict()[node] is None:
+                        try:
+                            print("Expanding Reduction")
+                            ReduceExpansion.apply_to(sdfg, _reduce = node, 
+                                reduce_implementation = 'sequential')
 
-                    except ValueError:
-                        pass
-    '''
-    if not nofuse:
+                        except ValueError as e:
+                            print("ValueError", e)
+                            pass
+        '''
         # fuse greedily 
         greedy_fuse(sdfg, 
                     device = device,
@@ -457,7 +463,9 @@ def auto_optimize(sdfg: SDFG,
                     validate_all = validate_all, 
                     recursive = False, 
                     tile = True)
-        
+    
+    elif trivial_fuse:
+        sdfg.apply_transformations_repeated(MapFusion)
     #sdfg.apply_transformations_repeated(DeduplicateAccess)
     #sdfg.apply_transformations(MapTiling)
     
@@ -501,8 +509,6 @@ def auto_optimize(sdfg: SDFG,
     if device == dtypes.DeviceType.GPU:
         for aname, arr in sdfg.arrays.items():
             if arr.transient and not isinstance(arr, dt.View): #and size only depends on SDFG params
-                #if len(sdfg.symbols.keys() - arr.free_symbols) > 0:
-                #    continue
                 if arr.storage == dtypes.StorageType.GPU_Global:
                     arr.lifetime = dtypes.AllocationLifetime.Persistent
 
@@ -512,7 +518,6 @@ def auto_optimize(sdfg: SDFG,
                 for edge in n.edges():
                     edge.data.wcr_nonatomic = False
 
- 
     # Validate at the end
     if validate or validate_all:
         sdfg.validate()
