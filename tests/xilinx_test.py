@@ -11,10 +11,11 @@ import re
 import shutil
 import subprocess as sp
 import sys
-from typing import Any, Iterable, Union
+from typing import Any, Iterable, Union, Tuple
 
 TEST_DIR = Path(__file__).absolute().parent
 DACE_DIR = TEST_DIR.parent
+TEST_TIMEOUT = 600  # Seconds
 
 # (relative path, sdfg name(s), run synthesis, assert II=1, args to executable)
 TESTS = [
@@ -100,6 +101,21 @@ def print_error(message):
     timestamp = datetime.now().strftime("%H:%M:%S")
     print(f"{Colors.ERROR}{Colors.BOLD}[{timestamp}]{Colors.END} {message}")
 
+def dump_logs(proc_or_logs: Union[sp.CompletedProcess, Tuple[str, str]]):
+    if isinstance(proc_or_logs, tuple):
+        log_out, log_err = proc_or_logs
+    else:
+        proc_or_logs.terminate()
+        proc_or_logs.kill()
+        try:
+            log_out, log_err = proc_or_logs.communicate(timeout=10)
+        except sp.TimeoutExpired:
+            return None  # Failed to even kill the process
+    if log_out:
+        print(log_out)
+    if log_err:
+        print(log_err)
+    return log_out, log_err
 
 def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
         assert_ii_1: bool, args: Iterable[Any]):
@@ -124,19 +140,21 @@ def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
         if "LIBRARY_PATH" not in env:
             env["LIBRARY_PATH"] = ""
         env["LIBRARY_PATH"] += ":/usr/lib/x86_64-linux-gnu"
-    proc = sp.run(map(str, [sys.executable, path] + args),
-                  env=env,
-                  cwd=TEST_DIR,
-                  capture_output=True,
-                  check=False,
-                  timeout=600)
-    sim_out = proc.stdout.decode("utf-8").strip()
-    sim_err = proc.stderr.decode("utf-8").strip()
+    try:
+        proc = sp.Popen(map(str, [sys.executable, path] + args),
+                        env=env,
+                        cwd=TEST_DIR,
+                        stdout=sp.PIPE,
+                        stderr=sp.PIPE,
+                        encoding="utf-8")
+        sim_out, sim_err = proc.communicate(timeout=TEST_TIMEOUT)
+    except sp.TimeoutExpired:
+        dump_logs(proc)
+        print_error(f"{base_name}: Simulation timed out "
+                    f"after {TEST_TIMEOUT} seconds.")
+        return False
     if proc.returncode != 0:
-        if sim_out:
-            print(sim_out)
-        if sim_err:
-            print(sim_err)
+        dump_logs((sim_out, sim_err))
         print_error(f"{base_name}: Simulation failed.")
         return False
     print_success(f"{base_name}: Simulation successful.")
@@ -153,19 +171,27 @@ def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
 
         # High-level synthesis
         if run_synthesis:
-            print_status(f"{base_name}: Running synthesis for {sdfg_name}.")
-            proc = sp.run(["make", "xilinx_synthesis"],
-                          env=env,
-                          cwd=build_folder,
-                          capture_output=True,
-                          check=False,
-                          timeout=600)
-            syn_out = proc.stdout.decode("utf-8").strip()
-            syn_err = proc.stderr.decode("utf-8").strip()
+            print_status(
+                f"{base_name}: Running high-level synthesis for {sdfg_name}.")
+            try:
+                proc = sp.Popen(["make", "xilinx_synthesis"],
+                              env=env,
+                              cwd=build_folder,
+                              stdout=sp.PIPE,
+                              stderr=sp.PIPE,
+                              encoding="utf=8")
+                syn_out, syn_err = proc.communicate(timeout=TEST_TIMEOUT)
+            except sp.TimeoutExpired:
+                dump_logs(proc)
+                print_error(f"{base_name}: High-level synthesis timed out "
+                            f"after {TEST_TIMEOUT} seconds.")
+                return False
             if proc.returncode != 0:
-                print_error(f"{base_name}: Synthesis failed.")
-                return syn_out, syn_err
-            print_success(f"{base_name}: Synthesis successful for {sdfg_name}.")
+                dump_logs(proc)
+                print_error(f"{base_name}: High-level synthesis failed.")
+                return False
+            print_success(f"{base_name}: High-level synthesis "
+                          f"successful for {sdfg_name}.")
             open(build_folder / "synthesis.out", "w").write(syn_out)
             open(build_folder / "synthesis.err", "w").write(syn_err)
 
@@ -183,17 +209,11 @@ def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
                 for m in re.finditer(r"Final II = ([0-9]+)", hls_log):
                     loops_found = True
                     if int(m.group(1)) != 1:
-                        if syn_out:
-                            print(syn_out)
-                        if syn_err:
-                            print(syn_err)
+                        dump_logs((syn_out, syn_err))
                         print_error(f"{base_name}: Failed to achieve II=1.")
                         return False
                 if not loops_found:
-                    if syn_out:
-                        print(syn_out)
-                    if syn_err:
-                        print(syn_err)
+                    dump_logs((syn_out, syn_err))
                     print_error("{base_name}: No pipelined loops found.")
                     return False
                 print_success(f"{base_name}: II=1 achieved.")
