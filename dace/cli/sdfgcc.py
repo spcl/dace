@@ -41,7 +41,12 @@ def main():
                         choices=['cpu', 'gpu', 'fpga'],
                         help='Chooses device to transform code to (used '
                         'in -O1 and -O2 modes only).', default='cpu')
-
+    parser.add_argument('--sequential',
+                        default=False,
+                        action='store_true',
+                        dest='sequential',
+                        help='Generate code without parallelism.')
+    
     args = parser.parse_args()
 
     filepath = args.filepath
@@ -75,6 +80,11 @@ def main():
     elif args.optimize == 'manual':
         sdfg.optimize()
 
+    if args.sequential:
+        for node, _ in sdfg.all_nodes_recursive():
+            if isinstance(node, dace.nodes.MapEntry):
+                node.schedule = dace.ScheduleType.Sequential
+        
     # Compile SDFG
     sdfg.compile(outpath)
 
