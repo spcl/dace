@@ -129,8 +129,8 @@ class StreamTransient(transformation.Transformation):
         # Create the new node: Temporary stream and an access node
         newname, _ = sdfg.add_stream('trans_' + dataname,
                                      sdfg.arrays[memlet.data].dtype,
-                                     1,
-                                     bbox_approx[0], [1],
+                                     bbox_approx[0],
+                                     storage=sdfg.arrays[memlet.data].storage,
                                      transient=True,
                                      find_new_name=True)
         snode = graph.add_access(newname)
@@ -163,7 +163,7 @@ class StreamTransient(transformation.Transformation):
 @make_properties
 class AccumulateTransient(transformation.Transformation):
     """ Implements the AccumulateTransient transformation, which adds
-        transient stream and data nodes between nested maps that lead to a 
+        transient stream and data nodes between nested maps that lead to a
         stream. The transient data nodes then act as a local accumulator.
     """
 

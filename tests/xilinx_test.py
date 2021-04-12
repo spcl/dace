@@ -40,6 +40,11 @@ TESTS = [
     ("tests/fpga/streaming_memory.py", "streamingcomp_1", True, True, []),
     ("tests/fpga/conflict_resolution.py", "fpga_conflict_resolution", True,
      False, []),
+    # This doesn't pipeline with Vitis 2020.1 for whatever reason (it pipelines
+    # with both 2019.2 and 2020.2), so just switch this back on once CI starts
+    # running 2020.2 or newer.
+    ("tests/transformations/mapfusion_fpga.py",
+     ["multiple_fusions_1", "fusion_with_transient_1"], True, False, []),
     # BLAS
     ("tests/blas/nodes/axpy_test.py", "axpy_test_fpga_1_w4_1", True, True,
      ["--target", "fpga"]),
@@ -227,7 +232,7 @@ def cli(tests):
     if tests:
         # If tests are specified on the command line, run only those tests, if
         # their name matches either the file or SDFG name of any known test
-        test_dict = {t: False for t in tests}
+        test_dict = {t.replace(".py", ""): False for t in tests}
         to_run = []
         for t in TESTS:
             stem = Path(t[0]).stem
