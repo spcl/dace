@@ -29,7 +29,7 @@ def main():
                         '--optimize',
                         dest='optimize',
                         type=str,
-                        choices=['0', '1', '2', 'manual'],
+                        choices=['0', '1', '1.5', '2', 'manual'],
                         help='''Chooses optimization mode:
   -O0: Perform no changes to the program;
   -O1 (default): Perform dataflow coarsening (strict transformations);
@@ -40,7 +40,7 @@ def main():
     parser.add_argument('--device', '-D', dest='device', type=str,
                         choices=['cpu', 'gpu', 'fpga'],
                         help='Chooses device to transform code to (used '
-                        'in -O2 mode only).', default='cpu')
+                        'in -O1 and -O2 modes only).', default='cpu')
 
     args = parser.parse_args()
 
@@ -59,9 +59,19 @@ def main():
         pass
     elif args.optimize == '1':
         sdfg.apply_strict_transformations()
+        if args.device == 'gpu':
+            sdfg.apply_gpu_transformations()
+        elif args.device == 'fpga':
+            sdfg.apply_fpga_transformations()
+            
+    elif args.optimize == '1.5':
+        dev = dace.DeviceType[args.device.upper()]
+        aopt.auto_optimize(sdfg, device=dev, subgraph_fuse=False)
+        
     elif args.optimize == '2':
         dev = dace.DeviceType[args.device.upper()]
         aopt.auto_optimize(sdfg, device=dev)
+        
     elif args.optimize == 'manual':
         sdfg.optimize()
 
