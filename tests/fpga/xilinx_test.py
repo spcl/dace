@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import click
-from collections import OrderedDict
-from dace import Config
-from datetime import datetime
-import multiprocessing as mp
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess as sp
 import sys
-from typing import Any, Iterable, Union, Tuple
+from typing import Any, Iterable, Union
 
-TEST_DIR = Path(__file__).absolute().parent
-DACE_DIR = TEST_DIR.parent
 TEST_TIMEOUT = 600  # Seconds
+
+from fpga_testing import (Colors, DACE_DIR, TEST_DIR, cli, dump_logs,
+                          print_status, print_success, print_error)
 
 # (relative path, sdfg name(s), run synthesis, assert II=1, args to executable)
 TESTS = [
@@ -78,45 +74,6 @@ TESTS = [
 ]
 
 
-class Colors:
-    SUCCESS = "\033[92m"
-    STATUS = "\033[94m"
-    ERROR = "\033[91m"
-    BOLD = "\033[1m"
-    UNDERLINE = "\033[4m"
-    END = "\033[0m"
-
-
-def print_status(message):
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    print(f"{Colors.STATUS}{Colors.BOLD}[{timestamp}]{Colors.END} {message}")
-
-
-def print_success(message):
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    print(f"{Colors.SUCCESS}{Colors.BOLD}[{timestamp}]{Colors.END} {message}")
-
-
-def print_error(message):
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    print(f"{Colors.ERROR}{Colors.BOLD}[{timestamp}]{Colors.END} {message}")
-
-def dump_logs(proc_or_logs: Union[sp.CompletedProcess, Tuple[str, str]]):
-    if isinstance(proc_or_logs, tuple):
-        log_out, log_err = proc_or_logs
-    else:
-        proc_or_logs.terminate()
-        proc_or_logs.kill()
-        try:
-            log_out, log_err = proc_or_logs.communicate(timeout=10)
-        except sp.TimeoutExpired:
-            return None  # Failed to even kill the process
-    if log_out:
-        print(log_out)
-    if log_err:
-        print(log_err)
-    return log_out, log_err
-
 def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
         assert_ii_1: bool, args: Iterable[Any]):
 
@@ -175,11 +132,11 @@ def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
                 f"{base_name}: Running high-level synthesis for {sdfg_name}.")
             try:
                 proc = sp.Popen(["make", "xilinx_synthesis"],
-                              env=env,
-                              cwd=build_folder,
-                              stdout=sp.PIPE,
-                              stderr=sp.PIPE,
-                              encoding="utf=8")
+                                env=env,
+                                cwd=build_folder,
+                                stdout=sp.PIPE,
+                                stderr=sp.PIPE,
+                                encoding="utf=8")
                 syn_out, syn_err = proc.communicate(timeout=TEST_TIMEOUT)
             except sp.TimeoutExpired:
                 dump_logs(proc)
@@ -221,58 +178,16 @@ def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
     return True
 
 
-def run_parallel(tests):
-    # Run tests in parallel using default number of workers
-    with mp.Pool() as pool:
-        results = pool.starmap(run, tests)
-        if all(results):
-            print_success("All tests passed.")
-            sys.exit(0)
-        else:
-            print_error("Failed Xilinx tests:")
-            for test, result in zip(tests, results):
-                if result == False:
-                    print_error(f"- {test[0]}")
-            num_passed = sum(results, 0)
-            num_tests = len(results)
-            num_failed = num_tests - num_passed
-            print_error(f"{num_passed} / {num_tests} Xilinx tests passed "
-                        f"({num_failed} tests failed).")
-            sys.exit(1)
-
-
 @click.command()
 @click.argument("tests", nargs=-1)
-def cli(tests):
+def xilinx_cli(tests):
     """
-    If no arguments are specified, runs all Xilinx tests. If any arguments are
+    If no arguments are specified, runs all tests. If any arguments are
     specified, runs only the tests specified (matching on file name or SDFG
     name).
     """
-    if tests:
-        # If tests are specified on the command line, run only those tests, if
-        # their name matches either the file or SDFG name of any known test
-        test_dict = {t.replace(".py", ""): False for t in tests}
-        to_run = []
-        for t in TESTS:
-            stem = Path(t[0]).stem
-            if stem in test_dict:
-                to_run.append(t)
-                test_dict[stem] = True
-            else:
-                sdfgs = t[1] if not isinstance(t[1], str) else [t[1]]
-                for sdfg in sdfgs:
-                    if sdfg in test_dict:
-                        to_run.append(t)
-                        test_dict[sdfg] = True
-        for k, v in test_dict.items():
-            if not v:
-                raise ValueError(f"Test \"{k}\" not found.")
-    else:
-        # Otherwise run them all
-        to_run = TESTS
-    run_parallel(to_run)
+    cli(TESTS, run, tests)
 
 
 if __name__ == "__main__":
-    cli()
+    xilinx_cli()
