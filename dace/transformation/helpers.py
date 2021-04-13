@@ -333,7 +333,7 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
     nodes_to_remove = set(subgraph.nodes())
     nodes_to_remove -= set(n for n in nodes_to_remove
                            if state.out_degree(n) > 1)
-    nodes_to_remove -= set(n for n in nodes_to_remove if state.in_degree(n) > 1)
+    nodes_to_remove -= set(n for n in nodes_to_remove
     state.remove_nodes_from(nodes_to_remove)
 
     for n in subgraph.nodes():
