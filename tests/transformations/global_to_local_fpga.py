@@ -24,7 +24,7 @@ def test_global_to_local(size: int):
     sdfg = global_to_local.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG])
     sdfg.apply_transformations([FPGAGlobalToLocal])
-    sdfg(A=A, B=B, N=N)
+    sdfg(A=A, B=B, N=size)
     assert np.allclose(A+1, B)
 
 
