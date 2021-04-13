@@ -75,7 +75,7 @@ TESTS = [
     ("tests/rtl/hardware_test.py", "floating_point_vector_plus_scalar", True,
      False, [1]),
     #Global to Local Transformation
-    ("tests/fpga/transformations/global_to_local_fpga.py", "global_to_local_1",
+    ("tests/transformations/global_to_local_fpga.py", "global_to_local_1",
      True, True, [])
 ]
 
