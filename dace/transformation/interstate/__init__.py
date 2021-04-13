@@ -5,6 +5,7 @@ from .state_fusion import StateFusion
 from .state_elimination import EndStateElimination, StateAssignElimination, HoistState
 from .fpga_transform_state import FPGATransformState
 from .fpga_transform_sdfg import FPGATransformSDFG
+from .fpga_global_to_local import FPGAGlobalToLocal
 from .gpu_transform_sdfg import GPUTransformSDFG
 from .sdfg_nesting import NestSDFG, InlineSDFG, InlineTransients, RefineNestedAccess
 from .loop_unroll import LoopUnroll
