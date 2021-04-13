@@ -1165,7 +1165,8 @@ class NestSDFG(transformation.Transformation):
             itertools.chain(inputs.values(), outputs.values(),
                             transients.values()))
         for arrname, desc in list(nested_sdfg.arrays.items()):
-            if not desc.transient and arrname not in nested_data:
+            # TODO: do not add scalars that are also symbols. Fix this
+            if not desc.transient and arrname not in nested_data and arrname not in nested_sdfg.symbols:
                 arrname_nested = f"__{arrname}_in"
                 outer_sdfg.arrays[arrname] = dc(desc)
                 nested_sdfg.arrays[arrname_nested] = desc
