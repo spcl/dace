@@ -867,9 +867,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                                 key=lambda e: e.dst_conn or ""):
             if in_memlet.data is None:
                 continue
-            desc = sdfg.arrays[in_memlet.data]
-            is_memory_interface = (isinstance(desc, dt.Array) and desc.storage
-                                   == dtypes.StorageType.FPGA_Global)
+            is_memory_interface = (self._dispatcher.defined_vars.get(
+                in_memlet.data, 1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:
                 interface_name = cpp.array_interface_variable(
                     vconn, False, None)
@@ -906,9 +905,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                             uconn,
                                             conntype=node.out_connectors[uconn],
                                             is_write=True)
-            desc = sdfg.arrays[out_memlet.data]
-            is_memory_interface = (isinstance(desc, dt.Array) and desc.storage
-                                   == dtypes.StorageType.FPGA_Global)
+            is_memory_interface = (self._dispatcher.defined_vars.get(
+                out_memlet.data, 1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:
                 interface_name = cpp.array_interface_variable(uconn, True, None)
                 # Register the raw pointer as a defined variable

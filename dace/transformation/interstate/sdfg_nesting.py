@@ -522,7 +522,7 @@ class InlineSDFG(transformation.Transformation):
         state: SDFGState,
         orig_data: Dict[Union[nodes.AccessNode, MultiConnectorEdge], str],
     ) -> Set[MultiConnectorEdge]:
-        """ 
+        """
         Deals with access->access edges where both sides are non-transient.
         """
         result = set()
@@ -1046,44 +1046,31 @@ class NestSDFG(transformation.Transformation):
         inputs = {}
         outputs = {}
         transients = {}
-        input_transients = {}
-        output_transients = {}
 
         for state in nested_sdfg.nodes():
             #  Input and output nodes are added as input and output nodes of the nested SDFG
             for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode)
                         and not node.desc(nested_sdfg).transient):
-                    arrname = node.data
-
-                    previous_name = None
-                    # If we have already seen this array, use the same name
-                    if arrname in inputs:
-                        previous_name = inputs[arrname]
-                    elif arrname in outputs:
-                        previous_name = outputs[arrname]
-
-                    is_input = state.out_degree(node) > 0
-                    is_output = state.in_degree(node) > 0
-                    if is_input and is_output:
-                        node_data_name = previous_name or '__' + arrname
-                    elif is_input:  # input only node
-                        node_data_name = previous_name or '__' + arrname + '_in'
-                    else:  # output only node
-                        node_data_name = previous_name or '__' + arrname + '_out'
-
-                    # add the array to the outer_sdfg if need and keep track of the mapping
-                    if is_input and arrname not in inputs:
-                        arrobj = nested_sdfg.arrays[arrname]
-                        nested_sdfg.arrays[node_data_name] = arrobj
-                        outer_sdfg.arrays[arrname] = dc(arrobj)
-                        inputs[arrname] = node_data_name
-                    if is_output and arrname not in outputs:
-                        arrobj = nested_sdfg.arrays[arrname]
-                        nested_sdfg.arrays[node_data_name] = arrobj
+                    if (state.out_degree(node) > 0):  # input node
+                        arrname = node.data
+                        arrname_nested = f"__{arrname}_in"
                         if arrname not in inputs:
+                            arrobj = nested_sdfg.arrays[arrname]
                             outer_sdfg.arrays[arrname] = dc(arrobj)
-                        outputs[arrname] = node_data_name
+                            nested_sdfg.arrays[arrname_nested] = arrobj
+                            inputs[arrname] = arrname_nested
+                        node_data_name = arrname_nested
+                    if (state.in_degree(node) > 0):  # output node
+                        arrname = node.data
+                        arrname_nested = f"__{arrname}_out"
+                        if arrname not in outputs:
+                            arrobj = nested_sdfg.arrays[arrname]
+                            if arrname not in inputs:
+                                outer_sdfg.arrays[arrname] = dc(arrobj)
+                            nested_sdfg.arrays[arrname_nested] = arrobj
+                            outputs[arrname] = arrname_nested
+                        node_data_name = arrname_nested
                     node.data = node_data_name
 
             if self.promote_global_trans:
@@ -1158,32 +1145,38 @@ class NestSDFG(transformation.Transformation):
                             # nodedesc.total_size = math.prod(nodedesc.shape)
 
                         arrname = node.data
-                        node_data_name = '__' + arrname + '_trans'
-                        if arrname not in transients and not scope_dict[node]:
-                            arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays[node_data_name] = arrobj
-                            outer_sdfg.arrays[arrname] = dc(arrobj)
-                            transients[arrname] = node_data_name
+                        if not scope_dict[node]:
+                            arrname_nested = f"__{arrname}_out"
+                            node.data = arrname_nested
+                            if arrname not in transients:
+                                arrobj = nested_sdfg.arrays[arrname]
+                                outer_sdfg.arrays[arrname] = dc(arrobj)
+                                nested_sdfg.arrays[arrname_nested] = arrobj
+                                transients[arrname] = arrname_nested
+                                if state.out_degree(node) > 0:
+                                    inputs[arrname] = arrname_nested
+                                if state.in_degree(node) > 0:
+                                    outputs[arrname] = arrname_nested
 
-                        # keep track of both input and output transients and add them as input/output connectors
-                        if state.in_degree(node) > 0:
-                            output_transients[arrname] = node_data_name
-                        if state.out_degree(node) > 0:
-                            input_transients[arrname] = node_data_name
-                        node.data = node_data_name
+        # Catch data containers that we didn't find on any access nodes, and add
+        # them as inputs. This can happen when a scalar input is used on an
+        # interstate edge, and thus doesn't appear in the dataflow.
+        nested_data = set(
+            itertools.chain(inputs.values(), outputs.values(),
+                            transients.values()))
+        for arrname, desc in list(nested_sdfg.arrays.items()):
+            if not desc.transient and arrname not in nested_data:
+                arrname_nested = f"__{arrname}_in"
+                outer_sdfg.arrays[arrname] = dc(desc)
+                nested_sdfg.arrays[arrname_nested] = desc
+                inputs[arrname] = arrname_nested
 
-        for arrname in inputs.keys():
-            nested_sdfg.arrays.pop(arrname)
-        for arrname in outputs.keys():
-            nested_sdfg.arrays.pop(arrname, None)
-        for oldarrname, newarrname in transients.items():
-            nested_sdfg.arrays.pop(oldarrname)
+        # Purge the old descriptors
+        for name in set(itertools.chain(inputs, outputs, transients)):
+            del nested_sdfg.arrays[name]
+
+        for newarrname in transients.values():
             nested_sdfg.arrays[newarrname].transient = False
-        # outputs.update(transients)
-        outputs.update(output_transients)
-        inputs.update(input_transients)
-        # import pdb
-        # pdb.set_trace()
 
         # Update memlets
         for state in nested_sdfg.nodes():
@@ -1196,8 +1189,9 @@ class NestSDFG(transformation.Transformation):
                             and src.data == inputs[mem.data]):
                         mem.data = inputs[mem.data]
                     elif (mem.data in outputs.keys()
-                          and (src.data == outputs[mem.data]
-                               or dst.data == outputs[mem.data])):
+                          and (src.data == outputs[mem.data] or
+                               (isinstance(dst, nodes.AccessNode)
+                                and dst.data == outputs[mem.data]))):
                         mem.data = outputs[mem.data]
                 elif (isinstance(dst, nodes.AccessNode)
                       and mem.data in outputs.keys()
@@ -1205,19 +1199,9 @@ class NestSDFG(transformation.Transformation):
                     mem.data = outputs[mem.data]
         outer_state = outer_sdfg.add_state(outer_sdfg.label)
 
-        nested_node = outer_state.add_nested_sdfg(nested_sdfg, outer_sdfg,
-                                                  set(inputs.values()),
-                                                  set(outputs.values()))
-        for key, val in inputs.items():
-            arrnode = outer_state.add_read(key)
-            outer_state.add_edge(
-                arrnode, None, nested_node, val,
-                memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
-        for key, val in outputs.items():
-            arrnode = outer_state.add_write(key)
-            outer_state.add_edge(
-                nested_node, val, arrnode, None,
-                memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
+        # Clean up any remaining mentions of input nodes in the nested SDFG
+        for before, after in inputs.items():
+            nested_sdfg.replace(before, after)
 
         # Remove from the parent SDFG the symbols that are defined in the nested one
         defined_syms = set()
@@ -1235,3 +1219,19 @@ class NestSDFG(transformation.Transformation):
             if type is not None:
                 # update or add the symbol in the nested sdfg
                 nested_sdfg.symbols[s] = type
+
+        # Add the nested SDFG to the parent state and connect it
+        nested_node = outer_state.add_nested_sdfg(nested_sdfg, outer_sdfg,
+                                                  set(inputs.values()),
+                                                  set(outputs.values()))
+
+        for key, val in inputs.items():
+            arrnode = outer_state.add_read(key)
+            outer_state.add_edge(
+                arrnode, None, nested_node, val,
+                memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
+        for key, val in outputs.items():
+            arrnode = outer_state.add_write(key)
+            outer_state.add_edge(
+                nested_node, val, arrnode, None,
+                memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))

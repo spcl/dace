@@ -40,8 +40,11 @@ TESTS = [
     ("tests/fpga/streaming_memory.py", "streamingcomp_1", True, True, []),
     ("tests/fpga/conflict_resolution.py", "fpga_conflict_resolution", True,
      False, []),
+    # This doesn't pipeline with Vitis 2020.1 for whatever reason (it pipelines
+    # with both 2019.2 and 2020.2), so just switch this back on once CI starts
+    # running 2020.2 or newer.
     ("tests/transformations/mapfusion_fpga.py",
-     ["multiple_fusions_1", "fusion_with_transient_1"], True, True, []),
+     ["multiple_fusions_1", "fusion_with_transient_1"], True, False, []),
     # BLAS
     ("tests/blas/nodes/axpy_test.py", "axpy_test_fpga_1_w4_1", True, True,
      ["--target", "fpga"]),
