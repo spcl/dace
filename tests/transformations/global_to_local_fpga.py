@@ -13,7 +13,7 @@ def test_global_to_local(size: int):
     :return:
     '''
     @dace.program
-    def program(A: dace.float32[N], B: dace.float32[N]):
+    def global_to_local(A: dace.float32[N], B: dace.float32[N]):
         for i in range(N):
             tmp = A[i]
             B[i] = tmp + 1
@@ -21,13 +21,11 @@ def test_global_to_local(size: int):
     A = np.random.rand(size).astype(np.float32)
     B = np.random.rand(size).astype(np.float32)
 
-    sdfg = program.to_sdfg()
+    sdfg = global_to_local.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG])
     sdfg.apply_transformations([FPGAGlobalToLocal])
-    sdfg.save('/tmp/out.sdfg')
-    sdfg(A=A, B=B)
+    sdfg(A=A, B=B, N=N)
     assert np.allclose(A+1, B)
-
 
 
 if __name__ == "__main__":

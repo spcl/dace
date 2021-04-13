@@ -11,6 +11,7 @@ from dace import symbolic, dtypes
 from dace.sdfg import nodes, trace_nested_access
 from dace import config
 
+
 @registry.autoregister
 @properties.make_properties
 class FPGAGlobalToLocal(transformation.Transformation):
@@ -19,7 +20,6 @@ class FPGAGlobalToLocal(transformation.Transformation):
         - data the is transient,
         - and the data is not a transient shared with other states,
         - and data has a compile-time known size. """
-
     @staticmethod
     def annotates_memlets():
         return True
@@ -38,7 +38,6 @@ class FPGAGlobalToLocal(transformation.Transformation):
     def match_to_str(graph, candidate):
         return graph.label
 
-
     def apply(self, sdfg):
 
         count = 0
@@ -48,7 +47,8 @@ class FPGAGlobalToLocal(transformation.Transformation):
             ) and desc.storage == dtypes.StorageType.FPGA_Global:
 
                 # Get the total size, trying to resolve it to constant if it is a symbol
-                total_size = symbolic.resolve_symbol_to_constant(desc.total_size, sdfg)
+                total_size = symbolic.resolve_symbol_to_constant(
+                    desc.total_size, sdfg)
 
                 if total_size is not None:
                     desc.storage = dtypes.StorageType.FPGA_Local

@@ -149,6 +149,9 @@ run_all() {
     # Test map fusion resulting in Tasklet -> Tasklet memlets
     run_sample transformations/mapfusion_fpga multiple_fusions_1 "\n\n\n\n"
 
+    # Test Global To Local
+    run_sample transformations/global_to_local_fpga global_to_local_1 "\n"
+
 }
 
 # Check if aoc is vailable
