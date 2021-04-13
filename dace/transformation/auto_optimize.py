@@ -507,6 +507,13 @@ def auto_optimize(sdfg: SDFG,
     # Set all Default storage types that are constant sized to registers
     move_small_arrays_to_stack(sdfg)
 
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        for aname, arr in nsdfg.arrays.items():
+            if arr.transient and not isinstance(
+                    arr, dt.View) and not symbolic.issymbolic(arr.total_size):
+                if arr.storage != dtypes.StorageType.Register:
+                    arr.lifetime = dtypes.AllocationLifetime.Persistent
+
     if device == dtypes.DeviceType.GPU:
         for aname, arr in sdfg.arrays.items():
             if arr.transient and not isinstance(

@@ -331,10 +331,9 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
 
     # Mark boundary access nodes to keep after fission
     nodes_to_remove = set(subgraph.nodes())
-    nodes_to_remove -= set(n for n in subgraph.source_nodes()
+    nodes_to_remove -= set(n for n in nodes_to_remove
                            if state.out_degree(n) > 1)
-    nodes_to_remove -= set(n for n in subgraph.sink_nodes()
-                           if state.in_degree(n) > 1)
+    nodes_to_remove -= set(n for n in nodes_to_remove if state.in_degree(n) > 1)
     state.remove_nodes_from(nodes_to_remove)
 
     for n in subgraph.nodes():
@@ -382,9 +381,8 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         # Special case: If internal memlet is one element and the top
         # memlet uses all its dimensions, ignore the internal element
         # TODO: There must be a better solution
-        if (len(internal_subset) == 1 and ones == list(range(len(shape)))
-                and (internal_subset[0] == (0, 0, 1)
-                     or internal_subset[0] == 0)):
+        if (len(internal_subset) == 1 and ones == list(range(len(shape))) and
+            (internal_subset[0] == (0, 0, 1) or internal_subset[0] == 0)):
             to_unsqueeze = ones[1:]
         else:
             to_unsqueeze = ones
