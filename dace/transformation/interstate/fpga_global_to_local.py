@@ -16,11 +16,11 @@ from dace import config
 @registry.autoregister
 @properties.make_properties
 class FPGAGlobalToLocal(transformation.Transformation):
-    """ Implements the FPGAGlobalToLoca transformation, which takes an entire
-        SDFG  and changes the storage type of a Global FPGA data container to Local in the following situation:
-        - data the is transient,
-        - and the data is not a transient shared with other states,
-        - and data has a compile-time known size. """
+    """ Implements the FPGAGlobalToLocal transformation, which takes an entire
+        SDFG and changes the storage type of a global FPGA data container to Local in the following situation:
+        - the data is transient,
+        - the data is not a transient shared with other states, and
+        - the data has a compile-time known size. """
     @staticmethod
     def annotates_memlets():
         return True
