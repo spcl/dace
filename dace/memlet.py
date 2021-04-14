@@ -371,6 +371,16 @@ class Memlet(object):
         if (self.data is not None and self.subset is None):
             self.subset = subsets.Range.from_array(sdfg.arrays[self.data])
 
+    def get_src_subset(self, edge: 'dace.sdfg.graph.MultiConnectorEdge',
+                       state: 'dace.sdfg.SDFGState'):
+        self.try_initialize(state.parent, state, edge)
+        return self.src_subset
+    
+    def get_dst_subset(self, edge: 'dace.sdfg.graph.MultiConnectorEdge',
+                       state: 'dace.sdfg.SDFGState'):
+        self.try_initialize(state.parent, state, edge)
+        return self.dst_subset
+
     @staticmethod
     def from_array(dataname, datadesc, wcr=None):
         """ Constructs a Memlet that transfers an entire array's contents.
