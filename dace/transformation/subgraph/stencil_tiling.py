@@ -219,8 +219,11 @@ class StencilTiling(transformation.SubgraphTransformation):
             return False 
 
         # get intermediate_nodes, out_nodes from SubgraphFusion Transformation
-        node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph,
-                                                        map_entries)
+        try:
+            node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph,
+                                                            map_entries)
+        except NotImplementedError:
+            return False
         (_, intermediate_nodes, out_nodes) = node_config
 
         # 1.4: check topological feasibility
