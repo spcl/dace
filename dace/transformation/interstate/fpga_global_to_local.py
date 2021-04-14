@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains a transformation that changes the storage type of a Global FPGA variable to Local when certains
-    conditions are met.
+"""
+Transformation to move data stored in off-chip (global) memory, such as DRAM, into fast on-chip (local) FPGA memory,
+drastically reducing access latency and improving bandwidth, as well as saving expensive memory interfaces to off-chip memory.
 """
 
 import networkx as nx
