@@ -77,15 +77,15 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
     sdfg = graph.parent
 
     edges_to_consider: Set[Tuple[gr.MultiConnectorEdge[Memlet],
-                                 nodes.EntryNode]] = set()
+                                 nodes.MapEntry]] = set()
     for edge in graph_or_subgraph.edges():
         if edge.data.wcr is not None:
-            if (isinstance(edge.src, (nodes.ExitNode, nodes.NestedSDFG))
-                    or isinstance(edge.dst, nodes.EntryNode)):
+            if (isinstance(edge.src, (nodes.MapExit, nodes.NestedSDFG))
+                    or isinstance(edge.dst, nodes.MapEntry)):
                 # Do not consider intermediate edges
                 continue
             reason = cpp.is_write_conflicted_with_reason(graph, edge)
-            if reason is None or not isinstance(reason, nodes.EntryNode):
+            if reason is None or not isinstance(reason, nodes.MapEntry):
                 # Do not consider edges that will not generate atomics or
                 # atomics we cannot transform
                 continue
@@ -208,7 +208,7 @@ def find_fast_library(device: dtypes.DeviceType) -> str:
         # BLAS calls
         if mkl.IntelMKL.is_installed():
             result.append('MKL')
-        elif openblas.OpenBLAS.is_installed():
+        if openblas.OpenBLAS.is_installed():
             result.append('OpenBLAS')
 
         return result + ['pure']
@@ -218,7 +218,7 @@ def find_fast_library(device: dtypes.DeviceType) -> str:
 
 def move_small_arrays_to_stack(sdfg: SDFG) -> None:
     """
-    Set all Default storage types that are constant sized and less than 
+    Set all Default storage types that are constant sized and less than
     the auto-tile size to the stack (as StorageType.Register).
     :param sdfg: The SDFG to operate on.
     :note: Operates in-place on the SDFG.

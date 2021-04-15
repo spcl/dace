@@ -146,6 +146,9 @@ run_all() {
     # Views
     run_sample fpga/reshape_view_fpga reshape_view_fpga "\n\n\n"
 
+    # Test map fusion resulting in Tasklet -> Tasklet memlets
+    run_sample transformations/mapfusion_fpga multiple_fusions_1 "\n\n\n\n"
+
 }
 
 # Check if aoc is vailable

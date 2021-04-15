@@ -1263,19 +1263,20 @@ class CPUCodeGen(TargetCodeGenerator):
                             dfg.node_id(node), edge.src_conn)
 
                     # Read variable from shared storage
-                    inner_stream.write(
-                        "const %s& %s = %s;" % (
-                            ctype,
-                            edge.dst_conn,
-                            shared_data_name,
-                        ),
-                        sdfg,
-                        state_id,
-                        [edge.src, edge.dst],
-                    )
+                    defined_type, _ = self._dispatcher.defined_vars.get(
+                        shared_data_name)
+                    if defined_type in (DefinedType.Scalar,
+                                        DefinedType.Pointer):
+                        assign_str = (f"const {ctype} {edge.dst_conn} "
+                                      f"= {shared_data_name};")
+                    else:
+                        assign_str = (f"const {ctype} &{edge.dst_conn} "
+                                      f"= {shared_data_name};")
+                    inner_stream.write(assign_str, sdfg, state_id,
+                                       [edge.src, edge.dst])
                     self._dispatcher.defined_vars.add(edge.dst_conn,
-                                                      DefinedType.Scalar,
-                                                      'const %s' % ctype)
+                                                      defined_type,
+                                                      f"const {ctype}")
 
                 else:
                     self._dispatcher.dispatch_copy(
