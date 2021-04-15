@@ -43,8 +43,8 @@ class FPGAGlobalToLocal(transformation.Transformation):
 
         count = 0
 
-        for sd, name, desc in sdfg.arrays_recursive():
-            if desc.transient and name not in sd.shared_transients(
+        for name, desc in sdfg.arrays.items():
+            if desc.transient and name not in sdfg.shared_transients(
             ) and desc.storage == dtypes.StorageType.FPGA_Global:
 
                 # Get the total size, trying to resolve it to constant if it is a symbol
@@ -56,7 +56,7 @@ class FPGAGlobalToLocal(transformation.Transformation):
                     count = count + 1
 
                     # update all access nodes that refer to this container
-                    for node, graph in sd.all_nodes_recursive():
+                    for node, graph in sdfg.all_nodes_recursive():
                         if isinstance(node, nodes.AccessNode):
                             trace = trace_nested_access(node, graph,
                                                         graph.parent)
