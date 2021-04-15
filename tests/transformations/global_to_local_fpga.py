@@ -24,6 +24,30 @@ def test_global_to_local(size: int):
     sdfg = global_to_local.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG])
     sdfg.apply_transformations([FPGAGlobalToLocal])
+
+    # Check that transformation has been actually applied
+    # There should be only one transient among the sdfg arrays and it must have Local Storage Type
+    candidate = None
+    for name, array in sdfg.arrays.items():
+        if array.transient:
+            assert array.storage == dace.dtypes.StorageType.FPGA_Local
+            candidate = name
+            break
+
+    assert candidate is not None
+
+    # Check that all access nodes that refer to this container have also been updated
+    for node, graph in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.sdfg.nodes.AccessNode):
+            trace = dace.sdfg.utils.trace_nested_access(
+                node, graph, graph.parent)
+
+            for (_, acc_node), memlet_trace, state_trace, sdfg_trace in trace:
+                if acc_node is not None and acc_node.data == candidate:
+                    nodedesc = node.desc(graph)
+                    assert nodedesc.storage == dace.dtypes.StorageType.FPGA_Local
+
+
     sdfg(A=A, B=B, N=size)
     assert np.allclose(A+1, B)
 

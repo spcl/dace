@@ -55,21 +55,16 @@ class FPGAGlobalToLocal(transformation.Transformation):
                     desc.storage = dtypes.StorageType.FPGA_Local
                     count = count + 1
 
-                    # update all access nodes that refers to this container
-                    for state in sd.states():
-                        for node, graph in state.all_nodes_recursive():
-                            if isinstance(node, nodes.AccessNode):
-                                trace = trace_nested_access(
-                                    node, graph, graph.parent)
-                                outer_node = None
-                                for node_trace, memlet_trace, state_trace, sdfg_trace in trace:
-                                    # Find the name of the accessed node in our scope
-                                    if state_trace == state and sdfg_trace == sd:
-                                        _, outer_node = node_trace
-                                        if outer_node is not None:
-                                            break
+                    # update all access nodes that refer to this container
+                    for node, graph in sd.all_nodes_recursive():
+                        if isinstance(node, nodes.AccessNode):
+                            trace = trace_nested_access(node, graph,
+                                                        graph.parent)
 
-                                if outer_node is not None and outer_node.data == name:
+                            for (
+                                    _, candidate
+                            ), memlet_trace, state_trace, sdfg_trace in trace:
+                                if candidate is not None and candidate.data == name:
                                     nodedesc = node.desc(graph)
                                     nodedesc.storage = dtypes.StorageType.FPGA_Local
 
