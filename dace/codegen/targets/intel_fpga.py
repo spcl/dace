@@ -76,6 +76,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         self.generated_converters = set()
         # Channel mangles
         self.channel_mangle = defaultdict(dict)
+        # Modules name mangles
+        self.module_mange = defaultdict(dict)
 
         super().__init__(*args, **kwargs)
 
@@ -190,7 +192,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
 
     def create_mangled_channel_name(self, var_name, kernel_id):
         '''
-        Memorize and returns  the mangled name of a global channel
+        Memorize and returns the mangled name of a global channel
         The dictionary is organized as (var_name) : {kernel_id: mangled_name)
         '''
 
@@ -210,6 +212,19 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
             return self.channel_mangle[var_name][kernel_id]
         else:
             return var_name
+
+    def create_mangled_module_name(self, module_name, kernel_id):
+        '''
+        Memorize and returns the mangled name of a module (OpenCL kernel)
+        The dictionary is organized as (module_name) : {kernel_id: mangled_name)
+        '''
+
+        if kernel_id not in self.module_mange[module_name]:
+            existing_count = len(self.module_mange[module_name])
+            suffix = f"_{existing_count}" if existing_count > 0 else ""
+            mangled_name = f"{module_name}{suffix}"
+            self.module_mange[module_name][kernel_id] = mangled_name
+        return self.module_mange[module_name][kernel_id]
 
     def define_stream(self, dtype, buffer_size, var_name, array_size,
                       function_stream, kernel_stream):
@@ -485,17 +500,18 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_body_stream.write("\n")
 
         # Generate host code
-        self.generate_host_function_boilerplate(
-            sdfg, state, kernel_name, global_data_parameters,
-            nested_global_transients, host_code_body_stream, function_stream,
-            callsite_stream)
+        self.generate_host_function_boilerplate(sdfg, state, kernel_name,
+                                                global_data_parameters,
+                                                nested_global_transients,
+                                                host_code_body_stream,
+                                                function_stream,
+                                                callsite_stream)
 
         self.generate_host_function_prologue(sdfg, state, host_code_body_stream)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
-                              subgraph_parameters,
-                              kernel_body_stream, host_code_header_stream,
-                              host_code_body_stream)
+                              subgraph_parameters, kernel_body_stream,
+                              host_code_header_stream, host_code_body_stream)
 
         kernel_body_stream.write("\n")
 
@@ -555,8 +571,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 }""", sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
-                        module_stream, host_header_stream,
-                        host_body_stream):
+                        module_stream, host_header_stream, host_body_stream):
 
         state_id = sdfg.node_id(state)
         dfg = sdfg.nodes()[state_id]
@@ -584,8 +599,10 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # "_cra_slave_inst", which is 15 characters, so we restrict to
         # 61 - 15 = 46, and round down to 36 to be conservative, since
         # internally could still fail while dealing with RTL.
-        # Therefore we cut down names longer than that
-        module_function_name = module_function_name[0:36]
+        # However, in this way we could have name clashes (e.g., if we have two almost identical NestedSDFG).
+        # Therefore we explicitly take care of this by mangling the name
+        module_function_name = self.create_mangled_module_name(
+            module_function_name[0:36], self._kernel_count)
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
@@ -936,13 +953,14 @@ __kernel void \\
                                               defined_type,
                                               atype,
                                               allow_shadowing=True)
-            _, _, value = cpp.emit_memlet_reference(self._dispatcher,
-                                                            sdfg,
-                                                            edge.data,
-                                                            name,
-                                                            dtypes.pointer(
-                                                                nodedesc.dtype),
-                                                            ancestor=0, device_code=self._in_device_code)
+            _, _, value = cpp.emit_memlet_reference(
+                self._dispatcher,
+                sdfg,
+                edge.data,
+                name,
+                dtypes.pointer(nodedesc.dtype),
+                ancestor=0,
+                device_code=self._in_device_code)
         else:
             qualifier = ""
             atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
@@ -1387,7 +1405,12 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
     Removes Dace Keywords and enforces OpenCL compliance
     """
 
-    nptypes_to_ctypes = {'float64': 'double', 'float32': 'float', 'int32': 'int', 'int64': 'long'}
+    nptypes_to_ctypes = {
+        'float64': 'double',
+        'float32': 'float',
+        'int32': 'int',
+        'int64': 'long'
+    }
     nptypes = ['float64', 'float32', 'int32', 'int64']
     ctypes = [
         'bool', 'char', 'cl_char', 'unsigned char', 'uchar', 'cl_uchar',
