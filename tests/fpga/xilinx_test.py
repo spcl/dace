@@ -83,6 +83,9 @@ def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
     env["DACE_compiler_use_cache"] = "0"
     env["DACE_testing_single_cache"] = "0"
     env["DACE_compiler_xilinx_mode"] = "simulation"
+    os.environ["DACE_optimizer_transform_on_call"] = "0"
+    os.environ["DACE_optimizer_interface"] = ""
+    os.environ["DACE_optimizer_autooptimize"] = "0"
 
     path = DACE_DIR / path
     if not path.exists():
