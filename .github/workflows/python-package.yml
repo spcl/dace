@@ -137,6 +137,7 @@ jobs:
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
+        rm -r .dacecache  # To avoid conflicts with Xilinx tests
         python tests/fpga/intel_fpga_test.py
 
     - name: Report overall coverage
