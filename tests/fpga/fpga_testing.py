@@ -23,17 +23,20 @@ class Colors:
 
 def print_status(message):
     timestamp = datetime.now().strftime("%H:%M:%S")
-    print(f"{Colors.STATUS}{Colors.BOLD}[{timestamp}]{Colors.END} {message}")
+    click.echo(
+        f"{Colors.STATUS}{Colors.BOLD}[{timestamp}]{Colors.END} {message}")
 
 
 def print_success(message):
     timestamp = datetime.now().strftime("%H:%M:%S")
-    print(f"{Colors.SUCCESS}{Colors.BOLD}[{timestamp}]{Colors.END} {message}")
+    click.echo(
+        f"{Colors.SUCCESS}{Colors.BOLD}[{timestamp}]{Colors.END} {message}")
 
 
 def print_error(message):
     timestamp = datetime.now().strftime("%H:%M:%S")
-    print(f"{Colors.ERROR}{Colors.BOLD}[{timestamp}]{Colors.END} {message}")
+    click.echo(
+        f"{Colors.ERROR}{Colors.BOLD}[{timestamp}]{Colors.END} {message}")
 
 
 def dump_logs(proc_or_logs: Union[sp.CompletedProcess, Tuple[str, str]]):

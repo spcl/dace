@@ -24,22 +24,22 @@ TESTS = [
     ("tests/fpga/fpga_stencil.py", "fpga_stcl_test", []),
     ### Map tiling and WCR ####
     # First tile then transform
-    ("tests/intel_fpga/dot.py", "dot_1", ["--tile-first"]),
+    ("tests/fpga/intel_fpga/dot.py", "dot_1", ["--tile-first"]),
     # Other way around
-    ("tests/intel_fpga/dot.py", "dot_1", ["--no-tile-first"]),
+    ("tests/fpga/intel_fpga/dot.py", "dot_1", ["--no-tile-first"]),
     # simple WCR (accumulates on scalar)
     ("tests/fpga/conflict_resolution.py", "fpga_conflict_resolution", []),
     # Simple reduce
-    ("tests/intel_fpga/vector_reduce.py", "vector_reduce", []),
+    ("tests/fpga/intel_fpga/vector_reduce.py", "vector_reduce", []),
     # Matrix multiplication sample
     ("samples/simple/matmul.py", "matmul_1", ["--version", "fpga_naive"]),
     ### Type inference ###
     ("samples/simple/mandelbrot.py", "mandelbrot_1", ["--fpga"]),
-    ("tests/intel_fpga/type_inference.py", "type_inference_1", []),
-    ("tests/intel_fpga/constant_type_inference.py", "constant_type_inference",
+    ("tests/fpga/intel_fpga/type_inference.py", "type_inference_1", []),
+    ("tests/fpga/intel_fpga/constant_type_inference.py", "constant_type_inference",
      []),
     ### Systolic array ###
-    ("tests/intel_fpga/simple_systolic_array.py", "simple_systolic_array_4",
+    ("tests/fpga/intel_fpga/simple_systolic_array.py", "simple_systolic_array_4",
      [128, 4]),
     ("samples/fpga/matrix_multiplication_systolic.py",
      "mm_fpga_systolic_4_NxKx256", [256, 256, 256, 4]),
@@ -47,7 +47,7 @@ TESTS = [
      []),
     # Execute some of the compatible tests in samples/fpga (some of them have C++ code in tasklet)
     # They contain streams
-    ("tests/intel_fpga/async.py", "async_test", []),
+    ("tests/fpga/intel_fpga/async.py", "async_test", []),
     ("samples/fpga/filter_fpga.py", "filter_fpga", [1000, 0.2]),
     ("samples/fpga/matrix_multiplication_stream.py", "mm_fpga_stream_NxKx128",
      [128, 128, 128]),
@@ -73,12 +73,12 @@ TESTS = [
     # Nested SDFGs generated as FPGA kernels
     ("tests/fpga/nested_sdfg_as_kernel.py", "nested_sdfg_kernels", []),
     # Generating autorun kernels
-    ("tests/intel_fpga/autorun.py", "autorun_test", []),
+    ("tests/fpga/intel_fpga/autorun.py", "autorun_test", []),
     # Multiple gearboxing
     ("tests/fpga/multiple_veclen_conversions.py", "multiple_veclen_conversions",
      []),
     # Channels mangling
-    ("tests/intel_fpga/channels_mangling.py", "channels_mangling", []),
+    ("tests/fpga/intel_fpga/channels_mangling.py", "channels_mangling", []),
     # Views
     ("tests/fpga/reshape_view_fpga.py", "reshape_view_fpga", []),
     # Test map fusion resulting in Tasklet -> Tasklet memlets
