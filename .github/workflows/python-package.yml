@@ -121,15 +121,6 @@ jobs:
         . /opt/setupenv
         ./tests/mpi_test.sh
 
-    - name: Run Xilinx tests
-      run: |
-        export NOSTATUSBAR=1
-        export DACE_testing_single_cache=0
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
-        . /opt/setupenv
-        python tests/fpga/xilinx_test.py
-
     - name: Run Intel FPGA tests
       run: |
         export NOSTATUSBAR=1
@@ -139,6 +130,15 @@ jobs:
         . /opt/setupenv
         rm -r .dacecache  # To avoid conflicts with Xilinx tests
         python tests/fpga/intel_fpga_test.py
+
+    - name: Run Xilinx tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_single_cache=0
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        . /opt/setupenv
+        python tests/fpga/xilinx_test.py
 
     - name: Report overall coverage
       run: |
