@@ -53,9 +53,9 @@ def dump_logs(proc_or_logs: Union[sp.CompletedProcess, Tuple[str, str]]):
     return log_out, log_err
 
 
-def run_parallel(test_func, tests):
+def run_parallel(test_func, tests, sequentialize):
     # Run tests in parallel using default number of workers
-    with mp.Pool() as pool:
+    with mp.Pool(1 if sequentialize else None) as pool:
         results = pool.starmap(test_func, tests)
         if all(results):
             print_success("All tests passed.")
@@ -73,7 +73,7 @@ def run_parallel(test_func, tests):
             sys.exit(1)
 
 
-def cli(all_tests, test_func, tests_to_run):
+def cli(all_tests, test_func, tests_to_run, parallel):
     if tests_to_run:
         # If tests are specified on the command line, run only those tests, if
         # their name matches either the file or SDFG name of any known test
@@ -96,4 +96,4 @@ def cli(all_tests, test_func, tests_to_run):
     else:
         # Otherwise run them all
         to_run = all_tests
-    run_parallel(test_func, to_run)
+    run_parallel(test_func, to_run, not parallel)

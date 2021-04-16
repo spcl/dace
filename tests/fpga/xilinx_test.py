@@ -179,14 +179,15 @@ def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
 
 
 @click.command()
+@click.option("--parallel/--no-parallel", default=True)
 @click.argument("tests", nargs=-1)
-def xilinx_cli(tests):
+def xilinx_cli(parallel, tests):
     """
     If no arguments are specified, runs all tests. If any arguments are
     specified, runs only the tests specified (matching on file name or SDFG
     name).
     """
-    cli(TESTS, run, tests)
+    cli(TESTS, run, tests, parallel)
 
 
 if __name__ == "__main__":
