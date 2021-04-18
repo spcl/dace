@@ -1,20 +1,23 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ DaCe Python parsing functionality and entry point to Python frontend. """
 from __future__ import print_function
+import collections
 import inspect
 import copy
 import os
 import sympy
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional, Set, Tuple
 
 from dace import symbolic, dtypes
 from dace.config import Config
 from dace.frontend.python import newast
 from dace.sdfg import SDFG
-from dace.data import create_datadescriptor
+from dace.data import create_datadescriptor, Data
+
+ArgTypes = Dict[str, Data]
 
 
-def _get_type_annotations(f, f_argnames, decorator_args):
+def _get_type_annotations(f, f_argnames, decorator_args) -> ArgTypes:
     """ Obtains types from decorator or from type annotations in a function. 
     """
     type_annotations = {}
@@ -24,8 +27,17 @@ def _get_type_annotations(f, f_argnames, decorator_args):
     # Type annotation conditions
     has_args = len(decorator_args) > 0
     has_annotations = len(type_annotations) > 0
+
+    # Set __return* arrays from return type annotations
     if 'return' in type_annotations:
-        raise TypeError('DaCe programs do not have a return type')
+        rettype = type_annotations['return']
+        if isinstance(rettype, tuple):
+            for i, subrettype in enumerate(rettype):
+                type_annotations[f'__return_{i}'] = subrettype
+        else:
+            type_annotations['__return'] = rettype
+        del type_annotations['return']
+
     if has_args and has_annotations:
         raise SyntaxError('DaCe programs can only have decorator arguments ' +
                           '(\'@dace.program(...)\') or type annotations ' +
@@ -45,7 +57,11 @@ def _get_type_annotations(f, f_argnames, decorator_args):
         }
     elif has_annotations:
         # Make sure all arguments are annotated
-        if len(type_annotations) != len(f_argnames):
+        filtered = {
+            a
+            for a in type_annotations.keys() if not a.startswith('__return')
+        }
+        if len(filtered) != len(f_argnames):
             raise SyntaxError(
                 'Either none or all DaCe program parameters must ' +
                 'have type annotations')
@@ -132,7 +148,7 @@ def parse_from_function(function, *compilation_args, strict=None, save=True):
         # control flow detection in code generation
         xfh.split_interstate_edges(sdfg)
 
-    # Save the SDFG (again). Skip this step if running from a cached SDFG, as
+    # Save the SDFG. Skip this step if running from a cached SDFG, as
     # it might overwrite the cached SDFG.
     if not Config.get_bool('compiler', 'use_cache') and save:
         sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
@@ -250,7 +266,8 @@ class DaceProgram:
 
         self.global_vars = {
             k: v
-            for k, v in global_vars.items() if dtypes.isallowed(v, allow_recursive=True)
+            for k, v in global_vars.items()
+            if dtypes.isallowed(v, allow_recursive=True)
         }
         if self.argnames is None:
             self.argnames = []
