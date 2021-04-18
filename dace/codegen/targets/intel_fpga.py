@@ -25,6 +25,7 @@ from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.sdfg import nodes, utils as sdutils
+from dace.codegen.targets.common import sym2cpp
 from dace.sdfg import SDFGState
 import dace.sdfg.utils as utils
 from dace.symbolic import evaluate
@@ -74,6 +75,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             return
         # Keep track of generated converters to avoid multiple definition
         self.generated_converters = set()
+        # constants
+        self.generated_constants = set()
         # Channel mangles
         self.channel_mangle = defaultdict(dict)
         # Modules name mangles
@@ -1327,13 +1330,37 @@ __kernel void \\
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
     def generate_constants(self, sdfg, callsite_stream):
-        # Use framecode's generate_constants, but substitute constexpr for
-        # __constant
-        constant_stream = CodeIOStream()
-        self._frame.generate_constants(sdfg, constant_stream)
-        constant_string = constant_stream.getvalue()
-        constant_string = constant_string.replace("constexpr", "__constant")
-        callsite_stream.write(constant_string, sdfg)
+        # To avoid constants being multiple defined, define it the first time
+        # that we encounter it, and then we only declare it (as extern)
+
+        # Write constants
+
+        for cstname, (csttype, cstval) in sdfg.constants_prop.items():
+            if isinstance(csttype, dace.data.Array):
+                const_str = "__constant " + csttype.dtype.ctype + \
+                            " " + cstname + "[" + str(cstval.size) + "]"
+
+                if cstname not in self.generated_constants:
+                    # First time, define it
+                    self.generated_constants.add(cstname)
+                    const_str += " = {"
+                    it = np.nditer(cstval, order='C')
+                    for i in range(cstval.size - 1):
+                        const_str += str(it[0]) + ", "
+                        it.iternext()
+                    const_str += str(it[0]) + "};\n"
+                else:
+                    # only define
+                    const_str = "extern " + const_str + ";\n"
+                callsite_stream.write(const_str, sdfg)
+            else:
+                # this is a scalar. Now, defining this as an extern has the drawback
+                # that it is not resolved at compile time, preventing us to allocate fast memory
+                # Therefore, we will stick here a nice #define
+
+                # TODO: this has the problem that we can have name clashes
+                callsite_stream.write(f"#define {cstname} {sym2cpp(cstval)}\n",
+                                      sdfg)
 
     def generate_tasklet_postamble(self, sdfg, dfg, state_id, node,
                                    function_stream, callsite_stream,
