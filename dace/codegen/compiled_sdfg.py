@@ -164,7 +164,6 @@ class CompiledSDFG(object):
         self._sig = self._sdfg.signature_arglist(with_types=False)
         self._typedict = self._sdfg.arglist()
 
-
     def get_state_struct(self) -> ctypes.Structure:
         """ Attempt to parse the SDFG source code and extract the state struct. This method will parse the first
             consecutive entries in the struct that are pointers. As soon as a non-pointer or other unparseable field is
@@ -391,6 +390,9 @@ class CompiledSDFG(object):
 
         self._lastargs = newargs, initargs
         return self._lastargs
+
+    def clear_return_values(self):
+        self._return_syms = None
 
     def _initialize_return_values(self, kwargs):
         # Obtain symbol values from arguments and constants
