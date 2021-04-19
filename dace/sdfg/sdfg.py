@@ -1694,6 +1694,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
         return sdfg
 
+    def is_loaded(self) -> bool:
+        """
+        Returns True if the SDFG binary is already loaded in the current
+        process.
+        """
+        # Avoid import loops
+        from dace.codegen import compiled_sdfg as cs, compiler
+
+        binary_filename = compiler.get_binary_name(self.build_folder, self.name)
+        dll = cs.ReloadableDLL(binary_filename, self.name)
+        return dll.is_loaded()
+
     def compile(self, output_file=None) -> \
             'dace.codegen.compiler.CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
@@ -1717,6 +1729,15 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Clone SDFG as the other modules may modify its contents
         sdfg = copy.deepcopy(self)
+
+        # Rename SDFG to avoid runtime issues with clashing names
+        index = 0
+        while sdfg.is_loaded():
+            sdfg._name = f'{self._name}_{index}'
+            index += 1
+        if self.name != sdfg.name:
+            warnings.warn('SDFG "%s" is already loaded by another object, '
+                          'recompiling under a different name.' % self.name)
 
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()

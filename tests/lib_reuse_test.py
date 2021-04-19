@@ -2,12 +2,13 @@
 from __future__ import print_function
 
 import dace
+from dace.frontend.python.parser import DaceProgram
 from dace.codegen.exceptions import CompilationError
 import numpy as np
 
 
 # Dynamically creates DaCe programs with the same name
-def program_generator(size, factor):
+def program_generator(size: int, factor: float) -> DaceProgram:
     @dace.program(dace.float64[size],
                   dace.float64[size],
                   size=size,

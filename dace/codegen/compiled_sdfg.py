@@ -48,6 +48,32 @@ class ReloadableDLL(object):
 
         return ctypes.CFUNCTYPE(restype)(func)
 
+    def is_loaded(self) -> bool:
+        """ Checks if the library is already loaded. """
+
+        # If internal library is already loaded, skip
+        if self._lib is not None and self._lib.value is not None:
+            return True
+        if not os.path.isfile(self._stub_filename):
+            return False
+        self._stub = ctypes.CDLL(self._stub_filename)
+
+        # Set return types of stub functions
+        self._stub.load_library.restype = ctypes.c_void_p
+        self._stub.get_symbol.restype = ctypes.c_void_p
+
+        lib_cfilename = None
+        # Convert library filename to string according to OS
+        if os.name == 'nt':
+            # As UTF-16
+            lib_cfilename = ctypes.c_wchar_p(self._library_filename)
+        else:
+            # As UTF-8
+            lib_cfilename = ctypes.c_char_p(
+                self._library_filename.encode('utf-8'))
+
+        return self._stub.is_library_loaded(lib_cfilename) == 1
+
     def load(self):
         """ Loads the internal library using the stub. """
 
