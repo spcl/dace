@@ -38,10 +38,9 @@ def get_type_annotations(f, f_argnames, decorator_args) -> ArgTypes:
             type_annotations['__return'] = rettype
         del type_annotations['return']
 
+    # If both arguments and annotations are given, annotations take precedence
     if has_args and has_annotations:
-        raise SyntaxError('DaCe programs can only have decorator arguments ' +
-                          '(\'@dace.program(...)\') or type annotations ' +
-                          '(\'def program(arr: type, ...)\'), but not both')
+        has_args = False
 
     # Alert if there are any discrepancies between annotations and arguments
     if has_args:
