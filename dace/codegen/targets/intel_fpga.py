@@ -1330,10 +1330,8 @@ __kernel void \\
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
     def generate_constants(self, sdfg, callsite_stream):
-        # To avoid constants being multiple defined, define it the first time
-        # that we encounter it, and then we only declare it (as extern)
-
-        # Write constants
+        # To avoid a constant being multiple defined, define it once and
+        # declare it as extern everywhere else.
 
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
             if isinstance(csttype, dace.data.Array):
@@ -1354,11 +1352,9 @@ __kernel void \\
                     const_str = "extern " + const_str + ";\n"
                 callsite_stream.write(const_str, sdfg)
             else:
-                # this is a scalar. Now, defining this as an extern has the drawback
-                # that it is not resolved at compile time, preventing us to allocate fast memory
-                # Therefore, we will stick here a nice #define
-
-                # TODO: this has the problem that we can have name clashes
+                # This is a scalar: defining it as an extern variable has the drawback
+                # that it is not resolved at compile time, preventing the compiler to
+                # allocate fast memory. Therefore, we will use a #define
                 callsite_stream.write(f"#define {cstname} {sym2cpp(cstval)}\n",
                                       sdfg)
 
