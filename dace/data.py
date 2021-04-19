@@ -186,7 +186,7 @@ class Scalar(Data):
     def offset(self):
         return [0]
 
-    def __eq__(self, other):
+    def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
         if self.dtype != other.dtype:
@@ -382,7 +382,7 @@ class Array(Data):
         return True
 
     # Checks for equivalent shape and type
-    def __eq__(self, other):
+    def is_equivalent(self, other):
         if not isinstance(other, type(self)):
             return False
 
@@ -500,7 +500,7 @@ class Stream(Data):
                           self.offset, self.lifetime, self.debuginfo)
 
     # Checks for equivalent shape and type
-    def __eq__(self, other):
+    def is_equivalent(self, other):
         if not isinstance(other, type(self)):
             return False
 

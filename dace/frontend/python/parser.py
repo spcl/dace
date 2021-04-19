@@ -195,15 +195,28 @@ class DaceProgram:
         sdfg = self.parse(*args, strict=strict, save=save)
         return sdfg.compile()
 
+    def is_cached(self, argtypes: ArgTypes) -> bool:
+        """
+        Returns True if the given arguments exist in the compiled SDFG cache.
+        """
+        if self._cache[0] is None or self._cache[0].keys() != argtypes.keys():
+            return False
+        for k, v in self._cache[0].items():
+            if not v.is_equivalent(argtypes[k]):
+                return False
+        return True
+
     def __call__(self, *args, **kwargs):
         """ Convenience function that parses, compiles, and runs a DaCe 
             program. """
         # Check if SDFG with these argument types and shapes is cached
         argtypes = get_type_annotations(self.f, self.argnames, args)
-        if self._cache[0] == argtypes:
+        if self.is_cached(argtypes):
             self._cache[2].clear_return_values()
             # Reconstruct keyword arguments
-            kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
+            kwargs.update(
+                {aname: arg
+                 for aname, arg in zip(self.argnames, args)})
             kwargs.update(infer_symbols_from_shapes(self._cache[1], kwargs))
             return self._cache[2](**kwargs)
 
