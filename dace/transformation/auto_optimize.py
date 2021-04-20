@@ -187,11 +187,15 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
                 identity = dtypes.reduction_identity(dtype, redtype)
                 if identity is None:  # Cannot infer identity value
                     continue
-                dataflow.AccumulateTransient.apply_to(
-                    sdfg,
-                    options=dict(identity=identity, array=e.data.data),
-                    map_exit=mapexit,
-                    outer_map_exit=outer_mapexit)
+                try:
+                    dataflow.AccumulateTransient.apply_to(
+                        sdfg,
+                        options=dict(identity=identity, array=e.data.data),
+                        map_exit=mapexit,
+                        outer_map_exit=outer_mapexit)
+                except StopIteration:
+                    # A previous AccumulateTransient created a nested SDFG
+                    continue
 
     if debugprint and len(transformed) > 0:
         print(f'Optimized {len(transformed)} write-conflicted maps')
