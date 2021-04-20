@@ -219,7 +219,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
     def create_mangled_module_name(self, module_name, kernel_id):
         '''
         Memorize and returns the mangled name of a module (OpenCL kernel)
-        The dictionary is organized as (module_name) : {kernel_id: mangled_name)
+        The dictionary is organized as {module_name: {kernel_id: mangled_name}}
         '''
 
         if kernel_id not in self.module_mange[module_name]:
