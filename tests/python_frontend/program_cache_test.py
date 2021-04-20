@@ -52,7 +52,24 @@ def test_cache_return_values():
     assert a == 25 and b == 36
 
 
+def test_cache_argument_names():
+    @dace.program
+    def test(C: dace.float32[20], A: dace.float64[30]):
+        A *= 5
+        C *= 2
+
+    sdfg = test.to_sdfg()
+    a = np.random.rand(20).astype(np.float32)
+    c = np.random.rand(30)
+    rega = a * 2
+    regc = c * 5
+    sdfg(a, c)
+
+    assert np.allclose(a, rega) and np.allclose(c, regc)
+
+
 if __name__ == '__main__':
     test_cache_same_args()
     test_cache_different_args()
     test_cache_return_values()
+    test_cache_argument_names()

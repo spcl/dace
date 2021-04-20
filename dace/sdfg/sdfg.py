@@ -33,9 +33,10 @@ from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import validate_name
-from dace.properties import (make_properties, Property, CodeProperty,
-                             TransformationHistProperty, SDFGReferenceProperty,
-                             DictProperty, OrderedDictProperty, CodeBlock)
+from dace.properties import (ListProperty, make_properties, Property,
+                             CodeProperty, TransformationHistProperty,
+                             SDFGReferenceProperty, DictProperty,
+                             OrderedDictProperty, CodeBlock)
 
 
 def _arrays_to_json(arrays):
@@ -225,7 +226,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         the `Memlet` class documentation.
     """
 
-    arg_types = OrderedDictProperty(default={}, desc="Formal parameter list")
+    arg_names = ListProperty(
+        element_type=str,
+        desc='Ordered argument names (used for calling conventions).')
     constants_prop = Property(dtype=dict,
                               default={},
                               desc="Compile-time constants")
@@ -255,7 +258,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def __init__(self,
                  name: str,
-                 arg_types: Dict[str, dt.Data] = None,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
                  propagate: bool = True,
                  parent=None):
@@ -275,7 +277,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if name is not None and not validate_name(name):
             raise InvalidSDFGError('Invalid SDFG name "%s"' % name, self, None)
 
-        self.arg_types = arg_types or collections.OrderedDict()
         self.constants_prop = {}
         if constants is not None:
             for cstname, (cst_dtype, cstval) in constants.items():
@@ -341,8 +342,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         edges = json_obj['edges']
 
         ret = SDFG(name=attrs['name'],
-                   arg_types=dace.serialize.loads(
-                       dace.serialize.dumps(attrs['arg_types'])),
                    constants=dace.serialize.loads(
                        dace.serialize.dumps(attrs['constants_prop'])),
                    parent=context_info['sdfg'])

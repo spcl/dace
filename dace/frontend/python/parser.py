@@ -203,7 +203,7 @@ class DaceProgram:
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
             sdfg = self._auto_optimize(sdfg)
 
-        return CompiledDaceProgram(sdfg.compile(), self)
+        return sdfg.compile()
 
     def is_cached(self, argtypes: ArgTypes) -> bool:
         """
@@ -280,6 +280,9 @@ class DaceProgram:
 
         # Obtain DaCe program as SDFG
         sdfg = self.generate_pdp(*compilation_args, strict=strict)
+
+        # Set argument names
+        sdfg.arg_names = self.argnames
 
         # Apply strict transformations automatically
         if (strict == True or (strict is None and Config.get_bool(
@@ -384,22 +387,3 @@ class DaceProgram:
                                          other_sdfgs,
                                          self.dec_kwargs,
                                          strict=strict)
-
-
-class CompiledDaceProgram:
-    """ 
-    A precompiled DaCe program (SDFG) that can accept arguments
-    in the same order as the Python function. Contains the precompiled
-    SDFG and the original DaceProgram for argument reference.
-    """
-    def __init__(self, csdfg: 'dace.codegen.compiled_sdfg.CompiledSDFG',
-                 program: DaceProgram):
-        self.csdfg = csdfg
-        self.program = program
-
-    def __call__(self, *args, **kwargs):
-        # Reconstruct keyword arguments
-        kwargs.update(
-            {aname: arg
-             for aname, arg in zip(self.program.argnames, args)})
-        return self.csdfg(**kwargs)

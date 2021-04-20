@@ -171,7 +171,7 @@ def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
 
 class CompiledSDFG(object):
     """ A compiled SDFG object that can be called through Python. """
-    def __init__(self, sdfg, lib: ReloadableDLL):
+    def __init__(self, sdfg, lib: ReloadableDLL, argnames: List[str] = None):
         self._sdfg = sdfg
         self._lib = lib
         self._initialized = False
@@ -189,6 +189,7 @@ class CompiledSDFG(object):
         # Cache SDFG argument properties
         self._sig = self._sdfg.signature_arglist(with_types=False)
         self._typedict = self._sdfg.arglist()
+        self.argnames = argnames
 
     def get_state_struct(self) -> ctypes.Structure:
         """ Attempt to parse the SDFG source code and extract the state struct. This method will parse the first
@@ -260,7 +261,13 @@ class CompiledSDFG(object):
         if self._exit is not None:
             self._exit(self._libhandle)
 
-    def __call__(self, **kwargs):
+    def __call__(self, *args, **kwargs):
+        # Update arguments from ordered list
+        if len(args) > 0 and self.argnames is not None:
+            kwargs.update(
+                {aname: arg
+                 for aname, arg in zip(self.argnames, args)})
+
         try:
             argtuple, initargtuple = self._construct_args(**kwargs)
 
