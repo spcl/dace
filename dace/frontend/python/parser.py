@@ -185,6 +185,12 @@ class DaceProgram:
         self._cache: Tuple[ArgTypes, SDFG,
                            compiled_sdfg.CompiledSDFG] = (None, None, None)
 
+    def _auto_optimize(self, sdfg: SDFG) -> SDFG:
+        """ Invoke automatic optimization heuristics on internal program. """
+        # Avoid import loop
+        from dace.transformation import auto_optimize as autoopt
+        return autoopt.auto_optimize(sdfg, self.device)
+
     def to_sdfg(self, *args, strict=None, save=False) -> SDFG:
         """ Parses the DaCe function into an SDFG. """
         return self.parse(*args, strict=strict, save=save)
@@ -192,7 +198,12 @@ class DaceProgram:
     def compile(self, *args, strict=None, save=False):
         """ Convenience function that parses and compiles a DaCe program. """
         sdfg = self.parse(*args, strict=strict, save=save)
-        return sdfg.compile()
+
+        # Invoke auto-optimization as necessary
+        if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
+            sdfg = self._auto_optimize(sdfg)
+
+        return CompiledDaceProgram(sdfg.compile(), self)
 
     def is_cached(self, argtypes: ArgTypes) -> bool:
         """
@@ -237,8 +248,7 @@ class DaceProgram:
 
         # Invoke auto-optimization as necessary
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
-            from dace.transformation import auto_optimize as autoopt
-            sdfg = autoopt.auto_optimize(sdfg, self.device)
+            sdfg = self._auto_optimize(sdfg)
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
@@ -319,14 +329,15 @@ class DaceProgram:
             if not argtypes:
                 if not compilation_args:
                     raise SyntaxError(
-                        'DaCe program compilation requires either type annotations '
-                        'or arrays')
+                        'Compiling DaCe programs requires static types. '
+                        'Please provide type annotations on the function, '
+                        'or add sample arguments to the compilation call.')
 
                 # Parse compilation arguments
                 if len(compilation_args) != len(self.argnames):
                     raise SyntaxError(
-                        'Arguments must match DaCe program parameters (expecting '
-                        '%d)' % len(self.argnames))
+                        'Number of keyword arguments must match parameters '
+                        '(expecting %d)' % len(self.argnames))
                 argtypes = {
                     k: create_datadescriptor(v)
                     for k, v in zip(self.argnames, compilation_args)
@@ -373,3 +384,22 @@ class DaceProgram:
                                          other_sdfgs,
                                          self.dec_kwargs,
                                          strict=strict)
+
+
+class CompiledDaceProgram:
+    """ 
+    A precompiled DaCe program (SDFG) that can accept arguments
+    in the same order as the Python function. Contains the precompiled
+    SDFG and the original DaceProgram for argument reference.
+    """
+    def __init__(self, csdfg: 'dace.codegen.compiled_sdfg.CompiledSDFG',
+                 program: DaceProgram):
+        self.csdfg = csdfg
+        self.program = program
+
+    def __call__(self, *args, **kwargs):
+        # Reconstruct keyword arguments
+        kwargs.update(
+            {aname: arg
+             for aname, arg in zip(self.program.argnames, args)})
+        return self.csdfg(**kwargs)
