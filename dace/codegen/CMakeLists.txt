@@ -462,6 +462,8 @@ if(DACE_ENABLE_XILINX)
     set(DACE_VITIS_KERNEL_FILES ${DACE_VITIS_KERNEL_FILES} ${DACE_KERNEL_FILE})
     configure_file(${CMAKE_SOURCE_DIR}/Xilinx_HLS.tcl.in Synthesize_${DACE_KERNEL_NAME}.tcl)
     add_custom_target(xilinx_synthesis_${DACE_KERNEL_NAME} COMMAND ${Vitis_HLS} -f Synthesize_${DACE_KERNEL_NAME}.tcl)
+    set_property(TARGET xilinx_synthesis_${DACE_KERNEL_NAME} APPEND PROPERTY
+                 ADDITIONAL_CLEAN_FILES ${DACE_KERNEL_NAME} vitis_hls.log)
     set(DACE_SYNTHESIS_TARGETS ${DACE_SYNTHESIS_TARGETS} xilinx_synthesis_${DACE_KERNEL_NAME})
 
     if(Vitis_IS_LEGACY)
