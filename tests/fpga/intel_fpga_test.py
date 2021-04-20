@@ -36,11 +36,11 @@ TESTS = [
     ### Type inference ###
     ("samples/simple/mandelbrot.py", "mandelbrot_1", ["--fpga"]),
     ("tests/fpga/intel_fpga/type_inference.py", "type_inference_1", []),
-    ("tests/fpga/intel_fpga/constant_type_inference.py", "constant_type_inference",
-     []),
+    ("tests/fpga/intel_fpga/constant_type_inference.py",
+     "constant_type_inference", []),
     ### Systolic array ###
-    ("tests/fpga/intel_fpga/simple_systolic_array.py", "simple_systolic_array_4",
-     [128, 4]),
+    ("tests/fpga/intel_fpga/simple_systolic_array.py",
+     "simple_systolic_array_4", [128, 4]),
     ("samples/fpga/matrix_multiplication_systolic.py",
      "mm_fpga_systolic_4_NxKx256", [256, 256, 256, 4]),
     ("samples/fpga/jacobi_fpga_systolic.py", "jacobi_fpga_systolic_8_Hx8192xT",
@@ -52,8 +52,7 @@ TESTS = [
     ("samples/fpga/matrix_multiplication_stream.py", "mm_fpga_stream_NxKx128",
      [128, 128, 128]),
     ("samples/fpga/spmv_fpga_stream.py", "spmv_fpga_stream", [128, 128, 64]),
-    ("samples/fpga/axpy_transformed.py",
-     ["axpy_test_fpga_0_w1_1", "axpy_test_fpga_1_w4_1"], [24]),
+    ("samples/fpga/axpy_transformed.py", ["axpy_fpga_24"], [24]),
     ("tests/fpga/multiple_kernels.py", "multiple_kernels", []),
     ("tests/fpga/unique_nested_sdfg_fpga.py", "two_vecAdd", []),
     ### BLAS ###
@@ -80,7 +79,8 @@ TESTS = [
     # Channels mangling
     ("tests/fpga/intel_fpga/channels_mangling.py", "channels_mangling", []),
     # Views
-    ("tests/fpga/reshape_view_fpga.py", "reshape_view_fpga", []),
+    ("tests/fpga/reshape_view_fpga.py",
+     ["reshapedst_1", "reshp_np_1", "view_fpga"], []),
     # Test map fusion resulting in Tasklet -> Tasklet memlets
     ("tests/transformations/mapfusion_fpga.py",
      ["multiple_fusions_1", "fusion_with_transient_1"], []),

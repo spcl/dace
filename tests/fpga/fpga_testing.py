@@ -4,6 +4,7 @@ import click
 from datetime import datetime
 import multiprocessing as mp
 from pathlib import Path
+import re
 import subprocess as sp
 import sys
 from typing import Union, Tuple
@@ -81,18 +82,21 @@ def cli(all_tests, test_func, tests_to_run, parallel):
         # If tests are specified on the command line, run only those tests, if
         # their name matches either the file or SDFG name of any known test
         test_dict = {t.replace(".py", ""): False for t in tests_to_run}
+        test_patterns = {k: re.compile(k) for k in test_dict.keys()}
         to_run = []
         for t in all_tests:
             stem = Path(t[0]).stem
-            if stem in test_dict:
-                to_run.append(t)
-                test_dict[stem] = True
-            else:
-                sdfgs = t[1] if not isinstance(t[1], str) else [t[1]]
+            sdfgs = t[1] if not isinstance(t[1], str) else [t[1]]
+            for k, v in test_patterns.items():
+                if re.search(v, stem):
+                    to_run.append(t)
+                    test_dict[k] = True
+                    break
                 for sdfg in sdfgs:
-                    if sdfg in test_dict:
+                    if re.search(v, sdfg):
                         to_run.append(t)
-                        test_dict[sdfg] = True
+                        test_dict[k] = True
+                        break
         for k, v in test_dict.items():
             if not v:
                 raise ValueError(f"Test \"{k}\" not found.")
