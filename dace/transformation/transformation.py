@@ -496,6 +496,8 @@ class ExpandTransformation(Transformation):
         state = sdfg.nodes()[self.state_id]
         node = state.nodes()[self.subgraph[type(self)._match_node]]
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
+        import pdb
+        pdb.set_trace()
         if isinstance(expansion, SDFG):
             expansion = state.add_nested_sdfg(expansion,
                                               sdfg,

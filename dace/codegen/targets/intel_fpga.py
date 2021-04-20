@@ -19,12 +19,14 @@ from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import make_absolute
 from dace.codegen.targets import cpp, fpga
+from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.tools.type_inference import infer_expr_type
 from dace.codegen.targets.common import sym2cpp
 from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.sdfg import nodes, utils as sdutils
+from dace.codegen.targets.common import sym2cpp
 from dace.sdfg import SDFGState
 import dace.sdfg.utils as utils
 from dace.symbolic import evaluate
@@ -74,11 +76,11 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             return
         # Keep track of generated converters and constantsto avoid multiple definition
         self.generated_converters = set()
+        # constants
         self.generated_constants = set()
-
         # Channel mangles
         self.channel_mangle = defaultdict(dict)
-
+        # Modules name mangles
         self.module_mange = defaultdict(dict)
 
         super().__init__(*args, **kwargs)
@@ -219,7 +221,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
     def create_mangled_module_name(self, module_name, kernel_id):
         '''
         Memorize and returns the mangled name of a module (OpenCL kernel)
-        The dictionary is organized as (module_name) : {kernel_id: mangled_name)
+        The dictionary is organized as {module_name: {kernel_id: mangled_name}}
         '''
 
         if kernel_id not in self.module_mange[module_name]:
@@ -503,17 +505,18 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_body_stream.write("\n")
 
         # Generate host code
-        self.generate_host_function_boilerplate(
-            sdfg, state, kernel_name, global_data_parameters,
-            nested_global_transients, host_code_body_stream, function_stream,
-            callsite_stream)
+        self.generate_host_function_boilerplate(sdfg, state, kernel_name,
+                                                global_data_parameters,
+                                                nested_global_transients,
+                                                host_code_body_stream,
+                                                function_stream,
+                                                callsite_stream)
 
         self.generate_host_function_prologue(sdfg, state, host_code_body_stream)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
-                              subgraph_parameters,
-                              kernel_body_stream, host_code_header_stream,
-                              host_code_body_stream)
+                              subgraph_parameters, kernel_body_stream,
+                              host_code_header_stream, host_code_body_stream)
 
         kernel_body_stream.write("\n")
 
@@ -579,8 +582,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 }""", sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
-                        module_stream, host_header_stream,
-                        host_body_stream):
+                        module_stream, host_header_stream, host_body_stream):
 
         state_id = sdfg.node_id(state)
         dfg = sdfg.nodes()[state_id]
@@ -608,12 +610,11 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # "_cra_slave_inst", which is 15 characters, so we restrict to
         # 61 - 15 = 46, and round down to 36 to be conservative, since
         # internally could still fail while dealing with RTL.
-        # Therefore we cut down names longer than that
-
-        # But tha is no more sufficient: indeed, if we two almost identical NestedSDFG, it could happen
-        # that we have module name clashes. Therefore we also take care of this
+        # However, in this way we could have name clashes (e.g., if we have two almost identical NestedSDFG).
+        # Therefore we explicitly take care of this by mangling the name
         module_function_name = self.create_mangled_module_name(
             module_function_name[0:36], self._kernel_count)
+
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
         scope_children = subgraph.scope_children()
@@ -807,7 +808,6 @@ __kernel void \\
             desc = sdfg.arrays[in_memlet.data]
             defined_type, defined_ctype = self._dispatcher.defined_vars.get(
                 in_memlet.data, 1)
-
             if isinstance(desc, dace.data.Array) and (
                     desc.storage == dtypes.StorageType.FPGA_Global
                     or desc.storage == dtypes.StorageType.FPGA_Local):
@@ -1346,10 +1346,9 @@ __kernel void \\
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
     def generate_constants(self, sdfg, callsite_stream):
-        # To avoid constants being multiple defined, define it the first time
-        # that we encounter it, and then we only declare it (as extern)
+        # To avoid a constant being multiple defined, define it once and
+        # declare it as extern everywhere else.
 
-        # Write constants
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
             if isinstance(csttype, dace.data.Array):
                 const_str = "__constant " + csttype.dtype.ctype + \
@@ -1369,9 +1368,9 @@ __kernel void \\
                     const_str = "extern " + const_str + ";\n"
                 callsite_stream.write(const_str, sdfg)
             else:
-                # this is a scalar. Now, definining this as an exter has the drawback
-                # that it is not resolved at compile time, preventing us to allocate fast memory
-                # Therefore, we will stick here a nice #define
+                # This is a scalar: defining it as an extern variable has the drawback
+                # that it is not resolved at compile time, preventing the compiler to
+                # allocate fast memory. Therefore, we will use a #define
                 callsite_stream.write(f"#define {cstname} {sym2cpp(cstval)}\n",
                                       sdfg)
 

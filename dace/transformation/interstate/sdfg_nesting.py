@@ -1086,19 +1086,18 @@ class NestSDFG(transformation.Transformation):
                         real_shape = copy.deepcopy(nodedesc.shape)
                         overapprox_shape = []
                         propagation.propagate_states(nested_sdfg)
+
+                        # it this transient has a symbolic shape, if any symbol is in in the "ranges" of the state
+                        # the substitute it with its max value (if it can be inferred)
+                        # This is useful for FPGAs, where we can not have dynamic memory allocation
                         if not isinstance(nodedesc,
                                           data.Scalar) and state.ranges:
                             for sz in nodedesc.shape:
                                 newsz = sz
-                                # if symbolic.issymbolic(sz):
-                                #     for s in sz.free_symbols:
-                                #         if str(s) in state.ranges.keys():
-                                #             repldict = {s: state.ranges[str(s)][0][1] + 1}
-                                #             newsz = newsz.subs(repldict)
+
                                 if symbolic.issymbolic(sz):
                                     for s in newsz.free_symbols:
-                                        # import pdb
-                                        # pdb.set_trace()
+
                                         replacement_limit_value = None
                                         to_solve_limit_value = copy.deepcopy(s)
                                         replacement_initial_value = None
@@ -1128,7 +1127,7 @@ class NestSDFG(transformation.Transformation):
                                         if replacement_initial_value is not None and replacement_limit_value is not None:
 
                                             # Note we can evaluate the maximum, since we don't know the value of symbols
-                                            # TODO: this is not robust
+                                            # TODO: this can fail
                                             newsz_limit = newsz.subs(
                                                 {s: replacement_limit_value})
                                             if newsz_limit.is_negative:
@@ -1142,7 +1141,6 @@ class NestSDFG(transformation.Transformation):
                             nodedesc.shape = overapprox_shape
                             nodedesc.total_size = reduce(
                                 operator.mul, nodedesc.shape, 1)
-                            # nodedesc.total_size = math.prod(nodedesc.shape)
 
                         arrname = node.data
                         if not scope_dict[node]:
