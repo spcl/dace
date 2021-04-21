@@ -14,9 +14,6 @@ def test():
 
     sdfg.add_stream("fifo_in_a", dace.dtypes.int32, 1, transient=True)
     sdfg.add_stream("fifo_in_b", dace.dtypes.int32, 1, transient=True)
-    sdfg.add_stream("fifo_in_a", dace.dtypes.int32, 1, transient=True)
-    sdfg.add_stream("fifo_in_b", dace.dtypes.int32, 1, transient=True)
-    sdfg.add_stream("fifo_out", dace.dtypes.int32, 1, transient=True)
     sdfg.add_stream("fifo_out", dace.dtypes.int32, 1, transient=True)
 
     state = sdfg.add_state("sections")

@@ -25,8 +25,9 @@ out3 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
 
 
 @dace.program
-def program(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O], \
-         out1: dace.float64[N,M], out2: dace.float64[1], out3: dace.float64[N,M,O]):
+def subgraph_fusion_complex(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O],
+                 out1: dace.float64[N, M], out2: dace.float64[1],
+                 out3: dace.float64[N, M, O]):
 
     tmp1 = np.ndarray([N, M, O], dtype=dace.float64)
     tmp2 = np.ndarray([N, M, O], dtype=dace.float64)
@@ -136,7 +137,7 @@ def _test_quantitatively(sdfg, graph):
 
 
 def test_complex():
-    sdfg = program.to_sdfg()
+    sdfg = subgraph_fusion_complex.to_sdfg()
     sdfg.apply_strict_transformations()
     _test_quantitatively(sdfg, sdfg.nodes()[0])
 

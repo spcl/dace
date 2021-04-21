@@ -82,7 +82,8 @@ def test_call_multiple_sdfgs():
     ##################
     # put everything together as a program
     @dace.program
-    def prog(input: dace.float32[2, 2], output: dace.float32[2, 2]):
+    def multiple_nested_sdfgs(input: dace.float32[2, 2],
+                              output: dace.float32[2, 2]):
         tmp_max = np.max(input, axis=axis)
 
         out_tmp = dace.define_local(out_tmp_shape, out_tmp_dtype)
@@ -92,7 +93,7 @@ def test_call_multiple_sdfgs():
 
         out_tmp_div_sum(out_tmp=out_tmp, tmp_sum=tmp_sum, output=output)
 
-    sdfg = prog.to_sdfg(strict=False)
+    sdfg = multiple_nested_sdfgs.to_sdfg(strict=False)
     state = sdfg.nodes()[-1]
     for n in state.nodes():
         if isinstance(n, dace.sdfg.nodes.AccessNode):

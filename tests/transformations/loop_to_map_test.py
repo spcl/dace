@@ -175,7 +175,7 @@ def test_loop_to_map_variable_reassigned(n=None):
 
 def test_output_copy():
     @dace.program
-    def l2mtest(A: dace.float64[20, 20]):
+    def l2mtest_copy(A: dace.float64[20, 20]):
         for i in range(1, 20):
             A[i, :] = A[i - 1] + 5
 
@@ -194,7 +194,7 @@ def test_output_copy():
 
 def test_output_accumulate():
     @dace.program
-    def l2mtest(A: dace.float64[20, 20]):
+    def l2mtest_accumulate(A: dace.float64[20, 20]):
         for i in range(1, 20):
             A[i, :] += A[i - 1] + 5
 

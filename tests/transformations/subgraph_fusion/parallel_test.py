@@ -11,11 +11,13 @@ N, M, O, P, Q, R = [dace.symbol(s) for s in ['N', 'M', 'O', 'P', 'Q', 'R']]
 
 
 @dace.program
-def program(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O],
-            D: dace.float64[M], E: dace.float64[N], F: dace.float64[P],
-            G: dace.float64[M], H: dace.float64[P], I: dace.float64[N],
-            J: dace.float64[R], X: dace.float64[N], Y: dace.float64[M],
-            Z: dace.float64[P]):
+def subgraph_fusion_parallel(A: dace.float64[N], B: dace.float64[M],
+                             C: dace.float64[O], D: dace.float64[M],
+                             E: dace.float64[N], F: dace.float64[P],
+                             G: dace.float64[M], H: dace.float64[P],
+                             I: dace.float64[N], J: dace.float64[R],
+                             X: dace.float64[N], Y: dace.float64[M],
+                             Z: dace.float64[P]):
 
     tmp1 = np.ndarray([N, M, O], dtype=dace.float64)
     for i, j, k in dace.map[0:N, 0:M, 0:O]:
@@ -67,7 +69,7 @@ def test_p1():
     Q.set(42)
     R.set(25)
 
-    sdfg = program.to_sdfg()
+    sdfg = subgraph_fusion_parallel.to_sdfg()
     sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
 
