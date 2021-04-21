@@ -67,7 +67,7 @@ jobs:
         codecov
 
   test-heterogeneous:
-    runs-on: [self-hosted, linux, gpu, intel-fpga, xilinx-fpga]
+    runs-on: [self-hosted, linux]
     steps:
     - uses: actions/checkout@v2
       with:
@@ -85,7 +85,6 @@ jobs:
     - name: Test dependencies
       run: |
         papi_avail
-        nvidia-smi
 
     - name: Run parallel pytest 
       run: |
@@ -94,6 +93,42 @@ jobs:
         . /opt/setupenv
         pytest -n auto --cov-report=xml --cov=dace --tb=short -m "verilator or mkl or papi"
         codecov
+
+    - name: Run MPI tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_single_cache=1
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        . /opt/setupenv
+        ./tests/mpi_test.sh
+
+    - name: Report overall coverage
+      run: |
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        . /opt/setupenv
+        coverage combine . */; coverage report; coverage xml
+        codecov
+
+  test-gpu:
+    runs-on: [self-hosted, linux, gpu]
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: 'recursive'
+    - name: Install dependencies
+      run: |
+        rm -rf .dacecache tests/.dacecache
+        . /opt/setupenv
+        python -m pip install --upgrade pip
+        pip install flake8 pytest-xdist coverage codecov
+        pip install mpi4py
+        pip uninstall -y dace
+        pip install -e ".[testing]"
+
+    - name: Test dependencies
+      run: |
+        nvidia-smi
 
     - name: Run pytest GPU
       run: |
@@ -112,14 +147,28 @@ jobs:
         . /opt/setupenv
         ./tests/cuda_test.sh
 
-    - name: Run MPI tests
+    - name: Report overall coverage
       run: |
-        export NOSTATUSBAR=1
-        export DACE_testing_single_cache=1
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
-        ./tests/mpi_test.sh
+        coverage combine . */; coverage report; coverage xml
+        codecov
+
+  test-fpga:
+    runs-on: [self-hosted, linux, intel-fpga, xilinx-fpga]
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: 'recursive'
+    - name: Install dependencies
+      run: |
+        rm -rf .dacecache tests/.dacecache
+        . /opt/setupenv
+        python -m pip install --upgrade pip
+        pip install flake8 pytest-xdist coverage codecov
+        pip install mpi4py
+        pip uninstall -y dace
+        pip install -e ".[testing]"
 
     - name: Run Intel FPGA tests
       run: |
