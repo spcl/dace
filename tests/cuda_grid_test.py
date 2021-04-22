@@ -22,7 +22,7 @@ def was_vectorized(sdfg: dace.SDFG) -> bool:
 
 
 @dace.program(dace.float32[N], dace.float32[N])
-def cuda_grid(V, Vout):
+def cudahello(V, Vout):
     # Transient variable
     @dace.map(_[0:N])
     def multiplication(i):
