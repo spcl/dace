@@ -93,7 +93,9 @@ def run(path: Path, sdfg_names: Union[str, Iterable[str]], args: Iterable[Any]):
     os.environ["DACE_compiler_fpga_vendor"] = "intel_fpga"
     os.environ["DACE_compiler_use_cache"] = "0"
     os.environ["DACE_compiler_default_data_types"] = "C"
-    os.environ["DACE_testing_single_cache"] = "0"
+    # We would like to use DACE_cache=hash, but we want to have access to the
+    # program's build folder
+    os.environ["DACE_cache"] = "name"
     os.environ["DACE_compiler_intel_fpga_mode"] = "emulator"
     os.environ["DACE_optimizer_transform_on_call"] = "0"
     os.environ["DACE_optimizer_interface"] = ""

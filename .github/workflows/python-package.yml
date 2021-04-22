@@ -43,7 +43,7 @@ jobs:
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
-        export DACE_testing_single_cache=0
+        export DACE_cache=unique
         export DACE_optimizer_interface=" "
         if [ "${{ matrix.strict-xforms }}" = "autoopt" ]; then
             export DACE_optimizer_automatic_strict_transformations=1
@@ -58,7 +58,7 @@ jobs:
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
-        export DACE_testing_single_cache=1
+        export DACE_cache=single
         export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         ./tests/polybench_test.sh
@@ -88,7 +88,7 @@ jobs:
 
     - name: Run parallel pytest 
       run: |
-        export DACE_testing_single_cache=0
+        export DACE_cache=unique
         export DACE_optimizer_interface=" "
         . /opt/setupenv
         pytest -n auto --cov-report=xml --cov=dace --tb=short -m "verilator or mkl or papi"
@@ -97,7 +97,7 @@ jobs:
     - name: Run MPI tests
       run: |
         export NOSTATUSBAR=1
-        export DACE_testing_single_cache=1
+        export DACE_cache=single
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
@@ -132,7 +132,7 @@ jobs:
 
     - name: Run pytest GPU
       run: |
-        export DACE_testing_single_cache=1
+        export DACE_cache=single
         export DACE_optimizer_interface=" "
         . /opt/setupenv
         pytest --cov-report=xml --cov=dace --tb=short -m "gpu"
@@ -141,7 +141,7 @@ jobs:
     - name: Run extra GPU tests
       run: |
         export NOSTATUSBAR=1
-        export DACE_testing_single_cache=1
+        export DACE_cache=single
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
@@ -172,7 +172,6 @@ jobs:
     - name: Run Intel FPGA tests
       run: |
         export NOSTATUSBAR=1
-        export DACE_testing_single_cache=0
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
@@ -182,7 +181,6 @@ jobs:
     - name: Run Xilinx tests
       run: |
         export NOSTATUSBAR=1
-        export DACE_testing_single_cache=0
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv

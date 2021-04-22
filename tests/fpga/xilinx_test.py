@@ -81,7 +81,9 @@ def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
     env = os.environ.copy()
     env["DACE_compiler_fpga_vendor"] = "xilinx"
     env["DACE_compiler_use_cache"] = "0"
-    env["DACE_testing_single_cache"] = "0"
+    # We would like to use DACE_cache=hash, but we need to know which folder to
+    # run synthesis in.
+    env["DACE_cache"] = "name"
     env["DACE_compiler_xilinx_mode"] = "simulation"
     os.environ["DACE_optimizer_transform_on_call"] = "0"
     os.environ["DACE_optimizer_interface"] = ""
