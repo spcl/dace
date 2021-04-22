@@ -740,10 +740,10 @@ required:
         title: Naming of cache entry 
         description: >
             Determine the name of the generated dacecache folder.
-            "name" uses the name of the SDFG, causing it to be overridden by
-            other programs using a similar SDFG name.
-            "hash" uses a mangled name using the hash of the SDFG, such that any
-            change to the SDFG will generate a different cache folder.
+            "name" uses the name of the SDFG directly, causing it to be
+            overridden by other programs using the same SDFG name.
+            "hash" uses a mangled name based on the hash of the SDFG, such that
+            any change to the SDFG will generate a different cache folder.
             "unique" uses a name based on the currently running Pythion process 
             at code generation time, such that no caching or clashes can happen
             between different processes or subsequent invokations of Python.
