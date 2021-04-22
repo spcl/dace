@@ -22,7 +22,7 @@ def was_vectorized(sdfg: dace.SDFG) -> bool:
 
 
 @dace.program(dace.float32[N], dace.float32[N])
-def cudahello(V, Vout):
+def cuda_grid(V, Vout):
     # Transient variable
     @dace.map(_[0:N])
     def multiplication(i):
@@ -49,12 +49,15 @@ def _test(sdfg):
 
 
 def test_cpu():
-    _test(cudahello.to_sdfg())
+    sdfg = cudahello.to_sdfg()
+    sdfg._name = "cuda_grid_cpu"
+    _test(sdfg)
 
 
 @pytest.mark.gpu
 def test_gpu():
     sdfg = cudahello.to_sdfg()
+    sdfg._name = "cuda_grid_gpu"
     assert sdfg.apply_transformations(GPUTransformMap) == 1
     _test(sdfg)
 
@@ -62,6 +65,7 @@ def test_gpu():
 @pytest.mark.gpu
 def test_gpu_vec():
     sdfg: dace.SDFG = cudahello.to_sdfg()
+    sdfg._name = "cuda_grid_gpu_vec"
     assert sdfg.apply_transformations([GPUTransformMap, Vectorization]) == 2
     _test(sdfg)
 
