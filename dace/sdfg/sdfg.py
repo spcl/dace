@@ -697,7 +697,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         elif cache_config == 'unique':
             # Base name on location in memory, so no caching is possible between
             # processes or subsequent invokations
-            md5_hash = md5(str(id(self)).encode('utf-8')).hexdigest()
+            md5_hash = md5(str(os.getpid()).encode('utf-8')).hexdigest()
             return os.path.join('.dacecache', f'{self.name}_{md5_hash}')
         elif cache_config == 'name':
             # Overwrites previous invocations, and can clash with other programs
