@@ -65,11 +65,11 @@ def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after,
                                 "d = sqrt(a**2 + b**2)")
 
     tasklet2 = body.add_tasklet("tasklet2", {}, {},
-                                """\
+                                f"""\
 static std::mutex mutex;
 std::unique_lock<std::mutex> lock(mutex);
-std::ofstream of("{}", std::ofstream::app);
-of << i << "\\n";""".format(log_path),
+std::ofstream of("{log_path}", std::ofstream::app);
+of << i << "\\n";""",
                                 language=dace.Language.CPP)
 
     body.add_memlet_path(a, tasklet0, dst_conn="a", memlet=dace.Memlet("A[i]"))
