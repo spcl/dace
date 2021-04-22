@@ -746,7 +746,7 @@ required:
             change to the SDFG will generate a different cache folder.
             "unique" uses a name based on the currently running Pythion process 
             at code generation time, such that no caching or clashes can happen
-            between different processes or subsequent invokations of Python.
+            between different processes or subsequent invocations of Python.
             "single" uses a single cache folder for all SDFGs, saving space and
             potentially build time, but disallows executing SDFGs in parallel
             and caching of more than one simultaneous SDFG.
