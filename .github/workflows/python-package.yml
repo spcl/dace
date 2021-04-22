@@ -186,10 +186,3 @@ jobs:
         . /opt/setupenv
         python tests/fpga/xilinx_test.py
         codecov
-
-    - name: Report overall coverage
-      run: |
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
-        . /opt/setupenv
-        coverage combine . */; coverage report; coverage xml
-        codecov
