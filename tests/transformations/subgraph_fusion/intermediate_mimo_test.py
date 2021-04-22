@@ -19,7 +19,7 @@ N.set(1000)
 
 
 @dace.program
-def program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
+def mimo(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
             D: dace.float64[N]):
 
     for i in dace.map[0:N // 2]:
@@ -74,7 +74,7 @@ def _test_quantitatively(sdfg):
 
 
 def test_mimo():
-    sdfg = program.to_sdfg()
+    sdfg = mimo.to_sdfg()
     from dace.transformation.interstate.state_fusion import StateFusion
     sdfg.apply_transformations_repeated(StateFusion)
     # merge the C array
