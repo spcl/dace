@@ -12,6 +12,8 @@ def fpga_global_to_local(sdfg: SDFG) -> None:
            - the data is transient,
            - the data is not a transient shared with other states, and
            - the data has a compile-time known size.
+        :param: sdfg: The SDFG to operate on.
+        :note: Operates in-place on the SDFG.
     """
 
     count = 0
@@ -41,3 +43,24 @@ def fpga_global_to_local(sdfg: SDFG) -> None:
 
     if config.Config.get_bool('debugprint'):
         print(f'Applied {count} Global-To-Local.')
+
+
+def fpga_rr_interleave_containers_to_banks(sdfg: SDFG, num_banks: int = 4):
+    '''
+    Allocates the (global) arrays to FPGA off-chip memory banks, interleaving them in a
+    Round-Robin (RR) fashion, following the order of appearance in the SDFG.
+    :param sdfg: The SDFG to operate on.
+    :param: num_banks: number of off-chip memory banks to consider
+    :returns: a list containing  the number of arrays allocated to each bank
+    :note: Operates in-place on the SDFG.
+    '''
+
+    # keep track of memory allocated to each bank
+    num_allocated = [0 for i in range(num_banks)]
+
+    for i, (name, desc) in enumerate(sdfg.arrays.items()):
+        if desc.storage == dtypes.StorageType.FPGA_Global:
+            desc.location["bank"] = i % num_banks
+            num_allocated[i % num_banks] = num_allocated[i % num_banks] + 1
+
+    return num_allocated
