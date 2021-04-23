@@ -54,5 +54,33 @@ def test_global_to_local(size: int):
     assert np.allclose(A + 1, B)
 
 
+
+def test_rr_interleave():
+    '''
+        Tests RR interleaving of containers to memory banks
+    '''
+
+    @dace.program
+    def rr_interleave(A: dace.float32[8], B: dace.float32[8], C: dace.float32[8]):
+        return A + B + C
+
+    A = np.random.rand(8).astype(np.float32)
+    B = np.random.rand(8).astype(np.float32)
+    C = np.random.rand(8).astype(np.float32)
+
+    sdfg = rr_interleave.to_sdfg()
+    sdfg.apply_transformations([FPGATransformSDFG])
+
+    allocated = aopt.fpga_rr_interleave_containers_to_banks(sdfg)
+
+    # There will be 5 arrays (one is a temporary containing A + B)
+    assert allocated == [2,1,1,1]
+
+    R = sdfg(A=A, B=B, C=C)
+    assert np.allclose(A + B + C, R)
+
+
+
 if __name__ == "__main__":
     test_global_to_local(8)
+    test_rr_interleave()
