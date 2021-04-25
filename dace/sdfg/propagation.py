@@ -292,8 +292,9 @@ class AffineSMemlet(SeparableMemletPattern):
                 candidate_skip = rs
                 candidate_tile = rt * node_rlen
                 candidate_lstart_pt = result_end - result_begin + 1 - candidate_tile
-                if simplify(candidate_lstart_pt / (num_elements / candidate_tile - 1)
-                    ) == candidate_skip:
+                if simplify(
+                        candidate_lstart_pt /
+                    (num_elements / candidate_tile - 1)) == candidate_skip:
                     result_skip = rs
                     result_tile = rt * node_rlen
                 else:
@@ -1406,10 +1407,17 @@ def propagate_subset(memlets: List[Memlet],
                 break
         else:
             # No patterns found. Emit a warning and propagate the entire
-            # array
+            # array whenever symbols are used
             warnings.warn('Cannot find appropriate memlet pattern to '
                           'propagate %s through %s' % (str(subset), str(rng)))
-            tmp_subset = subsets.Range.from_array(arr)
+            entire_array = subsets.Range.from_array(arr)
+            paramset = set(params)
+            # Fill in the entire array only if one of the parameters appears in the
+            # free symbols list of the subset dimension
+            tmp_subset = subsets.Range([
+                ea if any(sd.free_symbols & paramset for sd in s) else s
+                for s, ea in zip(subset, entire_array)
+            ])
 
         # Union edges as necessary
         if new_subset is None:
