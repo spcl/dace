@@ -78,6 +78,7 @@ def _semantic_eq(tile_sizes, program):
     B2 = np.zeros((16, 16), dtype=np.float32)
 
     sdfg = program.to_sdfg()
+    sdfg.name = f"{sdfg.name}_{'_'.join(map(str, tile_sizes))}"
     sdfg.apply_strict_transformations()
     sdfg(w3=w3, w5=w5, A=A, B=B1, I=A.shape[0], J=A.shape[1])
 
