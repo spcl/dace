@@ -56,10 +56,10 @@ def fpga_global_to_local(sdfg: SDFG, max_size: int = 1048576) -> None:
 def fpga_rr_interleave_containers_to_banks(sdfg: SDFG, num_banks: int = 4):
     '''
     Allocates the (global) arrays to FPGA off-chip memory banks, interleaving them in a
-    Round-Robin (RR) fashion, following the order of appearance in the SDFG.
-    :param sdfg: The SDFG to operate on. It must be a top-level SDFG.
+    Round-Robin (RR) fashion. This applies to all the arrays in the SDFG hierarchy.
+    :param sdfg: The SDFG to operate on.
     :param: num_banks: number of off-chip memory banks to consider
-    :returns: a list containing  the number of arrays allocated to each bank
+    :returns: a list containing  the number of (transient) arrays allocated to each bank
     :note: Operates in-place on the SDFG.
     '''
 
@@ -73,9 +73,11 @@ def fpga_rr_interleave_containers_to_banks(sdfg: SDFG, num_banks: int = 4):
     # keep track of memory allocated to each bank
     num_allocated = [0 for i in range(num_banks)]
 
-    for i, (name, desc) in enumerate(sdfg.arrays.items()):
-        if desc.storage == dtypes.StorageType.FPGA_Global:
+    i = 0
+    for sd, aname, desc in sdfg.arrays_recursive():
+        if not isinstance(desc, dt.Stream) and desc.storage == dtypes.StorageType.FPGA_Global and desc.transient:
             desc.location["bank"] = i % num_banks
             num_allocated[i % num_banks] = num_allocated[i % num_banks] + 1
+            i = i+1
 
     return num_allocated
