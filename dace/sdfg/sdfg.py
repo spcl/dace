@@ -949,9 +949,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Start with the set of SDFG free symbols
         free_syms |= set(self.symbols.keys())
 
-        # Add free data symbols and exclude data descriptor names
+        # Exclude data descriptor names
         for name, desc in self.arrays.items():
-            free_syms |= set(map(str, desc.free_symbols))
             defined_syms.add(name)
 
         # Add free state symbols
@@ -1563,11 +1562,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 raise NameError('Array or Stream with name "%s" already exists '
                                 "in SDFG" % name)
         self._arrays[name] = datadesc
-
-        # Add free symbols to the SDFG global symbol storage
-        for sym in datadesc.free_symbols:
-            if sym.name not in self.symbols:
-                self.add_symbol(sym.name, sym.dtype)
 
         return name
 
