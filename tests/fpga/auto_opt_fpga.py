@@ -20,7 +20,7 @@ def test_global_to_local(size: int):
         tmp = alpha / 2
         return tmp * B
 
-    alpha = np.random.rand(1).astype(np.float32)
+    alpha = 0.5
     B = np.random.rand(size).astype(np.float32)
 
     sdfg = global_to_local.to_sdfg()
