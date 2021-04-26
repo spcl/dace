@@ -283,7 +283,7 @@ class DaceProgram:
         # Invoke auto-optimization as necessary
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
             from dace.transformation import auto_optimize as autoopt
-            sdfg = autoopt.auto_optimize(sdfg, self.device)
+            sdfg = autoopt.auto_optimize(sdfg, self.device, symbols = kwargs)
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)

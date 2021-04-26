@@ -96,6 +96,7 @@ def test_out_transient1():
 def test_out_transient2():
     # transient
     sdfg = program2.to_sdfg()
+    sdfg.save('out_transient2.sdfg')
     sdfg.apply_strict_transformations()
     graph = sdfg.nodes()[0]
     _test_quantitatively(sdfg, graph)

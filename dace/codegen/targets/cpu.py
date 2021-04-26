@@ -209,6 +209,7 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
             # Casting is already done in emit_memlet_reference
+            aname = cpp.ptr(aname, nodedesc)
             allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,

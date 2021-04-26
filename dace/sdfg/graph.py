@@ -277,7 +277,7 @@ class Graph(Generic[NodeT, EdgeT]):
         return deduplicate([e.dst for e in self.out_edges(node)])
 
     def neighbors(self, node: NodeT) -> Iterable[NodeT]:
-        return itertools.chain(self.predecessors(node), self.successors(node))
+        return self.successors(node)
 
     def in_degree(self, node: NodeT) -> int:
         """Returns the number of incoming edges to the specified node."""

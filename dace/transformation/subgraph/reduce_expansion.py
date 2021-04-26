@@ -89,7 +89,7 @@ class ReduceExpansion(transformation.Transformation):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         reduce_node = graph.nodes()[candidate[ReduceExpansion._reduce]]
         inedge = graph.in_edges(reduce_node)[0]
-        input_dims = inedge.data.subset.data_dims()
+        input_dims = inedge.data.subset.dims()
         axes = reduce_node.axes
         if axes is None:
             # axes = None -> full reduction, can't expand
@@ -160,8 +160,9 @@ class ReduceExpansion(transformation.Transformation):
 
         queue = [nsdfg]
         array_closest_ancestor = None
+        '''
         while len(queue) > 0:
-            current = queue.pop(0)
+            current = queue.pop()
             if isinstance(current, nodes.AccessNode):
                 if current.data == out_storage_node.data:
                     # it suffices to find the first node
@@ -169,14 +170,14 @@ class ReduceExpansion(transformation.Transformation):
                     array_closest_ancestor = current
                     break
             queue.extend([in_edge.src for in_edge in graph.in_edges(current)])
-
+        
+        '''
         # if ancestor doesn't exist:
         #           if non-transient: create data node accessing it
         #           if transient: ancestor_node = none, set_zero on outer node
 
         shortcut = False
-        if (not array_closest_ancestor and sdfg.data(out_storage_node.data).transient) \
-                                        or identity is not None:
+        if True:
             if self.debug:
                 print("ReduceExpansion::Expanding Reduction into Map")
             # we are lucky

@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement subgraph fusion
 """
 import dace
@@ -14,7 +14,7 @@ from dace.symbolic import symstr, overapproximate
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet, propagate_memlets_scope, _propagate_node
 from dace.transformation.subgraph import helpers
 from dace.transformation.dataflow import RedundantArray
-from dace.sdfg.utils import consolidate_edges_scope
+from dace.sdfg.utils import consolidate_edges_scope, dynamic_map_inputs, get_view_node
 from dace.transformation.helpers import find_contiguous_subsets
 
 from copy import deepcopy as dcpy
@@ -46,7 +46,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     debug = Property(desc="Show debug info", dtype=bool, default=False)
 
     transient_allocation = Property(
-        choices=dtypes.StorageType,
         desc="Storage Location to push transients to that are "
         "fully contained within the subgraph.",
         dtype=dtypes.StorageType,
@@ -54,9 +53,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
     schedule_innermaps = Property(desc="Schedule of inner maps. If none, "
                                   "keeps schedule.",
-                                  choices=dtypes.ScheduleType,
                                   dtype=dtypes.ScheduleType,
-                                  default=dtypes.ScheduleType.Default,
+                                  default=None,
                                   allow_none=True)
     consolidate = Property(
         desc="Consolidate edges that enter and exit the fused map.",
@@ -82,6 +80,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
            the respective incoming memlets' subset into the next map.
            Also, as a limitation, the union of all exiting memlets'
            subsets must be contiguous.
+        4. Check for any disjoint accesses of arrays.
         '''
         # get graph
         graph = subgraph.graph
@@ -127,7 +126,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # definition see in apply()
         node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph,
                                                         map_entries)
-        _, intermediate_nodes, out_nodes = node_config
+        in_nodes, intermediate_nodes, out_nodes = node_config
 
         # 2.2 topological feasibility:
         if not SubgraphFusion.check_topo_feasibility(
@@ -183,7 +182,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     # cannot use memlet tree here as there could be
                     # not just one map succedding. Do it manually
                     for oedge in graph.out_edges(out_edge.dst):
-                        if oedge.src_conn[3:] == out_edge.dst_conn[2:]:
+                        if oedge.src_conn and oedge.src_conn[
+                                3:] == out_edge.dst_conn[2:]:
                             subset_to_add = dcpy(oedge.data.subset \
                                                  if oedge.data.data == node.data \
                                                  else oedge.data.other_subset)
@@ -217,6 +217,128 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 if not union_upper.covers(lower_subset):
                     return False
 
+        # 2.3 Check for WCRs in out nodes: If there is one, the corresponding
+        # data must never be accessed anywhere else
+        intermediate_data = set([n.data for n in intermediate_nodes])
+        in_data = set(
+            [n.data for n in in_nodes if isinstance(n, nodes.AccessNode)])
+        out_data = set(
+            [n.data for n in out_nodes if isinstance(n, nodes.AccessNode)])
+
+        view_nodes = set()
+        for node in chain(in_nodes, out_nodes, intermediate_nodes):
+            if isinstance(node, nodes.AccessNode):
+                is_view = isinstance(sdfg.data(node.data), dace.data.View)
+                for edge in chain(graph.in_edges(node), graph.out_edges(node)):
+                    for e in graph.memlet_tree(edge):
+                        if isinstance(
+                                e.dst,
+                                nodes.AccessNode) and (is_view or isinstance(
+                                    sdfg.data(e.dst.data), dace.data.View)):
+                            view_nodes.add(e.dst)
+                        if isinstance(
+                                e.src,
+                                nodes.AccessNode) and (is_view or isinstance(
+                                    sdfg.data(e.src.data), dace.data.View)):
+                            view_nodes.add(e.src)
+
+        view_data = set([n.data for n in view_nodes])
+
+        for out_node in out_nodes:
+            for in_edge in graph.in_edges(out_node):
+                if in_edge.src in map_exits and in_edge.data.wcr:
+                    if in_edge.data.data in in_data or in_edge.data.data in intermediate_data or in_edge.data.data in view_data:
+                        warnings.warn("WCR Special Case")
+                        return False
+
+        # 2.5 Intermediate Arrays must not connect to ArrayViews
+        for n in intermediate_nodes:
+            for out_edge in graph.out_edges(n):
+                for e in graph.memlet_tree(out_edge):
+                    if isinstance(e.dst, nodes.AccessNode) and isinstance(
+                            sdfg.data(e.dst.data), dace.data.View):
+                        warnings.warn(
+                            "Special Case: Intermediate node connecting to View"
+                        )
+                        return False
+            for in_edge in graph.in_edges(n):
+                for e in graph.memlet_tree(in_edge):
+                    if isinstance(e.src, nodes.AccessNode) and isinstance(
+                            sdfg.data(e.src.data), dace.data.View):
+                        warnings.warn(
+                            "Special Case: Intermediate node connecting to View"
+                        )
+                        return False
+
+        #if len(intermediate_nodes & out_nodes) > 0:
+        #    return False
+        # 2.6 Check for disjoint accesses for arrays that cannot be augmented
+        '''
+        node_data = in_data | intermediate_data | out_data | view_data
+        #subgraph_contains_data = {n: True for n in node_data if sdfg.data(n).transient == True else False}
+        subgraph_contains_data = dict() 
+        for n in node_data:
+            if sdfg.data(n).transient:
+                subgraph_contains_data[n] = True 
+            else:
+                subgraph_contains_data[n] = False
+
+        for graph_it in sdfg.nodes():
+            for node_it in graph_it.nodes():
+                if isinstance(node_it, nodes.AccessNode) and node_it.data in subgraph_contains_data and node_it not in intermediate_nodes:
+                    subgraph_contains_data[node_it.data] = False
+
+        container_dict = defaultdict(list)
+        for node in chain(in_nodes, intermediate_nodes, out_nodes):
+            if isinstance(node, nodes.AccessNode):
+                container_dict[node.data].append(node) # BUG: 'MapEntry object has no attribute data'
+
+        
+        for (node_data, contained) in subgraph_contains_data.items():
+            if not contained:
+                if len(container_dict[node_data]) > 1:
+                    # check for disjoint accesses 
+                    # TODO 
+                    access_set = None 
+                    for node in container_dict[node_data]:
+                        for e in graph.out_edges(node):
+                            if e.dst in map_entries:
+                                for oe in graph.out_edges(e.dst):
+                                    if oe.src_conn[3:] == e.dst_conn[2:]:
+                                        access_set = subsets.union(access_set, oe.data.subset)
+                                        if access_set is None:
+                                            warnings.warn("Disjoint Access found")
+                                            return False
+                        for e in graph.in_edges(node):
+                            if e.src in map_exits:
+                                for ie in graph.in_edges(e.src):
+                                    if ie.dst_conn[2:] == e.src_conn[3:]:
+                                        access_set = subsets.union(access_set, ie.data.subset)
+                                        if access_set is None:
+                                            warnings.warn("Disjoint Access found")
+                                            return False
+                                        
+                        #for e in chain(graph.out_edges(node), graph.in_edges(node)):
+                        #    access_set = subsets.union(access_set, e.data.subset)
+                        #    if access_set is None:
+                        #        # cannot evaluate truth value of relational 
+                        #        warnings.warn("Disjoint Accesses found!")
+                        #        return False 
+                        
+                    subset_plus = access_set 
+                    subset_minus = dcpy(subset_plus)
+                    subset_minus.replace({f'{param}': f'{param}-1' for param in map_entries[0].params})
+                    try:
+                        if subset_plus.intersects(subset_minus):
+                            warnings.warn("Disjoint Accesses found!")
+                            print(node_data)
+                            print(subset_plus, subset_minus)
+                            return False 
+                    except TypeError:
+                        warnings.warn("Disjoint Accesses found!")
+                        return False 
+        
+        '''
         return True
 
     @staticmethod
@@ -388,7 +510,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         for out_edge in graph.out_edges(node):
             if out_edge.dst in map_entries:
                 for other_edge in graph.out_edges(out_edge.dst):
-                    if other_edge.src_conn[3:] == out_edge.dst_conn[2:]:
+                    if other_edge.src_conn and other_edge.src_conn[
+                            3:] == out_edge.dst_conn[2:]:
                         other_subset = other_edge.data.subset \
                                        if other_edge.data.data == node.data \
                                        else other_edge.data.other_subset
@@ -433,26 +556,41 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         if remove_old:
             graph.remove_edge(edge)
-        '''
-        if new_src:
-            ret = graph.add_edge(new_src, new_src_conn, edge.dst, edge.dst_conn,
-                                 data)
-            graph.remove_edge(edge)
-        if new_dst:
-            ret = graph.add_edge(edge.src, edge.src_conn, new_dst, new_dst_conn,
-                                 data)
-            graph.remove_edge(edge)
-        '''
         return ret
 
-    def adjust_arrays_nsdfg(self, sdfg, nsdfg, name, nname):
+    def adjust_arrays_nsdfg(self, sdfg, nsdfg, name, nname, memlet):
         '''
         DFS to replace strides and volumes of data that has adjacent
         nested SDFGs to its access nodes. Needed in a post-processing
         step during fusion.
         '''
-        nsdfg.data(nname).strides = dcpy(sdfg.data(name).strides)
-        nsdfg.data(nname).total_size = dcpy(sdfg.data(name).total_size)
+        # check whether array needs to change
+        if len(sdfg.data(name).shape) != len(nsdfg.data(nname).shape):
+            subset_copy = dcpy(memlet.subset)
+            non_ones = subset_copy.squeeze()
+            strides = []
+            total_size = 1
+
+            if non_ones:
+                strides = []
+                total_size = 1
+                for (i, (sh, st)) in enumerate(
+                        zip(sdfg.data(name).shape,
+                            sdfg.data(name).strides)):
+                    if i in non_ones:
+                        strides.append(st)
+                        total_size *= sh
+            else:
+                strides = [1]
+                total_size = 1
+
+            nsdfg.data(nname).strides = tuple(strides)
+            nsdfg.data(nname).total_size = total_size
+
+        else:
+            nsdfg.data(nname).strides = sdfg.data(name).strides
+            nsdfg.data(nname).total_size = sdfg.data(name).total_size
+
         # traverse the whole graph and search for arrays
         for ngraph in nsdfg.nodes():
             for nnode in ngraph.nodes():
@@ -463,10 +601,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         for te in ngraph.memlet_tree(e):
                             if isinstance(te.dst, nodes.NestedSDFG):
                                 self.adjust_arrays_nsdfg(
-                                    nsdfg, te.dst.sdfg, nname, te.dst_conn)
+                                    nsdfg, te.dst.sdfg, nname, te.dst_conn,
+                                    te.data)
                             if isinstance(te.src, nodes.NestedSDFG):
                                 self.adjust_arrays_nsdfg(
-                                    nsdfg, te.src.sdfg, nname, te.src_conn)
+                                    nsdfg, te.src.sdfg, nname, te.src_conn,
+                                    te.data)
 
     def prepare_intermediate_nodes(self,
                                    sdfg,
@@ -655,19 +795,31 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         for map_entry, map_exit in zip(map_entries, map_exits):
             # handle inputs
-            # TODO: dynamic map range -- this is fairly unrealistic in such a setting
+
+            # TODO: dynamic map range -- handle in can_be_applied!
+            for dyninp in dynamic_map_inputs(graph, map_entry):
+                if dyninp.dst_conn in global_map_entry.in_connectors:
+                    continue
+                else:
+                    global_map_entry.add_in_connector(
+                        dyninp.dst_conn,
+                        map_entry.in_connectors[dyninp.dst_conn])
+                    graph.add_edge(dyninp.src, dyninp.src_conn,
+                                   global_map_entry, dyninp.dst_conn,
+                                   dyninp.data)
+
             for edge in graph.in_edges(map_entry):
                 src = edge.src
-                mmt = graph.memlet_tree(edge)
-                out_edges = [child.edge for child in mmt.root().children]
+                out_edges = [
+                    e for e in graph.out_edges(map_entry)
+                    if (e.src_conn and e.src_conn[3:] == edge.dst_conn[2:])
+                ]
 
                 if src in in_nodes:
                     in_conn = None
                     out_conn = None
                     if src in inconnectors_dict:
-                        # no need to augment subset of outer edge.
-                        # will do this at the end in one pass.
-
+                        # for access nodes only
                         in_conn = inconnectors_dict[src][1]
                         out_conn = inconnectors_dict[src][2]
 
@@ -678,7 +830,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         global_map_entry.add_in_connector(in_conn)
                         global_map_entry.add_out_connector(out_conn)
 
-                        inconnectors_dict[src] = (edge, in_conn, out_conn)
+                        if isinstance(src, nodes.AccessNode):
+                            inconnectors_dict[src] = (edge, in_conn, out_conn)
 
                         # reroute in edge via global_map_entry
                         self.copy_edge(graph, edge, new_dst = global_map_entry, \
@@ -711,7 +864,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     # no destination connector, path ends here.
                     self.copy_edge(graph, edge, new_dst=global_map_exit)
                     continue
-                # find corresponding out_edges for current edge, cannot use mmt anymore
+                # find corresponding out_edges for current edge
                 out_edges = [
                     oedge for oedge in graph.out_edges(map_exit)
                     if oedge.src_conn[3:] == edge.dst_conn[2:]
@@ -750,11 +903,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                         e_inner = graph.add_edge(dst, None, global_map_exit,
                                                  in_conn, inner_memlet)
-                        mm_outer = propagate_memlet(graph, inner_memlet, global_map_entry, \
-                                                    union_inner_edges = False)
 
+                        outer_memlet = dcpy(out_edge.data)
                         e_outer = graph.add_edge(global_map_exit, out_conn,
-                                                 dst_transient, None, mm_outer)
+                                                 dst_transient, None,
+                                                 outer_memlet)
 
                         # remove edge from dst to dst_transient that was created
                         # in intermediate preparation.
@@ -776,6 +929,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     if dst in (out_nodes - intermediate_nodes):
                         if edge.dst != global_map_exit:
                             next_conn = global_map_exit.next_connector()
+
                             in_conn = 'IN_' + next_conn
                             out_conn = 'OUT_' + next_conn
                             global_map_exit.add_in_connector(in_conn)
@@ -787,13 +941,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             port_created = (in_conn, out_conn)
 
                         else:
-                            conn_nr = edge.dst_conn[3:]
                             in_conn = port_created.st
                             out_conn = port_created.nd
 
                         # map
-                        graph.add_edge(global_map_exit, out_conn, dst, None,
-                                       dcpy(out_edge.data))
+                        graph.add_edge(global_map_exit, out_conn, dst,
+                                       out_edge.dst_conn, dcpy(out_edge.data))
 
             # maps are now ready to be discarded
             # all connected edges will be finally removed as well
@@ -805,9 +958,25 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         min_offsets = dict()
 
         # do one pass to augment all transient arrays
+        def change_data(transient_array, shape, strides, total_size, offset,
+                        lifetime, storage):
+            if shape is not None:
+                transient_array.shape = shape
+            if strides is not None:
+                transient_array.strides = strides
+            if total_size is not None:
+                transient_array.total_size = total_size
+            if offset is not None:
+                transient_array.offset = offset
+            if lifetime is not None:
+                transient_array.lifetime = lifetime
+            if storage is not None:
+                transient_array.storage = storage
+
         data_intermediate = set([node.data for node in intermediate_nodes])
         for data_name in data_intermediate:
-            if subgraph_contains_data[data_name]:
+            if subgraph_contains_data[data_name] and isinstance(
+                    sdfg.data(data_name), dace.data.Array):
                 all_nodes = [
                     n for n in intermediate_nodes if n.data == data_name
                 ]
@@ -817,7 +986,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 in_edge = next(in_edges_iter)
                 target_subset = dcpy(in_edge.data.subset)
                 target_subset.pop(invariant_dimensions[data_name])
-                ######
                 while True:
                     try:  # executed if there are multiple in_edges
                         in_edge = next(in_edges_iter)
@@ -861,7 +1029,17 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                 new_data_totalsize = data._prod(new_data_shape)
                 new_data_offset = [0] * len(new_data_shape)
-                # augment.
+
+                # augment original shape
+                change_data(sdfg.data(data_name),
+                            shape=new_data_shape,
+                            strides=new_data_strides,
+                            total_size=new_data_totalsize,
+                            offset=new_data_offset,
+                            lifetime=dtypes.AllocationLifetime.Scope,
+                            storage=self.transient_allocation)
+                '''
+                # old augmentation call:
                 transient_to_transform = sdfg.data(data_name)
                 transient_to_transform.shape = new_data_shape
                 transient_to_transform.strides = new_data_strides
@@ -869,6 +1047,39 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 transient_to_transform.offset = new_data_offset
                 transient_to_transform.lifetime = dtypes.AllocationLifetime.Scope
                 transient_to_transform.storage = self.transient_allocation
+                '''
+                '''
+                # check for views and augment them as well
+                for n in all_nodes:
+                    for out_edge in graph.out_edges(n):
+                        for e in graph.memlet_path(out_edge):
+                            if isinstance(e.dst, nodes.AccessNode) and isinstance(sdfg.data(out_edge.dst.data), dace.data.View):
+                                # find dimension injection 
+                                warnings.warn("Special Case detected: Modifying ArrayView")
+                                transient_subset = e.data.subset if e.data == out_edge.data else e.data.other_subset 
+                                view_subset = e.data.other_subset if e.data == out_edge.data else e.data.subset 
+                                
+                                transient_index, view_index = 0, 0
+                                new_strides = []
+                                while (transient_index < transient_subset.dims() and view_index < view_subset.dims()):
+                                    # find view dimension corresponding to transient index 
+                                    # TODO
+                                    transient_subset[transient_index]
+                                    break
+
+                                # TODO: change strides 
+                                pass 
+
+
+                    for in_edge in graph.in_edges(n):
+                        for e in graph.memlet_path(in_edge):
+                            if isinstance(e.src, nodes.AccessNode) and isinstance(sdfg.data(in_edge.src.data), dace.data.View):
+                                # TODO: Implement me! 
+                                warnings.warn("Special Case detected: Modifying ArrayView")
+
+                                
+                                pass 
+                '''
 
             else:
                 # don't modify data container - array is needed outside
@@ -881,7 +1092,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     sdfg.data(
                         data_name).lifetime = dtypes.AllocationLifetime.State
 
-        # do one pass to adjust and the memlets of in-between transients
+        # do one pass to adjust strides and the memlets of in-between transients
         for node in intermediate_nodes:
             # all incoming edges to node
             in_edges = graph.in_edges(node)
@@ -900,7 +1111,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
             # memlets of all in between transients:
             # offset memlets if array has been augmented
-            if subgraph_contains_data[node.data]:
+            if subgraph_contains_data[node.data] and isinstance(
+                    sdfg.data(node.data), dace.data.Array):
                 # get min_offset
                 min_offset = min_offsets[node.data]
                 # re-add invariant dimensions with offset 0
@@ -915,7 +1127,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         nsdfg = iedge.src.sdfg
                         nested_data_name = edge.src_conn
                         self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data,
-                                                 nested_data_name)
+                                                 nested_data_name, iedge.data)
 
                 for cedge in out_edges:
                     for edge in graph.memlet_tree(cedge):
@@ -928,7 +1140,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             nsdfg = edge.dst.sdfg
                             nested_data_name = edge.dst_conn
                             self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data,
-                                                     nested_data_name)
+                                                     nested_data_name,
+                                                     edge.data)
 
                 # if in_edges has several entries:
                 # put other_subset into out_edges for correctness
