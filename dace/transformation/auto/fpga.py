@@ -63,13 +63,6 @@ def fpga_rr_interleave_containers_to_banks(sdfg: SDFG, num_banks: int = 4):
     :note: Operates in-place on the SDFG.
     '''
 
-    if sdfg.parent is not None:
-        if config.Config.get_bool('debugprint'):
-            print(
-                'Interleave Containers can be applied only to a top-level SDFG.'
-            )
-        return []  # Not the top-most SDFG. Do nothing.
-
     # keep track of memory allocated to each bank
     num_allocated = [0 for i in range(num_banks)]
 
