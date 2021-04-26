@@ -14,6 +14,9 @@ from dace.transformation.interstate import LoopToMap
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
 
+# FPGA AutoOpt
+from dace.transformation.auto import fpga as fpga_aopt
+
 GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
 
@@ -202,6 +205,11 @@ def find_fast_library(device: dtypes.DeviceType) -> str:
     # device
     if device is dtypes.DeviceType.GPU:
         return ['cuBLAS', 'CUB', 'pure']
+    elif device is dtypes.DeviceType.FPGA:
+        return [
+            'FPGA_PartialSums', 'FPGAPartialReduction', 'FPGA_Accumulate',
+            'FPGA1DSystolic', 'pure'
+        ]
     elif device is dtypes.DeviceType.CPU:
         result = []
 
@@ -306,33 +314,43 @@ def auto_optimize(sdfg: SDFG,
     # Map fusion
     greedy_fuse(sdfg, validate_all)
 
-    # Tiled WCR and streams
-    for nsdfg in list(sdfg.all_sdfgs_recursive()):
-        tile_wcrs(nsdfg, validate_all)
+    if device == dtypes.DeviceType.FPGA:
+        # apply FPGA Transformations
+        sdfg.apply_fpga_transformations()
+        fpga_aopt.fpga_global_to_local(sdfg)
+        fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
 
-    # Collapse maps
-    sdfg.apply_transformations_repeated(MapCollapse,
-                                        strict=True,
-                                        validate=False,
-                                        validate_all=validate_all)
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.MapEntry):
-            node.map.collapse = len(node.map.range)
+        # Set all library nodes to expand to fast library calls
+        set_fast_implementations(sdfg, device)
+        return SDFG
+    else:
+        # Tiled WCR and streams
+        for nsdfg in list(sdfg.all_sdfgs_recursive()):
+            tile_wcrs(nsdfg, validate_all)
 
-    # Set all library nodes to expand to fast library calls
-    set_fast_implementations(sdfg, device)
+        # Collapse maps
+        sdfg.apply_transformations_repeated(MapCollapse,
+                                            strict=True,
+                                            validate=False,
+                                            validate_all=validate_all)
+        for node, _ in sdfg.all_nodes_recursive():
+            if isinstance(node, nodes.MapEntry):
+                node.map.collapse = len(node.map.range)
 
-    # TODO(later): Safe vectorization
+        # Set all library nodes to expand to fast library calls
+        set_fast_implementations(sdfg, device)
 
-    # Disable OpenMP parallel sections
-    # TODO(later): Set on a per-SDFG basis
-    config.Config.set('compiler', 'cpu', 'openmp_sections', value=False)
+        # TODO(later): Safe vectorization
 
-    # Set all Default storage types that are constant sized to registers
-    move_small_arrays_to_stack(sdfg)
+        # Disable OpenMP parallel sections
+        # TODO(later): Set on a per-SDFG basis
+        config.Config.set('compiler', 'cpu', 'openmp_sections', value=False)
 
-    # Validate at the end
-    if validate or validate_all:
-        sdfg.validate()
+        # Set all Default storage types that are constant sized to registers
+        move_small_arrays_to_stack(sdfg)
 
-    return sdfg
+        # Validate at the end
+        if validate or validate_all:
+            sdfg.validate()
+
+        return sdfg

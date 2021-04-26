@@ -4,7 +4,8 @@
 import dace
 import numpy as np
 from dace.transformation.interstate import FPGATransformSDFG
-from dace.transformation.auto import fpga as aopt
+from dace.transformation.auto import auto_optimize as aopt
+from dace.transformation.auto import fpga as fpga_aopt
 
 N = dace.symbol('N')
 
@@ -15,18 +16,16 @@ def test_global_to_local(size: int):
     :return:
     '''
     @dace.program
-    def global_to_local(A: dace.float32[N], B: dace.float32[N]):
-        for i in range(N):
-            tmp = A[i]
-            B[i] = tmp + 1
+    def global_to_local(alpha: dace.float32, B: dace.float32[N]):
+        tmp = alpha / 2
+        return tmp * B
 
-    A = np.random.rand(size).astype(np.float32)
+    alpha = np.random.rand(1).astype(np.float32)
     B = np.random.rand(size).astype(np.float32)
 
     sdfg = global_to_local.to_sdfg()
-    sdfg.apply_transformations([FPGATransformSDFG])
 
-    aopt.fpga_global_to_local(sdfg)
+    aopt.auto_optimize(sdfg, dace.DeviceType.FPGA)
 
     # Check that transformation has been actually applied
     # There should be only one transient among the sdfg arrays and it must have Local Storage Type
@@ -50,18 +49,18 @@ def test_global_to_local(size: int):
                     nodedesc = node.desc(graph)
                     assert nodedesc.storage == dace.dtypes.StorageType.FPGA_Local
 
-    sdfg(A=A, B=B, N=size)
-    assert np.allclose(A + 1, B)
-
+    C = sdfg(alpha=alpha, B=B, N=size)
+    ref = alpha / 2 * B
+    assert np.allclose(ref, C)
 
 
 def test_rr_interleave():
     '''
         Tests RR interleaving of containers to memory banks
     '''
-
     @dace.program
-    def rr_interleave(A: dace.float32[8], B: dace.float32[8], C: dace.float32[8]):
+    def rr_interleave(A: dace.float32[8], B: dace.float32[8],
+                      C: dace.float32[8]):
         return A + B + C
 
     A = np.random.rand(8).astype(np.float32)
@@ -71,14 +70,14 @@ def test_rr_interleave():
     sdfg = rr_interleave.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG])
 
-    allocated = aopt.fpga_rr_interleave_containers_to_banks(sdfg)
+    #specifically run the the interleave transformation
+    allocated = fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
 
     # There will be 5 arrays (one is a temporary containing A + B)
-    assert allocated == [2,1,1,1]
+    assert allocated == [2, 1, 1, 1]
 
     R = sdfg(A=A, B=B, C=C)
     assert np.allclose(A + B + C, R)
-
 
 
 if __name__ == "__main__":
