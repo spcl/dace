@@ -129,7 +129,12 @@ class MapReduceFusion(pm.Transformation):
         # Delete relevant data descriptors
         for node in set(nodes_to_remove):
             if isinstance(node, nodes.AccessNode):
-                sdfg.remove_data(node.data, True)
+                # try to delete it
+                try:
+                    sdfg.remove_data(node.data)
+                # will raise ValueError if the datadesc is used somewhere else
+                except ValueError:
+                    pass
 
         # Filter out reduced dimensions from subset
         filtered_subset = [

@@ -721,7 +721,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if validate:
             for state in self.nodes():
                 for node in state.nodes():
-                    if isinstance(node, nd.AccessNode) and nd.data == name:
+                    if isinstance(node, nd.AccessNode) and node.data == name:
                         raise ValueError("Data descriptor %s is already used"
                                          "in node %s, state %s" %
                                          (name, node, state))
