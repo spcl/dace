@@ -17,12 +17,6 @@ def fpga_global_to_local(sdfg: SDFG, max_size: int = 1048576) -> None:
             storage type change
         :note: Operates in-place on the SDFG.
     """
-
-    if sdfg.parent is not None:
-        if config.Config.get_bool('debugprint'):
-            print('Global-To-Local can be applied only to a top-level SDFG.')
-        return  # Not the top-most SDFG. Do nothing.
-
     converted = []
 
     for name, desc in sdfg.arrays.items():
