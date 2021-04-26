@@ -322,35 +322,35 @@ def auto_optimize(sdfg: SDFG,
 
         # Set all library nodes to expand to fast library calls
         set_fast_implementations(sdfg, device)
-        return SDFG
-    else:
-        # Tiled WCR and streams
-        for nsdfg in list(sdfg.all_sdfgs_recursive()):
-            tile_wcrs(nsdfg, validate_all)
-
-        # Collapse maps
-        sdfg.apply_transformations_repeated(MapCollapse,
-                                            strict=True,
-                                            validate=False,
-                                            validate_all=validate_all)
-        for node, _ in sdfg.all_nodes_recursive():
-            if isinstance(node, nodes.MapEntry):
-                node.map.collapse = len(node.map.range)
-
-        # Set all library nodes to expand to fast library calls
-        set_fast_implementations(sdfg, device)
-
-        # TODO(later): Safe vectorization
-
-        # Disable OpenMP parallel sections
-        # TODO(later): Set on a per-SDFG basis
-        config.Config.set('compiler', 'cpu', 'openmp_sections', value=False)
-
-        # Set all Default storage types that are constant sized to registers
-        move_small_arrays_to_stack(sdfg)
-
-        # Validate at the end
-        if validate or validate_all:
-            sdfg.validate()
-
         return sdfg
+
+    # Tiled WCR and streams
+    for nsdfg in list(sdfg.all_sdfgs_recursive()):
+        tile_wcrs(nsdfg, validate_all)
+
+    # Collapse maps
+    sdfg.apply_transformations_repeated(MapCollapse,
+                                        strict=True,
+                                        validate=False,
+                                        validate_all=validate_all)
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry):
+            node.map.collapse = len(node.map.range)
+
+    # Set all library nodes to expand to fast library calls
+    set_fast_implementations(sdfg, device)
+
+    # TODO(later): Safe vectorization
+
+    # Disable OpenMP parallel sections
+    # TODO(later): Set on a per-SDFG basis
+    config.Config.set('compiler', 'cpu', 'openmp_sections', value=False)
+
+    # Set all Default storage types that are constant sized to registers
+    move_small_arrays_to_stack(sdfg)
+
+    # Validate at the end
+    if validate or validate_all:
+        sdfg.validate()
+
+    return sdfg
