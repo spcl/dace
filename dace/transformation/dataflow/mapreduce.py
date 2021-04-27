@@ -126,6 +126,16 @@ class MapReduceFusion(pm.Transformation):
         # Delete relevant edges and nodes
         graph.remove_nodes_from(nodes_to_remove)
 
+        # Delete relevant data descriptors
+        for node in set(nodes_to_remove):
+            if isinstance(node, nodes.AccessNode):
+                # try to delete it
+                try:
+                    sdfg.remove_data(node.data)
+                # will raise ValueError if the datadesc is used somewhere else
+                except ValueError:
+                    pass
+
         # Filter out reduced dimensions from subset
         filtered_subset = [
             dim for i, dim in enumerate(memlet_edge.data.subset)
