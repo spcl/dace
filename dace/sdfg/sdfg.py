@@ -721,7 +721,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if validate:
             for state in self.nodes():
                 for node in state.nodes():
-                    if isinstance(node, nd.AccessNode) and nd.data == name:
+                    if isinstance(node, nd.AccessNode) and node.data == name:
                         raise ValueError("Data descriptor %s is already used"
                                          "in node %s, state %s" %
                                          (name, node, state))
@@ -949,9 +949,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Start with the set of SDFG free symbols
         free_syms |= set(self.symbols.keys())
 
-        # Add free data symbols and exclude data descriptor names
+        # Exclude data descriptor names
         for name, desc in self.arrays.items():
-            free_syms |= set(map(str, desc.free_symbols))
             defined_syms.add(name)
 
         # Add free state symbols
