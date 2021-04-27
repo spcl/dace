@@ -20,12 +20,12 @@ def bla(input, output):
 
 
 @dp.program
-def myprogram(A, B):
+def multi_inline(A, B):
     bla(A, B)
 
 
 def test():
-    myprogram.compile(dp.float32[W, H], dp.float32[H, W])
+    multi_inline.compile(dp.float32[W, H], dp.float32[H, W])
 
 
 if __name__ == "__main__":

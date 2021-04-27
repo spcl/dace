@@ -74,7 +74,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         if fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return
-        # Keep track of generated converters and constantsto avoid multiple definition
+        # Keep track of generated converters to avoid multiple definition
         self.generated_converters = set()
         # constants
         self.generated_constants = set()
@@ -808,6 +808,7 @@ __kernel void \\
             desc = sdfg.arrays[in_memlet.data]
             defined_type, defined_ctype = self._dispatcher.defined_vars.get(
                 in_memlet.data, 1)
+
             if isinstance(desc, dace.data.Array) and (
                     desc.storage == dtypes.StorageType.FPGA_Global
                     or desc.storage == dtypes.StorageType.FPGA_Local):
@@ -827,7 +828,7 @@ __kernel void \\
                 else:
                     typedef = "{} *".format(vec_type)
                 ref = '&' if defined_type is DefinedType.Scalar else ''
-                memlet_references.append((typedef, vconn, ref+expr))
+                memlet_references.append((typedef, vconn, ref + expr))
                 # get the defined type (as defined in the parent)
                 # Register defined variable
                 self._dispatcher.defined_vars.add(vconn,
@@ -844,7 +845,9 @@ __kernel void \\
                 if defined_type is not DefinedType.Pointer:
                     typedef = typedef + "*"
 
-                memlet_references.append((typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type)))
+                memlet_references.append(
+                    (typedef, vconn,
+                     cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type)))
                 self._dispatcher.defined_vars.add(vconn,
                                                   DefinedType.Pointer,
                                                   typedef,
@@ -882,7 +885,7 @@ __kernel void \\
                     expr = self.make_ptr_vector_cast(
                         out_memlet.data + offset_expr, desc.dtype,
                         node.out_connectors[uconn], False, defined_type)
-                    memlet_references.append((typedef, uconn, ref+expr))
+                    memlet_references.append((typedef, uconn, ref + expr))
                     # Register defined variable
                     self._dispatcher.defined_vars.add(uconn,
                                                       DefinedType.Pointer,
@@ -931,6 +934,7 @@ __kernel void \\
                     # if this is not already a mapped symbol, add it
                     if p not in node.symbol_mapping.keys():
                         memlet_references.append((typedef, p, p))
+
         return memlet_references
 
     def allocate_view(self, sdfg: dace.SDFG, dfg: SDFGState, state_id: int,
@@ -963,7 +967,6 @@ __kernel void \\
             qualifier = "__global volatile "
             atype = dtypes.pointer(nodedesc.dtype).ctype + " restrict"
             aname = name
-
             viewed_desc = sdfg.arrays[edge.data.data]
             defined_type, _ = self._dispatcher.defined_vars.get(
                 edge.data.data, 0)

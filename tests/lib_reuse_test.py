@@ -12,14 +12,14 @@ def program_generator(size, factor):
                   dace.float64[size],
                   size=size,
                   factor=factor)
-    def program(input, output):
+    def lib_reuse(input, output):
         @dace.map(_[0:size])
         def tasklet(i):
             a << input[i]
             b >> output[i]
             b = a * factor
 
-    return program
+    return lib_reuse
 
 
 def test_reload():
