@@ -1411,12 +1411,13 @@ def propagate_subset(memlets: List[Memlet],
             warnings.warn('Cannot find appropriate memlet pattern to '
                           'propagate %s through %s' % (str(subset), str(rng)))
             entire_array = subsets.Range.from_array(arr)
-            paramset = set(params)
+            paramset = set(map(str, params))
             # Fill in the entire array only if one of the parameters appears in the
             # free symbols list of the subset dimension
             tmp_subset = subsets.Range([
-                ea if any(sd.free_symbols & paramset for sd in s) else s
-                for s, ea in zip(subset, entire_array)
+                ea if any(
+                    set(map(str, sd.free_symbols)) & paramset
+                    for sd in s) else s for s, ea in zip(subset, entire_array)
             ])
 
         # Union edges as necessary
