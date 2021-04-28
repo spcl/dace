@@ -189,7 +189,7 @@ class StripMining(transformation.Transformation):
         map_entry = graph.nodes()[candidate[StripMining._map_entry]]
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 
-    def apply(self, sdfg):
+    def apply(self, sdfg: SDFG) -> nodes.Map:
         graph = sdfg.nodes()[self.state_id]
         # Strip-mine selected dimension.
         _, _, new_map = self._stripmine(sdfg, graph, self.subgraph)
@@ -375,11 +375,9 @@ class StripMining(transformation.Transformation):
         # Retrieve parameter and range of dimension to be strip-mined.
         target_dim = map_entry.map.params[dim_idx]
         td_from, td_to, td_step = map_entry.map.range[dim_idx]
-        tile_size = map_entry.map.range.size_exact()[dim_idx] / number_of_tiles
+        size = map_entry.map.range.size_exact()[dim_idx]
 
-        if tile_stride == 0:
-            tile_stride = tile_size
-        if tile_stride != tile_size:
+        if tile_stride != 0:
             raise NotImplementedError
 
         new_dim = self._find_new_dim(sdfg, state, map_entry, new_dim_prefix,
@@ -389,15 +387,15 @@ class StripMining(transformation.Transformation):
                             subsets.Range([new_dim_range]))
 
         dimsym = dace.symbolic.pystr_to_symbolic(new_dim)
-        td_from_new = dimsym * tile_size
+        td_from_new = (dimsym * size) // number_of_tiles
         if divides_evenly:
-            td_to_new = (dimsym + 1) * tile_size - 1
+            td_to_new = ((dimsym + 1) * size) // number_of_tiles  - 1
         else:
             if isinstance(td_to, dace.symbolic.SymExpr):
                 td_to = td_to.expr
             td_to_new = dace.symbolic.SymExpr(
-                sympy.Min((dimsym + 1) * tile_size - 1, td_to),
-                (dimsym + 1) * tile_size - 1)
+                sympy.Min(((dimsym + 1) * size) // number_of_tiles, td_to+1)-1,
+                ((dimsym + 1) * size) // number_of_tiles - 1)
         td_step_new = td_step
         return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
 
