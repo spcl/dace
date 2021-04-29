@@ -68,12 +68,57 @@ DACE_DFI dace::vec<float, 4> operator+(float f, dace::vec<float, 4> v) {
     return result;
 }
 
+DACE_DFI dace::vec<float, 4> operator/(float f, dace::vec<float, 4> v) {
+    dace::vec<float, 4> result;
+    result.x = f / v.x;
+    result.y = f / v.y;
+    result.z = f / v.z;
+    result.w = f / v.w;
+    return result;
+}
+
+DACE_DFI dace::vec<float, 4> operator/(dace::vec<float, 4> v, float f) {
+    dace::vec<float, 4> result;
+    result.x = v.x / f;
+    result.y = v.y / f;
+    result.z = v.z / f;
+    result.w = v.w / f;
+    return result;
+}
+
+DACE_DFI dace::vec<float, 4> operator-(dace::vec<float, 4> v) {
+    dace::vec<float, 4> result;
+    result.x = - v.x;
+    result.y = - v.y;
+    result.z = - v.z;
+    result.w = - v.w;
+    return result;
+}
+
 DACE_DFI dace::vec<float, 4> operator-(float f, dace::vec<float, 4> v) {
     dace::vec<float, 4> result;
     result.x = f - v.x;
     result.y = f - v.y;
     result.z = f - v.z;
     result.w = f - v.w;
+    return result;
+}
+
+DACE_DFI dace::vec<float, 4> operator-(dace::vec<float, 4> u, dace::vec<float, 4> v) {
+    dace::vec<float, 4> result;
+    result.x = u.x - v.x;
+    result.y = u.y - v.y;
+    result.z = u.z - v.z;
+    result.w = u.w - v.w;
+    return result;
+}
+
+DACE_DFI dace::vec<float, 4> operator*(float f, dace::vec<float, 4> v) {
+    dace::vec<float, 4> result;
+    result.x = v.x * f;
+    result.y = v.y * f;
+    result.z = v.z * f;
+    result.w = v.w * f;
     return result;
 }
 
