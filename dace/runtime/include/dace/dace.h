@@ -53,9 +53,23 @@ DACE_HDFI float4 exp(float4 v) {
 DACE_HDFI float4 operator+(float f, float4 v) {
     return make_float4(v.x + f, v.y + f, v.z + f, v.w + f);
 }
+DACE_HDFI float4 operator+(float4 u, float4 v) {
+    return make_float4(v.x + u.x, v.y + u.y, v.z + u.z, v.w + u.w);
+}
+DACE_HDFI float4 operator+(float4 v, float f) {
+    return make_float4(v.x + f, v.y + f, v.z + f, v.w + f);
+}
 
 DACE_HDFI float4 operator*(float4 u, float4 v) {
     return make_float4(u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w);
+}
+
+DACE_HDFI float4 operator*(float4 u, float f) {
+    return make_float4(u.x * f, u.y * f, u.z * f, u.w * f);
+}
+
+DACE_HDFI float4 operator*(float f, float4 u) {
+    return make_float4(u.x * f, u.y * f, u.z * f, u.w * f);
 }
 
 DACE_HDFI float4 log(float4 v) {
