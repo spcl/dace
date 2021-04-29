@@ -41,8 +41,9 @@
 
 #include "fpga_common.h"
 
-DACE_HDFI float4 exp(float4 v) {
-    float4 result;
+
+DACE_HDFI dace::vec<float, 4> exp(dace::vec<float, 4> v) {
+    dace::vec<float, 4> result;
     result.x = exp(v.x);
     result.y = exp(v.y);
     result.z = exp(v.z);
@@ -50,30 +51,36 @@ DACE_HDFI float4 exp(float4 v) {
     return result;
 }
 
-DACE_HDFI float4 operator+(float f, float4 v) {
-    return make_float4(v.x + f, v.y + f, v.z + f, v.w + f);
-}
-DACE_HDFI float4 operator+(float4 u, float4 v) {
-    return make_float4(v.x + u.x, v.y + u.y, v.z + u.z, v.w + u.w);
-}
-DACE_HDFI float4 operator+(float4 v, float f) {
-    return make_float4(v.x + f, v.y + f, v.z + f, v.w + f);
-}
-
-DACE_HDFI float4 operator*(float4 u, float4 v) {
-    return make_float4(u.x * v.x, u.y * v.y, u.z * v.z, u.w * v.w);
+DACE_HDFI dace::vec<float, 4> operator+(float f, dace::vec<float, 4> v) {
+    dace::vec<float, 4> result;
+    result.x = v.x + f;
+    result.y = v.y + f;
+    result.z = v.z + f;
+    result.w = v.w + f;
+    return result;
 }
 
-DACE_HDFI float4 operator*(float4 u, float f) {
-    return make_float4(u.x * f, u.y * f, u.z * f, u.w * f);
+DACE_HDFI dace::vec<float, 4> operator*(dace::vec<float, 4> u, dace::vec<float, 4> v) {
+    dace::vec<float, 4> result;
+    result.x = v.x * u.x;
+    result.y = v.y * u.y;
+    result.z = v.z * u.z;
+    result.w = v.w * u.w;
+    return result;
 }
 
-DACE_HDFI float4 operator*(float f, float4 u) {
-    return make_float4(u.x * f, u.y * f, u.z * f, u.w * f);
+DACE_HDFI dace::vec<float, 4> operator*(dace::vec<float, 4> v, float f) {
+    dace::vec<float, 4> result;
+    result.x = v.x * f;
+    result.y = v.y * f;
+    result.z = v.z * f;
+    result.w = v.w * f;
+    return result;
 }
 
-DACE_HDFI float4 log(float4 v) {
-    float4 result;
+
+DACE_HDFI dace::vec<float, 4> log(dace::vec<float, 4> v) {
+    dace::vec<float, 4> result;
     result.x = log(v.x);
     result.y = log(v.y);
     result.z = log(v.z);
@@ -81,8 +88,8 @@ DACE_HDFI float4 log(float4 v) {
     return result;
 }
 
-DACE_HDFI float4 tanh(float4 v) {
-    float4 result;
+DACE_HDFI dace::vec<float, 4> tanh(dace::vec<float, 4> v) {
+    dace::vec<float, 4> result;
     result.x = tanh(v.x);
     result.y = tanh(v.y);
     result.z = tanh(v.z);
