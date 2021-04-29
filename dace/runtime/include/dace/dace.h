@@ -60,15 +60,6 @@ DACE_HDFI dace::vec<float, 4> operator+(float f, dace::vec<float, 4> v) {
     return result;
 }
 
-DACE_HDFI dace::vec<float, 4> operator*(dace::vec<float, 4> u, dace::vec<float, 4> v) {
-    dace::vec<float, 4> result;
-    result.x = v.x * u.x;
-    result.y = v.y * u.y;
-    result.z = v.z * u.z;
-    result.w = v.w * u.w;
-    return result;
-}
-
 DACE_HDFI dace::vec<float, 4> operator*(dace::vec<float, 4> v, float f) {
     dace::vec<float, 4> result;
     result.x = v.x * f;
