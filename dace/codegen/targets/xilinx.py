@@ -639,7 +639,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             # Launch the kernel from the host code
             rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg)
             host_stream.write(
-                f"  auto kernel_{rtl_name} = program.MakeKernel(\"{rtl_name}_top\", {', '.join([name for _, name, p, _ in parameters if not isinstance(p, dt.Stream)])}).ExecuteTaskFork();",
+                f"  auto kernel_{rtl_name} = program.MakeKernel(\"{rtl_name}_top\"{', '.join([''] + [name for _, name, p, _ in parameters if not isinstance(p, dt.Stream)])}).ExecuteTaskFork();",
                 sdfg, state_id, rtl_tasklet)
 
             return

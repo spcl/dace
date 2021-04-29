@@ -45,7 +45,7 @@ class Data(object):
         Examples: Arrays, Streams, custom arrays (e.g., sparse matrices).
     """
 
-    dtype = TypeClassProperty(default=dtypes.int32)
+    dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
     shape = ShapeProperty(default=[])
     transient = Property(dtype=bool, default=False)
     storage = Property(dtype=dtypes.StorageType,

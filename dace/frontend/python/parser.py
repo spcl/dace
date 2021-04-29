@@ -188,7 +188,7 @@ class DaceProgram:
     def _auto_optimize(self, sdfg: SDFG) -> SDFG:
         """ Invoke automatic optimization heuristics on internal program. """
         # Avoid import loop
-        from dace.transformation import auto_optimize as autoopt
+        from dace.transformation.auto import auto_optimize as autoopt
         return autoopt.auto_optimize(sdfg, self.device)
 
     def to_sdfg(self, *args, strict=None, save=False) -> SDFG:

@@ -7,7 +7,7 @@ import errno
 import itertools
 import os
 import pickle, json
-from hashlib import sha256
+from hashlib import md5, sha256
 from pydoc import locate
 import random
 import re
@@ -683,10 +683,27 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """ Returns a relative path to the build cache folder for this SDFG. """
         if hasattr(self, '_build_folder'):
             return self._build_folder
-        elif Config.get_bool('testing', 'single_cache'):
-            return os.path.join('.dacecache', 'test')
-        else:
+        cache_config = Config.get('cache')
+        if cache_config == 'single':
+            # Always use the same directory, overwriting any other program,
+            # preventing parallelism and caching of multiple programs, but
+            # saving space and potentially build time
+            return os.path.join('.dacecache', 'single_cache')
+        elif cache_config == 'hash':
+            # Any change to the SDFG will result in a new cache folder
+            md5_hash = md5(str(self.to_json()).encode('utf-8')).hexdigest()
+            return os.path.join('.dacecache', f'{self.name}_{md5_hash}')
+        elif cache_config == 'unique':
+            # Base name on location in memory, so no caching is possible between
+            # processes or subsequent invokations
+            md5_hash = md5(str(os.getpid()).encode('utf-8')).hexdigest()
+            return os.path.join('.dacecache', f'{self.name}_{md5_hash}')
+        elif cache_config == 'name':
+            # Overwrites previous invocations, and can clash with other programs
+            # if executed in parallel in the same working directory
             return os.path.join('.dacecache', self.name)
+        else:
+            raise ValueError(f'Unknown cache configuration: {cache_config}')
 
     @build_folder.setter
     def build_folder(self, newfolder: str):
@@ -703,7 +720,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if validate:
             for state in self.nodes():
                 for node in state.nodes():
-                    if isinstance(node, nd.AccessNode) and nd.data == name:
+                    if isinstance(node, nd.AccessNode) and node.data == name:
                         raise ValueError("Data descriptor %s is already used"
                                          "in node %s, state %s" %
                                          (name, node, state))
@@ -931,9 +948,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Start with the set of SDFG free symbols
         free_syms |= set(self.symbols.keys())
 
-        # Add free data symbols and exclude data descriptor names
+        # Exclude data descriptor names
         for name, desc in self.arrays.items():
-            free_syms |= set(map(str, desc.free_symbols))
             defined_syms.add(name)
 
         # Add free state symbols
@@ -2152,6 +2168,25 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         from dace.transformation.interstate import GPUTransformSDFG
 
         self.apply_transformations(GPUTransformSDFG,
+                                   validate=validate,
+                                   validate_all=validate_all,
+                                   strict=strict,
+                                   states=states)
+
+    def apply_fpga_transformations(self,
+                                   states=None,
+                                   validate=True,
+                                   validate_all=False,
+                                   strict=True):
+        """ Applies a series of transformations on the SDFG for it to
+            generate FPGA code.
+
+            :note: This is an in-place operation on the SDFG.
+        """
+        # Avoiding import loops
+        from dace.transformation.interstate import FPGATransformSDFG
+
+        self.apply_transformations(FPGATransformSDFG,
                                    validate=validate,
                                    validate_all=validate_all,
                                    strict=strict,
