@@ -42,7 +42,7 @@
 #include "fpga_common.h"
 
 
-DACE_HDFI dace::vec<float, 4> exp(dace::vec<float, 4> v) {
+DACE_DFI dace::vec<float, 4> exp(dace::vec<float, 4> v) {
     dace::vec<float, 4> result;
     result.x = exp(v.x);
     result.y = exp(v.y);
@@ -51,7 +51,7 @@ DACE_HDFI dace::vec<float, 4> exp(dace::vec<float, 4> v) {
     return result;
 }
 
-DACE_HDFI dace::vec<float, 4> operator+(float f, dace::vec<float, 4> v) {
+DACE_DFI dace::vec<float, 4> operator+(float f, dace::vec<float, 4> v) {
     dace::vec<float, 4> result;
     result.x = v.x + f;
     result.y = v.y + f;
@@ -60,7 +60,7 @@ DACE_HDFI dace::vec<float, 4> operator+(float f, dace::vec<float, 4> v) {
     return result;
 }
 
-DACE_HDFI dace::vec<float, 4> operator*(dace::vec<float, 4> v, float f) {
+DACE_DFI dace::vec<float, 4> operator*(dace::vec<float, 4> v, float f) {
     dace::vec<float, 4> result;
     result.x = v.x * f;
     result.y = v.y * f;
@@ -70,7 +70,7 @@ DACE_HDFI dace::vec<float, 4> operator*(dace::vec<float, 4> v, float f) {
 }
 
 
-DACE_HDFI dace::vec<float, 4> log(dace::vec<float, 4> v) {
+DACE_DFI dace::vec<float, 4> log(dace::vec<float, 4> v) {
     dace::vec<float, 4> result;
     result.x = log(v.x);
     result.y = log(v.y);
@@ -79,7 +79,7 @@ DACE_HDFI dace::vec<float, 4> log(dace::vec<float, 4> v) {
     return result;
 }
 
-DACE_HDFI dace::vec<float, 4> tanh(dace::vec<float, 4> v) {
+DACE_DFI dace::vec<float, 4> tanh(dace::vec<float, 4> v) {
     dace::vec<float, 4> result;
     result.x = tanh(v.x);
     result.y = tanh(v.y);
