@@ -3,6 +3,7 @@ import functools
 import os
 from typing import List
 
+import dace
 from dace import dtypes
 from dace import data
 from dace.sdfg import SDFG
@@ -15,6 +16,7 @@ from dace.sdfg import infer_types
 from dace.codegen.targets import cpp, cpu
 
 from dace.codegen.instrumentation import InstrumentationProvider
+
 
 
 def generate_headers(sdfg: SDFG) -> str:
@@ -195,7 +197,7 @@ def generate_code(sdfg) -> List[CodeObject]:
                        linkable=False)
     target_objects.append(dummy)
 
-    for env in used_environments:
+    for env in dace.library.get_environments_and_dependencies(used_environments):
         if hasattr(env, "codeobjects"):
             target_objects.extend(env.codeobjects)
 
