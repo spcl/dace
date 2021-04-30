@@ -1415,9 +1415,9 @@ def propagate_subset(memlets: List[Memlet],
             # Fill in the entire array only if one of the parameters appears in the
             # free symbols list of the subset dimension
             tmp_subset = subsets.Range([
-                ea if any(
-                    set(map(str, sd.free_symbols)) & paramset
-                    for sd in s) else s for s, ea in zip(subset, entire_array)
+                ea if any(set(map(str, _freesyms(sd))) & paramset
+                          for sd in s) else s
+                for s, ea in zip(subset, entire_array)
             ])
 
         # Union edges as necessary
@@ -1455,3 +1455,13 @@ def propagate_subset(memlets: List[Memlet],
         new_memlet.volume = 0
 
     return new_memlet
+
+
+def _freesyms(expr):
+    """ 
+    Helper function that either returns free symbols for sympy expressions
+    or an empty set if constant.
+    """
+    if isinstance(expr, sympy.Basic):
+        return expr.free_symbols
+    return {}
