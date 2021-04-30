@@ -195,6 +195,10 @@ def generate_code(sdfg) -> List[CodeObject]:
                        linkable=False)
     target_objects.append(dummy)
 
+    for env in used_environments:
+        if hasattr(env, "codeobjects"):
+            target_objects.extend(env.codeobjects)
+
     # add a dummy main function to show how to call the SDFG
     dummy = CodeObject(sdfg.name + "_main",
                        generate_dummy(sdfg),
