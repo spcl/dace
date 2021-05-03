@@ -205,12 +205,18 @@ required:
                     will crash if this is not the case.
 
             unique_functions:
-                type: bool
-                default: true
+                type: str
+                default: hash
                 title: Generate unique functions
                 description: >
-                    If set to true, if multiple nested SDFGs with equivalent contents exist,
-                    the code is generated only once.
+                    Determine if and how to generate the code for equivalent nestedSDFGs:
+                    "hash": hashing is used to determine if multiple nested SDFGs with equivalent contents exist.
+                    If this is the case, the code is generated only once.
+                    "unique_name": the unique_name property of SDFG is used to determine if two NestedSDFGs are equal,
+                    generating the code only once.  This gives more control to the programmer, that can explicitly
+                    decide what NestedSDFG code can be replicated and what not.
+                    "none": a separate function is code generated for each NestedSDFG
+
 
             inline_sdfgs:
                 type: bool
