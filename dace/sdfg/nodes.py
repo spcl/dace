@@ -1202,10 +1202,13 @@ class LibraryNode(CodeNode):
             :return: the name of the expanded implementation
         """
         implementation = self.implementation
-        library_name = type(self)._dace_library_name
+        library_name = getattr(type(self), '_dace_library_name', '')
         try:
-            config_implementation = Config.get("library", library_name,
-                                               "default_implementation")
+            if library_name:
+                config_implementation = Config.get("library", library_name,
+                                                   "default_implementation")
+            else:
+                config_implementation = None
         except KeyError:
             # Non-standard libraries are not defined in the config schema, and
             # thus might not exist in the config.
