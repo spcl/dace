@@ -25,6 +25,7 @@ from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.sdfg import nodes, utils as sdutils
+from dace.codegen.targets.common import sym2cpp
 from dace.sdfg import SDFGState
 import dace.sdfg.utils as utils
 from dace.symbolic import evaluate
@@ -74,8 +75,12 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             return
         # Keep track of generated converters to avoid multiple definition
         self.generated_converters = set()
+        # constants
+        self.generated_constants = set()
         # Channel mangles
         self.channel_mangle = defaultdict(dict)
+        # Modules name mangles
+        self.module_mange = defaultdict(dict)
 
         super().__init__(*args, **kwargs)
 
@@ -190,7 +195,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
 
     def create_mangled_channel_name(self, var_name, kernel_id):
         '''
-        Memorize and returns  the mangled name of a global channel
+        Memorize and returns the mangled name of a global channel
         The dictionary is organized as (var_name) : {kernel_id: mangled_name)
         '''
 
@@ -210,6 +215,19 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
             return self.channel_mangle[var_name][kernel_id]
         else:
             return var_name
+
+    def create_mangled_module_name(self, module_name, kernel_id):
+        '''
+        Memorize and returns the mangled name of a module (OpenCL kernel)
+        The dictionary is organized as {module_name: {kernel_id: mangled_name}}
+        '''
+
+        if kernel_id not in self.module_mange[module_name]:
+            existing_count = len(self.module_mange[module_name])
+            suffix = f"_{existing_count}" if existing_count > 0 else ""
+            mangled_name = f"{module_name}{suffix}"
+            self.module_mange[module_name][kernel_id] = mangled_name
+        return self.module_mange[module_name][kernel_id]
 
     def define_stream(self, dtype, buffer_size, var_name, array_size,
                       function_stream, kernel_stream):
@@ -485,17 +503,18 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_body_stream.write("\n")
 
         # Generate host code
-        self.generate_host_function_boilerplate(
-            sdfg, state, kernel_name, global_data_parameters,
-            nested_global_transients, host_code_body_stream, function_stream,
-            callsite_stream)
+        self.generate_host_function_boilerplate(sdfg, state, kernel_name,
+                                                global_data_parameters,
+                                                nested_global_transients,
+                                                host_code_body_stream,
+                                                function_stream,
+                                                callsite_stream)
 
         self.generate_host_function_prologue(sdfg, state, host_code_body_stream)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
-                              subgraph_parameters,
-                              kernel_body_stream, host_code_header_stream,
-                              host_code_body_stream)
+                              subgraph_parameters, kernel_body_stream,
+                              host_code_header_stream, host_code_body_stream)
 
         kernel_body_stream.write("\n")
 
@@ -555,8 +574,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 }""", sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
-                        module_stream, host_header_stream,
-                        host_body_stream):
+                        module_stream, host_header_stream, host_body_stream):
 
         state_id = sdfg.node_id(state)
         dfg = sdfg.nodes()[state_id]
@@ -584,8 +602,10 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # "_cra_slave_inst", which is 15 characters, so we restrict to
         # 61 - 15 = 46, and round down to 36 to be conservative, since
         # internally could still fail while dealing with RTL.
-        # Therefore we cut down names longer than that
-        module_function_name = module_function_name[0:36]
+        # However, in this way we could have name clashes (e.g., if we have two almost identical NestedSDFG).
+        # Therefore we explicitly take care of this by mangling the name
+        module_function_name = self.create_mangled_module_name(
+            module_function_name[0:36], self._kernel_count)
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
@@ -780,13 +800,16 @@ __kernel void \\
             desc = sdfg.arrays[in_memlet.data]
             defined_type, defined_ctype = self._dispatcher.defined_vars.get(
                 in_memlet.data, 1)
+
             if isinstance(desc, dace.data.Array) and (
                     desc.storage == dtypes.StorageType.FPGA_Global
                     or desc.storage == dtypes.StorageType.FPGA_Local):
                 # special case: in intel FPGA this must be handled properly to guarantee OpenCL compatibility
+                # (no pass by reference)
+                # The defined type can be a scalar, and therefore we get its address
                 vec_type = desc.dtype.ocltype
                 offset = cpp.cpp_offset_expr(desc, in_memlet.subset, None)
-                offset_expr = '[' + offset + ']'
+                offset_expr = '[' + offset + ']' if defined_type is not DefinedType.Scalar else ''
 
                 expr = self.make_ptr_vector_cast(in_memlet.data + offset_expr,
                                                  desc.dtype,
@@ -796,11 +819,12 @@ __kernel void \\
                     typedef = "__global volatile  {}* restrict".format(vec_type)
                 else:
                     typedef = "{} *".format(vec_type)
-                memlet_references.append((typedef, vconn, expr))
+                ref = '&' if defined_type is DefinedType.Scalar else ''
+                memlet_references.append((typedef, vconn, ref + expr))
                 # get the defined type (as defined in the parent)
                 # Register defined variable
                 self._dispatcher.defined_vars.add(vconn,
-                                                  defined_type,
+                                                  DefinedType.Pointer,
                                                   typedef,
                                                   allow_shadowing=True)
             elif isinstance(desc, dace.data.Stream):
@@ -810,9 +834,14 @@ __kernel void \\
                 # if this is a scalar and the argument passed is also a scalar
                 # then we have to pass it by value, as references do not exist in C99
                 typedef = defined_ctype
-                memlet_references.append((typedef, vconn, in_memlet.data))
+                if defined_type is not DefinedType.Pointer:
+                    typedef = typedef + "*"
+
+                memlet_references.append(
+                    (typedef, vconn,
+                     cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type)))
                 self._dispatcher.defined_vars.add(vconn,
-                                                  defined_type,
+                                                  DefinedType.Pointer,
                                                   typedef,
                                                   allow_shadowing=True)
             else:
@@ -834,22 +863,24 @@ __kernel void \\
                 if isinstance(desc, dace.data.Array) and (
                         desc.storage == dtypes.StorageType.FPGA_Global
                         or desc.storage == dtypes.StorageType.FPGA_Local):
-                    # special case: in intel FPGA this must be handled properly
+                    # special case: in intel FPGA this must be handled properly.
+                    # The defined type can be scalar, and therefore we get its address
                     vec_type = desc.dtype.ocltype
                     offset = cpp.cpp_offset_expr(desc, out_memlet.subset, None)
-                    offset_expr = '[' + offset + ']'
+                    offset_expr = '[' + offset + ']' if defined_type is not DefinedType.Scalar else ''
                     if desc.storage == dtypes.StorageType.FPGA_Global:
                         typedef = "__global volatile  {}* restrict".format(
                             vec_type)
                     else:
                         typedef = "{}*".format(vec_type)
+                    ref = '&' if defined_type is DefinedType.Scalar else ''
                     expr = self.make_ptr_vector_cast(
                         out_memlet.data + offset_expr, desc.dtype,
                         node.out_connectors[uconn], False, defined_type)
-                    memlet_references.append((typedef, uconn, expr))
+                    memlet_references.append((typedef, uconn, ref + expr))
                     # Register defined variable
                     self._dispatcher.defined_vars.add(uconn,
-                                                      defined_type,
+                                                      DefinedType.Pointer,
                                                       typedef,
                                                       allow_shadowing=True)
                 elif isinstance(desc, dace.data.Stream):
@@ -895,7 +926,6 @@ __kernel void \\
                     # if this is not already a mapped symbol, add it
                     if p not in node.symbol_mapping.keys():
                         memlet_references.append((typedef, p, p))
-
         return memlet_references
 
     def allocate_view(self, sdfg: dace.SDFG, dfg: SDFGState, state_id: int,
@@ -936,13 +966,14 @@ __kernel void \\
                                               defined_type,
                                               atype,
                                               allow_shadowing=True)
-            _, _, value = cpp.emit_memlet_reference(self._dispatcher,
-                                                            sdfg,
-                                                            edge.data,
-                                                            name,
-                                                            dtypes.pointer(
-                                                                nodedesc.dtype),
-                                                            ancestor=0, device_code=self._in_device_code)
+            _, _, value = cpp.emit_memlet_reference(
+                self._dispatcher,
+                sdfg,
+                edge.data,
+                name,
+                dtypes.pointer(nodedesc.dtype),
+                ancestor=0,
+                device_code=self._in_device_code)
         else:
             qualifier = ""
             atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
@@ -1309,13 +1340,33 @@ __kernel void \\
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
     def generate_constants(self, sdfg, callsite_stream):
-        # Use framecode's generate_constants, but substitute constexpr for
-        # __constant
-        constant_stream = CodeIOStream()
-        self._frame.generate_constants(sdfg, constant_stream)
-        constant_string = constant_stream.getvalue()
-        constant_string = constant_string.replace("constexpr", "__constant")
-        callsite_stream.write(constant_string, sdfg)
+        # To avoid a constant being multiple defined, define it once and
+        # declare it as extern everywhere else.
+
+        for cstname, (csttype, cstval) in sdfg.constants_prop.items():
+            if isinstance(csttype, dace.data.Array):
+                const_str = "__constant " + csttype.dtype.ctype + \
+                            " " + cstname + "[" + str(cstval.size) + "]"
+
+                if cstname not in self.generated_constants:
+                    # First time, define it
+                    self.generated_constants.add(cstname)
+                    const_str += " = {"
+                    it = np.nditer(cstval, order='C')
+                    for i in range(cstval.size - 1):
+                        const_str += str(it[0]) + ", "
+                        it.iternext()
+                    const_str += str(it[0]) + "};\n"
+                else:
+                    # only define
+                    const_str = "extern " + const_str + ";\n"
+                callsite_stream.write(const_str, sdfg)
+            else:
+                # This is a scalar: defining it as an extern variable has the drawback
+                # that it is not resolved at compile time, preventing the compiler to
+                # allocate fast memory. Therefore, we will use a #define
+                callsite_stream.write(f"#define {cstname} {sym2cpp(cstval)}\n",
+                                      sdfg)
 
     def generate_tasklet_postamble(self, sdfg, dfg, state_id, node,
                                    function_stream, callsite_stream,
@@ -1387,7 +1438,12 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
     Removes Dace Keywords and enforces OpenCL compliance
     """
 
-    nptypes_to_ctypes = {'float64': 'double', 'float32': 'float', 'int32': 'int', 'int64': 'long'}
+    nptypes_to_ctypes = {
+        'float64': 'double',
+        'float32': 'float',
+        'int32': 'int',
+        'int64': 'long'
+    }
     nptypes = ['float64', 'float32', 'int32', 'int64']
     ctypes = [
         'bool', 'char', 'cl_char', 'unsigned char', 'uchar', 'cl_uchar',
