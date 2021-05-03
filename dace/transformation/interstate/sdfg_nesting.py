@@ -104,22 +104,33 @@ class InlineSDFG(transformation.Transformation):
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph: SDFGState,
+                       candidate,
+                       expr_index,
+                       sdfg,
+                       strict=False):
         nested_sdfg = graph.nodes()[candidate[InlineSDFG._nested_sdfg]]
         if nested_sdfg.no_inline:
             return False
         if len(nested_sdfg.sdfg.nodes()) != 1:
             return False
 
-        # Ensure every connector has one incoming/outgoing edge
+        # Ensure every connector has one incoming/outgoing edge and that it
+        # is not empty
         in_connectors = set()
         out_connectors = set()
         for edge in graph.in_edges(nested_sdfg):
             if edge.dst_conn in in_connectors:
                 return False
+            if (edge.data.is_empty()
+                    and not isinstance(edge.src, nodes.EntryNode)):
+                return False
             in_connectors.add(edge.dst_conn)
         for edge in graph.out_edges(nested_sdfg):
             if edge.src_conn in out_connectors:
+                return False
+            if (edge.data.is_empty()
+                    and not isinstance(edge.dst, nodes.ExitNode)):
                 return False
             out_connectors.add(edge.src_conn)
 
