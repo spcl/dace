@@ -311,8 +311,12 @@ class CompiledSDFG(object):
         # Return value initialization (for values that have not been given)
         self._initialize_return_values(kwargs)
         if self._return_arrays is not None:
-            for desc, arr in zip(self._retarray_shapes, self._return_arrays):
-                kwargs[desc[0]] = arr
+            if len(self._retarray_shapes) == 1:
+                kwargs[self._retarray_shapes[0][0]] = self._return_arrays
+            else:
+                for desc, arr in zip(self._retarray_shapes,
+                                     self._return_arrays):
+                    kwargs[desc[0]] = arr
 
         # Argument construction
         sig = self._sig
