@@ -253,6 +253,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     orig_sdfg = SDFGReferenceProperty(allow_none=True)
     transformation_hist = TransformationHistProperty()
 
+    unique_name = Property(dtype=str,
+                           desc="Unique name of the SDFG",
+                           default="")
+
     def __init__(self,
                  name: str,
                  arg_types: Dict[str, dt.Data] = None,
