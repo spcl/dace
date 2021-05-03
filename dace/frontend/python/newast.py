@@ -3036,6 +3036,8 @@ class ProgramVisitor(ExtNodeVisitor):
         except:
             dtype = None
             warnings.warn('typeclass {} is not supported'.format(type_name))
+        if node.value is None:  # Annotating type without assignment
+            return self.generic_visit(node)
         self._visit_assign(node, node.target, None, dtype=dtype)
 
     def _visit_assign(self, node, node_target, op, dtype=None, is_return=False):
