@@ -4,7 +4,7 @@
 from dace.sdfg import SDFG, SDFGState
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union, List
+from typing import Any, Set, Tuple, Union, List
 import warnings
 
 # Transformations
@@ -166,6 +166,11 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
         # Transform all outgoing WCR and stream edges
         mapexit = graph.exit_node(mapentry)
         outer_mapexit = graph.exit_node(outer_mapentry)
+
+        # Tuple of (transformation type, options, pattern)
+        to_apply: Tuple[Union[dataflow.StreamTransient,
+                              dataflow.AccumulateTransient], Dict[str, Any],
+                        Dict[str, nodes.Node]] = None
         for e in graph.out_edges(mapexit):
             if isinstance(sdfg.arrays[e.data.data], dt.Stream):
                 mpath = graph.memlet_path(e)
@@ -173,10 +178,16 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
                 if not isinstance(tasklet, nodes.Tasklet) or len(mpath) != 3:
                     # TODO(later): Implement StreamTransient independently of tasklet
                     continue
-                dataflow.StreamTransient.apply_to(sdfg,
-                                                  tasklet=tasklet,
-                                                  map_exit=mapexit,
-                                                  outer_map_exit=outer_mapexit)
+
+                # Make transient only if there is one WCR/stream
+                if to_apply is not None:
+                    to_apply = None
+                    break
+
+                to_apply = (dataflow.StreamTransient, {},
+                            dict(tasklet=tasklet,
+                                 map_exit=mapexit,
+                                 outer_map_exit=outer_mapexit))
             else:
                 if (e.data.is_empty() or e.data.wcr is None
                         or e.data.wcr_nonatomic
@@ -190,15 +201,18 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
                 identity = dtypes.reduction_identity(dtype, redtype)
                 if identity is None:  # Cannot infer identity value
                     continue
-                try:
-                    dataflow.AccumulateTransient.apply_to(
-                        sdfg,
-                        options=dict(identity=identity, array=e.data.data),
-                        map_exit=mapexit,
-                        outer_map_exit=outer_mapexit)
-                except StopIteration:
-                    # A previous AccumulateTransient created a nested SDFG
-                    continue
+                # Make transient only if there is one WCR/stream
+                if to_apply is not None:
+                    to_apply = None
+                    break
+
+                to_apply = (dataflow.AccumulateTransient,
+                            dict(identity=identity, array=e.data.data),
+                            dict(map_exit=mapexit,
+                                 outer_map_exit=outer_mapexit))
+        if to_apply is not None:
+            xform, opts, pattern = to_apply
+            xform.apply_to(sdfg, options=opts, **pattern)
 
     if debugprint and len(transformed) > 0:
         print(f'Optimized {len(transformed)} write-conflicted maps')
