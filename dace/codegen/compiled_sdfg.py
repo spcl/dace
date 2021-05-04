@@ -482,12 +482,14 @@ class CompiledSDFG(object):
                     # Use stored sizes to recreate arrays (fast path)
                     if isinstance(self._return_arrays, tuple):
                         self._return_arrays = tuple(
-                            self._create_array(*desc)
+                            kwargs[desc[0]] if desc[0] in
+                            kwargs else self._create_array(*desc)
                             for desc in self._retarray_shapes)
                         return
                     else:  # Single array return value
                         desc = self._retarray_shapes[0]
-                        arr = self._create_array(*desc)
+                        arr = (kwargs[desc[0]] if desc[0] in kwargs else
+                               self._create_array(*desc))
                         self._return_arrays = arr
                         return
 
@@ -501,6 +503,7 @@ class CompiledSDFG(object):
             if arrname.startswith('__return') and not arr.transient:
                 if arrname in kwargs:
                     self._return_arrays.append(kwargs[arrname])
+                    self._retarray_shapes.append((arrname,))
                     continue
 
                 if isinstance(arr, dt.Stream):
