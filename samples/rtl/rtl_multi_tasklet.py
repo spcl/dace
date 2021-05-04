@@ -27,23 +27,23 @@ tasklet0 = state.add_tasklet(name='rtl_tasklet0',
 typedef enum [1:0] {READY, BUSY, DONE} state_e;
 state_e state;
 
-always@(posedge clk_i) begin
-    if (rst_i) begin // case: reset
-        b <= 0;
-        ready_o <= 1'b1;
+always@(posedge ap_aclk) begin
+    if (ap_areset) begin // case: reset
+        m_axis_b_tdata <= 0;
+        s_axis_a_tready <= 1'b1;
         state <= READY;
-    end else if (valid_i && state == READY) begin // case: load a 
-        b <= a;
-        ready_o <= 1'b0;
+    end else if (s_axis_a_tvalid && state == READY) begin // case: load a 
+        m_axis_b_tdata <= s_axis_a_tdata;
+        s_axis_a_tready <= 1'b0;
         state <= BUSY;
-    end else if (b < 80) // case: increment counter b
-        b <= b + 1;
+    end else if (m_axis_b_tdata < 80) // case: increment counter b
+        m_axis_b_tdata <= m_axis_b_tdata + 1;
     else
-        b <= b;
+        m_axis_b_tdata <= m_axis_b_tdata;
         state <= DONE;
 end    
 
-assign valid_o = (b >= 80) ? 1'b1:1'b0;
+assign m_axis_b_tvalid = (m_axis_b_tdata >= 80) ? 1'b1:1'b0;
 """,
                              language=dace.Language.SystemVerilog)
 
@@ -54,23 +54,23 @@ tasklet1 = state.add_tasklet(name='rtl_tasklet1',
 typedef enum [1:0] {READY, BUSY, DONE} state_e;
 state_e state;
 
-always@(posedge clk_i) begin
-    if (rst_i) begin // case: reset
-        c <= 0;
-        ready_o <= 1'b1;
+always@(posedge ap_aclk) begin
+    if (ap_areset) begin // case: reset
+        m_axis_c_tdata <= 0;
+        s_axis_b_tready <= 1'b1;
         state <= READY;
-    end else if (valid_i && state == READY) begin // case: load a 
-        c <= b;
-        ready_o <= 1'b0;
+    end else if (s_axis_b_tvalid && state == READY) begin // case: load a 
+        m_axis_c_tdata <= s_axis_b_tdata;
+        s_axis_b_tready <= 1'b0;
         state <= BUSY;
-    end else if (c < 100) // case: increment counter b
-        c <= c + 1;
+    end else if (m_axis_c_tdata < 100) // case: increment counter b
+        m_axis_c_tdata <= m_axis_c_tdata + 1;
     else
-        c <= c;
+        m_axis_c_tdata <= m_axis_c_tdata;
         state <= DONE;
 end    
 
-assign valid_o = (c >= 100) ? 1'b1:1'b0;   
+assign m_axis_c_tvalid = (m_axis_c_tdata >= 100) ? 1'b1:1'b0;   
 """,
                              language=dace.Language.SystemVerilog)
 
@@ -81,10 +81,10 @@ B_r = state.add_read('B')
 C = state.add_write('C')
 
 # connect input/output array with the tasklet
-state.add_edge(A, None, tasklet0, 'a', dace.Memlet.simple('A', '0'))
-state.add_edge(tasklet0, 'b', B_w, None, dace.Memlet.simple('B', '0'))
-state.add_edge(B_r, None, tasklet1, 'b', dace.Memlet.simple('B', '0'))
-state.add_edge(tasklet1, 'c', C, None, dace.Memlet.simple('C', '0'))
+state.add_edge(A, None, tasklet0, 'a', dace.Memlet('A[0]'))
+state.add_edge(tasklet0, 'b', B_w, None, dace.Memlet('B[0]'))
+state.add_edge(B_r, None, tasklet1, 'b', dace.Memlet('B[0]'))
+state.add_edge(tasklet1, 'c', C, None, dace.Memlet('C[0]'))
 
 # validate sdfg
 sdfg.validate()

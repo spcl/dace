@@ -1,10 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Automatic optimization routines for SDFGs. """
 
-from dace.sdfg.state import SDFGState
+from dace.sdfg import SDFG, SDFGState
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union
+from typing import Set, Tuple, Union, List
 import warnings
 
 # Transformations
@@ -13,6 +13,9 @@ from dace.transformation.interstate import LoopToMap
 
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
+
+# FPGA AutoOpt
+from dace.transformation.auto import fpga as fpga_aopt
 
 GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
@@ -77,15 +80,15 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
     sdfg = graph.parent
 
     edges_to_consider: Set[Tuple[gr.MultiConnectorEdge[Memlet],
-                                 nodes.EntryNode]] = set()
+                                 nodes.MapEntry]] = set()
     for edge in graph_or_subgraph.edges():
         if edge.data.wcr is not None:
-            if (isinstance(edge.src, (nodes.ExitNode, nodes.NestedSDFG))
-                    or isinstance(edge.dst, nodes.EntryNode)):
+            if (isinstance(edge.src, (nodes.MapExit, nodes.NestedSDFG))
+                    or isinstance(edge.dst, nodes.MapEntry)):
                 # Do not consider intermediate edges
                 continue
             reason = cpp.is_write_conflicted_with_reason(graph, edge)
-            if reason is None or not isinstance(reason, nodes.EntryNode):
+            if reason is None or not isinstance(reason, nodes.MapEntry):
                 # Do not consider edges that will not generate atomics or
                 # atomics we cannot transform
                 continue
@@ -202,13 +205,18 @@ def find_fast_library(device: dtypes.DeviceType) -> str:
     # device
     if device is dtypes.DeviceType.GPU:
         return ['cuBLAS', 'CUB', 'pure']
+    elif device is dtypes.DeviceType.FPGA:
+        return [
+            'FPGA_PartialSums', 'FPGAPartialReduction', 'FPGA_Accumulate',
+            'FPGA1DSystolic', 'pure'
+        ]
     elif device is dtypes.DeviceType.CPU:
         result = []
 
         # BLAS calls
         if mkl.IntelMKL.is_installed():
             result.append('MKL')
-        elif openblas.OpenBLAS.is_installed():
+        if openblas.OpenBLAS.is_installed():
             result.append('OpenBLAS')
 
         return result + ['pure']
@@ -218,7 +226,7 @@ def find_fast_library(device: dtypes.DeviceType) -> str:
 
 def move_small_arrays_to_stack(sdfg: SDFG) -> None:
     """
-    Set all Default storage types that are constant sized and less than 
+    Set all Default storage types that are constant sized and less than
     the auto-tile size to the stack (as StorageType.Register).
     :param sdfg: The SDFG to operate on.
     :note: Operates in-place on the SDFG.
@@ -240,6 +248,35 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
         print(f'Statically allocating {converted} transient arrays')
 
 
+def set_fast_implementations(sdfg: SDFG,
+                             device: dtypes.DeviceType,
+                             blocklist: List[str] = None):
+    """
+    Set fast library node implementations for the given device
+
+    :param sdfg: The SDFG to optimize.
+    :param device: the device to optimize for.
+    :param blocklist: list of disallowed implementations.
+    :note: Operates in-place on the given SDFG.
+    """
+    if blocklist is None:
+        implementation_prio = find_fast_library(device)
+    else:
+        implementation_prio = [
+            i for i in find_fast_library(device) if i not in blocklist
+        ]
+
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.LibraryNode):
+            for impl in implementation_prio:
+                if impl in node.implementations:
+                    node.implementation = impl
+                    break
+            else:
+                warnings.warn('No fast library implementation found for "%s", '
+                              'falling back to default.' % node.name)
+
+
 def auto_optimize(sdfg: SDFG,
                   device: dtypes.DeviceType,
                   validate: bool = True,
@@ -256,6 +293,7 @@ def auto_optimize(sdfg: SDFG,
         * Set all library nodes to expand to ``fast`` expansion, which calls
           the fastest library on the target device
     :param sdfg: The SDFG to optimize.
+    :param device: the device to optimize for.
     :param validate: If True, validates the SDFG after all transformations
                      have been applied.
     :param validate_all: If True, validates the SDFG after every step.
@@ -276,6 +314,16 @@ def auto_optimize(sdfg: SDFG,
     # Map fusion
     greedy_fuse(sdfg, validate_all)
 
+    if device == dtypes.DeviceType.FPGA:
+        # apply FPGA Transformations
+        sdfg.apply_fpga_transformations()
+        fpga_aopt.fpga_global_to_local(sdfg)
+        fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
+
+        # Set all library nodes to expand to fast library calls
+        set_fast_implementations(sdfg, device)
+        return sdfg
+
     # Tiled WCR and streams
     for nsdfg in list(sdfg.all_sdfgs_recursive()):
         tile_wcrs(nsdfg, validate_all)
@@ -290,16 +338,7 @@ def auto_optimize(sdfg: SDFG,
             node.map.collapse = len(node.map.range)
 
     # Set all library nodes to expand to fast library calls
-    implementation_prio = find_fast_library(device)
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.LibraryNode):
-            for impl in implementation_prio:
-                if impl in node.implementations:
-                    node.implementation = impl
-                    break
-            else:
-                warnings.warn('No fast library implementation found for "%s", '
-                              'falling back to default.' % node.name)
+    set_fast_implementations(sdfg, device)
 
     # TODO(later): Safe vectorization
 

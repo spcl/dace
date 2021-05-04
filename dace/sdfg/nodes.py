@@ -411,6 +411,32 @@ class Tasklet(CodeNode):
             return self.label
 
 
+@make_properties
+class RTLTasklet(Tasklet):
+    """ A specialized tasklet, which is a functional computation procedure
+        that can only access external data specified using connectors.
+
+        This tasklet is specialized for tasklets implemented in System Verilog
+        in that it adds support for adding metadata about the IP cores in use.
+    """
+    # TODO to be replaced when enums have embedded properties
+    ip_cores = DictProperty(key_type=str,
+                            value_type=dict,
+                            desc="A set of IP cores used by the tasklet.")
+
+    @property
+    def __jsontype__(self):
+        return 'Tasklet'
+
+    def add_ip_core(self, module_name, name, vendor, version, params):
+        self.ip_cores[module_name] = {
+            'name': name,
+            'vendor': vendor,
+            'version': version,
+            'params': params
+        }
+
+
 # ------------------------------------------------------------------------------
 
 
@@ -1176,10 +1202,13 @@ class LibraryNode(CodeNode):
             :return: the name of the expanded implementation
         """
         implementation = self.implementation
-        library_name = type(self)._dace_library_name
+        library_name = getattr(type(self), '_dace_library_name', '')
         try:
-            config_implementation = Config.get("library", library_name,
-                                               "default_implementation")
+            if library_name:
+                config_implementation = Config.get("library", library_name,
+                                                   "default_implementation")
+            else:
+                config_implementation = None
         except KeyError:
             # Non-standard libraries are not defined in the config schema, and
             # thus might not exist in the config.

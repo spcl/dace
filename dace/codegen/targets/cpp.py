@@ -6,14 +6,15 @@ NOTE: The C++ code generator is currently located in cpu.py.
 import ast
 import copy
 import functools
+import itertools
 import warnings
 
 import sympy as sp
 from six import StringIO
-from typing import IO, Tuple, Union
+from typing import IO, Optional, Tuple, Union
 
 import dace
-from dace import data, subsets, symbolic, dtypes, memlet as mmlt
+from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
 from dace.codegen import cppunparse
 from dace.codegen.targets.common import (sym2cpp, find_incoming_edges,
                                          codeblock_to_cpp)
@@ -23,7 +24,7 @@ from dace.frontend import operations
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.sdfg import nodes, graph as gr
 from dace.properties import LambdaProperty
-from dace.sdfg import SDFG, is_devicelevel_gpu
+from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 
 
 def copy_expr(
@@ -31,6 +32,7 @@ def copy_expr(
     sdfg,
     dataname,
     memlet,
+    is_write=None,  # Otherwise it's a read
     offset=None,
     relative_offset=True,
     packed_types=False,
@@ -60,6 +62,12 @@ def copy_expr(
     add_offset = offset_cppstr != "0"
 
     if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
+        if def_type == DefinedType.ArrayInterface:
+            # If this is a view, it has already been renamed
+            if not isinstance(datadesc, data.View):
+                if is_write is None:
+                    raise ValueError("is_write must be set for ArrayInterface.")
+                expr = array_interface_variable(expr, is_write, dispatcher)
         return "{}{}{}".format(
             dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
 
@@ -101,13 +109,15 @@ def memlet_copy_to_absolute_strides(dispatcher,
                              sdfg,
                              src_node.data,
                              memlet,
+                             is_write=False,
                              packed_types=packed_types)
         dst_expr = copy_expr(dispatcher,
                              sdfg,
                              dst_node.data,
                              memlet,
-                             None,
-                             False,
+                             is_write=True,
+                             offset=None,
+                             relative_offset=False,
                              packed_types=packed_types)
         if memlet.other_subset is not None:
             dst_expr = copy_expr(
@@ -115,8 +125,9 @@ def memlet_copy_to_absolute_strides(dispatcher,
                 sdfg,
                 dst_node.data,
                 memlet,
-                memlet.other_subset,
-                False,
+                is_write=True,
+                offset=memlet.other_subset,
+                relative_offset=False,
                 packed_types=packed_types,
             )
             dst_subset = memlet.other_subset
@@ -129,13 +140,15 @@ def memlet_copy_to_absolute_strides(dispatcher,
                              sdfg,
                              src_node.data,
                              memlet,
-                             None,
-                             False,
+                             is_write=False,
+                             offset=None,
+                             relative_offset=False,
                              packed_types=packed_types)
         dst_expr = copy_expr(dispatcher,
                              sdfg,
                              dst_node.data,
                              memlet,
+                             is_write=True,
                              packed_types=packed_types)
         if memlet.other_subset is not None:
             src_expr = copy_expr(
@@ -143,8 +156,9 @@ def memlet_copy_to_absolute_strides(dispatcher,
                 sdfg,
                 src_node.data,
                 memlet,
-                memlet.other_subset,
-                False,
+                is_write=False,
+                offset=memlet.other_subset,
+                relative_offset=False,
                 packed_types=packed_types,
             )
             src_subset = memlet.other_subset
@@ -213,7 +227,9 @@ def ptr(name: str, desc: data.Data) -> str:
     # struct to name
     if (desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent
             and desc.storage != dtypes.StorageType.CPU_ThreadLocal):
-        return f'__state->{name}'
+        from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
+        if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
+            return f'__state->{name}'
 
     return name
 
@@ -223,10 +239,13 @@ def emit_memlet_reference(dispatcher,
                           memlet: mmlt.Memlet,
                           pointer_name: str,
                           conntype: dtypes.typeclass,
-                          ancestor: int = 1) -> Tuple[str, str, str]:
+                          ancestor: int = 1,
+                          is_write=None,
+                          device_code=False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
+    :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
     :return: A tuple of the form (type, name, value).
     """
     desc = sdfg.arrays[memlet.data]
@@ -241,13 +260,24 @@ def emit_memlet_reference(dispatcher,
     # accordingly.
     defined_type, defined_ctype = dispatcher.defined_vars.get(
         memlet.data, ancestor)
-    if defined_type == DefinedType.Pointer:
+    if (defined_type == DefinedType.Pointer
+            or (defined_type == DefinedType.ArrayInterface
+                and isinstance(desc, data.View))):
         if not is_scalar and desc.dtype == conntype.base_type:
             # Cast potential consts
             typedef = defined_ctype
         if is_scalar:
             defined_type = DefinedType.Scalar
             ref = '&'
+    elif defined_type == DefinedType.ArrayInterface:
+        if is_write is None:
+            raise ValueError("is_write must be defined for ArrayInterface.")
+        else:
+            base_ctype = conntype.base_type.ctype
+            typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
+            datadef = array_interface_variable(datadef, is_write, dispatcher,
+                                               ancestor)
+        is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
         ref = '&' if is_scalar else ''
@@ -260,12 +290,6 @@ def emit_memlet_reference(dispatcher,
         if not is_scalar:
             conntype = conntype.base_type
             is_scalar = True
-    elif defined_type == DefinedType.ArrayInterface:
-        ref = ''
-        typedef = defined_ctype
-        is_scalar = True  # Avoid "&" in expression below
-        offset_expr = ' + ' + offset_expr[1:-1]  # Trim brackets
-        conntype = conntype.base_type  # Avoid vector-esque casts
     elif defined_type == DefinedType.StreamArray:
         # Stream array to stream (reference)
         if memlet.subset.num_elements() == 1:
@@ -285,7 +309,7 @@ def emit_memlet_reference(dispatcher,
     else:
         raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
 
-    if (defined_type != DefinedType.ArrayInterface
+    if (not device_code and defined_type != DefinedType.ArrayInterface
             and desc.storage == dace.StorageType.FPGA_Global):
         # This is a device buffer accessed on the host.
         # Can not be accessed with offset different than zero. Check this if we can:
@@ -294,7 +318,6 @@ def emit_memlet_reference(dispatcher,
             raise TypeError(
                 "Can not offset device buffers from host code ({}, offset {})".
                 format(datadef, offset))
-
         # Device buffers are passed by reference
         expr = datadef
         ref = '&'
@@ -501,7 +524,7 @@ def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar,
             dst_expr = '*(%s *)(&%s)' % (src_dtype.ctype, dst_expr)
         elif src_dtype.base_type != dst_dtype:
             dst_expr = '(%s)(&%s)' % (src_dtype.ctype, dst_expr)
-        elif defined_type == DefinedType.Pointer:
+        elif defined_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
             dst_expr = '&' + dst_expr
     elif not is_scalar:
         dst_expr = '&' + dst_expr
@@ -514,7 +537,8 @@ def cpp_ptr_expr(sdfg,
                  offset=None,
                  relative_offset=True,
                  use_other_subset=False,
-                 indices=None):
+                 indices=None,
+                 is_write=None):
     """ Converts a memlet to a C++ pointer expression. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
@@ -525,6 +549,11 @@ def cpp_ptr_expr(sdfg,
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     dname = ptr(memlet.data, desc)
+
+    if defined_type == DefinedType.ArrayInterface:
+        if is_write is None:
+            raise ValueError("is_write must be set for ArrayInterface.")
+        dname = array_interface_variable(dname, is_write, None)
 
     if defined_type == DefinedType.Scalar:
         dname = '&' + dname
@@ -655,6 +684,12 @@ def is_write_conflicted_with_reason(dfg,
             warnings.warn('Unexpected WCR path to not end in access node')
             return dst
 
+        if dfg.in_degree(dst) > 0:
+            for x, y in itertools.combinations(dfg.in_edges(dst), 2):
+                x, y = x.data.subset, y.data.subset
+                if subsets.intersects(x, y):
+                    return dst
+
         # If this is a nested SDFG and the access leads outside
         if not sdfg.arrays[dst.data].transient:
             if sdfg.parent_nsdfg_node is not None:
@@ -718,6 +753,15 @@ def unparse_cr(sdfg, wcr_ast, dtype):
                                          for a in args), body_cpp)
 
 
+def connected_to_gpu_memory(node: nodes.Node, state: SDFGState, sdfg: SDFG):
+    for e in state.all_edges(node):
+        path = state.memlet_path(e)
+        if ((isinstance(path[0].src, nodes.AccessNode) and
+             path[0].src.desc(sdfg).storage is dtypes.StorageType.GPU_Global)):
+            return True
+    return False
+
+
 def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
                     locals, ldepth, toplevel_schedule, codegen):
 
@@ -736,16 +780,26 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
         # set the stream to a local variable.
         max_streams = int(
             Config.get("compiler", "cuda", "max_concurrent_streams"))
-        if (max_streams >= 0 and not is_devicelevel_gpu(sdfg, state_dfg, node)
-                and hasattr(node, "_cuda_stream")):
-            callsite_stream.write(
-                'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
-                %
-                (node._cuda_stream, Config.get('compiler', 'cuda', 'backend')),
-                sdfg,
-                state_id,
-                node,
-            )
+        if not is_devicelevel_gpu(sdfg, state_dfg, node) and (
+                hasattr(node, "_cuda_stream")
+                or connected_to_gpu_memory(node, state_dfg, sdfg)):
+            if max_streams >= 0:
+                callsite_stream.write(
+                    'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
+                    % (node._cuda_stream,
+                       Config.get('compiler', 'cuda', 'backend')),
+                    sdfg,
+                    state_id,
+                    node,
+                )
+            else:
+                callsite_stream.write(
+                    '%sStream_t __dace_current_stream = nullptr;' %
+                    Config.get('compiler', 'cuda', 'backend'),
+                    sdfg,
+                    state_id,
+                    node,
+                )
 
         if node.language != dtypes.Language.CPP:
             raise ValueError(
@@ -1003,9 +1057,18 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 cppunparse.cppunparse(value,
                                                       expr_semicolon=False),
                             ))
-                        else:
+                        elif (var_type != DefinedType.ArrayInterface
+                              or isinstance(desc, data.View)):
                             newnode = ast.Name(id="%s = %s;" % (
                                 cpp_array_expr(self.sdfg, memlet),
+                                cppunparse.cppunparse(value,
+                                                      expr_semicolon=False),
+                            ))
+                        else:
+                            newnode = ast.Name(id="__%s_out[%s] = %s;" % (
+                                memlet.data,
+                                cpp_array_expr(
+                                    self.sdfg, memlet, with_brackets=False),
                                 cppunparse.cppunparse(value,
                                                       expr_semicolon=False),
                             ))
@@ -1049,6 +1112,17 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         newnode = ast.Name(id="%s[%s]" % (target, sym2cpp(subscript, defined)))
 
         return ast.copy_location(newnode, node)
+
+    def visit_Name(self, node: ast.Name):
+        name = rname(node)
+        if name not in self.memlets:
+            return self.generic_visit(node)
+        memlet, nc, wcr, dtype = self.memlets[name]
+        if (isinstance(dtype, dtypes.pointer)
+                and memlet.subset.num_elements() == 1):
+            return ast.Name(id="(*{})".format(name), ctx=node.ctx)
+        else:
+            return self.generic_visit(node)
 
     def visit_Expr(self, node):
         # Check for DaCe function calls
@@ -1188,3 +1262,30 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                         [e.src, e.dst],
                     )
                 # Otherwise, no synchronization necessary
+
+
+def array_interface_variable(var_name: str,
+                             is_write: bool,
+                             dispatcher: Optional["TargetDispatcher"],
+                             ancestor: int = 0):
+    """
+    Generates the variable name of an ArrayInterface variable.
+    """
+    ptr_in = f"__{var_name}_in"
+    ptr_out = f"__{var_name}_out"
+    if dispatcher is not None:
+        # DaCe allows reading from an output connector, even though it
+        # is not an input connector. If this occurs, panic and read
+        # from the output interface instead
+        if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
+            # Throw a KeyError if this pointer also doesn't exist
+            dispatcher.defined_vars.get(ptr_out, ancestor)
+            # Otherwise use it
+            return ptr_out
+        else:
+            return ptr_in
+    else:
+        # We might call this before the variable is even defined (e.g., because
+        # we are about to define it), so if the dispatcher is not passed, just
+        # return the appropriate string
+        return ptr_out if is_write else ptr_in

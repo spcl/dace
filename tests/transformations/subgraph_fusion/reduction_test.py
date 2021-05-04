@@ -17,7 +17,8 @@ M.set(30)
 
 
 @dace.program
-def program(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
+def reduction_test_1(A: dace.float64[M, N], B: dace.float64[M, N],
+                     C: dace.float64[N]):
 
     tmp = np.ndarray(shape=[M, N], dtype=np.float64)
     tmp[:] = 2 * A[:] + B[:]
@@ -25,7 +26,8 @@ def program(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
 
 
 @dace.program
-def program2(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
+def reduction_test_2(A: dace.float64[M, N], B: dace.float64[M, N],
+                     C: dace.float64[N]):
 
     tmp = np.ndarray(shape=[M, N], dtype=np.float64)
     C[:] = dace.reduce(lambda a, b: max(a, b), B, axis=0)
@@ -39,7 +41,7 @@ def program2(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
 
 
 def test_p1():
-    sdfg = program.to_sdfg()
+    sdfg = reduction_test_1.to_sdfg()
     sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
     for node in state.nodes():
@@ -72,7 +74,7 @@ def test_p1():
 
 
 def test_p2():
-    sdfg = program2.to_sdfg()
+    sdfg = reduction_test_2.to_sdfg()
     sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
     A = np.random.rand(M.get(), N.get()).astype(np.float64)

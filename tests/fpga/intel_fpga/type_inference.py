@@ -2,6 +2,7 @@
 """ Type inference test with annotated types. """
 
 import dace
+from dace.transformation.interstate import FPGATransformSDFG
 import numpy as np
 import argparse
 N = dace.symbol("N")
@@ -18,7 +19,8 @@ def type_inference(x: dace.float32[N], y: dace.float32[N]):
         # computes y[i]=(int)x[i] + ((int)y[i])*2.1
         var1 = int(in_x)
         var2: int = in_y
-        var3 = 2.1 if (i>1 and i<10) else 2.1 # Just for the sake of testing
+        var3 = 2.1 if (i > 1
+                       and i < 10) else 2.1  # Just for the sake of testing
         res = var1 + var3 * var2
         out = res
 
@@ -28,11 +30,10 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int, nargs="?", default=24)
-    parser.add_argument(
-        "--compile-only",
-        default=False,
-        action="store_true",
-        dest="compile-only")
+    parser.add_argument("--compile-only",
+                        default=False,
+                        action="store_true",
+                        dest="compile-only")
     args = vars(parser.parse_args())
     dace.config.Config.set("compiler", "intel_fpga", "mode", value="emulator")
 
@@ -48,7 +49,9 @@ if __name__ == "__main__":
     for i in range(0, N.get()):
         Z[i] = int(X[i]) + int(Y[i]) * 2.1
 
-    type_inference(X, Y)
+    type_inference = type_inference.to_sdfg()
+    type_inference.apply_transformations(FPGATransformSDFG)
+    type_inference(x=X, y=Y, N=N)
 
     diff = np.linalg.norm(Z - Y) / N.get()
     print("Difference:", diff)

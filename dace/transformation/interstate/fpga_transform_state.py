@@ -43,13 +43,6 @@ class FPGATransformState(transformation.Transformation):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         state = graph.nodes()[candidate[FPGATransformState._state]]
 
-        # TODO: Support most of these cases
-        for edge, graph in state.all_edges_recursive():
-            # Code->Code memlets are disallowed (for now)
-            if (isinstance(edge.src, nodes.CodeNode)
-                    and isinstance(edge.dst, nodes.CodeNode)):
-                return False
-
         for node, graph in state.all_nodes_recursive():
             # Consume scopes are currently unsupported
             if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
@@ -127,9 +120,17 @@ class FPGATransformState(transformation.Transformation):
     def apply(self, sdfg):
         state = sdfg.nodes()[self.subgraph[FPGATransformState._state]]
 
-        # Find source/sink (data) nodes
-        input_nodes = sdutil.find_source_nodes(state)
-        output_nodes = sdutil.find_sink_nodes(state)
+        # Find source/sink (data) nodes that are relevant outside this FPGA
+        # kernel
+        shared_transients = set(sdfg.shared_transients())
+        input_nodes = [
+            n for n in sdutil.find_source_nodes(state)
+            if isinstance(n, nodes.AccessNode) and (not sdfg.arrays[n.data].transient or n.data in shared_transients)
+        ]
+        output_nodes = [
+            n for n in sdutil.find_sink_nodes(state)
+            if isinstance(n, nodes.AccessNode) and (not sdfg.arrays[n.data].transient or n.data in shared_transients)
+        ]
 
         fpga_data = {}
 

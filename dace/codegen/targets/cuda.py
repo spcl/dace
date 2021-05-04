@@ -53,6 +53,7 @@ class CUDACodeGen(TargetCodeGenerator):
     """ GPU (CUDA/HIP) code generator. """
     target_name = 'cuda'
     title = 'CUDA'
+    _in_device_code = False
 
     def __init__(self, frame_codegen, sdfg: SDFG):
         self.backend = Config.get('compiler', 'cuda', 'backend')
@@ -63,7 +64,7 @@ class CUDACodeGen(TargetCodeGenerator):
 
         self.create_grid_barrier = False
         self.extra_nsdfg_args = []
-        self._in_device_code = False
+        CUDACodeGen._in_device_code = False
         self._cpu_codegen = None
         self._block_dims = None
         self._grid_dims = None
@@ -267,7 +268,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
             if node.schedule in dtypes.GPU_SCHEDULES:
                 return True
-        if isinstance(node, nodes.NestedSDFG) and self._in_device_code:
+        if isinstance(node, nodes.NestedSDFG) and CUDACodeGen._in_device_code:
             return True
         return False
 
@@ -694,7 +695,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         if (isinstance(src_node, nodes.AccessNode)
                 and isinstance(dst_node, nodes.AccessNode)
-                and not self._in_device_code and
+                and not CUDACodeGen._in_device_code and
             (src_storage
              in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned]
              or dst_storage
@@ -791,33 +792,34 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                               'not supported for N-dimensions')
                 else:
                     # Write for-loop headers
-                    for d in range(dims-2):
-                        callsite_stream.write(
-                            f"for (int __copyidx{d} = 0; "
-                            f"__copyidx{d} < {copy_shape[d]};"
-                            f"++__copyidx{d}) {{"
-                        )
+                    for d in range(dims - 2):
+                        callsite_stream.write(f"for (int __copyidx{d} = 0; "
+                                              f"__copyidx{d} < {copy_shape[d]};"
+                                              f"++__copyidx{d}) {{")
                     # Write Memcopy2DAsync
-                    current_src_expr = src_expr + " + " + " + ".join(
-                        ["(__copyidx{} * ({}))".format(d, sym2cpp(s))
-                         for d, s in enumerate(src_strides[:-2])])
-                    current_dst_expr = dst_expr + " + " + "+ " .join(
-                        ["(__copyidx{} * ({}))".format(d, sym2cpp(s))
-                         for d, s in enumerate(dst_strides[:-2])])
+                    current_src_expr = src_expr + " + " + " + ".join([
+                        "(__copyidx{} * ({}))".format(d, sym2cpp(s))
+                        for d, s in enumerate(src_strides[:-2])
+                    ])
+                    current_dst_expr = dst_expr + " + " + "+ ".join([
+                        "(__copyidx{} * ({}))".format(d, sym2cpp(s))
+                        for d, s in enumerate(dst_strides[:-2])
+                    ])
                     callsite_stream.write(
                         '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n'
-                        % (self.backend, current_dst_expr, _topy(dst_strides[-2]) +
-                            ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                            current_src_expr, sym2cpp(src_strides[-2]) + ' * sizeof(%s)' %
-                            src_node.desc(sdfg).dtype.ctype, sym2cpp(copy_shape[-1]) +
-                            ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                            sym2cpp(copy_shape[-2]), self.backend, src_location,
-                            dst_location, cudastream), sdfg, state_id,
+                        %
+                        (self.backend, current_dst_expr, _topy(dst_strides[-2])
+                         + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
+                         current_src_expr, sym2cpp(src_strides[-2]) +
+                         ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
+                         sym2cpp(copy_shape[-1]) +
+                         ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
+                         sym2cpp(copy_shape[-2]), self.backend, src_location,
+                         dst_location, cudastream), sdfg, state_id,
                         [src_node, dst_node])
                     # Write for-loop footers
-                    for d in range(dims-2):
+                    for d in range(dims - 2):
                         callsite_stream.write("}")
-
 
             if dims == 1 and not (src_strides[-1] != 1 or dst_strides[-1] != 1):
                 copysize = ' * '.join([
@@ -868,8 +870,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n'
                     % (self.backend, dst_expr, _topy(dst_strides[0]) +
                        ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                       src_expr, sym2cpp(src_strides[0]) + ' * sizeof(%s)' %
-                       src_node.desc(sdfg).dtype.ctype,
+                       src_expr, sym2cpp(src_strides[0]) +
+                       ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
                        'sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
                        sym2cpp(copy_shape[0]), self.backend, src_location,
                        dst_location, cudastream), sdfg, state_id,
@@ -1024,7 +1026,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
     def generate_state(self, sdfg, state, function_stream, callsite_stream):
         # Two modes: device-level state and if this state has active streams
-        if self._in_device_code:
+        if CUDACodeGen._in_device_code:
             self.generate_devicelevel_state(sdfg, state, function_stream,
                                             callsite_stream)
         else:
@@ -1445,9 +1447,10 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         # Invoke kernel call
         callsite_stream.write(
-            '__dace_runkernel_%s(%s);\n' %
-            (kernel_name, ', '.join(['__state'] + list(kernel_args))), sdfg,
-            state_id, scope_entry)
+            '__dace_runkernel_%s(%s);\n' % (kernel_name, ', '.join(
+                ['__state'] +
+                [cpp.ptr(aname, arg) for aname, arg in kernel_args.items()])),
+            sdfg, state_id, scope_entry)
 
         synchronize_streams(sdfg, state, state_id, scope_entry, scope_exit,
                             callsite_stream)
@@ -1691,8 +1694,8 @@ void  *{kname}_args[] = {{ {kargs} }};
                                                       DefinedType.Scalar, 'int')
 
         # Dispatch internal code
-        assert self._in_device_code is False
-        self._in_device_code = True
+        assert CUDACodeGen._in_device_code is False
+        CUDACodeGen._in_device_code = True
         self._kernel_map = node
         self._block_dims = block_dims
         self._grid_dims = grid_dims
@@ -1752,7 +1755,7 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         self._block_dims = None
         self._kernel_map = None
-        self._in_device_code = False
+        CUDACodeGen._in_device_code = False
         self._grid_dims = None
 
     def get_next_scope_entries(self, dfg, scope_entry):
@@ -1777,7 +1780,7 @@ void  *{kname}_args[] = {{ {kargs} }};
     def generate_devicelevel_scope(self, sdfg, dfg_scope, state_id,
                                    function_stream, callsite_stream):
         # Sanity check
-        assert self._in_device_code == True
+        assert CUDACodeGen._in_device_code == True
 
         dfg = sdfg.nodes()[state_id]
         sdict = dfg.scope_dict()
@@ -2148,14 +2151,14 @@ void  *{kname}_args[] = {{ {kargs} }};
             gen(sdfg, dfg, state_id, node, function_stream, callsite_stream)
             return
 
-        if not self._in_device_code:
+        if not CUDACodeGen._in_device_code:
             self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
                                             function_stream, callsite_stream)
             return
 
         self._locals.clear_scope(self._code_state.indentation + 1)
 
-        if self._in_device_code and isinstance(node, nodes.MapExit):
+        if CUDACodeGen._in_device_code and isinstance(node, nodes.MapExit):
             return  # skip
 
         self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,

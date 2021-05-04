@@ -11,6 +11,7 @@ from dace.transformation.dataflow import (DoubleBuffering, MapCollapse,
                                           MapExpansion, MapReduceFusion,
                                           StripMining, InLocalStorage,
                                           AccumulateTransient, Vectorization)
+from dace.transformation.interstate import FPGATransformSDFG
 from dace.transformation import helpers as xfutil
 
 # For library node implementations
@@ -55,6 +56,7 @@ def matmul_lib(A: dtype[M, K], B: dtype[K, N]):
 
 #####################################################################
 # Data-centric optimization helpers
+
 
 def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
     """ Finds the first map entry node by the given parameter name. """
@@ -219,15 +221,15 @@ if __name__ == "__main__":
     parser.add_argument('--version',
                         choices=[
                             'unoptimized', 'optimize_cpu', 'optimize_gpu',
-                            'mkl', 'cublas'
+                            'mkl', 'cublas', 'fpga_naive', 'fpga_library'
                         ],
                         default='unoptimized',
-                        help='''Different available versions: 
-unoptimized: Run `matmul` without optimizations;  
+                        help='''Different available versions:
+unoptimized: Run `matmul` without optimizations;
 optimize_cpu: Transform `matmul` to a reasonably-optimized version for
-                multicore CPU;  
-optimize_gpu: Transform `matmul` to a reasonably-optimized version for GPU;  
-mkl: Use `matmul_lib` with the MKL library node implementation;  
+                multicore CPU;
+optimize_gpu: Transform `matmul` to a reasonably-optimized version for GPU;
+mkl: Use `matmul_lib` with the MKL library node implementation;
 cublas: Use `matmul_lib` with the CUBLAS library node implementation.''')
     parser.add_argument('--noverify',
                         dest='verify',
@@ -271,6 +273,13 @@ cublas: Use `matmul_lib` with the CUBLAS library node implementation.''')
         # Set default implementation to CUBLAS
         dace.libraries.blas.default_implementation = 'cuBLAS'
         # Call program
+        C = matmul_lib(A, B)
+    elif version == 'fpga_naive':
+        matmul = matmul.to_sdfg()
+        matmul.apply_transformations(FPGATransformSDFG)
+        matmul(A=A, B=B, C=C, N=n, K=k, M=m)
+    elif version == 'fpga_systolic':
+        dace.libraries.blas.default_implementation = 'FPGA1DSystolic'
         C = matmul_lib(A, B)
     else:
         raise ValueError('Invalid version %s' % version)

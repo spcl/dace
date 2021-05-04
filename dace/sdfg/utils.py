@@ -323,6 +323,19 @@ def merge_maps(
 
     graph.add_nodes_from([merged_entry, merged_exit])
 
+    # Handle the case of dynamic map inputs in the inner map
+    inner_dynamic_map_inputs = dynamic_map_inputs(graph, inner_map_entry)
+    for edge in inner_dynamic_map_inputs:
+        conn_to_remove = edge.src_conn[4:]
+        merged_entry.remove_in_connector('IN_' + conn_to_remove)
+        merged_entry.remove_out_connector('OUT_' + conn_to_remove)
+        merged_entry.add_in_connector(
+            edge.dst_conn, inner_map_entry.in_connectors[edge.dst_conn])
+        outer_edge = next(graph.in_edges_by_connector(outer_map_entry, 'IN_' + conn_to_remove))
+        graph.add_edge(outer_edge.src, outer_edge.src_conn, merged_entry, edge.dst_conn,
+                       outer_edge.data)
+        graph.remove_edge(outer_edge)
+
     # Redirect inner in edges.
     for edge in graph.out_edges(inner_map_entry):
         if edge.src_conn is None:  # Empty memlets
@@ -568,7 +581,7 @@ def get_view_edge(
     state: SDFGState, view: nd.AccessNode
 ) -> Tuple[nd.AccessNode, gr.MultiConnectorEdge[mm.Memlet]]:
     """
-    Given a view access node, returns the viewed access node and 
+    Given a view access node, returns the viewed access node and
     incoming/outgoing edge which points to it.
     See the ruleset in the documentation of ``dace.data.View``.
 
@@ -950,7 +963,7 @@ def fuse_states(sdfg: SDFG) -> int:
 
 
 def load_precompiled_sdfg(folder: str):
-    """ 
+    """
     Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
     Folder must contain a file called "program.sdfg" and a subfolder called
     "build" with the shared object.

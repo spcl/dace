@@ -209,7 +209,7 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
         desc_y.transient = False
         sdfg.add_datadesc("_y", desc_y)
 
-        if node.transA and desc_a.dtype.veclen > 0:
+        if node.transA and desc_a.dtype.veclen > 1:
             raise NotImplementedError(
                 "Vectorization not implemented for transposed A.")
 
@@ -550,7 +550,7 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
         desc_y.transient = False
         sdfg.add_datadesc("_y", desc_y)
 
-        if not node.transA and desc_a.dtype.veclen > 0:
+        if not node.transA and desc_a.dtype.veclen > 1:
             raise NotImplementedError(
                 "Vectorization not implemented for non-transposed A.")
 

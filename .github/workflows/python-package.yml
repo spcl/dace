@@ -34,7 +34,7 @@ jobs:
         sudo apt-get install -y mpich # MPI dependencies
         sudo apt-get install -y verilator # RTL simulation dependencies
         python -m pip install --upgrade pip
-        pip install flake8 pytest coverage codecov mpi4py pytest-mpi
+        pip install flake8 pytest-xdist coverage codecov mpi4py pytest-mpi
         pip install -e ".[testing]"
 
     - name: Test dependencies
@@ -45,7 +45,7 @@ jobs:
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
-        export DACE_testing_single_cache=1
+        export DACE_cache=unique
         export DACE_optimizer_interface=" "
         if [ "${{ matrix.strict-xforms }}" = "autoopt" ]; then
             export DACE_optimizer_automatic_strict_transformations=1
@@ -54,13 +54,13 @@ jobs:
         else
             export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
         fi
-        pytest --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl"
+        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl"
         codecov
     - name: Run other tests
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
-        export DACE_testing_single_cache=1
+        export DACE_cache=single
         export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         ./tests/polybench_test.sh
@@ -69,7 +69,7 @@ jobs:
         codecov
 
   test-heterogeneous:
-    runs-on: [self-hosted, linux, gpu, intel-fpga, xilinx-fpga]
+    runs-on: [self-hosted, linux]
     steps:
     - uses: actions/checkout@v2
       with:
@@ -79,7 +79,7 @@ jobs:
         rm -rf .dacecache tests/.dacecache
         . /opt/setupenv
         python -m pip install --upgrade pip
-        pip install flake8 pytest coverage codecov
+        pip install flake8 pytest-xdist coverage codecov
         pip install mpi4py
         pip uninstall -y dace
         pip install -e ".[testing]"
@@ -87,64 +87,104 @@ jobs:
     - name: Test dependencies
       run: |
         papi_avail
-        nvidia-smi
 
-    - name: Test with pytest
+    - name: Run parallel pytest 
       run: |
-        export DACE_testing_single_cache=1
+        export DACE_cache=unique
         export DACE_optimizer_interface=" "
         . /opt/setupenv
-        pytest --cov-report=xml --cov=dace --tb=short -m "gpu or verilator or mkl"
+        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "verilator or mkl or papi"
         codecov
-
-    - name: Run PAPI tests
-      run: |
-        export DACE_testing_single_cache=1
-        export DACE_optimizer_interface=" "
-        . /opt/setupenv
-        pytest --cov-report=xml --cov=dace --tb=short -m "papi"
-        codecov
-    
-    - name: Run extra GPU tests
-      run: |
-        export NOSTATUSBAR=1
-        export DACE_testing_single_cache=1
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
-        . /opt/setupenv
-        ./tests/cuda_test.sh
 
     - name: Run MPI tests
       run: |
         export NOSTATUSBAR=1
-        export DACE_testing_single_cache=1
+        export DACE_cache=single
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
         ./tests/mpi_test.sh
 
-    - name: Run Xilinx tests
-      run: |
-        export NOSTATUSBAR=1
-        export DACE_testing_single_cache=1
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
-        . /opt/setupenv
-        ./tests/xilinx_test.sh 0
-    
-    - name: Run Intel FPGA tests
-      run: |
-        export NOSTATUSBAR=1
-        export DACE_testing_single_cache=1
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
-        . /opt/setupenv
-        export DACE_compiler_default_data_types=C
-        ./tests/intel_fpga_test.sh
-        
     - name: Report overall coverage
       run: |
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         . /opt/setupenv
         coverage combine . */; coverage report; coverage xml
+        codecov
+
+  test-gpu:
+    runs-on: [self-hosted, linux, gpu]
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: 'recursive'
+    - name: Install dependencies
+      run: |
+        rm -rf .dacecache tests/.dacecache
+        . /opt/setupenv
+        python -m pip install --upgrade pip
+        pip install flake8 pytest-xdist coverage codecov
+        pip install mpi4py
+        pip uninstall -y dace
+        pip install -e ".[testing]"
+
+    - name: Test dependencies
+      run: |
+        nvidia-smi
+
+    - name: Run pytest GPU
+      run: |
+        export DACE_cache=single
+        export DACE_optimizer_interface=" "
+        . /opt/setupenv
+        pytest --cov-report=xml --cov=dace --tb=short -m "gpu"
+        codecov
+
+    - name: Run extra GPU tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=single
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        . /opt/setupenv
+        ./tests/cuda_test.sh
+
+    - name: Report overall coverage
+      run: |
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        . /opt/setupenv
+        coverage combine . */; coverage report; coverage xml
+        codecov
+
+  test-fpga:
+    runs-on: [self-hosted, linux, intel-fpga, xilinx-fpga]
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: 'recursive'
+    - name: Install dependencies
+      run: |
+        rm -rf .dacecache tests/.dacecache
+        . /opt/setupenv
+        python -m pip install --upgrade pip
+        pip install flake8 coverage codecov
+        pip uninstall -y dace
+        pip install -e ".[testing]"
+
+    - name: Run Intel FPGA tests
+      run: |
+        export NOSTATUSBAR=1
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        . /opt/setupenv
+        python tests/fpga/intel_fpga_test.py
+        codecov
+
+    - name: Run Xilinx tests
+      run: |
+        export NOSTATUSBAR=1
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        . /opt/setupenv
+        python tests/fpga/xilinx_test.py
         codecov

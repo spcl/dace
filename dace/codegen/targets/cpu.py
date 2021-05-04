@@ -175,6 +175,7 @@ class CPUCodeGen(TargetCodeGenerator):
         Allocates (creates pointer and refers to original) a view of an
         existing array, scalar, or view.
         """
+
         name = node.data
         nodedesc = node.desc(sdfg)
         if self._dispatcher.defined_vars.has(name):
@@ -183,9 +184,13 @@ class CPUCodeGen(TargetCodeGenerator):
         # Check directionality of view (referencing dst or src)
         edge = sdutils.get_view_edge(dfg, node)
 
+        # When emitting ArrayInterface, we need to know if this is a read or
+        # write variation
+        is_write = edge.src is node
+
         # Allocate the viewed data before the view, if necessary
         mpath = dfg.memlet_path(edge)
-        viewed_dnode = mpath[0].src if edge.dst is node else mpath[-1].dst
+        viewed_dnode = mpath[-1].dst if is_write else mpath[0].src
         self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, viewed_dnode,
                                            global_stream, allocation_stream)
 
@@ -196,7 +201,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         name,
                                                         dtypes.pointer(
                                                             nodedesc.dtype),
-                                                        ancestor=0)
+                                                        ancestor=0,
+                                                        is_write=is_write)
         if declaration_stream == allocation_stream:
             declaration_stream.write(f'{atype} {aname} = {value};', sdfg,
                                      state_id, node)
@@ -921,10 +927,12 @@ class CPUCodeGen(TargetCodeGenerator):
                             continue
                         defined_type, _ = self._dispatcher.defined_vars.get(
                             memlet.data)
+                        desc = sdfg.arrays[memlet.data]
 
                         if defined_type == DefinedType.Scalar:
                             write_expr = f"{memlet.data} = {in_local_name};"
-                        elif defined_type == DefinedType.ArrayInterface:
+                        elif (defined_type == DefinedType.ArrayInterface
+                              and not isinstance(desc, data.View)):
                             # Special case: No need to write anything between
                             # array interfaces going out
                             try:
@@ -938,10 +946,10 @@ class CPUCodeGen(TargetCodeGenerator):
                                                             memlet,
                                                             with_brackets=False)
                             write_expr = (
-                                f"*({memlet.data} + {array_expr}).ptr_out() "
+                                f"*(__{memlet.data}_out + {array_expr}) "
                                 f"= {in_local_name};")
                         else:
-                            desc_dtype = sdfg.arrays[memlet.data].dtype
+                            desc_dtype = desc.dtype
                             expr = cpp.cpp_array_expr(sdfg, memlet)
                             write_expr = codegen.make_ptr_assignment(
                                 in_local_name, conntype, expr, desc_dtype)
@@ -1118,20 +1126,18 @@ class CPUCodeGen(TargetCodeGenerator):
                     DefinedType.ArrayInterface
                 ] else ptr)
 
-        # Special case: ArrayInterface - get input/output pointers from array
-        if var_type == DefinedType.ArrayInterface and not is_scalar:
-            if output:
-                expr = '(%s + %s).ptr_out()' % (ptr, expr)
-                ctypedef = memlet_type
-            else:
-                expr = '(%s + %s).ptr_in()' % (ptr, expr)
-                ctypedef = 'const ' + memlet_type
-        else:  # Otherwise, "&arr[ind]" syntax can be used
-            if expr != ptr:
-                expr = '%s[%s]' % (ptr, expr)
-            # If there is a type mismatch, cast pointer
-            expr = codegen.make_ptr_vector_cast(expr, desc.dtype, conntype,
-                                                is_scalar, var_type)
+        # Special case: ArrayInterface, append _in or _out
+        _ptr = ptr
+        if var_type == DefinedType.ArrayInterface:
+            # Views have already been renamed
+            if not isinstance(desc, data.View):
+                ptr = cpp.array_interface_variable(ptr, output,
+                                                   self._dispatcher)
+        if expr != _ptr:
+            expr = '%s[%s]' % (ptr, expr)
+        # If there is a type mismatch, cast pointer
+        expr = codegen.make_ptr_vector_cast(expr, desc.dtype, conntype,
+                                            is_scalar, var_type)
 
         defined = None
 
@@ -1259,19 +1265,20 @@ class CPUCodeGen(TargetCodeGenerator):
                             dfg.node_id(node), edge.src_conn)
 
                     # Read variable from shared storage
-                    inner_stream.write(
-                        "const %s& %s = %s;" % (
-                            ctype,
-                            edge.dst_conn,
-                            shared_data_name,
-                        ),
-                        sdfg,
-                        state_id,
-                        [edge.src, edge.dst],
-                    )
+                    defined_type, _ = self._dispatcher.defined_vars.get(
+                        shared_data_name)
+                    if defined_type in (DefinedType.Scalar,
+                                        DefinedType.Pointer):
+                        assign_str = (f"const {ctype} {edge.dst_conn} "
+                                      f"= {shared_data_name};")
+                    else:
+                        assign_str = (f"const {ctype} &{edge.dst_conn} "
+                                      f"= {shared_data_name};")
+                    inner_stream.write(assign_str, sdfg, state_id,
+                                       [edge.src, edge.dst])
                     self._dispatcher.defined_vars.add(edge.dst_conn,
-                                                      DefinedType.Scalar,
-                                                      'const %s' % ctype)
+                                                      defined_type,
+                                                      f"const {ctype}")
 
                 else:
                     self._dispatcher.dispatch_copy(

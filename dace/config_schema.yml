@@ -419,8 +419,8 @@ required:
                         description: Platform name of Vitis/SDx/SDAccel target.
 
                     frequency:
-                        type: str 
-                        default: '' 
+                        type: str
+                        default: ''
                         title: Target frequency for Xilinx kernels
                         description: >
                             Target frequency when compiling kernels for Xilinx.
@@ -734,6 +734,23 @@ required:
         title: Debug printing
         description: Enable verbose printouts.
 
+    cache:
+        type: str 
+        default: name 
+        title: Naming of cache entry 
+        description: >
+            Determine the name of the generated dacecache folder.
+            "name" uses the name of the SDFG directly, causing it to be
+            overridden by other programs using the same SDFG name.
+            "hash" uses a mangled name based on the hash of the SDFG, such that
+            any change to the SDFG will generate a different cache folder.
+            "unique" uses a name based on the currently running Python process 
+            at code generation time, such that no caching or clashes can happen
+            between different processes or subsequent invocations of Python.
+            "single" uses a single cache folder for all SDFGs, saving space and
+            potentially build time, but disallows executing SDFGs in parallel
+            and caching of more than one simultaneous SDFG.
+
     profiling:
         type: bool
         default: false
@@ -786,14 +803,6 @@ required:
                     Before generating code, verify that a serialization/deserialization loop
                     generates the same SDFG.
 
-            single_cache:
-                type: bool
-                default: false
-                title: Use one build folder
-                description: >
-                    When generating code, use a single build folder as cache.
-                    Speeds up build time but disallows concurrent invocations.
-
     #############################################
     # DaCe library settings
 
@@ -819,8 +828,8 @@ required:
                             implementation has been explicitly set on a node.
                     fpga:
                         type: dict
-                        title: FPGA 
-                        description: FPGA-specific BLAS options. 
+                        title: FPGA
+                        description: FPGA-specific BLAS options.
                         required:
                             default_stream_depth:
                                 type: int

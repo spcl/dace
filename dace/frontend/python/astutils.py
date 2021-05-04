@@ -29,17 +29,25 @@ def function_to_ast(f):
     """
     try:
         src = inspect.getsource(f)
+        src_file = inspect.getfile(f)
+        _, src_line = inspect.findsource(f)
     # TypeError: X is not a module, class, method, function, traceback, frame,
     # or code object; OR OSError: could not get source code
     except (TypeError, OSError):
-        raise TypeError('Cannot obtain source code for dace program. This may '
-                        'happen if you are using the "python" default '
-                        'interpreter. Please either use the "ipython" '
-                        'interpreter, a Jupyter or Colab notebook, or place '
-                        'the source code in a file and import it.')
+        # Try to import dill to obtain code from compiled functions
+        try:
+            import dill
+            src = dill.source.getsource(f)
+            src_file = '<interpreter>'
+            src_line = 0
+        except (ImportError, ModuleNotFoundError, TypeError, OSError):
+            raise TypeError(
+                'Cannot obtain source code for dace program. This may '
+                'happen if you are using the "python" default '
+                'interpreter. Please either use the "ipython" '
+                'interpreter, a Jupyter or Colab notebook, or place '
+                'the source code in a file and import it.')
 
-    src_file = inspect.getfile(f)
-    _, src_line = inspect.findsource(f)
     src_ast = ast.parse(_remove_outer_indentation(src))
     ast.increment_lineno(src_ast, src_line)
 
@@ -182,9 +190,11 @@ def subscript_to_slice(node, arrays, without_array=False):
     else:
         return name, rng
 
+
 def slice_to_subscript(arrname, range):
     """ Converts a name and subset to a Python AST Subscript object. """
     return ast.parse(f'{arrname}[{range}]').body[0].value
+
 
 def astrange_to_symrange(astrange, arrays, arrname=None):
     """ Converts an AST range (array, [(start, end, skip)]) to a symbolic math 
@@ -301,9 +311,8 @@ class ExtNodeTransformer(ast.NodeTransformer):
                 new_values = []
                 for value in old_value:
                     if isinstance(value, ast.AST):
-                        if (field == 'body'
-                                or field == 'orelse') and isinstance(
-                                    value, ast.Expr):
+                        if (field == 'body' or field
+                                == 'orelse') and isinstance(value, ast.Expr):
                             clsname = type(value).__name__
                             if getattr(self, "visit_TopLevel" + clsname, False):
                                 value = getattr(self, "visit_TopLevel" +
@@ -383,7 +392,7 @@ class RemoveSubscripts(ast.NodeTransformer):
     def visit_Subscript(self, node: ast.Subscript):
         if rname(node) in self.keywords:
             return ast.copy_location(node.value, node)
-        
+
         return self.generic_visit(node)
 
 
@@ -409,7 +418,8 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
     def visit_AnnAssign(self, node):
         # Skip visiting annotation
         self.visit(node.target)
-        self.visit(node.value)
+        if node.value is not None:
+            self.visit(node.value)
 
     def visit_Name(self, node):
         if (isinstance(node.ctx, ast.Load) and node.id not in self.defined
