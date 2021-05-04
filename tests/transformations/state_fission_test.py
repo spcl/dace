@@ -37,41 +37,41 @@ def make_vecAdd_sdfg(symbol_name: str,
     # ---------- ----------
     # COMPUTE
     # ---------- ----------
-    vecMap_entry, vecMap_exit = vecAdd_state.add_map('vecAdd_map',
-                                                     dict(i='0:{}'.format(n)))
+    vecMap_entry, vecMap_exit = vecAdd_state.add_map("vecAdd_map",
+                                                     dict(i="0:{}".format(n)))
 
-    vecAdd_tasklet = vecAdd_state.add_tasklet('vecAdd_task', ['x_con', 'y_con'],
-                                              ['z_con'],
-                                              'z_con = x_con + y_con')
+    vecAdd_tasklet = vecAdd_state.add_tasklet("vecAdd_task", ["x_con", "y_con"],
+                                              ["z_con"],
+                                              "z_con = x_con + y_con")
 
     vecAdd_state.add_memlet_path(x_in,
                                  vecMap_entry,
                                  vecAdd_tasklet,
                                  dst_conn='x_con',
-                                 memlet=dace.Memlet.simple(x_in.data, 'i'))
+                                 memlet=dace.Memlet(f"{x_name}[i]"))
 
     vecAdd_state.add_memlet_path(y_in,
                                  vecMap_entry,
                                  vecAdd_tasklet,
                                  dst_conn='y_con',
-                                 memlet=dace.Memlet.simple(y_in.data, 'i'))
+                                 memlet=dace.Memlet(f"{y_name}[i]"))
 
     vecAdd_state.add_memlet_path(vecAdd_tasklet,
                                  vecMap_exit,
                                  z_out,
                                  src_conn='z_con',
-                                 memlet=dace.Memlet.simple(z_out.data, 'i'))
+                                 memlet=dace.Memlet(f"{z_name}[i]"))
 
     return vecAdd_sdfg
 
 
 def make_nested_sdfg_cpu():
     '''
-    Build an SDFG with two nested SDFGs
+    Build an SDFG with three nested SDFGs that comput
+    r = (x+y) + (v+w)
     '''
 
     n = dace.symbol("n")
-    m = dace.symbol("m")
 
     sdfg = dace.SDFG("two_vecAdd")
     state = sdfg.add_state("state")
@@ -87,49 +87,70 @@ def make_nested_sdfg_cpu():
     sdfg.add_array("z", [n], dace.float32)
     x = state.add_read("x")
     y = state.add_read("y")
-    z = state.add_write("z")
+    z = state.add_access("z")
 
     nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"})
 
     state.add_memlet_path(x,
                           nested_sdfg,
                           dst_conn="x",
-                          memlet=Memlet.simple(x, "0:n", num_accesses=n))
+                          memlet=Memlet(f"x[0:{n}]"))
     state.add_memlet_path(y,
                           nested_sdfg,
                           dst_conn="y",
-                          memlet=Memlet.simple(y, "0:n", num_accesses=n))
+                          memlet=Memlet(f"y[0:{n}]"))
     state.add_memlet_path(nested_sdfg,
                           z,
                           src_conn="z",
-                          memlet=Memlet.simple(z, "0:n", num_accesses=n))
+                          memlet=Memlet(f"z[0:{n}]"))
 
-    # Build the second axpy: works with v,w and u of m elements
+    # Build the second axpy: works with v,w and u of n elements
     access_nodes_dict = {"x": "v", "y": "w", "z": "u"}
-    to_nest = make_vecAdd_sdfg("m", "vecAdd2", access_nodes_dict)
+    to_nest = make_vecAdd_sdfg("n", "vecAdd2", access_nodes_dict)
 
-    sdfg.add_array("v", [m], dace.float32)
-    sdfg.add_array("w", [m], dace.float32)
-    sdfg.add_array("u", [m], dace.float32)
+    sdfg.add_array("v", [n], dace.float32)
+    sdfg.add_array("w", [n], dace.float32)
+    sdfg.add_array("u", [n], dace.float32)
     v = state.add_read("v")
     w = state.add_read("w")
-    u = state.add_write("u")
+    u = state.add_access("u")
 
     nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"v", "w"}, {"u"})
 
     state.add_memlet_path(v,
                           nested_sdfg,
                           dst_conn="v",
-                          memlet=Memlet.simple(v, "0:m", num_accesses=m))
+                          memlet=Memlet(f"v[0:{n}]"))
     state.add_memlet_path(w,
                           nested_sdfg,
                           dst_conn="w",
-                          memlet=Memlet.simple(w, "0:m", num_accesses=m))
+                          memlet=Memlet(f"w[0:{n}]"))
     state.add_memlet_path(nested_sdfg,
                           u,
                           src_conn="u",
-                          memlet=Memlet.simple(u, "0:m", num_accesses=m))
+                          memlet=Memlet(f"u[0:{n}]"))
 
+    # Build the third axpy: works with z,u and u of n elements
+    access_nodes_dict = {"x": "z", "y": "u", "z": "r"}
+    to_nest = make_vecAdd_sdfg("n", "vecAdd3", access_nodes_dict)
+
+    sdfg.add_array("r", [n], dace.float32)
+    r = state.add_write("r")
+
+    nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"z", "u"}, {"r"})
+
+    state.add_memlet_path(z,
+                          nested_sdfg,
+                          dst_conn="z",
+                          memlet=Memlet(f"z[0:{n}]"))
+    state.add_memlet_path(u,
+                          nested_sdfg,
+                          dst_conn="u",
+                          memlet=Memlet(f"u[0:{n}]"))
+    state.add_memlet_path(nested_sdfg,
+                          r,
+                          src_conn="r",
+                          memlet=Memlet(f"r[0:{n}]"))
     return sdfg
 
 
@@ -141,7 +162,6 @@ def test_state_fission():
     '''
 
     size_n = 16
-    size_m = 32
     sdfg = make_nested_sdfg_cpu()
 
     # state fission
@@ -155,7 +175,6 @@ def test_state_fission():
                                         [node_x, node_y, vec_add1, node_z])
     helpers.state_fission(sdfg, subg)
     sdfg.validate()
-
     assert (len(sdfg.states()) == 2)
 
     # run the program
@@ -165,19 +184,19 @@ def test_state_fission():
     y = np.random.rand(size_n).astype(np.float32)
     z = np.random.rand(size_n).astype(np.float32)
 
-    v = np.random.rand(size_m).astype(np.float32)
-    w = np.random.rand(size_m).astype(np.float32)
-    u = np.random.rand(size_m).astype(np.float32)
+    v = np.random.rand(size_n).astype(np.float32)
+    w = np.random.rand(size_n).astype(np.float32)
+    u = np.random.rand(size_n).astype(np.float32)
 
-    vec_add(x=x, y=y, z=z, v=v, w=w, u=u, n=size_n, m=size_m)
+    r = np.random.rand(size_n).astype(np.float32)
 
-    ref1 = np.add(x, y)
-    ref2 = np.add(v, w)
+    vec_add(x=x, y=y, z=z, v=v, w=w, u=u, n=size_n, r=r)
 
-    diff1 = np.linalg.norm(ref1 - z) / size_n
-    diff2 = np.linalg.norm(ref2 - u) / size_m
+    ref = np.add(x, y) + np.add(v, w)
 
-    assert (diff1 <= 1e-5 and diff2 <= 1e-5)
+    diff = np.linalg.norm(ref - r) / size_n
+
+    assert diff <= 1e-5
 
 
 if __name__ == "__main__":
