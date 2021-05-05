@@ -37,7 +37,7 @@ def register_implementation(implementation_name, expansion_cls, node_cls):
                     implementation_name))
     else:
         node_cls.implementations[implementation_name] = expansion_cls
-    
+
     # Update library as necessary
     if hasattr(node_cls, "_dace_library_name"):
         expansion_cls._dace_library_name = node_cls._dace_library_name
@@ -185,7 +185,7 @@ def environment(env):
     # Retrieve which file this was called from
     caller_file = inspect.getmodule(env).__file__
     env._dace_file_path = caller_file
-    _DACE_REGISTERED_ENVIRONMENTS[env.__name__] = env
+    _DACE_REGISTERED_ENVIRONMENTS[env.__module__] = env
     return env
 
 
