@@ -326,9 +326,12 @@ def merge_maps(
     # Handle the case of dynamic map inputs in the inner map
     inner_dynamic_map_inputs = dynamic_map_inputs(graph, inner_map_entry)
     for edge in inner_dynamic_map_inputs:
+        remove_conn = (len(list(graph.out_edges_by_connector(edge.src,
+            edge.src_conn))) == 1)
         conn_to_remove = edge.src_conn[4:]
-        merged_entry.remove_in_connector('IN_' + conn_to_remove)
-        merged_entry.remove_out_connector('OUT_' + conn_to_remove)
+        if remove_conn:
+            merged_entry.remove_in_connector('IN_' + conn_to_remove)
+            merged_entry.remove_out_connector('OUT_' + conn_to_remove)
         merged_entry.add_in_connector(
             edge.dst_conn, inner_map_entry.in_connectors[edge.dst_conn])
         outer_edge = next(
@@ -336,7 +339,8 @@ def merge_maps(
                                         'IN_' + conn_to_remove))
         graph.add_edge(outer_edge.src, outer_edge.src_conn, merged_entry,
                        edge.dst_conn, outer_edge.data)
-        graph.remove_edge(outer_edge)
+        if remove_conn:
+            graph.remove_edge(outer_edge)
 
     # Redirect inner in edges.
     for edge in graph.out_edges(inner_map_entry):
