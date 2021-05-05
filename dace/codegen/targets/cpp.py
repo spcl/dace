@@ -1113,6 +1113,17 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
         return ast.copy_location(newnode, node)
 
+    def visit_Name(self, node: ast.Name):
+        name = rname(node)
+        if name not in self.memlets:
+            return self.generic_visit(node)
+        memlet, nc, wcr, dtype = self.memlets[name]
+        if (isinstance(dtype, dtypes.pointer)
+                and memlet.subset.num_elements() == 1):
+            return ast.Name(id="(*{})".format(name), ctx=node.ctx)
+        else:
+            return self.generic_visit(node)
+
     def visit_Expr(self, node):
         # Check for DaCe function calls
         if isinstance(node.value, ast.Call):
@@ -1253,7 +1264,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                 # Otherwise, no synchronization necessary
 
 
-def array_interface_variable(var_name: str, is_write: bool,
+def array_interface_variable(var_name: str,
+                             is_write: bool,
                              dispatcher: Optional["TargetDispatcher"],
                              ancestor: int = 0):
     """

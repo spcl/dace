@@ -189,7 +189,7 @@ class Scalar(Data):
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
-        if self.dtype != other.type:
+        if self.dtype != other.dtype:
             return False
         return True
 

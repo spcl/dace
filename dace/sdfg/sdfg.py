@@ -33,9 +33,10 @@ from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import validate_name
-from dace.properties import (make_properties, Property, CodeProperty,
-                             TransformationHistProperty, SDFGReferenceProperty,
-                             DictProperty, OrderedDictProperty, CodeBlock)
+from dace.properties import (ListProperty, make_properties, Property,
+                             CodeProperty, TransformationHistProperty,
+                             SDFGReferenceProperty, DictProperty,
+                             OrderedDictProperty, CodeBlock)
 
 
 def _arrays_to_json(arrays):
@@ -225,7 +226,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         the `Memlet` class documentation.
     """
 
-    arg_types = OrderedDictProperty(default={}, desc="Formal parameter list")
+    arg_names = ListProperty(
+        element_type=str,
+        desc='Ordered argument names (used for calling conventions).')
     constants_prop = Property(dtype=dict,
                               default={},
                               desc="Compile-time constants")
@@ -255,7 +258,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def __init__(self,
                  name: str,
-                 arg_types: Dict[str, dt.Data] = None,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
                  propagate: bool = True,
                  parent=None):
@@ -275,7 +277,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if name is not None and not validate_name(name):
             raise InvalidSDFGError('Invalid SDFG name "%s"' % name, self, None)
 
-        self.arg_types = arg_types or collections.OrderedDict()
         self.constants_prop = {}
         if constants is not None:
             for cstname, (cst_dtype, cstval) in constants.items():
@@ -341,8 +342,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         edges = json_obj['edges']
 
         ret = SDFG(name=attrs['name'],
-                   arg_types=dace.serialize.loads(
-                       dace.serialize.dumps(attrs['arg_types'])),
                    constants=dace.serialize.loads(
                        dace.serialize.dumps(attrs['constants_prop'])),
                    parent=context_info['sdfg'])
@@ -1710,6 +1709,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
         return sdfg
 
+    def is_loaded(self) -> bool:
+        """
+        Returns True if the SDFG binary is already loaded in the current
+        process.
+        """
+        # Avoid import loops
+        from dace.codegen import compiled_sdfg as cs, compiler
+
+        binary_filename = compiler.get_binary_name(self.build_folder, self.name)
+        dll = cs.ReloadableDLL(binary_filename, self.name)
+        return dll.is_loaded()
+
     def compile(self, output_file=None) -> \
             'dace.codegen.compiler.CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
@@ -1733,6 +1744,15 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Clone SDFG as the other modules may modify its contents
         sdfg = copy.deepcopy(self)
+
+        # Rename SDFG to avoid runtime issues with clashing names
+        index = 0
+        while sdfg.is_loaded():
+            sdfg._name = f'{self._name}_{index}'
+            index += 1
+        if self.name != sdfg.name:
+            warnings.warn('SDFG "%s" is already loaded by another object, '
+                          'recompiling under a different name.' % self.name)
 
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
