@@ -382,9 +382,8 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         # Special case: If internal memlet is one element and the top
         # memlet uses all its dimensions, ignore the internal element
         # TODO: There must be a better solution
-        if (len(internal_subset) == 1 and ones == list(range(len(shape)))
-                and (internal_subset[0] == (0, 0, 1)
-                     or internal_subset[0] == 0)):
+        if (len(internal_subset) == 1 and ones == list(range(len(shape))) and
+            (internal_subset[0] == (0, 0, 1) or internal_subset[0] == 0)):
             to_unsqueeze = ones[1:]
         else:
             to_unsqueeze = ones

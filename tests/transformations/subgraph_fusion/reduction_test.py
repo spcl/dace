@@ -8,7 +8,7 @@ import numpy as np
 import dace.libraries.standard as stdlib
 
 from typing import Union, List
-from util import expand_reduce, expand_maps, fusion 
+from util import expand_reduce, expand_maps, fusion
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -40,7 +40,7 @@ def reduction_test_2(A: dace.float64[M, N], B: dace.float64[M, N],
     C[:] = dace.reduce(lambda a, b: a + b, tmp, axis=0)
 
 
-def test_p1(in_transient = False, out_transient = False):
+def test_p1(in_transient=False, out_transient=False):
     sdfg = reduction_test_1.to_sdfg()
     sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
@@ -62,7 +62,10 @@ def test_p1(in_transient = False, out_transient = False):
     csdfg(A=A, B=B, C=C1, N=N, M=M)
     del csdfg
 
-    expand_reduce(sdfg, state, create_in_transient = in_transient, create_out_transient = out_transient)
+    expand_reduce(sdfg,
+                  state,
+                  create_in_transient=in_transient,
+                  create_out_transient=out_transient)
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, N=N, M=M)
     del csdfg
@@ -72,7 +75,7 @@ def test_p1(in_transient = False, out_transient = False):
     print("PASS")
 
 
-def test_p2(in_transient = False, out_transient = False):
+def test_p2(in_transient=False, out_transient=False):
     sdfg = reduction_test_2.to_sdfg()
     sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
@@ -85,7 +88,10 @@ def test_p2(in_transient = False, out_transient = False):
     csdfg(A=A, B=B, C=C1, N=N, M=M)
     del csdfg
 
-    expand_reduce(sdfg, state, create_in_transient = in_transient, create_out_transient = out_transient)
+    expand_reduce(sdfg,
+                  state,
+                  create_in_transient=in_transient,
+                  create_out_transient=out_transient)
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, N=N, M=M)
 
@@ -94,13 +100,12 @@ def test_p2(in_transient = False, out_transient = False):
     print("PASS")
 
 
-
 if __name__ == "__main__":
     test_p1()
     test_p2()
 
-    test_p1(in_transient = True)
-    test_p2(in_transient = True)
+    test_p1(in_transient=True)
+    test_p2(in_transient=True)
 
-    test_p1(out_transient = True)
-    test_p2(out_transient = True)
+    test_p1(out_transient=True)
+    test_p2(out_transient=True)

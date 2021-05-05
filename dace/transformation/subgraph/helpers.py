@@ -45,7 +45,7 @@ def common_map_base_ranges(ranges: List[subsets.Range]) -> List[subsets.Range]:
 
 def find_reassignment(maps: List[nodes.Map],
                       common_ranges,
-                      offset = False) -> Dict[nodes.Map, List]:
+                      offset=False) -> Dict[nodes.Map, List]:
     """ Provided a list of maps and their common base ranges
         (found via common_map_base_ranges()),
         for each map greedily assign each loop to an index so that
@@ -73,7 +73,7 @@ def find_reassignment(maps: List[nodes.Map],
         result_map = []
         map_range = copy.deepcopy(m.range)
         if offset:
-            map_range.offset(map_range.min_element(), negative = True)
+            map_range.offset(map_range.min_element(), negative=True)
         for current_range in map_range:
             found = False
             for j, outer_range in outer_ranges_dict.items():
@@ -199,11 +199,12 @@ def subgraph_from_maps(sdfg, graph, map_entries, scope_children=None):
     node_set = set()
     for map_entry in map_entries:
         node_set |= set(scope_children[map_entry])
-        node_set |= set(e.dst for e in graph.out_edges(graph.exit_node(map_entry)) if isinstance(e.dst, nodes.AccessNode))
-        node_set |= set(e.src for e in graph.in_edges(map_entry) if isinstance(e.src, nodes.AccessNode))
+        node_set |= set(e.dst
+                        for e in graph.out_edges(graph.exit_node(map_entry))
+                        if isinstance(e.dst, nodes.AccessNode))
+        node_set |= set(e.src for e in graph.in_edges(map_entry)
+                        if isinstance(e.src, nodes.AccessNode))
 
         node_set.add(map_entry)
 
     return SubgraphView(graph, list(node_set))
-
-

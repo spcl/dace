@@ -8,7 +8,7 @@ import numpy as np
 import dace.libraries.standard as stdlib
 
 from typing import Union, List
-from util import expand_reduce, expand_maps, fusion 
+from util import expand_reduce, expand_maps, fusion
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -16,25 +16,24 @@ N.set(20)
 M.set(30)
 
 
-
-@dace.program 
+@dace.program
 def reduction_test_3(A: dace.float64[M, N], B: dace.float64[M, N],
                      C: dace.float64[N]):
-    
-    tmp = dace.reduce(lambda a, b: max(a,b), A, identity = -9999999, axis = 0)
-    tmp2 = dace.reduce(lambda a, b: a+b, B, identity = 0, axis = 0)
+
+    tmp = dace.reduce(lambda a, b: max(a, b), A, identity=-9999999, axis=0)
+    tmp2 = dace.reduce(lambda a, b: a + b, B, identity=0, axis=0)
     for i in dace.map[0:N]:
         with dace.tasklet:
-            in1 << tmp[i] 
-            in2 << tmp2[i] 
+            in1 << tmp[i]
+            in2 << tmp2[i]
             out1 >> C[i]
 
-            out1 = in1 + in2 
+            out1 = in1 + in2
 
 
-def test_p3(in_transient = False, out_transient = False):
-    sdfg = reduction_test_3.to_sdfg() 
-    sdfg.apply_strict_transformations() 
+def test_p3(in_transient=False, out_transient=False):
+    sdfg = reduction_test_3.to_sdfg()
+    sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
     A = np.random.rand(M.get(), N.get()).astype(np.float64)
     B = np.random.rand(M.get(), N.get()).astype(np.float64)
@@ -46,27 +45,29 @@ def test_p3(in_transient = False, out_transient = False):
     csdfg(A=A, B=B, C=C1, N=N, M=M)
     del csdfg
 
-    expand_reduce(sdfg, state, create_in_transient = in_transient, create_out_transient = out_transient)
+    expand_reduce(sdfg,
+                  state,
+                  create_in_transient=in_transient,
+                  create_out_transient=out_transient)
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, N=N, M=M)
-    del csdfg 
+    del csdfg
 
-    expand_maps(sdfg, state) 
-    fusion(sdfg, state) 
+    expand_maps(sdfg, state)
+    fusion(sdfg, state)
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C3, N=N, M=M)
-    del csdfg 
+    del csdfg
 
     assert np.linalg.norm(C1) > 0.01
     assert np.allclose(C1, C2)
     assert np.allclose(C1, C3)
-  
 
     print("PASS")
 
 
 if __name__ == "__main__":
 
-    test_p3() 
-    test_p3(in_transient = True) 
-    test_p3(out_transient = True )
+    test_p3()
+    test_p3(in_transient=True)
+    test_p3(out_transient=True)
