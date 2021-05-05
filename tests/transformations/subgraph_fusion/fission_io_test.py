@@ -148,6 +148,10 @@ def test_inputs_outputs():
     assert np.allclose(C_cpy, expected_C)
     assert np.allclose(D_cpy, expected_D)
 
+    subgraph = SubgraphView(sdfg.nodes()[0], sdfg.nodes()[0].nodes())
+    sf = SubgraphFusion(subgraph)
+    assert sf.can_be_applied(sdfg, subgraph)
+    print("Can be applied")
     fusion(sdfg, sdfg.nodes()[0], None)
 
     C_cpy = deepcopy(C)
