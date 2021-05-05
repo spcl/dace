@@ -17,7 +17,7 @@ def test_assign_scalar():
                 b = 0.0
 
     code = get_code(program, 'i')
-
+    print(code)
     # Scalar must be duplicated and brought into right type
     assert 'svdup_f32' in code
     assert '(dace::float32)' in code

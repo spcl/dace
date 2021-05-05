@@ -1,8 +1,8 @@
 import argparse
 import dace
 import numpy as np
-from dace.codegen.targets.sve.vectorization import vectorize
-import dace.codegen.targets.sve.tests.common as common
+from vectorization import vectorize
+import common
 
 N = dace.symbol('N', positive=True)
 
@@ -42,7 +42,6 @@ def test_filter():
 
     sdfg = pbf.to_sdfg()
     vectorize(sdfg, 'i', special=True)
-    #sdfg.save('playground/out/pbf.sdfg')
 
     if common.SHOULD_EXECUTE_SVE:
         sdfg(A=A, B=B, outsz=outsize, ratio=ratio, N=N)

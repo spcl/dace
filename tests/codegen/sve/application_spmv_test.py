@@ -6,8 +6,8 @@ import dace
 import math
 import numpy as np
 import scipy
-from dace.codegen.targets.sve.vectorization import vectorize
-import dace.codegen.targets.sve.tests.common as common
+from vectorization import vectorize
+import common
 
 W = dace.symbol('W')
 H = dace.symbol('H')

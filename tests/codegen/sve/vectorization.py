@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
-    Vectorization: This module is horrible, but allows for heavy vectorization (which the current Vectorization transform can't do yet).
-    It is only needed for Milestone II and will be replaced by a nicer version in Milestone III.
+    Vectorization: This module allows to force vectorization of an SDFG.
 """
 
 import dace
@@ -14,8 +13,6 @@ from dace.sdfg import graph, state, find_input_arraynode, find_output_arraynode
 
 
 def vectorize(sdfg, par, weak=False, special=False):
-    # HACK: This function is extremely hacky and only needed for demonstration purposes in Milestone II.
-    # I am fully aware that this is horrible!
 
     if weak:
         for xform in Optimizer(sdfg).get_pattern_matches(patterns=[
