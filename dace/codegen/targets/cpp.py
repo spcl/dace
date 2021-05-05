@@ -1113,17 +1113,6 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
         return ast.copy_location(newnode, node)
 
-    def visit_Name(self, node: ast.Name):
-        name = rname(node)
-        if name not in self.memlets:
-            return self.generic_visit(node)
-        memlet, nc, wcr, dtype = self.memlets[name]
-        if (isinstance(dtype, dtypes.pointer)
-                and memlet.subset.num_elements() == 1):
-            return ast.Name(id="(*{})".format(name), ctx=node.ctx)
-        else:
-            return self.generic_visit(node)
-
     def visit_Expr(self, node):
         # Check for DaCe function calls
         if isinstance(node.value, ast.Call):
@@ -1235,8 +1224,13 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                 )
                 continue
 
+            # If a view, get the relevant access node
+            dstnode = edge.dst
+            while isinstance(sdfg.arrays[dstnode.data], data.View):
+                dstnode = dfg.out_edges(dstnode)[0].dst
+
             # We need the streams leading out of the output data
-            for e in dfg.out_edges(edge.dst):
+            for e in dfg.out_edges(dstnode):
                 if isinstance(e.dst, nodes.AccessNode):
                     continue
                 # If no stream at destination: synchronize stream with host.
