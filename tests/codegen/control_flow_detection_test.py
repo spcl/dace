@@ -69,7 +69,7 @@ def test_edge_split_loop_detection():
 
     A = looptest()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
-    assert (np.array_equal(A, A_ref))
+    assert (np.array_equal(A[::2], A_ref[::2]))
 
 
 if __name__ == '__main__':
