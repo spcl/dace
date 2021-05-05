@@ -269,7 +269,7 @@ class DaceProgram:
                         decorator).
         :param compilation_args: Various compilation arguments e.g. dtypes.
         :param strict: Whether to apply strict transformations or not (None
-                    uses configuration-defined value). 
+                       uses configuration-defined value). 
         :param save: If True, saves the generated SDFG to 
                     ``_dacegraphs/program.sdfg`` after parsing.
         :return: The generated SDFG object.
