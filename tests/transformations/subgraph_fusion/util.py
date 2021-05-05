@@ -44,7 +44,7 @@ def expand_reduce(sdfg: dace.SDFG,
             trafo_reduce.expand(sdfg, graph, reduce_node)
             if isinstance(sg, SubgraphView):
                 sg.nodes().remove(reduce_node)
-                sg.nodes().append(trafo_reduce._new_reduce)
+                sg.nodes().append(trafo_reduce._reduce)
                 sg.nodes().append(trafo_reduce._outer_entry)
 
 
