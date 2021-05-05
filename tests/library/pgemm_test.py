@@ -2,7 +2,7 @@
 import dace
 from dace.memlet import Memlet
 from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
-import dace.libraries.scalapack as scalapack
+import dace.libraries.pblas as pblas
 import sys
 import warnings
 import numpy as np
@@ -30,7 +30,7 @@ def make_sdfg(dtype):
     inbuf = state.add_access("inbuf")
     outbuf = state.add_access("outbuf")
     root = state.add_access("root")
-    scatter_node = scalapack.nodes.scatter.Pgemm("pgemm")
+    scatter_node = pblas.nodes.scatter.Pgemm("pgemm")
     
     state.add_memlet_path(inbuf,
                           scatter_node,
