@@ -252,7 +252,7 @@ def _numpy_full(pv: 'ProgramVisitor',
     """ Creates and array of the specified shape and initializes it with
         the fill value.
     """
-    if isinstance(fill_value, Number):
+    if isinstance(fill_value, (Number, np.bool_)):
         vtype = dtypes.DTYPE_TO_TYPECLASS[type(fill_value)]
     elif isinstance(fill_value, sp.Expr):
         vtype = _sym_type(fill_value)
@@ -1079,7 +1079,7 @@ def _result_type(
         elif isinstance(arg, data.Scalar):
             datatypes.append(arg.dtype)
             dtypes_for_result.append(_representative_num(arg.dtype))
-        elif isinstance(arg, Number):
+        elif isinstance(arg, (Number, np.bool_)):
             datatypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
             dtypes_for_result.append(arg)
         elif symbolic.issymbolic(arg):
@@ -1733,11 +1733,11 @@ def _const_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
     left_cast = casting[0]
     right_cast = casting[1]
 
-    if isinstance(left_operand, Number) and left_cast is not None:
+    if isinstance(left_operand, (Number, np.bool_)) and left_cast is not None:
         left = eval(left_cast)(left_operand)
     else:
         left = left_operand
-    if isinstance(right_operand, Number) and right_cast is not None:
+    if isinstance(right_operand, (Number, np.bool_)) and right_cast is not None:
         right = eval(right_cast)(right_operand)
     else:
         right = right_operand
@@ -2817,7 +2817,7 @@ def _validate_where_kword(
         where = kwargs['where']
         if isinstance(where, str) and where in sdfg.arrays.keys():
             has_where = True
-        elif isinstance(where, bool):
+        elif isinstance(where, (bool, np.bool_)):
             has_where = True
         elif isinstance(where, (list, tuple)):
             raise mem_parser.DaceSyntaxError(
@@ -3088,10 +3088,10 @@ def _create_subgraph(visitor: 'ProgramVisitor',
     if list(output_shape) == [1]:
         # No map needed
         if has_where:
-            if isinstance(where, bool):
-                if where is True:
+            if isinstance(where, (bool, np.bool_)):
+                if where == True:
                     pass
-                elif where is False:
+                elif where == False:
                     return
             elif isinstance(where, str) and where in sdfg.arrays.keys():
                 cond_state = state
@@ -3130,10 +3130,10 @@ def _create_subgraph(visitor: 'ProgramVisitor',
     else:
         # Map needed
         if has_where:
-            if isinstance(where, bool):
-                if where is True:
+            if isinstance(where, (bool, np.bool_)):
+                if where == True:
                     pass
-                elif where is False:
+                elif where == False:
                     return
             elif isinstance(where, str) and where in sdfg.arrays.keys():
                 nested_sdfg = dace.SDFG(state.label + "_where")
@@ -3377,13 +3377,13 @@ def _validate_keepdims_kword(visitor: 'ProgramVisitor', ast_node: ast.Call,
     keepdims = False
     if 'keepdims' in kwargs.keys():
         keepdims = kwargs['keepdims']
-        if not isinstance(keepdims, (Integral, bool)):
+        if not isinstance(keepdims, (Integral, bool, np.bool_)):
             raise mem_parser.DaceSyntaxError(
                 visitor, ast_node,
                 "Integer or boolean value expected for keyword argument "
                 "'keepdims' in reduction operation {f} (got {v}).".format(
                     f=ufunc_name, v=keepdims))
-        if not isinstance(keepdims, bool):
+        if not isinstance(keepdims, (bool, np.bool_)):
             keepdims = bool(keepdims)
 
     return keepdims
@@ -3543,7 +3543,7 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call,
     if isinstance(arg, str):
         datadesc = sdfg.arrays[arg]
         result_type = datadesc.dtype
-    elif isinstance(arg, Number):
+    elif isinstance(arg, (Number, np.bool_)):
         result_type = dtypes.DTYPE_TO_TYPECLASS[type(arg)]
     elif isinstance(arg, sp.Basic):
         result_type = _sym_type(arg)
@@ -3881,7 +3881,7 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor', ast_node: ast.Call,
             input_idx = None
         input_indices.append(input_idx)
 
-    if has_where and not isinstance(where, bool):
+    if has_where and not isinstance(where, (bool, np.bool_)):
         where_shape = sdfg.arrays[where].shape
         try:
             bcast_out_shape, _, _, bcast_inp_indices = _broadcast(
@@ -4111,7 +4111,7 @@ def _ndarray_copy(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
 @oprepo.replaces_method('View', 'fill')
 def _ndarray_fill(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str,
                   value: Number) -> str:
-    if not isinstance(value, Number):
+    if not isinstance(value, (Number, np.bool_)):
         raise mem_parser.DaceSyntaxError(
             pv, None, "Fill value {f} must be a number!".format(f=value))
     return _elementwise(pv, sdfg, state, "lambda x: {}".format(value), arr, arr)
@@ -4290,7 +4290,9 @@ def _ndarray_any(pv: 'ProgramVisitor',
 
 
 def _make_datatype_converter(typeclass: str):
-    if typeclass in {"int", "float", "complex"}:
+    if typeclass == "bool":
+        dtype = dace.bool
+    elif typeclass in {"int", "float", "complex"}:
         dtype = dtypes.DTYPE_TO_TYPECLASS[eval(typeclass)]
     else:
         dtype = dtypes.DTYPE_TO_TYPECLASS[eval("np.{}".format(typeclass))]

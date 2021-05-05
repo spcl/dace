@@ -3154,13 +3154,13 @@ class ProgramVisitor(ExtNodeVisitor):
                                     boolarr = arr
                             elif arr in self.sdfg.constants:
                                 desc = self.sdfg.constants[arr]
-                                if desc.dtype == numpy.bool:
+                                if desc.dtype == numpy.bool_:
                                     boolarr = arr
                             else:
                                 raise IndexError(
                                     f'Array index "{arr}" undefined')
                         elif isinstance(arr, (list, tuple)):
-                            if numpy.array(arr).dtype == numpy.bool:
+                            if numpy.array(arr).dtype == numpy.bool_:
                                 carr = numpy.array(
                                     arrname, dtype=dtypes.typeclass(int).type)
                                 cname = self.sdfg.find_new_constant(
@@ -3967,12 +3967,16 @@ class ProgramVisitor(ExtNodeVisitor):
         return node.s
 
     def visit_Num(self, node: ast.Num):
-        if isinstance(node.n, (int, float, complex, bool)):
+        if isinstance(node.n, bool):
+            return dace.bool_(node.n)
+        if isinstance(node.n, (int, float, complex)):
             return dtypes.DTYPE_TO_TYPECLASS[type(node.n)](node.n)
         return node.n
 
     def visit_Constant(self, node: ast.Constant):
-        if isinstance(node.value, (int, float, complex, bool)):
+        if isinstance(node.value, bool):
+            return dace.bool_(node.n)
+        if isinstance(node.value, (int, float, complex)):
             return dtypes.DTYPE_TO_TYPECLASS[type(node.value)](node.value)
         return node.value
 
@@ -4038,7 +4042,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 result.append(
                     (operand, type(self.scope_arrays[operand]).__name__))
             elif isinstance(operand, tuple(dtypes.DTYPE_TO_TYPECLASS.keys())):
-                if isinstance(operand, (bool, numpy.bool, numpy.bool_)):
+                if isinstance(operand, (bool, numpy.bool_)):
                     result.append((operand, 'BoolConstant'))
                 else:
                     result.append((operand, 'NumConstant'))
@@ -4244,7 +4248,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return node
         if isinstance(result, ast.AST):
             newnode = result
-        elif isinstance(result, Number):
+        elif isinstance(result, (Number, numpy.bool_)):
             # Compatibility check since Python changed their AST nodes
             if sys.version_info >= (3, 8):
                 newnode = ast.Constant(value=result, kind='')

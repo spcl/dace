@@ -66,22 +66,22 @@ class Property:
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
     def __init__(
-        self,
-        getter=None,
-        setter=None,
-        dtype=None,
-        default=None,
-        from_string=None,
-        to_string=None,
-        from_json=None,
-        to_json=None,
-        meta_to_json=None,
-        choices=None,  # Values must be present in this enum
-        unmapped=False,  # Don't enforce 1:1 mapping with a member variable
-        allow_none=False,
-        indirected=False,  # This property belongs to a different class
-        category='General',
-        desc=""):
+            self,
+            getter=None,
+            setter=None,
+            dtype=None,
+            default=None,
+            from_string=None,
+            to_string=None,
+            from_json=None,
+            to_json=None,
+            meta_to_json=None,
+            choices=None,  # Values must be present in this enum
+            unmapped=False,  # Don't enforce 1:1 mapping with a member variable
+            allow_none=False,
+            indirected=False,  # This property belongs to a different class
+            category='General',
+            desc=""):
 
         self._getter = getter
         self._setter = setter
@@ -809,19 +809,19 @@ class DebugInfoProperty(Property):
 class SetProperty(Property):
     """Property for a set of elements of one type, e.g., connectors. """
     def __init__(
-        self,
-        element_type,
-        getter=None,
-        setter=None,
-        default=None,
-        from_string=None,
-        to_string=None,
-        from_json=None,
-        to_json=None,
-        unmapped=False,  # Don't enforce 1:1 mapping with a member variable
-        allow_none=False,
-        desc="",
-        **kwargs):
+            self,
+            element_type,
+            getter=None,
+            setter=None,
+            default=None,
+            from_string=None,
+            to_string=None,
+            from_json=None,
+            to_json=None,
+            unmapped=False,  # Don't enforce 1:1 mapping with a member variable
+            allow_none=False,
+            desc="",
+            **kwargs):
         if to_json is None:
             to_json = self.to_json
         super(SetProperty, self).__init__(getter=getter,
@@ -1136,8 +1136,8 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        if (val is not None and not isinstance(val, sp.Expr)
-                and not isinstance(val, Number) and not isinstance(val, str)):
+        if (val is not None
+                and not isinstance(val, (sp.Expr, Number, np.bool_, str))):
             raise TypeError(f"Property {self.attr_name} must be a literal "
                             f"or symbolic expression, got: {type(val)}")
         if isinstance(val, (Number, str)):

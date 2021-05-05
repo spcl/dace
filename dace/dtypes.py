@@ -177,7 +177,6 @@ _CTYPES = {
     float: "float",
     complex: "dace::complex64",
     bool: "bool",
-    numpy.bool: "bool",
     numpy.bool_: "bool",
     numpy.int8: "char",
     numpy.int16: "short",
@@ -200,7 +199,6 @@ _OCL_TYPES = {
     int: "int",
     float: "float",
     bool: "bool",
-    numpy.bool: "bool",
     numpy.bool_: "bool",
     numpy.int8: "char",
     numpy.int16: "short",
@@ -240,7 +238,6 @@ _FFI_CTYPES = {
     float: ctypes.c_float,
     complex: ctypes.c_uint64,
     bool: ctypes.c_bool,
-    numpy.bool: ctypes.c_bool,
     numpy.bool_: ctypes.c_bool,
     numpy.int8: ctypes.c_int8,
     numpy.int16: ctypes.c_int16,
@@ -264,7 +261,6 @@ _BYTES = {
     float: 4,
     complex: 8,
     bool: 1,
-    numpy.bool: 1,
     numpy.bool_: 1,
     numpy.int8: 1,
     numpy.int16: 2,
@@ -406,7 +402,7 @@ class typeclass(object):
 def max_value(dtype: typeclass):
     """Get a max value literal for `dtype`."""
     nptype = dtype.as_numpy_dtype()
-    if nptype == numpy.bool:
+    if nptype == numpy.bool_:
         return True
     elif numpy.issubdtype(nptype, numpy.integer):
         return numpy.iinfo(nptype).max
@@ -419,7 +415,7 @@ def max_value(dtype: typeclass):
 def min_value(dtype: typeclass):
     """Get a min value literal for `dtype`."""
     nptype = dtype.as_numpy_dtype()
-    if nptype == numpy.bool:
+    if nptype == numpy.bool_:
         return False
     elif numpy.issubdtype(nptype, numpy.integer):
         return numpy.iinfo(nptype).min
@@ -940,7 +936,7 @@ def isconstant(var):
     return type(var) in _CONSTANT_TYPES
 
 
-bool = typeclass(numpy.bool)
+bool = typeclass(numpy.bool_)
 bool_ = typeclass(numpy.bool_)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
@@ -978,7 +974,6 @@ DTYPE_TO_TYPECLASS = {
     int: typeclass(int),
     float: typeclass(float),
     complex: typeclass(complex),
-    numpy.bool: bool,
     numpy.bool_: bool_,
     numpy.int8: int8,
     numpy.int16: int16,
