@@ -480,7 +480,9 @@ class CompiledSDFG(object):
                 else:
                     self._create_new_arrays = False
                     # Use stored sizes to recreate arrays (fast path)
-                    if isinstance(self._return_arrays, tuple):
+                    if self._return_arrays is None:
+                        return
+                    elif isinstance(self._return_arrays, tuple):
                         self._return_arrays = tuple(
                             kwargs[desc[0]] if desc[0] in
                             kwargs else self._create_array(*desc)
