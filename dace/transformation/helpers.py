@@ -331,21 +331,31 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
 
     # Mark boundary access nodes to keep after fission
     nodes_to_remove = set(subgraph.nodes())
-    nodes_to_remove -= set(n for n in subgraph.source_nodes()
-                           if state.out_degree(n) > 1)
-    nodes_to_remove -= set(n for n in subgraph.sink_nodes()
-                           if state.in_degree(n) > 1)
+    boundary_nodes = [
+        n for n in subgraph.nodes()
+        if len(state.out_edges(n)) > len(subgraph.out_edges(n))
+    ] + [
+        n for n in subgraph.nodes()
+        if len(state.in_edges(n)) > len(subgraph.in_edges(n))
+    ]
+
+    # Make dictionary of nodes to add to new state
+    new_nodes = {n: n for n in subgraph.nodes()}
+    new_nodes.update({b: copy.deepcopy(b) for b in boundary_nodes})
+
+    nodes_to_remove -= set(boundary_nodes)
     state.remove_nodes_from(nodes_to_remove)
 
-    for n in subgraph.nodes():
+    for n in new_nodes.values():
         if isinstance(n, nodes.NestedSDFG):
             # Set the new parent state
             n.sdfg.parent = newstate
 
-    newstate.add_nodes_from(subgraph.nodes())
+    newstate.add_nodes_from(new_nodes.values())
 
     for e in orig_edges:
-        newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+        newstate.add_edge(new_nodes[e.src], e.src_conn, new_nodes[e.dst],
+                          e.dst_conn, e.data)
 
     return newstate
 
