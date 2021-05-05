@@ -255,7 +255,7 @@ class StencilTiling(transformation.SubgraphTransformation):
         dag_neighbors = StencilTiling.topology(sdfg, graph, map_entries)
         (children_dict, _, sink_maps) = dag_neighbors
 
-        # 1.6: we now check coverage:
+        # 1.7: we now check coverage:
         # each outgoing coverage for a data memlet has to
         # be exactly equal to the union of incoming coverages
         # of all chidlren map memlets of this data
@@ -324,11 +324,11 @@ class StencilTiling(transformation.SubgraphTransformation):
                         except KeyError:
                             return False
 
-            # 1.6: parameter mapping must be the same
+            #parameter mapping must be the same
             if param_parent_coverage != param_children_coverage:
                 return False
 
-        # 1.7: we want all sink maps to have the same range size
+        # 1.8: we want all sink maps to have the same range size
         assert len(sink_maps) > 0
         first_sink_map = next(iter(sink_maps))
         if not all([

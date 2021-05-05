@@ -134,7 +134,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # 2.2 topological feasibility:
         if not SubgraphFusion.check_topo_feasibility(
                 sdfg, graph, map_entries, intermediate_nodes, out_nodes):
-            print("TOPO FEAS")
             return False
 
         # 2.3 memlet feasibility
@@ -146,7 +145,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             invariant_dimensions = self.determine_invariant_dimensions(
                 sdfg, graph, intermediate_nodes, map_entries, map_exits)
         except NotImplementedError:
-            print("INVARIANT_DIMS")
             return False
 
         for node in intermediate_nodes:
@@ -169,7 +167,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             p not in subset_params
                             for p in in_edge.src.map.params
                     ]):
-                        print("COVERAGE1")
                         return False
                 if in_edge.src in map_exits:
                     for iedge in graph.in_edges(in_edge.src):
@@ -204,33 +201,26 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             try:
                 contiguous_upper = find_contiguous_subsets(upper_subsets)
                 if len(contiguous_upper) > 1:
-                    print("COVERAGE2")
                     return False
             except TypeError:
                 warnings.warn(
                     'SubgraphFusion::Could not determine whether subset is continuous.'
                     'Exiting Check with False.')
-                print("COVERAGE3")
                 return False
 
             # now take union of upper subsets
-            print("UPPER SUBSETS", upper_subsets)
             upper_iter = iter(upper_subsets)
             union_upper = next(upper_iter)
             for subs in upper_iter:
                 union_upper = subsets.union(union_upper, subs)
                 if not union_upper:
                     # something went wrong using union -- we'd rather abort
-                    print("COVERAGE4")
                     return False
 
             # finally check coverage
             # every lower subset must be completely covered by union_upper
             for lower_subset in lower_subsets:
                 if not union_upper.covers(lower_subset):
-                    print("COVERAGE5")
-                    print("lower_subset", lower_subset)
-                    print("union_upper", union_upper)
                     return False
 
         # 2.4 Check for WCRs in out nodes: If there is one, the corresponding
@@ -264,7 +254,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             for in_edge in graph.in_edges(out_node):
                 if in_edge.src in map_exits and in_edge.data.wcr:
                     if in_edge.data.data in in_data or in_edge.data.data in intermediate_data or in_edge.data.data in view_data:
-                        print("WCR")
                         return False
 
         # Check compressibility for each intermediate node -- this is needed in the following checks
@@ -278,7 +267,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     for e in graph.memlet_tree(out_edge):
                         if isinstance(e.dst, nodes.AccessNode) and isinstance(
                                 sdfg.data(e.dst.data), dace.data.View):
-                            print("VIEW")
                             warnings.warn(
                                 "SubgraphFusion::View Node Compression not supported!"
                             )
@@ -287,7 +275,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     for e in graph.memlet_tree(in_edge):
                         if isinstance(e.src, nodes.AccessNode) and isinstance(
                                 sdfg.data(e.src.data), dace.data.View):
-                            print("VIEW")
                             warnings.warn(
                                 "SubgraphFusion::View Node Compression not supported"
                             )
@@ -326,7 +313,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                                 warnings.warn(
                                                     "SubgraphFusion::Disjoint Access found"
                                                 )
-                                                print("DISJOINT")
                                                 return False
                             for e in graph.in_edges(node):
                                 if e.src in map_exits:
@@ -344,7 +330,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                                 warnings.warn(
                                                     "SubgraphFusion::Disjoint Access found"
                                                 )
-                                                print("DISJOINT")
                                                 return False
 
                         # compare iteration space i_d and i_d-1 in each dimension,
@@ -366,7 +351,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             if intersection is None or intersection == True:
                                 warnings.warn(
                                     "SubgraphFusion::Disjoint Accesses found!")
-                                print("DISJOINT")
                                 return False
 
         return True
