@@ -1090,12 +1090,11 @@ class NestSDFG(transformation.Transformation):
                         # support dynamic memory allocation.
 
                         propagation.propagate_states(nested_sdfg)
-
+                        overapprox_shape = []
                         if not isinstance(nodedesc,
                                           data.Scalar) and state.ranges:
                             for sz in nodedesc.shape:
                                 newsz = sz
-                                overapprox_shape = []
 
                                 if symbolic.issymbolic(sz):
                                     for s in newsz.free_symbols:
