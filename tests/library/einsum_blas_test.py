@@ -28,7 +28,10 @@ def test_change_default():
 
 
 def assert_used_environment(sdfg, impl):
-    implementation_to_env = {"MKL": "IntelMKL", "cuBLAS": "cuBLAS"}
+    implementation_to_env = {
+        "MKL": blas.environments.IntelMKL.__module__,
+        "cuBLAS": blas.environments.cuBLAS.__module__
+    }
     all_tasklets = (n for n, _ in sdfg.all_nodes_recursive()
                     if isinstance(n, dace.nodes.Tasklet))
     environments = {env for n in all_tasklets for env in n.environments}
