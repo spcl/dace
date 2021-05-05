@@ -98,4 +98,5 @@ def test_indirect_load_implicit():
 
     code = get_code(program, 'i')
 
+    # This is still an indirect load (uses Indirection tasklet)
     assert 'svld1_gather_index' in code
