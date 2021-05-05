@@ -142,6 +142,41 @@ class ExpandTransposeMKL(ExpandTransformation):
 
 
 @dace.library.expansion
+class ExpandTransposeOpenBLAS(ExpandTransformation):
+
+    environments = [environments.openblas.OpenBLAS]
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
+        dtype = node.dtype
+        if dtype == dace.float32:
+            func = "somatcopy"
+            alpha = "1.0f"
+        elif dtype == dace.float64:
+            func = "domatcopy"
+            alpha = "1.0"
+        elif dtype == dace.complex64:
+            func = "comatcopy"
+            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
+        elif dtype == dace.complex128:
+            func = "zomatcopy"
+            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
+        else:
+            raise ValueError("Unsupported type for OpenBLAS omatcopy extension: " +
+                             str(dtype))
+        _, _, (m, n) = _get_transpose_input(node, state, sdfg)
+        code = ("cblas_{f}('R', 'T', {m}, {n}, {a}, _inp, "
+                "{n}, _out, {m});").format(f=func, m=m, n=n, a=alpha)
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+        return tasklet
+
+
+@dace.library.expansion
 class ExpandTransposeCuBLAS(ExpandTransformation):
 
     environments = [environments.cublas.cuBLAS]
@@ -180,6 +215,7 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "pure": ExpandTransposePure,
         "MKL": ExpandTransposeMKL,
+        "OpenBLAS": ExpandTransposeOpenBLAS,
         "cuBLAS": ExpandTransposeCuBLAS
     }
     default_implementation = None
