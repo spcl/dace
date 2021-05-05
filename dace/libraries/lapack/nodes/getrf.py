@@ -7,6 +7,7 @@ from dace import dtypes
 from dace.libraries.lapack import lapack_helpers
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
+from dace.libraries.blas import environments as blas_environments
 
 
 @dace.library.expansion
@@ -25,7 +26,7 @@ class ExpandGetrfPure(ExpandTransformation):
 @dace.library.expansion
 class ExpandGetrfOpenBLAS(ExpandTransformation):
 
-    environments = [environments.openblas.OpenBLAS]
+    environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -33,9 +34,20 @@ class ExpandGetrfOpenBLAS(ExpandTransformation):
          cols_x), desc_ipiv, desc_result = node.validate(
              parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
-        
+        lapack_dtype = "X"
+        if dtype == dace.dtypes.float32:
+            lapack_dtype = "s"
+        elif dtype == dace.dtypes.float64:
+            lapack_dtype = "d" 
+        elif dtype == dace.dtypes.complex64:
+            lapack_dtype = "c"
+        elif dtype == dace.dtypes.complex128:
+            lapack_dtype = "z"
+        else:
+            print("The datatype "+str(dtype)+" is not supported!")
+            raise(NotImplementedError) 
         if desc_x.dtype.veclen > 1:
-            raise (NotImplementedError)
+            raise(NotImplementedError)
 
         n = n or node.n
         code = f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, _xin, {stride_x}, _ipiv);"

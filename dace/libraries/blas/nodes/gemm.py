@@ -433,6 +433,8 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
 @dace.library.expansion
 class ExpandGemmPBLAS(ExpandTransformation):
 
+    environments = []
+
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
@@ -465,6 +467,8 @@ class ExpandGemmPBLAS(ExpandTransformation):
             dace.comm.BCGather(lC, _c, (M//Px, N//Py))
 
         return _gemm_pblas.to_sdfg()
+
+
 class ExpandGemmFPGA1DSystolic(ExpandTransformation):
     """
     FPGA based implementation of GEMM, using a 1D systolic array.

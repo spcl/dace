@@ -7,6 +7,7 @@ from dace import dtypes
 from dace.libraries.lapack import lapack_helpers
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
+from dace.libraries.blas import environments as blas_environments
 
 
 @dace.library.expansion
@@ -25,7 +26,7 @@ class ExpandPotrfPure(ExpandTransformation):
 @dace.library.expansion
 class ExpandPotrfOpenBLAS(ExpandTransformation):
 
-    environments = [environments.openblas.OpenBLAS]
+    environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):

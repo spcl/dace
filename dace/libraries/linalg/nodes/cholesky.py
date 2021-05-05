@@ -8,6 +8,7 @@ from dace.libraries.blas import Transpose
 from dace.libraries.lapack import Potrf
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.lapack import environments
+from dace.libraries.blas import environments as blas_environments
 
 
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):
@@ -93,7 +94,7 @@ class ExpandCholeskyPure(ExpandTransformation):
 @dace.library.expansion
 class ExpandCholeskyOpenBLAS(ExpandTransformation):
 
-    environments = [environments.openblas.OpenBLAS]
+    environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):

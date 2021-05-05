@@ -8,6 +8,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import environments as blas_environments
 
 
 @dace.library.expansion
@@ -25,7 +26,7 @@ class ExpandGetriPure(ExpandTransformation):
 @dace.library.expansion
 class ExpandGetriOpenBLAS(ExpandTransformation):
 
-    environments = [environments.openblas.OpenBLAS]
+    environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):

@@ -10,6 +10,7 @@ from dace.libraries.blas.nodes import Transpose
 from dace.libraries.lapack.nodes import Getrf, Getrs
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.lapack import environments
+from dace.libraries.blas import environments as blas_environments
 
 
 def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
@@ -132,7 +133,7 @@ class ExpandSolvePure(ExpandTransformation):
 @dace.library.expansion
 class ExpandSolveOpenBLAS(ExpandTransformation):
 
-    environments = [environments.openblas.OpenBLAS]
+    environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
