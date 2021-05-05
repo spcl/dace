@@ -142,6 +142,8 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
                  marks=pytest.mark.mkl),
     pytest.param("MKL", dace.float64, dace.StorageType.Default,
                  marks=pytest.mark.mkl),
+    pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default),
+    pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default),
     pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global,
                  marks=pytest.mark.gpu),
     pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global,
