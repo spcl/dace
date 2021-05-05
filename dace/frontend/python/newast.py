@@ -3910,6 +3910,12 @@ class ProgramVisitor(ExtNodeVisitor):
         return self.visit_With(node, is_async=True)
 
     def _visitname(self, name: str, node: ast.AST):
+        if isinstance(name, (sympy.Symbol, symbolic.symbol)):
+            name = str(name)
+        elif symbolic.issymbolic(name, self.sdfg.constants):
+            raise TypeError(
+                'Symbolic expression found instead of variable name')
+
         # First, if it is defined in the parser, use the definition
         if name in self.variables:
             return self.variables[name]
