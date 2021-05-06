@@ -188,7 +188,6 @@ class Transformation(TransformationBase):
             for optname, optval in options.items():
                 setattr(self, optname, optval)
 
-
     @property
     def subgraph(self):
         return self._subgraph_user
@@ -529,7 +528,7 @@ class ExpandTransformation(Transformation):
                                                     expansion.schedule, True)
 
         expansion.environments = copy.copy(
-            set(map(lambda a: a.__module__,
+            set(map(lambda a: a.full_class_path(),
                     type(self).environments)))
         sdutil.change_edge_dest(state, node, expansion)
         sdutil.change_edge_src(state, node, expansion)

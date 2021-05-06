@@ -5,9 +5,10 @@ import types
 from typing import Set, List
 import contextlib
 import networkx as nx
+import types
 
 import dace.properties
-from dace.sdfg.nodes import LibraryNode
+from dace.sdfg.nodes import LibraryNode, full_class_path
 from dace.transformation.transformation import (Transformation,
                                                 ExpandTransformation)
 
@@ -185,7 +186,8 @@ def environment(env):
     # Retrieve which file this was called from
     caller_file = inspect.getmodule(env).__file__
     env._dace_file_path = caller_file
-    _DACE_REGISTERED_ENVIRONMENTS[env.__module__] = env
+    env.full_class_path = types.MethodType(full_class_path, env)
+    _DACE_REGISTERED_ENVIRONMENTS[env.full_class_path()] = env
     return env
 
 
