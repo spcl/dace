@@ -1579,21 +1579,27 @@ class CPUCodeGen(TargetCodeGenerator):
 
         code_already_generated = False
         if unique_functions and not inline:
+            hash = node.sdfg.hash_sdfg()
             if unique_functions_hash:
                 # Use hashing to check whether this Nested SDFG has been already generated. If that is the case,
                 # use the saved name to call it, otherwise save the hash and the associated name
-                hash = node.sdfg.hash_sdfg()
                 if hash in self._generated_nested_sdfg:
                     code_already_generated = True
                     sdfg_label = self._generated_nested_sdfg[hash]
                 else:
                     self._generated_nested_sdfg[hash] = sdfg_label
             else:
-                # Use the SDFG label, keep track if this has been already code generated
+                # Use the SDFG label to check if this has been already code generated.
+                # Check the hash of the formerly generated SDFG to check that we are not
+                # generating different SDFGs with the same name
                 if sdfg_label in self._generated_nested_sdfg:
                     code_already_generated = True
+                    if hash != self._generated_nested_sdfg[sdfg_label]:
+                        raise ValueError(
+                            f'Different Nested SDFGs have tha same unique name: {sdfg_label}'
+                        )
                 else:
-                    self._generated_nested_sdfg[sdfg_label] = sdfg_label
+                    self._generated_nested_sdfg[sdfg_label] = hash
 
         #########################################
         # Take care of nested SDFG I/O (arguments)
