@@ -256,6 +256,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     orig_sdfg = SDFGReferenceProperty(allow_none=True)
     transformation_hist = TransformationHistProperty()
 
+    openmp_sections = Property(dtype=bool,
+                               default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
+                               desc='Whether to generate OpenMP sections in code')
+
+
     def __init__(self,
                  name: str,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
