@@ -166,8 +166,11 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
             raise ValueError("Unsupported type for OpenBLAS omatcopy extension: " +
                              str(dtype))
         _, _, (m, n) = _get_transpose_input(node, state, sdfg)
-        code = ("cblas_{f}('R', 'T', {m}, {n}, {a}, _inp, "
-                "{n}, _out, {m});").format(f=func, m=m, n=n, a=alpha)
+        # Adaptations for BLAS API
+        order = 'CblasRowMajor'
+        trans = 'CblasTrans'
+        code = ("cblas_{f}({o}, {t}, {m}, {n}, {a}, _inp, "
+                "{n}, _out, {m});").format(f=func, o=order, t=trans, m=m, n=n, a=alpha)
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
