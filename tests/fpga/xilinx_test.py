@@ -73,6 +73,8 @@ TESTS = [
      False, [1]),
     # Auto-opt for FPGA
     ("tests/fpga/auto_opt_fpga.py", ["global_to_local_1", "rr_interleave_1"], True, False, []),
+    # Over approx Shapes
+    ("tests/fpga/overapprox_transient_shapes.py", ["overapprox_1"], True, False, []),
 ]
 
 

@@ -11,12 +11,14 @@ from typing import Callable, Dict, Iterable, List, Set, Optional, Tuple, Union
 import warnings
 from functools import reduce
 import operator
+import copy
+
 from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.sdfg import nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import utils as sdutil, infer_types
+from dace.sdfg import utils as sdutil, infer_types, propagation
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 from dace import data
@@ -1080,16 +1082,15 @@ class NestSDFG(transformation.Transformation):
                             and node.desc(nested_sdfg).transient and
                             not isinstance(node.desc(nested_sdfg), data.View)):
                         nodedesc = node.desc(nested_sdfg)
-                        import copy
-                        from dace.sdfg import propagation
-                        import math
-                        real_shape = copy.deepcopy(nodedesc.shape)
-                        overapprox_shape = []
-                        propagation.propagate_states(nested_sdfg)
 
-                        # it this transient has a symbolic shape, if any symbol is in in the "ranges" of the state
-                        # the substitute it with its max value (if it can be inferred)
-                        # This is useful for FPGAs, where we can not have dynamic memory allocation
+                        # If this transient has a symbolic shape, and if any symbol is in in the "ranges"
+                        # of the state then substitute it with its max value (if it can be inferred).
+                        # This is useful for the cases where the transient comes from a slice operation
+                        # (e.g. array[:i] or array[i:]), and we are on devices such as FPGAs that do not
+                        # support dynamic memory allocation.
+
+                        propagation.propagate_states(nested_sdfg)
+                        overapprox_shape = []
                         if not isinstance(nodedesc,
                                           data.Scalar) and state.ranges:
                             for sz in nodedesc.shape:
@@ -1104,7 +1105,7 @@ class NestSDFG(transformation.Transformation):
 
                                         to_solve_initial_value = copy.deepcopy(
                                             s)
-                                        # This probably comes from a slice, e.g. array[:i] or array[i:]
+
                                         # We should detect the maximal size, therefore we consider the
                                         # state ranges, by looking both at the initial and the final value
 
@@ -1125,16 +1126,22 @@ class NestSDFG(transformation.Transformation):
                                             to_solve_initial_value = replacement_initial_value
 
                                         if replacement_initial_value is not None and replacement_limit_value is not None:
+                                            # We compute the shape by considering both the range initial and limit value
 
-                                            # Note we can evaluate the maximum, since we don't know the value of symbols
-                                            # TODO: this can fail
+                                            # Note: here we are lenient. We can't evaluate the maximum of the two,
+                                            # since we don't know the value of symbols, therefore we only take the one
+                                            # that is not negative
+
                                             newsz_limit = newsz.subs(
                                                 {s: replacement_limit_value})
+                                            newsz_initial = newsz.subs(
+                                                {s: replacement_initial_value})
                                             if newsz_limit.is_negative:
-                                                newsz = newsz.subs({
-                                                    s:
-                                                    replacement_initial_value
-                                                })
+                                                if newsz_initial.is_negative:
+                                                    raise ValueError(
+                                                        f"Can not over-approximate shape for transient{node.data}"
+                                                    )
+                                                newsz = newsz_initial
                                             else:
                                                 newsz = newsz_limit
                                 overapprox_shape.append(newsz)
