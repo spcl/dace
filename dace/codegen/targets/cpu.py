@@ -1570,9 +1570,9 @@ class CPUCodeGen(TargetCodeGenerator):
                 f'Unknown unique_functions configuration: {unique_functions_conf}'
             )
 
-        if unique_functions and not unique_functions_hash and node.sdfg.unique_name != "":
+        if unique_functions and not unique_functions_hash and node.unique_name != "":
             # If the SDFG has a unique name, use it
-            sdfg_label = node.sdfg.unique_name
+            sdfg_label = node.unique_name
         else:
             sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, sdfg.sdfg_id,
                                           state_id, dfg.node_id(node))

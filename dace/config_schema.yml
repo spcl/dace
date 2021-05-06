@@ -209,8 +209,8 @@ required:
                 default: hash
                 title: Generate unique functions
                 description: >
-                    Determine if and how to generate the code for equivalent nestedSDFGs:
-                    "hash": hashing is used to determine if multiple nested SDFGs with equivalent contents exist.
+                    Determine if and how to generate the code for equivalent NestedSDFGs:
+                    "hash": hashing is used to determine if multiple NestedSDFGs with equivalent contents exist.
                     If this is the case, the code is generated only once.
                     "unique_name": the unique_name property of SDFG is used to determine if two NestedSDFGs are equal,
                     generating the code only once.  This gives more control to the programmer, that can explicitly

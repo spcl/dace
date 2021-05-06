@@ -479,6 +479,10 @@ class NestedSDFG(CodeNode):
         "(in the InlineSDFG transformation)",
         default=False)
 
+    unique_name = Property(dtype=str,
+                           desc="Unique name of the SDFG",
+                           default="")
+
     def __init__(self,
                  label,
                  sdfg,

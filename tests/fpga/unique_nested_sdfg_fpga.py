@@ -11,19 +11,15 @@ import subprocess
 from dace.memlet import Memlet
 
 
-def make_vecAdd_sdfg(sdfg_name: str, unique_names, dtype=dace.float32):
+def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
     '''
     :param sdfg_name: Name of the created SDFG
-    :param unique_names: True if the given name must be used also as the SDFG unique name
     :param dtype:
     '''
     vecWidth = 4
     n = dace.symbol("size")
     vecAdd_sdfg = dace.SDFG(sdfg_name)
     vecType = dace.vector(dtype, vecWidth)
-
-    if unique_names:
-        vecAdd_sdfg.unique_name = sdfg_name
 
     x_name = "x"
     y_name = "y"
@@ -149,7 +145,8 @@ def make_nested_sdfg_fpga(unique_names):
     # build the first axpy: works with x,y, and z of n-elements
 
     # ATTENTION: this two nested SDFG must have the same name as they are equal
-    to_nest = make_vecAdd_sdfg("vecAdd", unique_names)
+    sdfg_name = "vecAdd"
+    to_nest = make_vecAdd_sdfg(sdfg_name)
 
     sdfg.add_array("x", [n], dace.float32)
     sdfg.add_array("y", [n], dace.float32)
@@ -161,6 +158,9 @@ def make_nested_sdfg_fpga(unique_names):
     # add nested sdfg with symbol mapping
     nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"},
                                         {"size": "n"})
+
+    if unique_names:
+        nested_sdfg.unique_name = sdfg_name
 
     state.add_memlet_path(x,
                           nested_sdfg,
@@ -179,7 +179,7 @@ def make_nested_sdfg_fpga(unique_names):
 
     state2 = sdfg.add_state("state2")
 
-    to_nest = make_vecAdd_sdfg("vecAdd", unique_names)
+    to_nest = make_vecAdd_sdfg(sdfg_name)
 
     sdfg.add_array("v", [m], dace.float32)
     sdfg.add_array("w", [m], dace.float32)
@@ -190,6 +190,9 @@ def make_nested_sdfg_fpga(unique_names):
 
     nested_sdfg = state2.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"},
                                          {"size": "m"})
+
+    if unique_names:
+        nested_sdfg.unique_name = sdfg_name
 
     state2.add_memlet_path(v,
                            nested_sdfg,
