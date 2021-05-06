@@ -498,17 +498,16 @@ class ElementWiseArrayOperation2D(pm.Transformation):
                     [(desc.shape[0]) // Px, (desc.shape[1]) // Py],
                     dtype=desc.dtype, storage=desc.storage)
                 local_access = graph.add_access(local_name)
-                # bsizes_name, bsizes_arr = sdfg.add_temp_transient(
-                #     (2,), dtype=dace.int32)
-                # bsizes_access = graph.add_access(bsizes_name)
-                # bsizes_tasklet = nodes.Tasklet(
-                #     '_set_bsizes_',
-                #     {}, {'__out'},
-                #     "__out[0] = {x}; __out[1] = {y}".format(
-                #         x=(desc.size_exact()[0]) // Px,
-                #         y=(desc.size_exact()[1]) // Py))
-                # graph.add_edge(bsizes_tasklet, '__out', bsizes_access, None,
-                #                dace.Memlet.from_array(bsizes_name, bsizes_arr))
+                bsizes_name, bsizes_arr = sdfg.add_temp_transient(
+                    (2,), dtype=dace.int32)
+                bsizes_access = graph.add_access(bsizes_name)
+                bsizes_tasklet = nodes.Tasklet(
+                    '_set_bsizes_',
+                    {}, {'__out'},
+                    "__out[0] = {x}; __out[1] = {y}".format(
+                        x=(desc.shape[0]) // Px, y=(desc.shape[1]) // Py))
+                graph.add_edge(bsizes_tasklet, '__out', bsizes_access, None,
+                               dace.Memlet.from_array(bsizes_name, bsizes_arr))
                 # gdesc_name, gdesc_arr = sdfg.add_temp_transient(
                 #     (9,), dtype=dace.int32)
                 # gdesc_access = graph.add_access(gdesc_name)
