@@ -10,8 +10,18 @@ def MPI_DDT(dtype):
         mpi_dtype_str = "MPI_COMPLEX"
     elif dtype == dace.dtypes.complex128:
         mpi_dtype_str = "MPI_COMPLEX_DOUBLE"
+    elif dtype == dace.dtypes.int16:
+        mpi_dtype_str = "MPI_SHORT"
     elif dtype == dace.dtypes.int32:
         mpi_dtype_str = "MPI_INT"
+    elif dtype == dace.dtypes.int64:
+        mpi_dtype_str = "MPI_LONG_LONG"
+    elif dtype == dace.dtypes.uint16:
+        mpi_dtype_str = "MPI_UNSIGNED_SHORT"
+    elif dtype == dace.dtypes.uint32:
+        mpi_dtype_str = "MPI_UNSIGNED"
+    elif dtype == dace.dtypes.uint64:
+        mpi_dtype_str = "MPI_UNSIGNED_LONG_LONG"
     else:
         raise ValueError("DDT of "+str(dtype)+" not supported yet.")
     return mpi_dtype_str
