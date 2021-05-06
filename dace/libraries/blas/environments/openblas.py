@@ -5,13 +5,15 @@ import ctypes.util
 @dace.library.environment
 class OpenBLAS:
 
+    # NOTE: This works with OpenBLAS on Linux when liblapack and libblas are
+    # pointing to libopenblas through update-alternatives.
+
     cmake_minimum_version = "3.6"
     cmake_packages = ["LAPACK", "BLAS"]
     cmake_variables = {"BLA_VENDOR": "OpenBLAS"}
     cmake_includes = []  # For some reason, FindBLAS does not find includes
     cmake_compile_flags = []
-    # cmake_link_flags = ["${BLAS_LINKER_FLAGS} ${LAPACK_LINKER_FLAGS}"]
-    cmake_link_flags = ["-llapacke -llapack -lblas -lgfortran"]
+    cmake_link_flags = ["${LAPACK_LINKER_FLAGS} ${BLAS_LINKER_FLAGS}"]
     cmake_files = []
 
     headers = ["cblas.h", "lapacke.h", "../include/dace_blas.h"]
@@ -22,13 +24,10 @@ class OpenBLAS:
 
     @staticmethod
     def cmake_libraries():
-        path = ctypes.util.find_library('openblas')
-        print(path)
-        if path:
-            return ['liblapacke.so', 'liblapack.so', 'libblas.so']
-            # return ["${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}"]
-            # return ["${BLAS_openblas_LIBRARY}", "${LAPACK_openblas_LIBRARY}"]
-
+        lapacke_path = ctypes.util.find_library('lapacke')
+        blas_path = ctypes.util.find_library('blas')
+        if lapacke_path and blas_path:
+            return [lapacke_path, blas_path]
         return []
 
     @staticmethod
