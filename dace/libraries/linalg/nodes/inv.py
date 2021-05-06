@@ -214,7 +214,10 @@ class ExpandInvOpenBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        return _make_sdfg(node, parent_state, parent_sdfg, "OpenBLAS")
+        if node._getri:
+            return _make_sdfg(node, parent_state, parent_sdfg, "OpenBLAS")
+        else:
+            return _make_sdfg_getrs(node, parent_state, parent_sdfg, "OpenBLAS")
 
 
 @dace.library.expansion
