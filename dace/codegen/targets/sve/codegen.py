@@ -14,7 +14,6 @@ from dace.codegen.targets.cpp import sym2cpp
 from dace import dtypes, memlet as mm
 from dace.sdfg import graph, state, find_input_arraynode, find_output_arraynode
 from dace.sdfg.scope import is_in_scope
-from IPython.display import Code
 import itertools
 import dace.codegen.targets.sve.util as util
 import copy
@@ -397,7 +396,7 @@ class SVEMap(TargetCodeGenerator):
     def define_out_memlet(self, sdfg: SDFG, dfg: state.StateSubgraphView,
                           state_id: int, src_node: nodes.Node,
                           dst_node: nodes.Node, edge: graph.MultiConnectorEdge,
-                          function_stream: CodeIOStream, callsite_stream: Code):
+                          function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         scope = util.get_sve_scope(sdfg, dfg, src_node)
         if scope is None:
             raise NotImplementedError('Not in an SVE scope')
