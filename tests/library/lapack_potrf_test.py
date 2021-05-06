@@ -13,7 +13,9 @@ import pytest
 
 
 def generate_matrix(size, dtype):
-    A = np.random.randn(size, size).astype(dtype)
+    from numpy.random import default_rng
+    rng = default_rng(42)
+    A = rng.random((size, size), dtype=dtype)
     return (0.5 * A @ A.T).copy()
 
 
