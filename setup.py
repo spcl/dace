@@ -88,6 +88,6 @@ setup(name='dace',
               'diode = diode.diode_server:main',
               'sdfv = dace.cli.sdfv:main',
               'sdfgcc = dace.cli.sdfgcc:main',
-              'sdprof = dace.cli.sdfprof:main',
+              'sdprof = dace.cli.sdprof:main',
           ],
       })

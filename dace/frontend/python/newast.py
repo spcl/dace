@@ -3035,7 +3035,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return self.generic_visit(node)
         self._visit_assign(node, node.target, None, dtype=dtype)
 
-    def _visit_assign(self, node, node_target, op, dtype=None):
+    def _visit_assign(self, node, node_target, op, dtype=None, is_return=False):
         # Get targets (elts) and results
         elts = None
         results = None
@@ -3067,8 +3067,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 true_name = defined_vars[name]
                 true_array = defined_arrays[true_name]
 
-            if (isinstance(target, ast.Name) and true_name and not op
-                    and not isinstance(true_array, data.Scalar)
+            if (not is_return and isinstance(target, ast.Name) and true_name
+                    and not op and not isinstance(true_array, data.Scalar)
                     and not (true_array.shape == (1, ))):
                 raise DaceSyntaxError(
                     self, target,
@@ -3898,10 +3898,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 ast.parse('(%s,)' % ','.join(
                     '__return_%d' % i
                     for i in range(len(node.value.elts)))).body[0].value, node)
-            self._visit_assign(new_node, ast_tuple, None)
+            self._visit_assign(new_node, ast_tuple, None, is_return=True)
         else:
             ast_name = ast.copy_location(ast.Name(id='__return'), node)
-            self._visit_assign(new_node, ast_name, None)
+            self._visit_assign(new_node, ast_name, None, is_return=True)
 
     def visit_With(self, node, is_async=False):
         # "with dace.tasklet" syntax
@@ -3936,6 +3936,12 @@ class ProgramVisitor(ExtNodeVisitor):
         return self.visit_With(node, is_async=True)
 
     def _visitname(self, name: str, node: ast.AST):
+        if isinstance(name, (sympy.Symbol, symbolic.symbol)):
+            name = str(name)
+        elif symbolic.issymbolic(name, self.sdfg.constants):
+            raise TypeError(
+                'Symbolic expression found instead of variable name')
+
         # First, if it is defined in the parser, use the definition
         if name in self.variables:
             return self.variables[name]

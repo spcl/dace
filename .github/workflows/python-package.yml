@@ -76,6 +76,7 @@ jobs:
         submodules: 'recursive'
     - name: Install dependencies
       run: |
+        rm ~/.dace.conf
         rm -rf .dacecache tests/.dacecache
         . /opt/setupenv
         python -m pip install --upgrade pip
@@ -120,6 +121,7 @@ jobs:
         submodules: 'recursive'
     - name: Install dependencies
       run: |
+        rm ~/.dace.conf
         rm -rf .dacecache tests/.dacecache
         . /opt/setupenv
         python -m pip install --upgrade pip
@@ -164,6 +166,7 @@ jobs:
         submodules: 'recursive'
     - name: Install dependencies
       run: |
+        rm ~/.dace.conf
         rm -rf .dacecache tests/.dacecache
         . /opt/setupenv
         python -m pip install --upgrade pip
