@@ -149,6 +149,10 @@ class StateFusion(transformation.Transformation):
         # state).
         if len(out_edges) != 1:
             return False
+        # If both states have more than one incoming edge, some control flow
+        # may become ambiguous
+        if len(in_edges) > 1 and graph.in_degree(second_state) > 1:
+            return False
         # The interstate edge must not have a condition.
         if not out_edges[0].data.is_unconditional():
             return False
