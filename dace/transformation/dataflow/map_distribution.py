@@ -49,9 +49,9 @@ class ElementWiseArrayOperation(pm.Transformation):
         # then we cannot flatten them (currently).
         # See, for example, samples/simple/mandelbrot.py
         for node in subgraph_from_maps(sdfg, graph, [map_entry]):
-            if isinstance(node, dace.nodes.Tasklet):
+            if isinstance(node, dace.nodes.CodeNode):
                 for p in params:
-                    if node.code.as_string.find(str(p)) != -1:
+                    if str(p) in node.free_symbols:
                         return False
 
         inputs = dict()
