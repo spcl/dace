@@ -44,7 +44,7 @@ def reduction_test_2(A: dace.float64[M, N], B: dace.float64[M, N],
 
 settings = [[False, False], [True, False], [False, True]]
 @pytest.mark.parametrize(["in_transient", "out_transient"], settings)
-def test_p1(in_transient=False, out_transient=False):
+def test_p1(in_transient, out_transient):
     sdfg = reduction_test_1.to_sdfg()
     sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
@@ -80,7 +80,7 @@ def test_p1(in_transient=False, out_transient=False):
 
 settings = [[False, False], [True, False], [False, True]]
 @pytest.mark.parametrize(["in_transient", "out_transient"], settings)
-def test_p2(in_transient=False, out_transient=False):
+def test_p2(in_transient, out_transient):
     sdfg = reduction_test_2.to_sdfg()
     sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
