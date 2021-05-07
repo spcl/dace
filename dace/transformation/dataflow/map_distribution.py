@@ -12,6 +12,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedMultiDiConnectorGraph
 from dace.transformation import transformation as pm
+from dace.transformation.subgraph.helpers import subgraph_from_maps
 from functools import reduce
 
 
@@ -44,6 +45,15 @@ class ElementWiseArrayOperation(pm.Transformation):
         if "Py" in map_entry.map.range.free_symbols:
             return False
 
+        # If the map iterators are used in the code of a Tasklet,
+        # then we cannot flatten them (currently).
+        # See, for example, samples/simple/mandelbrot.py
+        for node in subgraph_from_maps(sdfg, graph, [map_entry]):
+            if isinstance(node, dace.nodes.Tasklet):
+                for p in params:
+                    if node.code.as_string.find(str(p)) != -1:
+                        return False
+
         inputs = dict()
         for _, _, _, _, m in graph.out_edges(map_entry):
             if not m.data:
@@ -61,8 +71,6 @@ class ElementWiseArrayOperation(pm.Transformation):
                     continue
                 for a in accesses:
                     if a.num_elements() != 1:
-                        # if list(a.size()) == list(desc.shape):
-                        #     continue
                         return False
                     indices = a.min_element()
                     unmatched_indices = set(params)
@@ -300,8 +308,6 @@ class ElementWiseArrayOperation2D(pm.Transformation):
                     return False
                 for a in accesses:
                     if a.num_elements() != 1:
-                        # if list(a.size()) == list(desc.shape):
-                        #     continue
                         return False
                     indices = a.min_element()
                     unmatched_indices = set(params)
