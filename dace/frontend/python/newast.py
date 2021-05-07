@@ -381,14 +381,16 @@ def add_indirection_subgraph(sdfg: SDFG,
         for i, r in enumerate(memlet.subset):
             if i in nonsqz_dims:
                 mapped_rng.append(r)
-        ind_entry, ind_exit = graph.add_map('indirection', {
-            # NOTE: Experimental (original code below)
-            '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
-            for i, (s, e, t) in enumerate(mapped_rng)
-        #     '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
-            # for i, (s, e, t) in enumerate(rng)
-        },
-                                            debuginfo=pvisitor.current_lineinfo)
+        ind_entry, ind_exit = graph.add_map(
+            'indirection',
+            {
+                # NOTE: Experimental (original code below)
+                '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
+                for i, (s, e, t) in enumerate(mapped_rng)
+                #     '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
+                # for i, (s, e, t) in enumerate(rng)
+            },
+            debuginfo=pvisitor.current_lineinfo)
         inp_base_path.insert(0, ind_entry)
         out_base_path.append(ind_exit)
 
@@ -508,9 +510,10 @@ def add_indirection_subgraph(sdfg: SDFG,
     if ind_entry:  # Amend indirected range
         # indirectRange = ','.join([ind for ind in ind_entry.map.params])
         # NOTE: Experimental (original code above)
-        indirectRange = ','.join(
-            ["{} - {}".format(ind, r[0])
-             for ind, r in zip(ind_entry.map.params, mapped_rng)])
+        indirectRange = ','.join([
+            "{} - {}".format(ind, r[0])
+            for ind, r in zip(ind_entry.map.params, mapped_rng)
+        ])
 
     # Create memlet that depends on the full array that we look up in
     fullRange = subsets.Range([(0, s - 1, 1) for s in array.shape])
@@ -923,9 +926,11 @@ class TaskletTransformer(ExtNodeTransformer):
         if isinstance(node, ast.Name):
             actual_node = copy.deepcopy(node)
             actual_node.id = name
-            expr: MemletExpr = ParseMemlet(
-                self, {**self.sdfg.arrays, **self.scope_arrays, **self.defined},
-                actual_node)
+            expr: MemletExpr = ParseMemlet(self, {
+                **self.sdfg.arrays,
+                **self.scope_arrays,
+                **self.defined
+            }, actual_node)
             rng = expr.subset
         elif isinstance(node, ast.Subscript):
             actual_node = copy.deepcopy(node)
@@ -933,9 +938,11 @@ class TaskletTransformer(ExtNodeTransformer):
                 actual_node.value.func.id = name
             else:
                 actual_node.value.id = name
-            expr: MemletExpr = ParseMemlet(
-                self, {**self.sdfg.arrays, **self.scope_arrays, **self.defined},
-                actual_node)
+            expr: MemletExpr = ParseMemlet(self, {
+                **self.sdfg.arrays,
+                **self.scope_arrays,
+                **self.defined
+            }, actual_node)
             rng = expr.subset
         elif isinstance(node, ast.Call):
             rng = dace.subsets.Range.from_array({
@@ -1762,7 +1769,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 ctr = 0
                 repldict = {}
                 symval = pystr_to_symbolic(val)
-                
 
                 for atom in symval.free_symbols:
                     if symbolic.issymbolic(atom, self.sdfg.constants):
@@ -1806,7 +1812,7 @@ class ProgramVisitor(ExtNodeVisitor):
         return new_params, map_inputs
 
     def _parse_consume_inputs(
-        self, node: ast.FunctionDef
+            self, node: ast.FunctionDef
     ) -> Tuple[str, str, Tuple[str, str], str, str]:
         """ Parse consume parameters from AST.
             :return: A 5-tuple of Stream name, internal stream name,
@@ -2174,7 +2180,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self.globals = old_globals
 
         return before_state, first_internal_state, last_internal_state
-    
+
     def _replace_with_global_symbols(self, expr: sympy.Expr) -> sympy.Expr:
         repldict = dict()
         for s in expr.free_symbols:
@@ -2235,9 +2241,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 symbolic.pystr_to_symbolic(ranges[0][2]))
             try:
                 conditions = [s >= 0 for s in (start, stop, step)]
-                if (conditions == [True, True, True] or
-                        (start > stop and step < 0)):
-                    nonnegative=True
+                if (conditions == [True, True, True]
+                        or (start > stop and step < 0)):
+                    nonnegative = True
                     if start != 0:
                         positive = True
             except:
@@ -2249,14 +2255,16 @@ class ProgramVisitor(ExtNodeVisitor):
                     infer_expr_type(ranges[0][0], self.sdfg.symbols),
                     infer_expr_type(ranges[0][1], self.sdfg.symbols),
                     infer_expr_type(ranges[0][2], self.sdfg.symbols)),
-                integer=integer, nonnegative=nonnegative, positive=positive)
+                integer=integer,
+                nonnegative=nonnegative,
+                positive=positive)
 
             # TODO: What if two consecutive loops use the same symbol
             # but different ranges?
             if sym_name in self.sdfg.symbols.keys():
                 for k, v in self.symbols.items():
-                    if (str(k) == sym_name and
-                            v != subsets.Range([(start, stop - 1, step)])):
+                    if (str(k) == sym_name
+                            and v != subsets.Range([(start, stop - 1, step)])):
                         warnings.warn(
                             "Two for-loops using the same variable ({}) but "
                             "different ranges in the same nested SDFG level. "
@@ -2295,8 +2303,8 @@ class ProgramVisitor(ExtNodeVisitor):
             end_loop_state = self.last_state
 
             # Add loop to SDFG
-            loop_cond = '>' if ((
-                pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
+            loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0)
+                                == True) else '<'
             _, loop_guard, loop_end = self.sdfg.add_loop(
                 laststate, first_loop_state, end_loop_state, indices[0],
                 astutils.unparse(ast_ranges[0][0]), '%s %s %s' %
@@ -3135,8 +3143,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
                     # Visit slice contents
                     true_target.slice = self.visit(true_target.slice)
-                    defined_arrays = {**self.sdfg.arrays, **self.scope_arrays,
-                                      **self.defined}
+                    defined_arrays = {
+                        **self.sdfg.arrays,
+                        **self.scope_arrays,
+                        **self.defined
+                    }
 
                 expr: MemletExpr = ParseMemlet(self, defined_arrays,
                                                true_target)
@@ -3772,16 +3783,15 @@ class ProgramVisitor(ExtNodeVisitor):
                 # If it is not a subscript, then we just pass the array pointer directly.
                 # If it is not an array of the current SDFG, then the normal
                 # argument parsing will create a connector, i.e. a pointer.
-                if (isinstance(arg, ast.Subscript) and (
-                        rname(arg) in self.sdfg.arrays.keys() or (
-                            rname(arg) in self.variables.keys() and
-                            self.variables[rname(arg)]
-                            in self.sdfg.arrays.keys()))):
+                if (isinstance(arg, ast.Subscript) and
+                    (rname(arg) in self.sdfg.arrays.keys() or
+                     (rname(arg) in self.variables.keys() and
+                      self.variables[rname(arg)] in self.sdfg.arrays.keys()))):
                     arg.slice = self.visit(arg.slice)
-                    expr: MemletExpr = ParseMemlet(
-                        self,
-                        {**self.sdfg.arrays, **self.defined},
-                        arg)
+                    expr: MemletExpr = ParseMemlet(self, {
+                        **self.sdfg.arrays,
+                        **self.defined
+                    }, arg)
                     name = rname(arg)
                     if name in self.variables.keys():
                         name = self.variables[name]
@@ -4141,9 +4151,11 @@ class ProgramVisitor(ExtNodeVisitor):
         if self.nested:
 
             defined_vars = {**self.variables, **self.scope_vars}
-            defined_arrays = {**self.sdfg.arrays, **self.scope_arrays,
-                              **self.defined}
-
+            defined_arrays = {
+                **self.sdfg.arrays,
+                **self.scope_arrays,
+                **self.defined
+            }
 
             name = rname(node)
             true_name = defined_vars[name]
@@ -4155,8 +4167,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     and isinstance(node.value, ast.Name)):
                 true_node = copy.deepcopy(node)
                 true_node.value.id = true_name
-                expr: MemletExpr = ParseMemlet(self, defined_arrays,
-                                               true_node)
+                expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node)
                 rng = expr.subset
                 # rng = dace.subsets.Range(
                 #     astutils.subscript_to_slice(true_node, defined_arrays)[1])
@@ -4189,8 +4200,10 @@ class ProgramVisitor(ExtNodeVisitor):
         # TODO: This needs to be formalized better
         node.value = ast.Name(id=array)
         # expr: MemletExpr = ParseMemlet(self, self.sdfg.arrays, node)
-        expr: MemletExpr = ParseMemlet(
-            self, {**self.sdfg.arrays, **self.defined}, node)
+        expr: MemletExpr = ParseMemlet(self, {
+            **self.sdfg.arrays,
+            **self.defined
+        }, node)
         arrobj = self.sdfg.arrays[array]
 
         # Consider array dims (rhs expression)
