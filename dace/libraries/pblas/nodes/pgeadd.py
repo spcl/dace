@@ -20,8 +20,9 @@ class ExpandBlockCyclicScatterPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise(NotImplementedError)
-  
+        raise (NotImplementedError)
+
+
 @dace.library.expansion
 class ExpandBlockCyclicScatterMKL(ExpandTransformation):
 
@@ -32,34 +33,30 @@ class ExpandBlockCyclicScatterMKL(ExpandTransformation):
 
         rows, cols = node.validate(parent_sdfg, parent_state)
 
-
-        code = (f"if (!__state->__mkl_scalapack_grid_init) {{\n"
-                f"    __state->__mkl_scalapack_prows = Px;\n"
-                f"    __state->__mkl_scalapack_pcols = Py;\n"
-                f"    blacs_gridinit(&__state->__mkl_scalapack_context, \"R\", &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols);\n"
-                f"    blacs_gridinfo(&__state->__mkl_scalapack_context, &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols, &__state->__mkl_scalapack_myprow, &__state->__mkl_scalapack_mypcol);\n"
-                f"    __state->__mkl_scalapack_grid_init = true;\n"
-                f"}}\n"
-                f"const double  zero = 0.0E+0, one = 1.0E+0;\n"
-                f"const char trans = 'N';\n"
-                f"MKL_INT grows = {rows};\n"
-                f"MKL_INT gcols = {cols};\n"
-                f"MKL_INT brows = _block_sizes[0];\n"
-                f"MKL_INT bcols = (gcols > 1 ? _block_sizes[1]: 1);\n"
-                f"MKL_INT mloc = numroc( &grows, &brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
-                f"MKL_INT nloc = numroc( &gcols, &bcols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);\n"
-                # f"MKL_INT gld = grows;\n"
-                # f"MKL_INT gld = (gcols > 1 ? gcols : grows);\n"
-                f"MKL_INT gld = gcols;\n"
-                f"MKL_INT lld = mloc;\n"
-                f"MKL_INT info;\n"
-                # f"descinit(_gdescriptor, &grows, &gcols, &grows, &gcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
-                f"descinit(_gdescriptor, &gcols, &grows, &gcols, &grows, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
-                f"descinit(_ldescriptor, &grows, &gcols, &brows, &bcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
-                # f"if (gcols > 1) {{ mkl_dimatcopy('R', 'T', grows, gcols, 1.0, _inbuffer, gcols, grows); }}\n"
-                # f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor);")
-                f"if (gcols == 1) {{ pdcopy(&grows, _inbuffer,  &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor, &__state->__mkl_int_one, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &__state->__mkl_int_one); }}\n"
-                f"else {{ pdtran(&grows, &gcols, &one, _inbuffer,  &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor); }}")
+        code = (
+            f"if (!__state->__mkl_scalapack_grid_init) {{\n"
+            f"    __state->__mkl_scalapack_prows = Px;\n"
+            f"    __state->__mkl_scalapack_pcols = Py;\n"
+            f"    blacs_gridinit(&__state->__mkl_scalapack_context, \"R\", &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols);\n"
+            f"    blacs_gridinfo(&__state->__mkl_scalapack_context, &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols, &__state->__mkl_scalapack_myprow, &__state->__mkl_scalapack_mypcol);\n"
+            f"    __state->__mkl_scalapack_grid_init = true;\n"
+            f"}}\n"
+            f"const double  zero = 0.0E+0, one = 1.0E+0;\n"
+            f"const char trans = 'N';\n"
+            f"MKL_INT grows = {rows};\n"
+            f"MKL_INT gcols = {cols};\n"
+            f"MKL_INT brows = _block_sizes[0];\n"
+            f"MKL_INT bcols = (gcols > 1 ? _block_sizes[1]: 1);\n"
+            f"MKL_INT mloc = numroc( &grows, &brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
+            f"MKL_INT nloc = numroc( &gcols, &bcols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);\n"
+            f"MKL_INT gld = gcols;\n"
+            f"MKL_INT lld = mloc;\n"
+            f"MKL_INT info;\n"
+            f"descinit(_gdescriptor, &gcols, &grows, &gcols, &grows, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
+            f"descinit(_ldescriptor, &grows, &gcols, &brows, &bcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
+            f"if (gcols == 1) {{ pdcopy(&grows, _inbuffer,  &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor, &__state->__mkl_int_one, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &__state->__mkl_int_one); }}\n"
+            f"else {{ pdtran(&grows, &gcols, &one, _inbuffer,  &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor); }}"
+        )
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -70,9 +67,13 @@ class ExpandBlockCyclicScatterMKL(ExpandTransformation):
         # from regular BLAS GEMV (somehow `_block_sizes` stays a scalar for the
         # vector input).
         conn = tasklet.in_connectors
-        conn = {c: (dtypes.pointer(dace.int32)
-                    if c == '_block_sizes' # and not isinstance(t, dtypes.pointer)
-                    else t) for c, t in conn.items()}
+        conn = {
+            c: (
+                dtypes.pointer(dace.int32)
+                if c == '_block_sizes'  # and not isinstance(t, dtypes.pointer)
+                else t)
+            for c, t in conn.items()
+        }
         tasklet.in_connectors = conn
         return tasklet
 
@@ -98,18 +99,16 @@ class BlockCyclicScatter(dace.sdfg.nodes.LibraryNode):
         :return: A three-tuple (buffer, root) of the three data descriptors in the
                  parent SDFG.
         """
-        
-        inbuffer, block_sizes, outbuffer  = None, None, None
+
+        inbuffer, block_sizes, outbuffer = None, None, None
         for e in state.out_edges(self):
             if e.src_conn == "_outbuffer":
                 outbuffer = sdfg.arrays[e.data.data]
                 out_shape = e.data.subset.size_exact()
-                # out_ld = outbuffer.strides[-2]
         for e in state.in_edges(self):
             if e.dst_conn == "_inbuffer":
                 inbuffer = sdfg.arrays[e.data.data]
                 in_shape = e.data.subset.size_exact()
-                # in_ld = inbuffer.strides[-2]
             if e.dst_conn == "_block_sizes":
                 block_sizes = sdfg.arrays[e.data.data]
 
@@ -133,8 +132,9 @@ class ExpandBlockCyclicGatherPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise(NotImplementedError)
-  
+        raise (NotImplementedError)
+
+
 @dace.library.expansion
 class ExpandBlockCyclicGatherMKL(ExpandTransformation):
 
@@ -145,49 +145,37 @@ class ExpandBlockCyclicGatherMKL(ExpandTransformation):
 
         in_shape, out_shape = node.validate(parent_sdfg, parent_state)
 
-
-        code = (f"if (!__state->__mkl_scalapack_grid_init) {{\n"
-                f"    __state->__mkl_scalapack_prows = Px;\n"
-                f"    __state->__mkl_scalapack_pcols = Py;\n"
-                f"    blacs_gridinit(&__state->__mkl_scalapack_context, \"R\", &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols);\n"
-                f"    blacs_gridinfo(&__state->__mkl_scalapack_context, &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols, &__state->__mkl_scalapack_myprow, &__state->__mkl_scalapack_mypcol);\n"
-                f"    __state->__mkl_scalapack_grid_init = true;\n"
-                f"}}\n"
-                f"const double  zero = 0.0E+0, one = 1.0E+0;\n"
-                f"const char trans = 'N';\n"
-                f"MKL_INT grows = {out_shape[0]};\n"
-                f"MKL_INT gcols = {out_shape[1]};\n"
-                f"MKL_INT brows = _block_sizes[0];\n"
-                f"MKL_INT bcols = (gcols > 1 ? _block_sizes[1]: 1);\n"
-                f"MKL_INT mloc = numroc( &grows, &brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
-                f"MKL_INT nloc = numroc( &gcols, &bcols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);\n"
-                # f"MKL_INT gld = grows;\n"
-                # f"MKL_INT gld = (gcols > 1 ? gcols : grows);\n"
-                f"MKL_INT gld = gcols;\n"
-                f"MKL_INT lld = mloc;\n"
-                f"MKL_INT info;\n"
-                f"MKL_INT _gdescriptor[9], _ldescriptor[9];\n"
-                # f"descinit(_gdescriptor, &grows, &gcols, &grows, &gcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
-                f"descinit(_gdescriptor, &gcols, &grows, &gcols, &grows, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
-                f"descinit(_ldescriptor, &grows, &gcols, &brows, &bcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
-                # f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor);\n"
-                # f"if (gcols > 1) {{ mkl_dimatcopy('R', 'T', gcols, grows, 1.0, _outbuffer, grows, gcols); }}")
-                f"if (gcols == 1) {{ pdcopy(&grows, _inbuffer,  &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &__state->__mkl_int_one, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor, &__state->__mkl_int_one); }}\n"
-                f"else {{ pdtran(&gcols, &grows, &one, _inbuffer,  &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor); }}")
-                
-                # f"MKL_INT grows = {out_shape[0]};\n"
-                # f"MKL_INT gcols = {out_shape[1]};\n"
-                # f"pdgeadd(&trans, &grows, &gcols, &one, _inbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor);\n"
-                # f"if (gcols > 1) {{ mkl_dimatcopy('R', 'T', gcols, grows, 1.0, _outbuffer, grows, gcols); }}")
+        code = (
+            f"if (!__state->__mkl_scalapack_grid_init) {{\n"
+            f"    __state->__mkl_scalapack_prows = Px;\n"
+            f"    __state->__mkl_scalapack_pcols = Py;\n"
+            f"    blacs_gridinit(&__state->__mkl_scalapack_context, \"R\", &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols);\n"
+            f"    blacs_gridinfo(&__state->__mkl_scalapack_context, &__state->__mkl_scalapack_prows, &__state->__mkl_scalapack_pcols, &__state->__mkl_scalapack_myprow, &__state->__mkl_scalapack_mypcol);\n"
+            f"    __state->__mkl_scalapack_grid_init = true;\n"
+            f"}}\n"
+            f"const double  zero = 0.0E+0, one = 1.0E+0;\n"
+            f"const char trans = 'N';\n"
+            f"MKL_INT grows = {out_shape[0]};\n"
+            f"MKL_INT gcols = {out_shape[1]};\n"
+            f"MKL_INT brows = _block_sizes[0];\n"
+            f"MKL_INT bcols = (gcols > 1 ? _block_sizes[1]: 1);\n"
+            f"MKL_INT mloc = numroc( &grows, &brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);\n"
+            f"MKL_INT nloc = numroc( &gcols, &bcols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);\n"
+            f"MKL_INT gld = gcols;\n"
+            f"MKL_INT lld = mloc;\n"
+            f"MKL_INT info;\n"
+            f"MKL_INT _gdescriptor[9], _ldescriptor[9];\n"
+            f"descinit(_gdescriptor, &gcols, &grows, &gcols, &grows, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &gld, &info);\n"
+            f"descinit(_ldescriptor, &grows, &gcols, &brows, &bcols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &lld, &info);\n"
+            f"if (gcols == 1) {{ pdcopy(&grows, _inbuffer,  &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &__state->__mkl_int_one, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor, &__state->__mkl_int_one); }}\n"
+            f"else {{ pdtran(&gcols, &grows, &one, _inbuffer,  &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor); }}"
+        )
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)
-        # conn = tasklet.out_connectors
-        # conn = {c: (dtypes.pointer(dace.int32) if c == '_context' else t) for c, t in conn.items()}
-        # tasklet.out_connectors = conn
         return tasklet
 
 
@@ -203,7 +191,7 @@ class BlockCyclicGather(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={"_inbuffer", "_block_sizes"},  #, "_gdescriptor", "_ldescriptor"},
+                         inputs={"_inbuffer", "_block_sizes"},
                          outputs={"_outbuffer"},
                          **kwargs)
 
@@ -212,22 +200,19 @@ class BlockCyclicGather(dace.sdfg.nodes.LibraryNode):
         :return: A three-tuple (buffer, root) of the three data descriptors in the
                  parent SDFG.
         """
-        
-        inbuffer, block_sizes, outbuffer  = None, None, None
+
+        inbuffer, block_sizes, outbuffer = None, None, None
         for e in state.out_edges(self):
             if e.src_conn == "_outbuffer":
                 outbuffer = sdfg.arrays[e.data.data]
                 out_shape = e.data.subset.size_exact()
                 if len(out_shape) == 1:
                     out_shape = [out_shape[0], 1]
-                # out_ld = outbuffer.strides[-2]
         for e in state.in_edges(self):
             if e.dst_conn == "_inbuffer":
                 inbuffer = sdfg.arrays[e.data.data]
                 in_shape = e.data.subset.size_exact()
-                # in_ld = inbuffer.strides[-2]
                 if len(in_shape) == 1:
                     in_shape = [in_shape[0], 1]
-
 
         return in_shape, out_shape

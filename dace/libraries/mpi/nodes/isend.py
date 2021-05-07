@@ -20,7 +20,7 @@ class ExpandIsendPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise(NotImplementedError)
+        raise (NotImplementedError)
 
 
 @dace.library.expansion
@@ -30,12 +30,13 @@ class ExpandIsendMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (buffer, count_str, buffer_offset, ddt), dest, tag, req = node.validate(parent_sdfg, parent_state)
+        (buffer, count_str, buffer_offset,
+         ddt), dest, tag, req = node.validate(parent_sdfg, parent_state)
         mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(buffer.dtype.base_type)
 
         if buffer.dtype.veclen > 1:
-            raise(NotImplementedError)
-         
+            raise (NotImplementedError)
+
         code = ""
         if ddt is not None:
             code = f"""static MPI_Datatype newtype;
@@ -60,7 +61,11 @@ class ExpandIsendMPI(ExpandTransformation):
                                           code,
                                           language=dace.dtypes.Language.CPP)
         conn = tasklet.out_connectors
-        conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
+        conn = {
+            c: (dtypes.pointer(dtypes.opaque("MPI_Request"))
+                if c == '_request' else t)
+            for c, t in conn.items()
+        }
         tasklet.out_connectors = conn
         return tasklet
 
@@ -88,7 +93,7 @@ class Isend(dace.sdfg.nodes.LibraryNode):
         """
         :return: buffer, count, mpi_dtype, req of the input data
         """
-        
+
         buffer, dest, tag, req = None, None, None, None
         for e in state.in_edges(self):
             if e.dst_conn == "_buffer":
@@ -97,15 +102,15 @@ class Isend(dace.sdfg.nodes.LibraryNode):
                 dest = sdfg.arrays[e.data.data]
             if e.dst_conn == "_tag":
                 tag = sdfg.arrays[e.data.data]
-        for e in state.out_edges(self):        
+        for e in state.out_edges(self):
             if e.src_conn == "_request":
                 req = sdfg.arrays[e.data.data]
-        
+
         if dest.dtype.base_type != dace.dtypes.int32:
             raise ValueError("Source must be an integer!")
         if tag.dtype.base_type != dace.dtypes.int32:
             raise ValueError("Tag must be an integer!")
-        
+
         count_str = "XXX"
         for _, _, _, dst_conn, data in state.in_edges(self):
             if dst_conn == '_buffer':
@@ -118,13 +123,13 @@ class Isend(dace.sdfg.nodes.LibraryNode):
                 for idx, m in enumerate(minelem):
                     buffer_offsets += [(str(m) + "*" + str(dims_data[idx]))]
                 buffer_offset = "+".join(buffer_offsets)
-            
+
                 # create a ddt which describes the buffer layout IFF the sent data is not contiguous
                 ddt = None
-                if dace.libraries.mpi.utils.is_access_contiguous(data, sdfg.arrays[data.data]):
+                if dace.libraries.mpi.utils.is_access_contiguous(
+                        data, sdfg.arrays[data.data]):
                     pass
                 else:
-                    ddt = dace.libraries.mpi.utils.create_vector_ddt(data, sdfg.arrays[data.data])
+                    ddt = dace.libraries.mpi.utils.create_vector_ddt(
+                        data, sdfg.arrays[data.data])
         return (buffer, count_str, buffer_offset, ddt), dest, tag, req
-
-

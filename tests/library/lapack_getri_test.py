@@ -1,11 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
-from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 import dace.libraries.lapack as lapack
 import numpy as np
-import sys
-import warnings
 import pytest
 
 ###############################################################################
@@ -15,13 +12,11 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
     n = dace.symbol("n")
 
-    sdfg = dace.SDFG("matrix_inv_getrf_getri_{}_{}".format(implementation, dtype))
+    sdfg = dace.SDFG("matrix_inv_getrf_getri_{}_{}".format(
+        implementation, dtype))
     state = sdfg.add_state("dataflow")
 
-    sdfg.add_array("x", [n,n],
-                   dtype,
-                   storage=storage,
-                   transient=False)
+    sdfg.add_array("x", [n, n], dtype, storage=storage, transient=False)
     sdfg.add_array("pivots", [n],
                    dace.dtypes.int32,
                    storage=storage,
@@ -47,11 +42,12 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     getri_node = lapack.nodes.getri.Getri("getri")
     getri_node.implementation = implementation
 
-
     state.add_memlet_path(xin,
                           getrf_node,
                           dst_conn="_xin",
-                          memlet=Memlet.simple(xin, "0:n, 0:n", num_accesses=n*n))
+                          memlet=Memlet.simple(xin,
+                                               "0:n, 0:n",
+                                               num_accesses=n * n))
     state.add_memlet_path(getrf_node,
                           res_getrf,
                           src_conn="_res",
@@ -71,20 +67,27 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     state.add_memlet_path(getrf_node,
                           xout_getrf,
                           src_conn="_xout",
-                          memlet=Memlet.simple(xout_getrf, "0:n, 0:n", num_accesses=n*n))
+                          memlet=Memlet.simple(xout_getrf,
+                                               "0:n, 0:n",
+                                               num_accesses=n * n))
     state.add_memlet_path(xout_getrf,
                           getri_node,
                           dst_conn="_xin",
-                          memlet=Memlet.simple(xout_getrf, "0:n, 0:n", num_accesses=n*n))
+                          memlet=Memlet.simple(xout_getrf,
+                                               "0:n, 0:n",
+                                               num_accesses=n * n))
     state.add_memlet_path(getri_node,
                           xout_getri,
                           src_conn="_xout",
-                          memlet=Memlet.simple(xout_getri, "0:n, 0:n", num_accesses=n*n))
+                          memlet=Memlet.simple(xout_getri,
+                                               "0:n, 0:n",
+                                               num_accesses=n * n))
 
     return sdfg
 
 
 ###############################################################################
+
 
 @pytest.mark.parametrize("implementation, dtype", [
     pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
@@ -96,28 +99,34 @@ def test_getri(implementation, dtype):
     sdfg = make_sdfg(implementation, dtype)
     inv_sdfg = sdfg.compile()
     np_dtype = getattr(np, dtype.to_string())
-    
+
     size = 4
     lapack_status1 = np.array([-1], dtype=np.int32)
     lapack_status2 = np.array([-1], dtype=np.int32)
-    A1 = np.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]], dtype=np_dtype)
+    A1 = np.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]],
+                  dtype=np_dtype)
     A2 = np.copy(A1)
     A3 = np.linalg.inv(A2)
-    pivots = np.ndarray([0,0,0,0], dtype=np.int32)
-  
+    pivots = np.ndarray([0, 0, 0, 0], dtype=np.int32)
+
     # the x is input AND output, the "result" argument gives the lapack status!
-    inv_sdfg(x=A1, result_getrf=lapack_status1, result_getri=lapack_status2, pivots=pivots, n=size)
+    inv_sdfg(x=A1,
+             result_getrf=lapack_status1,
+             result_getri=lapack_status2,
+             pivots=pivots,
+             n=size)
 
     if np.allclose(A1, A3):
         print("Test ran successfully for {}.".format(implementation))
     else:
-        print(A1-A3)
+        print(A1 - A3)
         raise ValueError("Validation error!")
+
 
 ###############################################################################
 
 if __name__ == "__main__":
     test_getri("MKL", dace.float32)
     test_getri("MKL", dace.float64)
-    
+
 ###############################################################################

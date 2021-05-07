@@ -20,8 +20,9 @@ class ExpandScatterPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise(NotImplementedError)
-  
+        raise (NotImplementedError)
+
+
 @dace.library.expansion
 class ExpandScatterMPI(ExpandTransformation):
 
@@ -29,14 +30,16 @@ class ExpandScatterMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (inbuffer, in_count_str), (outbuffer, out_count_str), root = node.validate(
-            parent_sdfg, parent_state)
-        in_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(inbuffer.dtype.base_type)
-        out_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(outbuffer.dtype.base_type)
+        (inbuffer, in_count_str), (outbuffer,
+                                   out_count_str), root = node.validate(
+                                       parent_sdfg, parent_state)
+        in_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(
+            inbuffer.dtype.base_type)
+        out_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(
+            outbuffer.dtype.base_type)
 
-        
         if inbuffer.dtype.veclen > 1:
-            raise(NotImplementedError)
+            raise (NotImplementedError)
         if root.dtype.base_type != dace.dtypes.int32:
             raise ValueError("Scatter root must be an integer!")
 
@@ -70,7 +73,7 @@ class Scatter(dace.sdfg.nodes.LibraryNode):
         :return: A three-tuple (buffer, root) of the three data descriptors in the
                  parent SDFG.
         """
-        
+
         inbuffer, outbuffer, root = None, None, None
         for e in state.out_edges(self):
             if e.src_conn == "_outbuffer":
@@ -82,18 +85,17 @@ class Scatter(dace.sdfg.nodes.LibraryNode):
                 root = sdfg.arrays[e.data.data]
 
         if root.dtype.base_type != dace.dtypes.int32:
-            raise(ValueError("Scatter root must be an integer!"))
+            raise (ValueError("Scatter root must be an integer!"))
 
         in_count_str = "XXX"
         out_count_str = "XXX"
-        for _, src_conn, _, _, data in state.out_edges(self):  
+        for _, src_conn, _, _, data in state.out_edges(self):
             if src_conn == '_outbuffer':
                 dims = [symstr(e) for e in data.subset.size_exact()]
-                out_count_str = "*".join(dims)        
-        for _, _, _, dst_conn, data in state.in_edges(self): 
+                out_count_str = "*".join(dims)
+        for _, _, _, dst_conn, data in state.in_edges(self):
             if dst_conn == '_inbuffer':
                 dims = [symstr(e) for e in data.subset.size_exact()]
                 in_count_str = "*".join(dims)
 
         return (inbuffer, in_count_str), (outbuffer, out_count_str), root
-

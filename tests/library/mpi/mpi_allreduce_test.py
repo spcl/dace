@@ -1,14 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
-from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 import dace.libraries.mpi as mpi
-import sys
-import warnings
 import numpy as np
 from mpi4py import MPI as MPI4PY
 import pytest
-
 
 ###############################################################################
 
@@ -25,7 +21,7 @@ def make_sdfg(dtype):
     inbuf = state.add_access("inbuf")
     outbuf = state.add_access("outbuf")
     allreduce_node = mpi.nodes.allreduce.Allreduce("allreduce")
-    
+
     state.add_memlet_path(inbuf,
                           allreduce_node,
                           dst_conn="_inbuffer",
@@ -40,6 +36,7 @@ def make_sdfg(dtype):
 
 ###############################################################################
 
+
 @pytest.mark.parametrize("implementation, dtype", [
     pytest.param("MPI", dace.float32, marks=pytest.mark.mpi),
     pytest.param("MPI", dace.float64, marks=pytest.mark.mpi)
@@ -51,13 +48,14 @@ def test_mpi(implementation, dtype):
     commsize = comm.Get_size()
     mpi_sdfg = None
     if commsize < 2:
-        raise ValueError("This test is supposed to be run with at least two processes!")
+        raise ValueError(
+            "This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
             sdfg = make_sdfg(dtype)
             mpi_sdfg = sdfg.compile()
         comm.Barrier()
-  
+
     size = 8
     A = np.full(size, 1, dtype=np_dtype)
     B = np.full(size, 42, dtype=np_dtype)
@@ -65,10 +63,9 @@ def test_mpi(implementation, dtype):
     mpi_sdfg(inbuf=A, outbuf=B, root=root, n=size)
     # now B should be an array of size, containing commsize
     if (not np.allclose(B, np.full(size, commsize, dtype=np_dtype))):
-        raise(ValueError("The received values are not what I expected on root."))
-###############################################################################
+        raise (
+            ValueError("The received values are not what I expected on root."))
 
-# Alex not sure if you want to add a test here as well
 
 ###############################################################################
 

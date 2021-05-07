@@ -1,10 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import Memlet
-from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 from dace.libraries.linalg import Cholesky
 import numpy as np
-import warnings
 import pytest
 
 
@@ -44,15 +42,19 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
 
 @pytest.mark.parametrize("implementation, dtype, storage", [
-    pytest.param("MKL", dace.float32, dace.StorageType.Default,
-                 marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, dace.StorageType.Default,
-                 marks=pytest.mark.mkl),
+    pytest.param(
+        "MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
+    pytest.param(
+        "MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
     pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default),
     pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default),
-    pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global,
+    pytest.param("cuSolverDn",
+                 dace.float32,
+                 dace.StorageType.GPU_Global,
                  marks=pytest.mark.gpu),
-    pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global,
+    pytest.param("cuSolverDn",
+                 dace.float64,
+                 dace.StorageType.GPU_Global,
                  marks=pytest.mark.gpu),
 ])
 def test_cholesky(implementation, dtype, storage):
@@ -62,28 +64,23 @@ def test_cholesky(implementation, dtype, storage):
         sdfg.apply_strict_transformations()
     np_dtype = getattr(np, dtype.to_string())
     cholesky_sdfg = sdfg.compile()
-    
+
     size = 4
     A = generate_matrix(size, np_dtype)
     B = np.zeros([size, size], dtype=np_dtype)
     cholesky_ref = np.linalg.cholesky(A)
-  
+
     # the x is input AND output, the "result" argument gives the lapack status!
     cholesky_sdfg(xin=A, xout=B, n=size)
 
-    # if np.allclose(A, cholesky_ref):
-    #     print("Test ran successfully for {}.".format(implementation))
-    # else:
-    #     raise ValueError("Validation error!")
     if dtype == dace.float32:
         rtol = 1e-6
-        atol = 1e-6
     elif dtype == dace.float64:
         rtol = 1e-12
-        atol = 1e-12
     else:
         raise NotImplementedError
-    assert (np.linalg.norm(cholesky_ref - B) / np.linalg.norm(cholesky_ref)) < rtol
+    assert (np.linalg.norm(cholesky_ref - B) /
+            np.linalg.norm(cholesky_ref)) < rtol
 
 
 ###############################################################################

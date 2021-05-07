@@ -6,8 +6,6 @@ from mpi4py import MPI
 from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
 
 
-# NI, NJ, NK = (dc.symbol(s, dtype=dc.int64) for s in ('NI', 'NJ', 'NK'))
-
 lM = dc.symbol('lM', dtype=dc.int64, integer=True, positive=True)
 lN = dc.symbol('lN', dtype=dc.int64, integer=True, positive=True)
 lNx = dc.symbol('lNx', dtype=dc.int64, integer=True, positive=True)
@@ -37,16 +35,12 @@ def gesummv_distr(alpha: dc.float64, beta: dc.float64, A: dc.float64[M, N],
     lB = np.empty((lM, lN), dtype=B.dtype)
     lx = np.empty((lNx,), dtype=x.dtype)
 
-    # dc.comm.BCScatter(A, lA, (lM, lN))
-    # dc.comm.BCScatter(B, lB, (lM, lN))
     Av = np.reshape(A, (Px, lM, Py, lN))
     A2 = np.transpose(Av, axes=(0, 2, 1, 3))
     Bv = np.reshape(B, (Px, lM, Py, lN))
     B2 = np.transpose(Bv, axes=(0, 2, 1, 3))
     dc.comm.BCScatter(x, lx, (lNx, 1))
 
-    # tmp1 = distr.MatMult(A, x, lA, lx, (lM, lN), (lNx, 1))
-    # tmp2 = distr.MatMult(B, x, lB, lx, (lM, lN), (lNx, 1))
     tmp1 = distr.MatMult(lA, lx, (M, N), b_block_sizes=(lNx, 1))
     tmp2 = distr.MatMult(lB, lx, (M, N), b_block_sizes=(lNx, 1))
 
@@ -68,25 +62,11 @@ def init_data(M, N, datatype):
 
     alpha = datatype(1.5)
     beta = datatype(1.2)
-    # A = np.empty((N, N), dtype=datatype)
-    # B = np.empty((N, N), dtype=datatype)
-    # tmp = np.empty((N, ), dtype=datatype)
-    # x = np.empty((N, ), dtype=datatype)
-    # y = np.empty((N, ), dtype=datatype)
-    # for i in range(N):
-    #     x[i] = (i % N) % N
-    #     for j in range(N):
-    #         A[i, j] = ((i * j + 1) % N) / N
-    #         B[i, j] = ((i * j + 2) % N) / N
     rng = np.random.default_rng(42)
     A = rng.random((M, N), dtype=datatype)
     B = rng.random((M, N), dtype=datatype)
     x = rng.random((N,), dtype=datatype)
     y = rng.random((M,), dtype=datatype)
-    # A = np.arange(0, M*N, dtype=datatype).reshape(M, N)
-    # B = np.arange(0, M*N, dtype=datatype).reshape(M, N)
-    # x = np.arange(0, N, dtype=datatype)
-    # y = np.arange(0, M, dtype=datatype)
 
     return alpha, beta, A, B, x, y
 
@@ -106,9 +86,7 @@ grid = {
 if __name__ == "__main__":
 
     # Initialization
-    # M, N = 3200, 2800
     M, N = 6400, 5600
-    # M, N = 4, 8
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -116,19 +94,14 @@ if __name__ == "__main__":
     Px, Py = grid[size]
     lM = M // Px
     lN = N // Py
-    # lNx = N // Py
     lMy = M // Py
 
     def setup_func(rank):
         if rank == 0:
-            print("Hello world")    return init_data(M, N, np.float64)
+            return init_data(M, N, np.float64)
         else:
             return (
                 1.5, 1.2, None, None, np.empty((N,), dtype=np.float64), None)
-                # np.empty((M, N), dtype=np.float64),
-                # np.empty((M, N), dtype=np.float64),
-                # np.empty((N,), dtype=np.float64),
-                # np.empty((M,), dtype=np.float64))
     
     alpha, beta, A, B, x, y = setup_func(rank)
 
@@ -152,8 +125,6 @@ if __name__ == "__main__":
     lx[:] = x[pj*lN:(pj+1)*lN]
 
     mpi_sdfg = None
-    # if size < 2:
-    #     raise ValueError("This test is supposed to be run with at least two processes!")
     if rank == 0:
         mpi_sdfg = gesummv_distr2.to_sdfg(strict=False)
         mpi_sdfg.apply_strict_transformations()
@@ -189,7 +160,6 @@ if __name__ == "__main__":
 
     stmt = ("mpi_func(A=lA, B=lB, x=lx, alpha=alpha, beta=beta, y=ly, "
             "lM=lM, lN=lN, lMy=lMy, Px=Px, Py=Py)")
-    # setup = "alpha, beta, A, B, x, y = setup_func(rank); comm.Barrier()"
     setup = "comm.Barrier()"
     repeat = 10
 
@@ -212,10 +182,5 @@ if __name__ == "__main__":
                              y=refy, lM=lM, lN=lN, lNx=lNx, Px=Px, Py=Py)
 
         print("=======Validation=======")
-        print(relerr(refy, y))
-
-        # print(A)
-        # print(B)
-        # print(x)
-        # print(refy)
-        # print(y)
+        assert(np.allclose(refy, y))
+        print("OK")

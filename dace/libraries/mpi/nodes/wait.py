@@ -20,7 +20,7 @@ class ExpandWaitPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise(NotImplementedError)
+        raise (NotImplementedError)
 
 
 @dace.library.expansion
@@ -38,7 +38,11 @@ class ExpandWaitMPI(ExpandTransformation):
                                           code,
                                           language=dace.dtypes.Language.CPP)
         conn = tasklet.in_connectors
-        conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
+        conn = {
+            c: (dtypes.pointer(dtypes.opaque("MPI_Request"))
+                if c == '_request' else t)
+            for c, t in conn.items()
+        }
         tasklet.in_connectors = conn
         return tasklet
 
@@ -66,15 +70,15 @@ class Wait(dace.sdfg.nodes.LibraryNode):
         """
         :return: req, status
         """
-        
+
         req, status = None, None
         for e in state.in_edges(self):
             if e.dst_conn == "_request":
                 req = sdfg.arrays[e.data.data]
-        for e in state.out_edges(self):        
+        for e in state.out_edges(self):
             if e.src_conn == "_status":
                 status = sdfg.arrays[e.data.data]
-            
+
         return req, status
 
 
@@ -88,7 +92,7 @@ class ExpandWaitallPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise(NotImplementedError)
+        raise (NotImplementedError)
 
 
 @dace.library.expansion
@@ -106,7 +110,11 @@ class ExpandWaitallMPI(ExpandTransformation):
                                           code,
                                           language=dace.dtypes.Language.CPP)
         conn = tasklet.in_connectors
-        conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
+        conn = {
+            c: (dtypes.pointer(dtypes.opaque("MPI_Request"))
+                if c == '_request' else t)
+            for c, t in conn.items()
+        }
         tasklet.in_connectors = conn
         return tasklet
 
@@ -124,11 +132,7 @@ class Waitall(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_request"},
-                         outputs={},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_request"}, outputs={}, **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -139,10 +143,9 @@ class Waitall(dace.sdfg.nodes.LibraryNode):
         for e in state.in_edges(self):
             if e.dst_conn == "_request":
                 count = e.data.subset.num_elements()
-        
+
         if not count:
-            raise ValueError("At least 1 request object must be passed to Waitall")
-            
+            raise ValueError(
+                "At least 1 request object must be passed to Waitall")
+
         return count
-
-

@@ -1,12 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
-from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 import dace.libraries.blas as blas
 import dace.libraries.lapack as lapack
 import numpy as np
-import sys
-import warnings
 import pytest
 
 ###############################################################################
@@ -19,7 +16,8 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("matrix_solve_getrf_getrs_{}_{}".format(implementation, dtype))
+    sdfg = dace.SDFG("matrix_solve_getrf_getrs_{}_{}".format(
+        implementation, dtype))
     state = sdfg.add_state("dataflow")
 
     Ahost_arr = sdfg.add_array("A", [n, n],
@@ -57,9 +55,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
     if transient:
         Ahi = state.add_read("A")
-        # Aho = state.add_write("A")
         Ai = state.add_access("A" + suffix)
-        # Ao = state.add_access("A" + suffix)
         Ain = state.add_access("AT" + suffix)
         Aout = state.add_access("AT" + suffix)
         Bhi = state.add_read("B")
@@ -94,11 +90,12 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     getrs_node = lapack.nodes.getrs.Getrs("getrs")
     getrs_node.implementation = implementation
 
-
     state.add_memlet_path(Ain,
                           getrf_node,
                           dst_conn="_xin",
-                          memlet=Memlet.simple(Ain, "0:n, 0:n", num_accesses=n*n))
+                          memlet=Memlet.simple(Ain,
+                                               "0:n, 0:n",
+                                               num_accesses=n * n))
     state.add_memlet_path(getrf_node,
                           res_getrf,
                           src_conn="_res",
@@ -118,11 +115,15 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     state.add_memlet_path(getrf_node,
                           Aout,
                           src_conn="_xout",
-                          memlet=Memlet.simple(Aout, "0:n, 0:n", num_accesses=n*n))
+                          memlet=Memlet.simple(Aout,
+                                               "0:n, 0:n",
+                                               num_accesses=n * n))
     state.add_memlet_path(Aout,
                           getrs_node,
                           dst_conn="_a",
-                          memlet=Memlet.simple(Aout, "0:n, 0:n", num_accesses=n*n))
+                          memlet=Memlet.simple(Aout,
+                                               "0:n, 0:n",
+                                               num_accesses=n * n))
     state.add_memlet_path(Bin,
                           getrs_node,
                           dst_conn="_rhs_in",
@@ -137,23 +138,28 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
 ###############################################################################
 
+
 @pytest.mark.parametrize("implementation, dtype, storage", [
-    pytest.param("MKL", dace.float32, dace.StorageType.Default,
-                 marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, dace.StorageType.Default,
-                 marks=pytest.mark.mkl),
+    pytest.param(
+        "MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
+    pytest.param(
+        "MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
     pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default),
     pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default),
-    pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global,
+    pytest.param("cuSolverDn",
+                 dace.float32,
+                 dace.StorageType.GPU_Global,
                  marks=pytest.mark.gpu),
-    pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global,
+    pytest.param("cuSolverDn",
+                 dace.float64,
+                 dace.StorageType.GPU_Global,
                  marks=pytest.mark.gpu),
 ])
 def test_getrs(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)
     solve_sdfg = sdfg.compile()
     np_dtype = getattr(np, dtype.to_string())
-    
+
     # this is what we are trying to do, using getrf (LU factorize the matrix a) and getrs (solve the system for b as rhs)
     a1 = np.array([[1, 2], [3, 5]], dtype=np_dtype)
     b1 = np.array([1, 2], dtype=np_dtype)
@@ -162,12 +168,18 @@ def test_getrs(implementation, dtype, storage):
     # verify if it works in numpy :)
     if not np.allclose(np.dot(a1, x), b1):
         raise ValueError("NumPy solve returned wrong result o_O")
-  
+
     lapack_status1 = np.array([-1], dtype=np.int32)
     lapack_status2 = np.array([-1], dtype=np.int32)
-    a2 = np.copy(a1)  # a input will be overwritten by its lu factorization (by getrf) 
+    a2 = np.copy(
+        a1)  # a input will be overwritten by its lu factorization (by getrf)
     b2 = np.copy(b1)  # rhs input will be overwritten by the solution (by getrs)
-    solve_sdfg(A=a2, B=b2, result_getrf=lapack_status1, result_getrs=lapack_status2, pivots=np.ndarray([0,0], dtype=np.int32), n=2)
+    solve_sdfg(A=a2,
+               B=b2,
+               result_getrf=lapack_status1,
+               result_getrs=lapack_status2,
+               pivots=np.ndarray([0, 0], dtype=np.int32),
+               n=2)
 
     if np.allclose(np.dot(a1, b2), b1):
         print("Test ran successfully for {}.".format(implementation))

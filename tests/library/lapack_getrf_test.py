@@ -1,12 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
-from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 import dace.libraries.blas as blas
 import dace.libraries.lapack as lapack
 import numpy as np
-import sys
-import warnings
 import pytest
 
 ###############################################################################
@@ -19,7 +16,8 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("matrix_lufact_getrf_{}_{}".format(implementation, str(dtype)))
+    sdfg = dace.SDFG("matrix_lufact_getrf_{}_{}".format(implementation,
+                                                        str(dtype)))
     state = sdfg.add_state("dataflow")
 
     xhost_arr = sdfg.add_array("x", [n, n],
@@ -110,31 +108,36 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
 ###############################################################################
 
+
 @pytest.mark.parametrize("implementation, dtype, storage", [
-    pytest.param("MKL", dace.float32, dace.StorageType.Default,
-                 marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, dace.StorageType.Default,
-                 marks=pytest.mark.mkl),
+    pytest.param(
+        "MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
+    pytest.param(
+        "MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
     pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default),
     pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default),
-    pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global,
+    pytest.param("cuSolverDn",
+                 dace.float32,
+                 dace.StorageType.GPU_Global,
                  marks=pytest.mark.gpu),
-    pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global,
+    pytest.param("cuSolverDn",
+                 dace.float64,
+                 dace.StorageType.GPU_Global,
                  marks=pytest.mark.gpu),
 ])
-
 def test_getrf(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)
     getrf_sdfg = sdfg.compile()
     np_dtype = getattr(np, dtype.to_string())
-    
+
     from scipy.linalg import lu_factor
     size = 4
     lapack_status = np.array([-1], dtype=np.int32)
-    A = np.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]], dtype=np_dtype)
+    A = np.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]],
+                 dtype=np_dtype)
     lu_ref, _ = lu_factor(A)
-    pivots = np.ndarray([0,0,0,0], dtype=np.int32)
-  
+    pivots = np.ndarray([0, 0, 0, 0], dtype=np.int32)
+
     # the x is input AND output, the "result" argument gives the lapack status!
     getrf_sdfg(x=A, result=lapack_status, pivots=pivots, n=size)
 
@@ -142,6 +145,7 @@ def test_getrf(implementation, dtype, storage):
         print("Test ran successfully for {}.".format(implementation))
     else:
         raise ValueError("Validation error!")
+
 
 ###############################################################################
 

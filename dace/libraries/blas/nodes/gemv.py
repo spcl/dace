@@ -914,11 +914,6 @@ class ExpandGemvPBLAS(ExpandTransformation):
         def _gemNv_pblas(_A: dtype[m, n], _x: dtype[n], _y: dtype[m]):
             lA = np.empty((m // Px, n // Py), dtype=_A.dtype)
             lx = np.empty((n // Px,), dtype=_x.dtype)
-            # bsizesA = np.empty((2,), dtype=np.int32)
-            # bsizesA[0] = m // Px
-            # bsizesA[1] = n // Py
-            # bsizesx = np.empty((1,), dtype=np.int32)
-            # bsizesx[0] = n // (Px * Py)
             dace.comm.BCScatter(_A, lA, (m//Px, n//Py))
             dace.comm.BCScatter(_x, lx, (n//Px, 1))
             ly = distr.MatMult(_A, _x, lA, lx, (m//Px, n//Py), (n//Px, 1))
@@ -928,11 +923,6 @@ class ExpandGemvPBLAS(ExpandTransformation):
         def _gemTv_pblas(_A: dtype[m, n], _x: dtype[m], _y: dtype[n]):
             lA = np.empty((m // Px, n // Py), dtype=_A.dtype)
             lx = np.empty((m // Px,), dtype=_x.dtype)
-            # bsizesA = np.empty((1,), dtype=np.int32)
-            # bsizesA[0] = m // Px
-            # bsizesA[1] = n // Py
-            # bsizesx = np.empty((1,), dtype=np.int32)
-            # bsizesx[0] = m // (Px * Py)
             dace.comm.BCScatter(_A, lA, (m//Px, n//Py))
             dace.comm.BCScatter(_x, lx, (m//Px, 1))
             ly = distr.MatMult(_x, _A, lx, lA, (m//Px, 1), (m//Px, n//Py))

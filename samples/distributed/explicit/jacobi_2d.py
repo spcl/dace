@@ -30,10 +30,6 @@ ne = dc.symbol('ne', dtype=dc.int32, integer=True)
 MPI_Request = dc.opaque("MPI_Request")
 
 
-def relerr(ref, val):
-    return np.linalg.norm(ref-val) / np.linalg.norm(ref)
-
-
 @dc.program
 def jacobi_2d_shared(TSTEPS: dc.int64, A: dc.float64[Nx, Ny], B: dc.float64[Nx, Ny]):
     
@@ -52,9 +48,6 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[Nx, Ny], B: dc.float64[Nx, Ny
     tAB = np.empty((lNx, lNy), dtype=A.dtype)
 
     req = np.empty((8,), dtype=MPI_Request)
-
-    # dc.comm.BCScatter(A, lA[1:-1, 1:-1], (N // Px, N // Py))
-    # dc.comm.BCScatter(B, lB[1:-1, 1:-1], (N // Px, N // Py))
 
     Av = np.reshape(A, (Px, lNx, Py, lNy))
     A2 = np.transpose(Av, axes=(0, 2, 1, 3))
@@ -103,9 +96,6 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[Nx, Ny], B: dc.float64[Nx, Ny
             lB[1+noff:-1-soff, 2+woff:-eoff] +
             lB[2+noff:-soff, 1+woff:-1-eoff] +
             lB[noff:-2-soff, 1+woff:-1-eoff])
-
-    # dc.comm.BCGather(lA[1:-1, 1:-1], A, (N // Px, N // Py))
-    # dc.comm.BCGather(lB[1:-1, 1:-1], B, (N // Px, N // Py))
  
     tAB[:] = lA[1:-1, 1:-1]
     dc.comm.Gather(tAB, A2)
@@ -118,9 +108,8 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[Nx, Ny], B: dc.float64[Nx, Ny
 
 def init_data(N, datatype):
 
-    rng = np.random.default_rng(42)
-    A = rng.random((N, N), dtype=datatype)
-    B = rng.random((N, N), dtype=datatype)
+    A = np.fromfunction(lambda i, j: i * (j + 2) / N, shape=(N, N), dtype=datatype)
+    B = np.fromfunction(lambda i, j: i * (j + 3) / N, shape=(N, N), dtype=datatype)
 
     return A, B
 
@@ -140,9 +129,7 @@ grid = {
 
 if __name__ == "__main__":
 
-    # Initialization
-    # TSTEPS, N = 100, 1000  # 500, 1300  # 1000, 2800
-    TSTEPS, N = 1000, 2800
+    TSTEPS, N = 100, 280
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -170,14 +157,6 @@ if __name__ == "__main__":
         eoff = 1
         ne = MPI.PROC_NULL
 
-    # for r in range(size):
-    #     if r == rank:
-    #         print("===== Rank {} =====".format(rank), flush=True)
-    #         print(pi, pj, flush=True)
-    #         print(nn, ns, nw, ne, flush=True)
-    #         print(noff, soff, woff, eoff, flush=True)
-    #     comm.Barrier()
-
     def setup_func(rank):
         if rank == 0:
             return init_data(N, np.float64)
@@ -189,8 +168,6 @@ if __name__ == "__main__":
     A, B = setup_func(rank)
 
     mpi_sdfg = None
-    # if size < 2:
-    #     raise ValueError("This test is supposed to be run with at least two processes!")
     mpi_sdfg = jacobi_2d_dist.to_sdfg(strict=False)
     if rank == 0:
         mpi_sdfg.apply_strict_transformations()
@@ -199,8 +176,6 @@ if __name__ == "__main__":
         mpi_func = mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:
-        # mpi_sdfg = dc.SDFG.from_file(".dacecache/{n}/program.sdfg".format(
-        #     n=jacobi_2d_dist.name))
         mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
             ".dacecache/{n}/build/lib{n}.so".format(n=jacobi_2d_dist.name),
             jacobi_2d_dist.name))
@@ -241,5 +216,6 @@ if __name__ == "__main__":
         shared_sdfg(A=refA, B=refB, TSTEPS=TSTEPS, lNx=lNx, lNy=lNy, Px=Px, Py=Py)
 
         print("=======Validation=======")
-        print(relerr(refA, A))
-        print(relerr(refB, B))
+        assert(np.allclose(A, refA))
+        assert(np.allclose(B, refB))
+        print("OK")

@@ -384,11 +384,8 @@ def add_indirection_subgraph(sdfg: SDFG,
         ind_entry, ind_exit = graph.add_map(
             'indirection',
             {
-                # NOTE: Experimental (original code below)
                 '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
                 for i, (s, e, t) in enumerate(mapped_rng)
-                #     '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
-                # for i, (s, e, t) in enumerate(rng)
             },
             debuginfo=pvisitor.current_lineinfo)
         inp_base_path.insert(0, ind_entry)
@@ -508,8 +505,6 @@ def add_indirection_subgraph(sdfg: SDFG,
     tmp_shape = storage.shape
     indirectRange = subsets.Range([(0, s - 1, 1) for s in tmp_shape])
     if ind_entry:  # Amend indirected range
-        # indirectRange = ','.join([ind for ind in ind_entry.map.params])
-        # NOTE: Experimental (original code above)
         indirectRange = ','.join([
             "{} - {}".format(ind, r[0])
             for ind, r in zip(ind_entry.map.params, mapped_rng)

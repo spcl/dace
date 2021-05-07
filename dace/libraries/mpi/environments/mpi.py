@@ -17,5 +17,5 @@ class MPI:
     headers = ["mpi.h"]
     state_fields = []
     init_code = "int t; MPI_Initialized(&t);  if (!t) MPI_Init(NULL, NULL);"
-    finalize_code = "// MPI_Finalize();" # actually if we finalize in the dace program we break pytest :)
+    finalize_code = "// MPI_Finalize();"  # actually if we finalize in the dace program we break pytest :)
     dependencies = []

@@ -36,9 +36,6 @@ def gemm_distr(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
     lB = np.empty((lNKb, lNJ), dtype=B.dtype)
     lC = np.empty((lNI, lNJ), dtype=A.dtype)
 
-    # dc.comm.BCScatter(A, lA, (lNI, lNKa))
-    # dc.comm.BCScatter(B, lB, (lNKb, lNJ))
-    # dc.comm.BCScatter(C, lC, (lNI, lNJ))
     Av = np.reshape(A, (Px, lNI, Py, lNKa))
     A2 = np.transpose(Av, axes=(0, 2, 1, 3))
     Bv = np.reshape(B, (Px, lNKb, Py, lNJ))
@@ -53,8 +50,6 @@ def gemm_distr(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
 
     lC[:] = alpha * tmp + beta * lC
 
-
-    # dc.comm.BCGather(lC, C, (lNI, lNJ))
     dc.comm.Gather(lC, C2)
     C[:] = np.transpose(C2, (0, 2, 1, 3))
 
@@ -74,9 +69,6 @@ def init_data(NI, NJ, NK, datatype):
     C = rng.random((NI, NJ), dtype=datatype)
     A = rng.random((NI, NK), dtype=datatype)
     B = rng.random((NK, NJ), dtype=datatype)
-    # C = np.zeros((NI, NJ), dtype=datatype)
-    # A = np.arange(0, NI*NK, dtype=datatype).reshape(NI, NK)
-    # B = np.arange(NI*NK, NI*NK+NK*NJ, dtype=datatype).reshape(NK, NJ)
 
     return alpha, beta, C, A, B
 
@@ -97,9 +89,7 @@ grid = {
 if __name__ == "__main__":
 
     # Initialization
-    # NI, NJ, NK = 2000, 2300, 2600  # 4000, 4600, 5200
     NI, NJ, NK = 4000, 4600, 5200
-    # NI, NJ, NK = 4, 4, 4
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -116,9 +106,6 @@ if __name__ == "__main__":
         else:
             return (
                 1.5, 1.2, None, None, None)
-                # np.empty((NI, NJ), dtype=np.float64),
-                # np.empty((NI, NK), dtype=np.float64),
-                # np.empty((NK, NJ), dtype=np.float64))
     
     alpha, beta, C, A, B = setup_func(rank)
 
@@ -141,8 +128,6 @@ if __name__ == "__main__":
     tC = np.copy(lC)
 
     mpi_sdfg = None
-    # if size < 2:
-    #     raise ValueError("This test is supposed to be run with at least two processes!")
     if rank == 0:
         mpi_sdfg = gemm_distr2.to_sdfg(strict=False)
         mpi_sdfg.apply_strict_transformations()
@@ -173,7 +158,6 @@ if __name__ == "__main__":
     stmt = ("mpi_func(A=lA, B=lB, C=tC, alpha=alpha, beta=beta, "
             "NI=NI, NJ=NJ, NK=NK, lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb, "
             "Px=Px, Py=Py)")
-    # setup = "alpha, beta, C, A, B = setup_func(rank); comm.Barrier()"
     setup = "tC = np.copy(lC); comm.Barrier()"
     repeat = 10
 
@@ -198,9 +182,5 @@ if __name__ == "__main__":
                     Px=Px, Py=Py)
 
         print("=======Validation=======")
-        print(relerr(refC, C))
-
-        # print(A)
-        # print(B)
-        # print(refC)
-        # print(C)
+        assert(np.allclose(refC, C))
+        print("OK")

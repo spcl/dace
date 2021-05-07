@@ -1,6 +1,9 @@
 import numpy as np
 import dace as dc
+
 from mpi4py import MPI
+from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
+from dace.transformation.dataflow import MapFusion
 
 
 N = dc.symbol('N', dtype=dc.int64)
@@ -27,25 +30,19 @@ def jacobi_1d_dist(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
     lA = np.zeros((lN + 2,), dtype=A.dtype)
     lB = np.zeros((lN + 2,), dtype=B.dtype)
     tAB = np.empty((lN, ), dtype=A.dtype)
-    # rl = np.empty((1,), dtype=A.dtype)
-    # rr = np.empty((1,), dtype=A.dtype)
 
-    dace.comm.Scatter(A, tAB)
+    dc.comm.Scatter(A, tAB)
     lA[1:-1] = tAB
-    dace.comm.Scatter(B, tAB)
+    dc.comm.Scatter(B, tAB)
     lB[1:-1] = tAB
     
     for t in range(1, TSTEPS):
         if rank > 0:
-            # dace.comm.Recv(rl, rank - 1, t)
-            # lA[0] = rl
-            dace.comm.Recv(lA[0], rank - 1, t)
-            dace.comm.Send(lA[1], rank - 1, t)
+            dc.comm.Recv(lA[0], rank - 1, t)
+            dc.comm.Send(lA[1], rank - 1, t)
         if rank < size - 1:
-            dace.comm.Send(lA[-2], rank + 1, t)
-            # dace.comm.Recv(rr, rank + 1, t)
-            # lA[-1] = rr
-            dace.comm.Recv(lA[-1], rank + 1, t)
+            dc.comm.Send(lA[-2], rank + 1, t)
+            dc.comm.Recv(lA[-1], rank + 1, t)
         if rank == 0:
             lB[2:-1] = 0.33333 * (lA[1:-2] + lA[2:-1] + lA[3:])
         elif rank == size - 1:
@@ -53,15 +50,11 @@ def jacobi_1d_dist(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
         else:
             lB[1:-1] = 0.33333 * (lA[:-2] + lA[1:-1] + lA[2:])
         if rank > 0:
-            # dace.comm.Recv(rl, rank - 1, t)
-            # lB[0] = rl
-            dace.comm.Recv(lB[0], rank - 1, t)
-            dace.comm.Send(lB[1], rank - 1, t)
+            dc.comm.Recv(lB[0], rank - 1, t)
+            dc.comm.Send(lB[1], rank - 1, t)
         if rank < size - 1:
-            dace.comm.Send(lB[-2], rank + 1, t)
-            # dace.comm.Recv(rr, rank + 1, t)
-            # lB[-1] = rr
-            dace.comm.Recv(lB[-1], rank + 1, t)
+            dc.comm.Send(lB[-2], rank + 1, t)
+            dc.comm.Recv(lB[-1], rank + 1, t)
         if rank == 0:
             lA[2:-1] = 0.33333 * (lB[1:-2] + lB[2:-1] + lB[3:])
         elif rank == size - 1:
@@ -70,18 +63,15 @@ def jacobi_1d_dist(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
             lA[1:-1] = 0.33333 * (lB[:-2] + lB[1:-1] + lB[2:])
     
     tAB[:] = lA[1:-1]
-    dace.comm.Gather(tAB, A)
+    dc.comm.Gather(tAB, A)
     tAB[:] = lB[1:-1]
-    dace.comm.Gather(tAB, B)
+    dc.comm.Gather(tAB, B)
 
 
 def init_data(N, datatype):
 
-    A = np.empty((N, ), dtype=datatype)
-    B = np.empty((N, ), dtype=datatype)
-    for i in range(N):
-        A[i] = (i + 2) / N
-        B[i] = (i + 3) / N
+    A = np.fromfunction(lambda i: (i + 2) / N, shape=(N,), dtype=datatype)
+    B = np.fromfunction(lambda i: (i + 3) / N, shape=(N,), dtype=datatype)
 
     return A, B
 
@@ -90,39 +80,27 @@ if __name__ == "__main__":
 
     # Initialization
     TSTEPS, N = 50, 1000
-    # A, B = init_data(N, np.float64)
-    A = np.arange(0, N).astype(np.float64)
-    B = np.arange(0, N).astype(np.float64)
+    A, B = init_data(N, np.float64)
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
     lN = N // size
+    
+    mpi_sdfg = jacobi_1d_dist.to_sdfg()
+    if rank == 0:
+        mpi_func = mpi_sdfg.compile()
+    comm.Barrier()
+    if rank > 0:
+        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
+            ".dacecache/{n}/build/lib{n}.so".format(n=jacobi_1d_dist.name),
+            jacobi_1d_dist.name))
 
-    mpi_sdfg = None
-    # if size < 2:
-    #     raise ValueError("This test is supposed to be run with at least two processes!")
-    for r in range(0, size):
-        if r == rank:
-            mpi_sdfg = jacobi_1d_dist.compile()
-        comm.Barrier()
   
-    mpi_sdfg(A=A, B=B, TSTEPS=TSTEPS, N=N, lN=lN, rank=rank, size=size)
+    mpi_func(A=A, B=B, TSTEPS=TSTEPS, N=N, lN=lN, rank=rank, size=size)
 
     if rank == 0:
-        # refA, refB = init_data(N, np.float64)
-        refA = np.arange(0, N).astype(np.float64)
-        refB = np.arange(0, N).astype(np.float64)
-        # print(refA)
-        # print(refB)
-        # print()
+        refA, refB = init_data(N, np.float64)
         jacobi_1d_shared(TSTEPS, refA, refB)
-
-        print(relerr(refA, A))
-        print(relerr(refB, B))
-        # print()
-        # print(refA)
-        # print(A)
-        # print()
-        # print(refB)
-        # print(B)
+        assert(np.allclose(A, refA))
+        assert(np.allclose(B, refB))

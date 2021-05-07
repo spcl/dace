@@ -632,9 +632,9 @@ class RedundantSecondArray(pm.Transformation):
                             for src, _ in G.in_edges(a):
                                 if src is in_array:
                                     continue
-                                if nx.has_path(G, in_array, src) and src != out_array:
+                                if (nx.has_path(G, in_array, src)
+                                        and src != out_array):
                                     continue
-                                # if not nx.has_path(G, in_array, src):
                                 return False
 
         # Make sure that both arrays are using the same storage location

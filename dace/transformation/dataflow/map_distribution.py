@@ -180,8 +180,6 @@ class ElementWiseArrayOperation(pm.Transformation):
                 continue
 
             if isinstance(desc, data.Array):
-                # if len(desc.shape) > 1:
-                #     raise NotImplementedError
 
                 local_name, local_arr = sdfg.add_temp_transient(
                     [(desc.total_size) // sz], dtype=desc.dtype,
@@ -231,8 +229,6 @@ class ElementWiseArrayOperation(pm.Transformation):
             if isinstance(desc, data.Scalar):
                 raise NotImplementedError
             if isinstance(desc, data.Array):
-                # if len(desc.shape) > 1:
-                #     raise NotImplementedError
                 local_name, local_arr = sdfg.add_temp_transient(
                     [(desc.total_size) // sz], dtype=desc.dtype,
                     storage=desc.storage)
@@ -426,8 +422,6 @@ class ElementWiseArrayOperation2D(pm.Transformation):
                 continue
 
             if isinstance(desc, data.Array):
-                # if len(desc.shape) > 1:
-                #     raise NotImplementedError
 
                 local_name, local_arr = sdfg.add_temp_transient(
                     [(desc.shape[0]) // Px, (desc.shape[1]) // Py],
@@ -467,7 +461,6 @@ class ElementWiseArrayOperation2D(pm.Transformation):
                 for e in graph.out_edges(map_entry):
                     if e.data.data == inp.data:
                         e.data.data = local_name
-                #         e.data = dace.Memlet.simple(local_name, "{}, {}".format(params[0], params[1]))
                 continue
 
             raise NotImplementedError
@@ -498,8 +491,6 @@ class ElementWiseArrayOperation2D(pm.Transformation):
             if isinstance(desc, data.Scalar):
                 raise NotImplementedError
             if isinstance(desc, data.Array):
-                # if len(desc.shape) > 1:
-                #     raise NotImplementedError
                 local_name, local_arr = sdfg.add_temp_transient(
                     [(desc.shape[0]) // Px, (desc.shape[1]) // Py],
                     dtype=desc.dtype, storage=desc.storage)
@@ -514,12 +505,6 @@ class ElementWiseArrayOperation2D(pm.Transformation):
                         x=(desc.shape[0]) // Px, y=(desc.shape[1]) // Py))
                 graph.add_edge(bsizes_tasklet, '__out', bsizes_access, None,
                                dace.Memlet.from_array(bsizes_name, bsizes_arr))
-                # gdesc_name, gdesc_arr = sdfg.add_temp_transient(
-                #     (9,), dtype=dace.int32)
-                # gdesc_access = graph.add_access(gdesc_name)
-                # ldesc_name, ldesc_arr = sdfg.add_temp_transient(
-                #     (9,), dtype=dace.int32)
-                # ldesc_access = graph.add_access(ldesc_name)
                 scatter_node = BlockCyclicGather('_Gather_')
                 graph.add_edge(local_access, None, scatter_node, '_inbuffer',
                                dace.Memlet.from_array(local_name, local_arr))
@@ -527,10 +512,6 @@ class ElementWiseArrayOperation2D(pm.Transformation):
                                dace.Memlet.from_array(bsizes_name, bsizes_arr))
                 graph.add_edge(scatter_node, '_outbuffer', out, None,
                                dace.Memlet.from_array(out.data, desc))
-                # graph.add_edge(gdesc_access, None, scatter_node, '_gdescriptor',
-                #                dace.Memlet.from_array(gdesc_name, gdesc_arr))
-                # graph.add_edge(ldesc_access, None, scatter_node, '_ldescriptor',
-                #                dace.Memlet.from_array(ldesc_name, ldesc_arr))
 
                 for e in graph.edges_between(map_exit, out):
                     graph.add_edge(map_exit, e.src_conn, local_access, None,
@@ -539,7 +520,6 @@ class ElementWiseArrayOperation2D(pm.Transformation):
                 for e in graph.in_edges(map_exit):
                     if e.data.data == out.data:
                         e.data.data = local_name
-                        # e.data = dace.Memlet.simple(local_name, params[0])
                 continue
             raise NotImplementedError
 
@@ -552,15 +532,11 @@ class RedundantComm2D(pm.Transformation):
     """ Implements the redundant array removal transformation, applied
         when a transient array is copied to and from (to another array),
         but never used anywhere else. """
-    
-    # from dace.libraries.pblas import BlockCyclicScatter, BlockCyclicGather
 
     in_array = pm.PatternNode(nodes.AccessNode)
     gather = pm.PatternNode(nodes.Tasklet)
-    # gather = pm.PatternNode(BlockCyclicGather)
     mid_array = pm.PatternNode(nodes.AccessNode)
     scatter = pm.PatternNode(nodes.Tasklet)
-    # scatter = pm.PatternNode(BlockCyclicScatter)
     out_array = pm.PatternNode(nodes.AccessNode)
 
     @staticmethod
@@ -575,7 +551,6 @@ class RedundantComm2D(pm.Transformation):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        # from dace.libraries.pblas import BlockCyclicScatter, BlockCyclicGather
         gather = graph.nodes()[candidate[RedundantComm2D.gather]]
         if '_block_sizes' not in gather.in_connectors:
             return False
@@ -676,8 +651,6 @@ class StencilOperation(pm.Transformation):
                 first_access = None
                 for a in accesses:
                     if a.num_elements() != 1:
-                        # if list(a.size()) == list(desc.shape):
-                        #     continue
                         return False
                     if first_access:
                         new_access = deepcopy(a)

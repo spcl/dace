@@ -1,12 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import Memlet
-from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 from dace.libraries.linalg import Solve
 import numpy as np
-import warnings
 import pytest
-
 
 n = dace.symbol("n", dace.int64)
 id = -1
@@ -74,45 +71,43 @@ def make_sdfg(implementation,
     return sdfg
 
 
-@pytest.mark.parametrize(
-    "implementation, dtype, size, shape", [
-        pytest.param('MKL', np.float32, 4,
-                [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
-                marks=pytest.mark.mkl),
-        pytest.param('MKL', np.float64, 4,
-                [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
-                marks=pytest.mark.mkl),
-        pytest.param('MKL', np.float32, 4,
-                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-                marks=pytest.mark.mkl),
-        pytest.param('MKL', np.float64, 4,
-                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-                marks=pytest.mark.mkl),
-        pytest.param('OpenBLAS', np.float32, 4,
-                [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]]),
-        pytest.param('OpenBLAS', np.float64, 4,
-                [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]]),
-        pytest.param('OpenBLAS', np.float32, 4,
-                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]]),
-        pytest.param('OpenBLAS', np.float64, 4,
-                [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]]),
-        pytest.param('cuSolverDn', np.float32, 4,
-                [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
-                marks=pytest.mark.gpu),
-        pytest.param('cuSolverDn', np.float64, 4,
-                [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
-                marks=pytest.mark.gpu),
-        # pytest.param('cuSolverDn', np.float32, 4,
-        #         [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-        #         marks=pytest.mark.gpu),
-        # pytest.param('cuSolverDn', np.float64, 4,
-        #         [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-        #         marks=pytest.mark.gpu)
+@pytest.mark.parametrize("implementation, dtype, size, shape", [
+    pytest.param('MKL',
+                 np.float32,
+                 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                 marks=pytest.mark.mkl),
+    pytest.param('MKL',
+                 np.float64,
+                 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                 marks=pytest.mark.mkl),
+    pytest.param('MKL',
+                 np.float32,
+                 4,
+                 [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 marks=pytest.mark.mkl),
+    pytest.param('MKL',
+                 np.float64,
+                 4,
+                 [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 marks=pytest.mark.mkl),
+    pytest.param('OpenBLAS', np.float32, 4,
+                 [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]]),
+    pytest.param('OpenBLAS', np.float64, 4,
+                 [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]]),
+    pytest.param('OpenBLAS', np.float32, 4,
+                 [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]]),
+    pytest.param('OpenBLAS', np.float64, 4,
+                 [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]]),
+    pytest.param('cuSolverDn',
+                 np.float32,
+                 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                 marks=pytest.mark.gpu),
+    pytest.param('cuSolverDn',
+                 np.float64,
+                 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                 marks=pytest.mark.gpu)
 ])
-def test_solve(implementation,
-               dtype,
-               size,
-               shape):
+def test_solve(implementation, dtype, size, shape):
     global id
     id += 1
 
@@ -170,14 +165,11 @@ def test_solve(implementation,
 
     if dtype == np.float32:
         rtol = 1e-6
-        atol = 1e-6
     elif dtype == np.float64:
         rtol = 1e-12
-        atol = 1e-12
     else:
         raise NotImplementedError
 
-    # assert np.allclose(B2[out_subset], ref, rtol=rtol, atol=atol)
     assert (np.linalg.norm(ref - B2[out_subset]) / np.linalg.norm(ref)) < rtol
 
 

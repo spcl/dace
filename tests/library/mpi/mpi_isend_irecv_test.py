@@ -1,14 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
-from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 import dace.libraries.mpi as mpi
-import sys
-import warnings
 import numpy as np
 from mpi4py import MPI as MPI4PY
 import pytest
-
 
 ###############################################################################
 
@@ -25,8 +21,12 @@ def make_sdfg(dtype):
     sdfg.add_array("src", [1], dace.dtypes.int32, transient=False)
     sdfg.add_array("dest", [1], dace.dtypes.int32, transient=False)
     sdfg.add_array("tag", [1], dace.dtypes.int32, transient=False)
-    sdfg.add_array("send_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True)
-    sdfg.add_array("recv_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True)
+    sdfg.add_array("send_req", [1],
+                   dace.dtypes.opaque("MPI_Request"),
+                   transient=True)
+    sdfg.add_array("recv_req", [1],
+                   dace.dtypes.opaque("MPI_Request"),
+                   transient=True)
 
     sdfg.add_array("stat_source", [1], dace.dtypes.int32, transient=True)
     sdfg.add_array("stat_count", [1], dace.dtypes.int32, transient=True)
@@ -77,8 +77,16 @@ def make_sdfg(dtype):
                           dst_conn="_request",
                           memlet=Memlet.simple(recv_req, "0:1", num_accesses=1))
 
-    state.add_memlet_path(wait_node, stat_tag, src_conn="_stat_tag", memlet=Memlet.simple(stat_tag, "0:1", num_accesses=1))
-    state.add_memlet_path(wait_node, stat_source, src_conn="_stat_source", memlet=Memlet.simple(stat_source, "0:1", num_accesses=1))
+    state.add_memlet_path(wait_node,
+                          stat_tag,
+                          src_conn="_stat_tag",
+                          memlet=Memlet.simple(stat_tag, "0:1", num_accesses=1))
+    state.add_memlet_path(wait_node,
+                          stat_source,
+                          src_conn="_stat_source",
+                          memlet=Memlet.simple(stat_source,
+                                               "0:1",
+                                               num_accesses=1))
 
     state.add_memlet_path(src,
                           recv_node,
@@ -98,16 +106,17 @@ def _test_mpi(info, sdfg, dtype):
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()
-    drank = (rank+1) % commsize
-    srank = (rank-1+commsize) % commsize
+    drank = (rank + 1) % commsize
+    srank = (rank - 1 + commsize) % commsize
     mpi_sdfg = None
     if commsize < 2:
-        raise ValueError("This test is supposed to be run with at least two processes!")
+        raise ValueError(
+            "This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
             mpi_sdfg = sdfg.compile()
         comm.Barrier()
-  
+
     size = 128
     A = np.full(size, rank, dtype=dtype)
     B = np.zeros(size, dtype=dtype)
@@ -117,16 +126,19 @@ def _test_mpi(info, sdfg, dtype):
     mpi_sdfg(x=A, y=B, src=src, dest=dest, tag=tag, n=size)
     # now B should be an array of size, containing srank
     if not np.allclose(B, np.full(size, srank, dtype=dtype)):
-        raise(ValueError("The received values are not what I expected."))
+        raise (ValueError("The received values are not what I expected."))
+
 
 @pytest.mark.mpi
 def test_mpi():
     _test_mpi("MPI Send/Recv", make_sdfg(np.float64), np.float64)
 
+
 ###############################################################################
 
 myrank = dace.symbol('myrank', dtype=dace.int32)
 mysize = dace.symbol('mysize', dtype=dace.int32)
+
 
 @dace.program
 def dace_send_recv():
@@ -148,15 +160,17 @@ def test_dace_send_recv():
     commsize = comm.Get_size()
     mpi_sdfg = None
     if commsize < 2:
-        raise ValueError("This test is supposed to be run with at least two processes!")
+        raise ValueError(
+            "This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
             mpi_sdfg = dace_send_recv.compile()
         comm.Barrier()
-    
+
     prv_rank = mpi_sdfg(myrank=rank, mysize=commsize)
 
-    assert(prv_rank[0] == (rank - 1) % commsize)
+    assert (prv_rank[0] == (rank - 1) % commsize)
+
 
 ###############################################################################
 

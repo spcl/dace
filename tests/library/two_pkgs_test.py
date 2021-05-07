@@ -6,7 +6,6 @@ from dace.libraries.linalg import Inv
 import numpy as np
 import warnings
 
-
 n = dace.symbol("n", dace.int64)
 
 
@@ -71,17 +70,17 @@ def make_sdfg(implementation,
 
 
 def _test_inv(implementation,
-             dtype,
-             id=0,
-             size=4,
-             in_shape=[4, 4],
-             out_shape=[4, 4],
-             in_offset=[0, 0],
-             out_offset=[0, 0],
-             in_dims=[0, 1],
-             out_dims=[0, 1],
-             overwrite=False,
-             getri=True):
+              dtype,
+              id=0,
+              size=4,
+              in_shape=[4, 4],
+              out_shape=[4, 4],
+              in_offset=[0, 0],
+              out_offset=[0, 0],
+              in_dims=[0, 1],
+              out_dims=[0, 1],
+              overwrite=False,
+              getri=True):
 
     assert np.all(np.array(in_shape)[in_dims] >= size)
     assert np.all(np.array(out_shape)[out_dims] >= size)
@@ -142,6 +141,7 @@ def _test_inv(implementation,
     assert np.allclose(A2[out_subset], A3, rtol=rtol, atol=atol)
     if overwrite:
         assert not np.array_equal(A0, A1)
+
 
 if __name__ == "__main__":
     _test_inv('OpenBLAS', np.float32, id=0)

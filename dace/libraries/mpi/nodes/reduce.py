@@ -21,8 +21,9 @@ class ExpandReducePure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise(NotImplementedError)
-  
+        raise (NotImplementedError)
+
+
 @dace.library.expansion
 class ExpandReduceMPI(ExpandTransformation):
 
@@ -30,10 +31,12 @@ class ExpandReduceMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (inbuffer, count_str), outbuffer, root = node.validate(parent_sdfg, parent_state)
-        mpi_dtype_str =  dace.libraries.mpi.utils.MPI_DDT(inbuffer.dtype.base_type)
+        (inbuffer,
+         count_str), outbuffer, root = node.validate(parent_sdfg, parent_state)
+        mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(
+            inbuffer.dtype.base_type)
         if inbuffer.dtype.veclen > 1:
-            raise(NotImplementedError)
+            raise (NotImplementedError)
         if root.dtype.base_type != dace.dtypes.int32:
             raise ValueError("Reduce root must be an integer!")
 
@@ -54,7 +57,6 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
         "MPI": ExpandReduceMPI,
     }
     default_implementation = "MPI"
-    
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
@@ -62,14 +64,14 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
                          inputs={"_inbuffer", "_root"},
                          outputs={"_outbuffer"},
                          **kwargs)
-        self._op = kwargs.get('op',"MPI_SUM")
+        self._op = kwargs.get('op', "MPI_SUM")
 
     def validate(self, sdfg, state):
         """
         :return: A three-tuple (buffer, root) of the three data descriptors in the
                  parent SDFG.
         """
-        
+
         inbuffer, outbuffer = None, None
         for e in state.out_edges(self):
             if e.src_conn == "_outbuffer":
@@ -81,13 +83,12 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
                 root = sdfg.arrays[e.data.data]
 
         if root.dtype.base_type != dace.dtypes.int32:
-            raise(ValueError("Reduce root must be an integer!"))
+            raise (ValueError("Reduce root must be an integer!"))
 
         count_str = "XXX"
-        for _, src_conn, _, _, data in state.out_edges(self):  
+        for _, src_conn, _, _, data in state.out_edges(self):
             if src_conn == '_outbuffer':
                 dims = [str(e) for e in data.subset.size_exact()]
                 count_str = "*".join(dims)
 
         return (inbuffer, count_str), outbuffer, root
-
