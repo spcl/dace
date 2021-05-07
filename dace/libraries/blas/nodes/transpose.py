@@ -5,6 +5,7 @@ from dace.config import Config
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
+from dace.libraries.blas import blas_helpers
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
@@ -140,6 +141,38 @@ class ExpandTransposeMKL(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandTransposeCuBLAS(ExpandTransformation):
+
+    environments = [environments.cublas.cuBLAS]
+
+    @staticmethod
+    def expansion(node, state, sdfg, **kwargs):
+        node.validate(sdfg, state)
+        dtype = node.dtype
+
+        func, cdtype, factort = blas_helpers.cublas_type_metadata(dtype)
+        func = func + 'geam'
+
+        alpha = f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()"
+        beta = f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()"
+        _, _, (m, n) = _get_transpose_input(node, state, sdfg)
+
+        code = (environments.cublas.cuBLAS.handle_setup_code(node) +
+                f"""cublas{func}(
+                    __dace_cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N,
+                    {m}, {n}, {alpha}, _inp, {n}, {beta}, _inp, {m}, _out, {m});
+                """)
+
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+
+        return tasklet
+
+
 @dace.library.node
 class Transpose(dace.sdfg.nodes.LibraryNode):
 
@@ -147,6 +180,7 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "pure": ExpandTransposePure,
         "MKL": ExpandTransposeMKL,
+        "cuBLAS": ExpandTransposeCuBLAS
     }
     default_implementation = None
 
