@@ -21,6 +21,7 @@ from dace.codegen.targets.target import make_absolute
 from dace.codegen.targets import cpp, fpga
 from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.tools.type_inference import infer_expr_type
+from dace.codegen.targets.common import sym2cpp
 from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
@@ -131,7 +132,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         host_code = CodeIOStream()
         host_code.write("""\
 #include "dace/intel_fpga/host.h"
-#include <iostream>\n\n""")
+#include <iostream>
+#include <fstream>\n\n""")
 
         self._frame.generate_fileheader(self._global_sdfg, host_code,
                                         'intelfpga_host')
@@ -570,7 +572,13 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             """\
   const auto end = std::chrono::high_resolution_clock::now();
   const double elapsedChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-  std::cout << "Kernel executed in " << elapsedChrono << " seconds.\\n" << std::flush;
+  // Do not print to avoid overhead
+  //std::cout << "Kernel executed in " << elapsedChrono << " seconds.\\n" << std::flush;
+  // Save execution time in file
+  std::ofstream out_file;
+  out_file.open("dace_times.dat", std::ios::app);
+  out_file << elapsedChrono <<std::endl;
+  out_file.close();
 }""", sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
@@ -926,6 +934,7 @@ __kernel void \\
                     # if this is not already a mapped symbol, add it
                     if p not in node.symbol_mapping.keys():
                         memlet_references.append((typedef, p, p))
+
         return memlet_references
 
     def allocate_view(self, sdfg: dace.SDFG, dfg: SDFGState, state_id: int,

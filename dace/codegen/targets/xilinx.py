@@ -468,7 +468,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     array_args.append((kernel_arg, dataname))
 
         stream_args = []
-        for is_output, dataname, data, interface in external_streams:
+        for is_output, dataname, data, interface in sorted(external_streams,
+                                                           key=lambda t: t[1]):
             kernel_arg = self.make_kernel_argument(data, dataname, is_output,
                                                    True, interface)
             if kernel_arg:
@@ -540,6 +541,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_stream.write(
             """\
   std::cout << "Kernel executed in " << elapsed.second << " seconds.\\n" << std::flush;
+  // Save execution time in file
+  std::ofstream out_file;
+  out_file.open("dace_times.dat", std::ios::app);
+  out_file << elapsed.second <<std::endl;
+  out_file.close();
 }""", sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
