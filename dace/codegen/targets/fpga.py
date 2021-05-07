@@ -300,7 +300,7 @@ class FPGACodeGen(TargetCodeGenerator):
         external_streams: Set[tuple[bool, str, dt, dict[str, int]]] = set()
 
         # Mapping from global arrays to memory interfaces
-        bank_assignments: Dict[str, str] = {}
+        bank_assignments: Dict[str, (str, str)] = {}
 
         # Mapping from symbol to a unique parameter tuple
         all_symbols = {
@@ -415,31 +415,50 @@ class FPGACodeGen(TargetCodeGenerator):
                     trace = utils.trace_nested_access(inner_node, subgraph,
                                                       sdfg)
                     bank = None
+                    banktype = None
                     for (trace_in, trace_out), _, _, trace_sdfg in trace:
                         trace_node = trace_in or trace_out
                         trace_name = trace_node.data
                         trace_desc = trace_node.desc(trace_sdfg)
-                        if "bank" in trace_desc.location:
-                            trace_bank = trace_desc.location["bank"]
-                            if (bank is not None
-                                    and bank != trace_bank):
+                        if "bank" in trace_desc.location or "hbmbank" in trace_desc.location:
+                            if "bank" in trace_desc.location and "hbmbank" in trace_desc.location:
+                                raise cgx.CodegenError("Found memory bank specifier "
+                                    f"with bank and hbmbank defined for {trace_name}")
+                            trace_bank = None
+                            trace_type = None
+                            if("bank" in trace_desc.location):
+                                trace_bank = trace_desc.location["bank"]
+                                trace_type = "DDR"
+                            else:
+                                trace_bank = trace_desc.location["hbmbank"]
+                                trace_type = "HBM"
+                            if (bank is not None and banktype is not None
+                                    and (bank != trace_bank or banktype != trace_type)):
                                 raise cgx.CodegenError(
                                     "Found inconsistent memory bank "
                                     f"specifier for {trace_name}.")
+                            try:
+                                check = int(trace_bank)
+                            except ValueError:
+                                raise cgx.CodegenError("Memory bank specifier must"
+                                    f"be an integer at {trace_name}")
+
                             bank = trace_bank
+                            banktype = trace_type
+                        
                     # Make sure the array has been allocated on this bank in the
                     # outermost scope
                     if bank is not None:
                         outer_node = trace[0][0][0] or trace[0][0][1]
                         outer_desc = outer_node.desc(trace[0][2])
-                        if ("bank" not in outer_desc.location
-                                or str(outer_desc.location["bank"]) !=
-                                str(bank)):
+                        okhbm = "hbmbank" in outer_desc.location and str(outer_desc.location["hbmbank"]) == str(bank)
+                        okbank = "bank" in outer_desc.location and str(outer_desc.location["bank"]) == str(bank)
+                        if (not (okhbm or okbank)):
                             raise cgx.CodegenError(
                                 "Memory bank allocation must be present on "
                                 f"outermost data descriptor {outer_node.data} "
                                 "to be allocated correctly.")
-                    bank_assignments[dataname] = bank
+                    bank_assignments[dataname] = (banktype, bank)
                 else:
                     interface_id = None
                 if (not desc.transient
@@ -605,6 +624,30 @@ class FPGACodeGen(TargetCodeGenerator):
                                         nodedesc.location["bank"]))
                             memory_bank_arg = (
                                 f"hlslib::ocl::MemoryBank::bank{bank}, ")
+                        #HBMJAN
+                        elif "hbmbank" in nodedesc.location:
+                            hbmbank = None
+                            try:
+                                hbmbank = int(nodedesc.location["hbmbank"])
+                            except ValueError:
+                                split = nodedesc.location["hbmbank"].split(":")
+                                ishbmrange = False
+                                if(len(split) == 2):
+                                    try:
+                                        check1 = int(split[0])
+                                        check2 = int(split[1])
+                                        ishbmrange = True
+                                    except ValueError:
+                                        pass
+                                if(ishbmrange):
+                                    raise ValueError("Found a not expanded"
+                                            f"(hbm-) array during codegen in {node.data}")
+                                else:
+                                    raise cgx.CodegenError(
+                                        "FPGA HBM bank specifier "
+                                        f"must be an integer for {node.data}")
+                            #TODO: generate actual HBM code
+                            memory_bank_arg = f"hlslib::ocl::IwouldLikeToHaveHBM{hbmbank}, "
 
                         # Define buffer, using proper type
                         result_decl.write(
