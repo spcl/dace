@@ -175,12 +175,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             # Only iterate over assignments if any exist
             if are_assigned:
                 for (kernel_name, interface_name
-                     ), memory_bank in self._bank_assignments.items():
+                     ), (memory_type, memory_bank) in self._bank_assignments.items():
                     if kernel_name != name:
                         continue
-                    # TODO: Support HBM
                     bank_assignment_code.append(
-                        f"{interface_name},DDR,{memory_bank}")
+                        f"{interface_name},{memory_type},{memory_bank}")
             # Create file even if there are no assignments
             kernel_code_objs.append(
                 CodeObject("{}_memory_interfaces".format(name),
@@ -481,6 +480,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             state_id)
 
         # Insert interface pragmas
+        #HBMJAN
         num_mapped_args = 0
         for arg, dataname in array_args:
             var_name = re.findall(r"\w+", arg)[-1]
@@ -492,8 +492,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     sdfg, state_id)
                 # Map this interface to the corresponding location
                 # specification to be passed to the Xilinx compiler
-                bank = bank_assignments[dataname]
-                self._bank_assignments[(kernel_name, interface_name)] = bank
+                memorybank = bank_assignments[dataname]
+                self._bank_assignments[(kernel_name, interface_name)] = memorybank
                 num_mapped_args += 1
 
         for arg in kernel_args + ["return"]:
