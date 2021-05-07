@@ -82,5 +82,5 @@ def call_sdfg_same_symbol_name_test():
 if __name__ == "__main__":
     call_test()
     call_sdfg_test()
-    call_sdfg_with_stride_symbols()
+    call_sdfg_with_stride_symbols_test()
     call_sdfg_same_symbol_name_test()
