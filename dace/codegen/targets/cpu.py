@@ -1560,7 +1560,7 @@ class CPUCodeGen(TargetCodeGenerator):
         
         # Backwards compatibility
         if unique_functions_conf is True:
-            unique_functions_conf = 'unique_name'
+            unique_functions_conf = 'hash'
         elif unique_functions_conf is False:
             unique_functions_conf = 'none'
 
