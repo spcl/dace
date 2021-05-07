@@ -15,7 +15,7 @@ from dace.libraries.blas import environments as blas_environments
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     arr_desc = node.validate(parent_sdfg, parent_state)
-    if node._overwrite:
+    if node.overwrite:
         in_shape, in_dtype, in_strides, n = arr_desc
     else:
         (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides,
@@ -25,7 +25,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
     a_arr = sdfg.add_array('_ain', in_shape, dtype=in_dtype, strides=in_strides)
-    if not node._overwrite:
+    if not node.overwrite:
         ain_arr = a_arr
         a_arr = sdfg.add_array('_aout',
                                out_shape,
@@ -41,7 +41,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     getri_node = Getri('getri')
     getri_node.implementation = implementation
 
-    if node._overwrite:
+    if node.overwrite:
         ain = state.add_read('_ain')
         ainout = state.add_access('_ain')
         aout = state.add_write('_ain')
@@ -95,7 +95,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
 
     arr_desc = node.validate(parent_sdfg, parent_state)
-    if node._overwrite:
+    if node.overwrite:
         in_shape, in_dtype, in_strides, n = arr_desc
     else:
         (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides,
@@ -105,7 +105,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
     a_arr = sdfg.add_array('_ain', in_shape, dtype=in_dtype, strides=in_strides)
-    if not node._overwrite:
+    if not node.overwrite:
         ain_arr = a_arr
         a_arr = sdfg.add_array('_ainout',
                                [n, n],
@@ -124,7 +124,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     getrs_node = Getrs('getrs')
     getrs_node.implementation = implementation
 
-    if node._overwrite:
+    if node.overwrite:
         ain = state.add_read('_ain')
         ainout = state.add_access('_ain')
         aout = state.add_write('_ain')
@@ -214,7 +214,7 @@ class ExpandInvOpenBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        if node._getri:
+        if node.use_getri:
             return _make_sdfg(node, parent_state, parent_sdfg, "OpenBLAS")
         else:
             return _make_sdfg_getrs(node, parent_state, parent_sdfg, "OpenBLAS")
@@ -227,7 +227,7 @@ class ExpandInvMKL(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        if node._getri:
+        if node.use_getri:
             return _make_sdfg(node, parent_state, parent_sdfg, "MKL")
         else:
             return _make_sdfg_getrs(node, parent_state, parent_sdfg, "MKL")
@@ -254,6 +254,9 @@ class Inv(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = None
 
+    overwrite = dace.properties.Property(dtype=bool, default=False)
+    use_getri = dace.properties.Property(dtype=bool, default=True)
+
     # Object fields
     def __init__(self, name, overwrite_a=False, use_getri=True, *args, **kwargs):
         super().__init__(name,
@@ -261,8 +264,8 @@ class Inv(dace.sdfg.nodes.LibraryNode):
                          inputs={"_ain"},
                          outputs={"_aout"},
                          **kwargs)
-        self._overwrite = overwrite_a
-        self._getri = use_getri
+        self.overwrite = overwrite_a
+        self.use_getri = use_getri
 
     def validate(self, sdfg, state):
         """
@@ -314,13 +317,13 @@ class Inv(dace.sdfg.nodes.LibraryNode):
             raise ValueError(
                 "Matrices with column strides greater than 1 are unsupported")
 
-        if self._overwrite and desc_ain is not desc_aout:
+        if self.overwrite and desc_ain is not desc_aout:
             raise ValueError(
                 "Overwrite enabled but output is different than input")
-        if not self._overwrite and desc_ain is desc_aout:
+        if not self.overwrite and desc_ain is desc_aout:
             raise ValueError("Overwrite disabled but output is same as input")
 
-        if self._overwrite:
+        if self.overwrite:
             return shape1, desc_ain.dtype, strides1, shape1[0]
         else:
             return (shape1, desc_ain.dtype, strides1, shape2, desc_aout.dtype,
