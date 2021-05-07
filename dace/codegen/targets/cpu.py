@@ -1557,6 +1557,13 @@ class CPUCodeGen(TargetCodeGenerator):
         nested_global_stream = CodeIOStream()
 
         unique_functions_conf = Config.get('compiler', 'unique_functions')
+        
+        # Backwards compatibility
+        if unique_functions_conf is True:
+            unique_functions_conf = 'hash'
+        elif unique_functions_conf is False:
+            unique_functions_conf = 'none'
+
         if unique_functions_conf == 'hash':
             unique_functions = True
             unique_functions_hash = True
