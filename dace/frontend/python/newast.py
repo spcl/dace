@@ -3462,13 +3462,13 @@ class ProgramVisitor(ExtNodeVisitor):
                     (type(func).__name__, funcname))
 
             # Avoid import loops
-            from dace.frontend.python.parser import infer_symbols_from_shapes
+            from dace.frontend.python.parser import infer_symbols_from_datadescriptor
 
             # Map internal SDFG symbols by adding keyword arguments
             # symbols = set(sdfg.symbols.keys())
             symbols = sdfg.free_symbols
             try:
-                mapping = infer_symbols_from_shapes(
+                mapping = infer_symbols_from_datadescriptor(
                     sdfg, {
                         k: self.sdfg.arrays[v]
                         for k, v in args if v in self.sdfg.arrays

@@ -93,12 +93,12 @@ def _get_locals_and_globals(f):
     return result
 
 
-def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
-                              exclude: Optional[Set[str]] = None) -> \
+def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
+                                      exclude: Optional[Set[str]] = None) -> \
         Dict[str, Any]:
     """
     Infers the values of SDFG symbols (not given as arguments) from the shapes
-    of input arguments (e.g., arrays).
+    and strides of input arguments (e.g., arrays).
     :param sdfg: The SDFG that is being called.
     :param args: A dictionary mapping from current argument names to their
                  values. This may also include symbols.
@@ -117,10 +117,10 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
             desc = sdfg.arrays[arg_name]
             if not hasattr(desc, 'shape') or not hasattr(arg_val, 'shape'):
                 continue
-            symbolic_shape = desc.shape
-            given_shape = arg_val.shape
+            symbolic_values = desc.shape + getattr(desc, 'strides', ())
+            given_values = arg_val.shape + getattr(arg_val, 'strides', ())
 
-            for sym_dim, real_dim in zip(symbolic_shape, given_shape):
+            for sym_dim, real_dim in zip(symbolic_values, given_values):
                 repldict = {}
                 for sym in symbolic.symlist(sym_dim).values():
                     newsym = symbolic.symbol('__SOLVE_' + str(sym))
@@ -137,6 +137,7 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
                     sym_dim = sym_dim.subs(repldict)
 
                 equations.append(sym_dim - real_dim)
+
 
     if len(symbols) == 0:
         return {}
@@ -227,7 +228,7 @@ class DaceProgram:
             kwargs.update(
                 {aname: arg
                  for aname, arg in zip(self.argnames, args)})
-            kwargs.update(infer_symbols_from_shapes(self._cache[1], kwargs))
+            kwargs.update(infer_symbols_from_datadescriptor(self._cache[1], kwargs))
             return self._cache[2](**kwargs)
 
         # Clear cache to enforce deletion and closure of compiled program
@@ -240,7 +241,7 @@ class DaceProgram:
         kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
 
         # Update arguments with symbols in data shapes
-        kwargs.update(infer_symbols_from_shapes(sdfg, kwargs))
+        kwargs.update(infer_symbols_from_datadescriptor(sdfg, {k:create_datadescriptor(v) for k, v  in kwargs.items()}))
 
         # Allow CLI to prompt for optimizations
         if Config.get_bool('optimizer', 'transform_on_call'):
