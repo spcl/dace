@@ -379,7 +379,7 @@ def identical_file_exists(filename: str, file_contents: str):
 def get_program_handle(library_path, sdfg):
     lib = csd.ReloadableDLL(library_path, sdfg.name)
     # Load and return the compiled function
-    return csd.CompiledSDFG(sdfg, lib)
+    return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
 
 
 def load_from_file(sdfg, binary_filename):
