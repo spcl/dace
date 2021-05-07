@@ -29,20 +29,25 @@ def greedy_fuse(
         graph_or_subgraph: GraphViewType,
         validate_all: bool,
         device: dace.dtypes.DeviceType = dace.dtypes.DeviceType.CPU,
-        #apply_reduce_expansion: bool = False, # TODO: push as option here
         recursive: bool = True,
-        tile=False) -> None:
-
-    #CompositeFusion.allow_expansion = apply_multi_expansion
-    #CompositeFusion.allow_tiling = apply_stencil_tiling
+        tile: bool = False) -> None:
+    '''
+    Greedily fuses maps of an SDFG or graph, operating in-place.
+    :param graph_or_subgraph: SDFG, SDFGState or Subgraph
+    :param validate_all: Validate SDFG or graph at each fusion step 
+    :param device: Device type to specialize for 
+    :param recursive: Fuse recursively within (fused and unfused) scopes
+    :param tile: Perform stencil fusion instead of regular fusion 
+    '''
 
     if isinstance(graph_or_subgraph, SDFG):
         # If we have an SDFG, recurse into graphs
-        #graph_or_subgraph.apply_transformations_repeated(ReduceExpansion)
         graph_or_subgraph.apply_strict_transformations(
             validate_all=validate_all)
+        # MapFusion for trivial cases
         graph_or_subgraph.apply_transformations_repeated(
             MapFusion, validate_all=validate_all)
+        # recurse into graphs
         for graph in graph_or_subgraph.nodes():
             greedy_fuse(graph,
                         validate_all=validate_all,
@@ -63,7 +68,7 @@ def greedy_fuse(
             graph = graph_or_subgraph.graph
             subgraph = graph_or_subgraph
 
-        # greedily enumerate fusible components
+        # within SDFGState: greedily enumerate fusible components
         # and apply transformation
         applied_transformations = 0
         reverse = True if tile else False
