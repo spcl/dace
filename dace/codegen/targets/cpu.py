@@ -1596,7 +1596,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     code_already_generated = True
                     if hash != self._generated_nested_sdfg[sdfg_label]:
                         raise ValueError(
-                            f'Different Nested SDFGs have tha same unique name: {sdfg_label}'
+                            f'Different Nested SDFGs have the same unique name: {sdfg_label}'
                         )
                 else:
                     self._generated_nested_sdfg[sdfg_label] = hash
