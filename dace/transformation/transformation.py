@@ -29,7 +29,7 @@ class TransformationBase(object):
 @make_registry
 @make_properties
 class Transformation(TransformationBase):
-    """ Base class for pattern-matching transformations, as well as a static 
+    """ Base class for pattern-matching transformations, as well as a static
         registry of transformations, where new transformations can be added in a
         decentralized manner.
         An instance of a Transformation represents a match of the transformation
@@ -187,7 +187,6 @@ class Transformation(TransformationBase):
         if options is not None:
             for optname, optval in options.items():
                 setattr(self, optname, optval)
-
 
     @property
     def subgraph(self):
@@ -529,7 +528,7 @@ class ExpandTransformation(Transformation):
                                                     expansion.schedule, True)
 
         expansion.environments = copy.copy(
-            set(map(lambda a: a.__name__,
+            set(map(lambda a: a.full_class_path(),
                     type(self).environments)))
         sdutil.change_edge_dest(state, node, expansion)
         sdutil.change_edge_src(state, node, expansion)

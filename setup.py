@@ -76,7 +76,7 @@ setup(name='dace',
       install_requires=[
           'numpy', 'networkx >= 2.2', 'astunparse', 'sympy', 'pyyaml', 'ply',
           'websockets', 'requests', 'flask', 'scikit-build', 'cmake', 'aenum',
-          'dataclasses; python_version < "3.7"', 'dill', 'pyreadline'
+          'dataclasses; python_version < "3.7"', 'dill', 'pyreadline;platform_system=="Windows"'
       ],
       extras_require={
           'testing':
