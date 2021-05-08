@@ -431,6 +431,44 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
 
 
 @dace.library.expansion
+class ExpandGemmPBLAS(ExpandTransformation):
+
+    environments = []
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
+        (_, adesc, ashape,
+         astrides), (_, bdesc, bshape,
+                     bstrides), _ = _get_matmul_operands(node, state, sdfg)
+        dtype = adesc.dtype.base_type
+
+        if node.beta != 0:
+            raise NotImplementedError
+
+        M = ashape[0]
+        K = ashape[1]
+        N = bshape[1]
+        Px = dace.symbol('Px', dtype=dace.int32, integer=True, positive=True)
+        Py = dace.symbol('Py', dtype=dace.int32, integer=True, positive=True)
+        try:
+            sdfg.add_symbol('Px', dace.int32)
+            sdfg.add_symbol('Py', dace.int32)
+        except FileExistsError:
+            pass
+
+        @dace.program
+        def _gemm_pblas(_a: dtype[M, K], _b: dtype[K, N], _c: dtype[M, N]):
+            lA = np.empty((M // Px, K // Py), dtype=_a.dtype)
+            lB = np.empty((K // Px, N // Py), dtype=_b.dtype)
+            dace.comm.BCScatter(_a, lA, (M//Px, K//Py))
+            dace.comm.BCScatter(_b, lB, (K//Px, N//Py))
+            lC = distr.MatMult(_a, _b, lA, lB, (M//Px, K//Py), (K//Px, N//Py))
+            dace.comm.BCGather(lC, _c, (M//Px, N//Py))
+
+        return _gemm_pblas.to_sdfg()
+
+
 class ExpandGemmFPGA1DSystolic(ExpandTransformation):
     """
     FPGA based implementation of GEMM, using a 1D systolic array.
@@ -998,6 +1036,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandGemmMKL,
         "OpenBLAS": ExpandGemmOpenBLAS,
         "cuBLAS": ExpandGemmCuBLAS,
+        "PBLAS": ExpandGemmPBLAS,
         "FPGA1DSystolic": ExpandGemmFPGA1DSystolic
     }
     default_implementation = None

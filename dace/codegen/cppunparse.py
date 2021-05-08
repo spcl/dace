@@ -553,7 +553,7 @@ class CPPUnparser:
         if value is True or value is False or value is None:
             self.write(_py2c_nameconst[value])
         else:
-            if isinstance(value, Number):
+            if isinstance(value, (Number, np.bool_)):
                 self._Num(t)
             elif isinstance(value, tuple):
                 self.write("(")

@@ -261,7 +261,8 @@ class GPUTransformSDFG(transformation.Transformation):
                         # Try to move allocation/deallocation out of loops
                         dsyms = set(map(str, nodedesc.free_symbols))
                         if (self.toplevel_trans
-                                and not isinstance(nodedesc, data.Stream)
+                                and not isinstance(nodedesc, (data.Stream,
+                                                              data.View))
                                 and len(dsyms - const_syms) == 0):
                             nodedesc.lifetime = dtypes.AllocationLifetime.SDFG
                     elif nodedesc.storage not in gpu_storage:

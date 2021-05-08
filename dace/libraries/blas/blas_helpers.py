@@ -41,8 +41,7 @@ def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
     elif dtype == dtypes.complex128:
         return 'Z', 'cuDoubleComplex', 'Complex128'
     else:
-        raise TypeError('Type %s not supported in BLAS operations' %
-                        dtype.__name__)
+        raise TypeError('Type %s not supported in BLAS operations' % str(dtype))
 
 
 def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
