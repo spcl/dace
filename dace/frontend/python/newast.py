@@ -1659,7 +1659,7 @@ class ProgramVisitor(ExtNodeVisitor):
         elif isinstance(node, ast.Constant):
             return str(node.value)
         else:
-            return str(pyexpr_to_symbolic(self.defined, node))
+            return str(self.visit(node))
 
     def _parse_slice(self, node: ast.Slice):
         """Parses a range
@@ -1723,16 +1723,20 @@ class ProgramVisitor(ExtNodeVisitor):
 
             if len(node.args) == 1:  # (par)range(stop)
                 ranges = [('0', self._parse_value(node.args[0]), '1')]
-                ast_ranges = [(zero, node.args[0], one)]
+                ast_ranges = [(zero, self._visit_ast_or_value(node.args[0]),
+                               one)]
             elif len(node.args) == 2:  # (par)range(start, stop)
                 ranges = [(self._parse_value(node.args[0]),
                            self._parse_value(node.args[1]), '1')]
-                ast_ranges = [(node.args[0], node.args[1], one)]
+                ast_ranges = [(self._visit_ast_or_value(node.args[0]),
+                               self._visit_ast_or_value(node.args[1]), one)]
             elif len(node.args) == 3:  # (par)range(start, stop, step)
                 ranges = [(self._parse_value(node.args[0]),
                            self._parse_value(node.args[1]),
                            self._parse_value(node.args[2]))]
-                ast_ranges = [(node.args[0], node.args[1], node.args[2])]
+                ast_ranges = [(self._visit_ast_or_value(node.args[0]),
+                               self._visit_ast_or_value(node.args[1]),
+                               self._visit_ast_or_value(node.args[2]))]
             else:
                 raise DaceSyntaxError(
                     self, node,
@@ -4153,9 +4157,21 @@ class ProgramVisitor(ExtNodeVisitor):
                     new_name, _ = self.make_slice(new_name, new_rng)
                     return new_name
 
-        # Obtain array
+        # Obtain array/tuple
         node_parsed = self._gettype(node.value)
+
         if len(node_parsed) > 1:
+            # If the value is a tuple of constants (e.g., array.shape) and the
+            # slice is constant, return the value itself
+            nslice = self.visit(node.slice)
+            if isinstance(nslice, ast.Index):
+                v = self._parse_value(nslice.value)
+                try:
+                    value, valtype = node_parsed[int(v)]
+                    return value
+                except (TypeError, ValueError):
+                    pass  # Passthrough to exception
+
             raise DaceSyntaxError(self, node.value, 'Subscripted object cannot '
                                   'be a tuple')
         array, arrtype = node_parsed[0]
