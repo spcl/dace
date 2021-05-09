@@ -1309,7 +1309,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         constants = self.constants
         if name not in constants:
             return name
-            
+
         index = 0
         while (name + ('_%d' % index)) in constants:
             index += 1
@@ -2060,8 +2060,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 except InvalidSDFGError as err:
                     raise InvalidSDFGError(
                         "Validation failed after applying {}.".format(
-                            match_name), sdfg,
-                        match.state_id) from err
+                            match_name), sdfg, match.state_id) from err
 
         if order_by_transformation:
             applied_anything = True
@@ -2088,11 +2087,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             while applied:
                 applied = False
                 # Find and apply one of the chosen transformations
-                for match in opt.get_pattern_matches(
-                        strict=strict,
-                        patterns=xforms,
-                        states=states,
-                        options=options):
+                for match in opt.get_pattern_matches(strict=strict,
+                                                     patterns=xforms,
+                                                     states=states,
+                                                     options=options):
                     _apply_and_validate(match)
                     applied = True
                     break
@@ -2156,9 +2154,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     node.sdfg.expand_library_nodes()  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
                     impl_name = node.expand(self, state)
-                    print(
-                        "Automatically expanded library node \"{}\" with implementation \"{}\"."
-                        .format(str(node), impl_name))
+                    if Config.get_bool('debugprint'):
+                        print('Automatically expanded library node \"{}\" with '
+                              'implementation \"{}\".'.format(
+                                  str(node), impl_name))
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
                     if recursive:
