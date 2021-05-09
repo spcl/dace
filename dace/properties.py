@@ -577,7 +577,7 @@ class TransformationHistProperty(Property):
     def to_json(self, hist):
         if hist is None:
             return None
-        return [elem.to_json() for elem in hist]
+        return [elem.to_json() if elem is not None else None for elem in hist]
 
     def from_json(self, data, sdfg=None):
         if data is None:

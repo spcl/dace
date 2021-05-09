@@ -382,8 +382,11 @@ class Transformation(TransformationBase):
     @staticmethod
     def from_json(json_obj: Dict[str, Any],
                   context: Dict[str, Any] = None) -> 'Transformation':
-        xform = next(ext for ext in Transformation.extensions().keys()
-                     if ext.__name__ == json_obj['transformation'])
+        try:
+            xform = next(ext for ext in Transformation.extensions().keys()
+                         if ext.__name__ == json_obj['transformation'])
+        except StopIteration:
+            return None
 
         # Recreate subgraph
         expr = xform.expressions()[json_obj['expr_index']]
@@ -704,8 +707,11 @@ class SubgraphTransformation(TransformationBase):
     @staticmethod
     def from_json(json_obj: Dict[str, Any],
                   context: Dict[str, Any] = None) -> 'SubgraphTransformation':
-        xform = next(ext for ext in SubgraphTransformation.extensions().keys()
-                     if ext.__name__ == json_obj['transformation'])
+        try:
+            xform = next(ext for ext in SubgraphTransformation.extensions().keys()
+                         if ext.__name__ == json_obj['transformation'])
+        except StopIteration:
+            return None
 
         # Reconstruct transformation
         ret = xform(json_obj['subgraph'], json_obj['sdfg_id'],
