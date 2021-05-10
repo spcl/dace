@@ -7,7 +7,7 @@ import errno
 import itertools
 import os
 import pickle, json
-from hashlib import sha256
+from hashlib import md5, sha256
 from pydoc import locate
 import random
 import re
@@ -33,9 +33,10 @@ from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import validate_name
-from dace.properties import (make_properties, Property, CodeProperty,
-                             TransformationHistProperty, SDFGReferenceProperty,
-                             DictProperty, OrderedDictProperty, CodeBlock)
+from dace.properties import (ListProperty, make_properties, Property,
+                             CodeProperty, TransformationHistProperty,
+                             SDFGReferenceProperty, DictProperty,
+                             OrderedDictProperty, CodeBlock)
 
 
 def _arrays_to_json(arrays):
@@ -225,7 +226,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         the `Memlet` class documentation.
     """
 
-    arg_types = OrderedDictProperty(default={}, desc="Formal parameter list")
+    arg_names = ListProperty(
+        element_type=str,
+        desc='Ordered argument names (used for calling conventions).')
     constants_prop = Property(dtype=dict,
                               default={},
                               desc="Compile-time constants")
@@ -255,7 +258,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def __init__(self,
                  name: str,
-                 arg_types: Dict[str, dt.Data] = None,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
                  propagate: bool = True,
                  parent=None):
@@ -275,7 +277,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if name is not None and not validate_name(name):
             raise InvalidSDFGError('Invalid SDFG name "%s"' % name, self, None)
 
-        self.arg_types = arg_types or collections.OrderedDict()
         self.constants_prop = {}
         if constants is not None:
             for cstname, (cst_dtype, cstval) in constants.items():
@@ -341,8 +342,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         edges = json_obj['edges']
 
         ret = SDFG(name=attrs['name'],
-                   arg_types=dace.serialize.loads(
-                       dace.serialize.dumps(attrs['arg_types'])),
                    constants=dace.serialize.loads(
                        dace.serialize.dumps(attrs['constants_prop'])),
                    parent=context_info['sdfg'])
@@ -684,10 +683,27 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """ Returns a relative path to the build cache folder for this SDFG. """
         if hasattr(self, '_build_folder'):
             return self._build_folder
-        elif Config.get_bool('testing', 'single_cache'):
-            return os.path.join('.dacecache', 'test')
-        else:
+        cache_config = Config.get('cache')
+        if cache_config == 'single':
+            # Always use the same directory, overwriting any other program,
+            # preventing parallelism and caching of multiple programs, but
+            # saving space and potentially build time
+            return os.path.join('.dacecache', 'single_cache')
+        elif cache_config == 'hash':
+            # Any change to the SDFG will result in a new cache folder
+            md5_hash = md5(str(self.to_json()).encode('utf-8')).hexdigest()
+            return os.path.join('.dacecache', f'{self.name}_{md5_hash}')
+        elif cache_config == 'unique':
+            # Base name on location in memory, so no caching is possible between
+            # processes or subsequent invokations
+            md5_hash = md5(str(os.getpid()).encode('utf-8')).hexdigest()
+            return os.path.join('.dacecache', f'{self.name}_{md5_hash}')
+        elif cache_config == 'name':
+            # Overwrites previous invocations, and can clash with other programs
+            # if executed in parallel in the same working directory
             return os.path.join('.dacecache', self.name)
+        else:
+            raise ValueError(f'Unknown cache configuration: {cache_config}')
 
     @build_folder.setter
     def build_folder(self, newfolder: str):
@@ -704,7 +720,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if validate:
             for state in self.nodes():
                 for node in state.nodes():
-                    if isinstance(node, nd.AccessNode) and nd.data == name:
+                    if isinstance(node, nd.AccessNode) and node.data == name:
                         raise ValueError("Data descriptor %s is already used"
                                          "in node %s, state %s" %
                                          (name, node, state))
@@ -932,9 +948,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Start with the set of SDFG free symbols
         free_syms |= set(self.symbols.keys())
 
-        # Add free data symbols and exclude data descriptor names
+        # Exclude data descriptor names
         for name, desc in self.arrays.items():
-            free_syms |= set(map(str, desc.free_symbols))
             defined_syms.add(name)
 
         # Add free state symbols
@@ -1107,7 +1122,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return result
 
-    def shared_transients(self):
+    def shared_transients(self) -> List[str]:
         """ Returns a list of transient data that appears in more than one
             state. """
         seen = {}
@@ -1303,7 +1318,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return name + ('_%d' % index)
 
     def find_new_constant(self, name: str):
-        """ 
+        """
         Tries to find a new constant name by adding an underscore and a number.
         """
         constants = self.constants
@@ -1694,6 +1709,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
         return sdfg
 
+    def is_loaded(self) -> bool:
+        """
+        Returns True if the SDFG binary is already loaded in the current
+        process.
+        """
+        # Avoid import loops
+        from dace.codegen import compiled_sdfg as cs, compiler
+
+        binary_filename = compiler.get_binary_name(self.build_folder, self.name)
+        dll = cs.ReloadableDLL(binary_filename, self.name)
+        return dll.is_loaded()
+
     def compile(self, output_file=None) -> \
             'dace.codegen.compiler.CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
@@ -1717,6 +1744,15 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Clone SDFG as the other modules may modify its contents
         sdfg = copy.deepcopy(self)
+
+        # Rename SDFG to avoid runtime issues with clashing names
+        index = 0
+        while sdfg.is_loaded():
+            sdfg._name = f'{self._name}_{index}'
+            index += 1
+        if self.name != sdfg.name:
+            warnings.warn('SDFG "%s" is already loaded by another object, '
+                          'recompiling under a different name.' % self.name)
 
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
@@ -2132,6 +2168,25 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         from dace.transformation.interstate import GPUTransformSDFG
 
         self.apply_transformations(GPUTransformSDFG,
+                                   validate=validate,
+                                   validate_all=validate_all,
+                                   strict=strict,
+                                   states=states)
+
+    def apply_fpga_transformations(self,
+                                   states=None,
+                                   validate=True,
+                                   validate_all=False,
+                                   strict=True):
+        """ Applies a series of transformations on the SDFG for it to
+            generate FPGA code.
+
+            :note: This is an in-place operation on the SDFG.
+        """
+        # Avoiding import loops
+        from dace.transformation.interstate import FPGATransformSDFG
+
+        self.apply_transformations(FPGATransformSDFG,
                                    validate=validate,
                                    validate_all=validate_all,
                                    strict=strict,

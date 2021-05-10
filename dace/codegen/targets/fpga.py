@@ -12,11 +12,10 @@ from typing import Dict
 
 import dace
 from dace.codegen.targets import cpp
-from dace import subsets, data as dt
-from dace.dtypes import deduplicate
+from dace import subsets, data as dt, dtypes
 from dace.config import Config
 from dace.frontend import operations
-from dace.sdfg import nodes, SDFG
+from dace.sdfg import SDFG, nodes, utils, dynamic_map_inputs
 from dace.sdfg import ScopeSubgraphView, find_input_arraynode, find_output_arraynode
 from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
@@ -29,19 +28,13 @@ from dace.properties import Property, make_properties, indirect_properties
 from dace.symbolic import evaluate
 
 _CPU_STORAGE_TYPES = {
-    dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.CPU_ThreadLocal,
-    dace.dtypes.StorageType.CPU_Pinned
+    dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal,
+    dtypes.StorageType.CPU_Pinned
 }
 _FPGA_STORAGE_TYPES = {
-    dace.dtypes.StorageType.FPGA_Global, dace.dtypes.StorageType.FPGA_Local,
-    dace.dtypes.StorageType.FPGA_Registers,
-    dace.dtypes.StorageType.FPGA_ShiftRegister
+    dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+    dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister
 }
-
-
-class MemoryType(enum.Enum):
-    DDR = enum.auto()
-    HBM = enum.auto()
 
 
 def vector_element_type_of(dtype):
@@ -51,6 +44,27 @@ def vector_element_type_of(dtype):
     elif isinstance(dtype, dace.vector):
         return dtype.base_type
     return dtype
+
+
+def is_fpga_kernel(sdfg, state):
+    """
+    Returns whether the given state is an FPGA kernel and should be dispatched
+    to the FPGA code generator.
+    :return: True if this is an FPGA kernel, False otherwise.
+    """
+    if ("is_FPGA_kernel" in state.location
+            and state.location["is_FPGA_kernel"] == False):
+        return False
+    data_nodes = state.data_nodes()
+    if len(data_nodes) == 0:
+        return False
+    for n in data_nodes:
+        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global,
+                                        dtypes.StorageType.FPGA_Local,
+                                        dtypes.StorageType.FPGA_Registers,
+                                        dtypes.StorageType.FPGA_ShiftRegister):
+            return False
+    return True
 
 
 class FPGACodeGen(TargetCodeGenerator):
@@ -84,56 +98,52 @@ class FPGACodeGen(TargetCodeGenerator):
         # any other kind of generated file if any (name, code object)
         self._other_codes = {}
         self._bank_assignments = {}  # {(data name, sdfg): (type, id)}
+        self._stream_connections = {}  # { name: [src, dst] }
 
         # Register additional FPGA dispatchers
         self._dispatcher.register_map_dispatcher(
-            [dace.dtypes.ScheduleType.FPGA_Device], self)
+            [dtypes.ScheduleType.FPGA_Device], self)
 
         self._dispatcher.register_state_dispatcher(
             self,
-            predicate=lambda sdfg, state: len(state.data_nodes()) > 0 and
-            ("is_FPGA_kernel" not in state.location or state.
-             location["is_FPGA_kernel"] is True) and all([
-                 n.desc(sdfg).storage in [
-                     dace.dtypes.StorageType.FPGA_Global, dace.dtypes.
-                     StorageType.FPGA_Local, dace.dtypes.StorageType.
-                     FPGA_Registers, dace.dtypes.StorageType.FPGA_ShiftRegister
-                 ] for n in state.data_nodes()
-             ]))
+            predicate=is_fpga_kernel)
 
         self._dispatcher.register_node_dispatcher(
-            self, predicate=lambda *_: self._in_device_code)
+            self,
+            predicate=lambda sdfg, state, node: self._in_device_code and not (
+                isinstance(node, nodes.Tasklet) and node.language == dtypes.
+                Language.SystemVerilog))
 
         fpga_storage = [
-            dace.dtypes.StorageType.FPGA_Global,
-            dace.dtypes.StorageType.FPGA_Local,
-            dace.dtypes.StorageType.FPGA_Registers,
-            dace.dtypes.StorageType.FPGA_ShiftRegister,
+            dtypes.StorageType.FPGA_Global,
+            dtypes.StorageType.FPGA_Local,
+            dtypes.StorageType.FPGA_Registers,
+            dtypes.StorageType.FPGA_ShiftRegister,
         ]
         self._dispatcher.register_array_dispatcher(fpga_storage, self)
 
         # Register permitted copies
         for storage_from in itertools.chain(fpga_storage,
-                                            [dace.dtypes.StorageType.Register]):
-            for storage_to in itertools.chain(
-                    fpga_storage, [dace.dtypes.StorageType.Register]):
-                if (storage_from == dace.dtypes.StorageType.Register
-                        and storage_to == dace.dtypes.StorageType.Register):
+                                            [dtypes.StorageType.Register]):
+            for storage_to in itertools.chain(fpga_storage,
+                                              [dtypes.StorageType.Register]):
+                if (storage_from == dtypes.StorageType.Register
+                        and storage_to == dtypes.StorageType.Register):
                     continue
                 self._dispatcher.register_copy_dispatcher(
                     storage_from, storage_to, None, self)
         self._dispatcher.register_copy_dispatcher(
-            dace.dtypes.StorageType.FPGA_Global,
-            dace.dtypes.StorageType.CPU_Heap, None, self)
+            dtypes.StorageType.FPGA_Global, dtypes.StorageType.CPU_Heap, None,
+            self)
         self._dispatcher.register_copy_dispatcher(
-            dace.dtypes.StorageType.FPGA_Global,
-            dace.dtypes.StorageType.CPU_ThreadLocal, None, self)
+            dtypes.StorageType.FPGA_Global, dtypes.StorageType.CPU_ThreadLocal,
+            None, self)
         self._dispatcher.register_copy_dispatcher(
-            dace.dtypes.StorageType.CPU_Heap,
-            dace.dtypes.StorageType.FPGA_Global, None, self)
+            dtypes.StorageType.CPU_Heap, dtypes.StorageType.FPGA_Global, None,
+            self)
         self._dispatcher.register_copy_dispatcher(
-            dace.dtypes.StorageType.CPU_ThreadLocal,
-            dace.dtypes.StorageType.FPGA_Global, None, self)
+            dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.FPGA_Global,
+            None, self)
 
         # Memory width converters (gearboxing) to generate globally
         self.converters_to_generate = set()
@@ -163,6 +173,7 @@ class FPGACodeGen(TargetCodeGenerator):
         shared_transients = set(sdfg.shared_transients())
 
         if not self._in_device_code:
+
             # Allocate global memory transients, unless they are shared with
             # other states
             all_transients = set(state.all_transients())
@@ -171,13 +182,14 @@ class FPGACodeGen(TargetCodeGenerator):
                 data = node.desc(sdfg)
                 if node.data not in all_transients or node.data in allocated:
                     continue
-                if data.storage != dace.dtypes.StorageType.FPGA_Global or isinstance(
-                        data, dace.data.View):
-                    continue
-                allocated.add(node.data)
-                self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                                   function_stream,
-                                                   callsite_stream)
+                if (data.storage == dtypes.StorageType.FPGA_Global
+                        # and isinstance(data, dt.Array)
+                        and not isinstance(data, dt.View)):
+                    allocated.add(node.data)
+                    self._dispatcher.dispatch_allocate(sdfg, state, state_id,
+                                                       node, function_stream,
+                                                       callsite_stream)
+
             # Create a unique kernel name to avoid name clashes
             # If this kernels comes from a Nested SDFG, use that name also
             if sdfg.parent_nsdfg_node is not None:
@@ -185,9 +197,27 @@ class FPGACodeGen(TargetCodeGenerator):
                                                 state.label, sdfg.sdfg_id)
             else:
                 kernel_name = "{}_{}".format(state.label, sdfg.sdfg_id)
+            # Vitis HLS removes double underscores, which leads to a compilation
+            # error down the road due to kernel name mismatch. Remove them here
+            # to prevent this
+            while True:
+                _kernel_name = kernel_name.replace("__", "_")
+                if kernel_name == _kernel_name:
+                    break
+                else:
+                    kernel_name = _kernel_name
+
             # Generate kernel code
             self.generate_kernel(sdfg, state, kernel_name, subgraphs,
                                  function_stream, callsite_stream)
+            # Emit the connections ini file
+            if len(self._stream_connections) > 0:
+                ini_stream = CodeIOStream()
+                ini_stream.write('[connectivity]')
+                for _, (src, dst) in self._stream_connections.items():
+                    ini_stream.write('stream_connect={}:{}'.format(src, dst))
+                self._other_codes['link.ini'] = ini_stream
+
         else:  # self._in_device_code == True
 
             to_allocate = dace.sdfg.local_transients(sdfg, state, None)
@@ -198,8 +228,8 @@ class FPGACodeGen(TargetCodeGenerator):
                     continue
                 # Make sure there are no global transients in the nested state
                 # that are thus not gonna be allocated
-                if data.storage == dace.dtypes.StorageType.FPGA_Global and not isinstance(
-                        data, dace.data.View):
+                if data.storage == dtypes.StorageType.FPGA_Global and not isinstance(
+                        data, dt.View):
                     raise cgx.CodegenError(
                         "Cannot allocate global memory from device code.")
                 allocated.add(node.data)
@@ -207,6 +237,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                    function_stream,
                                                    callsite_stream)
+
             self.generate_nested_state(sdfg, state, state.label, subgraphs,
                                        function_stream, callsite_stream)
 
@@ -227,33 +258,60 @@ class FPGACodeGen(TargetCodeGenerator):
                             seen[node.data] = sg
         return shared
 
-    @classmethod
-    def make_parameters(cls, sdfg, state, subgraphs):
-        """Determines the parameters that must be passed to the passed list of
-           subgraphs, as well as to the global kernel."""
+    def make_parameters(self, sdfg, state, subgraphs):
+        """
+        Determines the parameters that must be passed to the passed list of
+        subgraphs, as well as to the global kernel.
+        :return: A tuple with the following six entries:
+                 - Data container parameters that should be passed from the
+                   host to the FPGA kernel.
+                 - Data containers that are local to the kernel, but must be
+                   allocated by the host prior to invoking the kernel.
+                 - A dictionary mapping from each processing element subgraph
+                   to which parameters it needs (from the total list of
+                   parameters).
+                 - Parameters that must be passed to the kernel from the host,
+                   but that do not exist before the CPU calls the kernel
+                   wrapper.
+                 - A dictionary of which memory interfaces should be assigned to
+                   which memory banks.
+                 - External streams that connect different FPGA kernels, and
+                   must be defined during the compilation flow.
+        """
 
         # Get a set of data nodes that are shared across subgraphs
-        shared_data = cls.shared_data(subgraphs)
+        shared_data = self.shared_data(subgraphs)
+        # Transients that are accessed in other states in this SDFG
+        used_outside = sdfg.shared_transients()
 
-        # Find scalar parameters (to filter out from data parameters)
-        scalar_parameters = [(k, v) for k, v in sdfg.arrays.items()
-                             if isinstance(v, dt.Scalar) and not v.transient]
-        scalar_set = set(p[0] for p in scalar_parameters)
+        # Build a dictionary of arrays to arbitrary data nodes referring to
+        # them, needed to trace memory bank assignments and to pass to the array
+        # allocator
+        data_to_node: Dict[str: dace.nodes.Node] = {}
 
-        # For some reason the array allocation dispatcher takes nodes, not
-        # arrays. Build a dictionary of arrays to arbitrary data nodes
-        # referring to them.
-        data_to_node = {}
-
-        global_data_parameters = []
-        global_data_names = set()
+        global_data_parameters = set()
         # Count appearances of each global array to create multiple interfaces
         global_interfaces: Dict[str, int] = collections.defaultdict(int)
 
-        top_level_local_data = []
+        top_level_local_data = set()
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
-        nested_global_transients = []
-        nested_global_transients_seen = set()
+        nested_global_transients = set()
+        # [(Is an output, dataname string, data object, interface)]
+        external_streams: Set[tuple[bool, str, dt, dict[str, int]]] = set()
+
+        # Mapping from global arrays to memory interfaces
+        bank_assignments: Dict[str, str] = {}
+
+        # Mapping from symbol to a unique parameter tuple
+        all_symbols = {
+            k: (False, k, dt.Scalar(v), None)
+            for k, v in sdfg.symbols.items() if k not in sdfg.constants
+        }
+        # Symbols that will be passed as parameters to the top-level kernel
+        global_symbols = set()
+
+        # Sorting by name, then by input/output, then by interface id
+        sort_func = lambda t: f"{t[1]}{t[0]}{t[3]}"
 
         for subgraph in subgraphs:
             data_to_node.update({
@@ -265,11 +323,47 @@ class FPGACodeGen(TargetCodeGenerator):
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
             for n in subgraph.source_nodes():
-                candidates += [(False, e.data.data, subsdfg.arrays[e.data.data])
-                               for e in state.in_edges(n)]
+                # Check if the node is connected to an RTL tasklet, in which
+                # case it should be an external stream
+                dsts = [e.dst for e in state.out_edges(n)]
+                srcs = [e.src for e in state.in_edges(n)]
+                tasks = [
+                    t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)
+                ]
+                external = any([
+                    t.language == dtypes.Language.SystemVerilog for t in tasks
+                ])
+                if external:
+                    external_streams |= {
+                        (True, e.data.data, subsdfg.arrays[e.data.data], None)
+                        for e in state.out_edges(n)
+                        if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
+                    }
+                else:
+                    candidates += [(False, e.data.data,
+                                    subsdfg.arrays[e.data.data])
+                                   for e in state.in_edges(n)]
             for n in subgraph.sink_nodes():
-                candidates += [(True, e.data.data, subsdfg.arrays[e.data.data])
-                               for e in state.out_edges(n)]
+                # Check if the node is connected to an RTL tasklet, in which
+                # case it should be an external stream
+                dsts = [e.dst for e in state.out_edges(n)]
+                srcs = [e.src for e in state.in_edges(n)]
+                tasks = [
+                    t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)
+                ]
+                external = any([
+                    t.language == dtypes.Language.SystemVerilog for t in tasks
+                ])
+                if external:
+                    external_streams |= {
+                        (False, e.data.data, subsdfg.arrays[e.data.data], None)
+                        for e in state.in_edges(n)
+                        if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
+                    }
+                else:
+                    candidates += [(True, e.data.data,
+                                    subsdfg.arrays[e.data.data])
+                                   for e in state.out_edges(n)]
             # Find other data nodes that are used internally
             for n, scope in subgraph.all_nodes_recursive():
                 if isinstance(n, dace.sdfg.nodes.AccessNode):
@@ -284,76 +378,111 @@ class FPGACodeGen(TargetCodeGenerator):
                         if scope.in_degree(n) > 0:
                             candidates.append((True, n.data, n.desc(scope)))
                         if scope != subgraph:
-                            if (isinstance(n.desc(scope), dace.data.Array)
+                            if (isinstance(n.desc(scope), dt.Array)
                                     and n.desc(scope).storage
-                                    == dace.dtypes.StorageType.FPGA_Global and
-                                    n.data not in nested_global_transients_seen
-                                    and not isinstance(n.desc(scope),
-                                                       dace.data.View)):
-                                nested_global_transients.append(n)
-                            nested_global_transients_seen.add(n.data)
-            subgraph_parameters[subgraph] = []
+                                    == dtypes.StorageType.FPGA_Global
+                                    and not isinstance(n.desc(scope), dt.View)):
+                                nested_global_transients.add(n)
+            subgraph_parameters[subgraph] = set()
             # For each subgraph, keep a listing of array to current interface ID
             data_to_interface: Dict[str, int] = {}
 
             # Differentiate global and local arrays. The former are allocated
             # from the host and passed to the device code, while the latter are
             # (statically) allocated on the device side.
-            for is_output, dataname, data in candidates:
-                if dataname in scalar_set:
-                    continue  # Skip already-parsed scalars
-                if (isinstance(data, dace.data.Array)
-                        or isinstance(data, dace.data.Scalar)
-                        or isinstance(data, dace.data.Stream)):
-                    if data.storage == dace.dtypes.StorageType.FPGA_Global:
-                        if dataname in data_to_interface:
-                            interface_id = data_to_interface[dataname]
-                        else:
-                            # Get and update global memory interface ID
-                            interface_id = global_interfaces[dataname]
-                            global_interfaces[dataname] += 1
-                            data_to_interface[dataname] = interface_id
-                        if not isinstance(data, dace.data.View):
-                            subgraph_parameters[subgraph].append(
-                                (is_output, dataname, data, interface_id))
-                            global_data_parameters.append(
-                                (is_output, dataname, data, interface_id))
-                            global_data_names.add(dataname)
-                    elif (data.storage
-                          in (dace.dtypes.StorageType.FPGA_Local,
-                              dace.dtypes.StorageType.FPGA_Registers,
-                              dace.dtypes.StorageType.FPGA_ShiftRegister)):
-                        if dataname in shared_data:
-                            # Only transients shared across multiple components
-                            # need to be allocated outside and passed as
-                            # parameters
-                            subgraph_parameters[subgraph].append(
-                                (is_output, dataname, data, None))
-                            # Resolve the data to some corresponding node to be
-                            # passed to the allocator
-                            top_level_local_data.append(dataname)
+            for is_output, dataname, desc in candidates:
+                # Ignore views, as these never need to be explicitly passed
+                if isinstance(desc, dt.View):
+                    continue
+                # Only distinguish between inputs and outputs for arrays
+                if not isinstance(desc, dt.Array):
+                    is_output = None
+                # If this is a global array, assign the correct interface ID and
+                # memory interface (e.g., DDR or HBM bank)
+                if (isinstance(desc, dt.Array)
+                        and desc.storage == dtypes.StorageType.FPGA_Global):
+                    if dataname in data_to_interface:
+                        interface_id = data_to_interface[dataname]
                     else:
-                        raise ValueError("Unsupported storage type for "
-                                         f"{dataname}: {data.storage}")
+                        # Get and update global memory interface ID
+                        interface_id = global_interfaces[dataname]
+                        global_interfaces[dataname] += 1
+                        data_to_interface[dataname] = interface_id
+                    # Collect the memory bank specification, if present, by
+                    # traversing outwards to where the data container is
+                    # actually allocated
+                    inner_node = data_to_node[dataname]
+                    trace = utils.trace_nested_access(inner_node, subgraph,
+                                                      sdfg)
+                    bank = None
+                    for (trace_in, trace_out), _, _, trace_sdfg in trace:
+                        trace_node = trace_in or trace_out
+                        trace_name = trace_node.data
+                        trace_desc = trace_node.desc(trace_sdfg)
+                        if "bank" in trace_desc.location:
+                            trace_bank = trace_desc.location["bank"]
+                            if (bank is not None
+                                    and bank != trace_bank):
+                                raise cgx.CodegenError(
+                                    "Found inconsistent memory bank "
+                                    f"specifier for {trace_name}.")
+                            bank = trace_bank
+                    # Make sure the array has been allocated on this bank in the
+                    # outermost scope
+                    if bank is not None:
+                        outer_node = trace[0][0][0] or trace[0][0][1]
+                        outer_desc = outer_node.desc(trace[0][2])
+                        if ("bank" not in outer_desc.location
+                                or str(outer_desc.location["bank"]) !=
+                                str(bank)):
+                            raise cgx.CodegenError(
+                                "Memory bank allocation must be present on "
+                                f"outermost data descriptor {outer_node.data} "
+                                "to be allocated correctly.")
+                    bank_assignments[dataname] = bank
                 else:
-                    raise TypeError("Unsupported data type: {}".format(
-                        type(data).__name__))
-            subgraph_parameters[subgraph] = dace.dtypes.deduplicate(
-                subgraph_parameters[subgraph])
+                    interface_id = None
+                if (not desc.transient
+                        or desc.storage == dtypes.StorageType.FPGA_Global
+                        or dataname in used_outside):
+                    # Add the data as a parameter to this PE
+                    subgraph_parameters[subgraph].add(
+                        (is_output, dataname, desc, interface_id))
+                    # Global data is passed from outside the kernel
+                    global_data_parameters.add(
+                        (is_output, dataname, desc, interface_id))
+                elif dataname in shared_data:
+                    # Add the data as a parameter to this PE
+                    subgraph_parameters[subgraph].add(
+                        (is_output, dataname, desc, interface_id))
+                    # Must be allocated outside PEs and passed to them
+                    top_level_local_data.add(dataname)
+            # Order by name
+            subgraph_parameters[subgraph] = list(
+                sorted(subgraph_parameters[subgraph], key=sort_func))
+            # Append symbols used in this subgraph
+            for k in sorted(subgraph.free_symbols):
+                if k not in sdfg.constants:
+                    param = all_symbols[k]
+                    subgraph_parameters[subgraph].append(param)
+                    global_symbols.add(param)
 
-        # Deduplicate
-        global_data_parameters = dace.dtypes.deduplicate(global_data_parameters)
-        top_level_local_data = dace.dtypes.deduplicate(top_level_local_data)
-        top_level_local_data = [data_to_node[n] for n in top_level_local_data]
+        # Order by name
+        global_data_parameters = list(
+            sorted(global_data_parameters, key=sort_func))
+        global_data_parameters += sorted(global_symbols, key=sort_func)
+        external_streams = list(sorted(external_streams, key=sort_func))
+        nested_global_transients = list(sorted(nested_global_transients))
 
-        symbol_parameters = {
-            k: dt.Scalar(v)
-            for k, v in sdfg.symbols.items() if k not in sdfg.constants
-        }
+        stream_names = {sname for _, sname, _, _ in external_streams}
+        top_level_local_data = [
+            data_to_node[name] for name in sorted(top_level_local_data)
+            if name not in stream_names
+        ]
 
         return (global_data_parameters, top_level_local_data,
-                subgraph_parameters, scalar_parameters, symbol_parameters,
-                nested_global_transients)
+                subgraph_parameters, nested_global_transients, bank_assignments,
+                external_streams)
 
     def generate_nested_state(self, sdfg, state, nest_name, subgraphs,
                               function_stream, callsite_stream):
@@ -399,7 +528,7 @@ class FPGACodeGen(TargetCodeGenerator):
         is_dynamically_sized = dace.symbolic.issymbolic(arrsize, sdfg.constants)
         dataname = node.data
 
-        if not isinstance(nodedesc, dace.data.Stream):
+        if not isinstance(nodedesc, dt.Stream):
             # Unless this is a Stream, if the variable has been already defined we can return
             # For Streams, we still allocate them to keep track of their names across
             # nested SDFGs (needed by Intel FPGA backend for channel mangling)
@@ -411,11 +540,11 @@ class FPGACodeGen(TargetCodeGenerator):
 
         allocname = cpp.ptr(dataname, nodedesc)
 
-        if isinstance(nodedesc, dace.data.View):
+        if isinstance(nodedesc, dt.View):
             return self.allocate_view(sdfg, dfg, state_id, node,
                                       function_stream, declaration_stream,
                                       allocation_stream)
-        elif isinstance(nodedesc, dace.data.Stream):
+        elif isinstance(nodedesc, dt.Stream):
 
             if not self._in_device_code:
                 raise cgx.CodegenError(
@@ -449,9 +578,9 @@ class FPGACodeGen(TargetCodeGenerator):
             else:
                 self._dispatcher.defined_vars.add(dataname, def_type, ctype)
 
-        elif isinstance(nodedesc, dace.data.Array):
+        elif isinstance(nodedesc, dt.Array):
 
-            if nodedesc.storage == dace.dtypes.StorageType.FPGA_Global:
+            if nodedesc.storage == dtypes.StorageType.FPGA_Global:
 
                 if self._in_device_code:
 
@@ -461,7 +590,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                                node.label, sdfg.name))
 
                 else:
-                    if isinstance(nodedesc, dace.data.Array):
+                    if isinstance(nodedesc, dt.Array):
 
                         # TODO: Distinguish between read, write, and read+write
                         self._allocated_global_arrays.add(node.data)
@@ -475,14 +604,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                     "must be an integer: {}".format(
                                         nodedesc.location["bank"]))
                             memory_bank_arg = (
-                                "hlslib::ocl::MemoryBank::bank{}, ".format(bank)
-                            )
-                            # (memory type, bank id)
-                            self._bank_assignments[(dataname,
-                                                    sdfg)] = (MemoryType.DDR,
-                                                              bank)
-                        else:
-                            self._bank_assignments[(dataname, sdfg)] = None
+                                f"hlslib::ocl::MemoryBank::bank{bank}, ")
 
                         # Define buffer, using proper type
                         result_decl.write(
@@ -498,10 +620,9 @@ class FPGACodeGen(TargetCodeGenerator):
                             dataname, DefinedType.Pointer,
                             'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
                             .format(nodedesc.dtype.ctype))
-            elif (nodedesc.storage
-                  in (dace.dtypes.StorageType.FPGA_Local,
-                      dace.dtypes.StorageType.FPGA_Registers,
-                      dace.dtypes.StorageType.FPGA_ShiftRegister)):
+            elif (nodedesc.storage in (dtypes.StorageType.FPGA_Local,
+                                       dtypes.StorageType.FPGA_Registers,
+                                       dtypes.StorageType.FPGA_ShiftRegister)):
 
                 if not self._in_device_code:
                     raise cgx.CodegenError(
@@ -525,7 +646,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 else:
                     # Language-specific
                     if (nodedesc.storage ==
-                            dace.dtypes.StorageType.FPGA_ShiftRegister):
+                            dtypes.StorageType.FPGA_ShiftRegister):
                         self.define_shift_register(dataname, nodedesc, arrsize,
                                                    function_stream, result_decl,
                                                    sdfg, state_id, node)
@@ -538,7 +659,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 raise NotImplementedError("Unimplemented storage type " +
                                           str(nodedesc.storage))
 
-        elif isinstance(nodedesc, dace.data.Scalar):
+        elif isinstance(nodedesc, dt.Scalar):
 
             result_decl.write("{} {};\n".format(nodedesc.dtype.ctype, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Scalar,
@@ -576,14 +697,14 @@ class FPGACodeGen(TargetCodeGenerator):
         data_to_data = (isinstance(src_node, dace.sdfg.nodes.AccessNode)
                         and isinstance(dst_node, dace.sdfg.nodes.AccessNode))
 
-        host_to_device = (data_to_data and src_storage in _CPU_STORAGE_TYPES and
-                          dst_storage == dace.dtypes.StorageType.FPGA_Global)
+        host_to_device = (data_to_data and src_storage in _CPU_STORAGE_TYPES
+                          and dst_storage == dtypes.StorageType.FPGA_Global)
         device_to_host = (data_to_data
-                          and src_storage == dace.dtypes.StorageType.FPGA_Global
+                          and src_storage == dtypes.StorageType.FPGA_Global
                           and dst_storage in _CPU_STORAGE_TYPES)
-        device_to_device = (
-            data_to_data and src_storage == dace.dtypes.StorageType.FPGA_Global
-            and dst_storage == dace.dtypes.StorageType.FPGA_Global)
+        device_to_device = (data_to_data
+                            and src_storage == dtypes.StorageType.FPGA_Global
+                            and dst_storage == dtypes.StorageType.FPGA_Global)
 
         if (host_to_device or device_to_host) and self._in_device_code:
             raise RuntimeError(
@@ -676,15 +797,15 @@ class FPGACodeGen(TargetCodeGenerator):
                     [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA
-        elif (data_to_data and
-              (((src_storage in (dace.dtypes.StorageType.FPGA_Local,
-                                 dace.dtypes.StorageType.FPGA_Registers,
-                                 dace.dtypes.StorageType.FPGA_ShiftRegister))
-                and dst_storage not in _FPGA_STORAGE_TYPES) or
-               ((dst_storage in (dace.dtypes.StorageType.FPGA_Local,
-                                 dace.dtypes.StorageType.FPGA_Registers,
-                                 dace.dtypes.StorageType.FPGA_ShiftRegister))
-                and src_storage not in _FPGA_STORAGE_TYPES))):
+        elif (data_to_data
+              and (((src_storage in (dtypes.StorageType.FPGA_Local,
+                                     dtypes.StorageType.FPGA_Registers,
+                                     dtypes.StorageType.FPGA_ShiftRegister))
+                    and dst_storage not in _FPGA_STORAGE_TYPES) or
+                   ((dst_storage in (dtypes.StorageType.FPGA_Local,
+                                     dtypes.StorageType.FPGA_Registers,
+                                     dtypes.StorageType.FPGA_ShiftRegister))
+                    and src_storage not in _FPGA_STORAGE_TYPES))):
             raise NotImplementedError(
                 "Copies between host memory and FPGA "
                 "local memory not supported: from {} to {}".format(
@@ -695,7 +816,7 @@ class FPGACodeGen(TargetCodeGenerator):
             if memlet.wcr is not None:
                 raise NotImplementedError("WCR not implemented for copy edges")
 
-            if src_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
+            if src_storage == dtypes.StorageType.FPGA_ShiftRegister:
                 raise NotImplementedError(
                     "Reads from shift registers only supported from tasklets.")
 
@@ -711,7 +832,7 @@ class FPGACodeGen(TargetCodeGenerator):
             dtype = src_node.desc(sdfg).dtype
             ctype = dtype.ctype
 
-            if dst_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
+            if dst_storage == dtypes.StorageType.FPGA_ShiftRegister:
                 if len(copy_shape) != 1:
                     raise ValueError(
                         "Only single-dimensional writes "
@@ -752,9 +873,9 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # TODO: detect in which cases we shouldn't unroll
             register_to_register = (src_node.desc(sdfg).storage
-                                    == dace.dtypes.StorageType.FPGA_Registers
+                                    == dtypes.StorageType.FPGA_Registers
                                     or dst_node.desc(sdfg).storage
-                                    == dace.dtypes.StorageType.FPGA_Registers)
+                                    == dtypes.StorageType.FPGA_Registers)
 
             num_loops = len([dim for dim in copy_shape if dim != 1])
             if num_loops > 0:
@@ -767,9 +888,9 @@ class FPGACodeGen(TargetCodeGenerator):
                     self.generate_flatten_loop_pre(callsite_stream, sdfg,
                                                    state_id, dst_node)
                 for node in [src_node, dst_node]:
-                    if (isinstance(node.desc(sdfg), dace.data.Array)
+                    if (isinstance(node.desc(sdfg), dt.Array)
                             and node.desc(sdfg).storage in [
-                                dace.dtypes.StorageType.FPGA_Local,
+                                dtypes.StorageType.FPGA_Local,
                                 dace.StorageType.FPGA_Registers
                             ]):
                         # Language-specific
@@ -784,11 +905,25 @@ class FPGACodeGen(TargetCodeGenerator):
                         # Language-specific
                         self.generate_unroll_loop_pre(callsite_stream, None,
                                                       sdfg, state_id, dst_node)
+                    # If we are copying from a container to itself, and the memlet subsets do not intersect,
+                    # then we can safely ignore loop carried dependencies
+
+                    ignore_dependencies = src_node.data == dst_node.data and not dace.subsets.intersects(
+                        memlet.src_subset, memlet.dst_subset)
+                    if ignore_dependencies:
+                        self.generate_no_dependence_pre(callsite_stream, sdfg,
+                                                        state_id, dst_node)
                     callsite_stream.write(
                         "for (int __dace_copy{} = 0; __dace_copy{} < {}; "
                         "++__dace_copy{}) {{".format(i, i,
                                                      cpp.sym2cpp(copy_dim), i),
                         sdfg, state_id, dst_node)
+
+                    if ignore_dependencies:
+                        self.generate_no_dependence_post(
+                            callsite_stream, sdfg, state_id, dst_node,
+                            node.data)
+
                     if register_to_register:
                         # Language-specific
                         self.generate_unroll_loop_post(callsite_stream, None,
@@ -831,7 +966,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                        packing_factor)
 
             # Language specific
-            if dst_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
+            if dst_storage == dtypes.StorageType.FPGA_ShiftRegister:
                 write_expr = self.make_shift_register_write(
                     dst_def_type, dtype, dst_node.label, dst_expr, dst_index,
                     read_expr, None, is_unpack, packing_factor, sdfg)
@@ -845,9 +980,9 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Inject dependence pragmas (DACE semantics implies no conflict)
             for node in [src_node, dst_node]:
-                if (isinstance(node.desc(sdfg), dace.data.Array)
+                if (isinstance(node.desc(sdfg), dt.Array)
                         and node.desc(sdfg).storage in [
-                            dace.dtypes.StorageType.FPGA_Local,
+                            dtypes.StorageType.FPGA_Local,
                             dace.StorageType.FPGA_Registers
                         ]):
                     # Language-specific
@@ -866,7 +1001,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
     @staticmethod
     def make_opencl_parameter(name, desc):
-        if isinstance(desc, dace.data.Array):
+        if isinstance(desc, dt.Array):
             return ("hlslib::ocl::Buffer<{}, "
                     "hlslib::ocl::Access::readWrite> &{}".format(
                         desc.dtype.ctype, name))
@@ -893,8 +1028,7 @@ class FPGACodeGen(TargetCodeGenerator):
         if hasattr(self, method_name):
 
             if hasattr(node, "schedule") and node.schedule not in [
-                    dace.dtypes.ScheduleType.Default,
-                    dace.dtypes.ScheduleType.FPGA_Device
+                    dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device
             ]:
                 warnings.warn("Found schedule {} on {} node in FPGA code. "
                               "Ignoring.".format(node.schedule,
@@ -915,7 +1049,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     function_stream, callsite_stream):
 
         if isinstance(src_node, dace.sdfg.nodes.CodeNode):
-            src_storage = dace.dtypes.StorageType.Register
+            src_storage = dtypes.StorageType.Register
             try:
                 src_parent = dfg.entry_node(src_node)
             except KeyError:
@@ -926,7 +1060,7 @@ class FPGACodeGen(TargetCodeGenerator):
             src_storage = src_node.desc(sdfg).storage
 
         if isinstance(dst_node, dace.sdfg.nodes.CodeNode):
-            dst_storage = dace.dtypes.StorageType.Register
+            dst_storage = dtypes.StorageType.Register
         else:
             dst_storage = dst_node.desc(sdfg).storage
 
@@ -998,6 +1132,16 @@ class FPGACodeGen(TargetCodeGenerator):
             # generator)
             callsite_stream.write('{', sdfg, state_id, node)
 
+            # Define dynamic loop bounds variables (dynamic input memlets to
+            # the MapEntry node)
+            for e in dynamic_map_inputs(sdfg.node(state_id), node):
+                if e.data.data != e.dst_conn:
+                    callsite_stream.write(
+                        self._cpu_codegen.memlet_definition(
+                            sdfg, e.data, False, e.dst_conn,
+                            e.dst.in_connectors[e.dst_conn]), sdfg, state_id,
+                        node)
+
             # Pipeline innermost loops
             scope_children = dfg.scope_children()
             scope = scope_children[node]
@@ -1034,9 +1178,9 @@ class FPGACodeGen(TargetCodeGenerator):
             for _, _, _, _, memlet in state.in_edges(node):
                 if memlet.data is not None:
                     desc = sdfg.arrays[memlet.data]
-                    if (isinstance(desc, dace.data.Array) and
-                        (desc.storage == dace.dtypes.StorageType.FPGA_Global
-                         or desc.storage == dace.dtypes.StorageType.FPGA_Local)
+                    if (isinstance(desc, dt.Array) and
+                        (desc.storage == dtypes.StorageType.FPGA_Global
+                         or desc.storage == dtypes.StorageType.FPGA_Local)
                             and memlet.wcr is None):
                         candidates_in.add(memlet.data)
                     elif memlet.wcr is not None:
@@ -1045,9 +1189,9 @@ class FPGACodeGen(TargetCodeGenerator):
             for _, _, _, _, memlet in state.out_edges(map_exit_node):
                 if memlet.data is not None:
                     desc = sdfg.arrays[memlet.data]
-                    if (isinstance(desc, dace.data.Array) and
-                        (desc.storage == dace.dtypes.StorageType.FPGA_Global
-                         or desc.storage == dace.dtypes.StorageType.FPGA_Local)
+                    if (isinstance(desc, dt.Array) and
+                        (desc.storage == dtypes.StorageType.FPGA_Global
+                         or desc.storage == dtypes.StorageType.FPGA_Local)
                             and memlet.wcr is None):
                         candidates_out.add(memlet.data)
                     elif memlet.wcr is not None:
@@ -1178,7 +1322,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     # add pragmas for data read/written inside this map, but only for local arrays
                     for candidate in in_out_data:
                         if sdfg.arrays[
-                                candidate].storage != dace.dtypes.StorageType.FPGA_Global:
+                                candidate].storage != dtypes.StorageType.FPGA_Global:
                             self.generate_no_dependence_post(
                                 result, sdfg, state_id, node, candidate)
 
@@ -1259,8 +1403,7 @@ class FPGACodeGen(TargetCodeGenerator):
         self._allocated_global_arrays = set()
 
     def generate_modules(self, sdfg, state, kernel_name, subgraphs,
-                         subgraph_parameters, scalar_parameters,
-                         symbol_parameters, module_stream, entry_stream,
+                         subgraph_parameters, module_stream, entry_stream,
                          host_stream):
         """Main entry function for generating a Xilinx kernel."""
 
@@ -1298,27 +1441,9 @@ class FPGACodeGen(TargetCodeGenerator):
                 raise RuntimeError("Expected at least one tasklet or data node")
             module_name = "_".join(labels)
 
-            # Consider only the scalars that are actually used in this subgraph
-            subgraph_scalar_parameters = []
-            for is_output, pname, p, *other in scalar_parameters:
-                if any(item.data == pname for item in subgraph.data_nodes()):
-                    if len(other) > 0:  # Xilinx: we indicate also the interface
-                        subgraph_scalar_parameters.append(
-                            (is_output, pname, p, *other))
-                    else:
-                        subgraph_scalar_parameters.append((is_output, pname, p))
-
-            # Consider only the symbols that are actually used in this subgraph
-            subgraph_symbol_parameters = {}
-            for symb, type in symbol_parameters.items():
-                if symb in subgraph.free_symbols:
-                    subgraph_symbol_parameters[symb] = type
-
-            self.generate_module(
-                sdfg, state, module_name, subgraph,
-                subgraph_parameters[subgraph] + subgraph_scalar_parameters,
-                subgraph_symbol_parameters, module_stream, entry_stream,
-                host_stream)
+            self.generate_module(sdfg, state, module_name, subgraph,
+                                 subgraph_parameters[subgraph], module_stream,
+                                 entry_stream, host_stream)
 
     def generate_nsdfg_header(self, sdfg, state, state_id, node,
                               memlet_references, sdfg_label):
@@ -1344,8 +1469,7 @@ class FPGACodeGen(TargetCodeGenerator):
             sdfg, state, dfg, node)
 
     def generate_host_function_boilerplate(self, sdfg, state, kernel_name,
-                                           parameters, symbol_parameters,
-                                           nested_global_transients,
+                                           parameters, nested_global_transients,
                                            host_code_stream, header_stream,
                                            callsite_stream):
 
@@ -1366,29 +1490,15 @@ class FPGACodeGen(TargetCodeGenerator):
         kernel_args_opencl.append(f'{self._global_sdfg.name}_t *__state')
         kernel_args_call_host.append(f'__state')
 
-        # Split into arrays and scalars
-        arrays = sorted(
-            [(t[0], t[1], t[2])
-             for t in parameters if not isinstance(t[2], dace.data.Scalar)],
-            key=lambda t: t[1])
-        scalars = [(t[0], t[1], t[2]) for t in parameters
-                   if isinstance(t[2], dace.data.Scalar)]
-        scalars += ((False, k, v) for k, v in symbol_parameters.items())
-        scalars = list(sorted(scalars, key=lambda t: t[1]))
-        for is_output, argname, arg in itertools.chain(arrays, scalars):
-            # Only pass each array once from the host code
-            if arg in seen:
-                continue
-            seen.add(arg)
+        for is_output, argname, arg, _ in parameters:
             # Streams and Views are not passed as arguments
-            if not isinstance(arg, dace.data.Stream) and not isinstance(
-                    arg, dace.data.View):
+            if not isinstance(arg, dt.Stream) and not isinstance(arg, dt.View):
                 kernel_args_call_host.append(arg.as_arg(False, name=argname))
                 kernel_args_opencl.append(
                     FPGACodeGen.make_opencl_parameter(argname, arg))
 
-        kernel_args_call_host = dace.dtypes.deduplicate(kernel_args_call_host)
-        kernel_args_opencl = dace.dtypes.deduplicate(kernel_args_opencl)
+        kernel_args_call_host = dtypes.deduplicate(kernel_args_call_host)
+        kernel_args_opencl = dtypes.deduplicate(kernel_args_opencl)
 
         host_function_name = "__dace_runkernel_{}".format(kernel_name)
         # Write OpenCL host function
@@ -1435,7 +1545,7 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
         # Inject dependency pragmas on memlets
         for edge in dfg.out_edges(node):
             datadesc = sdfg.arrays[edge.data.data]
-            if (isinstance(datadesc, dace.data.Array)
+            if (isinstance(datadesc, dt.Array)
                     and (datadesc.storage == dace.StorageType.FPGA_Local
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)

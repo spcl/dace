@@ -9,13 +9,16 @@ import itertools
 import networkx as nx
 from typing import Callable, Dict, Iterable, List, Set, Optional, Tuple, Union
 import warnings
+from functools import reduce
+import operator
+import copy
 
 from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.sdfg import nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import utils as sdutil, infer_types
+from dace.sdfg import utils as sdutil, infer_types, propagation
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 from dace import data
@@ -466,16 +469,21 @@ class InlineSDFG(transformation.Transformation):
 
         # Remove all unused external inputs/output memlet paths, as well as
         # resulting isolated nodes
-        removed_in_edges = self._remove_edge_path(state,
-                                                  inputs,
-                                                  set(inputs.keys()) -
-                                                  source_accesses,
-                                                  reverse=True)
-        removed_out_edges = self._remove_edge_path(state,
-                                                   outputs,
-                                                   set(outputs.keys()) -
-                                                   sink_accesses,
-                                                   reverse=False)
+        inverse_repldict = {v: k for k, v in repldict.items()}
+        removed_in_edges = self._remove_edge_path(
+            state,
+            inputs,
+            set(inputs.keys()) -
+            {inverse_repldict[n.data]
+             for n in source_accesses},
+            reverse=True)
+        removed_out_edges = self._remove_edge_path(
+            state,
+            outputs,
+            set(outputs.keys()) -
+            {inverse_repldict[n.data]
+             for n in sink_accesses},
+            reverse=False)
 
         # Re-add in/out edges to first/last nodes in subgraph
         order = [
@@ -516,7 +524,7 @@ class InlineSDFG(transformation.Transformation):
         state: SDFGState,
         orig_data: Dict[Union[nodes.AccessNode, MultiConnectorEdge], str],
     ) -> Set[MultiConnectorEdge]:
-        """ 
+        """
         Deals with access->access edges where both sides are non-transient.
         """
         result = set()
@@ -1048,21 +1056,23 @@ class NestSDFG(transformation.Transformation):
                         and not node.desc(nested_sdfg).transient):
                     if (state.out_degree(node) > 0):  # input node
                         arrname = node.data
+                        arrname_nested = f"__{arrname}_in"
                         if arrname not in inputs:
                             arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays['__' + arrname + '_in'] = arrobj
                             outer_sdfg.arrays[arrname] = dc(arrobj)
-                            inputs[arrname] = '__' + arrname + '_in'
-                        node_data_name = '__' + arrname + '_in'
+                            nested_sdfg.arrays[arrname_nested] = arrobj
+                            inputs[arrname] = arrname_nested
+                        node_data_name = arrname_nested
                     if (state.in_degree(node) > 0):  # output node
                         arrname = node.data
+                        arrname_nested = f"__{arrname}_out"
                         if arrname not in outputs:
                             arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays['__' + arrname + '_out'] = arrobj
                             if arrname not in inputs:
                                 outer_sdfg.arrays[arrname] = dc(arrobj)
-                            outputs[arrname] = '__' + arrname + '_out'
-                        node_data_name = '__' + arrname + '_out'
+                            nested_sdfg.arrays[arrname_nested] = arrobj
+                            outputs[arrname] = arrname_nested
+                        node_data_name = arrname_nested
                     node.data = node_data_name
 
             if self.promote_global_trans:
@@ -1071,21 +1081,107 @@ class NestSDFG(transformation.Transformation):
                     if (isinstance(node, nodes.AccessNode)
                             and node.desc(nested_sdfg).transient and
                             not isinstance(node.desc(nested_sdfg), data.View)):
+                        nodedesc = node.desc(nested_sdfg)
+
+                        # If this transient has a symbolic shape, and if any symbol is in in the "ranges"
+                        # of the state then substitute it with its max value (if it can be inferred).
+                        # This is useful for the cases where the transient comes from a slice operation
+                        # (e.g. array[:i] or array[i:]), and we are on devices such as FPGAs that do not
+                        # support dynamic memory allocation.
+
+                        propagation.propagate_states(nested_sdfg)
+                        overapprox_shape = []
+                        if not isinstance(nodedesc,
+                                          data.Scalar) and state.ranges:
+                            for sz in nodedesc.shape:
+                                newsz = sz
+
+                                if symbolic.issymbolic(sz):
+                                    for s in newsz.free_symbols:
+
+                                        replacement_limit_value = None
+                                        to_solve_limit_value = copy.deepcopy(s)
+                                        replacement_initial_value = None
+
+                                        to_solve_initial_value = copy.deepcopy(
+                                            s)
+
+                                        # We should detect the maximal size, therefore we consider the
+                                        # state ranges, by looking both at the initial and the final value
+
+                                        # Range Limit value
+                                        while str(to_solve_limit_value
+                                                  ) in state.ranges.keys():
+                                            replacement_limit_value = state.ranges[
+                                                str(to_solve_limit_value
+                                                    )][0][1] + 1
+                                            to_solve_limit_value = replacement_limit_value
+
+                                        # Range Initial value
+                                        while str(to_solve_initial_value
+                                                  ) in state.ranges.keys():
+                                            replacement_initial_value = state.ranges[
+                                                str(to_solve_initial_value
+                                                    )][0][0]
+                                            to_solve_initial_value = replacement_initial_value
+
+                                        if replacement_initial_value is not None and replacement_limit_value is not None:
+                                            # We compute the shape by considering both the range initial and limit value
+
+                                            # Note: here we are lenient. We can't evaluate the maximum of the two,
+                                            # since we don't know the value of symbols, therefore we only take the one
+                                            # that is not negative
+
+                                            newsz_limit = newsz.subs(
+                                                {s: replacement_limit_value})
+                                            newsz_initial = newsz.subs(
+                                                {s: replacement_initial_value})
+                                            if newsz_limit.is_negative:
+                                                if newsz_initial.is_negative:
+                                                    raise ValueError(
+                                                        f"Can not over-approximate shape for transient{node.data}"
+                                                    )
+                                                newsz = newsz_initial
+                                            else:
+                                                newsz = newsz_limit
+                                overapprox_shape.append(newsz)
+                            nodedesc.shape = overapprox_shape
+                            nodedesc.total_size = reduce(
+                                operator.mul, nodedesc.shape, 1)
+
                         arrname = node.data
-                        if arrname not in transients and not scope_dict[node]:
-                            arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays['__' + arrname + '_out'] = arrobj
-                            outer_sdfg.arrays[arrname] = dc(arrobj)
-                            transients[arrname] = '__' + arrname + '_out'
-                        node.data = '__' + arrname + '_out'
-        for arrname in inputs.keys():
-            nested_sdfg.arrays.pop(arrname)
-        for arrname in outputs.keys():
-            nested_sdfg.arrays.pop(arrname, None)
-        for oldarrname, newarrname in transients.items():
-            nested_sdfg.arrays.pop(oldarrname)
+                        if not scope_dict[node]:
+                            arrname_nested = f"__{arrname}_out"
+                            node.data = arrname_nested
+                            if arrname not in transients:
+                                arrobj = nested_sdfg.arrays[arrname]
+                                outer_sdfg.arrays[arrname] = dc(arrobj)
+                                nested_sdfg.arrays[arrname_nested] = arrobj
+                                transients[arrname] = arrname_nested
+                                if state.out_degree(node) > 0:
+                                    inputs[arrname] = arrname_nested
+                                if state.in_degree(node) > 0:
+                                    outputs[arrname] = arrname_nested
+
+        # Catch data containers that we didn't find on any access nodes, and add
+        # them as inputs. This can happen when a scalar input is used on an
+        # interstate edge, and thus doesn't appear in the dataflow.
+        nested_data = set(
+            itertools.chain(inputs.values(), outputs.values(),
+                            transients.values()))
+        for arrname, desc in list(nested_sdfg.arrays.items()):
+            if not desc.transient and arrname not in nested_data:
+                arrname_nested = f"__{arrname}_in"
+                outer_sdfg.arrays[arrname] = dc(desc)
+                nested_sdfg.arrays[arrname_nested] = desc
+                inputs[arrname] = arrname_nested
+
+        # Purge the old descriptors
+        for name in set(itertools.chain(inputs, outputs, transients)):
+            del nested_sdfg.arrays[name]
+
+        for newarrname in transients.values():
             nested_sdfg.arrays[newarrname].transient = False
-        outputs.update(transients)
 
         # Update memlets
         for state in nested_sdfg.nodes():
@@ -1098,8 +1194,9 @@ class NestSDFG(transformation.Transformation):
                             and src.data == inputs[mem.data]):
                         mem.data = inputs[mem.data]
                     elif (mem.data in outputs.keys()
-                          and (src.data == outputs[mem.data]
-                               or dst.data == outputs[mem.data])):
+                          and (src.data == outputs[mem.data] or
+                               (isinstance(dst, nodes.AccessNode)
+                                and dst.data == outputs[mem.data]))):
                         mem.data = outputs[mem.data]
                 elif (isinstance(dst, nodes.AccessNode)
                       and mem.data in outputs.keys()
@@ -1107,19 +1204,9 @@ class NestSDFG(transformation.Transformation):
                     mem.data = outputs[mem.data]
         outer_state = outer_sdfg.add_state(outer_sdfg.label)
 
-        nested_node = outer_state.add_nested_sdfg(nested_sdfg, outer_sdfg,
-                                                  set(inputs.values()),
-                                                  set(outputs.values()))
-        for key, val in inputs.items():
-            arrnode = outer_state.add_read(key)
-            outer_state.add_edge(
-                arrnode, None, nested_node, val,
-                memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
-        for key, val in outputs.items():
-            arrnode = outer_state.add_write(key)
-            outer_state.add_edge(
-                nested_node, val, arrnode, None,
-                memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
+        # Clean up any remaining mentions of input nodes in the nested SDFG
+        for before, after in inputs.items():
+            nested_sdfg.replace(before, after)
 
         # Remove from the parent SDFG the symbols that are defined in the nested one
         defined_syms = set()
@@ -1137,3 +1224,19 @@ class NestSDFG(transformation.Transformation):
             if type is not None:
                 # update or add the symbol in the nested sdfg
                 nested_sdfg.symbols[s] = type
+
+        # Add the nested SDFG to the parent state and connect it
+        nested_node = outer_state.add_nested_sdfg(nested_sdfg, outer_sdfg,
+                                                  set(inputs.values()),
+                                                  set(outputs.values()))
+
+        for key, val in inputs.items():
+            arrnode = outer_state.add_read(key)
+            outer_state.add_edge(
+                arrnode, None, nested_node, val,
+                memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
+        for key, val in outputs.items():
+            arrnode = outer_state.add_write(key)
+            outer_state.add_edge(
+                nested_node, val, arrnode, None,
+                memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
