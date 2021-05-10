@@ -150,6 +150,14 @@ DACE_DFI dace::vec<float, 4> tanh(dace::vec<float, 4> v) {
     return result;
 }
 
+DACE_DFI dace::vec<float, 4> heaviside(const dace::vec<float, 4>& a) {
+  dace::vec<float, 4> result;
+  result.x = (a.x > 0) ? 1.0f : 0.0f;
+  result.y = (a.y > 0) ? 1.0f : 0.0f;
+  result.z = (a.z > 0) ? 1.0f : 0.0f;
+  result.w = (a.w > 0) ? 1.0f : 0.0f;
+  return result;
+}
 #endif
 
 #endif  // __DACE_CUDACOMMON_CUH
