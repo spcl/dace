@@ -63,7 +63,7 @@ class ExpandGetrsOpenBLAS(ExpandTransformation):
 @dace.library.expansion
 class ExpandGetrsMKL(ExpandTransformation):
 
-    environments = [environments.intel_mkl.IntelMKL]
+    environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -225,4 +225,3 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Matrix A must be square")
 
         return (desc_a, stride_a, rows_a, cols_a), (desc_rhs,  stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res
-

@@ -21,7 +21,7 @@ class ExpandAllreducePure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise (NotImplementedError)
+        raise NotImplementedError
 
 
 @dace.library.expansion

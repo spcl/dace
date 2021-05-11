@@ -62,7 +62,7 @@ class ExpandGetriOpenBLAS(ExpandTransformation):
 @dace.library.expansion
 class ExpandGetriMKL(ExpandTransformation):
 
-    environments = [environments.intel_mkl.IntelMKL]
+    environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -166,4 +166,3 @@ class Getri(dace.sdfg.nodes.LibraryNode):
         cols_x = shape_xin[1]
 
         return (desc_xin, stride_x, rows_x, cols_x), desc_ipiv, desc_res
-

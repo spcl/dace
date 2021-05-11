@@ -88,7 +88,7 @@ class ExpandCholeskyPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise (NotImplementedError)
+        raise NotImplementedError
 
 
 @dace.library.expansion
@@ -104,7 +104,7 @@ class ExpandCholeskyOpenBLAS(ExpandTransformation):
 @dace.library.expansion
 class ExpandCholeskyMKL(ExpandTransformation):
 
-    environments = [environments.intel_mkl.IntelMKL]
+    environments = [blas_environments.intel_mkl.IntelMKL]
 
     staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):

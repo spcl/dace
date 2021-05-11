@@ -128,7 +128,6 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         ain = state.add_read('_ain')
         ainout = state.add_access('_ain')
         aout = state.add_write('_ain')
-        # bin = state.add_access('_b')
         bin_name = '_b'
         bout = state.add_write('_b')
         state.add_nedge(bout, aout, Memlet.from_array(*a_arr))
@@ -138,7 +137,6 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         ainout = state.add_access('_ainout')
         # aout = state.add_write('_aout')
         state.add_nedge(a, ain, Memlet.from_array(*ain_arr))
-        # bin = state.add_access('_aout')
         bin_name = '_aout'
         bout = state.add_access('_aout')
     
@@ -223,7 +221,7 @@ class ExpandInvOpenBLAS(ExpandTransformation):
 @dace.library.expansion
 class ExpandInvMKL(ExpandTransformation):
 
-    environments = [environments.intel_mkl.IntelMKL]
+    environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):

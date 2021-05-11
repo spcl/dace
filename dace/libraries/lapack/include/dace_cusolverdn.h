@@ -2,7 +2,6 @@
 #pragma once
 
 #include <cuda_runtime.h>
-// #include <cublas_v2.h>
 #include <cusolverDn.h>
 
 #include <cstddef>    // size_t

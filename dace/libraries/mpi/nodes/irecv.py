@@ -20,7 +20,7 @@ class ExpandIrecvPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise (NotImplementedError)
+        raise NotImplementedError
 
 
 @dace.library.expansion
@@ -35,7 +35,7 @@ class ExpandIrecvMPI(ExpandTransformation):
         mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(buffer.dtype.base_type)
 
         if buffer.dtype.veclen > 1:
-            raise (NotImplementedError)
+            raise NotImplementedError
         code = ""
         if ddt is not None:
             code = f"""static MPI_Datatype newtype;

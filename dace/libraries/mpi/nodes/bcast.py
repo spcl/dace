@@ -20,7 +20,7 @@ class ExpandBcastPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise (NotImplementedError)
+        raise NotImplementedError
 
 
 @dace.library.expansion
@@ -56,9 +56,9 @@ class ExpandBcastMPI(ExpandTransformation):
         if isinstance(buffer, dace.data.Scalar):
             ref = "&"
 
-        code = (
-            f"MPI_Bcast({ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, MPI_COMM_WORLD);\n"
-            f"_outbuffer = _inbuffer;")
+        code = f"""
+            MPI_Bcast({ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, MPI_COMM_WORLD);
+            _outbuffer = _inbuffer;"""
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,

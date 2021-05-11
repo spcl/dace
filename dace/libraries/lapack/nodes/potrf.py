@@ -63,7 +63,7 @@ class ExpandPotrfOpenBLAS(ExpandTransformation):
 @dace.library.expansion
 class ExpandPotrfMKL(ExpandTransformation):
 
-    environments = [environments.intel_mkl.IntelMKL]
+    environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
     def expansion(*args, **kwargs):

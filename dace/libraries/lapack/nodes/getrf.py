@@ -62,7 +62,7 @@ class ExpandGetrfOpenBLAS(ExpandTransformation):
 @dace.library.expansion
 class ExpandGetrfMKL(ExpandTransformation):
 
-    environments = [environments.intel_mkl.IntelMKL]
+    environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):

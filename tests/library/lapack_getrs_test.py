@@ -167,7 +167,7 @@ def test_getrs(implementation, dtype, storage):
 
     # verify if it works in numpy :)
     if not np.allclose(np.dot(a1, x), b1):
-        raise ValueError("NumPy solve returned wrong result o_O")
+        raise ValueError("NumPy solve returned wrong result")
 
     lapack_status1 = np.array([-1], dtype=np.int32)
     lapack_status2 = np.array([-1], dtype=np.int32)

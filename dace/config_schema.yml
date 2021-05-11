@@ -853,7 +853,7 @@ required:
                     default_implementation:
                         type: str
                         default: OpenBLAS
-                        description: Default implementation LAPACK library nodes.
+                        description: Default implementation of LAPACK library nodes.
                     override:
                         type: bool
                         default: false
@@ -868,7 +868,7 @@ required:
                     default_implementation:
                         type: str
                         default: OpenBLAS
-                        description: Default implementation linang library nodes.
+                        description: Default implementation of linalg library nodes.
                     override:
                         type: bool
                         default: false

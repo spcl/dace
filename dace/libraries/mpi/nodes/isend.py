@@ -35,7 +35,7 @@ class ExpandIsendMPI(ExpandTransformation):
         mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(buffer.dtype.base_type)
 
         if buffer.dtype.veclen > 1:
-            raise (NotImplementedError)
+            raise NotImplementedError
 
         code = ""
         if ddt is not None:
