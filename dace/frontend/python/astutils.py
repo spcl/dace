@@ -418,7 +418,8 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
     def visit_AnnAssign(self, node):
         # Skip visiting annotation
         self.visit(node.target)
-        self.visit(node.value)
+        if node.value is not None:
+            self.visit(node.value)
 
     def visit_Name(self, node):
         if (isinstance(node.ctx, ast.Load) and node.id not in self.defined

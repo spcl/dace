@@ -45,7 +45,7 @@ class Data(object):
         Examples: Arrays, Streams, custom arrays (e.g., sparse matrices).
     """
 
-    dtype = TypeClassProperty(default=dtypes.int32)
+    dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
     shape = ShapeProperty(default=[])
     transient = Property(dtype=bool, default=False)
     storage = Property(dtype=dtypes.StorageType,
@@ -189,7 +189,7 @@ class Scalar(Data):
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
-        if self.dtype != other.type:
+        if self.dtype != other.dtype:
             return False
         return True
 

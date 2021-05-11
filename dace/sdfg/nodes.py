@@ -8,7 +8,7 @@ from collections.abc import KeysView
 import dace
 import itertools
 import dace.serialize
-from typing import Any, Dict, Set
+from typing import Any, Dict, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
@@ -478,6 +478,10 @@ class NestedSDFG(CodeNode):
         desc="If True, this nested SDFG will not be inlined in strict mode "
         "(in the InlineSDFG transformation)",
         default=False)
+
+    unique_name = Property(dtype=str,
+                           desc="Unique name of the SDFG",
+                           default="")
 
     def __init__(self,
                  label,
@@ -1140,6 +1144,19 @@ PipelineEntry = indirect_properties(Pipeline,
 # ------------------------------------------------------------------------------
 
 
+# Based on https://stackoverflow.com/a/2020083/6489142
+def full_class_path(cls_or_obj: Union[type, object]):
+    if isinstance(cls_or_obj, type):
+        cls = cls_or_obj
+    else:
+        cls = type(cls_or_obj)
+    module = cls.__module__
+    if module is None or module == str.__class__.__module__:
+        return cls.__name__  # Avoid reporting __builtin__
+    else:
+        return module + '.' + cls.__name__
+
+
 @make_properties
 class LibraryNode(CodeNode):
 
@@ -1168,17 +1185,9 @@ class LibraryNode(CodeNode):
     def __jsontype__(self):
         return 'LibraryNode'
 
-    # Based on https://stackoverflow.com/a/2020083/6489142
-    def _fullclassname(self):
-        module = self.__class__.__module__
-        if module is None or module == str.__class__.__module__:
-            return self.__class__.__name__  # Avoid reporting __builtin__
-        else:
-            return module + '.' + self.__class__.__name__
-
     def to_json(self, parent):
         jsonobj = super().to_json(parent)
-        jsonobj['classpath'] = self._fullclassname()
+        jsonobj['classpath'] = full_class_path(self)
         return jsonobj
 
     @classmethod
@@ -1202,10 +1211,13 @@ class LibraryNode(CodeNode):
             :return: the name of the expanded implementation
         """
         implementation = self.implementation
-        library_name = type(self)._dace_library_name
+        library_name = getattr(type(self), '_dace_library_name', '')
         try:
-            config_implementation = Config.get("library", library_name,
-                                               "default_implementation")
+            if library_name:
+                config_implementation = Config.get("library", library_name,
+                                                   "default_implementation")
+            else:
+                config_implementation = None
         except KeyError:
             # Non-standard libraries are not defined in the config schema, and
             # thus might not exist in the config.

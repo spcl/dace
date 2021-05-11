@@ -3,6 +3,7 @@ import functools
 import os
 from typing import List
 
+import dace
 from dace import dtypes
 from dace import data
 from dace.sdfg import SDFG
@@ -200,6 +201,10 @@ def generate_code(sdfg) -> List[CodeObject]:
                        target_type='../../include',
                        linkable=False)
     target_objects.append(dummy)
+
+    for env in dace.library.get_environments_and_dependencies(used_environments):
+        if hasattr(env, "codeobjects"):
+            target_objects.extend(env.codeobjects)
 
     # add a dummy main function to show how to call the SDFG
     dummy = CodeObject(sdfg.name + "_main",
