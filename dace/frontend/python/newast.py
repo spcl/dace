@@ -28,6 +28,7 @@ from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
+from dace.sourcemap import temporaryInfo
 
 import numpy
 import sympy
@@ -151,6 +152,14 @@ def parse_dace_program(f,
         @rtype: SDFG
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
+
+    # Remember the start and end line of the 
+    # function for creating the source map
+    data = {
+        "start_line": src_line + 1,
+        "end_line": src_line + len(src.split("\n")) - 1
+    }
+    temporaryInfo(name, data)
 
     # Resolve data structures
     src_ast = StructTransformer(global_vars).visit(src_ast)

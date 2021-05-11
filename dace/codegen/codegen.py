@@ -10,6 +10,7 @@ from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
 from dace.sdfg import infer_types
+from dace.sourcemap import MapPython
 
 # Import CPU code generator. TODO: Remove when refactored
 from dace.codegen.targets import cpp, cpu
@@ -96,6 +97,8 @@ def generate_code(sdfg) -> List[CodeObject]:
     """
     # Before compiling, validate SDFG correctness
     sdfg.validate()
+
+    MapPython(sdfg.to_json(), sdfg.name)
 
     if Config.get_bool('testing', 'serialization'):
         from dace.sdfg import SDFG
