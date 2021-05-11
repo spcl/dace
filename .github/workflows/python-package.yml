@@ -54,6 +54,7 @@ jobs:
         else
             export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
         fi
+        mpirun -n 2 python -m pytest --with-mpi --cov-report=xml --cov=dace --tb=short -m "mpi"
         pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl"
         codecov
     - name: Run other tests
