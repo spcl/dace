@@ -1,3 +1,5 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+""" Implicitly distributed (transformed shared-memory SDFG) Gesummv sample."""
 import numpy as np
 import dace as dc
 from mpi4py import MPI
