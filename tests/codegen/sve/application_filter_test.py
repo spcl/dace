@@ -1,8 +1,8 @@
 import argparse
 import dace
 import numpy as np
-from vectorization import vectorize
-import common
+from tests.codegen.sve.vectorization import vectorize
+import tests.codegen.sve.common as common
 
 N = dace.symbol('N', positive=True)
 

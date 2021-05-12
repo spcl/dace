@@ -1,8 +1,9 @@
 import dace
 import numpy as np
 import scipy as sp
-from vectorization import vectorize
-import common
+from tests.codegen.sve.vectorization import vectorize
+import tests.codegen.sve.common as common
+
 N = dace.symbol('N')
 
 

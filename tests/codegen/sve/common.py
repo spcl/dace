@@ -1,5 +1,5 @@
 import dace
-from vectorization import vectorize
+from tests.codegen.sve.vectorization import vectorize
 
 SHOULD_EXECUTE_SVE = False
 

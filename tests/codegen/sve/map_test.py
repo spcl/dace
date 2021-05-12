@@ -1,5 +1,5 @@
 import dace
-from common import get_code
+from tests.codegen.sve.common import get_code
 
 N = dace.symbol('N')
 
