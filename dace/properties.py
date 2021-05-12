@@ -536,7 +536,7 @@ class ListProperty(Property):
             return [elem.to_json() for elem in l]
         # If elements are one of the JSON basic types, use directly
         if self.element_type in (int, float, list, tuple, dict):
-            return l
+            return list(map(self.element_type, l))
         # Otherwise, convert to strings
         return list(map(str, l))
 

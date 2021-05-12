@@ -65,3 +65,4 @@ def test_serialize_list_int64():
 
 if __name__ == '__main__':
     test_serialize_int_float()
+    test_serialize_list_int64()
