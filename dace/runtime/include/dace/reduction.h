@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "types.h"
+#include "vector.h"
 #include "math.h"  // for ::min, ::max
 
 #ifdef __CUDACC__
@@ -539,6 +540,32 @@ namespace dace {
         DACE_HDFI T operator()(const T &a, const T &b) const
         {
             return _wcr_fixed<REDTYPE, T>()(a, b);
+        }
+
+        // Vector -> Scalar versions
+        template <int N>
+        static DACE_HDFI T vreduce(T *ptr, const dace::vec<T, N>& value)
+        {
+            T old = *ptr;
+
+            T scal = value[0];
+            __DACE_UNROLL
+            for (int i = 1; i < N; ++i)
+              scal = _wcr_fixed<REDTYPE, T>()(scal, value[i]);
+
+            *ptr = _wcr_fixed<REDTYPE, T>()(old, scal);
+            return old;
+        }
+
+        template <int N>
+        static DACE_HDFI T vreduce_atomic(T *ptr, const dace::vec<T, N>& value)
+        {
+            T scal = value[0];
+            __DACE_UNROLL
+            for (int i = 1; i < N; ++i)
+              scal = _wcr_fixed<REDTYPE, T>()(scal, value[i]);
+            
+            return _wcr_fixed<REDTYPE, T>::reduce_atomic(ptr, scal);
         }
     };
 
