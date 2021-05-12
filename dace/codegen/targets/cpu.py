@@ -816,6 +816,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # pointer (vector->vector WCR). Otherwise, generate vector->scalar 
         # (horizontal) reduction.
         vec_prefix = ''
+        vec_suffix = ''
         if isinstance(dtype, dtypes.vector):
             if memlet.subset.num_elements() != 1:
                 ptr = f'({dtype.ctype} *)({ptr})'
