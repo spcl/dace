@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from copy import deepcopy
 from dace.sdfg.state import SDFGState
 import functools
 import itertools
@@ -194,10 +195,17 @@ class CPUCodeGen(TargetCodeGenerator):
         self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, viewed_dnode,
                                            global_stream, allocation_stream)
 
+        # Memlet points to view, construct mirror memlet
+        memlet = edge.data
+        if memlet.data == node.data:
+            memlet = deepcopy(memlet)
+            memlet.data = viewed_dnode.data
+            memlet.subset = memlet.dst_subset if is_write else memlet.src_subset
+            
         # Emit memlet as a reference and register defined variable
         atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
                                                         sdfg,
-                                                        edge.data,
+                                                        memlet,
                                                         name,
                                                         dtypes.pointer(
                                                             nodedesc.dtype),
