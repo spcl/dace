@@ -10,7 +10,6 @@ from dace.codegen.targets.sve.cppunparse import CPPUnparser
 from dace.codegen import cppunparse
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from typing import IO, Tuple, Union
-from IPython.display import Code
 from dace import registry, symbolic, dtypes
 import dace.codegen.targets.sve.preprocess as preprocess
 import dace.codegen.targets.sve.util as util
@@ -25,7 +24,7 @@ class SVEUnparser(CPPUnparser):
                  sdfg: SDFG,
                  tree: ast.AST,
                  file: IO[str],
-                 code: Code,
+                 code,
                  memlets,
                  pred_name,
                  loop_param,
@@ -114,20 +113,27 @@ class SVEUnparser(CPPUnparser):
 
         self.dispatch(body)
 
-    def generate_case_predicate(self, t: ast.If, acc_pred: str):
-        # It is very important to remember that elif's rely on the previous elif's (they are sequential)
-        # i.e. the first subcase that hits wins and all following ones lose
-
-        self.fill('// Case ' + astunparse.unparse(t.test))
-        self.enter()
-
-        test_pred = f'__pg_test_{self.if_depth}'
+    def generate_case_predicate(self, t: ast.If, acc_pred: str, id: int) -> str:
+        test_pred = f'__pg_test_{self.if_depth}_{id}'
 
         # Compute the test predicate for the current case
         self.fill(f'svbool_t {test_pred} = ')
         self.pred_name = acc_pred
         self.dispatch(t.test)
         self.write(';')
+
+        # Update the accumulator to exclude the test (the next case only occurs if we had failed)
+        # BIC(A, B) = A AND NOT B
+        self.fill(f'{acc_pred} = svbic_z({acc_pred}, {acc_pred}, {test_pred});')
+
+        return test_pred
+
+    def generate_case_body(self, t: ast.If, test_pred: str):
+        # It is very important to remember that elif's rely on the previous elif's (they are sequential)
+        # i.e. the first subcase that hits wins and all following ones lose
+
+        self.fill('// Case ' + astunparse.unparse(t.test))
+        self.enter()
 
         # Generate the case body, which will use the test predicate in the ops
         self.pred_name = test_pred
@@ -136,10 +142,6 @@ class SVEUnparser(CPPUnparser):
         sym = copy.deepcopy(self.defined_symbols)
         self.dispatch(t.body)
         self.defined_symbols = sym
-
-        # Update the accumulator to exclude the test (the next case only occurs if we had failed)
-        # BIC(A, B) = A AND NOT B
-        self.fill(f'{acc_pred} = svbic_z({acc_pred}, {acc_pred}, {test_pred});')
 
         self.leave()
 
@@ -153,21 +155,28 @@ class SVEUnparser(CPPUnparser):
         self.fill('// ==== If ===\n')
         self.enter()
 
+        # It is very important to remember that elif's rely on the previous elif's (they are sequential)
+        # i.e. the first subcase that hits wins and all following ones lose
         # The case accumulator keeps track of which elements of the current vector
         # would be still affected by the current case (since the tests are evaluated sequentially)
         self.fill(f'svbool_t {acc_pred} = {self.pred_name};')
 
-        self.generate_case_predicate(t, acc_pred)
-
-        # Collapse nested ifs into equivalent elifs.
+        # Find all branches (except for the last else, because it is treated differently)
+        branches = [t]
         while (t.orelse and len(t.orelse) == 1
-               and isinstance(t.orelse[0], ast.If)):
+            and isinstance(t.orelse[0], ast.If)):
             t = t.orelse[0]
-            self.generate_case_predicate(t, acc_pred)
+            branches.append(t)
+
+        # Precompute all case predicates
+        predicates = [self.generate_case_predicate(b, acc_pred, i + 1) for i, b in enumerate(branches)]
+
+        # Generate the cases
+        for b, p in zip(branches, predicates): 
+            self.generate_case_body(b, p)
 
         if t.orelse:
             self.fill('// Case (else)\n')
-
             # else case simply uses the accumulator (i.e. where other all cases failed)
             self.enter()
             self.pred_name = acc_pred
