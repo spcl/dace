@@ -75,6 +75,10 @@ class EmptyStateElimination(transformation.Transformation):
         return [sdutil.node_path_graph(EmptyStateElimination.empty_state)]
 
     @staticmethod
+    def annotates_memlets():
+        return True
+
+    @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         empty_state = graph.nodes()[candidate[EmptyStateElimination.empty_state]]
 
