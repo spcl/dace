@@ -27,10 +27,7 @@ class IntelMKLScaLAPACK:
     ]
     cmake_files = []
 
-    headers = [
-        "mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h",
-        "../include/dace_blas.h"
-    ]
+    headers = ["mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h"]
     state_fields = [
         "MKL_INT __mkl_scalapack_context;",
         "MKL_INT __mkl_scalapack_rank, __mkl_scalapack_size;",
