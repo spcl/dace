@@ -9,6 +9,7 @@ from .. import environments
 from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.blas import blas_helpers
 
 
 @dace.library.expansion
@@ -33,18 +34,7 @@ class ExpandGetriOpenBLAS(ExpandTransformation):
         (desc_x, stride_x, rows_x, cols_x),  desc_ipiv, desc_result = node.validate(
             parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
-        lapack_dtype = "X"
-        if dtype == dace.dtypes.float32:
-            lapack_dtype = "s"
-        elif dtype == dace.dtypes.float64:
-            lapack_dtype = "d" 
-        elif dtype == dace.dtypes.complex64:
-            lapack_dtype = "c"
-        elif dtype == dace.dtypes.complex128:
-            lapack_dtype = "z"
-        else:
-            print("The datatype "+str(dtype)+" is not supported!")
-            raise(NotImplementedError) 
+        lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         if desc_x.dtype.veclen > 1:
             raise(NotImplementedError)
 
@@ -69,21 +59,12 @@ class ExpandGetriMKL(ExpandTransformation):
         (desc_x, stride_x, rows_x, cols_x),  desc_ipiv, desc_result = node.validate(
             parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
-        lapack_dtype = "X"
+        lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
-        if dtype == dace.dtypes.float32:
-            lapack_dtype = "s"
-        elif dtype == dace.dtypes.float64:
-            lapack_dtype = "d" 
-        elif dtype == dace.dtypes.complex64:
-            lapack_dtype = "c"
+        if lapack_dtype == 'c':
             cast = "(MKL_Complex8*)"
-        elif dtype == dace.dtypes.complex128:
-            lapack_dtype = "z"
+        elif lapack_dtype == 'z':
             cast = "(MKL_Complex16*)"
-        else:
-            print("The datatype "+str(dtype)+" is not supported!")
-            raise(NotImplementedError) 
         if desc_x.dtype.veclen > 1:
             raise(NotImplementedError)
 

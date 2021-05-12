@@ -4,12 +4,12 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.symbolic import symstr
-from dace.libraries.lapack import lapack_helpers
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.blas import blas_helpers
 
 
 @dace.library.expansion
@@ -34,18 +34,7 @@ class ExpandGetrsOpenBLAS(ExpandTransformation):
         (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res = node.validate(
             parent_sdfg, parent_state)
         dtype = desc_a.dtype.base_type
-        lapack_dtype = "X"
-        if dtype == dace.dtypes.float32:
-            lapack_dtype = "s"
-        elif dtype == dace.dtypes.float64:
-            lapack_dtype = "d" 
-        elif dtype == dace.dtypes.complex64:
-            lapack_dtype = "c"
-        elif dtype == dace.dtypes.complex128:
-            lapack_dtype = "z"
-        else:
-            print("The datatype "+str(dtype)+" is not supported!")
-            raise(NotImplementedError) 
+        lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         if desc_a.dtype.veclen > 1:
             raise(NotImplementedError)
 
@@ -70,21 +59,12 @@ class ExpandGetrsMKL(ExpandTransformation):
         (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res = node.validate(
             parent_sdfg, parent_state)
         dtype = desc_a.dtype.base_type
-        lapack_dtype = "X"
+        lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
-        if dtype == dace.dtypes.float32:
-            lapack_dtype = "s"
-        elif dtype == dace.dtypes.float64:
-            lapack_dtype = "d" 
-        elif dtype == dace.dtypes.complex64:
-            lapack_dtype = "c"
+        if lapack_dtype == 'c':
             cast = "(MKL_Complex8*)"
-        elif dtype == dace.dtypes.complex128:
-            lapack_dtype = "z"
+        elif lapack_dtype == 'z':
             cast = "(MKL_Complex16*)"
-        else:
-            print("The datatype "+str(dtype)+" is not supported!")
-            raise(NotImplementedError) 
         if desc_a.dtype.veclen > 1:
             raise(NotImplementedError)
 
@@ -110,7 +90,7 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
         dtype = desc_a.dtype.base_type
         veclen = desc_a.dtype.veclen
 
-        func, cuda_type, _ = lapack_helpers.cuda_type_metadata(dtype)
+        func, cuda_type, _ = blas_helpers.cublas_type_metadata(dtype)
         func = func + 'getrs'
 
         n = n or node.n

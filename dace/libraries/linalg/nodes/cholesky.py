@@ -134,13 +134,15 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = None
 
+    lower = dace.properties.Property(dtype=bool, default=True)
+
     def __init__(self, name, lower=True, *args, **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_a"},
                          outputs={"_b",},
                          **kwargs)
-        self._lower = lower
+        self.lower = lower
 
     def validate(self, sdfg, state):
         """

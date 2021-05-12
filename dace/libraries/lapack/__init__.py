@@ -2,6 +2,5 @@
 from dace.library import register_library
 from .nodes import *
 from .environments import *
-from .utils import *
 
 register_library(__name__, "lapack")

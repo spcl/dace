@@ -171,6 +171,8 @@ class Solve(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = None
 
+    overwrite = dace.properties.Property(dtype=bool, default=False)
+
     # Object fields
     def __init__(self, name, *args, **kwargs):
         super().__init__(name,
@@ -178,7 +180,8 @@ class Solve(dace.sdfg.nodes.LibraryNode):
                          inputs={"_ain", "_bin"},
                          outputs={"_bout"},
                          **kwargs)
-        self._overwrite = False
+        # NOTE: We currently do not support overwrite == True
+        self.overwrite = False
     def validate(self, sdfg, state):
         """
         :return: A four-tuple (ain, aout, ipiv, info) of the three data

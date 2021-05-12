@@ -4,10 +4,10 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
-from dace.libraries.lapack import lapack_helpers
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.blas import blas_helpers
 
 
 @dace.library.expansion
@@ -34,18 +34,7 @@ class ExpandPotrfOpenBLAS(ExpandTransformation):
          cols_x), desc_result = node.validate(
              parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
-        lapack_dtype = "X"
-        if dtype == dace.dtypes.float32:
-            lapack_dtype = "s"
-        elif dtype == dace.dtypes.float64:
-            lapack_dtype = "d"
-        elif dtype == dace.dtypes.complex64:
-            lapack_dtype = "c"
-        elif dtype == dace.dtypes.complex128:
-            lapack_dtype = "z"
-        else:
-            print("The datatype " + str(dtype) + " is not supported!")
-            raise (NotImplementedError)
+        lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         if desc_x.dtype.veclen > 1:
             raise (NotImplementedError)
 
@@ -83,7 +72,7 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
-        func, cuda_type, _ = lapack_helpers.cuda_type_metadata(dtype)
+        func, cuda_type, _ = blas_helpers.cublas_type_metadata(dtype)
         func = func + 'potrf'
 
         n = n or node.n
