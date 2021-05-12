@@ -177,9 +177,8 @@ class ElementWiseArrayOperation(pm.Transformation):
                     graph.add_edge(local_access, None, map_entry, e.dst_conn,
                                    dace.Memlet.from_array(inp.data, desc))
                     graph.remove_edge(e)
-                continue
 
-            if isinstance(desc, data.Array):
+            elif isinstance(desc, data.Array):
 
                 local_name, local_arr = sdfg.add_temp_transient(
                     [(desc.total_size) // sz], dtype=desc.dtype,
@@ -199,9 +198,9 @@ class ElementWiseArrayOperation(pm.Transformation):
                 for e in graph.out_edges(map_entry):
                     if e.data.data == inp.data:
                         e.data = dace.Memlet.simple(local_name, params[0])
-                continue
 
-            raise NotImplementedError
+            else:
+                raise NotImplementedError
 
         outputs = set()
         for _, _, dst, _, m in graph.out_edges(map_exit):
@@ -228,7 +227,7 @@ class ElementWiseArrayOperation(pm.Transformation):
             desc = out.desc(sdfg)
             if isinstance(desc, data.Scalar):
                 raise NotImplementedError
-            if isinstance(desc, data.Array):
+            elif isinstance(desc, data.Array):
                 local_name, local_arr = sdfg.add_temp_transient(
                     [(desc.total_size) // sz], dtype=desc.dtype,
                     storage=desc.storage)
@@ -247,8 +246,8 @@ class ElementWiseArrayOperation(pm.Transformation):
                 for e in graph.in_edges(map_exit):
                     if e.data.data == out.data:
                         e.data = dace.Memlet.simple(local_name, params[0])
-                continue
-            raise NotImplementedError
+            else:
+                raise NotImplementedError
 
         map_entry.map.params = params
         map_entry.map.range = subsets.Range(ranges)
@@ -419,9 +418,8 @@ class ElementWiseArrayOperation2D(pm.Transformation):
                     graph.add_edge(local_access, None, map_entry, e.dst_conn,
                                    dace.Memlet.from_array(inp.data, desc))
                     graph.remove_edge(e)
-                continue
 
-            if isinstance(desc, data.Array):
+            elif isinstance(desc, data.Array):
 
                 local_name, local_arr = sdfg.add_temp_transient(
                     [(desc.shape[0]) // Px, (desc.shape[1]) // Py],
@@ -461,9 +459,9 @@ class ElementWiseArrayOperation2D(pm.Transformation):
                 for e in graph.out_edges(map_entry):
                     if e.data.data == inp.data:
                         e.data.data = local_name
-                continue
 
-            raise NotImplementedError
+            else:
+                raise NotImplementedError
 
         outputs = set()
         for _, _, dst, _, m in graph.out_edges(map_exit):
@@ -490,7 +488,7 @@ class ElementWiseArrayOperation2D(pm.Transformation):
             desc = out.desc(sdfg)
             if isinstance(desc, data.Scalar):
                 raise NotImplementedError
-            if isinstance(desc, data.Array):
+            elif isinstance(desc, data.Array):
                 local_name, local_arr = sdfg.add_temp_transient(
                     [(desc.shape[0]) // Px, (desc.shape[1]) // Py],
                     dtype=desc.dtype, storage=desc.storage)
@@ -520,8 +518,8 @@ class ElementWiseArrayOperation2D(pm.Transformation):
                 for e in graph.in_edges(map_exit):
                     if e.data.data == out.data:
                         e.data.data = local_name
-                continue
-            raise NotImplementedError
+            else:
+                raise NotImplementedError
 
         map_entry.map.params = params
         map_entry.map.range = subsets.Range(ranges)
@@ -529,8 +527,8 @@ class ElementWiseArrayOperation2D(pm.Transformation):
 
 @registry.autoregister_params(singlestate=True, strict=False)
 class RedundantComm2D(pm.Transformation):
-    """ Implements the redundant array removal transformation, applied
-        when a transient array is copied to and from (to another array),
+    """ Implements the redundant communication removal transformation,
+        applied when data are scattered and immediately gathered,
         but never used anywhere else. """
 
     in_array = pm.PatternNode(nodes.AccessNode)
