@@ -11,13 +11,11 @@ on:
 
 jobs:
   test:
-    # runs-on: ubuntu-latest
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: [3.8]
-        # strict-xforms: [0,1,autoopt]
-        strict-xforms: [0]
+        strict-xforms: [0,1,autoopt]
 
     steps:
     - uses: actions/checkout@v2
