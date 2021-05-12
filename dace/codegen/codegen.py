@@ -18,7 +18,6 @@ from dace.codegen.targets import cpp, cpu
 from dace.codegen.instrumentation import InstrumentationProvider
 
 
-
 def generate_headers(sdfg: SDFG) -> str:
     """ Generate a header file for the SDFG """
     proto = ""

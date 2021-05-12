@@ -367,4 +367,3 @@ DEFINE_ALL_EXT_TYPES(float64,double);
         typedef half8 aligned;
         typedef aligned unaligned;
     };
-

@@ -41,5 +41,4 @@
 
 #include "fpga_common.h"
 
-
 #endif  // __DACE_RUNTIME_H
