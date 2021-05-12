@@ -11,7 +11,7 @@ from dace.sdfg.state import SDFGState
 from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from string import ascii_uppercase
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 
 def node_path_graph(*args):
@@ -326,15 +326,21 @@ def merge_maps(
     # Handle the case of dynamic map inputs in the inner map
     inner_dynamic_map_inputs = dynamic_map_inputs(graph, inner_map_entry)
     for edge in inner_dynamic_map_inputs:
+        remove_conn = (len(list(graph.out_edges_by_connector(edge.src,
+            edge.src_conn))) == 1)
         conn_to_remove = edge.src_conn[4:]
-        merged_entry.remove_in_connector('IN_' + conn_to_remove)
-        merged_entry.remove_out_connector('OUT_' + conn_to_remove)
+        if remove_conn:
+            merged_entry.remove_in_connector('IN_' + conn_to_remove)
+            merged_entry.remove_out_connector('OUT_' + conn_to_remove)
         merged_entry.add_in_connector(
             edge.dst_conn, inner_map_entry.in_connectors[edge.dst_conn])
-        outer_edge = next(graph.in_edges_by_connector(outer_map_entry, 'IN_' + conn_to_remove))
-        graph.add_edge(outer_edge.src, outer_edge.src_conn, merged_entry, edge.dst_conn,
-                       outer_edge.data)
-        graph.remove_edge(outer_edge)
+        outer_edge = next(
+            graph.in_edges_by_connector(outer_map_entry,
+                                        'IN_' + conn_to_remove))
+        graph.add_edge(outer_edge.src, outer_edge.src_conn, merged_entry,
+                       edge.dst_conn, outer_edge.data)
+        if remove_conn:
+            graph.remove_edge(outer_edge)
 
     # Redirect inner in edges.
     for edge in graph.out_edges(inner_map_entry):
@@ -577,12 +583,25 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
     return False
 
 
-def get_view_edge(
-    state: SDFGState, view: nd.AccessNode
-) -> Tuple[nd.AccessNode, gr.MultiConnectorEdge[mm.Memlet]]:
+def get_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
     """
-    Given a view access node, returns the viewed access node and 
-    incoming/outgoing edge which points to it.
+    Given a view access node, returns the viewed access node 
+    if existent, else None
+    """
+    view_edge = get_view_edge(state, view)
+    if view_edge is None:
+        return None
+    if view_edge.dst == view:
+        return view_edge.src
+    else:
+        return view_edge.dst
+
+
+def get_view_edge(state: SDFGState,
+                  view: nd.AccessNode) -> gr.MultiConnectorEdge[mm.Memlet]:
+    """
+    Given a view access node, returns the 
+    incoming/outgoing edge which points to the viewed access node.
     See the ruleset in the documentation of ``dace.data.View``.
 
     :param state: The state in which the view resides.
@@ -963,7 +982,7 @@ def fuse_states(sdfg: SDFG) -> int:
 
 
 def load_precompiled_sdfg(folder: str):
-    """ 
+    """
     Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
     Folder must contain a file called "program.sdfg" and a subfolder called
     "build" with the shared object.
@@ -979,3 +998,27 @@ def load_precompiled_sdfg(folder: str):
         csdfg.ReloadableDLL(
             os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'),
             sdfg.name))
+
+
+def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
+    """
+    From the given state, return the next set of states that are reachable
+    in the SDFG, skipping empty states. Traversal stops at the non-empty 
+    state.
+    This function is used to determine whether synchronization should happen
+    at the end of a GPU state.
+    :param sdfg: The SDFG that contains the state.
+    :param state: The state to start from.
+    :return: A set of reachable non-empty states.
+    """
+    result: Set[SDFGState] = set()
+
+    # Traverse children until states are not empty
+    for succ in sdfg.successors(state):
+        result |= set(dfs_conditional(sdfg, sources=[succ],
+                    condition=lambda parent, _: parent.is_empty()))
+
+    # Filter out empty states
+    result = {s for s in result if not s.is_empty()}
+
+    return result

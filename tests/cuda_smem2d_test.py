@@ -38,19 +38,22 @@ def _test(sdfg):
 
 
 def test_cpu():
-    _test(cudahello.to_sdfg())
+    sdfg = cudahello.to_sdfg()
+    sdfg.name = "cuda_smem2d_cpu"
+    _test(sdfg)
 
 
 @pytest.mark.gpu
 def test_gpu():
     sdfg = cudahello.to_sdfg()
-    assert sdfg.apply_transformations(GPUTransformMap) == 1
+    sdfg.name = "cuda_smem2d_gpu"
     _test(sdfg)
 
 
 @pytest.mark.gpu
 def test_gpu_localstorage():
     sdfg = cudahello.to_sdfg()
+    sdfg.name = "cuda_smem2d_gpu_localstorage"
     assert sdfg.apply_transformations([GPUTransformMap, InLocalStorage],
                                       options=[{}, {
                                           'array': 'gpu_V'

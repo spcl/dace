@@ -467,7 +467,6 @@ class TFSession:
             if name not in node_types and not isinstance(desc, Scalar):
                 del self.graph.arrays[name]
 
-        self.graph._arg_types.update(self.callbackTypeDict)
         self.graph.fill_scope_connectors()
         ############################
         # Set up arguments

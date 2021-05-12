@@ -148,8 +148,7 @@ class ExpandReducePure(pm.ExpandTransformation):
         node.add_out_connector('_out')
 
         from dace.transformation import dataflow
-        nsdfg.apply_transformations_repeated(dataflow.MapCollapse,
-                                             validate=True)
+        nsdfg.apply_transformations_repeated(dataflow.MapCollapse)
 
         return nsdfg
 
@@ -352,10 +351,6 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         input_memlet = input_edge.data
         reduce_shape = input_memlet.subset.bounding_box_size()
         num_items = ' * '.join(symstr(s) for s in reduce_shape)
-        input = (input_memlet.data + ' + ' +
-                 cpp_array_expr(sdfg, input_memlet, with_brackets=False))
-        output = (output_memlet.data + ' + ' +
-                  cpp_array_expr(sdfg, output_memlet, with_brackets=False))
 
         input_dims = input_memlet.subset.dims()
         output_dims = output_memlet.subset.data_dims()
@@ -470,10 +465,8 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
 
         # Call reduction function where necessary
         host_localcode.write(
-            '__dace_reduce_{id}({input}, {output}, {reduce_range_call}, __dace_current_stream);'
+            '__dace_reduce_{id}(_in, _out, {reduce_range_call}, __dace_current_stream);'
             .format(id=idstr,
-                    input=input,
-                    output=output,
                     reduce_range_call=reduce_range_call))
 
         # Make tasklet

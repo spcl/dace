@@ -4,7 +4,7 @@
 from dace.sdfg import SDFG, SDFGState
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union, List
+from typing import Any, Set, Tuple, Union, List
 import warnings
 
 # Transformations
@@ -13,6 +13,9 @@ from dace.transformation.interstate import LoopToMap
 
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
+
+# FPGA AutoOpt
+from dace.transformation.auto import fpga as fpga_aopt
 
 GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
@@ -77,15 +80,15 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
     sdfg = graph.parent
 
     edges_to_consider: Set[Tuple[gr.MultiConnectorEdge[Memlet],
-                                 nodes.EntryNode]] = set()
+                                 nodes.MapEntry]] = set()
     for edge in graph_or_subgraph.edges():
         if edge.data.wcr is not None:
-            if (isinstance(edge.src, (nodes.ExitNode, nodes.NestedSDFG))
-                    or isinstance(edge.dst, nodes.EntryNode)):
+            if (isinstance(edge.src, (nodes.MapExit, nodes.NestedSDFG))
+                    or isinstance(edge.dst, nodes.MapEntry)):
                 # Do not consider intermediate edges
                 continue
             reason = cpp.is_write_conflicted_with_reason(graph, edge)
-            if reason is None or not isinstance(reason, nodes.EntryNode):
+            if reason is None or not isinstance(reason, nodes.MapEntry):
                 # Do not consider edges that will not generate atomics or
                 # atomics we cannot transform
                 continue
@@ -163,6 +166,11 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
         # Transform all outgoing WCR and stream edges
         mapexit = graph.exit_node(mapentry)
         outer_mapexit = graph.exit_node(outer_mapentry)
+
+        # Tuple of (transformation type, options, pattern)
+        to_apply: Tuple[Union[dataflow.StreamTransient,
+                              dataflow.AccumulateTransient], Dict[str, Any],
+                        Dict[str, nodes.Node]] = None
         for e in graph.out_edges(mapexit):
             if isinstance(sdfg.arrays[e.data.data], dt.Stream):
                 mpath = graph.memlet_path(e)
@@ -170,10 +178,16 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
                 if not isinstance(tasklet, nodes.Tasklet) or len(mpath) != 3:
                     # TODO(later): Implement StreamTransient independently of tasklet
                     continue
-                dataflow.StreamTransient.apply_to(sdfg,
-                                                  tasklet=tasklet,
-                                                  map_exit=mapexit,
-                                                  outer_map_exit=outer_mapexit)
+
+                # Make transient only if there is one WCR/stream
+                if to_apply is not None:
+                    to_apply = None
+                    break
+
+                to_apply = (dataflow.StreamTransient, {},
+                            dict(tasklet=tasklet,
+                                 map_exit=mapexit,
+                                 outer_map_exit=outer_mapexit))
             else:
                 if (e.data.is_empty() or e.data.wcr is None
                         or e.data.wcr_nonatomic
@@ -187,11 +201,18 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
                 identity = dtypes.reduction_identity(dtype, redtype)
                 if identity is None:  # Cannot infer identity value
                     continue
-                dataflow.AccumulateTransient.apply_to(
-                    sdfg,
-                    options=dict(identity=identity, array=e.data.data),
-                    map_exit=mapexit,
-                    outer_map_exit=outer_mapexit)
+                # Make transient only if there is one WCR/stream
+                if to_apply is not None:
+                    to_apply = None
+                    break
+
+                to_apply = (dataflow.AccumulateTransient,
+                            dict(identity=identity, array=e.data.data),
+                            dict(map_exit=mapexit,
+                                 outer_map_exit=outer_mapexit))
+        if to_apply is not None:
+            xform, opts, pattern = to_apply
+            xform.apply_to(sdfg, options=opts, **pattern)
 
     if debugprint and len(transformed) > 0:
         print(f'Optimized {len(transformed)} write-conflicted maps')
@@ -202,6 +223,11 @@ def find_fast_library(device: dtypes.DeviceType) -> str:
     # device
     if device is dtypes.DeviceType.GPU:
         return ['cuBLAS', 'CUB', 'pure']
+    elif device is dtypes.DeviceType.FPGA:
+        return [
+            'FPGA_PartialSums', 'FPGAPartialReduction', 'FPGA_Accumulate',
+            'FPGA1DSystolic', 'pure'
+        ]
     elif device is dtypes.DeviceType.CPU:
         result = []
 
@@ -218,7 +244,7 @@ def find_fast_library(device: dtypes.DeviceType) -> str:
 
 def move_small_arrays_to_stack(sdfg: SDFG) -> None:
     """
-    Set all Default storage types that are constant sized and less than 
+    Set all Default storage types that are constant sized and less than
     the auto-tile size to the stack (as StorageType.Register).
     :param sdfg: The SDFG to operate on.
     :note: Operates in-place on the SDFG.
@@ -302,6 +328,16 @@ def auto_optimize(sdfg: SDFG,
 
     # Map fusion
     greedy_fuse(sdfg, validate_all)
+
+    if device == dtypes.DeviceType.FPGA:
+        # apply FPGA Transformations
+        sdfg.apply_fpga_transformations()
+        fpga_aopt.fpga_global_to_local(sdfg)
+        fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
+
+        # Set all library nodes to expand to fast library calls
+        set_fast_implementations(sdfg, device)
+        return sdfg
 
     # Tiled WCR and streams
     for nsdfg in list(sdfg.all_sdfgs_recursive()):
