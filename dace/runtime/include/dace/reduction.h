@@ -588,6 +588,16 @@ namespace dace {
         cub::TransformInputIterator<int, decltype(conversion_op), decltype(counting_iterator)> itr(counting_iterator, conversion_op);
         return itr;
     }
+
+    template <ReductionType REDTYPE, typename T>
+    struct warpReduce {
+        static DACE_DFI T reduce(T v)
+        {
+            for (int i = 1; i < 32; i = i * 2)
+                v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor_sync(0xffffffff, v, i));
+            return v;
+        }
+    };
 #endif
 
 }  // namespace dace
