@@ -1,26 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic
-from dace.frontend.common import op_repository as oprepo
+from dace import dtypes
 
-
-@dace.library.expansion
-class ExpandWaitPure(ExpandTransformation):
-    """
-    Naive backend-agnostic expansion of Wait.
-    """
-
-    environments = []
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise (NotImplementedError)
 
 
 @dace.library.expansion
@@ -31,7 +16,12 @@ class ExpandWaitMPI(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         req, status = node.validate(parent_sdfg, parent_state)
-        code = f"MPI_Status _s;\nMPI_Wait(_request, &_s);\n_stat_tag = _s.MPI_TAG;\n_stat_source = _s.MPI_SOURCE;"
+        code = f"""
+            MPI_Status _s;
+            MPI_Wait(_request, &_s);
+            _stat_tag = _s.MPI_TAG;
+            _stat_source = _s.MPI_SOURCE;
+            """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -103,7 +93,10 @@ class ExpandWaitallMPI(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         count = node.validate(parent_sdfg, parent_state)
-        code = f"MPI_Status _s[{count}];\nMPI_Waitall({count}, _request, _s);"
+        code = f"""
+            MPI_Status _s[{count}];
+            MPI_Waitall({count}, _request, _s);
+            """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,

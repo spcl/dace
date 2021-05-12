@@ -1,27 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic
-from dace.frontend.common import op_repository as oprepo
-import pytest
-
-
-@dace.library.expansion
-class ExpandReducePure(ExpandTransformation):
-    """
-    Naive backend-agnostic expansion of MPI Reduce.
-    """
-
-    environments = []
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise (NotImplementedError)
 
 
 @dace.library.expansion
