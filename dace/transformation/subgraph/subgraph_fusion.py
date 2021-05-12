@@ -46,9 +46,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     debug = Property(desc="Show debug info", dtype=bool, default=False)
 
     transient_allocation = Property(
+        dtype=dtypes.StorageType,
         desc="Storage Location to push transients to that are "
         "fully contained within the subgraph.",
-        dtype=dtypes.StorageType,
+        choices=dtypes.StorageType,
+        from_string=lambda x: dtypes.StorageType[x],
         default=dtypes.StorageType.Default)
 
     schedule_innermaps = Property(desc="Schedule of inner maps. If none, "
@@ -647,8 +649,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         scope_dict = graph.scope_dict()
         for state in sdfg.nodes():
             for node in state.nodes():
-                if isinstance(node,
-                            nodes.AccessNode) and node.data in data_intermediate:
+                if isinstance(
+                        node,
+                        nodes.AccessNode) and node.data in data_intermediate:
                     # add them to the counter set in all cases
                     data_counter[node.data] += 1
                     # see whether we are inside the subgraph scope
@@ -666,7 +669,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                         and data not in do_not_override \
                                   for data in data_intermediate}
         return subgraph_contains_data
-     
 
     def clone_intermediate_nodes(self, sdfg: dace.sdfg.SDFG,
                                  graph: dace.sdfg.SDFGState,
@@ -686,7 +688,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         :return: A dict that maps each intermediate node that also functions as an out node 
                        to the respective cloned transient node 
         '''
-       
+
         transients_created = {}
         for node in intermediate_nodes & out_nodes:
             # create new transient at exit replacing the array
@@ -702,14 +704,14 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             if node.setzero:
                 node_trans.setzero = True
 
-            # redirect all relevant traffic from node_trans to node 
+            # redirect all relevant traffic from node_trans to node
             edges = list(graph.out_edges(node))
             for edge in edges:
                 if edge.dst not in map_entries:
                     self.copy_edge(graph,
-                                    edge,
-                                    new_src=node_trans,
-                                    remove_old=True)
+                                   edge,
+                                   new_src=node_trans,
+                                   remove_old=True)
 
             graph.add_edge(node, None, node_trans, None, Memlet())
 
