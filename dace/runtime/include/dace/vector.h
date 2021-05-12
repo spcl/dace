@@ -287,5 +287,27 @@ namespace dace
 
 }
 
+// TODO: This doesn't work for some reason (not visible), ideally should replace code below.
+//template <typename T, unsigned int N>
+//DACE_HDFI dace::vec<float, N> exp(dace::vec<T, N> v) {
+//    dace::vec<T, N> res;
+//    const T* in = (const T*)&v;
+//    T* out = (T*)&res;
+//    for (unsigned int i = 0; i < N; i++) {
+//        out[i] = exp(in[i]);
+//    }
+//    return res;
+//}
+
+DACE_HDFI dace::vec<float, 4> exp(dace::vec<float, 4> v) {
+    dace::vec<float, 4> res;
+    const float* in = (const float*)&v;
+    float* out = (float*)&res;
+    for (unsigned int i = 0; i < 4; i++) {
+        out[i] = exp(in[i]);
+    }
+    return res;
+}
+
 #endif // XILINX_DEVICE_CODE
 #endif  // __DACE_VECTOR_H
