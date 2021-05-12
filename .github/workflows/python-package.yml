@@ -98,7 +98,7 @@ jobs:
         . /opt/setupenv
         python -m pip install --upgrade pip
         pip install flake8 pytest-xdist coverage codecov
-        pip install mpi4py
+        pip install mpi4py pytest-mpi
         pip uninstall -y dace
         pip install -e ".[testing]"
 
