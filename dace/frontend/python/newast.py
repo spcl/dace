@@ -1669,17 +1669,18 @@ class ProgramVisitor(ExtNodeVisitor):
         return (self._parse_value(node.lower), self._parse_value(node.upper),
                 self._parse_value(node.step) if node.step is not None else "1")
 
-    def _parse_index_as_range(self, node: ast.Index):
-        """Parses an index as range
-
-        Arguments:
-            node {ast.Index} -- Index node
-
-        Returns:
-            Tuple[str] -- Range in (from, to, step) format
+    def _parse_index_as_range(self, node: Union[ast.Index, ast.Tuple]):
         """
-
-        val = self._parse_value(node.value)
+        Parses an index as range
+        :param node: Index node
+        :return: Range in (from, to, step) format
+        """
+        if isinstance(node, ast.Index):
+            val = self._parse_value(node.value)
+        elif isinstance(node, ast.Tuple):
+            val = self._parse_value(node.elts)
+        else:
+            val = self._parse_value(node)
         return (val, val, "1")
 
     def _parse_for_iterator(self, node: ast.Expr):
@@ -1736,7 +1737,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 iterator = 'dace.map'
         else:
             ranges = []
-            if isinstance(node.slice, ast.ExtSlice):
+            if isinstance(node.slice, (ast.Tuple, ast.ExtSlice)):
                 for s in node.slice.dims:
                     ranges.append(self._parse_slice(s))
             elif isinstance(node.slice, ast.Slice):
@@ -4194,7 +4195,10 @@ class ProgramVisitor(ExtNodeVisitor):
                                   'Type "%s" cannot be sliced' % arrtype)
 
         # Visit slice contents
-        node.slice = self.visit(node.slice)
+        if isinstance(node.slice, ast.Constant):  # 1D index (since Python 3.9)
+            node.slice = self._visit_ast_or_value(node.slice)
+        else:
+            node.slice = self.visit(node.slice)
 
         # Try to construct memlet from subscript
         # expr: MemletExpr = ParseMemlet(self, self.defined, node)
