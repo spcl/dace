@@ -980,8 +980,9 @@ class DaCeKeywordRemover(ExtNodeTransformer):
     def _subscript_expr(self, slicenode: ast.AST,
                         target: str) -> symbolic.SymbolicType:
         visited_slice = self.visit(slicenode)
-        if not isinstance(visited_slice, ast.Index):
-            raise NotImplementedError("Range subscripting not implemented")
+
+        if isinstance(visited_slice, ast.Index):
+            visited_slice = visited_slice.value
 
         # Collect strides for index expressions
         if target in self.constants:
@@ -1002,15 +1003,15 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 and not (s == 1 and subset_size[i] == dimlen)
             ]
 
-        if isinstance(visited_slice.value, ast.Tuple):
-            if len(strides) != len(visited_slice.value.elts):
+        if isinstance(visited_slice, ast.Tuple):
+            if len(strides) != len(visited_slice.elts):
                 raise SyntaxError(
                     'Invalid number of dimensions in expression (expected %d, '
-                    'got %d)' % (len(strides), len(visited_slice.value.elts)))
+                    'got %d)' % (len(strides), len(visited_slice.elts)))
 
             return sum(
                 symbolic.pystr_to_symbolic(unparse(elt)) * s
-                for elt, s in zip(visited_slice.value.elts, strides))
+                for elt, s in zip(visited_slice.elts, strides))
 
         if len(strides) != 1:
             raise SyntaxError('Missing dimensions in expression (expected %d, '
