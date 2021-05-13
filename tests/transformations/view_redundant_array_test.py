@@ -126,6 +126,7 @@ def test_redundant_array_2_into_1_dim(copy_subset, nonstrict):
 
 
 if __name__ == '__main__':
+    test_redundant_array_removal()
     test_redundant_array_1_into_2_dims("O", False)
     test_redundant_array_1_into_2_dims("T", False)
     test_redundant_array_1_into_2_dims("O", True)
