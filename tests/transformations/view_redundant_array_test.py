@@ -1,9 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import pytest
+import itertools
 
 import dace
 from dace import nodes, data
+from dace.transformation.dataflow.redundant_array import RedundantArray
 
 
 def test_redundant_array_removal():
@@ -49,8 +51,9 @@ def test_libnode_expansion():
     assert np.allclose(A @ B, C)
 
 
-@pytest.mark.parametrize("copy_subset", ["O", "T"])
-def test_redundant_array_1_into_2_dims(copy_subset):
+@pytest.mark.parametrize(["copy_subset", "nonstrict"],
+                         list(itertools.product(["O", "T"], [False, True])))
+def test_redundant_array_1_into_2_dims(copy_subset, nonstrict):
     sdfg = dace.SDFG("testing")
     state = sdfg.add_state()
 
@@ -70,21 +73,24 @@ def test_redundant_array_1_into_2_dims(copy_subset):
                         sdfg.make_array_memlet(copy_subset))
 
     sdfg.apply_strict_transformations()
-    sdfg.view()
+    if nonstrict:
+        sdfg.apply_transformations_repeated(RedundantArray)
+
+        # Ensure a view is created
+        assert (len([
+            n for n in sdfg.node(0).data_nodes()
+            if type(n.desc(sdfg)) is data.Array
+        ]) == 2)
 
     I = np.ones((3, 3), dtype=np.float32)
     O = np.zeros_like(I)
     sdfg(I=I, O=O)
     assert np.allclose(O, I + 1)
-    assert len([
-        n for n in sdfg.node(0).nodes()
-        if isinstance(n, nodes.AccessNode) and type(n.desc(sdfg)) is data.Array
-    ]) == 2
 
 
-@pytest.mark.parametrize("copy_subset", ["O", "T"])
-def test_redundant_array_2_into_1_dim(copy_subset):
-
+@pytest.mark.parametrize(["copy_subset", "nonstrict"],
+                         list(itertools.product(["O", "T"], [False, True])))
+def test_redundant_array_2_into_1_dim(copy_subset, nonstrict):
     sdfg = dace.SDFG("testing")
     state = sdfg.add_state()
 
@@ -104,13 +110,27 @@ def test_redundant_array_2_into_1_dim(copy_subset):
                         sdfg.make_array_memlet(copy_subset))
 
     sdfg.apply_strict_transformations()
-    sdfg.view()
+    if nonstrict:
+        sdfg.apply_transformations_repeated(RedundantArray)
+
+        # Ensure a view is created
+        assert (len([
+            n for n in sdfg.node(0).data_nodes()
+            if type(n.desc(sdfg)) is data.Array
+        ]) == 2)
 
     I = np.ones((3, 3), dtype=np.float32)
     O = np.zeros_like(I)
     sdfg(I=I, O=O)
     assert np.allclose(O, I + 1)
-    assert len([
-        n for n in sdfg.node(0).nodes()
-        if isinstance(n, nodes.AccessNode) and type(n.desc(sdfg)) is data.Array
-    ]) == 2
+
+
+if __name__ == '__main__':
+    test_redundant_array_1_into_2_dims("O", False)
+    test_redundant_array_1_into_2_dims("T", False)
+    test_redundant_array_1_into_2_dims("O", True)
+    test_redundant_array_1_into_2_dims("T", True)
+    test_redundant_array_2_into_1_dim("O", False)
+    test_redundant_array_2_into_1_dim("T", False)
+    test_redundant_array_2_into_1_dim("O", True)
+    test_redundant_array_2_into_1_dim("T", True)

@@ -416,6 +416,13 @@ def ndcopy_to_strided_copy(
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
+    # Another case of non-strided 1D copy: all indices match and copy length
+    # matches pointer difference
+    elif (first_src_index == first_dst_index
+          and last_src_index == last_dst_index and copy_length == src_copylen):
+        # Emit 1D copy of the whole array
+        copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
+        return copy_shape, [1], [1]
     # 1D strided copy
     elif sum([0 if c == 1 else 1 for c in copy_shape]) == 1:
         # Find the copied dimension:
