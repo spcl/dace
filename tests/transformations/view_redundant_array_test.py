@@ -82,10 +82,10 @@ def test_redundant_array_1_into_2_dims(copy_subset, nonstrict):
             if type(n.desc(sdfg)) is data.Array
         ]) == 2)
 
-    I = np.ones((3, 3), dtype=np.float32)
-    O = np.zeros_like(I)
+    I = np.ones((9,)).astype(np.float32)
+    O = np.zeros((3, 3)).astype(np.float32)
     sdfg(I=I, O=O)
-    assert np.allclose(O, I + 1)
+    assert np.allclose(O.flatten(), I + 1)
 
 
 @pytest.mark.parametrize(["copy_subset", "nonstrict"],
@@ -119,10 +119,10 @@ def test_redundant_array_2_into_1_dim(copy_subset, nonstrict):
             if type(n.desc(sdfg)) is data.Array
         ]) == 2)
 
-    I = np.ones((3, 3), dtype=np.float32)
-    O = np.zeros_like(I)
+    I = np.ones((3, 3)).astype(np.float32)
+    O = np.zeros((9,)).astype(np.float32)
     sdfg(I=I, O=O)
-    assert np.allclose(O, I + 1)
+    assert np.allclose(O, (I + 1).flatten())
 
 
 if __name__ == '__main__':
