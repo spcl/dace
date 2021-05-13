@@ -34,7 +34,7 @@ import sympy
 
 # register replacements in oprepo
 import dace.frontend.python.replacements
-from dace.frontend.python.replacements import _sym_type
+from dace.frontend.python.replacements import _sym_type, _broadcast_to
 
 # Type hints
 Size = Union[int, dace.symbolic.symbol]
@@ -2565,14 +2565,32 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if target_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
-                if target_subset.size() == op_subset.size() and op:
-                    inp_subset = copy.deepcopy(op_subset)
-                    inp_subset.offset(target_subset, True)
+                if target_subset.size() != op_subset.size() or op:
+
+                    _, all_idx_tuples, _, _, inp_idx = _broadcast_to(
+                        target_subset.size(), op_subset.size())
+
+                    inp_idx = inp_idx.split(',')
+                    # create a fake subset that would be the input subset broadcasted to the correct size
+                    missing_dimensions = target_subset.ranges[:len(
+                        all_idx_tuples) - len(inp_idx)]
+                    op_dimensions = op_subset.ranges
+
+                    fake_subset = dace.subsets.Range(missing_dimensions +
+                                                     op_dimensions)
+
+                    # use this fake subset to calculate the offset
+                    fake_subset.offset(target_subset, True)
+
+                    # we access the inp subset using the computed offset
+                    # since the inp_subset may be missing leading dimensions, we reverse-zip-reverse
+                    idx_and_subset = reversed(
+                        list(zip(reversed(inp_idx), reversed(fake_subset))))
+
                     inp_memlet = Memlet("{a}[{s}]".format(
                         a=op_name,
                         s=','.join([
-                            '__i%d + %d' % (i, s)
-                            for i, (s, _, _) in enumerate(inp_subset)
+                            f'{idx} + {s}' for idx, (s, _, _) in idx_and_subset
                         ])))
                     out_memlet = Memlet("{a}[{s}]".format(a=target_name,
                                                           s=target_index))
@@ -2596,6 +2614,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                              {'__out': out_memlet},
                                              external_edges=True,
                                              debuginfo=self.current_lineinfo)
+
                 else:
                     if boolarr is not None:
                         raise NotImplementedError
