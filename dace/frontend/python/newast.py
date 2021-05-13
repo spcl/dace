@@ -2567,20 +2567,28 @@ class ProgramVisitor(ExtNodeVisitor):
             if op_subset.num_elements() != 1:
                 if target_subset.size() != op_subset.size() or op:
 
+                    squeezed = copy.deepcopy(target_subset)
+                    squeezed.squeeze(offset=False)
                     _, all_idx_tuples, _, _, inp_idx = _broadcast_to(
-                        target_subset.size(), op_subset.size())
+                        squeezed.size(), op_subset.size())
+
+                    idx = iter(i for i, _ in all_idx_tuples)
+                    target_index = ','.join(
+                        next(idx) if size != 1 else str(target_subset.
+                                                        ranges[i][0])
+                        for i, size in enumerate(target_subset.size()))
 
                     inp_idx = inp_idx.split(',')
                     # create a fake subset that would be the input subset broadcasted to the correct size
-                    missing_dimensions = target_subset.ranges[:len(
-                        all_idx_tuples) - len(inp_idx)]
+                    missing_dimensions = squeezed.ranges[:len(all_idx_tuples) -
+                                                         len(inp_idx)]
                     op_dimensions = op_subset.ranges
 
                     fake_subset = dace.subsets.Range(missing_dimensions +
                                                      op_dimensions)
 
                     # use this fake subset to calculate the offset
-                    fake_subset.offset(target_subset, True)
+                    fake_subset.offset(squeezed, True)
 
                     # we access the inp subset using the computed offset
                     # since the inp_subset may be missing leading dimensions, we reverse-zip-reverse
@@ -2605,7 +2613,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     tasklet_code += '__out = __inp'
                     state.add_mapped_tasklet(state.label, {
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
-                        for i, (start, end, step) in enumerate(target_subset)
+                        for i, (start, end, step) in enumerate(squeezed)
                     }, {
                         '__inp': inp_memlet,
                         **input_memlets

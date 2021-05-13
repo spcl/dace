@@ -90,6 +90,13 @@ def test_assign_wild(A: dace.float32[3, 5, 10, 13], B: dace.float32[2, 1, 4]):
     return A
 
 
+@compare_numpy_output(positive=True)
+def test_assign_squeezed(A: dace.float32[3, 5, 10, 20, 13],
+                         B: dace.float32[2, 1, 4]):
+    A[2, 2:4, :, 1, 8:12] = B
+    return A
+
+
 if __name__ == '__main__':
     test_multiassign()
     test_multiassign_mutable()
