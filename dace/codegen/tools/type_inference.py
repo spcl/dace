@@ -364,7 +364,7 @@ def _Compare(t, symbols, inferred_symbols):
 def _BoolOp(t, symbols, inferred_symbols):
     for v in t.values:
         _dispatch(v, symbols, inferred_symbols)
-    return dtypes.typeclass(np.bool)
+    return dtypes.typeclass(bool)
 
 
 def _Attribute(t, symbols, inferred_symbols):
