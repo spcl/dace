@@ -124,6 +124,8 @@ def subscript_to_ast_slice(node, without_array=False):
         slice = node.slice.value
         if not isinstance(slice, ast.Tuple):
             result_slice = [slice]
+    elif isinstance(node.slice, ast.ExtSlice):
+        slice = tuple(node.slice.dims)
     else:
         slice = node.slice
 
