@@ -536,7 +536,7 @@ class ListProperty(Property):
             return [elem.to_json() for elem in l]
         # If elements are one of the JSON basic types, use directly
         if self.element_type in (int, float, list, tuple, dict):
-            return l
+            return list(map(self.element_type, l))
         # Otherwise, convert to strings
         return list(map(str, l))
 
@@ -577,7 +577,7 @@ class TransformationHistProperty(Property):
     def to_json(self, hist):
         if hist is None:
             return None
-        return [elem.to_json() for elem in hist]
+        return [elem.to_json() if elem is not None else None for elem in hist]
 
     def from_json(self, data, sdfg=None):
         if data is None:
