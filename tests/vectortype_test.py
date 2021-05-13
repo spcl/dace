@@ -101,6 +101,34 @@ def test_vector_reduction():
     assert np.allclose(B, np.array([A[0] + A[1], A[2] + A[3]]))
 
 
+def test_vector_to_vector_wcr():
+    """ 
+    Tests write-conflicted memlets from vectors on vectors.
+    """
+    sdfg = dace.SDFG('vectoradd')
+    sdfg.add_array('A', [2], float2)
+    sdfg.add_array('B', [2], float2)
+    state = sdfg.add_state()
+    r = state.add_read('A')
+    t1 = state.add_tasklet('something', {'a'}, {'b'}, 'b = a')
+    t2 = state.add_tasklet('something', {'a'}, {'b'}, 'b = a')
+    w = state.add_write('B')
+    state.add_edge(r, None, t1, 'a', dace.Memlet('A[0]'))
+    state.add_edge(t1, 'b', w, None,
+                   dace.Memlet('B[0]', wcr='lambda x, y: x + y'))
+    state.add_edge(r, None, t2, 'a', dace.Memlet('A[1]'))
+    state.add_edge(t2, 'b', w, None,
+                   dace.Memlet('B[1]', wcr='lambda x, y: x + y'))
+
+    assert '_atomic' not in sdfg.generate_code()[0].clean_code
+
+    A = np.random.rand(4).astype(np.float32)
+    B = np.random.rand(4).astype(np.float32)
+    B_reg = B + A
+    sdfg(A=A, B=B)
+    assert np.allclose(B, B_reg)
+
+
 def test_vector_reduction_atomic():
     """ 
     Tests "horizontal" summation (hadd) of vector types using 
@@ -170,4 +198,5 @@ if __name__ == '__main__':
     test_vector_type_inference()
     test_vector_type_cast()
     test_vector_reduction()
+    test_vector_to_vector_wcr()
     test_vector_reduction_atomic()

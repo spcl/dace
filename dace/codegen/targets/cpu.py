@@ -812,12 +812,14 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
 
-        # If there is a type mismatch and more than one element is used, cast 
-        # pointer (vector->vector WCR). Otherwise, generate vector->scalar 
+        # If there is a type mismatch and more than one element is used, cast
+        # pointer (vector->vector WCR). Otherwise, generate vector->scalar
         # (horizontal) reduction.
         vec_prefix = ''
         vec_suffix = ''
-        if isinstance(dtype, dtypes.vector):
+        dst_dtype = sdfg.arrays[memlet.data].dtype
+        if (isinstance(dtype, dtypes.vector)
+                and not isinstance(dst_dtype, dtypes.vector)):
             if memlet.subset.num_elements() != 1:
                 ptr = f'({dtype.ctype} *)({ptr})'
             else:
@@ -831,9 +833,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if redtype != dtypes.ReductionType.Custom:
             credtype = "dace::ReductionType::" + str(
                 redtype)[str(redtype).find(".") + 1:]
-            return (
-                f'dace::wcr_fixed<{credtype}, {dtype.ctype}>::{func}('
-                f'{ptr}, {inname})')
+            return (f'dace::wcr_fixed<{credtype}, {dtype.ctype}>::{func}('
+                    f'{ptr}, {inname})')
 
         # General reduction
         custom_reduction = cpp.unparse_cr(sdfg, memlet.wcr, dtype)
