@@ -569,7 +569,7 @@ class RedundantSecondArray(pm.Transformation):
 
         # 1. Get edge e1 and extract/validate subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
-        _, b1_subset = _validate_subsets(e1, sdfg.arrays)
+        a_subset, b1_subset = _validate_subsets(e1, sdfg.arrays)
 
         if strict:
             # In strict mode, make sure the memlet covers the removed array
@@ -637,6 +637,15 @@ class RedundantSecondArray(pm.Transformation):
                     G = helpers.simplify_state(graph)
                     # Loop over the accesses
                     for a in accesses:
+                        subsets_intersect = False
+                        for e in graph.in_edges(a):
+                            _, subset = _validate_subsets(e, sdfg.arrays, dst_name=a.data)
+                            res = subsets.intersects(a_subset, subset)
+                            if res == True or res is None:
+                                subsets_intersect = True
+                                break
+                        if not subsets_intersect:
+                            continue
                         try:
                             has_bward_path = nx.has_path(G, a, in_array)
                         except NodeNotFound:
@@ -653,7 +662,13 @@ class RedundantSecondArray(pm.Transformation):
                         # If there is a forward path then a must not be a direct
                         # successor of in_array.
                         if has_fward_path and a in G.successors(in_array):
-                            return False
+                            for src, _ in G.in_edges(a):
+                                if src is in_array:
+                                    continue
+                                if (nx.has_path(G, in_array, src)
+                                        and src != out_array):
+                                    continue
+                                return False
 
         # Make sure that both arrays are using the same storage location
         # and are of the same type (e.g., Stream->Stream)
