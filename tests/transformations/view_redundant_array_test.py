@@ -72,10 +72,10 @@ def test_redundant_array_1_into_2_dims(copy_subset):
     sdfg.apply_strict_transformations()
     sdfg.view()
 
-    I = np.ones((3, 3), dtype=np.float32)
-    O = np.zeros_like(I)
+    I = np.ones((9,)).astype(np.float32)
+    O = np.zeros((3, 3)).astype(np.float32)
     sdfg(I=I, O=O)
-    assert np.allclose(O, I + 1)
+    assert np.allclose(O.flatten(), I + 1)
     assert len([
         n for n in sdfg.node(0).nodes()
         if isinstance(n, nodes.AccessNode) and type(n.desc(sdfg)) is data.Array
@@ -106,10 +106,10 @@ def test_redundant_array_2_into_1_dim(copy_subset):
     sdfg.apply_strict_transformations()
     sdfg.view()
 
-    I = np.ones((3, 3), dtype=np.float32)
-    O = np.zeros_like(I)
+    I = np.ones((3, 3)).astype(np.float32)
+    O = np.zeros((9,)).astype(np.float32)
     sdfg(I=I, O=O)
-    assert np.allclose(O, I + 1)
+    assert np.allclose(O, (I + 1).flatten())
     assert len([
         n for n in sdfg.node(0).nodes()
         if isinstance(n, nodes.AccessNode) and type(n.desc(sdfg)) is data.Array
