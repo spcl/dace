@@ -8,10 +8,19 @@ It might at some point be beneficial to add this to the codegen, or to the utils
 it doesn't necessarily have to stay here. 
 """
 
+from copy import deepcopy
+from re import A
+from numpy import isin
+
+from sympy.codegen.ast import Variable
 from dace.codegen import exceptions as cgx
 from dace.sdfg import utils as sdutil
 from dace.sdfg import nodes as nd
-from dace import data, memlet, dtypes, sdfg as sd
+from dace import data, memlet, subsets, symbolic, sdfg as sd
+from dace.sdfg import state, graph
+
+from typing import Union
+from typing import Any
 
 def selectNodesConditional(sdfg, condition):
     #Get all nodes that fullfill a condition
@@ -87,7 +96,7 @@ def parseHBMAlignment(arrayname, array):
         splitaxes.remove(val)
     return splitaxes
 
-def collectAndParseHBMArrays(sdfg : sd.SDFG) -> "dict[(str, sd.SDFG), dict[str, any]]":
+def collectAndParseHBMArrays(sdfg : sd.SDFG) -> "dict[(str, sd.SDFG), dict[str, Any]]":
     """
     Finds all arrays that are spread across multiple HBM
     banks
@@ -131,18 +140,85 @@ def getNonExistingName(suggestedname : str, checkagainstcollection) -> str:
     while(suggestedname in checkagainstcollection):
         suggestedname = suggestedname + f"_{counter}"
         counter += 1
+    return suggestedname
 
-def addHBMAccessNodeEntry(accessnodelist, arraylist, accessnode, state):
-    refArrays = arraylist[accessnode.data]
-    locationcount = refArrays["splitcount"] * len(refArrays["splitaxes"])
-    listindex = (accessnode, state)
-    accessnodelist[listindex] = []
-    for i in range(locationcount):
-        newrefArray = refArrays["arraynames"][i]
-        newnode = nd.AccessNode(newrefArray, accessnode.access,
-            accessnode.debuginfo)
-        state.add_node(newnode)
-        accessnodelist[listindex].append(newnode)
+def getAttachedHBMMemlets(state, node, hbmarraylist):
+    hbminput = []
+    hbmoutput = []
+    for input in state.in_edges(node):
+        if((input.data.data, state.parent) in hbmarraylist):
+            hbminput.append(input)
+    for output in state.out_edges(node):
+        if((output.data.data, state.parent) in hbmarraylist):
+            hbmoutput.append(output)
+    return (hbminput, hbmoutput)
+
+def expand_hbm_node(state : state.SDFGState, node : nd.Node):
+    i = 0
+
+def unroll_map(state : state.SDFGState, entry : nd.MapEntry, exit : nd.MapExit):
+    """
+    1 D only, assume valid
+    """
+    begin, end, stride = entry.map.range[0]
+    begin = int(str(begin))
+    end = int(str(end))
+    stride = int(str(stride))
+    varname = entry.map.params[0]
+    
+    for k in range(begin, end, stride):
+        #maybe one can do this nicer using a nested SDFG?
+        oldToNewMap = {}
+        for v in sdutil.dfs_topological_sort(state, entry):
+            if(v == entry):
+                continue
+            newnode = deepcopy(v)
+            state.add_node(newnode)
+            oldToNewMap[v] = newnode
+            for edge in state.in_edges(v):
+                oldmemlet = edge.data
+                symbolicvar = symbolic.symbol(varname)
+                repldict = [(symbolicvar, 0)]
+                
+                newsubset = None
+                newwother_subset = None
+                newvolume = None
+                if(isinstance(oldmemlet.other_subset, symbolic.Range)):
+                    newwother_subset = oldmemlet.other_subset.replace(repldict)
+                if(isinstance(oldmemlet.volume, symbolic.Range)):
+                    newvolume = oldmemlet.volume.replace(repldict)
+                if(isinstance(oldmemlet.subset, symbolic.Range)):
+                    newsubset = oldmemlet.subset.replace(repldict)
+
+                mem = memlet.Memlet(None,
+                oldmemlet.data, 
+                newsubset,
+                newwother_subset,
+                newvolume,
+                oldmemlet.dynamic,
+                oldmemlet.wcr,
+                oldmemlet.debuginfo,
+                oldmemlet.wcr_nonatomic,
+                oldmemlet.allow_oob)
+                
+                if(edge.src == entry):
+                    path = state.memlet_path(edge)
+                    prev = path[path.index(edge)-1]
+                    state.add_edge(prev.src, prev.src_conn,
+                    edge.dst, edge.dst_conn, mem)
+                elif(edge.dst == exit):
+                    path = state.memlet_path(edge)
+                    next = path[path.index(edge) + 1]
+                    state.add_edge(edge.src, edge.src_conn,
+                    next.dst, next.dst_conn, mem)
+                else:
+                    state.add_edge(oldToNewMap[edge.src], edge.src_conn,
+                    newnode, edge.dst_conn, mem)
+            if(v == exit):
+                break
+        
+
+    
 
 def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
     """
@@ -159,7 +235,7 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
         return
     
     arraylist : dict[(str, sd.SDFG), list[(str, data.Array)]] = {}
-    statelist : list[sd.SDFGState] = []
+    statelist : set[sd.SDFGState] = set()
 
     for arrayname, arraysdfg in info.keys():
         #Create mapping from old to new arrays
@@ -197,56 +273,65 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
             newarray.location["hbmbank"] = f"{curinfo['lowbank'] + i}"
             arraylist[(arrayname, arraysdfg)].append((newname, newarray))
 
-    for node, parent in sdfg.all_nodes_recursive():
+    for lookatsdfg in sdfg.all_sdfgs_recursive():
         #Find all states where HBM-multibanks are used
-        if(isinstance(node, nd.AccessNode)):
-            if(node.data in arraylist):
-                statelist.append(parent)
+        for state in lookatsdfg.states():
+            for node in state.nodes():
+                if(isinstance(node, nd.AccessNode)):
+                    if((node.data, lookatsdfg) in arraylist):
+                        statelist.add(state)
 
-    for oldstate in statelist:
-        newstate = sd.SDFGState(oldstate.label, oldstate.parent, oldstate._debuginfo, oldstate.location)
-        #rebuild the entire state with expanded HBM-Accesses
-        start_nodes = list(v for v in oldstate.nodes() if len(list(oldstate.predecessors(v))) == 0)
-        for node in sdutil.dfs_topological_sort(oldstate, start_nodes): #sure this has the right type? (oldstate)
+    #rebuild the entire state with expanded HBM-Accesses (mostly inplace)
+    for state in statelist:
+        accessnodestoexpand = {}
+        mapstounroll = {}
+        start_nodes = sdutil.find_source_nodes(state)
+
+        for node in sdutil.dfs_topological_sort(state, start_nodes): #sure this has the right type? (oldstate)
+            #Find all accessnodes and maps which should be expanded and store
+            #them in accessnodestoexpand and mapstounroll
             if(isinstance(node, nd.AccessNode)):
-                i =0
-                #multiply the node
+                #multiply the node number-of-bank times and store in accesnodelist
+                currentindex = (node.data, state.parent)
+                refArrays = arraylist[currentindex]
+                refInfo = info[currentindex]
+                locationcount = refInfo["splitcount"] * len(refInfo["splitaxes"])
+                accessnodestoexpand[node] = []
+                for i in range(locationcount):
+                    newrefArrayname, newrefArray = refArrays[i]
+                    newnode = nd.AccessNode(
+                        newrefArrayname, 
+                        node.access,
+                        node.debuginfo)
+                    accessnodestoexpand[node].append(newnode)                
             elif(isinstance(node, nd.MapEntry)):
-                i= 0
-                #do something really clever to move into the scope (and decide for unrolling)
-            else:
-                i =0
-                #Probably don't do anything fancy. Look at the attached memlets and copy or replace a simplified version.
-                #will need to do this based on looking backwards so nodes are already handled. Maybe This can be done just like that 
-                #for acceessNodes and Mapentries, so maybe doing this in else is not even required.
+                #decide wheter to unroll the map
+                hbmin : list[graph.MultiConnectorEdge] = None
+                hbmout : list[graph.MultiConnectorEdge] = None
+                hbmin , hbmout  = getAttachedHBMMemlets(state, node, arraylist)
+                if(node.map.get_param_num() != 1):  #TODO: In case this has bound hbmmemlets need to throw an error here
+                    continue
+                variable = node.map.params[0]
+                for current in hbmout:
+                    low, high, stride = current.data.subset[0]
+                    lowstr = symbolic.free_symbols_and_functions(low)
+                    highstr = symbolic.free_symbols_and_functions(high)
+                    if(variable in lowstr or variable in highstr):
+                        #TODO: Check that low == high, and this is
+                        #a constant (i.e. just the variable)
+                        mapstounroll[node.map] = node
+                        break
+            elif(isinstance(node, nd.MapExit)):
+                if(node.map in mapstounroll):
+                    mapstounroll[node.map] = (mapstounroll[node.map], node)
             
+        for entry, exit in mapstounroll.values():
+            unroll_map(state, entry, exit)
 
 
-    """
-    __OLD
-
-    
-    
-    for i in range(count):
-                newshapelist = []
-                for d in range(ndim):
-                    if d in splitaxes:
-                        strip = shape[d] // splitcount
-                        if(i == 0):
-                            strip += shape[d] % splitcount
-                        newshapelist.append(strip)
-                    else:
-                        newshapelist.append(shape[d])
-                newshape = tuple(newshapelist)
-
-                newarrayname, newarray = sdfg.add_array(f"{accessnode.data}_hbm{i}", 
-                    newshape, oldarray.dtype)
-                newarray.location["hbmbank"] = f"{low + i}"
-                handledArrays[accessnode.data]["arraynames"].append(newarrayname)
+        #Probably don't do anything fancy. Look at the attached memlets and copy or replace a simplified version.
+        #will need to do this based on looking backwards so nodes are already handled. Maybe This can be done just like that 
+        #for acceessNodes and Mapentries, so maybe doing this in else is not even required.
             
-    #Remove the old arrays
-    #for old in handledArrays.keys():
-    #    sdfg.remove_data(old[0])
-    """
 
     return sdfg
