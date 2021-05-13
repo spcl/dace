@@ -446,9 +446,13 @@ class RedundantArray(pm.Transformation):
             if isinstance(e.src, Reduce):
                 reduction = True
 
-        # If the memlet does not cover the removed array, create a view.
-        if reduction or any(m != a
-                            for m, a in zip(a1_subset.size(), in_desc.shape)):
+        # If:
+        # 1. A reduce node is involved;
+        # 2. The memlet does not cover the removed array; or
+        # 3. Dimensions are mismatching (all dimensions are popped);
+        # create a view.
+        if reduction or len(a_dims_to_pop) == len(in_desc.shape) or any(
+                m != a for m, a in zip(a1_subset.size(), in_desc.shape)):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset,
                             b_dims_to_pop)
             return
