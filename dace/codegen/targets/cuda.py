@@ -1538,10 +1538,11 @@ void  *{kname}_args[] = {{ {kargs} }};
                                             'dynamic_map_block_size').split(',')
                     ]
             else:
-                warnings.warn(
-                    'Thread-block maps not found in kernel, assuming ' +
-                    'block size of (%s)' %
-                    Config.get('compiler', 'cuda', 'default_block_size'))
+                if Config.get_bool('debugprint'):
+                    warnings.warn(
+                        'Thread-block maps not found in kernel, assuming ' +
+                        'block size of (%s)' %
+                        Config.get('compiler', 'cuda', 'default_block_size'))
 
                 if (Config.get('compiler', 'cuda',
                                'default_block_size') == 'max'):
