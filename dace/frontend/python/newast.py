@@ -3434,7 +3434,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 func = self.other_sdfgs[funcname]
             if isinstance(func, SDFG):
                 sdfg = copy.deepcopy(func)
-                args = [(arg.arg, self._parse_function_arg(arg.value))
+                args = [(aname, self._parse_function_arg(arg))
+                        for aname, arg in zip(sdfg.arg_names, node.args)]
+                args += [(arg.arg, self._parse_function_arg(arg.value))
                         for arg in node.keywords]
                 required_args = [
                     a for a in sdfg.arglist().keys() if a not in sdfg.symbols
