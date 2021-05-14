@@ -228,7 +228,7 @@ def test_default_stream_blas_node():
                             if isinstance(n, dace.nodes.Tasklet))
             environments = {env for n in all_tasklets for env in n.environments}
 
-            assert "cuBLAS" in environments
+            assert blas.environments.cuBLAS.full_class_path() in environments
 
             sdfg(A=A, B=B, C=C)
             assert np.allclose(A @ B, C)

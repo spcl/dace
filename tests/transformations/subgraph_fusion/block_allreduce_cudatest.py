@@ -16,6 +16,7 @@ M.set(30)
 def program(A: dace.float32[M, N]):
     return dace.reduce(lambda a, b: max(a, b), A, axis=1, identity=0)
 
+
 @pytest.mark.gpu
 def test_blockallreduce():
     A = np.random.rand(M.get(), N.get()).astype(np.float32)
