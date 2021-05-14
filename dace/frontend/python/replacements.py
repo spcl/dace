@@ -676,7 +676,7 @@ def _min2(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, b: str):
         desc_a = a
         read_a = None
         conn_a = symbolic.symstr(a)
-    
+
     if isinstance(b, str) and b in sdfg.arrays.keys():
         desc_b = sdfg.arrays[b]
         read_b = state.add_read(b)
@@ -690,11 +690,12 @@ def _min2(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, b: str):
     dtype_c, [cast_a, cast_b] = _result_type([desc_a, desc_b])
     arg_a, arg_b = "{in1}".format(in1=conn_a), "{in2}".format(in2=conn_b)
     if cast_a:
-        arg_a = "{ca}({in1})".format(ca=str(cast_a).replace('::', '.'), in1=conn_a)
+        arg_a = "{ca}({in1})".format(ca=str(cast_a).replace('::', '.'),
+                                     in1=conn_a)
     if cast_b:
-        arg_b = "{cb}({in2})".format(cb=str(cast_b).replace('::', '.'), in2=conn_b)
-    
-    
+        arg_b = "{cb}({in2})".format(cb=str(cast_b).replace('::', '.'),
+                                     in2=conn_b)
+
     tasklet = nodes.Tasklet('__min2', in_conn, out_conn,
                             "__out = min({a}, {b})".format(a=arg_a, b=arg_b))
 
@@ -702,10 +703,13 @@ def _min2(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, b: str):
     desc_c = sdfg.arrays[c]
     write_c = state.add_write(c)
     if read_a:
-        state.add_edge(read_a, None, tasklet, '__in_a', Memlet.from_array(a, desc_a))
+        state.add_edge(read_a, None, tasklet, '__in_a',
+                       Memlet.from_array(a, desc_a))
     if read_b:
-        state.add_edge(read_b, None, tasklet, '__in_b', Memlet.from_array(b, desc_b))
-    state.add_edge(tasklet, '__out', write_c, None, Memlet.from_array(c, desc_c))
+        state.add_edge(read_b, None, tasklet, '__in_b',
+                       Memlet.from_array(b, desc_b))
+    state.add_edge(tasklet, '__out', write_c, None,
+                   Memlet.from_array(c, desc_c))
 
     return c
 
