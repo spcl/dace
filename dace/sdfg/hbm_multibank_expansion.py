@@ -153,8 +153,32 @@ def getAttachedHBMMemlets(state, node, hbmarraylist):
             hbmoutput.append(output)
     return (hbminput, hbmoutput)
 
-def expand_hbm_node(state : state.SDFGState, node : nd.Node):
-    i = 0
+def downward_topological(sdfg : state.SDFGState, source : nd.Node):
+    """
+    Starts from a source node and moves in a depth first
+    approach in topological order along memlets in the state. 
+    Moves only in the direction of dataflow (towards out edges)
+    """
+    visited = set()
+    getDownChildren = lambda s : [x.dst for x in sdfg.out_edges(s)]
+    stack = getDownChildren(source)
+    yield source
+    visited.add(source)
+    while stack:
+        child = stack[-1]
+        stack.pop()
+        if(child in visited):
+            continue
+        proc = True
+        for pred in sdfg.in_edges(child):
+            if(pred.src not in visited):
+                proc = False
+                break
+        if(proc):
+            visited.add(child)
+            stack.extend(getDownChildren(child))
+            yield child
+
 
 def unroll_map(state : state.SDFGState, entry : nd.MapEntry, exit : nd.MapExit):
     """
@@ -166,59 +190,56 @@ def unroll_map(state : state.SDFGState, entry : nd.MapEntry, exit : nd.MapExit):
     stride = int(str(stride))
     varname = entry.map.params[0]
     
-    for k in range(begin, end, stride):
-        #maybe one can do this nicer using a nested SDFG?
+    def intern_recreateMemletWithReplace(edge, varname : str, replace : int):
+        #Copy a memlet from an edge and replace varname with replace in 
+        #subset/volume
+        oldmemlet = edge.data
+        symbolicvar = symbolic.symbol(varname)
+        repldict = [(symbolicvar, replace)]
+
+        mem = deepcopy(oldmemlet)
+
+        if(symbolic.issymbolic(oldmemlet.volume)):
+            mem.volume = mem.volume.subs(repldict)
+        if(isinstance(oldmemlet.other_subset, subsets.Range)):
+            mem.other_subset.replace(repldict)
+        if(isinstance(oldmemlet.subset, subsets.Range)):
+            mem.subset.replace(repldict)
+        return mem
+
+    for k in range(begin, end+1, stride):
+        #Copy/reconnect the scope in the map #unroll times
         oldToNewMap = {}
-        for v in sdutil.dfs_topological_sort(state, entry):
+        for v in downward_topological(state, entry):
             if(v == entry):
                 continue
+            if(v == exit):
+                break
             newnode = deepcopy(v)
             state.add_node(newnode)
             oldToNewMap[v] = newnode
-            for edge in state.in_edges(v):
-                oldmemlet = edge.data
-                symbolicvar = symbolic.symbol(varname)
-                repldict = [(symbolicvar, 0)]
-                
-                newsubset = None
-                newwother_subset = None
-                newvolume = None
-                if(isinstance(oldmemlet.other_subset, symbolic.Range)):
-                    newwother_subset = oldmemlet.other_subset.replace(repldict)
-                if(isinstance(oldmemlet.volume, symbolic.Range)):
-                    newvolume = oldmemlet.volume.replace(repldict)
-                if(isinstance(oldmemlet.subset, symbolic.Range)):
-                    newsubset = oldmemlet.subset.replace(repldict)
 
-                mem = memlet.Memlet(None,
-                oldmemlet.data, 
-                newsubset,
-                newwother_subset,
-                newvolume,
-                oldmemlet.dynamic,
-                oldmemlet.wcr,
-                oldmemlet.debuginfo,
-                oldmemlet.wcr_nonatomic,
-                oldmemlet.allow_oob)
-                
+            for edge in state.in_edges(v):
+                mem = intern_recreateMemletWithReplace(edge, varname, k)
                 if(edge.src == entry):
                     path = state.memlet_path(edge)
                     prev = path[path.index(edge)-1]
                     state.add_edge(prev.src, prev.src_conn,
-                    edge.dst, edge.dst_conn, mem)
-                elif(edge.dst == exit):
-                    path = state.memlet_path(edge)
-                    next = path[path.index(edge) + 1]
-                    state.add_edge(edge.src, edge.src_conn,
-                    next.dst, next.dst_conn, mem)
+                    newnode, edge.dst_conn, mem)
                 else:
                     state.add_edge(oldToNewMap[edge.src], edge.src_conn,
                     newnode, edge.dst_conn, mem)
-            if(v == exit):
-                break
-        
-
-    
+        for edge in state.in_edges(exit):
+            mem = intern_recreateMemletWithReplace(edge, varname, k)
+            path = state.memlet_path(edge)
+            next = path[path.index(edge) + 1]
+            state.add_edge(oldToNewMap[edge.src], edge.src_conn,
+            next.dst, next.dst_conn, mem)
+    for v in downward_topological(state, entry):
+        #Erase the old map
+        state.remove_node(v)
+        if(v == exit):
+            break
 
 def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
     """
@@ -281,29 +302,19 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
                     if((node.data, lookatsdfg) in arraylist):
                         statelist.add(state)
 
-    #rebuild the entire state with expanded HBM-Accesses (mostly inplace)
     for state in statelist:
-        accessnodestoexpand = {}
+        accessnodestoexpand = []
         mapstounroll = {}
         start_nodes = sdutil.find_source_nodes(state)
 
-        for node in sdutil.dfs_topological_sort(state, start_nodes): #sure this has the right type? (oldstate)
+        for node in sdutil.dfs_topological_sort(state, start_nodes):
             #Find all accessnodes and maps which should be expanded and store
             #them in accessnodestoexpand and mapstounroll
             if(isinstance(node, nd.AccessNode)):
                 #multiply the node number-of-bank times and store in accesnodelist
                 currentindex = (node.data, state.parent)
-                refArrays = arraylist[currentindex]
-                refInfo = info[currentindex]
-                locationcount = refInfo["splitcount"] * len(refInfo["splitaxes"])
-                accessnodestoexpand[node] = []
-                for i in range(locationcount):
-                    newrefArrayname, newrefArray = refArrays[i]
-                    newnode = nd.AccessNode(
-                        newrefArrayname, 
-                        node.access,
-                        node.debuginfo)
-                    accessnodestoexpand[node].append(newnode)                
+                if(currentindex in arraylist):
+                    accessnodestoexpand.append(node)
             elif(isinstance(node, nd.MapEntry)):
                 #decide wheter to unroll the map
                 hbmin : list[graph.MultiConnectorEdge] = None
@@ -322,16 +333,50 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
                         mapstounroll[node.map] = node
                         break
             elif(isinstance(node, nd.MapExit)):
+                #if this map will be unrolled (known because we've already seen the MapEntry), store this MapExit
                 if(node.map in mapstounroll):
                     mapstounroll[node.map] = (mapstounroll[node.map], node)
             
         for entry, exit in mapstounroll.values():
             unroll_map(state, entry, exit)
+        for node in accessnodestoexpand:
+            currentindex = (node.data, state.parent)
+            refArrays = arraylist[currentindex]
+            refInfo = info[currentindex]
+            generated_nodes : dict[str, nd.AccessNode] = {}
+            for edge in state.in_edges(node):
+                oldmem = edge.data
+                firstrange = oldmem.subset[0]
+                if(firstrange[0] != firstrange[1]):
+                    i = 0
+                    #handle multiaccess
+                else:
+                    #Memlet only accesses 1 bank. Copy it and add it to the new AccessNode.
+                    index = int(str(firstrange[0]))
+                    newrefArrayname, newrefArray = refArrays[index]
+                    if(newrefArrayname not in generated_nodes):
+                        newnode = nd.AccessNode(
+                        newrefArrayname, 
+                        node.access,
+                        node.debuginfo)
+                        state.add_node(newnode)
+                        generated_nodes[newrefArrayname] = newnode
+                    newnode = generated_nodes[newrefArrayname]
+                    state.add_edge(edge.src, edge.src_conn, newnode, edge.dst_conn, deepcopy(oldmem))    #specific for in edge
+                    state.remove_edge(edge)
 
 
-        #Probably don't do anything fancy. Look at the attached memlets and copy or replace a simplified version.
-        #will need to do this based on looking backwards so nodes are already handled. Maybe This can be done just like that 
-        #for acceessNodes and Mapentries, so maybe doing this in else is not even required.
+    """
+    locationcount = refInfo["splitcount"] * len(refInfo["splitaxes"])
+            for i in range(locationcount):
+                newrefArrayname, newrefArray = refArrays[i]
+                newnode = nd.AccessNode(
+                    newrefArrayname, 
+                    node.access,
+                    node.debuginfo)
+                state.add_node(newnode)
+    """
+
             
 
     return sdfg
