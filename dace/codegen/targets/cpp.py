@@ -366,6 +366,16 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
     return reshaped_copy, new_strides
 
 
+def _is_c_contiguous(shape, strides):
+    """ 
+    Returns True if the strides represent a non-padded, C-contiguous (last 
+    dimension contiguous) array.
+    """
+    computed_strides = tuple(
+        data._prod(shape[i + 1:]) for i in range(len(shape)))
+    return tuple(strides) == computed_strides
+
+
 def ndcopy_to_strided_copy(
     copy_shape,
     src_shape,
@@ -416,8 +426,18 @@ def ndcopy_to_strided_copy(
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
+    # Another case of non-strided 1D copy: all indices match and copy length
+    # matches pointer difference, as well as match in contiguity and padding
+    elif (first_src_index == first_dst_index
+          and last_src_index == last_dst_index and copy_length == src_copylen
+          and _is_c_contiguous(src_shape, src_strides)
+          and _is_c_contiguous(dst_shape, dst_strides)):
+        # Emit 1D copy of the whole array
+        copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
+        return copy_shape, [1], [1]
     # 1D strided copy
-    elif sum([0 if c == 1 else 1 for c in copy_shape]) == 1:
+    elif (sum([0 if c == 1 else 1 for c in copy_shape]) == 1
+          and len(src_subset) == len(dst_subset)):
         # Find the copied dimension:
         # In copy shape
         copydim = next(i for i, c in enumerate(copy_shape) if c != 1)

@@ -193,7 +193,7 @@ def configure_and_compile(program_folder,
     if Config.get('compiler', 'linker', 'executable'):
         cmake_command.append("-DCMAKE_LINKER=\"{}\"".format(
             make_absolute(Config.get('compiler', 'linker', 'executable'))))
-    if Config.get('compiler', 'linker', 'args'):
+    if Config.get('compiler', 'linker', 'args') is not None:
         cmake_command.append(
             "-DCMAKE_SHARED_LINKER_FLAGS=\"{}\"".format(
                 Config.get('compiler', 'linker', 'args') + " " +
@@ -253,7 +253,7 @@ def configure_and_compile(program_folder,
 
 
 def _get_or_eval(value_or_function: Union[T, Callable[[], T]]) -> T:
-    """ 
+    """
     Returns a stored value or lazily evaluates it. Used in environments
     for allowing potential runtime (rather than import-time) checks.
     """
@@ -263,10 +263,10 @@ def _get_or_eval(value_or_function: Union[T, Callable[[], T]]) -> T:
 
 
 def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
-    """ 
+    """
     Returns the CMake environment and linkage flags associated with the
     given input environments/libraries.
-    :param environments: A list of ``@dace.library.environment``-decorated 
+    :param environments: A list of ``@dace.library.environment``-decorated
                          classes.
     :return: A 2-tuple of (environment CMake flags, linkage CMake flags)
     """

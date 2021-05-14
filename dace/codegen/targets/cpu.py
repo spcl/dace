@@ -201,6 +201,9 @@ class CPUCodeGen(TargetCodeGenerator):
             memlet = deepcopy(memlet)
             memlet.data = viewed_dnode.data
             memlet.subset = memlet.dst_subset if is_write else memlet.src_subset
+            if memlet.subset is None:
+                memlet.subset = subsets.Range.from_array(
+                    viewed_dnode.desc(sdfg))
 
         # Emit memlet as a reference and register defined variable
         atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
@@ -236,7 +239,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Compute array size
         arrsize = nodedesc.total_size
-        arrsize_bytes = arrsize * nodedesc.dtype.bytes
+        if not isinstance(nodedesc.dtype, dtypes.opaque):
+            arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
         alloc_name = cpp.ptr(name, nodedesc)
 
