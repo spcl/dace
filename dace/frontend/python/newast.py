@@ -2560,10 +2560,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if target_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
-                if target_subset.size() != op_subset.size() or op:
+                squeezed = copy.deepcopy(target_subset)
+                squeezed.squeeze(offset=False)
+                squeezed_op = copy.deepcopy(op_subset)
+                squeezed_op.squeeze(offset=False)
+                if squeezed.size() != squeezed_op.size() or op:
 
-                    squeezed = copy.deepcopy(target_subset)
-                    squeezed.squeeze(offset=False)
                     _, all_idx_tuples, _, _, inp_idx = _broadcast_to(
                         squeezed.size(), op_subset.size())
 
