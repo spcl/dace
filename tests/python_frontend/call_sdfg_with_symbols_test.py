@@ -4,12 +4,13 @@ import dace
 
 N = dace.symbol("N")
 
+
 @dace.program
 def add_one(A: dace.int64[N, N], result: dace.int64[N, N]):
     result[:] = A + 1
 
 
-def call_test():
+def test_call():
     @dace.program
     def add_one_more(A: dace.int64[N, N]):
         result = dace.define_local([N, N], dace.int64)
@@ -21,7 +22,7 @@ def call_test():
     assert np.allclose(result, A + 2)
 
 
-def call_sdfg_test():
+def test_call_sdfg():
     add_one_sdfg = add_one.to_sdfg()
 
     @dace.program
@@ -35,7 +36,7 @@ def call_sdfg_test():
     assert np.allclose(result, A + 2)
 
 
-def call_sdfg_argnames_test():
+def test_call_sdfg_argnames():
     add_one_sdfg = add_one.to_sdfg()
 
     @dace.program
@@ -59,44 +60,20 @@ t = state.add_tasklet('p', {'i'}, set(), 'printf("hello world %f\\n", i)')
 r = state.add_read('inp')
 state.add_edge(r, None, t, 'i', dace.Memlet.simple('inp', 'N-1, N-1'))
 
+
 @dace.program
 def caller(A: dace.float32[N, N]):
     sdfg(inp=A)
 
 
-def call_sdfg_with_stride_symbols():
-    A = np.random.rand(4,4).astype(np.float32)
+def test_call_sdfg_with_stride_symbols():
+    A = np.random.rand(4, 4).astype(np.float32)
     caller(A)
-    print('Should print', A[-1,-1])
-
-
-
-other_N = dace.symbol("N")
-
-
-@dace.program
-def add_one_other_n(A: dace.int64[other_N - 1, other_N - 1],
-                    result: dace.int64[other_N - 1, other_N - 1]):
-    result[:] = A + 1
-
-
-def call_sdfg_same_symbol_name_test():
-    add_one_sdfg = add_one_other_n.to_sdfg()
-
-    @dace.program
-    def add_one_more(A: dace.int64[N, N]):
-        result = dace.define_local([N, N], dace.int64)
-        add_one_sdfg(A=A, result=result)
-        return result + 1
-
-    A = np.random.randint(0, 10, size=(11, 11), dtype=np.int64)
-    result = add_one_more(A=A.copy())
-    assert np.allclose(result, A + 2)
+    print('Should print', A[-1, -1])
 
 
 if __name__ == "__main__":
-    call_test()
-    call_sdfg_test()
-    call_sdfg_argnames_test()
-    call_sdfg_with_stride_symbols()
-    call_sdfg_same_symbol_name_test()
+    test_call()
+    test_call_sdfg()
+    test_call_sdfg_argnames()
+    test_call_sdfg_with_stride_symbols()
