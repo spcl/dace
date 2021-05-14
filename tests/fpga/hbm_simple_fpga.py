@@ -36,7 +36,7 @@ def create_vadd_sdfg():
 
     state.add_memlet_path(readin1, outer_entry, map_entry, tasklet, memlet=tmpin1_memlet, dst_conn="__in1")
     state.add_memlet_path(readin2, outer_entry, map_entry, tasklet, memlet=tmpin2_memlet, dst_conn="__in2")
-    state.add_memlet_path(tasklet, outer_exit, map_exit, outwrite, memlet=tmpout_memlet, src_conn="__out")
+    state.add_memlet_path(tasklet, map_exit, outer_exit, outwrite, memlet=tmpout_memlet, src_conn="__out")
 
     sdfg.fill_scope_connectors()
   #  sdfg.apply_fpga_transformations() #modify todo
@@ -62,6 +62,6 @@ if __name__ == '__main__':
     #sdfg = create_vadd_sdfg_without_hbm()
     sdfg = create_vadd_sdfg()
     expander.expand_hbm_multiarrays(sdfg)
-    #sdfv.view(sdfg)
+    sdfv.view(sdfg)
     #code = Code(sdfg.generate_code()[2].code, language='cpp')
   #  print(code)
