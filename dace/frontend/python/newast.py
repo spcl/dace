@@ -1717,22 +1717,26 @@ class ProgramVisitor(ExtNodeVisitor):
             zero = ast.parse('0').body[0]
             one = ast.parse('1').body[0]
 
+            def visit_ast_or_value(arg):
+                ast_res = self._visit_ast_or_value(arg)
+                val_res = self._parse_value(ast_res)
+                return val_res, ast_res
+
             if len(node.args) == 1:  # (par)range(stop)
-                ranges = [('0', self._parse_value(node.args[0]), '1')]
-                ast_ranges = [(zero, self._visit_ast_or_value(node.args[0]),
-                               one)]
+                valr, astr = visit_ast_or_value(node.args[0])
+                ranges = [('0', valr, '1')]
+                ast_ranges = [(zero, astr, one)]
             elif len(node.args) == 2:  # (par)range(start, stop)
-                ranges = [(self._parse_value(node.args[0]),
-                           self._parse_value(node.args[1]), '1')]
-                ast_ranges = [(self._visit_ast_or_value(node.args[0]),
-                               self._visit_ast_or_value(node.args[1]), one)]
+                valr0, astr0 = visit_ast_or_value(node.args[0])
+                valr1, astr1 = visit_ast_or_value(node.args[1])
+                ranges = [(valr0, valr1, '1')]
+                ast_ranges = [(astr0, astr1, one)]
             elif len(node.args) == 3:  # (par)range(start, stop, step)
-                ranges = [(self._parse_value(node.args[0]),
-                           self._parse_value(node.args[1]),
-                           self._parse_value(node.args[2]))]
-                ast_ranges = [(self._visit_ast_or_value(node.args[0]),
-                               self._visit_ast_or_value(node.args[1]),
-                               self._visit_ast_or_value(node.args[2]))]
+                valr0, astr0 = visit_ast_or_value(node.args[0])
+                valr1, astr1 = visit_ast_or_value(node.args[1])
+                valr2, astr2 = visit_ast_or_value(node.args[2])
+                ranges = [(valr0, valr1, valr2)]
+                ast_ranges = [(astr0, astr1, astr2)]
             else:
                 raise DaceSyntaxError(
                     self, node,
@@ -4280,17 +4284,28 @@ class ProgramVisitor(ExtNodeVisitor):
         newnode = None
         if result is None:
             return node
-        if isinstance(result, ast.AST):
-            newnode = result
-        elif isinstance(result, (Number, numpy.bool_)):
-            # Compatibility check since Python changed their AST nodes
-            if sys.version_info >= (3, 8):
-                newnode = ast.Constant(value=result, kind='')
-            else:
-                newnode = ast.Num(n=result)
+        if isinstance(result, (list, tuple)):
+            res_num = len(result)
         else:
-            newnode = ast.Name(id=result)
-        return ast.copy_location(newnode, node)
+            res_num = 1
+            result = [result]
+        out = []
+        for i, r in enumerate(result):
+            if isinstance(result, ast.AST):
+                newnode = r
+            elif isinstance(result, (Number, numpy.bool_)):
+                # Compatibility check since Python changed their AST nodes
+                if sys.version_info >= (3, 8):
+                    newnode = ast.Constant(value=r, kind='')
+                else:
+                    newnode = ast.Num(n=r)
+            else:
+                newnode = ast.Name(id=r)
+            ast.copy_location(newnode, node)
+            out.append(newnode)
+        if res_num == 1:
+            out = out[0]
+        return out
 
     def visit_Index(self, node: ast.Index) -> Any:
         if isinstance(node.value, ast.Tuple):
