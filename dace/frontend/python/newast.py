@@ -4378,6 +4378,10 @@ class ProgramVisitor(ExtNodeVisitor):
                                     f'"{aname}" not found')
                 shape = desc.shape
             else:  # Literal list or tuple, add as constant and use shape
+                arrname = [
+                    v if isinstance(v, Number) else self._parse_value(v)
+                    for v in arrname
+                ]
                 carr = numpy.array(arrname, dtype=dtypes.typeclass(int).type)
                 cname = self.sdfg.find_new_constant(f'__ind{i}_{aname}')
                 self.sdfg.add_constant(cname, carr)
