@@ -381,13 +381,11 @@ def add_indirection_subgraph(sdfg: SDFG,
         for i, r in enumerate(memlet.subset):
             if i in nonsqz_dims:
                 mapped_rng.append(r)
-        ind_entry, ind_exit = graph.add_map(
-            'indirection',
-            {
-                '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
-                for i, (s, e, t) in enumerate(mapped_rng)
-            },
-            debuginfo=pvisitor.current_lineinfo)
+        ind_entry, ind_exit = graph.add_map('indirection', {
+            '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
+            for i, (s, e, t) in enumerate(mapped_rng)
+        },
+                                            debuginfo=pvisitor.current_lineinfo)
         inp_base_path.insert(0, ind_entry)
         out_base_path.append(ind_exit)
 
@@ -2208,7 +2206,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if iterator == 'dace.map':
             state = self._add_state('MapState')
-            params = [(k, ':'.join(v)) for k, v in zip(indices, ranges)]
+            params = [(k, ':'.join([str(t) for t in v]))
+                      for k, v in zip(indices, ranges)]
             params, map_inputs = self._parse_map_inputs('map_%d' % node.lineno,
                                                         params, node)
             me, mx = state.add_map(name='%s_%d' % (self.name, node.lineno),
@@ -4199,8 +4198,11 @@ class ProgramVisitor(ExtNodeVisitor):
             # If the value is a tuple of constants (e.g., array.shape) and the
             # slice is constant, return the value itself
             nslice = self.visit(node.slice)
-            if isinstance(nslice, ast.Index):
-                v = self._parse_value(nslice.value)
+            if isinstance(nslice, (ast.Index, Number)):
+                if isinstance(nslice, ast.Index):
+                    v = self._parse_value(nslice.value)
+                else:
+                    v = nslice
                 try:
                     value, valtype = node_parsed[int(v)]
                     return value
