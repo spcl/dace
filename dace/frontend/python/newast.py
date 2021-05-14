@@ -4291,9 +4291,9 @@ class ProgramVisitor(ExtNodeVisitor):
             result = [result]
         out = []
         for i, r in enumerate(result):
-            if isinstance(result, ast.AST):
+            if isinstance(r, ast.AST):
                 newnode = r
-            elif isinstance(result, (Number, numpy.bool_)):
+            elif isinstance(r, (Number, numpy.bool_)):
                 # Compatibility check since Python changed their AST nodes
                 if sys.version_info >= (3, 8):
                     newnode = ast.Constant(value=r, kind='')
