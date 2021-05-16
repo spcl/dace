@@ -3994,7 +3994,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_Constant(self, node: ast.Constant):
         if isinstance(node.value, bool):
-            return dace.bool_(node.n)
+            return dace.bool_(node.value)
         if isinstance(node.value, (int, float, complex)):
             return dtypes.DTYPE_TO_TYPECLASS[type(node.value)](node.value)
         return node.value
