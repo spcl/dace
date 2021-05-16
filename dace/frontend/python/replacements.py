@@ -80,7 +80,8 @@ def _define_local_scalar(
         storage: dtypes.StorageType = dtypes.StorageType.Default):
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
-    sdfg.add_scalar(name, dtype, transient=True, storage=storage)
+    _, desc = sdfg.add_scalar(name, dtype, transient=True, storage=storage)
+    pv.variables[name] = name
     return name
 
 
@@ -658,6 +659,75 @@ def _min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
                    a,
                    axis=axis,
                    identity=dtypes.max_value(sdfg.arrays[a].dtype))
+
+
+def _min2(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, b: str):
+    """ Implements the min function with 2 scalar arguments. """
+
+    in_conn = set()
+    out_conn = {'__out'}
+
+    if isinstance(a, str) and a in sdfg.arrays.keys():
+        desc_a = sdfg.arrays[a]
+        read_a = state.add_read(a)
+        conn_a = '__in_a'
+        in_conn.add(conn_a)
+    else:
+        desc_a = a
+        read_a = None
+        conn_a = symbolic.symstr(a)
+
+    if isinstance(b, str) and b in sdfg.arrays.keys():
+        desc_b = sdfg.arrays[b]
+        read_b = state.add_read(b)
+        conn_b = '__in_b'
+        in_conn.add(conn_b)
+    else:
+        desc_b = b
+        read_b = None
+        conn_b = symbolic.symstr(b)
+
+    dtype_c, [cast_a, cast_b] = _result_type([desc_a, desc_b])
+    arg_a, arg_b = "{in1}".format(in1=conn_a), "{in2}".format(in2=conn_b)
+    if cast_a:
+        arg_a = "{ca}({in1})".format(ca=str(cast_a).replace('::', '.'),
+                                     in1=conn_a)
+    if cast_b:
+        arg_b = "{cb}({in2})".format(cb=str(cast_b).replace('::', '.'),
+                                     in2=conn_b)
+
+    tasklet = nodes.Tasklet('__min2', in_conn, out_conn,
+                            "__out = min({a}, {b})".format(a=arg_a, b=arg_b))
+
+    c = _define_local_scalar(pv, sdfg, state, dtype_c)
+    desc_c = sdfg.arrays[c]
+    write_c = state.add_write(c)
+    if read_a:
+        state.add_edge(read_a, None, tasklet, '__in_a',
+                       Memlet.from_array(a, desc_a))
+    if read_b:
+        state.add_edge(read_b, None, tasklet, '__in_b',
+                       Memlet.from_array(b, desc_b))
+    state.add_edge(tasklet, '__out', write_c, None,
+                   Memlet.from_array(c, desc_c))
+
+    return c
+
+
+# NOTE: We support only the version of Python min that takes scalar arguments.
+# For iterable arguments one must use the equivalent NumPy methods.
+@oprepo.replaces('min')
+def _pymin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+           a: Union[str, Number, symbolic.symbol], *args):
+    left_arg = a
+    current_state = state
+    for i, b in enumerate(args):
+        if i > 0:
+            pv._add_state('__min2_%d' % i)
+            pv.last_state.set_default_lineinfo(pv.current_lineinfo)
+            current_state = pv.last_state
+        left_arg = _min2(pv, sdfg, current_state, left_arg, b)
+    return left_arg
 
 
 @oprepo.replaces('numpy.argmax')
