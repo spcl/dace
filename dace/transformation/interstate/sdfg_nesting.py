@@ -144,6 +144,17 @@ class InlineSDFG(transformation.Transformation):
                                     if isinstance(e.dst, nodes.AccessNode))):
                         return False
 
+        # Ensure that every connector has at least one corresponding access
+        # node in the (nested) SDFG. Otherwise, inlining is not possible.
+        all_connectors = in_connectors | out_connectors
+        nstate = nested_sdfg.sdfg.node(0)
+        for node in nstate.nodes():
+            if (isinstance(node, nodes.AccessNode)
+                    and node.data in all_connectors):
+                all_connectors.remove(node.data)
+        if len(all_connectors) > 0:
+            return False
+
         return True
 
     @staticmethod
@@ -495,9 +506,10 @@ class InlineSDFG(transformation.Transformation):
             try:
                 node = next(n for n in order if n.data == edge.data.data)
             except StopIteration:
-                raise NameError(f'Access node with data "{n.data}" not found in'
-                                f' nested SDFG "{nsdfg.name}" while inlining '
-                                '(reconnecting inputs)')
+                raise NameError(
+                    f'Access node with data "{edge.data.data}" not found in'
+                    f' nested SDFG "{nsdfg.name}" while inlining '
+                    '(reconnecting inputs)')
             state.add_edge(edge.src, edge.src_conn, node, edge.dst_conn,
                            edge.data)
         for edge in removed_out_edges:
@@ -506,9 +518,10 @@ class InlineSDFG(transformation.Transformation):
                 node = next(n for n in reversed(order)
                             if n.data == edge.data.data)
             except StopIteration:
-                raise NameError(f'Access node with data "{n.data}" not found in'
-                                f' nested SDFG "{nsdfg.name}" while inlining '
-                                '(reconnecting outputs)')
+                raise NameError(
+                    f'Access node with data "{edge.data.data}" not found in'
+                    f' nested SDFG "{nsdfg.name}" while inlining '
+                    '(reconnecting outputs)')
             state.add_edge(node, edge.src_conn, edge.dst, edge.dst_conn,
                            edge.data)
 
