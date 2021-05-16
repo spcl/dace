@@ -16,6 +16,7 @@ def assert_not_exists(name):
     if not raised:
         raise RuntimeError("Library " + name + " exists.")
 
+
 def test_include():
     assert_not_exists("FooLib")
     assert_not_exists("BarLib")

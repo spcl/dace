@@ -147,6 +147,9 @@ class ExpandReducePure(pm.ExpandTransformation):
         node.add_in_connector('_in')
         node.add_out_connector('_out')
 
+        from dace.transformation import dataflow
+        nsdfg.apply_transformations_repeated(dataflow.MapCollapse)
+
         return nsdfg
 
 

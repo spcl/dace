@@ -290,9 +290,6 @@ def set_fast_implementations(sdfg: SDFG,
                 if impl in node.implementations:
                     node.implementation = impl
                     break
-            else:
-                warnings.warn('No fast library implementation found for "%s", '
-                              'falling back to default.' % node.name)
 
 
 def auto_optimize(sdfg: SDFG,
