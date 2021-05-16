@@ -10,6 +10,7 @@ import warnings
 # Transformations
 from dace.transformation.dataflow import MapCollapse, MapFusion
 from dace.transformation.interstate import LoopToMap
+from dace.transformation import helpers as xfh
 
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
@@ -317,14 +318,20 @@ def auto_optimize(sdfg: SDFG,
     :note: This function is still experimental and may harm correctness in
            certain cases. Please report an issue if it does.
     """
-    # Strict transformations
-    sdfg.apply_strict_transformations(validate=False, validate_all=validate_all)
+    # Strict transformations and loop parallelization
+    transformed = True
+    while transformed:
+        sdfg.apply_strict_transformations(validate=False,
+                                          validate_all=validate_all)
 
-    # Try to parallelize loops
-    sdfg.apply_transformations_repeated(LoopToMap,
-                                        strict=True,
-                                        validate=False,
-                                        validate_all=validate_all)
+        xfh.split_interstate_edges(sdfg)
+
+        # Try to parallelize loops
+        l2ms = sdfg.apply_transformations_repeated(LoopToMap,
+                                                   strict=True,
+                                                   validate=False,
+                                                   validate_all=validate_all)
+        transformed = l2ms > 0
 
     # Map fusion
     greedy_fuse(sdfg, validate_all)
