@@ -67,6 +67,9 @@ def greedy_fuse(
             sdfg = graph_or_subgraph.graph.parent
             graph = graph_or_subgraph.graph
             subgraph = graph_or_subgraph
+        
+        # create condidtion function object 
+        fusion_condition = CompositeFusion(SubgraphView(graph, graph.nodes()))
 
         # within SDFGState: greedily enumerate fusible components
         # and apply transformation
@@ -75,21 +78,23 @@ def greedy_fuse(
         enumerator = GreedyEnumerator(sdfg, graph, subgraph, reverse=reverse)
 
         if tile:
-            CompositeFusion.allow_tiling._default = True
-            CompositeFusion.schedule_innermaps._default = dtypes.ScheduleType.Sequential
+            fusion_condition.allow_tiling = True
+            fusion_condition.schedule_innermaps = dtypes.ScheduleType.Sequential
             if device == dtypes.DeviceType.GPU:
-                CompositeFusion.stencil_unroll_loops._default = True
+                fusion_condition.stencil_unroll_loops = True
         else:
-            CompositeFusion.allow_tiling._default = False
-
+            fusion_condition.allow_tiling = False
+        
+        condition_function = lambda subgraph: return fusion_condition.can_be_applied(subgraph)
+        enumerator = GreedyEnumerator(sdfg, graph, subgraph, condition_function = condition_function)
         for map_entries in enumerator:
             if len(map_entries) > 1:
                 current_subgraph = helpers.subgraph_from_maps(
                     sdfg, graph, map_entries)
                 cf = CompositeFusion(current_subgraph)
-
-                #cf.allow_expansion = apply_multi_expansion
-                #cf.allow_tiling = apply_stencil_tiling
+                cf.allow_tiling = fusion_condition.allow_tiling
+                cf.schedule_innermaps = fusion_condition.schedule_innermaps
+                
                 cf.apply(sdfg)
                 sdfg.validate()
                 applied_transformations += 1
