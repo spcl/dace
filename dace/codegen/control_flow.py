@@ -212,8 +212,9 @@ class GeneralBlock(ControlFlow):
                 if elem.last_state:
                     continue
                 # Two negating conditions
-                if (len(out_edges) == 2 and out_edges[0].data.condition_sympy()
-                        == sp.Not(out_edges[1].data.condition_sympy())):
+                if (len(out_edges) == 2
+                        and out_edges[0].data.condition_sympy() == sp.Not(
+                            out_edges[1].data.condition_sympy())):
                     continue
                 # One unconditional edge
                 if (len(out_edges) == 1
@@ -328,12 +329,13 @@ class ForScope(ControlFlow):
 
         sdfg = self.guard.parent
 
+        preinit = ''
         if self.init_edges:
             for edge in self.init_edges:
                 for k, v in edge.data.assignments.items():
                     if k != self.itervar:
-                        init += ', ' + k + ' = ' + cpp.unparse_interstate_edge(
-                            v, sdfg)
+                        cppinit = cpp.unparse_interstate_edge(v, sdfg)
+                        preinit += f'{symbols[k]} {k} = {cppinit};\n'
 
         if self.condition is not None:
             cond = cpp.unparse_interstate_edge(self.condition.code[0], sdfg)
@@ -344,7 +346,7 @@ class ForScope(ControlFlow):
         if self.update is not None:
             update = f'{self.itervar} = {self.update}'
 
-        expr = f'for ({init}; {cond}; {update}) {{\n'
+        expr = f'{preinit}\nfor ({init}; {cond}; {update}) {{\n'
         expr += self.body.as_cpp(defined_vars, symbols)
         expr += '\n}\n'
         return expr
@@ -441,11 +443,10 @@ class SwitchCaseScope(ControlFlow):
 
 
 def _loop_from_structure(
-        sdfg: SDFG, guard: SDFGState, enter_edge: Edge[InterstateEdge],
-        leave_edge: Edge[InterstateEdge],
-        back_edges: List[Edge[InterstateEdge]],
-        dispatch_state: Callable[[SDFGState],
-                                 str]) -> Union[ForScope, WhileScope]:
+    sdfg: SDFG, guard: SDFGState, enter_edge: Edge[InterstateEdge],
+    leave_edge: Edge[InterstateEdge], back_edges: List[Edge[InterstateEdge]],
+    dispatch_state: Callable[[SDFGState], str]
+) -> Union[ForScope, WhileScope]:
     """ 
     Helper method that constructs the correct structured loop construct from a
     set of states. Can construct for or while loops.
