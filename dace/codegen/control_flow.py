@@ -335,7 +335,7 @@ class ForScope(ControlFlow):
                 for k, v in edge.data.assignments.items():
                     if k != self.itervar:
                         cppinit = cpp.unparse_interstate_edge(v, sdfg)
-                        preinit += f'{symbols[k]} {k} = {cppinit};\n'
+                        preinit += f'{k} = {cppinit};\n'
 
         if self.condition is not None:
             cond = cpp.unparse_interstate_edge(self.condition.code[0], sdfg)
