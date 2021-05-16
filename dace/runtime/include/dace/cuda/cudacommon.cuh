@@ -50,15 +50,6 @@ struct Context {
 }  // namespace dace
 
 #ifdef __CUDACC__
-DACE_DFI dace::vec<float, 4> exp(dace::vec<float, 4> v) {
-    dace::vec<float, 4> result;
-    result.x = exp(v.x);
-    result.y = exp(v.y);
-    result.z = exp(v.z);
-    result.w = exp(v.w);
-    return result;
-}
-
 DACE_DFI dace::vec<float, 4> operator+(float f, dace::vec<float, 4> v) {
     dace::vec<float, 4> result;
     result.x = v.x + f;
@@ -132,6 +123,17 @@ DACE_DFI dace::vec<float, 4> operator*(dace::vec<float, 4> v, float f) {
 }
 
 
+namespace dace { namespace math {
+
+DACE_DFI dace::vec<float, 4> exp(dace::vec<float, 4> v) {
+    dace::vec<float, 4> result;
+    result.x = exp(v.x);
+    result.y = exp(v.y);
+    result.z = exp(v.z);
+    result.w = exp(v.w);
+    return result;
+}
+
 DACE_DFI dace::vec<float, 4> log(dace::vec<float, 4> v) {
     dace::vec<float, 4> result;
     result.x = log(v.x);
@@ -150,6 +152,19 @@ DACE_DFI dace::vec<float, 4> tanh(dace::vec<float, 4> v) {
     return result;
 }
 
+DACE_DFI dace::vec<float, 4> heaviside(const dace::vec<float, 4>& a) {
+    dace::vec<float, 4> result;
+    result.x = (a.x > 0) ? 1.0f : 0.0f;
+    result.y = (a.y > 0) ? 1.0f : 0.0f;
+    result.z = (a.z > 0) ? 1.0f : 0.0f;
+    result.w = (a.w > 0) ? 1.0f : 0.0f;
+    return result;
+}
+} } // namespace dace::math
+using dace::math::exp;
+using dace::math::log;
+using dace::math::tanh;
+using dace::math::heaviside;
 #endif
 
 #endif  // __DACE_CUDACOMMON_CUH
