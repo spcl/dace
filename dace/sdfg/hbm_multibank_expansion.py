@@ -344,39 +344,37 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
             refArrays = arraylist[currentindex]
             refInfo = info[currentindex]
             generated_nodes : dict[str, nd.AccessNode] = {}
-            for edge in state.in_edges(node):
+
+            nodeInputEdges = state.in_edges(node)
+            nodeConnections = nodeInputEdges + state.out_edges(node)
+            for index in range(len(nodeConnections)):
+                edge = nodeConnections[index]
                 oldmem = edge.data
                 firstrange = oldmem.subset[0]
-                if(firstrange[0] != firstrange[1]):
-                    i = 0
-                    #handle multiaccess
-                else:
-                    #Memlet only accesses 1 bank. Copy it and add it to the new AccessNode.
-                    index = int(str(firstrange[0]))
+                #TODO: Check if range is really constant and in bounds, stride == 1
+                rangelow = int(str(firstrange[0]))
+                rangehigh = int(str(firstrange[1])) + 1
+                
+                for index in range(rangelow, rangehigh):
+                    #For each bank referenced by the memlet create a accessnode for
+                    #that bank if it does not already exist, and reconnect with single bank memlet
                     newrefArrayname, newrefArray = refArrays[index]
                     if(newrefArrayname not in generated_nodes):
-                        newnode = nd.AccessNode(
-                        newrefArrayname, 
-                        node.access,
-                        node.debuginfo)
+                        newnode = deepcopy(node)
+                        newnode.data = newrefArrayname
                         state.add_node(newnode)
                         generated_nodes[newrefArrayname] = newnode
                     newnode = generated_nodes[newrefArrayname]
-                    state.add_edge(edge.src, edge.src_conn, newnode, edge.dst_conn, deepcopy(oldmem))    #specific for in edge
-                    state.remove_edge(edge)
 
+                    if(index < len(nodeInputEdges)):
+                        #This is an input edge. Connect accordingly
+                        state.add_edge(edge.src, edge.src_conn, newnode, edge.dst_conn, deepcopy(oldmem))
+                    else:
+                        #This is an output edge
+                        state.add_edge(newnode, edge.src_conn, edge.dst, edge.dst_conn, deepcopy(oldmem))
+            state.remove_node(node)
 
-    """
-    locationcount = refInfo["splitcount"] * len(refInfo["splitaxes"])
-            for i in range(locationcount):
-                newrefArrayname, newrefArray = refArrays[i]
-                newnode = nd.AccessNode(
-                    newrefArrayname, 
-                    node.access,
-                    node.debuginfo)
-                state.add_node(newnode)
-    """
-
+        #TODO: Replace all hbm memlets with their real representation. For multimemlets add the right connectors to scopes.
             
 
     return sdfg
