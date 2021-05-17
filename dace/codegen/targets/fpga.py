@@ -728,11 +728,10 @@ class FPGACodeGen(TargetCodeGenerator):
                     continue
                 if isinstance(node, nodes.NestedSDFG):
                     # TODO: how we deal with this
-                    print("FPGA NESTED SDFG --------------")
                     if node.schedule == dtypes.ScheduleType.FPGA_Device:
                         continue
                 node._pe = max_pes
-                print("**added pe ", node._pe, " to :", node)
+                # print("**added pe ", node._pe, " to :", node)
                 node._pe_childpath = False
                 max_pes = increment(max_pes)
 
@@ -765,7 +764,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         if parent.schedule  == dtypes.ScheduleType.FPGA_Device:
                             e.src._pe_childpath = False
                 else:
-                    print("Use a new PE id")
+                    # print("Use a new PE id")
                     pe = max_pes
                     if (isinstance(e.dst, nodes.AccessNode)
                             and isinstance(sdfg.arrays[e.dst.data], dt.View)):
@@ -780,7 +779,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 if isinstance(e.dst, nodes.NestedSDFG):
                     if e.dst.schedule != dtypes.ScheduleType.FPGA_Device:
                         # TODO: what to do here? We don't want to recur
-                        assert False
+                        continue
+                        # assert False
                         # max_streams, max_events = self._compute_cudastreams(
                         #     e.dst.sdfg, e.dst._cuda_stream, max_events + 1)
 
@@ -819,7 +819,7 @@ class FPGACodeGen(TargetCodeGenerator):
                             or (isinstance(path[-1].dst, nodes.AccessNode)
                                 and path[-1].dst.desc(cur_sdfg).storage
                                 == dtypes.StorageType.FPGA_Global)):
-                        print("BREAK Leading to  FPGA Global Mem")
+                        # print("BREAK Leading to  FPGA Global Mem")
                         break
                     # If leading from/to a GPU tasklet, keep stream
                     if ((isinstance(path[0].src, nodes.CodeNode)
@@ -827,10 +827,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             or
                             (isinstance(path[-1].dst, nodes.CodeNode) and
                              is_fpga_kernel(cur_sdfg, graph))):
-                        print("BREAK FPGA KERNEL")
+                        # print("BREAK FPGA KERNEL")
                         break
                 else:  # If we did not break, we do not need a CUDA stream
-                    print("Remove pe from", node)
+                    # print("Remove pe from", node)
                     if hasattr(node, '_pe'):
                         delattr(node, '_pe')
                 # In any case, remove childpath
