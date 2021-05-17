@@ -17,15 +17,12 @@ from dace.sdfg import graph
 from dace.sdfg import state as statenamespace
 from dace import data, memlet, subsets, symbolic, sdfg as sd
 
-from typing import Union
-from typing import Any
+from typing import Iterable, Union, Any
             
-def getNonExistingName(suggestedname : str, checkagainstcollection) -> str:
+def getNonExistingName(suggestedname : str, 
+    checkagainstcollection : Iterable) -> str:
     """
-    Small helper that returns a new name.
-    :param suggestedname: The suggestedname
-    :param checkagainstcollection: A collection in which the name mustn't occur
-    :return: suggestedname, if necessary with _i appended, i integer
+    Small helper that returns a new name through appending f'_{number}'
     """
     counter = 0
     while(suggestedname in checkagainstcollection):
@@ -109,13 +106,13 @@ def unroll_map(state : statenamespace.SDFGState, entry : nd.MapEntry, exit : nd.
         if(v == exit):
             break
 
-def parseHBMBank(arrayname, array): 
+def parseHBMBank(arrayname : str, array : data.Array) -> "tuple[int, int]": 
     """
     Reads the hbm bank-specification of an array if present.
+
     :param arrayname: The name of the array
     :param array: The array
-    :return: None if not present, (low, high) otherwise, 
-    where low == high is possible.
+    :return: None if not present, (low, high) otherwise, where low == high is possible.
     """
     if(not "hbmbank" in array.location):
         return None
@@ -143,11 +140,12 @@ def parseHBMBank(arrayname, array):
             cgx.CodegenError(errormsg)
     raise RuntimeError("Reached unreachable state")
 
-def parseHBMAlignment(arrayname, array):
+def parseHBMAlignment(arrayname : str, array : data.Array) -> "list[int]":
     """
     Tries to read and parse alignment, if present,
     otherwise assumes default alignment. Returns 
     the axes along which the array is split.
+
     :param arrayname: The name of the array
     :param array: The array
     :return: A list of axes along which array is split
@@ -228,21 +226,22 @@ def collectAndParseHBMArrays(sdfg : sd.SDFG) -> "dict[(str, sd.SDFG), dict[str, 
             "splitcount" : splitcount, "splitaxes" : splitaxes, "lowbank" : low}
     return handledArrays
 
-def recursive_splice_hbmmemlettree(state : statenamespace.SDFGState, tree : memlet.MemletTree, flowsTowardsRoot : bool):
+def _recursive_splice_hbmmemlettree(state : statenamespace.SDFGState,
+        tree : memlet.MemletTree, flowsTowardsRoot : bool) -> "dict[int, list[graph.MultiConnectorEdge]]":
     """
     applying unroll results in an sdfg that still contains multibank memlets
     on the paths to the unrolled maps. This function "splices" those memlets,
     such that all memlets from/to the unrolled maps are single bank only. Note that
     the resulting state may still contain multibankmemlets between accessnodes.
 
-    :param flowsTowardsRoot: Does tree carry data towards the accessnode or away from it?
+    :param flowsTowardsRoot: Does the tree carry data towards the accessnode or away from it?
     """
     #TODO: Handle othersubset as well
     outgoingmemlets : dict[int, list[graph.MultiConnectorEdge]] = {}
     outgoingmemletcount = 0
     returnval = {}
     for child in tree.children:
-        result = recursive_splice_hbmmemlettree(state, child, flowsTowardsRoot)
+        result = _recursive_splice_hbmmemlettree(state, child, flowsTowardsRoot)
         for banknum in result.keys():
             if(banknum in outgoingmemlets):
                 outgoingmemlets[banknum].extend(result[banknum])
@@ -276,7 +275,8 @@ def recursive_splice_hbmmemlettree(state : statenamespace.SDFGState, tree : meml
             newmem.subset[0] = (symbolic.pystr_to_symbolic(banknum),
                         symbolic.pystr_to_symbolic(banknum),
                         symbolic.pystr_to_symbolic(1))
-            newmem.volume = symbolic.pystr_to_symbolic("floor(" + str(newmem.volume) + f" / {outgoingmemletcount})")
+            newmem.volume = symbolic.pystr_to_symbolic("floor(" + 
+                str(newmem.volume) + f" / {outgoingmemletcount})")
             connectsToList = outgoingmemlets[banknum]
             connectstoconnectorname = None
             newedge = None
@@ -286,13 +286,15 @@ def recursive_splice_hbmmemlettree(state : statenamespace.SDFGState, tree : meml
                 connectstoconnectorname = f"{connectsToList[0].dst_conn}_{banknum}"
                 referedNode.add_out_connector(edgeconnectorname)
                 referedNode.add_in_connector(connectstoconnectorname)
-                newedge = state.add_edge(edge.src, edgeconnectorname, edge.dst, edge.dst_conn, newmem)
+                newedge = state.add_edge(edge.src, edgeconnectorname, 
+                    edge.dst, edge.dst_conn, newmem)
             else:
                 edgeconnectorname = f"{edge.dst_conn}_{banknum}"
                 connectstoconnectorname = f"{connectsToList[0].src_conn}_{banknum}"
                 referedNode.add_in_connector(edgeconnectorname)
                 referedNode.add_out_connector(connectstoconnectorname)
-                newedge = state.add_edge(edge.src, edge.src_conn, edge.dst, edgeconnectorname, newmem)
+                newedge = state.add_edge(edge.src, edge.src_conn,
+                    edge.dst, edgeconnectorname, newmem)
             returnval[banknum] = [newedge]
             
             for connectsTo in connectsToList:
@@ -376,7 +378,8 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
     for state in statelist:
         def intern_iterate_attached_memlets(node, hbmarraylist):
             #small helper to iterate over all memlets of a node
-            #Why this is nested: Very simple pattern and used a lot in the following part, but not generally useful
+            #Why this is nested: Very simple pattern and used a lot 
+            #in the following part, but not generally useful
             for inp in state.in_edges(node):
                 if((inp.data.data, state.parent) in hbmarraylist):
                     yield 'in', inp
@@ -395,7 +398,8 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
                 if(currentindex in arraylist):
                     accessnodestoexpand.append(node)
             elif(isinstance(node, nd.MapEntry)):
-                if(node.map.get_param_num() != 1):  #TODO: In case this has bound hbmmemlets need to throw an error here
+                if(node.map.get_param_num() != 1):  
+                    #TODO: In case this has bound hbmmemlets need to throw an error here
                     continue
                 variable = node.map.params[0]
                 for inorout, current in intern_iterate_attached_memlets(node, arraylist):
@@ -421,7 +425,7 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
         for accessnode in accessnodestoexpand:
             for inorout, watchededge in intern_iterate_attached_memlets(accessnode, arraylist):
                 root = state.memlet_tree(watchededge)
-                recursive_splice_hbmmemlettree(state, root, inorout == 'in')
+                _recursive_splice_hbmmemlettree(state, root, inorout == 'in')
         
         #expand all accessnodes, so that each accessnode only accesses a single bank
         for node in accessnodestoexpand:
@@ -451,9 +455,11 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
                     newnode = generated_nodes[newrefArrayname]
 
                     if(inorout == 'in'):
-                        state.add_edge(edge.src, edge.src_conn, newnode, edge.dst_conn, deepcopy(oldmem))
+                        state.add_edge(edge.src, edge.src_conn, newnode, 
+                            edge.dst_conn, deepcopy(oldmem))
                     else:
-                        state.add_edge(newnode, edge.src_conn, edge.dst, edge.dst_conn, deepcopy(oldmem))
+                        state.add_edge(newnode, edge.src_conn, edge.dst, 
+                            edge.dst_conn, deepcopy(oldmem))
             state.remove_node(node)
         
         #TODO: Remove the bank index, if necessary modify the subsets, change the array of all memlets
