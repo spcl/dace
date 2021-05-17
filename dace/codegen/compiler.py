@@ -195,7 +195,7 @@ def configure_and_compile(program_folder,
     if cmake_linker:
         cmake_linker = make_absolute(cmake_linker)
         cmake_command.append(f'-DCMAKE_LINKER="{cmake_linker}"')
-    cmake_link_flags = (cmake_link_flags +
+    cmake_link_flags = (" ".join(cmake_link_flags) + " " +
                         Config.get('compiler', 'linker', 'args')).strip()
     if cmake_link_flags:
         cmake_command.append(
