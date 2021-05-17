@@ -4,35 +4,117 @@ This file collects all helper functions and the top level function
 required to transform sdfg's containing hbm-multibank arrays into 
 their corresponding representation with only single hbm-bank arrays.
 
-It might at some point be beneficial to add this to the codegen, or to the utils,
-it doesn't necessarily have to stay here. 
+This is only kept as 1 file, after that some of those function should go to utils,
+the rest into a file in the codegen.
 """
 
 from copy import deepcopy
-from re import A
-from numpy import isin
 
-from sympy.codegen.ast import Variable
 from dace.codegen import exceptions as cgx
 from dace.sdfg import utils as sdutil
 from dace.sdfg import nodes as nd
+from dace.sdfg import graph 
+from dace.sdfg import state as statenamespace
 from dace import data, memlet, subsets, symbolic, sdfg as sd
-from dace.sdfg import state, graph
 
 from typing import Union
 from typing import Any
+            
+def getNonExistingName(suggestedname : str, checkagainstcollection) -> str:
+    """
+    Small helper that returns a new name.
+    :param suggestedname: The suggestedname
+    :param checkagainstcollection: A collection in which the name mustn't occur
+    :return: suggestedname, if necessary with _i appended, i integer
+    """
+    counter = 0
+    while(suggestedname in checkagainstcollection):
+        suggestedname = suggestedname + f"_{counter}"
+        counter += 1
+    return suggestedname
 
-def selectNodesConditional(sdfg, condition):
-    #Get all nodes that fullfill a condition
-    targets = list(filter(lambda x : condition(x[0], x[1]),sdfg.all_nodes_recursive()))
-    return targets
+def downward_topological(state : statenamespace.SDFGState, source : nd.Node):
+    """
+    Starts from a source node and moves in a depth first
+    approach in topological order along memlets in the state. 
+    Moves only in the direction of dataflow (towards out edges)
+    """
+    visited = set()
+    getDownChildren = lambda s : [x.dst for x in state.out_edges(s)]
+    stack = getDownChildren(source)
+    yield source
+    visited.add(source)
+    while stack:
+        child = stack[-1]
+        stack.pop()
+        if(child in visited):
+            continue
+        proc = True
+        for pred in state.in_edges(child):
+            if(pred.src not in visited):
+                proc = False
+                break
+        if(proc):
+            visited.add(child)
+            stack.extend(getDownChildren(child))
+            yield child
+
+def unroll_map(state : statenamespace.SDFGState, entry : nd.MapEntry, exit : nd.MapExit):
+    """
+    Completly unrolls a map. The map has to be 1 dimensional and has to 
+    only depend on constants (in terms of begin, end and stride).
+    unroll_map assumes that the map passed is valid, if it is not
+    then the result is undefined.
+    This is an inplace operation on the passed state.
+    """
+    begin, end, stride = entry.map.range[0]
+    begin = int(str(begin))
+    end = int(str(end))
+    stride = int(str(stride))
+    varname = entry.map.params[0]
+
+    for k in range(begin, end+1, stride):
+        #Copy/reconnect the scope in the map #unroll times
+        oldToNewMap = {}
+        for v in downward_topological(state, entry):
+            if(v == entry):
+                continue
+            if(v == exit):
+                break
+            newnode = deepcopy(v)
+            state.add_node(newnode)
+            oldToNewMap[v] = newnode
+
+            for edge in state.in_edges(v):
+                mem = deepcopy(edge.data)
+                mem.replace({varname : str(k)})
+                if(edge.src == entry):
+                    path = state.memlet_path(edge)
+                    prev = path[path.index(edge) - 1]
+                    state.add_edge(prev.src, prev.src_conn,
+                    newnode, edge.dst_conn, mem)
+                else:
+                    state.add_edge(oldToNewMap[edge.src], edge.src_conn,
+                    newnode, edge.dst_conn, mem)
+        for edge in state.in_edges(exit):
+            mem = deepcopy(edge.data)
+            mem.replace({varname : str(k)})
+            path = state.memlet_path(edge)
+            next = path[path.index(edge) + 1]
+            state.add_edge(oldToNewMap[edge.src], edge.src_conn,
+            next.dst, next.dst_conn, mem)
+    for v in downward_topological(state, entry):
+        #Erase the old map
+        state.remove_node(v)
+        if(v == exit):
+            break
 
 def parseHBMBank(arrayname, array): 
     """
     Reads the hbm bank-specification of an array if present.
     :param arrayname: The name of the array
     :param array: The array
-    :return: None on not present, (low, high) otherwise, 
+    :return: None if not present, (low, high) otherwise, 
     where low == high is possible.
     """
     if(not "hbmbank" in array.location):
@@ -99,7 +181,18 @@ def parseHBMAlignment(arrayname, array):
 def collectAndParseHBMArrays(sdfg : sd.SDFG) -> "dict[(str, sd.SDFG), dict[str, Any]]":
     """
     Finds all arrays that are spread across multiple HBM
-    banks
+    banks, and parses their properties using parseHMBAlignment
+    and parseHBMBank.
+
+    :return: A mapping from (arrayname, sdfg of the array) to a mapping
+    from string that contains collected information.
+    'ndim': contains the dimension of the array
+    'splitcount': contains how many times this array is split
+        on each of the axes along which it is split 
+        (ie splitcount==2 on an 2d-array which is split along axis 0
+        and axis 1 => There are 4 parts)
+    'splitaxes': List that contains axes along which the array is split
+    'lowbank': The lowest bank index this array is placed on
     """
     arrays = sdfg.arrays_recursive()
 
@@ -134,112 +227,87 @@ def collectAndParseHBMArrays(sdfg : sd.SDFG) -> "dict[(str, sd.SDFG), dict[str, 
         handledArrays[(arrayname, currentsdfg)] = {"ndim" : ndim,
             "splitcount" : splitcount, "splitaxes" : splitaxes, "lowbank" : low}
     return handledArrays
+
+def recursive_splice_hbmmemlettree(state : statenamespace.SDFGState, tree : memlet.MemletTree, flowsTowardsRoot : bool):
+    """
+    applying unroll results in an sdfg that still contains multibank memlets
+    on the paths to the unrolled maps. This function "splices" those memlets,
+    such that all memlets from/to the unrolled maps are single bank only. Note that
+    the resulting state may still contain multibankmemlets between accessnodes.
+
+    :param flowsTowardsRoot: Does tree carry data towards the accessnode or away from it?
+    """
+    #TODO: Handle othersubset as well
+    outgoingmemlets : dict[int, list[graph.MultiConnectorEdge]] = {}
+    outgoingmemletcount = 0
+    returnval = {}
+    for child in tree.children:
+        result = recursive_splice_hbmmemlettree(state, child, flowsTowardsRoot)
+        for banknum in result.keys():
+            if(banknum in outgoingmemlets):
+                outgoingmemlets[banknum].extend(result[banknum])
+            else:
+                outgoingmemlets[banknum] = result[banknum]
+    for mlist in outgoingmemlets.values():
+        outgoingmemletcount += len(mlist)
+    edge : graph.MultiConnectorEdge = tree.edge
+    mem : memlet.Memlet = edge.data
+    if(outgoingmemletcount > 1):
+        subsetlow = int(str(mem.subset[0][0]))
+        subsethigh = int(str(mem.subset[0][1]))
+        stride = int(str(mem.subset[0][2]))
+        if(stride != 1):
+            raise NotImplementedError()
+        oldinputconnectorname = None
+        oldoutputconnectorname = None
+        referedNode : nd.Node = None
+        if(flowsTowardsRoot):
+            referedNode = edge.src
+            oldinputconnectorname = next(iter(outgoingmemlets.items()))[1][0].dst_conn
+            oldoutputconnectorname = edge.src_conn
+        else:
+            referedNode = edge.dst
+            oldoutputconnectorname = next(iter(outgoingmemlets.items()))[1][0].src_conn
+            oldinputconnectorname = edge.dst_conn
+
+        for banknum in outgoingmemlets.keys():
+            assert(banknum >= subsetlow and banknum <= subsethigh) #TODO: Handle stride !=1
+            newmem = deepcopy(mem)
+            newmem.subset[0] = (symbolic.pystr_to_symbolic(banknum),
+                        symbolic.pystr_to_symbolic(banknum),
+                        symbolic.pystr_to_symbolic(1))
+            newmem.volume = symbolic.pystr_to_symbolic("floor(" + str(newmem.volume) + f" / {outgoingmemletcount})")
+            connectsToList = outgoingmemlets[banknum]
+            connectstoconnectorname = None
+            newedge = None
+
+            if(flowsTowardsRoot):
+                edgeconnectorname = f"{edge.src_conn}_{banknum}"
+                connectstoconnectorname = f"{connectsToList[0].dst_conn}_{banknum}"
+                referedNode.add_out_connector(edgeconnectorname)
+                referedNode.add_in_connector(connectstoconnectorname)
+                newedge = state.add_edge(edge.src, edgeconnectorname, edge.dst, edge.dst_conn, newmem)
+            else:
+                edgeconnectorname = f"{edge.dst_conn}_{banknum}"
+                connectstoconnectorname = f"{connectsToList[0].src_conn}_{banknum}"
+                referedNode.add_in_connector(edgeconnectorname)
+                referedNode.add_out_connector(connectstoconnectorname)
+                newedge = state.add_edge(edge.src, edge.src_conn, edge.dst, edgeconnectorname, newmem)
+            returnval[banknum] = [newedge]
             
-def getNonExistingName(suggestedname : str, checkagainstcollection) -> str:
-    counter = 0
-    while(suggestedname in checkagainstcollection):
-        suggestedname = suggestedname + f"_{counter}"
-        counter += 1
-    return suggestedname
-
-def getAttachedHBMMemlets(state, node, hbmarraylist):
-    hbminput = []
-    hbmoutput = []
-    for input in state.in_edges(node):
-        if((input.data.data, state.parent) in hbmarraylist):
-            hbminput.append(input)
-    for output in state.out_edges(node):
-        if((output.data.data, state.parent) in hbmarraylist):
-            hbmoutput.append(output)
-    return (hbminput, hbmoutput)
-
-def downward_topological(sdfg : state.SDFGState, source : nd.Node):
-    """
-    Starts from a source node and moves in a depth first
-    approach in topological order along memlets in the state. 
-    Moves only in the direction of dataflow (towards out edges)
-    """
-    visited = set()
-    getDownChildren = lambda s : [x.dst for x in sdfg.out_edges(s)]
-    stack = getDownChildren(source)
-    yield source
-    visited.add(source)
-    while stack:
-        child = stack[-1]
-        stack.pop()
-        if(child in visited):
-            continue
-        proc = True
-        for pred in sdfg.in_edges(child):
-            if(pred.src not in visited):
-                proc = False
-                break
-        if(proc):
-            visited.add(child)
-            stack.extend(getDownChildren(child))
-            yield child
-
-
-def unroll_map(state : state.SDFGState, entry : nd.MapEntry, exit : nd.MapExit):
-    """
-    1 D only, assume valid
-    """
-    begin, end, stride = entry.map.range[0]
-    begin = int(str(begin))
-    end = int(str(end))
-    stride = int(str(stride))
-    varname = entry.map.params[0]
-    
-    def intern_recreateMemletWithReplace(edge, varname : str, replace : int):
-        #Copy a memlet from an edge and replace varname with replace in 
-        #subset/volume
-        oldmemlet = edge.data
-        symbolicvar = symbolic.symbol(varname)
-        repldict = [(symbolicvar, replace)]
-
-        mem = deepcopy(oldmemlet)
-
-        if(symbolic.issymbolic(oldmemlet.volume)):
-            mem.volume = mem.volume.subs(repldict)
-        if(isinstance(oldmemlet.other_subset, subsets.Range)):
-            mem.other_subset.replace(repldict)
-        if(isinstance(oldmemlet.subset, subsets.Range)):
-            mem.subset.replace(repldict)
-        return mem
-
-    for k in range(begin, end+1, stride):
-        #Copy/reconnect the scope in the map #unroll times
-        oldToNewMap = {}
-        for v in downward_topological(state, entry):
-            if(v == entry):
-                continue
-            if(v == exit):
-                break
-            newnode = deepcopy(v)
-            state.add_node(newnode)
-            oldToNewMap[v] = newnode
-
-            for edge in state.in_edges(v):
-                mem = intern_recreateMemletWithReplace(edge, varname, k)
-                if(edge.src == entry):
-                    path = state.memlet_path(edge)
-                    prev = path[path.index(edge)-1]
-                    state.add_edge(prev.src, prev.src_conn,
-                    newnode, edge.dst_conn, mem)
+            for connectsTo in connectsToList:
+                if(flowsTowardsRoot):
+                    connectsTo.dst_conn = connectstoconnectorname
                 else:
-                    state.add_edge(oldToNewMap[edge.src], edge.src_conn,
-                    newnode, edge.dst_conn, mem)
-        for edge in state.in_edges(exit):
-            mem = intern_recreateMemletWithReplace(edge, varname, k)
-            path = state.memlet_path(edge)
-            next = path[path.index(edge) + 1]
-            state.add_edge(oldToNewMap[edge.src], edge.src_conn,
-            next.dst, next.dst_conn, mem)
-    for v in downward_topological(state, entry):
-        #Erase the old map
-        state.remove_node(v)
-        if(v == exit):
-            break
+                    connectsTo.src_conn = connectstoconnectorname
+
+        state.remove_edge(edge)
+        referedNode.remove_in_connector(oldinputconnectorname)
+        referedNode.remove_out_connector(oldoutputconnectorname)
+    else:
+        banknum = int(str(edge.data.subset[0][0]))
+        returnval[banknum] = [edge]
+    return returnval
 
 def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
     """
@@ -248,14 +316,16 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
     Memlets/Accessnodes accessing the array get redefined according 
     to the subsets they access. This includes fully unrolling
     maps that access the memlet (if their index is used as bank index).
-    Copymemlets from/to host are created based on hbmalignment.
+    Copymemlets are created based on hbmalignment.
     """
-
+                
     info = collectAndParseHBMArrays(sdfg)
     if(len(info) == 0):
         return
-    
-    arraylist : dict[(str, sd.SDFG), list[(str, data.Array)]] = {}
+
+    #mapping from old arrays to a list of the new arrays
+    arraylist : dict[(str, sd.SDFG),  list[(str, data.Array)]] = {}
+    #all states that contain hbm multibanks
     statelist : set[sd.SDFGState] = set()
 
     for arrayname, arraysdfg in info.keys():
@@ -285,14 +355,15 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
                 newshape, 
                 oldarray.dtype,
                 transient=False,
-                strides=oldarray.strides,
-                offset=oldarray.offset,
-                lifetime=oldarray.lifetime,
-                debuginfo=oldarray.debuginfo,
-                allow_conflicts=oldarray.allow_conflicts
+                strides=deepcopy(oldarray.strides),
+                offset=deepcopy(oldarray.offset),
+                lifetime=deepcopy(oldarray.lifetime),
+                debuginfo=deepcopy(oldarray.debuginfo),
+                allow_conflicts=deepcopy(oldarray.allow_conflicts)
             )
             newarray.location["hbmbank"] = f"{curinfo['lowbank'] + i}"
             arraylist[(arrayname, arraysdfg)].append((newname, newarray))
+        sdfg.remove_data(arrayname, validate=False)
 
     for lookatsdfg in sdfg.all_sdfgs_recursive():
         #Find all states where HBM-multibanks are used
@@ -303,27 +374,33 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
                         statelist.add(state)
 
     for state in statelist:
+        def intern_iterate_attached_memlets(node, hbmarraylist):
+            #small helper to iterate over all memlets of a node
+            #Why this is nested: Very simple pattern and used a lot in the following part, but not generally useful
+            for inp in state.in_edges(node):
+                if((inp.data.data, state.parent) in hbmarraylist):
+                    yield 'in', inp
+            for outp in state.out_edges(node):
+                if((outp.data.data, state.parent) in hbmarraylist):
+                    yield 'out', outp
+
         accessnodestoexpand = []
         mapstounroll = {}
         start_nodes = sdutil.find_source_nodes(state)
-
         for node in sdutil.dfs_topological_sort(state, start_nodes):
             #Find all accessnodes and maps which should be expanded and store
             #them in accessnodestoexpand and mapstounroll
             if(isinstance(node, nd.AccessNode)):
-                #multiply the node number-of-bank times and store in accesnodelist
                 currentindex = (node.data, state.parent)
                 if(currentindex in arraylist):
                     accessnodestoexpand.append(node)
             elif(isinstance(node, nd.MapEntry)):
-                #decide wheter to unroll the map
-                hbmin : list[graph.MultiConnectorEdge] = None
-                hbmout : list[graph.MultiConnectorEdge] = None
-                hbmin , hbmout  = getAttachedHBMMemlets(state, node, arraylist)
                 if(node.map.get_param_num() != 1):  #TODO: In case this has bound hbmmemlets need to throw an error here
                     continue
                 variable = node.map.params[0]
-                for current in hbmout:
+                for inorout, current in intern_iterate_attached_memlets(node, arraylist):
+                    if(inorout == 'in'):
+                        continue
                     low, high, stride = current.data.subset[0]
                     lowstr = symbolic.free_symbols_and_functions(low)
                     highstr = symbolic.free_symbols_and_functions(high)
@@ -333,32 +410,39 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
                         mapstounroll[node.map] = node
                         break
             elif(isinstance(node, nd.MapExit)):
-                #if this map will be unrolled (known because we've already seen the MapEntry), store this MapExit
                 if(node.map in mapstounroll):
                     mapstounroll[node.map] = (mapstounroll[node.map], node)
-            
+
+        #unroll all maps
         for entry, exit in mapstounroll.values():
             unroll_map(state, entry, exit)
+
+        #expand all memlets such that only single bank memlets stay
+        for accessnode in accessnodestoexpand:
+            for inorout, watchededge in intern_iterate_attached_memlets(accessnode, arraylist):
+                root = state.memlet_tree(watchededge)
+                recursive_splice_hbmmemlettree(state, root, inorout == 'in')
+        
+        #expand all accessnodes, so that each accessnode only accesses a single bank
         for node in accessnodestoexpand:
             currentindex = (node.data, state.parent)
             refArrays = arraylist[currentindex]
-            refInfo = info[currentindex]
             generated_nodes : dict[str, nd.AccessNode] = {}
 
-            nodeInputEdges = state.in_edges(node)
-            nodeConnections = nodeInputEdges + state.out_edges(node)
-            for index in range(len(nodeConnections)):
-                edge = nodeConnections[index]
+            for inorout, edge in intern_iterate_attached_memlets(node, arraylist):
                 oldmem = edge.data
                 firstrange = oldmem.subset[0]
-                #TODO: Check if range is really constant and in bounds, stride == 1
-                rangelow = int(str(firstrange[0]))
-                rangehigh = int(str(firstrange[1])) + 1
-                
-                for index in range(rangelow, rangehigh):
-                    #For each bank referenced by the memlet create a accessnode for
-                    #that bank if it does not already exist, and reconnect with single bank memlet
-                    newrefArrayname, newrefArray = refArrays[index]
+                banklow = int(str(firstrange[0]))
+                bankhigh = int(str(firstrange[1]))
+                stride = int(str(firstrange[2]))
+                #TODO: support stride != 1
+                if(stride != 1):
+                    raise NotImplementedError()
+
+                #For each bank referenced by the memlet create an accessnode for
+                #that bank if it does not already exist, and reconnect with single bank memlet
+                for currentbank in range(banklow, bankhigh +1):
+                    newrefArrayname, newrefArray = refArrays[currentbank]
                     if(newrefArrayname not in generated_nodes):
                         newnode = deepcopy(node)
                         newnode.data = newrefArrayname
@@ -366,15 +450,12 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
                         generated_nodes[newrefArrayname] = newnode
                     newnode = generated_nodes[newrefArrayname]
 
-                    if(index < len(nodeInputEdges)):
-                        #This is an input edge. Connect accordingly
+                    if(inorout == 'in'):
                         state.add_edge(edge.src, edge.src_conn, newnode, edge.dst_conn, deepcopy(oldmem))
                     else:
-                        #This is an output edge
                         state.add_edge(newnode, edge.src_conn, edge.dst, edge.dst_conn, deepcopy(oldmem))
             state.remove_node(node)
-
-        #TODO: Replace all hbm memlets with their real representation. For multimemlets add the right connectors to scopes.
-            
+        
+        #TODO: Remove the bank index, if necessary modify the subsets, change the array of all memlets
 
     return sdfg
