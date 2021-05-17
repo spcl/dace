@@ -280,7 +280,6 @@ class CompiledSDFG(object):
             if self._initialized is False:
                 self._lib.load()
                 self.initialize(*initargtuple)
-
             # PROFILING
             if Config.get_bool('profiling'):
                 operations.timethis(self._sdfg, 'DaCe', 0, self._cfunc,
@@ -338,7 +337,6 @@ class CompiledSDFG(object):
             argtypes = []
             argnames = []
             sig = []
-
         # Type checking
         for a, arg, atype in zip(argnames, arglist, argtypes):
             if not dtypes.is_array(arg) and isinstance(atype, dt.Array):

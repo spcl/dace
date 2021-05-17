@@ -44,6 +44,11 @@ class LocalStorage(xf.Transformation, ABC):
         self._data_node = None
 
     @staticmethod
+    def annotates_memlets():
+        # Skip memlet propagation for now
+        return True
+        
+    @staticmethod
     def expressions():
         return [
             sdutil.node_path_graph(LocalStorage.node_a, LocalStorage.node_b)

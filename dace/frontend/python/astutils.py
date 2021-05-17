@@ -118,23 +118,35 @@ def subscript_to_ast_slice(node, without_array=False):
     if not isinstance(node, ast.Subscript):
         raise TypeError('AST node is not a subscript')
 
-    # ND Index
+    # Python <3.9 compatibility
+    result_slice = None
     if isinstance(node.slice, ast.Index):
-        if isinstance(node.slice.value, ast.Tuple):
-            result_slice = [dim for dim in node.slice.value.elts]
-        else:
-            result_slice = [node.slice.value]
-    # 1D slice
-    elif isinstance(node.slice, ast.Slice):
-        result_slice = [(node.slice.lower, node.slice.upper, node.slice.step)]
-    else:  # ND slice
-        result_slice = []
+        slice = node.slice.value
+        if not isinstance(slice, ast.Tuple):
+            result_slice = [slice]
+    elif isinstance(node.slice, ast.ExtSlice):
+        slice = tuple(node.slice.dims)
+    else:
+        slice = node.slice
 
-        for d in node.slice.dims:
-            if isinstance(d, ast.Index):
-                result_slice.append(d.value)
-            else:
-                result_slice.append((d.lower, d.upper, d.step))
+    # Decode slice tuple
+    if result_slice is None:
+        if isinstance(slice, ast.Tuple):
+            slices = slice.elts
+        elif isinstance(slice, tuple):
+            slices = slice
+        else:
+            slices = [slice]
+        result_slice = []
+        for s in slices:
+            # Slice
+            if isinstance(s, ast.Slice):
+                result_slice.append((s.lower, s.upper, s.step))
+            elif isinstance(s, ast.Index): # Index (Python <3.9)
+                result_slice.append(s.value)
+            else:  # Index
+                result_slice.append(s)
+
 
     if without_array:
         return result_slice

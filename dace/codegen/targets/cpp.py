@@ -366,6 +366,16 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
     return reshaped_copy, new_strides
 
 
+def _is_c_contiguous(shape, strides):
+    """ 
+    Returns True if the strides represent a non-padded, C-contiguous (last 
+    dimension contiguous) array.
+    """
+    computed_strides = tuple(
+        data._prod(shape[i + 1:]) for i in range(len(shape)))
+    return tuple(strides) == computed_strides
+
+
 def ndcopy_to_strided_copy(
     copy_shape,
     src_shape,
@@ -416,8 +426,18 @@ def ndcopy_to_strided_copy(
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
+    # Another case of non-strided 1D copy: all indices match and copy length
+    # matches pointer difference, as well as match in contiguity and padding
+    elif (first_src_index == first_dst_index
+          and last_src_index == last_dst_index and copy_length == src_copylen
+          and _is_c_contiguous(src_shape, src_strides)
+          and _is_c_contiguous(dst_shape, dst_strides)):
+        # Emit 1D copy of the whole array
+        copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
+        return copy_shape, [1], [1]
     # 1D strided copy
-    elif sum([0 if c == 1 else 1 for c in copy_shape]) == 1:
+    elif (sum([0 if c == 1 else 1 for c in copy_shape]) == 1
+          and len(src_subset) == len(dst_subset)):
         # Find the copied dimension:
         # In copy shape
         copydim = next(i for i, c in enumerate(copy_shape) if c != 1)
@@ -973,8 +993,9 @@ class DaCeKeywordRemover(ExtNodeTransformer):
     def _subscript_expr(self, slicenode: ast.AST,
                         target: str) -> symbolic.SymbolicType:
         visited_slice = self.visit(slicenode)
-        if not isinstance(visited_slice, ast.Index):
-            raise NotImplementedError("Range subscripting not implemented")
+
+        if isinstance(visited_slice, ast.Index):
+            visited_slice = visited_slice.value
 
         # Collect strides for index expressions
         if target in self.constants:
@@ -995,15 +1016,15 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 and not (s == 1 and subset_size[i] == dimlen)
             ]
 
-        if isinstance(visited_slice.value, ast.Tuple):
-            if len(strides) != len(visited_slice.value.elts):
+        if isinstance(visited_slice, ast.Tuple):
+            if len(strides) != len(visited_slice.elts):
                 raise SyntaxError(
                     'Invalid number of dimensions in expression (expected %d, '
-                    'got %d)' % (len(strides), len(visited_slice.value.elts)))
+                    'got %d)' % (len(strides), len(visited_slice.elts)))
 
             return sum(
                 symbolic.pystr_to_symbolic(unparse(elt)) * s
-                for elt, s in zip(visited_slice.value.elts, strides))
+                for elt, s in zip(visited_slice.elts, strides))
 
         if len(strides) != 1:
             raise SyntaxError('Missing dimensions in expression (expected %d, '
@@ -1235,8 +1256,13 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                 )
                 continue
 
+            # If a view, get the relevant access node
+            dstnode = edge.dst
+            while isinstance(sdfg.arrays[dstnode.data], data.View):
+                dstnode = dfg.out_edges(dstnode)[0].dst
+
             # We need the streams leading out of the output data
-            for e in dfg.out_edges(edge.dst):
+            for e in dfg.out_edges(dstnode):
                 if isinstance(e.dst, nodes.AccessNode):
                     continue
                 # If no stream at destination: synchronize stream with host.
