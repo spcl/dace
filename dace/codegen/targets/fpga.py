@@ -90,6 +90,9 @@ class FPGACodeGen(TargetCodeGenerator):
         self._allocated_global_arrays = set()
         self._unrolled_pes = set()
 
+        # Annotate FPGA PEs
+        self._compute_processing_elements(sdfg)
+
         # Register dispatchers
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
 
@@ -675,6 +678,192 @@ class FPGACodeGen(TargetCodeGenerator):
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
         pass  # Handled by destructor
+
+
+    def _compute_processing_elements(self,
+                             sdfg: SDFG,
+                             default_pe=0,
+                             default_event=0):
+        """ Annotates an SDFG (and all nested ones) to include a `_pe_id`
+            field. This field is applied to all FPGA maps, tasklets, and copies
+            that can be executed in parallel in seperate PEs.
+            :param sdfg: The sdfg to modify.
+            :param default_pe: The PEs ID to start counting from (used
+                                   in recursion to nested SDFGs).
+            :param default_event: The event ID to start counting from (used
+                                  in recursion to nested SDFGs).
+            :return: 2-tuple of the number of streams, events to create.
+        """
+
+        # TODO: control  this by some dace configuration flag?
+        pes = 0
+        concurrent_pes = 0
+
+        def increment(pe_id):
+            if concurrent_pes > 0:
+                return (pe_id + 1) % concurrent_pes
+            return pe_id + 1
+
+        # Keep track of PEs per state
+        state_pes = []
+        state_subsdfg_events = []
+        max_events = 0
+
+        for state in sdfg.nodes():
+            if not is_fpga_kernel(sdfg, state):
+                # if this is not an FPGA Kernel, we can skip PEs detection
+                state_pes.append(0)
+                state_subsdfg_events.append(max_events)
+                continue
+
+            # Start by annotating source nodes
+            source_nodes = state.source_nodes()
+
+            # Concurrency can only be found in each state
+            max_pes = default_pe
+            # max_events = default_event
+
+            for i, node in enumerate(source_nodes):
+                if isinstance(node, nodes.AccessNode):
+                    continue
+                if isinstance(node, nodes.NestedSDFG):
+                    # TODO: how we deal with this
+                    print("FPGA NESTED SDFG --------------")
+                    if node.schedule == dtypes.ScheduleType.FPGA_Device:
+                        continue
+                node._pe = max_pes
+                print("**added pe ", node._pe, " to :", node)
+                node._pe_childpath = False
+                max_pes = increment(max_pes)
+
+            # Maintain the same PE in DFS order, add more when
+            # possible.
+            for e in state.dfs_edges(source_nodes):
+                if hasattr(e.dst, '_pe'):
+                    continue
+                if hasattr(e.src, '_pe'):
+                    pe = e.src._pe
+
+                    if (isinstance(e.dst, nodes.AccessNode)
+                            and isinstance(sdfg.arrays[e.dst.data], dt.View)):
+                        # Skip views
+                        e.dst._pe = pe
+                        e.dst._pe_childpath = False
+                        continue
+
+                    if e.src._pe_childpath == True:
+                        pe = max_pes
+                        max_pes = increment(max_pes)
+                    e.src._pe_childpath = True
+
+                    # Do not create multiple PEs within FPGA scopes
+                    if (isinstance(e.src, nodes.EntryNode)
+                            and e.src.schedule == dtypes.ScheduleType.FPGA_Device):
+                        e.src._pe_childpath = False
+                    elif state.entry_node(e.src) is not None:
+                        parent = state.entry_node(e.src)
+                        if parent.schedule  == dtypes.ScheduleType.FPGA_Device:
+                            e.src._pe_childpath = False
+                else:
+                    print("Use a new PE id")
+                    pe = max_pes
+                    if (isinstance(e.dst, nodes.AccessNode)
+                            and isinstance(sdfg.arrays[e.dst.data], dt.View)):
+                        # Skip views
+                        pass
+                    else:
+                        max_pes = increment(max_pes)
+                e.dst._pe = pe
+
+                if not hasattr(e.dst, '_pe_childpath'):
+                    e.dst._pe_childpath = False
+                if isinstance(e.dst, nodes.NestedSDFG):
+                    if e.dst.schedule != dtypes.ScheduleType.FPGA_Device:
+                        # TODO: what to do here? We don't want to recur
+                        assert False
+                        # max_streams, max_events = self._compute_cudastreams(
+                        #     e.dst.sdfg, e.dst._cuda_stream, max_events + 1)
+
+
+            # TODO: is this useful?
+            state_pes.append(max_pes if concurrent_pes ==
+                                 0 else concurrent_pes)
+            state_subsdfg_events.append(max_events)
+
+        # Do not consider PEs in the following cases:
+        # - we are not in an FPGA kernelfrom paths of non-gpu copies and CPU tasklets
+        # TODO: is this needed in this case?
+        # For the moment being we are assuming that everything here is for FPGA
+        for node, graph in sdfg.all_nodes_recursive():
+            if isinstance(graph, dace.sdfg.SDFGState):
+                cur_sdfg = graph.parent
+
+                if (isinstance(node, (nodes.EntryNode, nodes.ExitNode))
+                        and node.schedule == dtypes.ScheduleType.FPGA_Device):
+                    # Node must have an associated PE, remove childpath and continue
+                    if hasattr(node, '_pe_childpath'):
+                        delattr(node, '_pe_childpath')
+                    continue
+
+                if not is_fpga_kernel(cur_sdfg, graph):
+                    # Not an FPGA kernel: skip
+                    continue
+                print(graph)
+
+                for e in graph.all_edges(node):
+                    path = graph.memlet_path(e)
+                    # If leading from/to a GPU memory node, keep stream
+                    if ((isinstance(path[0].src, nodes.AccessNode)
+                         and path[0].src.desc(cur_sdfg).storage
+                         == dtypes.StorageType.GPU_Global)
+                            or (isinstance(path[-1].dst, nodes.AccessNode)
+                                and path[-1].dst.desc(cur_sdfg).storage
+                                == dtypes.StorageType.FPGA_Global)):
+                        print("BREAK Leading to  FPGA Global Mem")
+                        break
+                    # If leading from/to a GPU tasklet, keep stream
+                    if ((isinstance(path[0].src, nodes.CodeNode)
+                         and is_fpga_kernel(cur_sdfg, graph))
+                            or
+                            (isinstance(path[-1].dst, nodes.CodeNode) and
+                             is_fpga_kernel(cur_sdfg, graph))):
+                        print("BREAK FPGA KERNEL")
+                        break
+                else:  # If we did not break, we do not need a CUDA stream
+                    print("Remove pe from", node)
+                    if hasattr(node, '_pe'):
+                        delattr(node, '_pe')
+                # In any case, remove childpath
+                if hasattr(node, '_pe_childpath'):
+                    delattr(node, '_pe_childpath')
+
+        # Compute maximal number of events by counting edges (within the same
+        # state) that point from one stream to another
+        state_events = []
+        import pdb
+        pdb.set_trace()
+        for i, state in enumerate(sdfg.nodes()):
+            events = state_subsdfg_events[i]
+
+            for e in state.edges():
+                if hasattr(e.src, '_cuda_stream'):
+                    # If there are two or more CUDA streams involved in this
+                    # edge, or the destination is unrelated to CUDA
+                    if (not hasattr(e.dst, '_cuda_stream')
+                            or e.src._cuda_stream != e.dst._cuda_stream):
+                        for mpe in state.memlet_path(e):
+                            mpe._cuda_event = events
+                        events += 1
+
+            state_events.append(events)
+
+        # Maximum over all states
+        max_pes = max(state_pes)
+        max_events = max(state_events)
+
+        import pdb
+        pdb.set_trace()
+
 
     def _emit_copy(self, sdfg, state_id, src_node, src_storage, dst_node,
                    dst_storage, dst_schedule, edge, dfg, function_stream,
