@@ -151,7 +151,6 @@ def test_inputs_outputs():
     subgraph = SubgraphView(sdfg.nodes()[0], sdfg.nodes()[0].nodes())
     sf = SubgraphFusion(subgraph)
     assert sf.can_be_applied(sdfg, subgraph)
-    print("Can be applied")
     fusion(sdfg, sdfg.nodes()[0], None)
 
     C_cpy = deepcopy(C)

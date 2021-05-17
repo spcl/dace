@@ -15,6 +15,7 @@ from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, Map
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import helpers, ReduceExpansion, StencilTiling
+from dace.transformation import helpers as xfh
 
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
@@ -365,9 +366,6 @@ def set_fast_implementations(sdfg: SDFG,
                 if impl in node.implementations:
                     node.implementation = impl
                     break
-            else:
-                warnings.warn('No fast library implementation found for "%s", '
-                              'falling back to default.' % node.name)
 
 
 def auto_optimize(sdfg: SDFG,
@@ -400,9 +398,6 @@ def auto_optimize(sdfg: SDFG,
     :note: This function is still experimental and may harm correctness in
            certain cases. Please report an issue if it does.
     """
-    # Strict transformations
-    sdfg.apply_strict_transformations(validate=False, validate_all=validate_all)
-
     # Try to eliminate trivial maps
     sdfg.apply_transformations_repeated(TrivialMapElimination,
                                         validate=validate,
@@ -411,12 +406,22 @@ def auto_optimize(sdfg: SDFG,
         # Try to parallelize loops
         for sd in sdfg.all_sdfgs_recursive():
             propagate_states(sd)
-        strict_transformations = dace.transformation.strict_transformations()
-        sdfg.apply_transformations_repeated([LoopToMap] +
-                                            strict_transformations,
-                                            strict=True,
-                                            validate=False,
-                                            validate_all=validate_all)
+            
+        # Strict transformations and loop parallelization
+        transformed = True
+        while transformed:
+            sdfg.apply_strict_transformations(validate=False,
+                                              validate_all=validate_all)
+
+            xfh.split_interstate_edges(sdfg)
+
+            # Try to parallelize loops
+            l2ms = sdfg.apply_transformations_repeated(LoopToMap,
+                                                       strict=True,
+                                                       validate=False,
+                                                       validate_all=validate_all)
+            transformed = l2ms > 0
+
     # Collapse maps
     sdfg.apply_transformations_repeated(MapCollapse,
                                         strict=True,

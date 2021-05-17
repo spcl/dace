@@ -30,7 +30,8 @@ from .streaming_memory import StreamingMemory, StreamingComposition
 # Complexity reduction
 from .dedup_access import DeduplicateAccess
 from .redundant_array import RedundantArray, RedundantSecondArray
-from .redundant_array_copying import (RedundantArrayCopying,
+from .redundant_array_copying import (RedundantArrayCopyingIn,
+                                      RedundantArrayCopying,
                                       RedundantArrayCopying2,
                                       RedundantArrayCopying3)
 from .merge_arrays import InMergeArrays, OutMergeArrays, MergeSourceSinkArrays
@@ -45,3 +46,8 @@ from .mpi import MPITransformMap
 
 # Algorithmic
 from .matrix_product_transpose import MatrixProductTranspose
+
+# Distributions
+from .map_distribution import (ElementWiseArrayOperation,
+                               ElementWiseArrayOperation2D,
+                               RedundantComm2D)
