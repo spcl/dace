@@ -55,7 +55,7 @@ class CodeObject(object):
         self.environments = environments or set()
 
         if (language == "cpp") & (title == "Frame"):
-            MapCpp(code, name)
+            MapCpp(code, name, self.target.target_name)
 
     @property
     def clean_code(self):

@@ -1,15 +1,17 @@
 import re
 import json
 import os
+import socket
 from pathlib import Path
 from dace.config import Config
+
 
 class SdfgLocation:
     def __init__(self, sdfg_id, state_id, node_ids):
         self.sdfg_id = sdfg_id
         self.state_id = state_id
         self.node_ids = node_ids
-    
+
     def printer(self):
         print(
             "SDFG {}:{}:{}".format(
@@ -19,81 +21,139 @@ class SdfgLocation:
             )
         )
 
-def create_folder(path_str:str):
+
+def create_folder(path_str: str):
+    """ Creates a folder if it does not yet exist """
     if not os.path.exists(path_str):
         path = os.path.abspath(path_str)
         os.mkdir(path)
 
+
 def create_cache(name):
+    """ Creates the map folder in .dacecache if it
+        does not yet exist
+    """
     create_folder(".dacecache")
     create_folder(".dacecache/" + name)
     create_folder(".dacecache/" + name + "/map")
     return ".dacecache/" + name
 
-def temporaryInfo(name, data):
-    """ Creates a temporary file that stores start and end line 
-    of the function for sourcemap processing later on
-        :param file: filename
-        :param start_line: first line of the function
-        :param end_line: last line of the function
+
+def temporaryInfo(filename: str, data: json):
+    """ Creates a temporary file that stores the json object
+    in a temporary file in the map folder of the function
+        :param filename: name of the function
+        :param data: data to save
     """
-    folder = create_cache(name)
+    folder = create_cache(filename)
     path = os.path.abspath(folder + "/map/tmp.json")
 
     with open(path, "w") as writer:
         json.dump(data, writer)
 
-def send(folder, name):
-    import socket
+
+def get_tmp(name):
+    path = ".dacecache/" + name + "/map/tmp.json"
+    if os.path.exists(path):
+        with open(path, "r") as tmp_json:
+            data = json.load(tmp_json)
+        return data
+    else:
+        return None
+
+def remove_tmp(name, remove_cache=False):
+    ''' Remove the tmp file of the function 'name'.
+        If remove_cache is true then check if the 
+        directory only contains the tmp file,
+        if this is the case, remove the cache directory
+        of this function.
+    '''
+    path = ".dacecache/" + name
+
+    if not os.path.exists(path):
+        return
+
+    try:
+        os.remove(path + "/map/tmp.json")
+    except OSError:
+        return
+    
+    if (
+        remove_cache and
+        len(os.listdir(path)) == 1 and
+        len(os.listdir(path + "/map")) == 0
+    ):
+        if os.path.exists(path):
+            try:
+                os.rmdir(path + "/map")
+                os.rmdir(path)
+            except OSError:
+                return
+        
+
+def send(data: json):
+    """ Sends a json object to the port given as the 
+        env variable DACE_port. If the port isn't set or 0
+        we won't send anything
+            :param data, json object to send
+    """
+
+    if "DACE_port" not in os.environ:
+        return
 
     HOST = socket.gethostname()
-    PORT = os.getenv('DACE_port')
+    PORT = os.environ["DACE_port"]
 
-    if PORT is None:
-        return
-        
+    data_bytes = bytes(json.dumps(data), "utf-8")
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((HOST, int(PORT)))
-        data = json.dumps(
-                {
-                    "folder": folder,
-                    "name": name
-                }
-            )
-        s.sendall(bytes(data, "utf-8"))
+        s.sendall(data_bytes)
+
 
 class MapCreater:
     def __init__(self, name):
         self.name = name
         self.map = {}
 
-    def save(self, language:str):
+    def save(self, language: str):
         folder = create_cache(self.name)
         path = os.path.abspath(
             folder +
-            "/map_{language}.json"
+            "/map/map_" + language + ".json"
         )
 
-        with open(path ,"w") as json_file:
+        with open(path, "w") as json_file:
             json.dump(self.map, json_file, indent=4)
-        
+
         return os.path.abspath(folder)
-        
+
 
 
 class MapCpp(MapCreater):
-    def __init__(self, code, name):
+    def __init__(self, code, name, target_name):
         super(MapCpp, self).__init__(name)
         self.code = code
         self.mapper()
+
         folder = self.save("cpp")
-        send(
-            folder,
-            self.name
-        )
+
+        tmp = get_tmp(self.name)
+        remove_tmp(self.name)
+
+        if tmp is not None:
+            send(
+                {
+                    "type": "registerFunction",
+                    "name": self.name,
+                    "path_cache": folder,
+                    "path_file": tmp.get("src_file"),
+                    "target_name": target_name
+                }
+            )
 
     def mapper(self):
-        for line_num, line in enumerate(self.code.split("\n"),1):
+        for line_num, line in enumerate(self.code.split("\n"), 1):
             nodes = self.get_node(line)
             for node in nodes:
                 self.create_mapping(node, line_num)
@@ -121,7 +181,7 @@ class MapCpp(MapCreater):
                 )
             )
         return nodes
-    
+
     def get_identifiers(self, line):
         line_identifier = re.findall(
             r'(\/\/\/\/__DACE:[0-9]:[0-9]:[0-9](,[0-9])*)',
@@ -129,6 +189,7 @@ class MapCpp(MapCreater):
         )
         # remove tuples
         return [x or y for (x, y) in line_identifier]
+
 
 class MapPython(MapCreater):
     def __init__(self, sdfg, name):
@@ -140,22 +201,42 @@ class MapPython(MapCreater):
 
         self.sorter()
 
-        line_info = self.get_tmp()
-        if line_info is not None:
-            self.create_mapping(
-                line_info["start_line"],
-                line_info["end_line"]
-            )
-        else:
+        line_info = get_tmp(self.name)
+
+        # If we haven't save line and/or src info return
+        # after creating the map and saving it
+        # Happens when using the SDFG API
+        if (
+            line_info is None or
+            "start_line" not in line_info or
+            "end_line" not in line_info
+        ):
             self.create_mapping()
+        else:
+            # Store the start and end line as a tuple 
+            # for every function in the SDFG
+            ranges = [
+                (line_info["start_line"], line_info["end_line"])
+            ]
+
+            if "other_sdfgs" in line_info:
+                for other_sdfg_name in line_info["other_sdfgs"]:
+                    other_tmp = get_tmp(other_sdfg_name)
+                    remove_tmp(other_sdfg_name, True)
+                    
+                    ranges.append(
+                        (other_tmp["start_line"], other_tmp["end_line"])
+                    )
+
+                self.create_mapping(ranges)
 
         self.save("py")
 
     def sorter(self):
         self.map = sorted(
-            self.map, 
-            key = lambda n: (
-                n['debuginfo']['start_line'], 
+            self.map,
+            key=lambda n: (
+                n['debuginfo']['start_line'],
                 n['debuginfo']['start_column'],
                 n['debuginfo']['end_line'],
                 n['debuginfo']['end_column']
@@ -183,48 +264,51 @@ class MapPython(MapCreater):
             if ("attributes" in node) & ("debuginfo" in node["attributes"]):
                 mapping.append(self.make_mapping(node, sdfg_id, state_id))
 
-            # If node has sub nodes, recursivly call
+            # If node has sub nodes, recursively call
             if("nodes" in node):
                 mapping += self.sdfg_debuginfo(node, state_id=node["id"])
 
-            # If the node is a SDFG, recursivly call
+            # If the node is a SDFG, recursively call
             if(("attributes" in node) & ("sdfg" in node["attributes"])):
                 mapping += self.sdfg_debuginfo(
-                    node["attributes"]["sdfg"], 
+                    node["attributes"]["sdfg"],
                     sdfg_id=node["id"]
                 )
 
         return mapping
-    
-    def get_tmp(self):
-        path = ".dacecache/" + self.name + "/map/tmp.json"
-        if os.path.exists(path):
-            with open(path, "r") as tmp_json:
-                data = json.load(tmp_json)
-            os.remove(path)
-            return data
-        else:
-            return None
-        
-    def create_mapping(self, f_start_line = None, f_end_line = None):
+
+    def create_mapping(self, ranges=None):
         mapping = {}
+        
         for node in self.map:
             for line in range(
-                node["debuginfo"]["start_line"], 
+                node["debuginfo"]["start_line"],
                 node["debuginfo"]["end_line"] + 1
-                ):
+            ):
+                # If we find a line for the first time then we map
+                # it to it's corresponding node
+                # We expect that the nodes are sorted by priority
                 if not str(line) in mapping:
                     mapping[str(line)] = {
                         "sdfg_id": node["sdfg_id"],
                         "state_id": node["state_id"],
                         "node_id": node["node_id"]
                     }
-        if (f_start_line is not None) & (f_end_line is not None):
-            for line in range(f_start_line, f_end_line + 1):
-                if not str(line) in mapping:
-                        mapping[str(line)] = {
-                            "sdfg_id": 0,
-                            "state_id": 0,
-                            "node_id": 0
-                        }
+
+        if ranges:
+            # Mapping lines that don't occur in the debugInfo of the SDFG
+            for start, end in ranges:
+                for line in range(start, end + 1):
+                    if not str(line) in mapping:
+                        # Set to the same node as the previous line
+                        # If the previous line doesn't exist 
+                        # (line - 1 < f_start_line) then search the next lines
+                        # until a mapping can be found
+                        if str(line-1) in mapping:
+                            mapping[str(line)] = mapping[str(line-1)]
+                        else:
+                            for line_after in range(line+1, end+1):
+                                if str(line_after) in mapping:
+                                    mapping[str(line)] = mapping[str(line_after)]
+
         self.map = mapping

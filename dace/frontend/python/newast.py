@@ -6,6 +6,7 @@ import copy
 import itertools
 import re
 import sys
+from os import path
 import warnings
 from numbers import Number
 from typing import Any, Dict, List, Set, Tuple, Union, Callable, Optional
@@ -152,12 +153,14 @@ def parse_dace_program(f,
         @rtype: SDFG
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
-
-    # Remember the start and end line of the 
-    # function for creating the source map
+    
+    # Save in tmp file for improved source mapping
+    other_functions = [func for func in other_sdfgs if not func == name]
     data = {
         "start_line": src_line + 1,
-        "end_line": src_line + len(src.split("\n")) - 1
+        "end_line": src_line + len(src.split("\n")) - 1,
+        "src_file": path.abspath(src_file),
+        "other_sdfgs": other_functions
     }
     temporaryInfo(name, data)
 
