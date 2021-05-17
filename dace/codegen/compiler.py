@@ -189,14 +189,15 @@ def configure_and_compile(program_folder,
 
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(libraries)))
 
-    # Set linker and linker arguments, iff they have been specified (setting an
-    # empty string seems to cause issues on macOS).
-    cmake_linker = Config.get('compiler', 'linker', 'executable').strip()
+    # Set linker and linker arguments, iff they have been specified
+    cmake_linker = Config.get('compiler', 'linker', 'executable') or ''
+    cmake_linker = cmake_linker.strip()
     if cmake_linker:
         cmake_linker = make_absolute(cmake_linker)
         cmake_command.append(f'-DCMAKE_LINKER="{cmake_linker}"')
-    cmake_link_flags = (" ".join(cmake_link_flags) + " " +
-                        Config.get('compiler', 'linker', 'args')).strip()
+    cmake_link_flags = (
+        ' '.join(cmake_link_flags) + ' ' +
+        (Config.get('compiler', 'linker', 'args') or '')).strip()
     if cmake_link_flags:
         cmake_command.append(
             f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
