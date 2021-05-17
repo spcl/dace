@@ -189,15 +189,17 @@ def configure_and_compile(program_folder,
 
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(libraries)))
 
-    # Override linker and linker arguments
-    if Config.get('compiler', 'linker', 'executable'):
-        cmake_command.append("-DCMAKE_LINKER=\"{}\"".format(
-            make_absolute(Config.get('compiler', 'linker', 'executable'))))
-    if Config.get('compiler', 'linker', 'args') is not None:
+    # Set linker and linker arguments, iff they have been specified (setting an
+    # empty string seems to cause issues on macOS).
+    cmake_linker = Config.get('compiler', 'linker', 'executable').strip()
+    if cmake_linker:
+        cmake_linker = make_absolute(cmake_linker)
+        cmake_command.append(f'-DCMAKE_LINKER="{cmake_linker}"')
+    cmake_link_flags = (cmake_link_flags +
+                        Config.get('compiler', 'linker', 'args')).strip()
+    if cmake_link_flags:
         cmake_command.append(
-            "-DCMAKE_SHARED_LINKER_FLAGS=\"{}\"".format(
-                Config.get('compiler', 'linker', 'args') + " " +
-                " ".join(cmake_link_flags)), )
+            f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
     cmake_command = ' '.join(cmake_command)
 
     cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
