@@ -747,3 +747,130 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry,
         )
 
     return extracted_map, map_to_collapse
+
+
+def scope_tree_recursive(state: SDFGState,
+                         entry: Optional[nodes.EntryNode] = None) -> ScopeTree:
+    """ 
+    Returns a scope tree that includes scopes from nested SDFGs. 
+    :param state: The state that contains the root of the scope tree.
+    :param entry: A scope entry node to set as root, otherwise the state is 
+                  the root if None is given.
+    """
+    stree = state.scope_tree()[entry]
+    stree.state = state  # Annotate state in tree
+
+    # Add nested SDFGs as children
+    def traverse(state: SDFGState, treenode: ScopeTree):
+        snodes = state.scope_children()[treenode.entry]
+        for node in snodes:
+            if isinstance(node, nodes.NestedSDFG):
+                for nstate in node.sdfg.nodes():
+                    ntree = nstate.scope_tree()[None]
+                    ntree.state = nstate
+                    treenode.children.append(ntree)
+        for child in treenode.children:
+            traverse(getattr(child, 'state', state), child)
+
+    traverse(state, stree)
+    return stree
+
+
+def get_internal_scopes(
+        state: SDFGState,
+        entry: nodes.EntryNode,
+        immediate: bool = False) -> List[Tuple[SDFGState, nodes.EntryNode]]:
+    """ 
+    Returns all internal scopes within a given scope, including if they 
+    reside in nested SDFGs.
+    :param state: State in which entry node resides.
+    :param entry: The entry node to start from.
+    :param immediate: If True, only returns the scopes that are immediately
+                      nested in the map.
+    """
+    stree = scope_tree_recursive(state, entry)
+    result = []
+
+    def traverse(state: SDFGState, treenode: ScopeTree):
+        for child in treenode.children:
+            if child.entry is not None:
+                result.append((state, child.entry))
+                if not immediate:
+                    traverse(state, child)
+            else:  # Nested SDFG
+                traverse(child.state, child)
+
+    traverse(state, stree)
+    return result
+
+
+def gpu_map_has_explicit_threadblocks(state: SDFGState,
+                                      entry: nodes.EntryNode) -> bool:
+    """ 
+    Returns True if GPU_Device map has explicit thread-block maps nested within.
+    """
+    internal_maps = get_internal_scopes(state, entry)
+    if any(m.schedule in (dtypes.ScheduleType.GPU_ThreadBlock,
+                          dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
+           for _, m in internal_maps):
+        return True
+    imm_maps = get_internal_scopes(state, entry, immediate=True)
+    if any(m.schedule == dtypes.ScheduleType.Default for _, m in imm_maps):
+        return True
+
+    return False
+
+
+def reconnect_edge_through_map(
+    state: SDFGState, edge: graph.MultiConnectorEdge[Memlet],
+    new_node: Union[nodes.EntryNode, nodes.ExitNode], keep_src: bool
+) -> Tuple[graph.MultiConnectorEdge[Memlet], graph.MultiConnectorEdge[Memlet]]:
+    """
+    Reconnects an edge through a map scope, removes old edge, and returns the 
+    two new edges.
+    :param state: The state in which the edge and map reside.
+    :param edge: The edge to reconnect and remove.
+    :param new_node: The scope (map) entry or exit to reconnect through.
+    :param keep_src: If True, keeps the source of the edge intact, otherwise
+                     keeps destination of edge.
+    :return: A 2-tuple of (incoming edge, outgoing edge).
+    """
+    if keep_src:
+        result = state.add_edge_pair(new_node,
+                                     edge.dst,
+                                     edge.src,
+                                     edge.data,
+                                     internal_connector=edge.dst_conn,
+                                     external_connector=edge.src_conn)
+    else:
+        result = state.add_edge_pair(new_node,
+                                     edge.src,
+                                     edge.dst,
+                                     edge.data,
+                                     internal_connector=edge.src_conn,
+                                     external_connector=edge.dst_conn)
+    state.remove_edge(edge)
+    return result
+
+
+def contained_in(state: SDFGState, node: nodes.Node,
+                 scope: nodes.EntryNode) -> bool:
+    """
+    Returns true if the specified node is contained within the scope opened
+    by the given entry node (including through nested SDFGs).
+    """
+    # A node is contained within itself
+    if node is scope:
+        return True
+    cursdfg = state.parent
+    curstate = state
+    curscope = state.entry_node(node)
+    while cursdfg is not None:
+        while curscope is not None:
+            if curscope is scope:
+                return True
+            curscope = curstate.entry_node(curscope)
+        curstate = cursdfg.parent
+        curscope = cursdfg.parent_nsdfg_node
+        cursdfg = cursdfg.parent_sdfg
+    return False
