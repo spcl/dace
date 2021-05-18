@@ -1,11 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
+from copy import deepcopy
 import dace
 from dace import data, memlet, dtypes, registry, sdfg as sd, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
+import copy
+
 
 
 def fpga_update(sdfg, state, depth):
@@ -185,6 +188,12 @@ class FPGATransformState(transformation.Transformation):
                         allow_conflicts=desc.allow_conflicts,
                         strides=desc.strides,
                         offset=desc.offset)
+                    if("hbmbank" in desc.location):
+                        fpga_array[1].location["hbmbank"] = desc.location["hbmbank"]
+                        desc.location.pop("hbmbank")
+                    if("hbmalignment" in desc.location):
+                        fpga_array[1].location["hbmalignment"] = desc.location["hbmalignment"]
+                        desc.location.pop("hbmalignment")
                     fpga_data[node.data] = fpga_array
 
                 pre_node = pre_state.add_read(node.data)
@@ -227,13 +236,23 @@ class FPGATransformState(transformation.Transformation):
                         allow_conflicts=desc.allow_conflicts,
                         strides=desc.strides,
                         offset=desc.offset)
+                    if("hbmbank" in desc.location):
+                        fpga_array[1].location["hbmbank"] = desc.location["hbmbank"]
+                        desc.location.pop("hbmbank")
+                    if("hbmalignment" in desc.location):
+                        fpga_array[1].location["hbmalignment"] = desc.location["hbmalignment"]
+                        desc.location.pop("hbmalignment")
                     fpga_data[node.data] = fpga_array
                 # fpga_node = type(node)(fpga_array)
 
                 post_node = post_state.add_write(node.data)
                 post_fpga_node = post_state.add_read('fpga_' + node.data)
-                full_range = subsets.Range([(0, s - 1, 1) for s in desc.shape])
-                mem = memlet.Memlet.simple('fpga_' + node.data, full_range)
+                if("hbmbank" in fpga_array[1].location):
+                    full_range = subsets.Range.from_array(fpga_array[1])
+                    mem = memlet.Memlet(f"fpga_{node.data}", None, full_range)
+                else:
+                    full_range = subsets.Range([(0, s - 1, 1) for s in desc.shape])
+                    mem = memlet.Memlet.simple('fpga_' + node.data, full_range)
                 post_state.add_edge(post_fpga_node, None, post_node, None, mem)
 
                 fpga_node = state.add_write('fpga_' + node.data)

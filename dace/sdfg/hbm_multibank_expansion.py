@@ -15,7 +15,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg import nodes as nd
 from dace.sdfg import graph 
 from dace.sdfg import state as statenamespace
-from dace import data, memlet, subsets, symbolic, sdfg as sd
+from dace import data, memlet, subsets, symbolic, dtypes, sdfg as sd
 
 from typing import Iterable, Union, Any
             
@@ -176,10 +176,9 @@ def parseHBMAlignment(arrayname : str, array : data.Array) -> "list[int]":
         splitaxes.remove(val)
     return splitaxes
 
-def collectAndParseHBMArrays(sdfg : sd.SDFG) -> "dict[(str, sd.SDFG), dict[str, Any]]":
+def parseHBMArray(arrayname : str, array : data.Array) -> "dict[str, Any]":
     """
-    Finds all arrays that are spread across multiple HBM
-    banks, and parses their properties using parseHMBAlignment
+    parses HBM properties using parseHMBAlignment
     and parseHBMBank.
 
     :return: A mapping from (arrayname, sdfg of the array) to a mapping
@@ -191,40 +190,98 @@ def collectAndParseHBMArrays(sdfg : sd.SDFG) -> "dict[(str, sd.SDFG), dict[str, 
         and axis 1 => There are 4 parts)
     'splitaxes': List that contains axes along which the array is split
     'lowbank': The lowest bank index this array is placed on
+    'shape': The shape of the whole array
+    """
+    parsed = parseHBMBank(arrayname, array)
+    if(parsed == None):
+        return None
+    low, high = parsed
+    count = high - low + 1
+    shape = array.shape
+    ndim = len(shape)
+    if(low == high):
+        return {"ndim" : ndim, "shape" : array.shape,
+            "splitcount" : 1, "splitaxes" : [], "lowbank" : low}
+    splitaxes = parseHBMAlignment(arrayname, array)
+    splitdim = len(splitaxes)
+    if(splitdim == 0):
+        cgx.CodegenError("for an array divided across multiple hbm-banks "
+            "there must be at least 1 allowed split dimension" 
+            f"in {arrayname}")
+    splitcount = round(count ** (1 / splitdim))
+    if(splitcount ** splitdim != count):
+        cgx.CodegenError("for an array divided across mutiple hbm-banks "
+            "the equation 'hbmbanks == x ** splitdims' must hold where "
+            "hbmbanks is the number of used banks, splitdims is the total "
+            "count of axes along which splitting is allowed and x is an "
+            "arbitrary integer. This is necessary so the number of splits "
+            "in each direction is the same). This does not hold for "
+            f"{arrayname}")
+    return {"ndim" : ndim, "shape" : array.shape,
+            "splitcount" : splitcount, "splitaxes" : splitaxes, "lowbank" : low}
+
+def findAndParseHBMMultibank(sdfg : sd.SDFG) -> "dict[(str, sd.SDFG), dict[str, Any]]":
+    """
+    Finds and parses HBM arrays that are spread across multiple banks
     """
     arrays = sdfg.arrays_recursive()
-
     handledArrays = {}  #(oldarrayname, sdfg) -> 
         #{ndim -> int, splitcount->int, splitaxes->[int]}
     for currentsdfg, arrayname, array in arrays:
-        parsed = parseHBMBank(arrayname, array)
-        if(parsed == None):
+        collected = parseHBMArray(arrayname, array)
+        if(collected == None or collected['splitcount'] == 0):
             continue
-        low, high = parsed
-        if(high - low == 0):
-            continue
-
-        count = high - low + 1
-        shape = array.shape
-        ndim = len(shape)
-        splitaxes = parseHBMAlignment(arrayname, array)
-        splitdim = len(splitaxes)
-        if(splitdim == 0):
-            cgx.CodegenError("for an array divided across multiple hbm-banks "
-                "there must be at least 1 allowed split dimension" 
-                f"in {arrayname}")
-        splitcount = round(count ** (1 / splitdim))
-        if(splitcount ** splitdim != count):
-            cgx.CodegenError("for an array divided across mutiple hbm-banks "
-                "the equation 'hbmbanks == x ** splitdims' must hold where "
-                "hbmbanks is the number of used banks, splitdims is the total "
-                "count of axes along which splitting is allowed and x is an "
-                "arbitrary integer. This is necessary so the number of splits "
-                "in each direction is the same). This does not hold for "
-                f"{arrayname}")
-        handledArrays[(arrayname, currentsdfg)] = {"ndim" : ndim,
-            "splitcount" : splitcount, "splitaxes" : splitaxes, "lowbank" : low}
+        handledArrays[(arrayname, currentsdfg)] = collected
     return handledArrays
+
+def _spliceHBMMemlet(state : statenamespace.SDFGState, edge : graph.MultiConnectorEdge, spliceSource : bool,
+    aimsAtBank : int, divideVolumeBy : int, followupConnector : str = None, edgeconnectorname = None):
+    """
+    This is a helper for hbm memlets.
+    'Splices', i.e. duplicates and reconnects an edge to a newly created connector. Volume and subset 
+    of the new memlet are modified to target a single bank. Optionally adds a new corresponding connector.
+
+    :param spliceSource: Wheter to splice at the source or at the destination of the edge
+    :param aimsAtBank: The bank index of the spliced memlet
+    :param divideVolumeBy: An integer by which the volume of the spliced memlet is divided
+    :param followupConnector: The old name of a followup connector
+    :param edgeconnectorname: If None will generate a unique new connector name, otherwise it will
+        take the provided names as given for the edge connector
+    """
+    newmem = deepcopy(edge.data)
+    newmem.subset[0] = (symbolic.pystr_to_symbolic(aimsAtBank),
+                symbolic.pystr_to_symbolic(aimsAtBank),
+                symbolic.pystr_to_symbolic(1))
+    newmem.volume = symbolic.pystr_to_symbolic("floor(" + 
+        str(newmem.volume) + f" / {divideVolumeBy})")
+
+    if(spliceSource):
+        referedNode = edge.src
+        if not edgeconnectorname:
+            edgeconnectorname = getNonExistingName(f"{edge.src_conn}_{aimsAtBank}", edge.src.out_connectors)
+        if followupConnector:
+            connectstoconnectorname = getNonExistingName(f"{followupConnector}_{aimsAtBank}", 
+                edge.src.in_connectors)
+            referedNode.add_in_connector(connectstoconnectorname)
+        referedNode.add_out_connector(edgeconnectorname)
+        newedge = state.add_edge(edge.src, edgeconnectorname, 
+            edge.dst, edge.dst_conn, newmem)
+    else:
+        referedNode = edge.dst
+        if not edgeconnectorname:
+            edgeconnectorname =  getNonExistingName(f"{edge.dst_conn}_{aimsAtBank}", edge.src.in_connectors)
+        if followupConnector:
+            connectstoconnectorname = getNonExistingName(f"{followupConnector}_{aimsAtBank}",
+                edge.src.out_connectors)
+            referedNode.add_out_connector(connectstoconnectorname)
+        referedNode.add_in_connector(edgeconnectorname)        
+        newedge = state.add_edge(edge.src, edge.src_conn, 
+             edge.dst, edgeconnectorname, newmem)
+    if(followupConnector):
+        return (newedge, connectstoconnectorname)
+    else:
+        return newedge
+    
 
 def _recursive_splice_hbmmemlettree(state : statenamespace.SDFGState,
         tree : memlet.MemletTree, flowsTowardsRoot : bool) -> "dict[int, list[graph.MultiConnectorEdge]]":
@@ -232,83 +289,60 @@ def _recursive_splice_hbmmemlettree(state : statenamespace.SDFGState,
     applying unroll results in an sdfg that still contains multibank memlets
     on the paths to the unrolled maps. This function "splices" those memlets,
     such that all memlets from/to the unrolled maps are single bank only. Note that
-    the resulting state may still contain multibankmemlets between accessnodes.
+    the resulting state may still contain multibankmemlets between accessnodes, or on 
+    nested sdfgs
 
     :param flowsTowardsRoot: Does the tree carry data towards the accessnode or away from it?
     """
-    #TODO: Handle othersubset as well
-    outgoingmemlets : dict[int, list[graph.MultiConnectorEdge]] = {}
-    outgoingmemletcount = 0
+    outgoingmemlets : dict[int, graph.MultiConnectorEdge] = {}
     returnval = {}
     for child in tree.children:
         result = _recursive_splice_hbmmemlettree(state, child, flowsTowardsRoot)
         for banknum in result.keys():
             if(banknum in outgoingmemlets):
-                outgoingmemlets[banknum].extend(result[banknum])
+                #Would make the computation of the volume terrible
+                raise ValueError("Accessing the same hbmbank multiple times at the same connector is disallowed")
             else:
                 outgoingmemlets[banknum] = result[banknum]
-    for mlist in outgoingmemlets.values():
-        outgoingmemletcount += len(mlist)
     edge : graph.MultiConnectorEdge = tree.edge
     mem : memlet.Memlet = edge.data
-    if(outgoingmemletcount > 1):
+
+    if(len(outgoingmemlets) > 1):
         subsetlow = int(str(mem.subset[0][0]))
         subsethigh = int(str(mem.subset[0][1]))
         stride = int(str(mem.subset[0][2]))
         if(stride != 1):
             raise NotImplementedError()
-        oldinputconnectorname = None
-        oldoutputconnectorname = None
-        referedNode : nd.Node = None
+        
         if(flowsTowardsRoot):
+            oldoutconnector = edge.src_conn
+            oldinconnector = next(iter(outgoingmemlets.values())).dst_conn
             referedNode = edge.src
-            oldinputconnectorname = next(iter(outgoingmemlets.items()))[1][0].dst_conn
-            oldoutputconnectorname = edge.src_conn
         else:
+            oldinconnector = edge.dst_conn
+            oldoutconnector = next(iter(outgoingmemlets.values())).src_conn
             referedNode = edge.dst
-            oldoutputconnectorname = next(iter(outgoingmemlets.items()))[1][0].src_conn
-            oldinputconnectorname = edge.dst_conn
-
         for banknum in outgoingmemlets.keys():
+            #Create the new edges and connectors and reconnect 
             assert(banknum >= subsetlow and banknum <= subsethigh) #TODO: Handle stride !=1
-            newmem = deepcopy(mem)
-            newmem.subset[0] = (symbolic.pystr_to_symbolic(banknum),
-                        symbolic.pystr_to_symbolic(banknum),
-                        symbolic.pystr_to_symbolic(1))
-            newmem.volume = symbolic.pystr_to_symbolic("floor(" + 
-                str(newmem.volume) + f" / {outgoingmemletcount})")
-            connectsToList = outgoingmemlets[banknum]
-            connectstoconnectorname = None
-            newedge = None
-
+            connectsTo = outgoingmemlets[banknum]
             if(flowsTowardsRoot):
-                edgeconnectorname = f"{edge.src_conn}_{banknum}"
-                connectstoconnectorname = f"{connectsToList[0].dst_conn}_{banknum}"
-                referedNode.add_out_connector(edgeconnectorname)
-                referedNode.add_in_connector(connectstoconnectorname)
-                newedge = state.add_edge(edge.src, edgeconnectorname, 
-                    edge.dst, edge.dst_conn, newmem)
+                newedge, connectstoconnectorname = _spliceHBMMemlet(state, edge, True, 
+                    banknum, len(outgoingmemlets), connectsTo.dst_conn)
             else:
-                edgeconnectorname = f"{edge.dst_conn}_{banknum}"
-                connectstoconnectorname = f"{connectsToList[0].src_conn}_{banknum}"
-                referedNode.add_in_connector(edgeconnectorname)
-                referedNode.add_out_connector(connectstoconnectorname)
-                newedge = state.add_edge(edge.src, edge.src_conn,
-                    edge.dst, edgeconnectorname, newmem)
+                newedge, connectstoconnectorname = _spliceHBMMemlet(state, edge, False,
+                    banknum, len(outgoingmemlets), connectsTo.src_conn)
             returnval[banknum] = [newedge]
-            
-            for connectsTo in connectsToList:
-                if(flowsTowardsRoot):
-                    connectsTo.dst_conn = connectstoconnectorname
-                else:
-                    connectsTo.src_conn = connectstoconnectorname
-
+            if(flowsTowardsRoot):
+                connectsTo.dst_conn = connectstoconnectorname
+            else:
+                connectsTo.src_conn = connectstoconnectorname
         state.remove_edge(edge)
-        referedNode.remove_in_connector(oldinputconnectorname)
-        referedNode.remove_out_connector(oldoutputconnectorname)
+        referedNode.remove_in_connector(oldinconnector)
+        referedNode.remove_out_connector(oldoutconnector)
     else:
         banknum = int(str(edge.data.subset[0][0]))
-        returnval[banknum] = [edge]
+        returnval[banknum] = edge
     return returnval
 
 def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
@@ -321,7 +355,7 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
     Copymemlets are created based on hbmalignment.
     """
                 
-    info = collectAndParseHBMArrays(sdfg)
+    info = findAndParseHBMMultibank(sdfg)
     if(len(info) == 0):
         return
 
@@ -329,6 +363,10 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
     arraylist : dict[(str, sd.SDFG),  list[(str, data.Array)]] = {}
     #all states that contain hbm multibanks
     statelist : set[sd.SDFGState] = set()
+    CPU_STORAGE_TYPES = {
+        dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal,
+        dtypes.StorageType.CPU_Pinned, dtypes.StorageType.Default
+    }
 
     for arrayname, arraysdfg in info.keys():
         #Create mapping from old to new arrays
@@ -365,7 +403,7 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
             )
             newarray.location["hbmbank"] = f"{curinfo['lowbank'] + i}"
             arraylist[(arrayname, arraysdfg)].append((newname, newarray))
-        sdfg.remove_data(arrayname, validate=False)
+        arraysdfg.remove_data(arrayname, validate=False)
 
     for lookatsdfg in sdfg.all_sdfgs_recursive():
         #Find all states where HBM-multibanks are used
@@ -373,22 +411,22 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
             for node in state.nodes():
                 if(isinstance(node, nd.AccessNode)):
                     if((node.data, lookatsdfg) in arraylist):
-                        statelist.add(state)
+                        if(state.label == "pre_vadd_hbm"): #DEBUG !!!!!!!!!!!!!
+                            statelist.add(state)
 
     for state in statelist:
-        def intern_iterate_attached_memlets(node, hbmarraylist):
+        def intern_iterate_attached_memlets(node, hbmarraylist=[], allmemlets=False):
             #small helper to iterate over all memlets of a node
-            #Why this is nested: Very simple pattern and used a lot 
-            #in the following part, but not generally useful
             for inp in state.in_edges(node):
-                if((inp.data.data, state.parent) in hbmarraylist):
+                if((inp.data.data, state.parent) in hbmarraylist or allmemlets):
                     yield 'in', inp
             for outp in state.out_edges(node):
-                if((outp.data.data, state.parent) in hbmarraylist):
+                if((outp.data.data, state.parent) in hbmarraylist or allmemlets):
                     yield 'out', outp
 
         accessnodestoexpand = []
         mapstounroll = {}
+        nestedsdfgs : list[nd.NestedSDFG]= []
         start_nodes = sdutil.find_source_nodes(state)
         for node in sdutil.dfs_topological_sort(state, start_nodes):
             #Find all accessnodes and maps which should be expanded and store
@@ -416,36 +454,116 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
             elif(isinstance(node, nd.MapExit)):
                 if(node.map in mapstounroll):
                     mapstounroll[node.map] = (mapstounroll[node.map], node)
+            elif(isinstance(node, nd.NestedSDFG)):
+                nestedsdfgs.append(node)
 
         #unroll all maps
         for entry, exit in mapstounroll.values():
             unroll_map(state, entry, exit)
+        #Splice hbm inputs to nested sdfg's
+        for nsdfg in nestedsdfgs:
+            for inorout, edge in intern_iterate_attached_memlets(nsdfg, arraylist):
+                if(inorout == 'in'):
+                    currentname = edge.dst_conn
+                else:
+                    currentname = edge.src_conn
+                targets = arraylist[(currentname, nsdfg.sdfg)]
+                for i in range(len(targets)):
+                    _spliceHBMMemlet(state, edge, inorout == 'out', i,
+                        len(targets), edgeconnectorname=targets[i][0])
+                state.remove_edge_and_connectors(edge)
 
-        #expand all memlets such that only single bank memlets stay
+        #expand all memlets leading from/to maps such that only single bank memlets stay
         for accessnode in accessnodestoexpand:
             for inorout, watchededge in intern_iterate_attached_memlets(accessnode, arraylist):
                 root = state.memlet_tree(watchededge)
                 _recursive_splice_hbmmemlettree(state, root, inorout == 'in')
         
+#        sdfg.view()
+
         #expand all accessnodes, so that each accessnode only accesses a single bank
         for node in accessnodestoexpand:
             currentindex = (node.data, state.parent)
             refArrays = arraylist[currentindex]
+            refInfo = info[currentindex]
             generated_nodes : dict[str, nd.AccessNode] = {}
 
-            for inorout, edge in intern_iterate_attached_memlets(node, arraylist):
+            for inorout, edge in intern_iterate_attached_memlets(node,allmemlets=True):
+                hbmtohost = False
+                hosttohbm = False
+                if(isinstance(edge.src, nd.AccessNode) and isinstance(edge.dst, nd.AccessNode)):
+                    #This is a copy memlet
+                    hbmtohost = edge.src == node and edge.dst.desc(state).storage in CPU_STORAGE_TYPES
+                    hosttohbm = edge.dst == node and edge.src.desc(state).storage in CPU_STORAGE_TYPES
+                    if(not hosttohbm and not hbmtohost):
+                        raise NotImplementedError("At the moment copy memlets between data nodes on "
+                            "the fpga are not supported")
                 oldmem = edge.data
-                firstrange = oldmem.subset[0]
-                banklow = int(str(firstrange[0]))
-                bankhigh = int(str(firstrange[1]))
-                stride = int(str(firstrange[2]))
+                if(hosttohbm):
+                    banklow = refInfo['lowbank']
+                    bankhigh = refInfo['splitcount'] * len(refInfo['splitaxes']) + banklow - 1
+                    stride = 1
+                else:
+                    firstrange = oldmem.subset[0]
+                    banklow = int(str(firstrange[0]))
+                    bankhigh = int(str(firstrange[1]))
+                    stride = int(str(firstrange[2]))
+                if(banklow != bankhigh and not hosttohbm and not hbmtohost):
+                    #At this point all memlets shoud be expanded except for copy
+                    #TODO: Maybe change this into a codegen error at some point
+                    raise ValueError("Found not expanded multibank memlets")
+
                 #TODO: support stride != 1
                 if(stride != 1):
                     raise NotImplementedError()
 
+                def updateSubsets(mem : memlet.Memlet, bank : int):
+                    #Writes the copied range onto copy memlets
+                    if(hbmtohost or hosttohbm):
+                        #Compute the bank offset
+                        dim = refInfo['ndim']
+                        splitaxes = refInfo['splitaxes']
+                        splitcount = refInfo['splitcount']
+                        oldshape = refInfo['shape']
+                        bankoffset = []
+                        countAlreadySplit = 0
+                        for d in range(dim):
+                            if(d not in splitaxes):
+                                bankoffset.append(0)
+                            else:
+                                countAlreadySplit += 1
+                                currentoffset = bank % (splitcount**countAlreadySplit)
+                                bankoffset.append(currentoffset)
+                                bank = bank - currentoffset
+                        trueoffset = []
+                        for d in range(dim):
+                            if(bankoffset[d] == 0):
+                                trueoffset.append("0")
+                            else:
+                                trueoffset.append(
+                                    f"({oldshape[d]}//{splitcount})*{bankoffset[d]}"
+                                )
+                        #TODO: Add error checks
+                        #TODO: Support a defined other_subset as well
+                        if(hbmtohost):
+                            hostsubset = ""
+                            for d in range(dim):
+                                hostsubset += (f"{trueoffset[d]}:{str(mem.src_subset[d+1][1])} + "
+                                    f"1 + {trueoffset[d]}")
+                                if(d < dim-1):
+                                    hostsubset += ","
+                            mem.src_subset[0] = subsets.Range.from_string(str(bank))[0]
+                            mem.dst_subset = subsets.Range.from_string(hostsubset)
+                            mem.volume = mem.dst_subset.num_elements()
+                        else:
+                            hostsubset = ""  #TODO: At the moment only full copies are supported
+                            for d in range(dim): 
+                                hostsubset += (f"{trueoffset[d]}:{")
+                    return mem
+
                 #For each bank referenced by the memlet create an accessnode for
                 #that bank if it does not already exist, and reconnect with single bank memlet
-                for currentbank in range(banklow, bankhigh +1):
+                for currentbank in range(bankhigh + 1 - banklow):
                     newrefArrayname, newrefArray = refArrays[currentbank]
                     if(newrefArrayname not in generated_nodes):
                         newnode = deepcopy(node)
@@ -456,12 +574,21 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
 
                     if(inorout == 'in'):
                         state.add_edge(edge.src, edge.src_conn, newnode, 
-                            edge.dst_conn, deepcopy(oldmem))
+                            edge.dst_conn, updateSubsets(deepcopy(oldmem), currentbank))
                     else:
                         state.add_edge(newnode, edge.src_conn, edge.dst, 
-                            edge.dst_conn, deepcopy(oldmem))
+                            edge.dst_conn, updateSubsets(deepcopy(oldmem), currentbank))
             state.remove_node(node)
         
-        #TODO: Remove the bank index, if necessary modify the subsets, change the array of all memlets
-
+        #Remove the bank index, change the data source
+        for edge in state.edges():
+            mem : memlet.Memlet = edge.data
+            if((mem.data, state.parent) in arraylist):
+                banklow = int(str(mem.subset[0][0]))
+                bankhigh = int(str(mem.subset[0][1]))
+                #TODO: Raise a nice error
+                assert(banklow == bankhigh)
+                mem.data = arraylist[(mem.data, state.parent)][banklow][0]
+                mem.subset.pop({0})
+            
     return sdfg
