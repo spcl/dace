@@ -874,3 +874,49 @@ def contained_in(state: SDFGState, node: nodes.Node,
         curscope = cursdfg.parent_nsdfg_node
         cursdfg = cursdfg.parent_sdfg
     return False
+
+
+def redirect_edge(
+        state: SDFGState,
+        edge: graph.MultiConnectorEdge[Memlet],
+        new_src: Optional[nodes.Node] = None,
+        new_dst: Optional[nodes.Node] = None,
+        new_src_conn: Optional[str] = None,
+        new_dst_conn: Optional[str] = None,
+        new_data: Optional[str] = None,
+        new_memlet: Optional[Memlet] = None
+) -> graph.MultiConnectorEdge[Memlet]:
+    """
+    Redirects an edge in a state. Choose which elements to override by setting
+    the keyword arguments.
+    :param state: The SDFG state in which the edge resides.
+    :param edge: The edge to redirect.
+    :param new_src: If provided, redirects the source of the new edge.
+    :param new_dst: If provided, redirects the destination of the new edge.
+    :param new_src_conn: If provided, renames the source connector of the edge.
+    :param new_dst_conn: If provided, renames the destination connector of the 
+                         edge.
+    :param new_data: If provided, changes the data on the memlet of the edge,
+                     and the entire associated memlet tree.
+    :param new_memlet: If provided, changes only the memlet of the new edge.
+    :return: The new, redirected edge.
+    :note: ``new_data`` and ``new_memlet`` cannot be used at the same time.
+    """
+    if new_data is not None and new_memlet is not None:
+        raise ValueError('new_data and new_memlet cannot both be given.')
+    mtree = None
+    if new_data is not None:
+        mtree = state.memlet_tree(edge)
+    state.remove_edge(edge)
+    if new_data is not None:
+        memlet = copy.deepcopy(edge.data)
+        memlet.data = new_data
+        # Rename on full memlet tree
+        for e in mtree:
+            e.data.data = new_data
+    else:
+        memlet = new_memlet or edge.data
+    new_edge = state.add_edge(new_src or edge.src, new_src_conn
+                              or edge.src_conn, new_dst or edge.dst,
+                              new_dst_conn or edge.dst_conn, memlet)
+    return new_edge
