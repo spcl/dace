@@ -6,12 +6,12 @@ from networkx import MultiDiGraph
 
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set, Union
 
-from dace import symbolic
+from dace import dtypes, symbolic
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
-from dace.sdfg.scope import ScopeSubgraphView
+from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg import graph
 from dace.memlet import Memlet
@@ -71,14 +71,18 @@ def nest_state_subgraph(sdfg: SDFG,
 
     # Consolidate edges in top scope
     utils.consolidate_edges(sdfg, scope)
+    snodes = subgraph.nodes()
 
     # Collect inputs and outputs of the nested SDFG
     inputs: List[MultiConnectorEdge] = []
     outputs: List[MultiConnectorEdge] = []
-    for node in subgraph.source_nodes():
-        inputs.extend(state.in_edges(node))
-    for node in subgraph.sink_nodes():
-        outputs.extend(state.out_edges(node))
+    for node in snodes:
+        for edge in state.in_edges(node):
+            if edge.src not in snodes:
+                inputs.append(edge)
+        for edge in state.out_edges(node):
+            if edge.dst not in snodes:
+                outputs.append(edge)
 
     # Collect transients not used outside of subgraph (will be removed of
     # top-level graph)
@@ -193,7 +197,8 @@ def nest_state_subgraph(sdfg: SDFG,
     # Add subgraph nodes and edges to nested state
     nstate.add_nodes_from(subgraph.nodes())
     for e in subgraph.edges():
-        nstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+        nstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn,
+                        copy.deepcopy(e.data))
 
     # Modify nested SDFG parents in subgraph
     for node in subgraph.nodes():
