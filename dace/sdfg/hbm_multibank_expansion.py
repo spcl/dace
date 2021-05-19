@@ -4,7 +4,7 @@ This file collects all helper functions and the top level function
 required to transform sdfg's containing hbm-multibank arrays into 
 their corresponding representation with only single hbm-bank arrays.
 
-This is only kept as 1 file, after that some of those function should go to utils,
+This is only kept as 1 file for development, after that some of those functions should go to utils,
 the rest into a file in the codegen.
 """
 
