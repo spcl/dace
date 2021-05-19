@@ -20,7 +20,7 @@ N.set(1000)
 
 @dace.program
 def mimo(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
-            D: dace.float64[N]):
+         D: dace.float64[N]):
 
     for i in dace.map[0:N // 2]:
         with dace.tasklet:
@@ -61,10 +61,14 @@ def _test_quantitatively(sdfg):
     del csdfg
 
     subgraph = SubgraphView(graph, [node for node in graph.nodes()])
-    assert MultiExpansion.can_be_applied(sdfg, subgraph) == True
-    MultiExpansion(subgraph).apply(sdfg)
-    assert SubgraphFusion.can_be_applied(sdfg, subgraph) == True
-    SubgraphFusion(subgraph).apply(sdfg)
+
+    me = MultiExpansion(subgraph)
+    assert me.can_be_applied(sdfg, subgraph) == True
+    me.apply(sdfg)
+
+    sf = SubgraphFusion(subgraph)
+    assert sf.can_be_applied(sdfg, subgraph) == True
+    sf.apply(sdfg)
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, D=D2, N=N)

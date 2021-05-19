@@ -4,12 +4,13 @@
 from dace.sdfg import SDFG, SDFGState
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union, List
+from typing import Any, Set, Tuple, Union, List
 import warnings
 
 # Transformations
 from dace.transformation.dataflow import MapCollapse, MapFusion
 from dace.transformation.interstate import LoopToMap
+from dace.transformation import helpers as xfh
 
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
@@ -166,6 +167,11 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
         # Transform all outgoing WCR and stream edges
         mapexit = graph.exit_node(mapentry)
         outer_mapexit = graph.exit_node(outer_mapentry)
+
+        # Tuple of (transformation type, options, pattern)
+        to_apply: Tuple[Union[dataflow.StreamTransient,
+                              dataflow.AccumulateTransient], Dict[str, Any],
+                        Dict[str, nodes.Node]] = None
         for e in graph.out_edges(mapexit):
             if isinstance(sdfg.arrays[e.data.data], dt.Stream):
                 mpath = graph.memlet_path(e)
@@ -173,10 +179,16 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
                 if not isinstance(tasklet, nodes.Tasklet) or len(mpath) != 3:
                     # TODO(later): Implement StreamTransient independently of tasklet
                     continue
-                dataflow.StreamTransient.apply_to(sdfg,
-                                                  tasklet=tasklet,
-                                                  map_exit=mapexit,
-                                                  outer_map_exit=outer_mapexit)
+
+                # Make transient only if there is one WCR/stream
+                if to_apply is not None:
+                    to_apply = None
+                    break
+
+                to_apply = (dataflow.StreamTransient, {},
+                            dict(tasklet=tasklet,
+                                 map_exit=mapexit,
+                                 outer_map_exit=outer_mapexit))
             else:
                 if (e.data.is_empty() or e.data.wcr is None
                         or e.data.wcr_nonatomic
@@ -190,11 +202,18 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
                 identity = dtypes.reduction_identity(dtype, redtype)
                 if identity is None:  # Cannot infer identity value
                     continue
-                dataflow.AccumulateTransient.apply_to(
-                    sdfg,
-                    options=dict(identity=identity, array=e.data.data),
-                    map_exit=mapexit,
-                    outer_map_exit=outer_mapexit)
+                # Make transient only if there is one WCR/stream
+                if to_apply is not None:
+                    to_apply = None
+                    break
+
+                to_apply = (dataflow.AccumulateTransient,
+                            dict(identity=identity, array=e.data.data),
+                            dict(map_exit=mapexit,
+                                 outer_map_exit=outer_mapexit))
+        if to_apply is not None:
+            xform, opts, pattern = to_apply
+            xform.apply_to(sdfg, options=opts, **pattern)
 
     if debugprint and len(transformed) > 0:
         print(f'Optimized {len(transformed)} write-conflicted maps')
@@ -272,9 +291,6 @@ def set_fast_implementations(sdfg: SDFG,
                 if impl in node.implementations:
                     node.implementation = impl
                     break
-            else:
-                warnings.warn('No fast library implementation found for "%s", '
-                              'falling back to default.' % node.name)
 
 
 def auto_optimize(sdfg: SDFG,
@@ -302,14 +318,20 @@ def auto_optimize(sdfg: SDFG,
     :note: This function is still experimental and may harm correctness in
            certain cases. Please report an issue if it does.
     """
-    # Strict transformations
-    sdfg.apply_strict_transformations(validate=False, validate_all=validate_all)
+    # Strict transformations and loop parallelization
+    transformed = True
+    while transformed:
+        sdfg.apply_strict_transformations(validate=False,
+                                          validate_all=validate_all)
 
-    # Try to parallelize loops
-    sdfg.apply_transformations_repeated(LoopToMap,
-                                        strict=True,
-                                        validate=False,
-                                        validate_all=validate_all)
+        xfh.split_interstate_edges(sdfg)
+
+        # Try to parallelize loops
+        l2ms = sdfg.apply_transformations_repeated(LoopToMap,
+                                                   strict=True,
+                                                   validate=False,
+                                                   validate_all=validate_all)
+        transformed = l2ms > 0
 
     # Map fusion
     greedy_fuse(sdfg, validate_all)
