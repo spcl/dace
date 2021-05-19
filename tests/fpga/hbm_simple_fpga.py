@@ -68,6 +68,7 @@ if __name__ == '__main__':
    # sdfg = create_vadd_sdfg_without_hbm()
     sdfg = create_vadd_sdfg(True)
     expander.expand_hbm_multiarrays(sdfg)
+    sdfg.validate()
     sdfv.view(sdfg, None)
     #code = Code(sdfg.generate_code()[2].code, language='cpp')
   #  print(code)
