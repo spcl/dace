@@ -123,14 +123,12 @@ class InstrumentationReport(object):
                     else:
                         element_label = 'N/A'
 
-                    string += row_format.format(
-                        element_label,
-                        np.min(runtimes),
-                        np.mean(runtimes),
-                        np.median(runtimes),
-                        np.max(runtimes),
-                        width=COLW
-                    )
+                    string += row_format.format(element_label,
+                                                '%.3f' % np.min(runtimes),
+                                                '%.3f' % np.mean(runtimes),
+                                                '%.3f' % np.median(runtimes),
+                                                '%.3f' % np.max(runtimes),
+                                                width=COLW)
             string += ('-' * (COLW * 5)) + '\n'
 
         if len(self.counters) > 0:
