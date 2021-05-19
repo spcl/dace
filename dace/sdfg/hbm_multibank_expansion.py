@@ -121,14 +121,14 @@ def parseHBMBank(arrayname : str, array : data.Array) -> "tuple[int, int]":
         f" type int and i1<i2 for {arrayname}")
     banks = array.location["hbmbank"]
     if(not isinstance(banks, str)):
-        cgx.CodegenError(errormsg)
+        raise TypeError(errormsg)
     split = banks.split(":")
     if(len(split) == 1):
         try:
             val = int(banks)
             return (val, val)
         except ValueError:
-            cgx.CodegenError(errormsg)
+            raise ValueError(errormsg)
     elif(len(split) == 2):
         try:
             low = int(split[0])
@@ -137,8 +137,8 @@ def parseHBMBank(arrayname : str, array : data.Array) -> "tuple[int, int]":
                 raise ValueError()
             return (low, high)
         except ValueError:
-            cgx.CodegenError(errormsg)
-    raise RuntimeError("Reached unreachable state")
+            raise ValueError(errormsg)
+    raise ValueError(errormsg)
 
 def parseHBMAlignment(arrayname : str, array : data.Array) -> "list[int]":
     """
@@ -164,13 +164,13 @@ def parseHBMAlignment(arrayname : str, array : data.Array) -> "list[int]":
         alignment = []
 
     if(not isinstance(alignment, list)):
-        cgx.CodegenError("hbmalignment must be 'even' "
+        raise ValueError("hbmalignment must be 'even' "
         f"or a list of axes in {arrayname}")
     alignment.sort()
     lastval = None
     for val in alignment:
         if(val >= ndim or (lastval != None and lastval == val)):
-            cgx.CodegenError("alignment list contains duplicates "
+            raise ValueError("alignment list contains duplicates "
                 f"or non existing axes in {arrayname}")
         lastval = val
         splitaxes.remove(val)
@@ -178,7 +178,7 @@ def parseHBMAlignment(arrayname : str, array : data.Array) -> "list[int]":
 
 def parseHBMArray(arrayname : str, array : data.Array) -> "dict[str, Any]":
     """
-    parses HBM properties using parseHMBAlignment
+    parses HBM properties of an array using parseHMBAlignment
     and parseHBMBank.
 
     :return: A mapping from (arrayname, sdfg of the array) to a mapping
@@ -205,12 +205,12 @@ def parseHBMArray(arrayname : str, array : data.Array) -> "dict[str, Any]":
     splitaxes = parseHBMAlignment(arrayname, array)
     splitdim = len(splitaxes)
     if(splitdim == 0):
-        cgx.CodegenError("for an array divided across multiple hbm-banks "
+        raise ValueError("for an array divided across multiple hbm-banks "
             "there must be at least 1 allowed split dimension" 
             f"in {arrayname}")
     splitcount = round(count ** (1 / splitdim))
     if(splitcount ** splitdim != count):
-        cgx.CodegenError("for an array divided across mutiple hbm-banks "
+        raise ValueError("for an array divided across mutiple hbm-banks "
             "the equation 'hbmbanks == x ** splitdims' must hold where "
             "hbmbanks is the number of used banks, splitdims is the total "
             "count of axes along which splitting is allowed and x is an "
@@ -222,7 +222,7 @@ def parseHBMArray(arrayname : str, array : data.Array) -> "dict[str, Any]":
 
 def findAndParseHBMMultibank(sdfg : sd.SDFG) -> "dict[(str, sd.SDFG), dict[str, Any]]":
     """
-    Finds and parses HBM arrays that are spread across multiple banks
+    Finds and parses HBM arrays that are spread across multiple banks in the sdfg
     """
     arrays = sdfg.arrays_recursive()
     handledArrays = {}  #(oldarrayname, sdfg) -> 
@@ -234,7 +234,7 @@ def findAndParseHBMMultibank(sdfg : sd.SDFG) -> "dict[(str, sd.SDFG), dict[str, 
         handledArrays[(arrayname, currentsdfg)] = collected
     return handledArrays
 
-def _spliceHBMMemlet(state : statenamespace.SDFGState, edge : graph.MultiConnectorEdge, spliceSource : bool,
+def spliceHBMMemlet(state : statenamespace.SDFGState, edge : graph.MultiConnectorEdge, spliceSource : bool,
     aimsAtBank : int, divideVolumeBy : int, followupConnector : str = None, edgeconnectorname = None):
     """
     This is a helper for hbm memlets.
@@ -283,7 +283,7 @@ def _spliceHBMMemlet(state : statenamespace.SDFGState, edge : graph.MultiConnect
         return newedge
     
 
-def _recursive_splice_hbmmemlettree(state : statenamespace.SDFGState,
+def recursive_splice_hbmmemlettree(state : statenamespace.SDFGState,
         tree : memlet.MemletTree, flowsTowardsRoot : bool) -> "dict[int, list[graph.MultiConnectorEdge]]":
     """
     applying unroll results in an sdfg that still contains multibank memlets
@@ -297,7 +297,7 @@ def _recursive_splice_hbmmemlettree(state : statenamespace.SDFGState,
     outgoingmemlets : dict[int, graph.MultiConnectorEdge] = {}
     returnval = {}
     for child in tree.children:
-        result = _recursive_splice_hbmmemlettree(state, child, flowsTowardsRoot)
+        result = recursive_splice_hbmmemlettree(state, child, flowsTowardsRoot)
         for banknum in result.keys():
             if(banknum in outgoingmemlets):
                 #Would make the computation of the volume terrible
@@ -327,10 +327,10 @@ def _recursive_splice_hbmmemlettree(state : statenamespace.SDFGState,
             assert(banknum >= subsetlow and banknum <= subsethigh) #TODO: Handle stride !=1
             connectsTo = outgoingmemlets[banknum]
             if(flowsTowardsRoot):
-                newedge, connectstoconnectorname = _spliceHBMMemlet(state, edge, True, 
+                newedge, connectstoconnectorname = spliceHBMMemlet(state, edge, True, 
                     banknum, len(outgoingmemlets), connectsTo.dst_conn)
             else:
-                newedge, connectstoconnectorname = _spliceHBMMemlet(state, edge, False,
+                newedge, connectstoconnectorname = spliceHBMMemlet(state, edge, False,
                     banknum, len(outgoingmemlets), connectsTo.src_conn)
             returnval[banknum] = [newedge]
             if(flowsTowardsRoot):
@@ -344,6 +344,57 @@ def _recursive_splice_hbmmemlettree(state : statenamespace.SDFGState,
         banknum = int(str(edge.data.subset[0][0]))
         returnval[banknum] = edge
     return returnval
+
+def getHBMBankOffset(refInfo : "dict[str, Any]", bank : int) -> "list[str]":
+    """
+    Returns the offset (as string) of a bank in a hbm multibankarray
+    :param refInfo: A dict containing info about the array as returned by parseHBMArray
+    :param bank: The bank for which to compute the offset
+    """
+    dim = refInfo['ndim']
+    splitaxes = refInfo['splitaxes']
+    splitcount = refInfo['splitcount']
+    oldshape = refInfo['shape']
+    bankoffset = []
+    countAlreadySplit = 0
+    for d in range(dim):
+        if(d not in splitaxes):
+            bankoffset.append(0)
+        else:
+            countAlreadySplit += 1
+            currentoffset = bank % (splitcount**countAlreadySplit)
+            bankoffset.append(currentoffset)
+            bank = bank - currentoffset
+    trueoffset = []
+    for d in range(dim):
+        if(bankoffset[d] == 0):
+            trueoffset.append("0")
+        else:
+            trueoffset.append(
+                f"({oldshape[d]}//{splitcount})*{bankoffset[d]}"
+            )
+    return trueoffset
+
+def getHBMHostRange(bank : int, refInfo : "dict[str, Any]",
+        hbmrange : subsets.Range) -> "subsets.Range":
+    """
+    Returns the range corresponding to the 'virtual' index of a
+    hbm-array given a bank and a range off the array on that bank
+    
+    :param bank: The bank
+    :param refInfo: A dict containing info about the array as returned by parseHBMArray
+    :param hbmrange: The subset on the hbm bank. Note that this is assumed to have a
+    bank index (as it's first index) which is equal to :param bank:
+    """
+    hostsubset = ""
+    dim = refInfo['ndim']
+    trueoffset = getHBMBankOffset(refInfo, bank)
+    for d in range(dim):
+        hostsubset += (f"{trueoffset[d]}:{str(hbmrange[d+1][1])} + "
+            f"1 + {trueoffset[d]}")
+        if(d < dim-1):
+            hostsubset += ","
+    return subsets.Range.from_string(hostsubset)
 
 def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
     """
@@ -361,6 +412,8 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
 
     #mapping from old arrays to a list of the new arrays
     arraylist : dict[(str, sd.SDFG),  list[(str, data.Array)]] = {}
+    #set of all newly created arrays
+    newcreatedarrays : set[(str, sd.SDFG)] = set()
     #all states that contain hbm multibanks
     statelist : set[sd.SDFGState] = set()
     CPU_STORAGE_TYPES = {
@@ -368,8 +421,8 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
         dtypes.StorageType.CPU_Pinned, dtypes.StorageType.Default
     }
 
+    #Create the new arrays and store them in a mapping from old to new
     for arrayname, arraysdfg in info.keys():
-        #Create mapping from old to new arrays
         curinfo = info[(arrayname, arraysdfg)]
         oldarray : data.Array = arraysdfg.arrays[arrayname]
         shape = oldarray.shape
@@ -382,10 +435,7 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
             newshapelist = []
             for d in range(curinfo["ndim"]):
                 if d in axes:
-                    strip = shape[d] // splitcount
-                    if(i == 0):
-                        strip += shape[d] % splitcount
-                    newshapelist.append(strip)
+                    newshapelist.append(shape[d] // splitcount)
                 else:
                     newshapelist.append(shape[d])
             newshape = tuple(newshapelist)
@@ -403,16 +453,16 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
             )
             newarray.location["hbmbank"] = f"{curinfo['lowbank'] + i}"
             arraylist[(arrayname, arraysdfg)].append((newname, newarray))
+            newcreatedarrays.add((newname, arraysdfg))
         arraysdfg.remove_data(arrayname, validate=False)
 
+    #Find all states where HBM-multibanks are used
     for lookatsdfg in sdfg.all_sdfgs_recursive():
-        #Find all states where HBM-multibanks are used
         for state in lookatsdfg.states():
             for node in state.nodes():
                 if(isinstance(node, nd.AccessNode)):
                     if((node.data, lookatsdfg) in arraylist):
-                        if(state.label == "pre_vadd_hbm"): #DEBUG !!!!!!!!!!!!!
-                            statelist.add(state)
+                        statelist.add(state)
 
     for state in statelist:
         def intern_iterate_attached_memlets(node, hbmarraylist=[], allmemlets=False):
@@ -424,17 +474,17 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
                 if((outp.data.data, state.parent) in hbmarraylist or allmemlets):
                     yield 'out', outp
 
-        accessnodestoexpand = []
+        accessnodestoexpand = set()
         mapstounroll = {}
         nestedsdfgs : list[nd.NestedSDFG]= []
+
+        #Find all accessnodes, maps and nestedSDFGs which should be expanded
         start_nodes = sdutil.find_source_nodes(state)
         for node in sdutil.dfs_topological_sort(state, start_nodes):
-            #Find all accessnodes and maps which should be expanded and store
-            #them in accessnodestoexpand and mapstounroll
             if(isinstance(node, nd.AccessNode)):
                 currentindex = (node.data, state.parent)
                 if(currentindex in arraylist):
-                    accessnodestoexpand.append(node)
+                    accessnodestoexpand.add(node)
             elif(isinstance(node, nd.MapEntry)):
                 if(node.map.get_param_num() != 1):  
                     #TODO: In case this has bound hbmmemlets need to throw an error here
@@ -460,6 +510,7 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
         #unroll all maps
         for entry, exit in mapstounroll.values():
             unroll_map(state, entry, exit)
+
         #Splice hbm inputs to nested sdfg's
         for nsdfg in nestedsdfgs:
             for inorout, edge in intern_iterate_attached_memlets(nsdfg, arraylist):
@@ -469,7 +520,7 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
                     currentname = edge.src_conn
                 targets = arraylist[(currentname, nsdfg.sdfg)]
                 for i in range(len(targets)):
-                    _spliceHBMMemlet(state, edge, inorout == 'out', i,
+                    spliceHBMMemlet(state, edge, inorout == 'out', i,
                         len(targets), edgeconnectorname=targets[i][0])
                 state.remove_edge_and_connectors(edge)
 
@@ -477,9 +528,7 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
         for accessnode in accessnodestoexpand:
             for inorout, watchededge in intern_iterate_attached_memlets(accessnode, arraylist):
                 root = state.memlet_tree(watchededge)
-                _recursive_splice_hbmmemlettree(state, root, inorout == 'in')
-        
-#        sdfg.view()
+                recursive_splice_hbmmemlettree(state, root, inorout == 'in')
 
         #expand all accessnodes, so that each accessnode only accesses a single bank
         for node in accessnodestoexpand:
@@ -499,18 +548,17 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
                         raise NotImplementedError("At the moment copy memlets between data nodes on "
                             "the fpga are not supported")
                 oldmem = edge.data
+                #TODO: Throw errors if the correct subset does not exist, or if parsing fails
                 if(hosttohbm):
-                    banklow = refInfo['lowbank']
-                    bankhigh = refInfo['splitcount'] * len(refInfo['splitaxes']) + banklow - 1
-                    stride = 1
+                    refsubset = oldmem.dst_subset
+                elif(hbmtohost):
+                    refsubset = oldmem.src_subset
                 else:
-                    firstrange = oldmem.subset[0]
-                    banklow = int(str(firstrange[0]))
-                    bankhigh = int(str(firstrange[1]))
-                    stride = int(str(firstrange[2]))
+                    refsubset = oldmem.subset
+                banklow = int(str(refsubset[0][0]))
+                bankhigh = int(str(refsubset[0][1]))
+                stride = int(str(refsubset[0][2]))
                 if(banklow != bankhigh and not hosttohbm and not hbmtohost):
-                    #At this point all memlets shoud be expanded except for copy
-                    #TODO: Maybe change this into a codegen error at some point
                     raise ValueError("Found not expanded multibank memlets")
 
                 #TODO: support stride != 1
@@ -518,52 +566,27 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
                     raise NotImplementedError()
 
                 def updateSubsets(mem : memlet.Memlet, bank : int):
-                    #Writes the copied range onto copy memlets
-                    if(hbmtohost or hosttohbm):
-                        #Compute the bank offset
-                        dim = refInfo['ndim']
-                        splitaxes = refInfo['splitaxes']
-                        splitcount = refInfo['splitcount']
-                        oldshape = refInfo['shape']
-                        bankoffset = []
-                        countAlreadySplit = 0
-                        for d in range(dim):
-                            if(d not in splitaxes):
-                                bankoffset.append(0)
-                            else:
-                                countAlreadySplit += 1
-                                currentoffset = bank % (splitcount**countAlreadySplit)
-                                bankoffset.append(currentoffset)
-                                bank = bank - currentoffset
-                        trueoffset = []
-                        for d in range(dim):
-                            if(bankoffset[d] == 0):
-                                trueoffset.append("0")
-                            else:
-                                trueoffset.append(
-                                    f"({oldshape[d]}//{splitcount})*{bankoffset[d]}"
-                                )
-                        #TODO: Add error checks
-                        #TODO: Support a defined other_subset as well
-                        if(hbmtohost):
-                            hostsubset = ""
-                            for d in range(dim):
-                                hostsubset += (f"{trueoffset[d]}:{str(mem.src_subset[d+1][1])} + "
-                                    f"1 + {trueoffset[d]}")
-                                if(d < dim-1):
-                                    hostsubset += ","
-                            mem.src_subset[0] = subsets.Range.from_string(str(bank))[0]
-                            mem.dst_subset = subsets.Range.from_string(hostsubset)
-                            mem.volume = mem.dst_subset.num_elements()
-                        else:
-                            hostsubset = ""  #TODO: At the moment only full copies are supported
-                            for d in range(dim): 
-                                hostsubset += (f"{trueoffset[d]}:{")
+                    """
+                    Updates the accessed subsets. At the moment there is no notion of what it means to
+                    have a defined src_subset for "host to hbm" respectively dst_subset for 
+                    "hbm to host", hence those values are simply overwritten if they exist. Also
+                    note that the corresponding opposite subset must be set.
+                    """
+                    mem = deepcopy(mem)
+                    if(hosttohbm):
+                        mem.src_subset = getHBMHostRange(bank, refInfo, mem.dst_subset)
+                        mem.dst_subset[0] = subsets.Range.from_string(str(bank))[0]
+                        mem.volume = mem.src_subset.num_elements()
+                    elif(hbmtohost):
+                        mem.dst_subset = getHBMHostRange(bank, refInfo, mem.src_subset)
+                        mem.src_subset[0] = subsets.Range.from_string(str(bank))[0]
+                        mem.volume = mem.dst_subset.num_elements()
                     return mem
 
                 #For each bank referenced by the memlet create an accessnode for
                 #that bank if it does not already exist, and reconnect with single bank memlet
-                for currentbank in range(bankhigh + 1 - banklow):
+                for k in range(bankhigh + 1 - banklow):
+                    currentbank = banklow + k
                     newrefArrayname, newrefArray = refArrays[currentbank]
                     if(newrefArrayname not in generated_nodes):
                         newnode = deepcopy(node)
@@ -574,10 +597,10 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
 
                     if(inorout == 'in'):
                         state.add_edge(edge.src, edge.src_conn, newnode, 
-                            edge.dst_conn, updateSubsets(deepcopy(oldmem), currentbank))
+                            edge.dst_conn, updateSubsets(oldmem, currentbank))
                     else:
                         state.add_edge(newnode, edge.src_conn, edge.dst, 
-                            edge.dst_conn, updateSubsets(deepcopy(oldmem), currentbank))
+                            edge.dst_conn, updateSubsets(oldmem, currentbank))
             state.remove_node(node)
         
         #Remove the bank index, change the data source
@@ -590,5 +613,10 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
                 assert(banklow == bankhigh)
                 mem.data = arraylist[(mem.data, state.parent)][banklow][0]
                 mem.subset.pop({0})
-            
+            elif(isinstance(edge.dst, nd.AccessNode) and (edge.dst.data, state.parent) in newcreatedarrays):
+                banklow = int(str(mem.other_subset[0][0]))
+                bankhigh = int(str(mem.other_subset[0][1]))
+                #TODO: Raise a nice error
+                assert(banklow == bankhigh)
+                mem.other_subset.pop({0})
     return sdfg

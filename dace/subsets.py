@@ -208,13 +208,12 @@ class Range(Subset):
         if("hbmbank" not in array.location):
             return Range([(0, s - 1, 1) for s in array.shape])
         else:
-            #TODO (Jannis): It's not possible to return a range for an array with differently sized tiles
             #TODO (Jannis): Rewrite this code once the hbm-stuff is at the final destination, maybe change the errors for parsing
+            #and imports
             import dace.sdfg.hbm_multibank_expansion as hbm
-            parsed = hbm.parseHBMArray("unknown array", array)
+            parsed = hbm.parseHBMArray("unknown array", array)    
             res = []
-            if(parsed['splitcount'] != 1):
-                res.append((0, parsed['splitcount'] * len(parsed['splitaxes']) -1, 1))
+            res.append((0, parsed['splitcount'] * len(parsed['splitaxes']) -1, 1))
             for i in range(len(array.shape)):
                 if (i in parsed['splitaxes']):
                     res.append((0, array.shape[i] // parsed['splitcount'] -1, 1))
