@@ -189,15 +189,18 @@ def configure_and_compile(program_folder,
 
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(libraries)))
 
-    # Override linker and linker arguments
-    if Config.get('compiler', 'linker', 'executable'):
-        cmake_command.append("-DCMAKE_LINKER=\"{}\"".format(
-            make_absolute(Config.get('compiler', 'linker', 'executable'))))
-    if Config.get('compiler', 'linker', 'args'):
+    # Set linker and linker arguments, iff they have been specified
+    cmake_linker = Config.get('compiler', 'linker', 'executable') or ''
+    cmake_linker = cmake_linker.strip()
+    if cmake_linker:
+        cmake_linker = make_absolute(cmake_linker)
+        cmake_command.append(f'-DCMAKE_LINKER="{cmake_linker}"')
+    cmake_link_flags = (
+        ' '.join(cmake_link_flags) + ' ' +
+        (Config.get('compiler', 'linker', 'args') or '')).strip()
+    if cmake_link_flags:
         cmake_command.append(
-            "-DCMAKE_SHARED_LINKER_FLAGS=\"{}\"".format(
-                Config.get('compiler', 'linker', 'args') + " " +
-                " ".join(cmake_link_flags)), )
+            f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
     cmake_command = ' '.join(cmake_command)
 
     cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
@@ -253,7 +256,7 @@ def configure_and_compile(program_folder,
 
 
 def _get_or_eval(value_or_function: Union[T, Callable[[], T]]) -> T:
-    """ 
+    """
     Returns a stored value or lazily evaluates it. Used in environments
     for allowing potential runtime (rather than import-time) checks.
     """
@@ -263,10 +266,10 @@ def _get_or_eval(value_or_function: Union[T, Callable[[], T]]) -> T:
 
 
 def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
-    """ 
+    """
     Returns the CMake environment and linkage flags associated with the
     given input environments/libraries.
-    :param environments: A list of ``@dace.library.environment``-decorated 
+    :param environments: A list of ``@dace.library.environment``-decorated
                          classes.
     :return: A 2-tuple of (environment CMake flags, linkage CMake flags)
     """
@@ -379,7 +382,7 @@ def identical_file_exists(filename: str, file_contents: str):
 def get_program_handle(library_path, sdfg):
     lib = csd.ReloadableDLL(library_path, sdfg.name)
     # Load and return the compiled function
-    return csd.CompiledSDFG(sdfg, lib)
+    return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
 
 
 def load_from_file(sdfg, binary_filename):

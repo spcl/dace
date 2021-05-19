@@ -91,6 +91,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False):
     sdfg.apply_strict_transformations()
     subgraph = SubgraphView(graph, [n for n in graph.nodes()])
     sf = SubgraphFusion(subgraph)
+    assert sf.can_be_applied(sdfg, subgraph)
     sf.apply(sdfg)
 
     sdfg.name = f'fused_{tile_size}_{offset}_{unroll}'

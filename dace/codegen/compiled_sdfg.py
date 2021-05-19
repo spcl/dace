@@ -48,6 +48,32 @@ class ReloadableDLL(object):
 
         return ctypes.CFUNCTYPE(restype)(func)
 
+    def is_loaded(self) -> bool:
+        """ Checks if the library is already loaded. """
+
+        # If internal library is already loaded, skip
+        if self._lib is not None and self._lib.value is not None:
+            return True
+        if not os.path.isfile(self._stub_filename):
+            return False
+        self._stub = ctypes.CDLL(self._stub_filename)
+
+        # Set return types of stub functions
+        self._stub.load_library.restype = ctypes.c_void_p
+        self._stub.get_symbol.restype = ctypes.c_void_p
+
+        lib_cfilename = None
+        # Convert library filename to string according to OS
+        if os.name == 'nt':
+            # As UTF-16
+            lib_cfilename = ctypes.c_wchar_p(self._library_filename)
+        else:
+            # As UTF-8
+            lib_cfilename = ctypes.c_char_p(
+                self._library_filename.encode('utf-8'))
+
+        return self._stub.is_library_loaded(lib_cfilename) == 1
+
     def load(self):
         """ Loads the internal library using the stub. """
 
@@ -145,25 +171,30 @@ def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
 
 class CompiledSDFG(object):
     """ A compiled SDFG object that can be called through Python. """
-    def __init__(self, sdfg, lib: ReloadableDLL):
+    def __init__(self, sdfg, lib: ReloadableDLL, argnames: List[str] = None):
         self._sdfg = sdfg
         self._lib = lib
         self._initialized = False
         self._libhandle = ctypes.c_void_p(0)
         self._lastargs = ()
-        self._return_arrays: List[np.ndarray] = []
-        self._return_kwarrays: Dict[str, np.ndarray] = {}
-        self._return_syms: Dict[str, Any] = {}
+
         lib.load()  # Explicitly load the library
         self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
         self._init.restype = ctypes.c_void_p
         self._exit = lib.get_symbol('__dace_exit_{}'.format(sdfg.name))
         self._cfunc = lib.get_symbol('__program_{}'.format(sdfg.name))
 
+        # Cache SDFG return values
+        self._create_new_arrays: bool = True
+        self._return_syms: Dict[str, Any] = None
+        self._retarray_shapes: List[Tuple[str, np.dtype, dtypes.StorageType,
+                                          Tuple[int], Tuple[int], int]] = []
+        self._return_arrays: List[np.ndarray] = []
+
         # Cache SDFG argument properties
         self._sig = self._sdfg.signature_arglist(with_types=False)
         self._typedict = self._sdfg.arglist()
-
+        self.argnames = argnames
 
     def get_state_struct(self) -> ctypes.Structure:
         """ Attempt to parse the SDFG source code and extract the state struct. This method will parse the first
@@ -235,15 +266,20 @@ class CompiledSDFG(object):
         if self._exit is not None:
             self._exit(self._libhandle)
 
-    def __call__(self, **kwargs):
+    def __call__(self, *args, **kwargs):
+        # Update arguments from ordered list
+        if len(args) > 0 and self.argnames is not None:
+            kwargs.update(
+                {aname: arg
+                 for aname, arg in zip(self.argnames, args)})
+
         try:
-            argtuple, initargtuple = self._construct_args(**kwargs)
+            argtuple, initargtuple = self._construct_args(kwargs)
 
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
                 self._lib.load()
                 self.initialize(*initargtuple)
-
             # PROFILING
             if Config.get_bool('profiling'):
                 operations.timethis(self._sdfg, 'DaCe', 0, self._cfunc,
@@ -264,7 +300,7 @@ class CompiledSDFG(object):
             self._libhandle = ctypes.c_void_p(0)
         self._lib.unload()
 
-    def _construct_args(self, **kwargs) -> Tuple[Tuple[Any], Tuple[Any]]:
+    def _construct_args(self, kwargs) -> Tuple[Tuple[Any], Tuple[Any]]:
         """ Main function that controls argument construction for calling
             the C prototype of the SDFG.
 
@@ -272,11 +308,14 @@ class CompiledSDFG(object):
             by alphabetical order, then symbols by alphabetical order.
         """
         # Return value initialization (for values that have not been given)
-        kwargs.update({
-            k: v
-            for k, v in self._initialize_return_values(kwargs).items()
-            if k not in kwargs
-        })
+        self._initialize_return_values(kwargs)
+        if self._return_arrays is not None:
+            if len(self._retarray_shapes) == 1:
+                kwargs[self._retarray_shapes[0][0]] = self._return_arrays
+            else:
+                for desc, arr in zip(self._retarray_shapes,
+                                     self._return_arrays):
+                    kwargs[desc[0]] = arr
 
         # Argument construction
         sig = self._sig
@@ -298,7 +337,6 @@ class CompiledSDFG(object):
             argtypes = []
             argnames = []
             sig = []
-
         # Type checking
         for a, arg, atype in zip(argnames, arglist, argtypes):
             if not dtypes.is_array(arg) and isinstance(atype, dt.Array):
@@ -392,6 +430,39 @@ class CompiledSDFG(object):
         self._lastargs = newargs, initargs
         return self._lastargs
 
+    def clear_return_values(self):
+        self._create_new_arrays = True
+
+    def _create_array(self, _: str, dtype: np.dtype,
+                      storage: dtypes.StorageType, shape: Tuple[int],
+                      strides: Tuple[int], total_size: int):
+        ndarray = np.ndarray
+        zeros = np.empty
+
+        if storage is dtypes.StorageType.GPU_Global:
+            try:
+                import cupy
+
+                # Set allocator to GPU
+                def ndarray(*args, buffer=None, **kwargs):
+                    if buffer is not None:
+                        buffer = buffer.data
+                    return cupy.ndarray(*args, memptr=buffer, **kwargs)
+
+                zeros = cupy.empty
+            except (ImportError, ModuleNotFoundError):
+                raise NotImplementedError('GPU return values are '
+                                          'unsupported if cupy is not '
+                                          'installed')
+        if storage is dtypes.StorageType.FPGA_Global:
+            raise NotImplementedError('FPGA return values are unsupported')
+
+        # Create an array with the properties of the SDFG array
+        return ndarray(shape,
+                       dtype,
+                       buffer=zeros(total_size, dtype),
+                       strides=strides)
+
     def _initialize_return_values(self, kwargs):
         # Obtain symbol values from arguments and constants
         syms = dict()
@@ -402,57 +473,55 @@ class CompiledSDFG(object):
 
         if self._initialized:
             if self._return_syms == syms:
-                return self._return_kwarrays
+                if not self._create_new_arrays:
+                    return
+                else:
+                    self._create_new_arrays = False
+                    # Use stored sizes to recreate arrays (fast path)
+                    if self._return_arrays is None:
+                        return
+                    elif isinstance(self._return_arrays, tuple):
+                        self._return_arrays = tuple(
+                            kwargs[desc[0]] if desc[0] in
+                            kwargs else self._create_array(*desc)
+                            for desc in self._retarray_shapes)
+                        return
+                    else:  # Single array return value
+                        desc = self._retarray_shapes[0]
+                        arr = (kwargs[desc[0]] if desc[0] in kwargs else
+                               self._create_array(*desc))
+                        self._return_arrays = arr
+                        return
 
         self._return_syms = syms
+        self._create_new_arrays = False
 
         # Initialize return values with numpy arrays
+        self._retarray_shapes = []
         self._return_arrays = []
-        self._return_kwarrays = {}
         for arrname, arr in sorted(self.sdfg.arrays.items()):
             if arrname.startswith('__return') and not arr.transient:
                 if arrname in kwargs:
                     self._return_arrays.append(kwargs[arrname])
-                    self._return_kwarrays[arrname] = kwargs[arrname]
+                    self._retarray_shapes.append((arrname,))
                     continue
 
                 if isinstance(arr, dt.Stream):
                     raise NotImplementedError('Return streams are unsupported')
 
-                ndarray = np.ndarray
-                zeros = np.zeros
-
-                if arr.storage is dtypes.StorageType.GPU_Global:
-                    try:
-                        import cupy
-
-                        # Set allocator to GPU
-                        def ndarray(*args, buffer=None, **kwargs):
-                            if buffer is not None:
-                                buffer = buffer.data
-                            return cupy.ndarray(*args, memptr=buffer, **kwargs)
-
-                        zeros = cupy.zeros
-                    except (ImportError, ModuleNotFoundError):
-                        raise NotImplementedError('GPU return values are '
-                                                  'unsupported if cupy is not '
-                                                  'installed')
-                if arr.storage is dtypes.StorageType.FPGA_Global:
-                    raise NotImplementedError('FPGA return values are '
-                                              'unsupported')
+                shape = tuple(symbolic.evaluate(s, syms) for s in arr.shape)
+                dtype = arr.dtype.as_numpy_dtype()
+                total_size = symbolic.evaluate(arr.total_size, syms)
+                strides = tuple(
+                    symbolic.evaluate(s, syms) * arr.dtype.bytes
+                    for s in arr.strides)
+                shape_desc = (arrname, dtype, arr.storage, shape, strides,
+                              total_size)
+                self._retarray_shapes.append(shape_desc)
 
                 # Create an array with the properties of the SDFG array
-                self._return_arrays.append(
-                    ndarray([symbolic.evaluate(s, syms) for s in arr.shape],
-                            arr.dtype.as_numpy_dtype(),
-                            buffer=zeros(
-                                [symbolic.evaluate(arr.total_size, syms)],
-                                arr.dtype.as_numpy_dtype()),
-                            strides=[
-                                symbolic.evaluate(s, syms) * arr.dtype.bytes
-                                for s in arr.strides
-                            ]))
-                self._return_kwarrays[arrname] = self._return_arrays[-1]
+                arr = self._create_array(*shape_desc)
+                self._return_arrays.append(arr)
 
         # Set up return_arrays field
         if len(self._return_arrays) == 0:
@@ -461,5 +530,3 @@ class CompiledSDFG(object):
             self._return_arrays = self._return_arrays[0]
         else:
             self._return_arrays = tuple(self._return_arrays)
-
-        return self._return_kwarrays
