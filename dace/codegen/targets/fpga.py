@@ -238,13 +238,13 @@ class FPGACodeGen(TargetCodeGenerator):
         # Determine independent components
         subgraphs = dace.sdfg.concurrent_subgraphs(state)
 
-        for i, sg in enumerate(subgraphs):
-            print("Subgraph: ", i, " Nodes: ", sg.nodes())
-
-        subgraphs2 = self._pes_subgraphs(state)
-
-        for i, sg in enumerate(subgraphs2):
-            print("Subgraph2: ", i, " Nodes: ", sg.nodes())
+        # for i, sg in enumerate(subgraphs):
+        #     print("Subgraph: ", i, " Nodes: ", sg.nodes())
+        #
+        # subgraphs2 = self._pes_subgraphs(state)
+        #
+        # for i, sg in enumerate(subgraphs2):
+        #     print("Subgraph2: ", i, " Nodes: ", sg.nodes())
 
         # Determine independend processing elements
 
