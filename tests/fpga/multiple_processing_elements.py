@@ -8,7 +8,7 @@ import pytest
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG, GPUTransformSDFG, NestSDFG
 
 
-def test_PEs_inside_component():
+def test_PEs_inside_component_0():
     '''
     Tests for PEs detection inside a single Component.
     It computes z =(x+y) + (v+w)
@@ -24,7 +24,7 @@ def test_PEs_inside_component():
     :return:
     '''
     @dace.program
-    def PEs_inside_component(x: dace.float32[8], y: dace.float32[8],
+    def PEs_inside_component_0(x: dace.float32[8], y: dace.float32[8],
                              v: dace.float32[8], w: dace.float32[8]):
         tmp1 = x + y
         tmp2 = v + w
@@ -35,7 +35,7 @@ def test_PEs_inside_component():
     v = np.random.rand(8).astype(np.float32)
     w = np.random.rand(8).astype(np.float32)
 
-    sdfg = PEs_inside_component.to_sdfg()
+    sdfg = PEs_inside_component_0.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
     sdfg.save('/tmp/out.sdfg')
     program = sdfg.compile()
@@ -47,5 +47,154 @@ def test_PEs_inside_component():
     assert np.allclose(z, x + y + v + w)
 
 
+def test_PEs_inside_component_1():
+    '''
+    Tests for PEs detection inside a single Component.
+    It computes
+    - z = alpha*((x+y) + (v+w))
+    - t = beta*((x+y) + (v+w))
+
+    High-level overview:
+     ┌───────────┐        ┌───────────┐
+     │ Add_Map_0 │        │ Add_Map_1 │
+     └──────┬────┘        └──────┬────┘
+            │   ┌───────────┐    │
+            └─► │ Add_Map_2 │◄───┘
+            ────└───────────┘────
+            │                   │
+     ┌──────v────┐        ┌─────v─────┐
+     │   Mul_3   │        │   Mul_4   │
+     └───────────┘        └───────────┘
+
+
+    :return:
+    '''
+    @dace.program
+    def PEs_inside_component_1(x: dace.float32[8], y: dace.float32[8],
+                             v: dace.float32[8], w: dace.float32[8], z: dace.float32[8], t: dace.float32[8],
+                             alpha: dace.float32, beta: dace.float32):
+        tmp1 = x + y
+        tmp2 = v + w
+        tmp3 = tmp1 + tmp2
+        z[:] = alpha * tmp3
+        t[:] = beta * tmp3
+
+    x = np.random.rand(8).astype(np.float32)
+    y = np.random.rand(8).astype(np.float32)
+    v = np.random.rand(8).astype(np.float32)
+    w = np.random.rand(8).astype(np.float32)
+    z = np.random.rand(8).astype(np.float32)
+    t = np.random.rand(8).astype(np.float32)
+    alpha = 1.0
+    beta = 2.0
+
+    sdfg = PEs_inside_component_1.to_sdfg()
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+    sdfg.save('/tmp/out.sdfg')
+    program = sdfg.compile()
+    for node, state in program.sdfg.all_nodes_recursive():
+        if hasattr(node, '_pe'):
+            print(node, node._pe)
+
+    program(x=x, y=y, v=v, w=w, z=z, t=t, alpha=alpha, beta=beta)
+    ref_z = alpha * (x + y + v + w)
+    ref_t = beta * (x + y + v + w)
+    assert np.allclose(z, ref_z )
+    assert np.allclose(t, ref_t )
+
+def test_PEs_inside_component_2():
+    '''
+    Tests for PEs detection inside a single Component.
+    It computes z =(x+y) and t = (y+v)
+
+
+    High-level overview:
+
+        x            y         v
+        │            │         │
+     ┌──V────────<───┘────>────V──────┐
+     │ Add_Map_0 │        │ Add_Map_1 │
+     └───────────┘        └───────────┘
+
+    Map_0 and Map_1 should belong to two distinct PEs
+    NOTE: this kind of graph was already executed in parallel
+
+    TODO: let the result is then used again?
+
+    :return:
+    '''
+    @dace.program
+    def PEs_inside_component_2(x: dace.float32[8], y: dace.float32[8],
+                             v: dace.float32[8], z: dace.float32[8], t:dace.float32[8]):
+        z[:] = x + y
+        t[:] = y + v
+
+
+    x = np.random.rand(8).astype(np.float32)
+    y = np.random.rand(8).astype(np.float32)
+    v = np.random.rand(8).astype(np.float32)
+    z = np.random.rand(8).astype(np.float32)
+    t = np.random.rand(8).astype(np.float32)
+
+    sdfg = PEs_inside_component_2.to_sdfg()
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+    sdfg.save('/tmp/out.sdfg')
+    program = sdfg.compile()
+    for node, state in program.sdfg.all_nodes_recursive():
+        if hasattr(node, '_pe'):
+            print(node, node._pe)
+
+    program(x=x, y=y, v=v, t=t, z=z)
+    assert np.allclose(z, x + y)
+    assert np.allclose(t, v + y)
+
+
+def test_PEs_LNs_inside_component():
+    '''
+    Tests for PEs detection inside a single Component where we
+    have multiple LNs.
+    It computes z =(x+y) + (v+w)
+
+    High-level overview:
+     ┌───────────┐        ┌───────────┐
+     │  Matmul_0 │        │  Matmul_1 │
+     └──────┬────┘        └──────┬────┘
+            │   ┌───────────┐    │
+            └─► │   Dot_2   │◄───┘
+                └───────────┘
+
+    :return:
+    '''
+    @dace.program
+    def PEs_LNs_inside_component(A: dace.float32[8, 8], x: dace.float32[8],
+                                 B: dace.float32[8, 8], y: dace.float32[8]):
+        tmp1 = A @ x
+        tmp2 = B @ y
+        return np.dot(tmp1, tmp2)
+
+    A = np.random.rand(8, 8).astype(np.float32)
+    B = np.random.rand(8, 8).astype(np.float32)
+    x = np.random.rand(8).astype(np.float32)
+    y = np.random.rand(8).astype(np.float32)
+
+    sdfg = PEs_LNs_inside_component.to_sdfg()
+    sdfg.save('/tmp/pre.sdfg')
+    from dace.transformation.interstate import GPUTransformSDFG
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+    sdfg.save('/tmp/out.sdfg')
+    program = sdfg.compile()
+    for node, state in program.sdfg.all_nodes_recursive():
+        if hasattr(node, '_pe'):
+            print(node, node._pe)
+
+    z = program(A=A, x=x, B=B, y=y)
+
+    ref = np.dot(A @ x, B @ y)
+    assert np.allclose(z, ref)
+
+
 if __name__ == "__main__":
-    test_PEs_inside_component()
+    test_PEs_inside_component_0()
+    # test_PEs_inside_component_1()
+    # test_PEs_inside_component_2()
+    # test_PEs_LNs_inside_component()

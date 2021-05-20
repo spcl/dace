@@ -107,9 +107,8 @@ class FPGACodeGen(TargetCodeGenerator):
         self._dispatcher.register_map_dispatcher(
             [dtypes.ScheduleType.FPGA_Device], self)
 
-        self._dispatcher.register_state_dispatcher(
-            self,
-            predicate=is_fpga_kernel)
+        self._dispatcher.register_state_dispatcher(self,
+                                                   predicate=is_fpga_kernel)
 
         self._dispatcher.register_node_dispatcher(
             self,
@@ -163,14 +162,91 @@ class FPGACodeGen(TargetCodeGenerator):
         # Right before finalizing code, write FPGA context to state structure
         self._frame.statestruct.append('dace::fpga::Context *fpga_context;')
 
+    def _pes_subgraphs(self, graph):
+        """ Finds subgraphs of an SDFGState or ScopeSubgraphView that identifes PEs
+        """
+        from dace.sdfg.scope import ScopeSubgraphView
+
+        if not isinstance(graph, (dace.sdfg.SDFGState, ScopeSubgraphView)):
+            raise TypeError(
+                "Expected SDFGState or ScopeSubgraphView, got: {}".format(
+                    type(graph).__name__))
+        # candidates = graph.source_nodes()
+        # components = collections.OrderedDict()  # {start node: nodes in component}
+        # for cand in candidates:
+        #     if isinstance(cand, dace.nodes.AccessNode):
+        #         # AccessNodes can be read from multiple concurrent components, so
+        #         # check all out edges
+        #         start_nodes = [e.dst for e in graph.out_edges(cand)]
+        #         for n in start_nodes:
+        #             if n not in components:
+        #                 components[n] = {cand, n}
+        #             else:
+        #                 # Components can read from multiple start arrays
+        #                 components[n].add(cand)
+        #     else:
+        #         # The source node == the first control or compute node
+        #         components[cand] = {cand}
+
+
+        subgraphs = collections.defaultdict(set)  # {pe_id: {nodes in subgraph}}
+
+        # Go over the nodes and populate the subgraphs
+        for node, _ in graph.all_nodes_recursive():
+            #TODO: access node may not have  PE ID
+            # - cleanup and refactor
+
+            # add this node to the corresponding subgraph
+            if hasattr(node, "_pe"):
+                if node._pe in subgraphs:
+                    subgraphs[node._pe].add(node)
+                else:
+                    subgraphs[node._pe] = {node}
+            else:
+                if isinstance(node, dace.nodes.AccessNode):
+                    # AccessNodes can be read from multiple PEs, so
+                    # check all out edges
+                    start_nodes = [e.dst for e in graph.out_edges(node)]
+                    for n in start_nodes:
+                        if hasattr(n, "_pe"):
+                            if n._pe in subgraphs:
+                                subgraphs[n._pe].add(node)
+                            else:
+                                subgraphs[n._pe] = {node}
+                else:
+                    print("Node: ", node, " does not have the pe label")
+
+        # Check: if some subgraph overlaps with any other, then there is something wrong:
+        # TODO:
+        # - we can't check if Access node are in multiple subgraphs
+
+
+        # Now stick each of the found components in a ScopeSubgraphView and return
+        # them. Sort according to original order of nodes
+        all_nodes = graph.nodes()
+        return [
+            ScopeSubgraphView(graph, [n for n in all_nodes if n in sg], None)
+            for sg in subgraphs.values()
+        ]
+
     def generate_state(self, sdfg, state, function_stream, callsite_stream):
-        """Generate a kernel that runs all connected components within a state
+        """Generate a kernel that runs all Processing Elements within a state
            as concurrent dataflow modules."""
 
         state_id = sdfg.node_id(state)
 
         # Determine independent components
         subgraphs = dace.sdfg.concurrent_subgraphs(state)
+
+        for i, sg in enumerate(subgraphs):
+            print("Subgraph: ", i, " Nodes: ", sg.nodes())
+
+        subgraphs2 = self._pes_subgraphs(state)
+
+        for i, sg in enumerate(subgraphs2):
+            print("Subgraph2: ", i, " Nodes: ", sg.nodes())
+
+        # Determine independend processing elements
 
         # Generate kernel code
         shared_transients = set(sdfg.shared_transients())
@@ -290,7 +366,7 @@ class FPGACodeGen(TargetCodeGenerator):
         # Build a dictionary of arrays to arbitrary data nodes referring to
         # them, needed to trace memory bank assignments and to pass to the array
         # allocator
-        data_to_node: Dict[str: dace.nodes.Node] = {}
+        data_to_node: Dict[str:dace.nodes.Node] = {}
 
         global_data_parameters = set()
         # Count appearances of each global array to create multiple interfaces
@@ -424,8 +500,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         trace_desc = trace_node.desc(trace_sdfg)
                         if "bank" in trace_desc.location:
                             trace_bank = trace_desc.location["bank"]
-                            if (bank is not None
-                                    and bank != trace_bank):
+                            if (bank is not None and bank != trace_bank):
                                 raise cgx.CodegenError(
                                     "Found inconsistent memory bank "
                                     f"specifier for {trace_name}.")
@@ -435,9 +510,8 @@ class FPGACodeGen(TargetCodeGenerator):
                     if bank is not None:
                         outer_node = trace[0][0][0] or trace[0][0][1]
                         outer_desc = outer_node.desc(trace[0][2])
-                        if ("bank" not in outer_desc.location
-                                or str(outer_desc.location["bank"]) !=
-                                str(bank)):
+                        if ("bank" not in outer_desc.location or
+                                str(outer_desc.location["bank"]) != str(bank)):
                             raise cgx.CodegenError(
                                 "Memory bank allocation must be present on "
                                 f"outermost data descriptor {outer_node.data} "
@@ -679,14 +753,14 @@ class FPGACodeGen(TargetCodeGenerator):
                          callsite_stream):
         pass  # Handled by destructor
 
-
     def _compute_processing_elements(self,
-                             sdfg: SDFG,
-                             default_pe=0,
-                             default_event=0):
+                                     sdfg: SDFG,
+                                     default_pe=0,
+                                     default_event=0):
         """ Annotates an SDFG (and all nested ones) to include a `_pe_id`
             field. This field is applied to all FPGA maps, tasklets, and copies
-            that can be executed in parallel in seperate PEs.
+            that can be executed in parallel in separate PEs.
+
             :param sdfg: The sdfg to modify.
             :param default_pe: The PEs ID to start counting from (used
                                    in recursion to nested SDFGs).
@@ -695,7 +769,10 @@ class FPGACodeGen(TargetCodeGenerator):
             :return: 2-tuple of the number of streams, events to create.
         """
 
-        # TODO: control  this by some dace configuration flag?
+        # TODO:
+        #  - control  this by some dace configuration flag?
+        #  - PEs numbering can be misleading (probably not solvable)
+        #  - how to deal with AccessNode: Should they have a PE id? they can be accessed by multiple PEs?
         pes = 0
         concurrent_pes = 0
 
@@ -709,9 +786,14 @@ class FPGACodeGen(TargetCodeGenerator):
         state_subsdfg_events = []
         max_events = 0
 
+        # TODO: keep track of precedences among PEs
+
+        precedences = dict()
+
         for state in sdfg.nodes():
             if not is_fpga_kernel(sdfg, state):
                 # if this is not an FPGA Kernel, we can skip PEs detection
+                # TODO: relax this
                 state_pes.append(0)
                 state_subsdfg_events.append(max_events)
                 continue
@@ -723,23 +805,35 @@ class FPGACodeGen(TargetCodeGenerator):
             max_pes = default_pe
             # max_events = default_event
 
+            # First step: assign a PE id to each node
             for i, node in enumerate(source_nodes):
                 if isinstance(node, nodes.AccessNode):
                     continue
                 if isinstance(node, nodes.NestedSDFG):
-                    # TODO: how we deal with this
                     if node.schedule == dtypes.ScheduleType.FPGA_Device:
                         continue
                 node._pe = max_pes
-                # print("**added pe ", node._pe, " to :", node)
+                # print("Source node ", node, " has associated PE: ", max_pes)
                 node._pe_childpath = False
                 max_pes = increment(max_pes)
 
             # Maintain the same PE in DFS order, add more when
             # possible.
+
+            # In the following:
+            # node._pe: PE ID associated to the node
+            # node._pe_childpath: if present indicates if a node is "parent" of more than one PE
+
             for e in state.dfs_edges(source_nodes):
+                # print("Edge: ", e.src, e.dst)
                 if hasattr(e.dst, '_pe'):
+                    # but this one could be another precedence
+
+                    # print("DST ", e.dst, " already has a PE ID")
+                    # Node has been already visited (THIS SHOULD NEVER OCCUR WITH DFS_EDGES, there is something strange)
+                    assert (False)
                     continue
+
                 if hasattr(e.src, '_pe'):
                     pe = e.src._pe
 
@@ -750,21 +844,33 @@ class FPGACodeGen(TargetCodeGenerator):
                         e.dst._pe_childpath = False
                         continue
 
-                    if e.src._pe_childpath == True:
+                    # Does this node need to be in another PE?
+                    # TODO: find a more robust way of checking this
+                    # if this node has more than one upstream node, than it should be on a seperate PE
+                    if len(list(state.predecessors(e.dst))) > 1:
+                        print(
+                            "Node ", e.dst,
+                            " has more than one predecessor. Put it in another PE"
+                        )
                         pe = max_pes
                         max_pes = increment(max_pes)
+                    elif e.src._pe_childpath == True:
+                        pe = max_pes
+                        max_pes = increment(max_pes)
+
                     e.src._pe_childpath = True
 
                     # Do not create multiple PEs within FPGA scopes
-                    if (isinstance(e.src, nodes.EntryNode)
-                            and e.src.schedule == dtypes.ScheduleType.FPGA_Device):
+                    if (isinstance(e.src, nodes.EntryNode) and e.src.schedule
+                            == dtypes.ScheduleType.FPGA_Device):
                         e.src._pe_childpath = False
                     elif state.entry_node(e.src) is not None:
                         parent = state.entry_node(e.src)
-                        if parent.schedule  == dtypes.ScheduleType.FPGA_Device:
+                        if parent.schedule == dtypes.ScheduleType.FPGA_Device:
                             e.src._pe_childpath = False
                 else:
-                    # print("Use a new PE id")
+                    print("Use a new PE id")
+                    # New PE: this should not have any predecessor
                     pe = max_pes
                     if (isinstance(e.dst, nodes.AccessNode)
                             and isinstance(sdfg.arrays[e.dst.data], dt.View)):
@@ -773,27 +879,40 @@ class FPGACodeGen(TargetCodeGenerator):
                     else:
                         max_pes = increment(max_pes)
                 e.dst._pe = pe
+                print(e.dst, " has associated PE ", pe)
 
                 if not hasattr(e.dst, '_pe_childpath'):
                     e.dst._pe_childpath = False
                 if isinstance(e.dst, nodes.NestedSDFG):
                     if e.dst.schedule != dtypes.ScheduleType.FPGA_Device:
-                        # TODO: what to do here? We don't want to recur
+                        # TODO: what to do here? We may want to not always  recur
                         continue
-                        # assert False
                         # max_streams, max_events = self._compute_cudastreams(
                         #     e.dst.sdfg, e.dst._cuda_stream, max_events + 1)
 
+            # do another pass and keep track of precedences
+            for node in state.nodes():
+                if hasattr(node, '_pe'):
+                    # print("Node: ", node, node._pe)
 
-            # TODO: is this useful?
-            state_pes.append(max_pes if concurrent_pes ==
-                                 0 else concurrent_pes)
+                    this_pe = node._pe
+                    # get all predecessors and see their associated pes
+                    for pred in state.predecessors(node):
+                        if hasattr(pred, '_pe') and pred._pe != this_pe:
+                            if this_pe not in precedences:
+                                precedences[this_pe] = set()
+                            precedences[this_pe].add(pred._pe)
+
+                # if hasattr(node, '_pe_childpath'):
+                #     print("\t", node._pe_childpath)
+
+            # TODO: are events useful?
+            state_pes.append(max_pes if concurrent_pes == 0 else concurrent_pes)
             state_subsdfg_events.append(max_events)
 
-        # Do not consider PEs in the following cases:
-        # - we are not in an FPGA kernelfrom paths of non-gpu copies and CPU tasklets
-        # TODO: is this needed in this case?
-        # For the moment being we are assuming that everything here is for FPGA
+        # Cleanup PEs in the following cases:
+        # For the moment being we are assuming that everything here is for FPGA Kernels
+        # TODO: this may change
         for node, graph in sdfg.all_nodes_recursive():
             if isinstance(graph, dace.sdfg.SDFGState):
                 cur_sdfg = graph.parent
@@ -807,29 +926,28 @@ class FPGACodeGen(TargetCodeGenerator):
 
                 if not is_fpga_kernel(cur_sdfg, graph):
                     # Not an FPGA kernel: skip
+                    # TODO: relax this
                     continue
-                print(graph)
 
                 for e in graph.all_edges(node):
                     path = graph.memlet_path(e)
-                    # If leading from/to a GPU memory node, keep stream
+                    # If leading from/to a FPGA memory node, keep stream
                     if ((isinstance(path[0].src, nodes.AccessNode)
                          and path[0].src.desc(cur_sdfg).storage
-                         == dtypes.StorageType.GPU_Global)
+                         == dtypes.StorageType.FPGA_Global)
                             or (isinstance(path[-1].dst, nodes.AccessNode)
                                 and path[-1].dst.desc(cur_sdfg).storage
                                 == dtypes.StorageType.FPGA_Global)):
                         # print("BREAK Leading to  FPGA Global Mem")
                         break
-                    # If leading from/to a GPU tasklet, keep stream
+                    # If leading from/to a FPGA tasklet, keep stream
                     if ((isinstance(path[0].src, nodes.CodeNode)
                          and is_fpga_kernel(cur_sdfg, graph))
-                            or
-                            (isinstance(path[-1].dst, nodes.CodeNode) and
-                             is_fpga_kernel(cur_sdfg, graph))):
+                            or (isinstance(path[-1].dst, nodes.CodeNode)
+                                and is_fpga_kernel(cur_sdfg, graph))):
                         # print("BREAK FPGA KERNEL")
                         break
-                else:  # If we did not break, we do not need a CUDA stream
+                else:  # If we did not break, we do not need another PE
                     # print("Remove pe from", node)
                     if hasattr(node, '_pe'):
                         delattr(node, '_pe')
@@ -840,19 +958,16 @@ class FPGACodeGen(TargetCodeGenerator):
         # Compute maximal number of events by counting edges (within the same
         # state) that point from one stream to another
         state_events = []
-        import pdb
-        pdb.set_trace()
         for i, state in enumerate(sdfg.nodes()):
             events = state_subsdfg_events[i]
 
             for e in state.edges():
-                if hasattr(e.src, '_cuda_stream'):
+                if hasattr(e.src, '_pe'):
                     # If there are two or more CUDA streams involved in this
                     # edge, or the destination is unrelated to CUDA
-                    if (not hasattr(e.dst, '_cuda_stream')
-                            or e.src._cuda_stream != e.dst._cuda_stream):
+                    if (not hasattr(e.dst, '_pe') or e.src._pe != e.dst._pe):
                         for mpe in state.memlet_path(e):
-                            mpe._cuda_event = events
+                            mpe._pe_event = events
                         events += 1
 
             state_events.append(events)
@@ -860,10 +975,7 @@ class FPGACodeGen(TargetCodeGenerator):
         # Maximum over all states
         max_pes = max(state_pes)
         max_events = max(state_events)
-
-        import pdb
-        pdb.set_trace()
-
+        print(precedences)
 
     def _emit_copy(self, sdfg, state_id, src_node, src_storage, dst_node,
                    dst_storage, dst_schedule, edge, dfg, function_stream,
@@ -1594,7 +1706,7 @@ class FPGACodeGen(TargetCodeGenerator):
     def generate_modules(self, sdfg, state, kernel_name, subgraphs,
                          subgraph_parameters, module_stream, entry_stream,
                          host_stream):
-        """Main entry function for generating a Xilinx kernel."""
+        """Generate all PEs inside an FPGA Kernel"""
 
         # Module generation
         for subgraph in subgraphs:
