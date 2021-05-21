@@ -166,10 +166,13 @@ def parse_dace_program(f,
 
     # Resolve constants to their values (if they are not already defined in this scope)
     # and symbols to their names
-    src_ast = GlobalResolver({
+    resolved = {
         k: v
         for k, v in global_vars.items() if k not in argtypes and k != '_'
-    }).visit(src_ast)
+    }
+    src_ast = GlobalResolver(resolved).visit(src_ast)
+    src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
+    src_ast = DeadCodeEliminator().visit(src_ast)
 
     # Filter remaining global variables according to type and scoping rules
     global_vars = {
@@ -245,6 +248,69 @@ class ModuleResolver(ast.NodeTransformer):
             cnode.value.id = self.modules[cnode.value.id]
 
         return self.generic_visit(node)
+
+
+# Replaces if conditions by their bodies if can be evaluated at compile time
+class ConditionalCodeResolver(ast.NodeTransformer):
+    def __init__(self, globals: Dict[str, Any]):
+        self.globals = globals
+
+    def visit_If(self, node: ast.If) -> Any:
+        try:
+            result = astutils.evalnode(node.test, self.globals)
+
+            if (result is True
+                    or isinstance(result, sympy.logic.boolalg.BooleanTrue)):
+                # Only return "if" body
+                return node.body
+            elif (result is False
+                  or isinstance(result, sympy.logic.boolalg.BooleanFalse)):
+                # Only return "else" body
+                return node.orelse
+            # Any other case is indeterminate, fall back to generic visit
+        except SyntaxError:
+            # Cannot evaluate if condition at compile time
+            pass
+
+        return self.generic_visit(node)
+
+    def visit_IfExp(self, node: ast.IfExp) -> Any:
+        return self.visit_If(node)
+
+
+class DeadCodeEliminator(ast.NodeTransformer):
+    """ Removes any code within scope after return/break/continue/raise. """
+    def generic_visit(self, node: ast.AST):
+        for field, old_value in ast.iter_fields(node):
+            if isinstance(old_value, list):
+                # Scope fields
+                scope_field = field in ('body', 'orelse')
+
+                new_values = []
+                for value in old_value:
+                    if isinstance(value, ast.AST):
+                        value = self.visit(value)
+                        if value is None:
+                            continue
+                        elif not isinstance(value, ast.AST):
+                            new_values.extend(value)
+                            continue
+                        elif (scope_field and isinstance(
+                                value,
+                            (ast.Return, ast.Break, ast.Continue, ast.Raise))):
+                            # Any AST node after this one is unreachable and
+                            # not parsed by this transformer
+                            new_values.append(value)
+                            break
+                    new_values.append(value)
+                old_value[:] = new_values
+            elif isinstance(old_value, ast.AST):
+                new_node = self.visit(old_value)
+                if new_node is None:
+                    delattr(node, field)
+                else:
+                    setattr(node, field, new_node)
+        return node
 
 
 # AST node types that are disallowed in DaCe programs
@@ -679,7 +745,7 @@ class GlobalResolver(ast.NodeTransformer):
     def visit_Attribute(self, node: ast.Attribute) -> Any:
         # Try to evaluate the expression with only the globals
         try:
-            global_val = self._evalnode(node)
+            global_val = astutils.evalnode(node, self.globals)
         except SyntaxError:
             return self.generic_visit(node)
 
@@ -693,16 +759,9 @@ class GlobalResolver(ast.NodeTransformer):
                 return newnode
         return self.generic_visit(node)
 
-    def _evalnode(self, node: ast.AST):
-        try:
-            return eval(compile(ast.Expression(node), '<string>', mode='eval'),
-                        self.globals)
-        except:  # Anything can happen here
-            raise SyntaxError
-
     def visit_Call(self, node: ast.Call) -> Any:
         try:
-            global_val = self._evalnode(node)
+            global_val = astutils.evalnode(node, self.globals)
         except SyntaxError:
             return self.generic_visit(node)
 
