@@ -6,7 +6,6 @@
 import dace
 import ast
 import astunparse
-from dace.codegen.targets.sve.cppunparse import CPPUnparser
 from dace.codegen import cppunparse
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from typing import IO, Tuple, Union
@@ -19,7 +18,7 @@ import copy
 import collections
 
 
-class SVEUnparser(CPPUnparser):
+class SVEUnparser(cppunparse.CPPUnparser):
     def __init__(self,
                  sdfg: SDFG,
                  tree: ast.AST,
@@ -27,7 +26,6 @@ class SVEUnparser(CPPUnparser):
                  code,
                  memlets,
                  pred_name,
-                 loop_param,
                  counter_type,
                  defined_symbols=None,
                  stream_associations=dict()):
@@ -234,6 +232,8 @@ class SVEUnparser(CPPUnparser):
         if not lhs_vec and not rhs_vec:
             # Only scalars involved
             super()._Assign(t)
+            if isinstance(target, ast.Name):
+                self.defined_symbols.update({target.id: rhs_type})
             return
 
         if not is_new_variable:
@@ -425,8 +425,6 @@ class SVEUnparser(CPPUnparser):
             raise NotImplementedError(
                 f'Binary operation {t.op.__class__.__name__} not implemented')
 
-        inf_type = self.infer(t)[0]
-
         op_name = util.BIN_OP_TO_SVE[t.op.__class__]
 
         # Special case: scalar / vector => svdivr (division reversed)
@@ -555,11 +553,11 @@ class SVEUnparser(CPPUnparser):
         self.write(')')
 
     def _Subscript(self, t):
-        type = self.infer(t.value)[0]
+        type, slice = self.infer(t.value, t.slice.value)
         self.assert_type_compatibility(type)
+        self.assert_type_compatibility(slice)
 
-        if isinstance(type, dtypes.pointer) and isinstance(
-                self.infer(t.slice)[0], dtypes.vector):
+        if isinstance(type, dtypes.pointer) and isinstance(slice, dtypes.vector):
             # Indirect load
             self.write(f'svld1_gather_index({self.pred_name}, ')
             self.dispatch(t.value)
