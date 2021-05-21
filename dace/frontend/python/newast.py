@@ -168,8 +168,15 @@ def parse_dace_program(f,
     # and symbols to their names
     src_ast = GlobalResolver({
         k: v
-        for k, v in global_vars.items() if not k in argtypes and k != '_'
+        for k, v in global_vars.items() if k not in argtypes and k != '_'
     }).visit(src_ast)
+
+    # Filter remaining global variables according to type and scoping rules
+    global_vars = {
+        k: v
+        for k, v in global_vars.items()
+        if k not in argtypes and dtypes.isallowed(v)
+    }
 
     pv = ProgramVisitor(name=name,
                         filename=src_file,
@@ -381,13 +388,11 @@ def add_indirection_subgraph(sdfg: SDFG,
         for i, r in enumerate(memlet.subset):
             if i in nonsqz_dims:
                 mapped_rng.append(r)
-        ind_entry, ind_exit = graph.add_map(
-            'indirection',
-            {
-                '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
-                for i, (s, e, t) in enumerate(mapped_rng)
-            },
-            debuginfo=pvisitor.current_lineinfo)
+        ind_entry, ind_exit = graph.add_map('indirection', {
+            '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
+            for i, (s, e, t) in enumerate(mapped_rng)
+        },
+                                            debuginfo=pvisitor.current_lineinfo)
         inp_base_path.insert(0, ind_entry)
         out_base_path.append(ind_exit)
 
@@ -672,19 +677,42 @@ class GlobalResolver(ast.NodeTransformer):
         return self.generic_visit(node)
 
     def visit_Attribute(self, node: ast.Attribute) -> Any:
-        # TODO(later): Support more levels of modules (mod.mod2.mod3.value)
-        if (isinstance(node.value, ast.Name)
-                and isinstance(node.value.ctx, ast.Load)
-                and node.value.id in self.globals
-                and hasattr(self.globals[node.value.id], node.attr)):
-            global_val = getattr(self.globals[node.value.id], node.attr)
-            # TODO: Without this check, dace dtypes do not serialize well
-            if not isinstance(global_val, dtypes.typeclass):
-                newnode = self.global_value_to_node(global_val,
-                                                    parent_node=node,
-                                                    recurse=True)
-                if newnode is not None:
-                    return newnode
+        # Try to evaluate the expression with only the globals
+        try:
+            global_val = self._evalnode(node)
+        except SyntaxError:
+            return self.generic_visit(node)
+
+        # global_val = getattr(self.globals[node.value.id], node.attr)
+        # TODO: Without this check, dace dtypes do not serialize well
+        if not isinstance(global_val, dtypes.typeclass):
+            newnode = self.global_value_to_node(global_val,
+                                                parent_node=node,
+                                                recurse=True)
+            if newnode is not None:
+                return newnode
+        return self.generic_visit(node)
+
+    def _evalnode(self, node: ast.AST):
+        try:
+            return eval(compile(ast.Expression(node), '<string>', mode='eval'),
+                        self.globals)
+        except:  # Anything can happen here
+            raise SyntaxError
+
+    def visit_Call(self, node: ast.Call) -> Any:
+        try:
+            global_val = self._evalnode(node)
+        except SyntaxError:
+            return self.generic_visit(node)
+
+        # TODO: Without this check, dace dtypes do not serialize well
+        if not isinstance(global_val, dtypes.typeclass):
+            newnode = self.global_value_to_node(global_val,
+                                                parent_node=node,
+                                                recurse=True)
+            if newnode is not None:
+                return newnode
         return self.generic_visit(node)
 
 
@@ -3433,7 +3461,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 args = [(aname, self._parse_function_arg(arg))
                         for aname, arg in zip(sdfg.arg_names, node.args)]
                 args += [(arg.arg, self._parse_function_arg(arg.value))
-                        for arg in node.keywords]
+                         for arg in node.keywords]
                 required_args = [
                     a for a in sdfg.arglist().keys() if a not in sdfg.symbols
                 ]

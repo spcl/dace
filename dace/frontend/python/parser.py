@@ -138,7 +138,6 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
 
                 equations.append(sym_dim - real_dim)
 
-
     if len(symbols) == 0:
         return {}
 
@@ -172,13 +171,8 @@ class DaceProgram:
         self.auto_optimize = auto_optimize
         self.device = device
 
-        global_vars = _get_locals_and_globals(f)
+        self.global_vars = _get_locals_and_globals(f)
 
-        self.global_vars = {
-            k: v
-            for k, v in global_vars.items()
-            if dtypes.isallowed(v, allow_recursive=True)
-        }
         if self.argnames is None:
             self.argnames = []
 
@@ -228,7 +222,8 @@ class DaceProgram:
             kwargs.update(
                 {aname: arg
                  for aname, arg in zip(self.argnames, args)})
-            kwargs.update(infer_symbols_from_datadescriptor(self._cache[1], kwargs))
+            kwargs.update(
+                infer_symbols_from_datadescriptor(self._cache[1], kwargs))
             return self._cache[2](**kwargs)
 
         # Clear cache to enforce deletion and closure of compiled program
@@ -241,7 +236,10 @@ class DaceProgram:
         kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
 
         # Update arguments with symbols in data shapes
-        kwargs.update(infer_symbols_from_datadescriptor(sdfg, {k:create_datadescriptor(v) for k, v  in kwargs.items()}))
+        kwargs.update(
+            infer_symbols_from_datadescriptor(
+                sdfg, {k: create_datadescriptor(v)
+                       for k, v in kwargs.items()}))
 
         # Allow CLI to prompt for optimizations
         if Config.get_bool('optimizer', 'transform_on_call'):
