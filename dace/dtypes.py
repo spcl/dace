@@ -130,6 +130,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
     PAPI_Counters = ()
     GPU_Events = ()
 
+
 @extensible_enum
 class TilingType(aenum.AutoNumberEnum):
     """ Available tiling types in a `StripMining` transformation. """
@@ -520,9 +521,9 @@ def result_type_of(lhs, *rhs):
         return lhs
     return rhs  # RHS is bigger
 
+
 class opaque(typeclass):
     """ A data type for an opaque object, useful for C bindings/libnodes, i.e., MPI_Request. """
-
     def __init__(self, typename):
         self.type = typename
         self.ctype = typename
@@ -544,7 +545,8 @@ class opaque(typeclass):
         return self
 
     def as_numpy_dtype(self):
-        raise NotImplementedError("Not sure how to make a numpy type from an opaque C type.")
+        raise NotImplementedError(
+            "Not sure how to make a numpy type from an opaque C type.")
 
 
 class pointer(typeclass):
@@ -952,6 +954,7 @@ float64 = typeclass(numpy.float64)
 complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 
+
 @extensible_enum
 class Typeclasses(aenum.AutoNumberEnum):
     bool = bool
@@ -969,6 +972,7 @@ class Typeclasses(aenum.AutoNumberEnum):
     float64 = float64
     complex64 = complex64
     complex128 = complex128
+
 
 DTYPE_TO_TYPECLASS = {
     int: typeclass(int),
@@ -1248,7 +1252,9 @@ def is_array(obj: Any) -> bool:
     :param obj: The given object.
     :return: True iff the object implements the array interface.
     """
-    if (hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__')
-            or hasattr(obj, '__cuda_array_interface__')):
+    if hasattr(obj, '__cuda_array_interface__'):
+        # GPU scalars are also arrays
+        return True
+    if (hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__')):
         return hasattr(obj, 'shape') and len(obj.shape) > 0
     return False
