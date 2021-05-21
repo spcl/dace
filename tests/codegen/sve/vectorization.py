@@ -7,9 +7,7 @@ import dace
 import dace.codegen.targets.sve.util
 import dace.codegen.targets.sve.codegen
 from dace.transformation.optimizer import Optimizer
-import numpy as np
 import dace.dtypes
-from dace.sdfg import graph, state, find_input_arraynode, find_output_arraynode
 
 
 def vectorize(sdfg, par, weak=False, special=False):

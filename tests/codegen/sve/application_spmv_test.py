@@ -3,6 +3,7 @@ from __future__ import print_function
 
 import argparse
 import dace
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import math
 import numpy as np
 import scipy
