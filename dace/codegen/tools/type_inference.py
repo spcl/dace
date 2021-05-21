@@ -382,9 +382,22 @@ def _Call(t, symbols, inferred_symbols):
 
 
 def _Subscript(t, symbols, inferred_symbols):
-    inferred_type = _dispatch(t.value, symbols, inferred_symbols)
-    _dispatch(t.slice, symbols, inferred_symbols)
-    return inferred_type
+    value_type = _dispatch(t.value, symbols, inferred_symbols)
+    slice_type = _dispatch(t.slice, symbols, inferred_symbols)
+
+    if isinstance(slice_type, dtypes.pointer):
+        raise SyntaxError('Invalid syntax (pointer given as slice)')
+
+    # A slice as subscript (e.g. [0:N]) returns a pointer
+    if isinstance(t.slice, ast.Slice):
+        return value_type
+
+    # A vector as subscript of a pointer returns a vector of the base type
+    if isinstance(value_type, dtypes.pointer) and isinstance(slice_type, dtypes.vector):
+        return dtypes.vector(value_type.base_type, slice_type._veclen)
+
+    # Otherwise (some index as subscript) we return the base type
+    return value_type.base_type
 
 
 def _Index(t, symbols, inferred_symbols):
