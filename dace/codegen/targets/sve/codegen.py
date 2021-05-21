@@ -65,13 +65,23 @@ class SVEMap(TargetCodeGenerator):
 
         return stride
 
+    def add_header(self, function_stream: CodeIOStream):
+        if self.has_generated_header:
+            return
+        self.has_generated_header = True
+
+        function_stream.write('#include <arm_sve.h>\n')
+
+        # TODO: Find this automatically at compile time
+        function_stream.write(f'#define {util.REGISTER_BYTE_SIZE} 64\n')
+
     def __init__(self, frame_codegen: DaCeCodeGenerator, sdfg: dace.SDFG):
         dace.ScheduleType.register('SVE_Map')
         dace.SCOPEDEFAULT_SCHEDULE[
             dace.ScheduleType.SVE_Map] = dace.ScheduleType.Sequential
         dace.SCOPEDEFAULT_STORAGE[
             dace.ScheduleType.SVE_Map] = dace.StorageType.CPU_Heap
-
+        self.has_generated_header = False
         self.frame = frame_codegen
         self.dispatcher = frame_codegen._dispatcher
         self.dispatcher.register_map_dispatcher(dace.ScheduleType.SVE_Map, self)
@@ -80,19 +90,11 @@ class SVEMap(TargetCodeGenerator):
                 state, sdfg, node, [dace.ScheduleType.SVE_Map]))
         self.cpu_codegen = self.dispatcher.get_generic_node_dispatcher()
 
-        # TODO: How to find out whether we are in the code file?
-        sdfg.append_global_code('#include <arm_sve.h>\n')
-
-        # TODO: Find this automatically at compile time
-        sdfg.append_global_code(f'#define {util.REGISTER_BYTE_SIZE} 64\n')
-
         for src_storage, dst_storage in itertools.product(
                 dtypes.StorageType, dtypes.StorageType):
             self.dispatcher.register_copy_dispatcher(src_storage, dst_storage,
                                                      dace.ScheduleType.SVE_Map,
                                                      self)
-
-        self.subgraph_strides = []
 
     def create_empty_definition(self,
                                 conn: dace.typeclass,
@@ -141,6 +143,8 @@ class SVEMap(TargetCodeGenerator):
     def generate_node(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
                       node: nodes.Node, function_stream: CodeIOStream,
                       callsite_stream: CodeIOStream):
+        self.add_header(function_stream)
+
         # Reset the mappings
         self.stream_associations = dict()
 
@@ -513,7 +517,6 @@ class SVEMap(TargetCodeGenerator):
             dace.codegen.targets.sve.unparse.SVEUnparser(
                 sdfg, stmt, result, body, memlets,
                 util.get_loop_predicate(sdfg, dfg, node),
-                util.get_sve_scope(sdfg, dfg, node).params[-1],
                 self.counter_type, defined_symbols, self.stream_associations)
             callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
