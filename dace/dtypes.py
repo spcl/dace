@@ -1249,12 +1249,16 @@ def is_array(obj: Any) -> bool:
     (supported by NumPy, Numba, CuPy, PyTorch, etc.). If the interface is
     supported, pointers can be directly obtained using the
     ``_array_interface_ptr`` function.
+
     :param obj: The given object.
     :return: True iff the object implements the array interface.
     """
-    if hasattr(obj, '__cuda_array_interface__'):
-        # GPU scalars are also arrays
+    try:
+        if hasattr(obj, '__cuda_array_interface__'):
+            return True
+    except RuntimeError:
+        # In PyTorch, accessing this attribute throws a runtime error for variables that require grad
         return True
-    if (hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__')):
+    if hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__'):
         return hasattr(obj, 'shape') and len(obj.shape) > 0
     return False
