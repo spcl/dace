@@ -1707,7 +1707,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
 
         path = self.memlet_path(edge)
 
-        is_read = isinstance(path[0], nd.AccessNode)
+        is_read = isinstance(path[0].src, nd.AccessNode)
         if is_read:
             # Traverse from connector to access node, so we can check if it's
             # safe to delete edges going out of a scope
