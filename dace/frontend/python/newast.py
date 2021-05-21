@@ -250,14 +250,41 @@ class ModuleResolver(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-# Replaces if conditions by their bodies if can be evaluated at compile time
+class RewriteSympyEquality(ast.NodeVisitor):
+    """ 
+    Replaces symbolic equality checks by ``sympy.{Eq,Ne}``. 
+    This is done because a test ``if x == 0`` where ``x`` is a symbol would
+    result in False, even in indeterminate cases.
+    """
+    def __init__(self, globals: Dict[str, Any]) -> None:
+        super().__init__()
+        self.globals = globals
+
+    def visit_Compare(self, node: ast.Compare) -> Any:
+        if len(node.comparators) != 1:
+            return self.generic_visit(node)
+        left = astutils.evalnode(self.visit(node.left), self.globals)
+        right = astutils.evalnode(self.visit(node.comparators[0]), self.globals)
+        if (isinstance(left, sympy.Basic) or isinstance(right, sympy.Basic)):
+            if isinstance(node.ops[0], ast.Eq):
+                return sympy.Eq(left, right)
+            elif isinstance(node.ops[0], ast.NotEq):
+                return sympy.Ne(left, right)
+        return self.generic_visit(node)
+
+
 class ConditionalCodeResolver(ast.NodeTransformer):
+    """ 
+    Replaces if conditions by their bodies if can be evaluated at compile time.
+    """
     def __init__(self, globals: Dict[str, Any]):
+        super().__init__()
         self.globals = globals
 
     def visit_If(self, node: ast.If) -> Any:
         try:
-            result = astutils.evalnode(node.test, self.globals)
+            test = RewriteSympyEquality(self.globals).visit(node.test)
+            result = astutils.evalnode(test, self.globals)
 
             if (result is True
                     or (isinstance(result, sympy.Basic) and result == True)):

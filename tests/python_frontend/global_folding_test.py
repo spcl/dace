@@ -153,9 +153,9 @@ def test_dead_code_elimination_unreachable():
         return 4 * A
 
     parsed_code = _analyze_and_unparse_code(test)
-    assert '6' not in parsed_code and '4' not in parsed_code
-    assert '5' in parsed_code and '1' in parsed_code
-    assert '3' in parsed_code and '2' in parsed_code
+    assert '6' not in parsed_code and '4' not in parsed_code  # Dead code
+    assert '5' in parsed_code and '1' in parsed_code  # Condition
+    assert '3' in parsed_code and '2' in parsed_code  # Reachable code
 
 
 # TODO: dace.constant should signal that argument evaluation is deferred to

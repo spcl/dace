@@ -62,6 +62,8 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     :return: The result of evaluation, or raises ``SyntaxError`` on any
              failure to evaluate.
     """
+    if not isinstance(node, ast.AST):
+        return node
     try:
         return eval(compile(ast.Expression(node), '<string>', mode='eval'),
                     gvars)
