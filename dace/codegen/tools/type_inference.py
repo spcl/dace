@@ -383,7 +383,7 @@ def _Call(t, symbols, inferred_symbols):
 
 def _Subscript(t, symbols, inferred_symbols):
     value_type = _dispatch(t.value, symbols, inferred_symbols)
-    slice_type = _dispatch(t.slice, symbols, inferred_symbols)
+    slice_type = _dispatch(t.slice.value, symbols, inferred_symbols)
 
     if isinstance(slice_type, dtypes.pointer):
         raise SyntaxError('Invalid syntax (pointer given as slice)')
