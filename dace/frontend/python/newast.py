@@ -260,11 +260,11 @@ class ConditionalCodeResolver(ast.NodeTransformer):
             result = astutils.evalnode(node.test, self.globals)
 
             if (result is True
-                    or isinstance(result, sympy.logic.boolalg.BooleanTrue)):
+                    or (isinstance(result, sympy.Basic) and result == True)):
                 # Only return "if" body
                 return node.body
             elif (result is False
-                  or isinstance(result, sympy.logic.boolalg.BooleanFalse)):
+                  or (isinstance(result, sympy.Basic) and result == False)):
                 # Only return "else" body
                 return node.orelse
             # Any other case is indeterminate, fall back to generic visit
