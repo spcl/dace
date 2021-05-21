@@ -250,7 +250,7 @@ class ModuleResolver(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-class RewriteSympyEquality(ast.NodeVisitor):
+class RewriteSympyEquality(ast.NodeTransformer):
     """ 
     Replaces symbolic equality checks by ``sympy.{Eq,Ne}``. 
     This is done because a test ``if x == 0`` where ``x`` is a symbol would
