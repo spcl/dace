@@ -7,11 +7,9 @@ import numpy as np
 import dace
 import dace.dtypes as dtypes
 import ast
-import dace.codegen.targets.sve.inference as infer
+import dace.codegen.targets.sve.infer as infer
 import astunparse
 import collections
-from dace.sdfg import nodes as nd
-from dace.sdfg.sdfg import SDFGState
 
 
 class NotSupportedError(Exception):
@@ -173,7 +171,7 @@ def is_scalar(type: dace.typeclass) -> bool:
 def infer_ast(defined_symbols: collections.OrderedDict, *args) -> tuple:
     """ Returns the inferred types of the arguments, which must be AST nodes, as tuples. """
     return tuple([
-        infer.infer_expr_type(astunparse.unparse(t), defined_symbols)
+        infer.infer_expr_type(t, defined_symbols)
         for t in args
     ])
 
