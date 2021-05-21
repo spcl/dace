@@ -761,12 +761,14 @@ class GlobalResolver(ast.NodeTransformer):
 
     def visit_Call(self, node: ast.Call) -> Any:
         try:
+            global_func = astutils.evalnode(node.func, self.globals)
             global_val = astutils.evalnode(node, self.globals)
         except SyntaxError:
             return self.generic_visit(node)
 
-        # TODO: Without this check, dace dtypes do not serialize well
-        if not isinstance(global_val, dtypes.typeclass):
+        # Without this check, casts don't generate code
+        if (not isinstance(global_val, dtypes.typeclass)
+                and not isinstance(global_func, dtypes.typeclass)):
             newnode = self.global_value_to_node(global_val,
                                                 parent_node=node,
                                                 recurse=True)
