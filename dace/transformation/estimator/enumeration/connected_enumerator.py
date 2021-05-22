@@ -27,6 +27,12 @@ class ConnectedEnumerator(ScoringEnumerator):
     prune = Property(desc="Perform Pruning during Enumeration",
                      default=True,
                      dtype=bool)
+                     
+    mode = Property(desc="Data type the Iterator should return. "
+                         "Choice between Subgraph and List of Map Entries.",
+                    default="map_entries",
+                    choices=["subgraph", "map_entries"],
+                    dtype=str)
 
     def __init__(self,
                  sdfg: SDFG,

@@ -16,7 +16,7 @@ import itertools
 
 
 @make_properties
-class BruteForceEnumerator(Enumerator):
+class BruteForceEnumerator(ScoringEnumerator):
     mode = Property(desc="Data type the Iterator should return. "
                          "Choice between Subgraph and List of Map Entries.",
                     default="map_entries",

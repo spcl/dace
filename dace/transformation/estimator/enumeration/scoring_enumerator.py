@@ -36,9 +36,6 @@ class ScoringEnumerator(Enumerator):
 
         # used to attach a score to each enumerated subgraph
         self._scoring_function = scoring_function
-        if self._condition_function is None and self._scoring_function is not None:
-            warnings.warn('Initialized with no condition function but scoring'
-                          'function. Will try to score all subgraphs!')
 
     def list(self):
         return list(e[0] for e in self.iterator())
