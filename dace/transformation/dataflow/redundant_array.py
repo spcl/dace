@@ -929,6 +929,10 @@ class SqueezeViewRemove(pm.Transformation):
 
         vsqdims = view_subset.squeeze()
 
+        # View may modify the behavior of a library node
+        if strict and isinstance(vedge.dst, nodes.LibraryNode):
+            return False
+
         # Check that subsets are equivalent
         if array_subset != view_subset:
             return False
@@ -1014,6 +1018,10 @@ class UnsqueezeViewRemove(pm.Transformation):
         array_subset = copy.deepcopy(aedge.data.subset)
 
         asqdims = array_subset.squeeze()
+
+        # View may modify the behavior of a library node
+        if strict and isinstance(vedge.src, nodes.LibraryNode):
+            return False
 
         # Check that subsets are equivalent
         if array_subset != view_subset:
