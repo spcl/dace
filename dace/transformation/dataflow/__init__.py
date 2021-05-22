@@ -13,7 +13,6 @@ from .map_fission import MapFission
 from .trivial_map_elimination import TrivialMapElimination
 from .trivial_map_range_elimination import TrivialMapRangeElimination
 
-
 # Data movement
 from .strip_mining import StripMining
 from .tiling import MapTiling
@@ -29,7 +28,8 @@ from .streaming_memory import StreamingMemory, StreamingComposition
 
 # Complexity reduction
 from .dedup_access import DeduplicateAccess
-from .redundant_array import RedundantArray, RedundantSecondArray
+from .redundant_array import (RedundantArray, RedundantSecondArray,
+                              SqueezeViewRemove, UnsqueezeViewRemove)
 from .redundant_array_copying import (RedundantArrayCopyingIn,
                                       RedundantArrayCopying,
                                       RedundantArrayCopying2,
@@ -50,5 +50,4 @@ from .matrix_product_transpose import MatrixProductTranspose
 
 # Distributions
 from .map_distribution import (ElementWiseArrayOperation,
-                               ElementWiseArrayOperation2D,
-                               RedundantComm2D)
+                               ElementWiseArrayOperation2D, RedundantComm2D)
