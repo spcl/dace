@@ -185,7 +185,7 @@ class DaceProgram:
         self._cache: Tuple[ArgTypes, SDFG,
                            compiled_sdfg.CompiledSDFG] = (None, None, None)
 
-    def _auto_optimize(self, sdfg: SDFG, symbols: dict = None) -> SDFG:
+    def _auto_optimize(self, sdfg: SDFG, symbols: Dict[str, int] = None) -> SDFG:
         """ Invoke automatic optimization heuristics on internal program. """
         # Avoid import loop
         from dace.transformation.auto import auto_optimize as autoopt
