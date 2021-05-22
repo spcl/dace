@@ -207,7 +207,7 @@ def configure_and_compile(program_folder,
             f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
     cmake_command = ' '.join(cmake_command)
 
-    cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')        
+    cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
     ##############################################
     # Configure
     try:
