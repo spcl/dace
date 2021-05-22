@@ -1172,7 +1172,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 evaluated = symbolic.symstr(
                     symbolic.evaluate(unparsed, self.constants))
                 node.right = ast.parse(evaluated).body[0].value
-            except TypeError:
+            except (TypeError, AttributeError, NameError, KeyError, ValueError):
                 return self.generic_visit(node)
 
         return self.generic_visit(node)
