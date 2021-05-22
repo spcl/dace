@@ -1,3 +1,4 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This file implements the Enuerator class """
 
 from dace.transformation.subgraph import SubgraphFusion, helpers

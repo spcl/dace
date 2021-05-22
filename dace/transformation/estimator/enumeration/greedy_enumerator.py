@@ -1,3 +1,4 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This file implements the GreedyEnumerator class """
 
 from dace.transformation.estimator.enumeration import Enumerator
