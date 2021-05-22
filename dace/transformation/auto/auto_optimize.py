@@ -7,14 +7,15 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.propagation import propagate_states
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union, List, Iterable
+from typing import Set, Tuple, Union, List, Iterable, Dict
 import warnings
 
 # Transformations
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, MapTiling, DeduplicateAccess
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.subgraph.composite import CompositeFusion
-from dace.transformation.subgraph import helpers, ReduceExpansion, StencilTiling
+from dace.transformation.subgraph import ReduceExpansion, StencilTiling
+from dace.transformation.subgraph import helpers as xfsh
 from dace.transformation import helpers as xfh
 
 # Environments
@@ -22,6 +23,9 @@ from dace.libraries.blas.environments import intel_mkl as mkl, openblas
 
 # Enumerator
 from dace.transformation.estimator.enumeration import GreedyEnumerator
+
+# FPGA AutoOpt
+from dace.transformation.auto import fpga as fpga_aopt
 
 GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
@@ -76,7 +80,6 @@ def greedy_fuse(
         # and apply transformation
         applied_transformations = 0
         reverse = True if tile else False
-        enumerator = GreedyEnumerator(sdfg, graph, subgraph, reverse=reverse)
 
         if tile:
             fusion_condition.allow_tiling = True
@@ -86,11 +89,11 @@ def greedy_fuse(
         else:
             fusion_condition.allow_tiling = False
         
-        condition_function = lambda subgraph: return fusion_condition.can_be_applied(subgraph)
+        condition_function = lambda subgraph: fusion_condition.can_be_applied(subgraph)
         enumerator = GreedyEnumerator(sdfg, graph, subgraph, condition_function = condition_function)
         for map_entries in enumerator:
             if len(map_entries) > 1:
-                current_subgraph = helpers.subgraph_from_maps(
+                current_subgraph = xfsh.subgraph_from_maps(
                     sdfg, graph, map_entries)
                 cf = CompositeFusion(current_subgraph)
                 cf.allow_tiling = fusion_condition.allow_tiling
@@ -161,15 +164,15 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
     sdfg = graph.parent
 
     edges_to_consider: Set[Tuple[gr.MultiConnectorEdge[Memlet],
-                                 nodes.EntryNode]] = set()
+                                 nodes.MapEntry]] = set()
     for edge in graph_or_subgraph.edges():
         if edge.data.wcr is not None:
-            if (isinstance(edge.src, (nodes.ExitNode, nodes.NestedSDFG))
-                    or isinstance(edge.dst, nodes.EntryNode)):
+            if (isinstance(edge.src, (nodes.MapExit, nodes.NestedSDFG))
+                    or isinstance(edge.dst, nodes.MapEntry)):
                 # Do not consider intermediate edges
                 continue
             reason = cpp.is_write_conflicted_with_reason(graph, edge)
-            if reason is None or not isinstance(reason, nodes.EntryNode):
+            if reason is None or not isinstance(reason, nodes.MapEntry):
                 # Do not consider edges that will not generate atomics or
                 # atomics we cannot transform
                 continue
@@ -247,6 +250,11 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
         # Transform all outgoing WCR and stream edges
         mapexit = graph.exit_node(mapentry)
         outer_mapexit = graph.exit_node(outer_mapentry)
+
+        # Tuple of (transformation type, options, pattern)
+        to_apply: Tuple[Union[dataflow.StreamTransient,
+                              dataflow.AccumulateTransient], Dict[str, Any],
+                        Dict[str, nodes.Node]] = None
         for e in graph.out_edges(mapexit):
             if isinstance(sdfg.arrays[e.data.data], dt.Stream):
                 mpath = graph.memlet_path(e)
@@ -254,10 +262,16 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
                 if not isinstance(tasklet, nodes.Tasklet) or len(mpath) != 3:
                     # TODO(later): Implement StreamTransient independently of tasklet
                     continue
-                dataflow.StreamTransient.apply_to(sdfg,
-                                                  tasklet=tasklet,
-                                                  map_exit=mapexit,
-                                                  outer_map_exit=outer_mapexit)
+
+                # Make transient only if there is one WCR/stream
+                if to_apply is not None:
+                    to_apply = None
+                    break
+
+                to_apply = (dataflow.StreamTransient, {},
+                            dict(tasklet=tasklet,
+                                 map_exit=mapexit,
+                                 outer_map_exit=outer_mapexit))
             else:
                 if (e.data.is_empty() or e.data.wcr is None
                         or e.data.wcr_nonatomic
@@ -271,15 +285,21 @@ def tile_wcrs(graph_or_subgraph: GraphViewType,
                 identity = dtypes.reduction_identity(dtype, redtype)
                 if identity is None:  # Cannot infer identity value
                     continue
-                dataflow.AccumulateTransient.apply_to(
-                    sdfg,
-                    options=dict(identity=identity, array=e.data.data),
-                    map_exit=mapexit,
-                    outer_map_exit=outer_mapexit)
+                # Make transient only if there is one WCR/stream
+                if to_apply is not None:
+                    to_apply = None
+                    break
+
+                to_apply = (dataflow.AccumulateTransient,
+                            dict(identity=identity, array=e.data.data),
+                            dict(map_exit=mapexit,
+                                 outer_map_exit=outer_mapexit))
+        if to_apply is not None:
+            xform, opts, pattern = to_apply
+            xform.apply_to(sdfg, options=opts, **pattern)
 
     if debugprint and len(transformed) > 0:
         print(f'Optimized {len(transformed)} write-conflicted maps')
-
 
 def find_fast_library(device: dtypes.DeviceType) -> str:
     # Returns the optimized library node implementations for the given target
