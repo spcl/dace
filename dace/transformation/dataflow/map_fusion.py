@@ -138,8 +138,8 @@ class MapFusion(transformation.Transformation):
         # Create a dict that maps parameters of the first map to those of the
         # second map.
         params_dict = {}
-        for _index, _param in enumerate(first_map_entry.map.params):
-            params_dict[_param] = second_map_entry.map.params[perm[_index]]
+        for _index, _param in enumerate(second_map_entry.map.params):
+            params_dict[_param] = first_map_entry.map.params[perm[_index]]
         # Create intermediate dicts to avoid conflicts, such as {i:j, j:i}
         repldict = {
             symbolic.pystr_to_symbolic(k):
@@ -255,7 +255,7 @@ class MapFusion(transformation.Transformation):
             for a in oacc_permuted:
                 a.replace(repldict)
                 a.replace(repldict_inv)
-            
+
             a = input_accesses[0]
             for b in oacc_permuted:
                 if isinstance(a, subsets.Indices):

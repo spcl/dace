@@ -10,6 +10,8 @@ import dace.libraries.standard as stdlib
 from typing import Union, List
 from util import expand_reduce, expand_maps, fusion
 
+import pytest 
+
 M = dace.symbol('M')
 N = dace.symbol('N')
 N.set(20)
@@ -30,8 +32,9 @@ def reduction_test_3(A: dace.float64[M, N], B: dace.float64[M, N],
 
             out1 = in1 + in2
 
-
-def test_p3(in_transient=False, out_transient=False):
+settings = [[False, False], [True, False], [False, True]]
+@pytest.mark.parametrize(["in_transient", "out_transient"], settings)
+def test_p3(in_transient, out_transient):
     sdfg = reduction_test_3.to_sdfg()
     sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
@@ -63,11 +66,9 @@ def test_p3(in_transient=False, out_transient=False):
     assert np.allclose(C1, C2)
     assert np.allclose(C1, C3)
 
-    print("PASS")
 
 
 if __name__ == "__main__":
-
     test_p3()
     test_p3(in_transient=True)
     test_p3(out_transient=True)

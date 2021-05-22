@@ -102,7 +102,6 @@ def test_p1():
     del csdfg
 
     assert np.allclose(A1, A2)
-    print("PASS")
 
 
 def test_p2():
@@ -114,7 +113,6 @@ def test_p2():
     subgraph = SubgraphView(state, state.nodes())
     sf = SubgraphFusion(subgraph)
     assert not sf.can_be_applied(sdfg, subgraph)
-    print("PASS")
 
 
 def test_p3():
@@ -126,7 +124,6 @@ def test_p3():
     subgraph = SubgraphView(state, state.nodes())
     sf = SubgraphFusion(subgraph)
     assert not sf.can_be_applied(sdfg, subgraph)
-    print("PASS")
 
 
 if __name__ == "__main__":

@@ -2214,9 +2214,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     node.sdfg.expand_library_nodes()  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
                     impl_name = node.expand(self, state)
-                    print(
-                        "Automatically expanded library node \"{}\" with implementation \"{}\"."
-                        .format(str(node), impl_name))
+                    if Config.get_bool('debugprint'):
+                        print('Automatically expanded library node \"{}\" with '
+                              'implementation \"{}\".'.format(
+                                  str(node), impl_name))
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
                     if recursive:

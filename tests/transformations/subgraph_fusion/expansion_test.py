@@ -69,7 +69,7 @@ def run(sdfg, graph, kwargs):
     del csdfg
 
 
-def _test_expansion2():
+def test_expansion2():
     sdfg = expansion2.to_sdfg()
     graph = sdfg.nodes()[0]
     kwargs = {
@@ -97,10 +97,8 @@ def _test_expansion2():
     assert np.allclose(out1, out3)
     assert np.allclose(out2, out4)
 
-    print("Test 2: PASS")
 
-
-def _test_expansion1():
+def test_expansion1():
     sdfg = expansion1.to_sdfg()
     graph = sdfg.nodes()[0]
     kwargs = {
@@ -121,13 +119,8 @@ def _test_expansion1():
 
     assert np.linalg.norm(out1) > 0.01
     assert np.allclose(out1, out2)
-    print("Test 1: PASS")
-
-
-def test_expansion():
-    _test_expansion1()
-    _test_expansion2()
 
 
 if __name__ == "__main__":
-    test_expansion()
+    test_expansion1()
+    test_expansion2()

@@ -12,6 +12,10 @@ from dace.memlet import Memlet
 
 
 def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
+    '''
+    :param sdfg_name: Name of the created SDFG
+    :param dtype:
+    '''
     vecWidth = 4
     n = dace.symbol("size")
     vecAdd_sdfg = dace.SDFG(sdfg_name)
@@ -127,11 +131,11 @@ def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
     return vecAdd_sdfg
 
 
-def make_nested_sdfg_fpga():
+def make_nested_sdfg_fpga(unique_names):
     '''
     Build an SDFG with two nested SDFGs, each one a different state
+    :param unique_names use unique names for all the Nested SDFGs
     '''
-
     n = dace.symbol("n")
     m = dace.symbol("m")
 
@@ -141,7 +145,8 @@ def make_nested_sdfg_fpga():
     # build the first axpy: works with x,y, and z of n-elements
 
     # ATTENTION: this two nested SDFG must have the same name as they are equal
-    to_nest = make_vecAdd_sdfg("vecAdd")
+    sdfg_name = "vecAdd"
+    to_nest = make_vecAdd_sdfg(sdfg_name)
 
     sdfg.add_array("x", [n], dace.float32)
     sdfg.add_array("y", [n], dace.float32)
@@ -153,6 +158,9 @@ def make_nested_sdfg_fpga():
     # add nested sdfg with symbol mapping
     nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"},
                                         {"size": "n"})
+
+    if unique_names:
+        nested_sdfg.unique_name = sdfg_name
 
     state.add_memlet_path(x,
                           nested_sdfg,
@@ -171,7 +179,7 @@ def make_nested_sdfg_fpga():
 
     state2 = sdfg.add_state("state2")
 
-    to_nest = make_vecAdd_sdfg("vecAdd")
+    to_nest = make_vecAdd_sdfg(sdfg_name)
 
     sdfg.add_array("v", [m], dace.float32)
     sdfg.add_array("w", [m], dace.float32)
@@ -182,6 +190,9 @@ def make_nested_sdfg_fpga():
 
     nested_sdfg = state2.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"},
                                          {"size": "m"})
+
+    if unique_names:
+        nested_sdfg.unique_name = sdfg_name
 
     state2.add_memlet_path(v,
                            nested_sdfg,
@@ -212,29 +223,57 @@ if __name__ == "__main__":
 
     size_n = args["N"]
     size_m = args["M"]
-    sdfg = make_nested_sdfg_fpga()
-
-    two_axpy = sdfg.compile()
 
     x = np.random.rand(size_n).astype(np.float32)
     y = np.random.rand(size_n).astype(np.float32)
-    z = np.random.rand(size_n).astype(np.float32)
+    z_hash = np.random.rand(size_n).astype(np.float32)
+    z_u_name = np.random.rand(size_n).astype(np.float32)
 
     v = np.random.rand(size_m).astype(np.float32)
     w = np.random.rand(size_m).astype(np.float32)
-    u = np.random.rand(size_m).astype(np.float32)
-
-    two_axpy(x=x, y=y, z=z, v=v, w=w, u=u, n=size_n, m=size_m)
+    u_hash = np.random.rand(size_m).astype(np.float32)
+    u_u_name = np.random.rand(size_m).astype(np.float32)
 
     ref1 = np.add(x, y)
     ref2 = np.add(v, w)
 
-    diff1 = np.linalg.norm(ref1 - z) / size_n
-    diff2 = np.linalg.norm(ref2 - u) / size_m
+    # Hash based detection of equivalent SDFGs
+    two_axpy_hash = make_nested_sdfg_fpga(False)
+    with dace.config.set_temporary('compiler', 'unique_functions',
+                                   value='hash'):
+        two_axpy_hash(x=x,
+                      y=y,
+                      z=z_hash,
+                      v=v,
+                      w=w,
+                      u=u_hash,
+                      n=size_n,
+                      m=size_m)
+
+    diff1 = np.linalg.norm(ref1 - z_hash) / size_n
+    diff2 = np.linalg.norm(ref2 - u_hash) / size_m
     if diff1 <= 1e-5 and diff2 <= 1e-5:
         print("==== Program end ====")
     else:
         raise Exception("==== Program Error! ====")
 
-    # There is no need to check that the Nested SDFG has been generated only once. If this is not the case
-    # the test will fail while compiling
+    # Unique_name based detection of equivalent SDFGs
+    two_axpy_u_name = make_nested_sdfg_fpga(True)
+    with dace.config.set_temporary('compiler',
+                                   'unique_functions',
+                                   value='unique_name'):
+        two_axpy_u_name(x=x,
+                        y=y,
+                        z=z_u_name,
+                        v=v,
+                        w=w,
+                        u=u_u_name,
+                        n=size_n,
+                        m=size_m)
+
+    diff1 = np.linalg.norm(ref1 - z_u_name) / size_n
+    diff2 = np.linalg.norm(ref2 - u_u_name) / size_m
+    if diff1 <= 1e-5 and diff2 <= 1e-5:
+        print("==== Program end ====")
+    else:
+        raise Exception("==== Program Error! ====")
