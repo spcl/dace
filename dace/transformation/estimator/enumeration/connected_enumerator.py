@@ -15,6 +15,7 @@ from collections import deque, defaultdict, ChainMap
 from typing import Set, Union, List, Callable
 import itertools
 
+
 @make_properties
 class ConnectedEnumerator(ScoringEnumerator):
     '''
@@ -39,8 +40,7 @@ class ConnectedEnumerator(ScoringEnumerator):
                          scoring_function)
 
         self.calculate_topology(subgraph)
-       
-        
+
     def traverse(self, current: List, forbidden: Set):
         if len(current) > 0:
             # get current subgraph we are inspecting
@@ -61,13 +61,12 @@ class ConnectedEnumerator(ScoringEnumerator):
 
             go_next = list()
             if conditional_eval or self.prune == False or len(current) == 1:
-                go_next = list(set(m for c in current
-                                   for m in self._adjacency_list[c]
-                                   if m not in current and m not in forbidden))
+                go_next = list(
+                    set(m for c in current for m in self._adjacency_list[c]
+                        if m not in current and m not in forbidden))
 
                 # for determinism and correctness during pruning
-                go_next.sort(key = lambda me: self._labels[me])
-             
+                go_next.sort(key=lambda me: self._labels[me])
 
             # yield element if condition is True
             if conditional_eval:
@@ -78,8 +77,8 @@ class ConnectedEnumerator(ScoringEnumerator):
         else:
             # special case at very beginning: explore every node
             go_next = list(set(m for m in self._adjacency_list.keys()))
-            go_next.sort(key = lambda me: self._labels[me])
-            
+            go_next.sort(key=lambda me: self._labels[me])
+
         if len(go_next) > 0:
             # recurse further
             forbidden_current = set()
@@ -89,7 +88,6 @@ class ConnectedEnumerator(ScoringEnumerator):
                 current.pop()
                 forbidden_current.add(child)
 
-       
     def iterator(self):
         '''
         returns an iterator that iterates over

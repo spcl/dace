@@ -22,6 +22,7 @@ class BruteForceEnumerator(Enumerator):
                     default="map_entries",
                     choices=["subgraph", "map_entries"],
                     dtype=str)
+
     def __init__(self,
                  sdfg: SDFG,
                  graph: SDFGState,
@@ -35,7 +36,6 @@ class BruteForceEnumerator(Enumerator):
                          condition_function=condition_function,
                          scoring_function=scoring_function)
 
-    
     def brute_force(self):
         for i in range(1, len(self._map_entries) + 1):
             for sg in itertools.combinations(self._map_entries, i):
@@ -63,8 +63,9 @@ class BruteForceEnumerator(Enumerator):
                 # yield element if condition is True
                 if conditional_eval:
                     self._histogram[len(sg)] += 1
-                    yield (tuple(sg), score) if self.mode == 'map_entries' else (
-                        current_subgraph, score)
+                    yield (tuple(sg),
+                           score) if self.mode == 'map_entries' else (
+                               current_subgraph, score)
 
     def iterator(self):
         self._histogram = defaultdict(int)
