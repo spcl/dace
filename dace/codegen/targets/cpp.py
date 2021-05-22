@@ -1164,6 +1164,19 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         # Do not parse internal functions
         return None
 
+    def visit_BinOp(self, node: ast.BinOp):
+        # Special case for integer powers
+        if isinstance(node.op, ast.Pow):
+            try:
+                unparsed = symbolic.pystr_to_symbolic(unparse(node.right))
+                evaluated = symbolic.symstr(
+                    symbolic.evaluate(unparsed, self.constants))
+                node.right = ast.parse(evaluated).body[0].value
+            except TypeError:
+                return self.generic_visit(node)
+
+        return self.generic_visit(node)
+
     # Replace default modules (e.g., math) with dace::math::
     def visit_Attribute(self, node):
         attrname = rname(node)
