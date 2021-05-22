@@ -306,13 +306,18 @@ def find_fast_library(device: dtypes.DeviceType) -> str:
     # device
     if device is dtypes.DeviceType.GPU:
         return ['cuBLAS', 'CUB', 'pure']
+    elif device is dtypes.DeviceType.FPGA:
+        return [
+            'FPGA_PartialSums', 'FPGAPartialReduction', 'FPGA_Accumulate',
+            'FPGA1DSystolic', 'pure'
+        ]
     elif device is dtypes.DeviceType.CPU:
         result = []
 
         # BLAS calls
         if mkl.IntelMKL.is_installed():
             result.append('MKL')
-        elif openblas.OpenBLAS.is_installed():
+        if openblas.OpenBLAS.is_installed():
             result.append('OpenBLAS')
 
         return result + ['pure']
