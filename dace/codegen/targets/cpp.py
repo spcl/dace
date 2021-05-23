@@ -804,6 +804,9 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
         )
         function_stream.write("\n", sdfg, state_id, node)
 
+    # add node state_fields to the statestruct
+    codegen._frame.statestruct.extend(node.state_fields)
+
     # If raw C++ code, return the code directly
     if node.language != dtypes.Language.Python:
         # If this code runs on the host and is associated with a GPU stream,

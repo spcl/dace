@@ -328,6 +328,7 @@ class Tasklet(CodeNode):
     """
 
     code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
+    state_fields = ListProperty(element_type=str, desc="Fields that are added to the global state")
     code_global = CodeProperty(
         desc="Global scope code needed for tasklet execution",
         default=CodeBlock("", dtypes.Language.CPP))
@@ -349,6 +350,7 @@ class Tasklet(CodeNode):
                  outputs=None,
                  code="",
                  language=dtypes.Language.Python,
+                 state_fields=None,
                  code_global="",
                  code_init="",
                  code_exit="",
@@ -358,6 +360,7 @@ class Tasklet(CodeNode):
 
         self.code = CodeBlock(code, language)
 
+        self.state_fields = state_fields or []
         self.code_global = CodeBlock(code_global, dtypes.Language.CPP)
         self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
         self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
