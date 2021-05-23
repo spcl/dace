@@ -2,6 +2,7 @@
 """ Automatic optimization routines for SDFGs. """
 
 import dace
+import sympy
 from dace.sdfg.state import SDFGState
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.propagation import propagate_states
@@ -507,9 +508,10 @@ def auto_optimize(sdfg: SDFG,
 
     # Strict transformations and loop parallelization
     transformed = True
+    sdfg.apply_transformations_repeated(TrivialMapElimination,
+                                        validate=validate,
+                                        validate_all=validate_all)
     while transformed:
-        sdfg.apply_strict_transformations(validate=False,
-                                          validate_all=validate_all)
 
         xfh.split_interstate_edges(sdfg)
 
@@ -529,9 +531,6 @@ def auto_optimize(sdfg: SDFG,
                                         validate=False,
                                         validate_all=validate_all)
 
-    sdfg.apply_transformations_repeated(TrivialMapElimination,
-                                        validate=validate,
-                                        validate_all=validate_all)
         
     # Apply GPU transformations and set library node implementations
     
@@ -541,6 +540,8 @@ def auto_optimize(sdfg: SDFG,
 
 
     # fuse subgraphs greedily
+    sdfg.apply_strict_transformations()
+
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
 
     # fuse stencils greedily
@@ -549,7 +550,7 @@ def auto_optimize(sdfg: SDFG,
                 validate_all=validate_all,
                 recursive=False,
                 stencil=True)
-
+    
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations
         sdfg.apply_fpga_transformations()
@@ -574,7 +575,7 @@ def auto_optimize(sdfg: SDFG,
         if isinstance(node, nodes.MapEntry):
             node.map.collapse = len(node.map.range) 
             pass
-
+    
     # Set all library nodes to expand to fast library calls
     set_fast_implementations(sdfg, device)
 
@@ -585,6 +586,7 @@ def auto_optimize(sdfg: SDFG,
     # Disable OpenMP parallel sections on a per-SDFG basis
     for nsdfg in sdfg.all_sdfgs_recursive():
         nsdfg.openmp_sections = False
+    
 
     if symbols:
         # Specialize for all known symbols
@@ -592,16 +594,28 @@ def auto_optimize(sdfg: SDFG,
             s: v
             for (s, v) in symbols.items() if s in sdfg.free_symbols
         }
+        known_symbols = {}
+        for (s, v) in symbols.items():
+            if s in sdfg.free_symbols:
+                if isinstance(v, (int, float)):
+                    known_symbols[s] = v 
+                if isinstance(v, sympy.core.numbers.Integer):
+                    try:
+                        known_symbols[s] = int(v) 
+                    except TypeError:
+                        pass 
+
         if debugprint and len(known_symbols) > 0:
             print("Specializing the SDFG for symbols", known_symbols)
         sdfg.specialize(known_symbols)
+
 
     # Set all Default storage types that are constant sized to registers
     move_small_arrays_to_stack(sdfg)
 
     # Fix storage and allocation properties, e.g., for benchmarking purposes 
-    fix_storage_properties(sdfg, device) 
-    
+    # TODO @Tal, leave this out? Improves performance in NPBench, but some tests fail
+    #fix_storage_properties(sdfg, device) 
 
     # Validate at the end
     if validate or validate_all:
