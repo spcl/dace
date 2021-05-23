@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This file implements the BruteForceEnumerator class """
 
-from dace.transformation.estimator.enumeration import Enumerator
+from dace.transformation.estimator.enumeration import MapScoringEnumerator
 
 from dace.transformation.subgraph import SubgraphFusion, helpers
 from dace.properties import make_properties, Property
@@ -16,12 +16,7 @@ import itertools
 
 
 @make_properties
-class BruteForceEnumerator(ScoringEnumerator):
-    mode = Property(desc="Data type the Iterator should return. "
-                         "Choice between Subgraph and List of Map Entries.",
-                    default="map_entries",
-                    choices=["subgraph", "map_entries"],
-                    dtype=str)
+class BruteForceEnumerator(MapScoringEnumerator):
 
     def __init__(self,
                  sdfg: SDFG,

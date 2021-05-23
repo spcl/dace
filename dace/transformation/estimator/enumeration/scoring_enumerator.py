@@ -16,7 +16,7 @@ import warnings
 
 
 @make_properties
-class ScoringEnumerator(Enumerator):
+class MapScoringEnumerator(Enumerator):
     '''
     Abstract Enumerator class that is used by enumerators 
     which rely on a scoring function 

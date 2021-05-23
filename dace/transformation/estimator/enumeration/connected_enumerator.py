@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This file implements the ConnectedEnumerator class """
 
-from dace.transformation.estimator.enumeration import Enumerator, ScoringEnumerator
+from dace.transformation.estimator.enumeration import MapScoringEnumerator
 
 from dace.transformation.subgraph import SubgraphFusion, helpers
 from dace.properties import make_properties, Property
@@ -16,7 +16,7 @@ import itertools
 
 
 @make_properties
-class ConnectedEnumerator(ScoringEnumerator):
+class ConnectedEnumerator(MapScoringEnumerator):
     '''
     Enumerates all fusible subgraphs based on their outermost scoped maps.
     If maps are neighbors, meaning that they access common (access) data nodes,
@@ -27,11 +27,6 @@ class ConnectedEnumerator(ScoringEnumerator):
                      default=True,
                      dtype=bool)
                      
-    mode = Property(desc="Data type the Iterator should return. "
-                         "Choice between Subgraph and List of Map Entries.",
-                    default="map_entries",
-                    choices=["subgraph", "map_entries"],
-                    dtype=str)
 
     def __init__(self,
                  sdfg: SDFG,
