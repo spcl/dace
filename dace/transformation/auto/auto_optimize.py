@@ -401,15 +401,13 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
 
 def set_fast_implementations(sdfg: SDFG,
                              device: dtypes.DeviceType,
-                             blocklist: List[str] = None,
-                             ignore_types: Iterable[type] = None):
+                             blocklist: List[str] = None):
     """
     Set fast library node implementations for the given device
 
     :param sdfg: The SDFG to optimize.
     :param device: the device to optimize for.
     :param blocklist: list of disallowed implementations.
-    :param ignore_types: list of library node types to ignore
     :note: Operates in-place on the given SDFG.
     """
     if blocklist is None:
@@ -432,7 +430,7 @@ def set_fast_implementations(sdfg: SDFG,
     # general nodes 
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node,
-                      nodes.LibraryNode) and type(node) not in ignore_types:
+                      nodes.LibraryNode):
             for impl in implementation_prio:
                 if impl in node.implementations:
                     node.implementation = impl
