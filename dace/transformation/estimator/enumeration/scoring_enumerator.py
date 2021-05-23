@@ -6,7 +6,6 @@ from dace.properties import make_properties, Property
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
 
-from dace.transformation.estimator import ScoringFunction
 from dace.transformation.estimator.enumeration import Enumerator
 import dace.sdfg.nodes as nodes
 

@@ -1,8 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This file implements the ConnectedEnumerator class """
 
-from dace.transformation.estimator.enumeration import Enumerator
-from dace.transformation.estimator.enumeration import ScoringEnumerator
+from dace.transformation.estimator.enumeration import Enumerator, ScoringEnumerator
 
 from dace.transformation.subgraph import SubgraphFusion, helpers
 from dace.properties import make_properties, Property

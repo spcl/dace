@@ -6,7 +6,6 @@ from dace.properties import make_properties, Property
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
 
-from dace.transformation.estimator import ScoringFunction
 import dace.sdfg.nodes as nodes
 
 from collections import deque, defaultdict, ChainMap
