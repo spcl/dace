@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Automatic optimization routines for SDFGs. """
 
-from math import perm
 import dace
 from dace.sdfg.state import SDFGState
 from dace.sdfg.graph import SubgraphView
@@ -610,4 +609,4 @@ def auto_optimize(sdfg: SDFG,
     if validate or validate_all:
         sdfg.validate()
 
-    return sdfg
+    return sdfg 
