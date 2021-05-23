@@ -37,6 +37,9 @@ class WarpTiling(xf.Transformation):
                        sdfg: SDFG, strict) -> bool:
         me: nodes.MapEntry = self.mapentry(sdfg)
 
+        if len(xfh.get_internal_scopes(graph, me, immediate=True)) == 0:
+            return False
+
         # GPU map that has no predefined thread-block maps
         return (me.schedule == dtypes.ScheduleType.GPU_Device
                 and not xfh.gpu_map_has_explicit_threadblocks(graph, me))
@@ -110,6 +113,13 @@ class WarpTiling(xf.Transformation):
 
             # If has WCR, add warp-collaborative reduction on outputs
             for out_edge in nstate.out_edges(inner_map_exit):
+                dst = nstate.memlet_path(out_edge)[-1].dst
+                if not xfh.contained_in(nstate, dst, new_me):
+                    # Skip edges going out of map
+                    continue
+                if dst.desc(nsdfg).storage == dtypes.StorageType.GPU_Global:
+                    # Skip shared memory
+                    continue
                 if out_edge.data.wcr is not None:
                     ctype = nsdfg.arrays[out_edge.data.data].dtype.ctype
                     redtype = detect_reduction_type(out_edge.data.wcr)
@@ -118,25 +128,27 @@ class WarpTiling(xf.Transformation):
                     credtype = ('dace::ReductionType::' +
                                 str(redtype)[str(redtype).find('.') + 1:])
 
-                    # Add local access between thread-locan and warp reduction
-                    newnode = nstate.add_access(out_edge.data.data)
-                    nstate.remove_edge(out_edge)
-                    nstate.add_edge(out_edge.src, out_edge.src_conn, newnode,
-                                    None, copy.deepcopy(out_edge.data))
-
                     if out_edge.data.subset.num_elements(
                     ) == 1:  # One element: tasklet
+                        # Add local access between thread-local and warp reduction
+                        newnode = nstate.add_access(out_edge.data.data)
+                        nstate.remove_edge(out_edge)
+                        nstate.add_edge(out_edge.src, out_edge.src_conn, newnode,
+                                        None, copy.deepcopy(out_edge.data))
+
                         wrt = nstate.add_tasklet(
                             'warpreduce', {'__a'}, {'__out'},
                             f'__out = dace::warpReduce<{credtype}, {ctype}>::reduce(__a);',
                             dtypes.Language.CPP)
-                        nstate.add_edge(newnode, None, wrt, '__a',
-                                        Memlet(out_edge.data.data))
                         out_edge.data.wcr = None
+                        nstate.add_edge(newnode, None, wrt, '__a',
+                                        copy.deepcopy(out_edge.data))
                         nstate.add_edge(wrt, '__out', out_edge.dst, None,
                                         out_edge.data)
                     else:  # More than one element: mapped tasklet
-                        raise NotImplementedError
+                        # Could be a parallel summation
+                        # TODO(later): Check if reduction
+                        continue
             # End of WCR to warp reduction
 
         # Make nested SDFG out of new scope

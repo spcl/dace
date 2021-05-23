@@ -671,7 +671,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         self._nodes[node] = (OrderedDict(), OrderedDict())
         self._nx.add_node(node)
 
-    def add_edge(self, src: NodeT, dst: NodeT, data: EdgeT):
+    def add_edge(self, src: NodeT, dst: NodeT, data: EdgeT = None):
         t = (src, dst)
         if t in self._edges:
             raise RuntimeError("Duplicate edge added")
