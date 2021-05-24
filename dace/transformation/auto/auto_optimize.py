@@ -448,7 +448,7 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     - Makes non-view array lifetimes persistent, with some 
       restrictions depending on the device 
     - Reset nonatomic WCR edges on GPU 
-    :param sdfg: SFDG
+    :param sdfg: SDFG
     :param device: Device type
     '''
     for nsdfg in sdfg.all_sdfgs_recursive():
