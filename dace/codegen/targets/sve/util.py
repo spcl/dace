@@ -10,7 +10,7 @@ import ast
 import dace.codegen.targets.sve.infer as infer
 import astunparse
 import collections
-
+import itertools
 
 class NotSupportedError(Exception):
     def __init__(self, message):
@@ -97,8 +97,21 @@ TYPE_TO_SVE_SUFFIX = {
     np.uint64: 'u64',
     np.float16: 'f16',
     np.float32: 'f32',
-    np.float64: 'f64'
+    np.float64: 'f64',
+    dace.int8: 's8',
+    dace.int16: 's16',
+    dace.int32: 's32',
+    dace.int64: 's64',
+    dace.uint8: 'u8',
+    dace.uint16: 'u16',
+    dace.uint32: 'u32',
+    dace.uint64: 'u64',
+    dace.float16: 'f16',
+    dace.float32: 'f32',
+    dace.float64: 'f64'
 }
+
+SVE_SUFFIX_TO_TYPE = dict((v, k) for k, v in TYPE_TO_SVE_SUFFIX.items())
 
 TYPE_TO_SVE = {
     int: 'svint32_t',
@@ -128,8 +141,8 @@ TYPE_TO_SVE = {
 }
 
 REDUCTION_TYPE_TO_SVE = {
-    dace.dtypes.ReductionType.Sum:
-    'svaddv',  # Note: tree-based reduction for FP
+    # Note: tree-based reduction for FP
+    dace.dtypes.ReductionType.Sum: 'svaddv',
     dace.dtypes.ReductionType.Max: 'svmaxv',
     dace.dtypes.ReductionType.Min: 'svminv'
 }
@@ -142,12 +155,29 @@ MATH_FUNCTION_TO_SVE = {
 }
 
 FUSED_OPERATION_TO_SVE = {
-    '__sve_mad': 'svmad',
-    '__sve_mla': 'svmla',
-    '__sve_msb': 'svmsb',
-    '__sve_mls': 'svmls'
+    '__svmad': 'svmad',
+    '__svmla': 'svmla',
+    '__svmsb': 'svmsb',
+    '__svmls': 'svmls'
 }
 
+def get_internal_symbols() -> dict:
+    res = {}
+    for func, type in itertools.product(FUSED_OPERATION_TO_SVE, TYPE_TO_SVE_SUFFIX):
+        res[f'{func}_{TYPE_TO_SVE_SUFFIX[type]}'] = dtypes.vector(type if isinstance(type, dtypes.typeclass) else dtypes.typeclass(type), -1)
+    return res
+
+def is_sve_internal(name: str) -> bool:
+    return name.startswith('__sv')
+
+def internal_to_external(name: str) -> tuple:
+    und = name.rfind('_')
+    meth = name[:und]
+    ext = name[und + 1:]
+    if meth not in FUSED_OPERATION_TO_SVE:
+        raise NotSupportedError('Unknown internal function')
+    return (FUSED_OPERATION_TO_SVE[meth] + '_' + ext, SVE_SUFFIX_TO_TYPE[ext])
+    
 
 def get_base_type(type: dace.typeclass) -> dace.typeclass:
     """ Returns the underlying type for any dtype. """
@@ -160,12 +190,11 @@ def get_base_type(type: dace.typeclass) -> dace.typeclass:
 
 
 def is_vector(type: dace.typeclass) -> bool:
-    # A pointer can also treated as a vector, because it points to vectorizable data.
-    return isinstance(type, (dace.dtypes.vector, dace.dtypes.pointer))
+    return isinstance(type, dtypes.vector)
 
 
 def is_scalar(type: dace.typeclass) -> bool:
-    return not is_vector(type)
+    return not isinstance(type, (dtypes.vector, dtypes.pointer))
 
 
 def infer_ast(defined_symbols: collections.OrderedDict, *args) -> tuple:
