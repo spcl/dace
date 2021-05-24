@@ -11,6 +11,7 @@ from dace.symbolic import SymExpr
 from dace.symbolic import symstr
 import sympy
 import sys
+import astunparse
 
 def infer_expr_type(ast, symbols=None):
     symbols = symbols or {}
@@ -37,15 +38,26 @@ def _dispatch(tree, symbols, inferred_symbols):
 
         return meth(tree, symbols, inferred_symbols)
 
+def _IfExp(t, symbols, inferred_symbols):
+    type_test = _dispatch(t.test, symbols, inferred_symbols)
+    type_body = _dispatch(t.body, symbols, inferred_symbols)
+    type_orelse = _dispatch(t.orelse, symbols, inferred_symbols)
+    res_type = dtypes.result_type_of(type_body, type_orelse)
+    if isinstance(type_test, dtypes.vector) and not isinstance(res_type, dtypes.vector):
+        res_type = dtypes.vector(res_type, -1)
+    return res_type
+
+"""
 def _Call(t, symbols, inferred_symbols):
-    # The only permitted calls in SVE are for math functions.
-    # Since the math functions are independent of the data type (can accept a lot of different types),
-    # as the result type of the call, we return the resulting type of all arguments.
-    # FIXME: Ensure that it is passed some float?
-    inf_type = _dispatch(t.func, symbols, inferred_symbols)
+    func_type = _dispatch(t.func, symbols, inferred_symbols)
+    if func_type:
+        return func_type
+
     arg_types = []
+    print(astunparse.unparse(t.func))
     for e in t.args:
         arg_types.append(_dispatch(e, symbols, inferred_symbols))
     for e in t.keywords:
         _dispatch(e, symbols, inferred_symbols)
-    return inf_type or dtypes.result_type_of(arg_types[0], *arg_types)
+    return func_type or dtypes.result_type_of(arg_types[0], *arg_types)
+"""
