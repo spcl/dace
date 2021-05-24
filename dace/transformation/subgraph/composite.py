@@ -41,11 +41,14 @@ class CompositeFusion(transformation.SubgraphTransformation):
         desc="Storage Location to push transients to that are "
              "fully contained within the subgraph.",
         dtype=dtypes.StorageType,
+        choices=dtypes.StorageType, 
+        from_string=lambda x: dtypes.StorageType[x],
         default=dtypes.StorageType.Default)
 
     schedule_innermaps = Property(desc="Schedule of inner fused maps",
                                   dtype=dtypes.ScheduleType,
-                                  default=dtypes.ScheduleType.Default)
+                                  default=None,  
+                                  allow_none=True)
 
     stencil_unroll_loops = Property(desc="Unroll inner stencil loops if they have size > 1",
                                     dtype=bool,
