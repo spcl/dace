@@ -826,6 +826,20 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_NegativeInfinity(self, expr):
         return '-INFINITY'
 
+    def _print_Pow(self, expr):
+        base = self._print(expr.args[0])
+        exponent = self._print(expr.args[1])
+        try:
+            int_exp = int(exponent)
+            assert(int_exp > 0)
+            res = "({})".format(base)
+            for _ in range(1, int_exp):
+                res += "*{}".format(base)
+            return res
+        except ValueError:
+            return "dace::math::pow({f}, {s})".format(
+                f=self._print(expr.args[0]), s=self._print(expr.args[1]))
+
 
 def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
     """ 

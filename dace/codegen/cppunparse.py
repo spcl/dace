@@ -553,7 +553,7 @@ class CPPUnparser:
         if value is True or value is False or value is None:
             self.write(_py2c_nameconst[value])
         else:
-            if isinstance(value, Number):
+            if isinstance(value, (Number, np.bool_)):
                 self._Num(t)
             elif isinstance(value, tuple):
                 self.write("(")
@@ -948,7 +948,7 @@ class CPPUnparser:
                 and isinstance(t.value.n, int)):
             self.write(" ")
         if (isinstance(t.value, ast.Name)
-                and t.value.id in ("dace::math", "dace::cmath")):
+                and t.value.id in ('dace', 'dace::math', 'dace::cmath')):
             self.write("::")
         else:
             self.write(".")

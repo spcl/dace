@@ -2,24 +2,25 @@
 from __future__ import print_function
 
 import dace
+from dace.frontend.python.parser import DaceProgram
 from dace.codegen.exceptions import CompilationError
 import numpy as np
 
 
 # Dynamically creates DaCe programs with the same name
-def program_generator(size, factor):
+def program_generator(size: int, factor: float) -> DaceProgram:
     @dace.program(dace.float64[size],
                   dace.float64[size],
                   size=size,
                   factor=factor)
-    def program(input, output):
+    def lib_reuse(input, output):
         @dace.map(_[0:size])
         def tasklet(i):
             a << input[i]
             b >> output[i]
             b = a * factor
 
-    return program
+    return lib_reuse
 
 
 def test_reload():

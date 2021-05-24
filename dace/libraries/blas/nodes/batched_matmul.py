@@ -164,6 +164,14 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
 
 
 @dace.library.expansion
+class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
+    environments = [environments.openblas.OpenBLAS]
+
+    @staticmethod
+    def expansion(*args, **kwargs):
+        return ExpandBatchedMatMulMKL.expansion(*args, **kwargs)
+
+@dace.library.expansion
 class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
 
     environments = [environments.cublas.cuBLAS]
@@ -298,6 +306,7 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "pure": ExpandBatchedMatMulPure,
         "MKL": ExpandBatchedMatMulMKL,
+        "OpenBLAS": ExpandBatchedMatMulOpenBLAS,
         "cuBLAS": ExpandBatchedMatMulCuBLAS
     }
     default_implementation = None

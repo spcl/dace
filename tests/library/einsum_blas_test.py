@@ -28,7 +28,10 @@ def test_change_default():
 
 
 def assert_used_environment(sdfg, impl):
-    implementation_to_env = {"MKL": "IntelMKL", "cuBLAS": "cuBLAS"}
+    implementation_to_env = {
+        "MKL": blas.environments.IntelMKL.full_class_path(),
+        "cuBLAS": blas.environments.cuBLAS.full_class_path()
+    }
     all_tasklets = (n for n, _ in sdfg.all_nodes_recursive()
                     if isinstance(n, dace.nodes.Tasklet))
     environments = {env for n in all_tasklets for env in n.environments}
@@ -99,7 +102,7 @@ def test_3x2(impl):
         C = np.zeros(C_desc.shape).astype(np.float32)
 
         sdfg: dace.SDFG = test_3x2.to_sdfg()
-        sdfg.name = impl + "_einsum_simple"
+        sdfg.name = impl + "_einsum_3x2"
         if impl == "cuBLAS":
             sdfg.apply_gpu_transformations()
         sdfg.expand_library_nodes()
@@ -126,7 +129,7 @@ def test_4x4(impl):
         C = np.zeros(C_desc.shape).astype(np.float32)
 
         sdfg: dace.SDFG = test_4x4.to_sdfg()
-        sdfg.name = impl + "_einsum_simple"
+        sdfg.name = impl + "_einsum_4x4"
         if impl == "cuBLAS":
             sdfg.apply_gpu_transformations()
         sdfg.expand_library_nodes()

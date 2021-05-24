@@ -44,7 +44,7 @@ def expand_reduce(sdfg: dace.SDFG,
             trafo_reduce.expand(sdfg, graph, reduce_node)
             if isinstance(sg, SubgraphView):
                 sg.nodes().remove(reduce_node)
-                sg.nodes().append(trafo_reduce._new_reduce)
+                sg.nodes().append(trafo_reduce._reduce)
                 sg.nodes().append(trafo_reduce._outer_entry)
 
 
@@ -88,7 +88,6 @@ def fusion(sdfg: dace.SDFG,
                 sg.nodes().remove(map_entry)
                 if graph.exit_node(map_entry) in sg.nodes():
                     sg.nodes().remove(graph.exit_node(map_entry))
-        print(f"Subgraph Fusion on map entries {map_entries}")
         map_fusion.fuse(sdfg, graph, map_entries)
         if isinstance(sg, SubgraphView):
             sg.nodes().append(map_fusion._global_map_entry)

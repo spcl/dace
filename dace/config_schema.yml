@@ -205,12 +205,18 @@ required:
                     will crash if this is not the case.
 
             unique_functions:
-                type: bool
-                default: true
+                type: str
+                default: hash
                 title: Generate unique functions
                 description: >
-                    If set to true, if multiple nested SDFGs with equivalent contents exist,
-                    the code is generated only once.
+                    Determine if and how to generate the code for equivalent NestedSDFGs:
+                    "hash": hashing is used to determine if multiple NestedSDFGs with equivalent contents exist.
+                    If this is the case, the code is generated only once.
+                    "unique_name": the unique_name property of SDFG is used to determine if two NestedSDFGs are equal,
+                    generating the code only once.  This gives more control to the programmer, that can explicitly
+                    decide what NestedSDFG code can be replicated and what not.
+                    "none": a separate function is code generated for each NestedSDFG
+
 
             inline_sdfgs:
                 type: bool
@@ -419,8 +425,8 @@ required:
                         description: Platform name of Vitis/SDx/SDAccel target.
 
                     frequency:
-                        type: str 
-                        default: '' 
+                        type: str
+                        default: ''
                         title: Target frequency for Xilinx kernels
                         description: >
                             Target frequency when compiling kernels for Xilinx.
@@ -734,6 +740,23 @@ required:
         title: Debug printing
         description: Enable verbose printouts.
 
+    cache:
+        type: str 
+        default: name 
+        title: Naming of cache entry 
+        description: >
+            Determine the name of the generated dacecache folder.
+            "name" uses the name of the SDFG directly, causing it to be
+            overridden by other programs using the same SDFG name.
+            "hash" uses a mangled name based on the hash of the SDFG, such that
+            any change to the SDFG will generate a different cache folder.
+            "unique" uses a name based on the currently running Python process 
+            at code generation time, such that no caching or clashes can happen
+            between different processes or subsequent invocations of Python.
+            "single" uses a single cache folder for all SDFGs, saving space and
+            potentially build time, but disallows executing SDFGs in parallel
+            and caching of more than one simultaneous SDFG.
+
     profiling:
         type: bool
         default: false
@@ -786,14 +809,6 @@ required:
                     Before generating code, verify that a serialization/deserialization loop
                     generates the same SDFG.
 
-            single_cache:
-                type: bool
-                default: false
-                title: Use one build folder
-                description: >
-                    When generating code, use a single build folder as cache.
-                    Speeds up build time but disallows concurrent invocations.
-
     #############################################
     # DaCe library settings
 
@@ -819,8 +834,8 @@ required:
                             implementation has been explicitly set on a node.
                     fpga:
                         type: dict
-                        title: FPGA 
-                        description: FPGA-specific BLAS options. 
+                        title: FPGA
+                        description: FPGA-specific BLAS options.
                         required:
                             default_stream_depth:
                                 type: int
@@ -830,3 +845,33 @@ required:
                                     Default FPGA stream depth used in the BLAS
                                     library nodes and the corresponding
                                     streaming transformations
+            lapack:
+                type: dict
+                title: LAPACK
+                description: Built-in LAPACK DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: OpenBLAS
+                        description: Default implementation of LAPACK library nodes.
+                    override:
+                        type: bool
+                        default: false
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.
+            linalg:
+                type: dict
+                title: linalg
+                description: Built-in NumPy linalg DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: OpenBLAS
+                        description: Default implementation of linalg library nodes.
+                    override:
+                        type: bool
+                        default: false
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.
