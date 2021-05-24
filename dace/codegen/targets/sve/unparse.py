@@ -16,7 +16,7 @@ import dace.frontend.python.astutils as astutils
 from dace.codegen.targets.sve.type_compatibility import assert_type_compatibility
 import copy
 import collections
-
+import itertools
 
 class SVEUnparser(cppunparse.CPPUnparser):
     def __init__(self,
@@ -52,8 +52,11 @@ class SVEUnparser(cppunparse.CPPUnparser):
         # Stream associations keep track between the local stream variable name <-> underlying stream
         self.stream_associations = stream_associations
 
-        # Detect fused operations first
+        # Detect fused operations first (are converted into internal calls)
         preprocessed = preprocess.SVEPreprocessor(defined_symbols).visit(tree)
+
+        # Make sure all internal calls are defined for the inference
+        defined_symbols.update(util.get_internal_symbols())
 
         super().__init__(preprocessed,
                          0,
@@ -91,25 +94,63 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         return (left, right)
 
-    def dispatch_scalar_dup(self, vec_type: dace.typeclass,
-                            scalar_type: dace.typeclass, body: ast.AST):
-        """ Some SVE instructions do not accept any scalar argument. In this case we must duplicate the vector. """
+    def dispatch_expect(self, tree: ast.AST, expect: dtypes.typeclass):
+        inf = self.infer(tree)[0]
 
-        # Duplicates the scalar to create a vector
-        self.write(f'svdup_{util.TYPE_TO_SVE_SUFFIX[vec_type.type]}(')
-        self.dispatch_scalar_cast(vec_type, scalar_type, body)
-        self.write(')')
+        # Sanity check
+        if not inf:
+            raise util.NotSupportedError(
+                f'Could not infer the expression type of `{astunparse.unparse(tree)}`')
 
-    def dispatch_scalar_cast(self, vec_type: dace.typeclass,
-                             scalar_type: dace.typeclass, body: ast.AST):
-        """ Some SVE instructions accept a scalar argument, but it must be the exact type, so we cast it. """
-        required = util.get_base_type(vec_type)
-
-        if scalar_type != required:
-            # Cast the scalar because it is not of the required type
-            self.write(f'({required.ctype}) ')
-
-        self.dispatch(body)
+        if isinstance(inf, dtypes.vector):
+            # Unparsing a vector
+            if isinstance(expect, dtypes.vector):
+                # A vector is expected
+                if inf.vtype == expect.vtype:
+                    # No cast required
+                    self.dispatch(tree)
+                else:
+                    # TODO: Cast vectors (but only if same bitwidth)
+                    raise NotImplementedError(
+                        'Vector-vector casting not implemented')
+            else:
+                # A pointer or scalar is expected (incompatible)
+                raise util.NotSupportedError(
+                    'Given a vector, expected a scalar or pointer')
+        elif isinstance(inf, dtypes.pointer):
+            # Unparsing a pointer
+            if isinstance(expect, dtypes.pointer):
+                # Expecting a pointer
+                if inf.base_type == expect.base_type:
+                    # No cast required
+                    self.dispatch(tree)
+                else:
+                    raise util.NotSupportedError('Inconsistent pointer types')
+            else:
+                # Expecting anything else
+                raise util.NotSupportedError(
+                    'Given a pointer, expected a scalar or vector')
+        else:
+            # Unparsing a scalar
+            if isinstance(expect, dtypes.vector):
+                # Expecting a vector: duplicate the scalar
+                self.write(f'svdup_{util.TYPE_TO_SVE_SUFFIX[expect.type]}(')
+                self.dispatch_expect(tree, expect.base_type)
+                self.write(')')
+            elif isinstance(expect, dtypes.pointer):
+                # Expecting a pointer
+                raise util.NotSupportedError(
+                    'Given a scalar, expected a pointer')
+            else:
+                # Expecting a scalar: cast if possible
+                if inf.type == expect.type:
+                    # No cast required
+                    self.dispatch(tree)
+                else:
+                    # Cast in C notation
+                    # TODO: Add suffixes if only a number is present
+                    self.write(f'({expect.ctype}) ')
+                    self.dispatch(tree)
 
     def generate_case_predicate(self, t: ast.If, acc_pred: str, id: int) -> str:
         test_pred = f'__pg_test_{self.if_depth}_{id}'
@@ -117,7 +158,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         # Compute the test predicate for the current case
         self.fill(f'svbool_t {test_pred} = ')
         self.pred_name = acc_pred
-        self.dispatch(t.test)
+        self.dispatch_expect(t.test, dtypes.vector(dace.bool, -1))
         self.write(';')
 
         # Update the accumulator to exclude the test (the next case only occurs if we had failed)
@@ -162,15 +203,16 @@ class SVEUnparser(cppunparse.CPPUnparser):
         # Find all branches (except for the last else, because it is treated differently)
         branches = [t]
         while (t.orelse and len(t.orelse) == 1
-            and isinstance(t.orelse[0], ast.If)):
+               and isinstance(t.orelse[0], ast.If)):
             t = t.orelse[0]
             branches.append(t)
 
         # Precompute all case predicates
-        predicates = [self.generate_case_predicate(b, acc_pred, i + 1) for i, b in enumerate(branches)]
+        predicates = [self.generate_case_predicate(
+            b, acc_pred, i + 1) for i, b in enumerate(branches)]
 
         # Generate the cases
-        for b, p in zip(branches, predicates): 
+        for b, p in zip(branches, predicates):
             self.generate_case_body(b, p)
 
         if t.orelse:
@@ -188,24 +230,56 @@ class SVEUnparser(cppunparse.CPPUnparser):
         self.pred_name = old_pred
         self.if_depth -= 1
 
+    def push_to_stream(self, t, target):
+        target_stream = self.stream_associations[target.id]
+        stream_type = target_stream[1]
+
+        self.enter()
+        self.fill('\n// === Stream push ===')
+
+        # Create a temporary array on the heap, where we will copy the SVE register contents to
+        self.fill('{} __tmp[{} / {}];'.format(stream_type.ctype,
+                                              util.REGISTER_BYTE_SIZE,
+                                              stream_type.bytes))
+
+        # Count the number of "to push" elements based on the current predicate
+        self.fill('size_t __cnt = svcntp_b{}({}, {});'.format(
+            self.pred_bits, self.pred_name, self.pred_name))
+
+        # Store the contents of the SVE register in the temporary array
+        self.fill(
+            f'svst1(svwhilelt_b{self.pred_bits}(0, ({self.counter_type}) __cnt), __tmp, '
+        )
+
+        # The contents should be compacted (i.e. all elements where the predicate is true are aligned)
+        self.write(f'svcompact({self.pred_name}, ')
+        self.dispatch_expect(t.value, dtypes.vector(stream_type, -1))
+        self.write('));')
+
+        # Push the temporary array onto the stream using DaCe's push
+        self.fill(f'{target_stream[0]}.push(&__tmp[0], __cnt);')
+        self.leave()
+
     def _Assign(self, t):
         if len(t.targets) > 1:
             raise util.NotSupportedError('Tuple output not supported')
 
         target = t.targets[0]
 
+        if isinstance(target, ast.Name) and target.id in self.stream_associations:
+            # Assigning to a stream variable is equivalent to a push
+            self.push_to_stream(t, target)
+            return
+
         lhs_type, rhs_type = self.infer(target, t.value)
 
-        if lhs_type is None:
-            self.assert_type_compatibility(rhs_type)
-        else:
-            self.assert_type_compatibility(lhs_type, rhs_type)
+        if rhs_type is None:
+            raise NotImplementedError('Can not infer RHS of assignment')
 
         is_new_variable = False
 
         if lhs_type is None:
             # The LHS could involve a variable name that was not declared (which is why inference fails)
-
             if not isinstance(
                     target,
                     ast.Name) or target.id in self.get_defined_symbols():
@@ -213,85 +287,43 @@ class SVEUnparser(cppunparse.CPPUnparser):
                 raise NotImplementedError('Can not infer LHS of assignment')
 
             # Declare it as `type name`
-
             lhs_type = rhs_type
-            if isinstance(lhs_type, dace.dtypes.vector):
-                # SVE register is possible
-                self.fill(util.TYPE_TO_SVE[lhs_type.type])
+            if isinstance(rhs_type, dtypes.vector):
+                # SVE register is possible (declare it as svXXX_t)
+                self.fill(util.TYPE_TO_SVE[rhs_type.type])
                 self.write(' ')
-                self.defined_symbols.update({target.id: lhs_type})
+                # Define the new symbol as vector
+                self.defined_symbols.update({target.id: rhs_type})
+            elif isinstance(rhs_type, dtypes.pointer):
+                raise util.NotSupportedError(
+                    'Defining pointers in Tasklet code not supported')
 
+            # Otherwise, the fallback will grab the case of a scalar, because the RHS is scalar, and the LHS is the same
             is_new_variable = True
 
-        if rhs_type is None:
-            raise NotImplementedError('Can not infer RHS of assignment')
+        # LHS and RHS types are now both well defined
+        lhs_vec = isinstance(lhs_type, dtypes.vector)
+        rhs_vec = isinstance(rhs_type, dtypes.vector)
 
-        lhs_vec = util.is_vector(lhs_type)
-        rhs_vec = util.is_vector(rhs_type)
+        # TODO: This is only bad if we assign to a variable from an outer scope
+        """
+        if self.if_depth > 0 and not lhs_vec:
+            raise util.NotSupportedError(
+                'Assignments in an if block must be to a vector or stream (otherwise unvectorizable)')
+        """
 
         if not lhs_vec and not rhs_vec:
-            # Only scalars involved
+            # Simple scalar-scalar assign handled by fallback
             super()._Assign(t)
             if isinstance(target, ast.Name):
                 self.defined_symbols.update({target.id: rhs_type})
             return
 
         if not is_new_variable:
+            # Indentation fix
             self.fill()
 
-        if not lhs_vec and rhs_vec:
-            raise util.NotSupportedError('Cannot assign a vector to a scalar')
-
-        if self.if_depth > 0 and not lhs_vec:
-            raise util.NotSupportedError(
-                'Assignments in an if block must be to a vector or stream (otherwise unvectorizable)'
-            )
-
-        if isinstance(target,
-                      ast.Name) and target.id in self.stream_associations:
-            # Assigning to a stream variable is equivalent to pushing into a stream
-
-            target_stream = self.stream_associations[target.id]
-
-            self.enter()
-            self.fill('// === Stream push ===')
-
-            stream_type = target_stream[1]
-
-            rhs_base = util.get_base_type(rhs_type)
-
-            # Create a temporary array on the heap, where we will copy the SVE register contents to
-            self.fill('{} __tmp[{} / {}];'.format(stream_type.ctype,
-                                                  util.REGISTER_BYTE_SIZE,
-                                                  rhs_base.bytes))
-
-            # Count the number of "to push" elements based on the current predicate
-            self.fill('size_t __cnt = svcntp_b{}({}, {});'.format(
-                self.pred_bits, self.pred_name, self.pred_name))
-
-            # Store the contents of the SVE register in the temporary array
-            self.fill(
-                f'svst1(svwhilelt_b{self.pred_bits}(0, ({self.counter_type}) __cnt), __tmp, '
-            )
-
-            # The contents should be compacted (i.e. all elements where the predicate is true are aligned)
-            self.write(f'svcompact({self.pred_name}, ')
-
-            if rhs_vec:
-                # We are pushing a vector
-                self.dispatch(t.value)
-            else:
-                # If we push a scalar, we must first convert it into a vector
-                self.dispatch_scalar_dup(stream_type, rhs_type, t.value)
-
-            self.write('));')
-
-            # Push the temporary array onto the stream using DaCe's push
-            self.fill(f'{target_stream[0]}.push(&__tmp[0], __cnt);')
-            self.leave()
-
-            return
-
+        # Some vector assignment
         self.dispatch(target)
         self.write(' = ')
 
@@ -300,17 +332,12 @@ class SVEUnparser(cppunparse.CPPUnparser):
             # If we are in an If block, we assign based on the predicate
             # In case of "a = b", we do:
             # a = select(if_pred, b, a)
-
             self.write(f'svsel({self.pred_name}, ')
 
-        if lhs_vec and not rhs_vec:
-            # Upcast scalar to vector by duplicating it
-
-            self.dispatch_scalar_dup(lhs_type, rhs_type, t.value)
-        else:
-            self.dispatch(t.value)
+        self.dispatch_expect(t.value, lhs_type)
 
         if self.if_depth > 0 and not is_new_variable:
+            # Close the select
             self.write(', ')
             self.dispatch(target)
             self.write(')')
@@ -318,19 +345,12 @@ class SVEUnparser(cppunparse.CPPUnparser):
         self.write(';')
 
     def _Call(self, t):
-        name = None
-        if isinstance(t.func, ast.Name):
-            name = util.FUSED_OPERATION_TO_SVE.get(t.func.id)
-            if name is None:
-                raise NotImplementedError(
-                    f'Function {t.func.id} is not implemented')
-        elif isinstance(t.func, ast.Attribute):
-            name = util.MATH_FUNCTION_TO_SVE.get(astutils.rname(t.func))
-            if name is None:
-                raise NotImplementedError(
-                    f'Function {astutils.rname(t.func)} is not implemented')
+        res_type = self.infer(t)[0]
+        if not res_type:
+            raise util.NotSupportedError(f'Unsupported call')
 
-        if util.only_scalars_involed(self.get_defined_symbols(), *t.args):
+        if not isinstance(res_type, dtypes.vector):
+            # Call does not involve any vectors (to our knowledge)
             # Replace default modules (e.g., math) with dace::math::
             attr_name = astutils.rname(t)
             module_name = attr_name[:attr_name.rfind(".")]
@@ -353,46 +373,40 @@ class SVEUnparser(cppunparse.CPPUnparser):
                 self.dispatch(e)
             self.write(')')
             return
-
-        arg_types = self.infer(*t.args)
-        self.assert_type_compatibility(*arg_types)
-
-        res_type = dtypes.result_type_of(arg_types[0], *arg_types)
+            
+        name = None
+        if isinstance(t.func, ast.Name):
+            # Could be an internal operation (provided by the preprocessor)
+            if not util.is_sve_internal(t.func.id):
+                raise NotImplementedError(
+                    f'Function {t.func.id} is not implemented')
+            name = util.internal_to_external(t.func.id)[0]
+        elif isinstance(t.func, ast.Attribute):
+            # Some module function (xxx.xxx), make sure it is available
+            name = util.MATH_FUNCTION_TO_SVE.get(astutils.rname(t.func))
+            if name is None:
+                raise NotImplementedError(
+                    f'Function {astutils.rname(t.func)} is not implemented')
 
         # Vectorized function
         self.write('{}_x({}, '.format(name, self.pred_name))
-
-        # Due to a very limited set of functions are available, the correctness of the reordering is ensured in the preprocessing
-        arg_count = len(t.args)
-        if arg_count >= 2:  # Binary ops need the scalar on the RHS
-            t.args[0], t.args[1] = self.reorder_vector_scalar(
-                t.args[0], t.args[1])
-        if arg_count == 3:  # Fused ops (3 args) need the scalar at the end
-            t.args[1], t.args[2] = self.reorder_vector_scalar(
-                t.args[1], t.args[2])
-        if arg_count > 3:
-            raise NotImplementedError('Too many arguments')
-
         comma = False
         for e in t.args:
             if comma:
                 self.write(", ")
             else:
                 comma = True
-            type = self.infer(e)[0]
-            if util.is_scalar(type):
-                self.dispatch_scalar_cast(res_type, type, e)
-            else:
-                self.dispatch(e)
+            self.dispatch_expect(e, res_type)
         self.write(')')
 
     def _UnaryOp(self, t):
-        self.assert_type_compatibility(self.infer(t.operand)[0])
+        inf_type = self.infer(t.operand)[0]
 
-        if util.only_scalars_involed(self.get_defined_symbols(), t.operand):
+        if util.is_scalar(inf_type):
             return super()._UnaryOp(t)
 
         if isinstance(t.op, ast.UAdd):
+            # A + infront is just ignored
             t.dispatch(t.operand)
             return
 
@@ -402,24 +416,20 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         self.write('{}_x({}, '.format(util.UN_OP_TO_SVE[t.op.__class__],
                                       self.pred_name))
-
         self.dispatch(t.operand)
         self.write(')')
 
     def _AugAssign(self, t):
         # Break up statements like a += 5 into a = a + 5
-        self._Assign(ast.Assign([t.target], ast.BinOp(t.target, t.op, t.value)))
+        self._Assign(ast.Assign(
+            [t.target], ast.BinOp(t.target, t.op, t.value)))
 
     def _BinOp(self, t):
-        if util.only_scalars_involed(self.get_defined_symbols(), t.left,
-                                     t.right):
-            return super()._BinOp(t)
-
         lhs_type, rhs_type = self.infer(t.left, t.right)
-        self.assert_type_compatibility(lhs_type, rhs_type)
-
-        lhs_vec = util.is_vector(lhs_type)
-        rhs_vec = util.is_vector(rhs_type)
+        res_type = dtypes.result_type_of(lhs_type, rhs_type)
+        
+        if not isinstance(res_type, (dtypes.vector, dtypes.pointer)):
+            return super()._BinOp(t)
 
         if t.op.__class__ not in util.BIN_OP_TO_SVE:
             raise NotImplementedError(
@@ -427,25 +437,10 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         op_name = util.BIN_OP_TO_SVE[t.op.__class__]
 
-        # Special case: scalar / vector => svdivr (division reversed)
-        if isinstance(t.op, ast.Div) and not lhs_vec and rhs_vec:
-            op_name = 'svdivr'
-
         self.write('{}_x({}, '.format(op_name, self.pred_name))
-
-        left, right = self.reorder_vector_scalar(t.left, t.right)
-
-        lhs_type, rhs_type = self.infer(left, right)
-        self.assert_type_compatibility(lhs_type, rhs_type)
-
-        self.dispatch(left)
+        self.dispatch_expect(t.left, res_type)
         self.write(', ')
-
-        if right != t.right:
-            self.dispatch_scalar_cast(lhs_type, rhs_type, right)
-        else:
-            self.dispatch(right)
-
+        self.dispatch_expect(t.right, res_type)
         self.write(')')
 
     #
@@ -458,31 +453,16 @@ class SVEUnparser(cppunparse.CPPUnparser):
             return super()._IfExp(t)
 
         if_type, else_type = self.infer(t.body, t.orelse)
-
-        type = dtypes.result_type_of(if_type, else_type)
-        self.assert_type_compatibility(type)
-
-        if_vec = util.is_vector(if_type)
-        else_vec = util.is_vector(else_type)
-
-        # svsel() doesn't accept any scalar argument, so we must manually create a vector if we have a scalar (svdup())
+        res_type = dtypes.result_type_of(if_type, else_type)
+        if not isinstance(res_type, dtypes.vector):
+            res_type = dtypes.vector(res_type, -1)
 
         self.write('svsel(')
-        self.dispatch(t.test)
+        self.dispatch_expect(t.test, dtypes.vector(dace.bool, -1))
         self.write(', ')
-
-        if not if_vec:
-            self.dispatch_scalar_dup(else_type, if_type, t.body)
-        else:
-            self.dispatch(t.body)
-
+        self.dispatch_expect(t.body, res_type)
         self.write(', ')
-
-        if not else_vec:
-            self.dispatch_scalar_dup(if_type, else_type, t.orelse)
-        else:
-            self.dispatch(t.orelse)
-
+        self.dispatch_expect(t.orelse, res_type)
         self.write(')')
 
     def _BoolOp(self, t):
@@ -494,7 +474,8 @@ class SVEUnparser(cppunparse.CPPUnparser):
         # Bool ops are nested SVE instructions, so we must make sure they all act on vectors
         for type in types:
             if not isinstance(type, dtypes.vector):
-                raise util.NotSupportedError('Unvectorizable boolean operation')
+                raise util.NotSupportedError(
+                    'Unvectorizable boolean operation')
 
         # There can be many t.values, e.g. if
         # x or y or z
@@ -525,31 +506,21 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         self.assert_type_compatibility(*self.infer(lhs, rhs))
 
-        if util.only_scalars_involed(self.get_defined_symbols(), lhs, rhs):
+        if not isinstance(self.infer(t)[0], (dtypes.vector, dtypes.pointer)):
             return super()._Compare(t)
 
         if op.__class__ not in util.COMPARE_TO_SVE:
             raise NotImplementedError('Comparator not supported')
 
-        new_lhs, new_rhs = self.reorder_vector_scalar(lhs, rhs)
-
-        if lhs != new_lhs:
-            # Invert inequality, because scalar must be at the end
-            op = util.FLIP_INEQUALITY[op.__class__]()
-
         self.write('{}({}, '.format(util.COMPARE_TO_SVE[op.__class__],
                                     self.pred_name))
 
-        lhs_type, rhs_type = self.infer(new_lhs, new_rhs)
+        lhs_type, rhs_type = self.infer(lhs, rhs)
+        res_type = dtypes.result_type_of(lhs_type, rhs_type)
 
-        self.dispatch(new_lhs)
+        self.dispatch_expect(lhs, res_type)
         self.write(', ')
-
-        if util.is_scalar(rhs_type):
-            self.dispatch_scalar_cast(lhs_type, rhs_type, new_rhs)
-        else:
-            self.dispatch(new_rhs)
-
+        self.dispatch_expect(rhs, res_type)
         self.write(')')
 
     def _Subscript(self, t):
