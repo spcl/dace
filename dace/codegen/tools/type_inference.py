@@ -15,7 +15,8 @@ from dace.symbolic import SymExpr
 from dace.symbolic import symstr
 import sympy
 import sys
-
+import dace.frontend.python.astutils
+import inspect
 
 def infer_types(code, symbols=None):
     """
@@ -354,17 +355,24 @@ def _BinOp(t, symbols, inferred_symbols):
 
 
 def _Compare(t, symbols, inferred_symbols):
-    _dispatch(t.left, symbols, inferred_symbols)
+    # If any vector occurs in the comparision, the inferred type is a bool vector
+    inf_type = _dispatch(t.left, symbols, inferred_symbols)
+    any_vector = isinstance(inf_type, dtypes.vector)
     for o, e in zip(t.ops, t.comparators):
         if o.__class__.__name__ not in cppunparse.CPPUnparser.cmpops:
             continue
-        _dispatch(e, symbols, inferred_symbols)
+        inf_type = _dispatch(e, symbols, inferred_symbols)
+        any_vector = any_vector or isinstance(inf_type, dtypes.vector)
 
+    return dtypes.vector(dace.bool, -1) if any_vector else dtypes.bool
 
 def _BoolOp(t, symbols, inferred_symbols):
+    # If any vector occurs in the bool op, the inferred type is also a bool vector
+    any_vector = False
     for v in t.values:
-        _dispatch(v, symbols, inferred_symbols)
-    return dtypes.typeclass(np.bool)
+        inf_type = _dispatch(v, symbols, inferred_symbols)
+        any_vector = any_vector or isinstance(inf_type, dtypes.vector)
+    return dtypes.vector(dace.bool, -1) if any_vector else dtypes.bool
 
 
 def _Attribute(t, symbols, inferred_symbols):
@@ -374,11 +382,25 @@ def _Attribute(t, symbols, inferred_symbols):
 
 def _Call(t, symbols, inferred_symbols):
     inf_type = _dispatch(t.func, symbols, inferred_symbols)
-    for e in t.args:
-        _dispatch(e, symbols, inferred_symbols)
+
+    # Dispatch the arguments and determine their types
+    arg_types = [_dispatch(e, symbols, inferred_symbols) for e in t.args]
+
     for e in t.keywords:
         _dispatch(e, symbols, inferred_symbols)
-    return inf_type
+
+    # If the function symbol is known, always return the defined type
+    if inf_type:
+        return inf_type
+    
+    # In case of a typeless math function, determine the return type based on the arguments
+    name = dace.frontend.python.astutils.rname(t)
+    module = name[:name.rfind('.')]
+    if module == 'math':
+        return dtypes.result_type_of(arg_types[0], *arg_types)
+    
+    # In any other case simply return None
+    return None
 
 
 def _Subscript(t, symbols, inferred_symbols):
