@@ -74,7 +74,6 @@ def test_persistent_gpu_transpose_regression():
     for _, _, arr in sdfg.arrays_recursive():
         if arr.transient and arr.storage == dace.StorageType.GPU_Global:
             arr.lifetime = dace.AllocationLifetime.Persistent
-    sdfg.view()
     A = np.random.rand(5, 3)
     result = sdfg(A=A)
     assert np.allclose(np.transpose(A), result)
