@@ -21,7 +21,7 @@ def test_mult(A: dace.int64[5, 5], B: dace.int64[5, 5]):
 
 
 @compare_numpy_output(non_zero=True)
-def test_div(A: dace.int64[5, 5], B: dace.int64[5, 5]):
+def test_div(A: dace.float64[5, 5], B: dace.float64[5, 5]):
     return A / B
 
 

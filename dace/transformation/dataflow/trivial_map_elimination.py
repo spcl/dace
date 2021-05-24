@@ -28,7 +28,7 @@ class TrivialMapElimination(transformation.Transformation):
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         map_entry = graph.nodes()[candidate[TrivialMapElimination._map_entry]]
-        return any(r[0] == r[1] for r in map_entry.map.range) and len(graph.in_edges(map_entry)) > 0
+        return any(r[0] == r[1] for r in map_entry.map.range)
 
     @staticmethod
     def match_to_str(graph, candidate):
