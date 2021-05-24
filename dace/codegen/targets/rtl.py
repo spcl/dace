@@ -30,6 +30,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
         self.sdfg: sdfg.SDFG = sdfg
         # store reference to frame code generator
         self.frame: framecode.DaCeCodeGenerator = frame_codegen
+        self._frame = self.frame
         # get dispatcher to register callbacks for allocation/nodes/.. code generators
         self.dispatcher: dispatcher.TargetDispatcher = frame_codegen.dispatcher
         # register node dispatcher -> generate_node(), predicate: process tasklets only
