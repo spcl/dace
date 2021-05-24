@@ -74,7 +74,6 @@ def test_persistent_gpu_transpose_regression():
     for _, _, arr in sdfg.arrays_recursive():
         if arr.transient and arr.storage == dace.StorageType.GPU_Global:
             arr.lifetime = dace.AllocationLifetime.Persistent
-    sdfg.view()
     A = np.random.rand(5, 3)
     result = sdfg(A=A)
     assert np.allclose(np.transpose(A), result)
@@ -127,30 +126,34 @@ def test_alloc_persistent():
 
 def test_alloc_persistent_threadlocal():
     @dace.program
-    def persistentmem(output: dace.int32[1]):
-        tmp = dace.ndarray([1],
+    def persistentmem(output: dace.int32[2]):
+        tmp = dace.ndarray([2],
                            output.dtype,
                            storage=dace.StorageType.CPU_ThreadLocal,
                            lifetime=dace.AllocationLifetime.Persistent)
         if output[0] == 1.0:
-            for i in dace.map[0:1]:
-                tmp[i] = 0
+            for i in dace.map[0:2]:
+                tmp[i] = i
         else:
-            for i in dace.map[0:1]:
+            for i in dace.map[0:2]:
                 tmp[i] += 3
                 output[i] = tmp[i]
 
     # Repeatedly invoke program. Since memory is persistent, output is expected
     # to increase with each call
     csdfg = persistentmem.compile()
-    value = np.ones([1], dtype=np.int32)
+    value = np.ones([2], dtype=np.int32)
     csdfg(output=value)
     assert value[0] == 1
-    value[0] = 2
+    assert value[1] == 1
+    value[0] = 4
+    value[1] = 2
     csdfg(output=value)
     assert value[0] == 3
+    assert value[1] == 4
     csdfg(output=value)
     assert value[0] == 6
+    assert value[1] == 7
 
     del csdfg
 

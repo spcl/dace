@@ -61,9 +61,15 @@ class WarpTiling(xf.Transformation):
         for nstate, nmap in maps_to_stride:
             nsdfg = nstate.parent
             nsdfg_node = nsdfg.parent_nsdfg_node
+
+            # Map cannot be partitioned across a warp
+            if (nmap.range.size()[-1] < self.warp_size) == True:
+                continue
+
             if nsdfg is not sdfg and nsdfg_node is not None:
                 nsdfg_node.symbol_mapping['__tid'] = __tid
-                nsdfg.add_symbol('__tid', dtypes.int32)
+                if '__tid' not in nsdfg.symbols:
+                    nsdfg.add_symbol('__tid', dtypes.int32)
             nmap.range[-1] = (nmap.range[-1][0], nmap.range[-1][1],
                               nmap.range[-1][2] * self.warp_size)
             subgraph = nstate.scope_subgraph(nmap)
