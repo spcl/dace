@@ -510,10 +510,6 @@ def auto_optimize(sdfg: SDFG,
         sdfg.apply_strict_transformations(validate=False,
                                           validate_all=validate_all)
         xfh.split_interstate_edges(sdfg)
-
-        # Try to parallelize loops
-        for sd in sdfg.all_sdfgs_recursive():
-            propagate_states(sd)
         l2ms = sdfg.apply_transformations_repeated(LoopToMap,
                                                    strict=True,
                                                    validate=False,
