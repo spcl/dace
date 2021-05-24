@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from dace.codegen.targets.sve.util import NotSupportedError
 import dace
 from tests.codegen.sve.common import get_code
 import pytest
@@ -18,7 +19,7 @@ def test_assign_scalar():
                 b = 0.0
 
     code = get_code(program, 'i')
-    print(code)
+
     # Scalar must be duplicated and brought into right type
     assert 'svdup_f32' in code
     assert '(dace::float32)' in code
@@ -34,7 +35,7 @@ def test_assign_pointer():
                 b = a
 
     # Assigning a pointer to a vector is bad!
-    with pytest.raises(IncompatibleTypeError):
+    with pytest.raises(NotSupportedError):
         get_code(program, 'i')
 
 
@@ -49,8 +50,7 @@ def test_compare_scalar_vector():
 
     code = get_code(program, 'i')
 
-    # Inequality will be flipped because SVE requires the scalar to be last argument in comparision
-    assert 'svcmpge' in code
+    assert 'svcmplt' in code
 
 
 def test_if_block():
@@ -79,7 +79,7 @@ def test_assign_new_variable():
                 a << A[i]
                 b >> B[i]
                 if a > 0 and a < 1:
-                    c = -a
+                    c = a
                 else:
                     c = 0
 
@@ -127,8 +127,6 @@ def test_fused_operations():
                 c = 0 * 1 + a
 
     code = get_code(program, 'i')
-
-    print(code)
 
     # All fused ops
     assert 'svmad' in code
