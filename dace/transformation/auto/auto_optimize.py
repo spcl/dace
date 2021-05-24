@@ -454,7 +454,7 @@ def fix_storage_properties(sdfg: SDFG,
     - Makes non-view array lifetimes persistent, with some 
       restrictions depending on the device 
     - Reset nonatomic WCR edges on GPU 
-    :param sdfg: SFDG
+    :param sdfg: SDFG
     :param device: Device type
     '''
     for nsdfg in sdfg.all_sdfgs_recursive():
