@@ -134,7 +134,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                 cf.schedule_innermaps = fusion_condition.schedule_innermaps
                 cf.expansion_split = fusion_condition.expansion_split
                 cf.stencil_strides = fusion_condition.stencil_strides
-                
+
                 cf.apply(sdfg)
                 applied_transformations += 1
 
@@ -507,7 +507,8 @@ def auto_optimize(sdfg: SDFG,
                                         validate=validate,
                                         validate_all=validate_all)
     while transformed:
-
+        sdfg.apply_strict_transformations(validate=False,
+                                          validate_all=validate_all)
         xfh.split_interstate_edges(sdfg)
 
         # Try to parallelize loops
