@@ -23,10 +23,9 @@ class ConnectedEnumerator(MapScoringEnumerator):
     backtracking occurs over this link.
     '''
 
-    prune = Property(desc="Perform Pruning during Enumeration",
+    prune = Property(desc="Perform pruning during enumeration",
                      default=True,
                      dtype=bool)
-                     
 
     def __init__(self,
                  sdfg: SDFG,
