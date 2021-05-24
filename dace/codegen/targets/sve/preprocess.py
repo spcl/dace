@@ -10,6 +10,7 @@ import dace.codegen.tools.type_inference as infer
 from dace.codegen.targets.cpp import DaCeKeywordRemover
 import dace.frontend.python.astutils as astutils
 import dace
+import dace.dtypes
 
 
 class SVEPreprocessor(ast.NodeTransformer):
@@ -44,17 +45,17 @@ class SVEPreprocessor(ast.NodeTransformer):
 
         if parent_op == ast.Add:
             if left_op == ast.Mult:
-                name = '__sve_mad'
+                name = '__svmad_'
                 args = [t.left.left, t.left.right, t.right]
             elif right_op == ast.Mult:
-                name = '__sve_mla'
+                name = '__svmla_'
                 args = [t.left, t.right.left, t.right.right]
         elif parent_op == ast.Sub:
             if left_op == ast.Mult:
-                name = '__sve_msb'
+                name = '__svmsb_'
                 args = [t.left.left, t.left.right, t.right]
             elif right_op == ast.Mult:
-                name = '__sve_mls'
+                name = '__svmls_'
                 args = [t.left, t.right.left, t.right.right]
 
         # Fused ops need at least two of three arguments to be a vector
@@ -63,6 +64,8 @@ class SVEPreprocessor(ast.NodeTransformer):
             scalar_args = sum([util.is_scalar(tp) for tp in inferred])
             if scalar_args > 1:
                 return self.generic_visit(t)
+            # Add the type suffix for internal representation
+            name += util.TYPE_TO_SVE_SUFFIX[util.get_base_type(dace.dtypes.result_type_of(*inferred))]
             return ast.Call(func=ast.Name(name, ast.Load()),
                             args=args,
                             keywords=[])
