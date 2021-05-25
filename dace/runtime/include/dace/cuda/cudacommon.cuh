@@ -125,6 +125,13 @@ DACE_DFI dace::vec<float, 4> operator*(dace::vec<float, 4> v, float f) {
 
 namespace dace { namespace math {
 
+DACE_DFI dace::vec<float, 2> exp(dace::vec<float, 2> v) {
+    dace::vec<float, 2> result;
+    result.x = exp(v.x);
+    result.y = exp(v.y);
+    return result;
+}
+
 DACE_DFI dace::vec<float, 4> exp(dace::vec<float, 4> v) {
     dace::vec<float, 4> result;
     result.x = exp(v.x);
