@@ -2,7 +2,7 @@ import dace
 import dace.sdfg.nodes
 from IPython.display import Code
 import dace.sdfg.hbm_multibank_expansion as expander
-
+from dace import subsets
 import dace.cli.sdfv as sdfv
 
 
@@ -17,9 +17,9 @@ def create_vadd_sdfg(unroll_map_inside = False):
     in2 = sdfg.add_array("in2", [N], dace.float32)
     out = sdfg.add_array("out", [N], dace.float32)
 
-    in1[1].location["hbmbank"] = "0:1"
-    in2[1].location["hbmbank"] = "2:3"
-    out[1].location["hbmbank"] = "4:5"
+    in1[1].location["hbmbank"] = subsets.Range.from_string("0:2")
+    in2[1].location["hbmbank"] = subsets.Range.from_string("2:4")
+    out[1].location["hbmbank"] = subsets.Range.from_string("4:6")
     
     readin1 = state.add_read("in1")
     readin2 = state.add_read("in2")
@@ -33,6 +33,7 @@ def create_vadd_sdfg(unroll_map_inside = False):
     map_entry, map_exit = state.add_map("vadd_inner_map", dict(i='0:(N//2)'))
     tasklet = state.add_tasklet("addandwrite", dict(__in1=None, __in2=None), 
         dict(__out=None), '__out = __in1 + __in2')
+    outer_entry.map.unroll = True
 
     if(unroll_map_inside):
         state.add_memlet_path(readin1, map_entry, outer_entry, tasklet, memlet=tmpin1_memlet, dst_conn="__in1")
@@ -58,7 +59,7 @@ def create_vadd_sdfg_without_hbm():
             out[i] = in1[i] + in2[i]
     
     sdfg = vadd.to_sdfg()
-    sdfg.apply_fpga_transformations()
+   # sdfg.apply_fpga_transformations()
     sdfg.fill_scope_connectors()
 
     return sdfg
@@ -66,8 +67,8 @@ def create_vadd_sdfg_without_hbm():
 
 if __name__ == '__main__':
    # sdfg = create_vadd_sdfg_without_hbm()
-    sdfg = create_vadd_sdfg(True)
-    expander.expand_hbm_multiarrays(sdfg)
+    sdfg = create_vadd_sdfg(False)
+    #expander.expand_hbm_multiarrays(sdfg)
     sdfg.validate()
     sdfv.view(sdfg, None)
     #code = Code(sdfg.generate_code()[2].code, language='cpp')

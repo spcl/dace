@@ -381,8 +381,8 @@ class Memlet(object):
         """
         try:
             rng = subsets.Range.from_array(datadesc)
-        except (ValueError, TypeError):
-            raise ValueError(f"Failed to parse hbmbank on array {dataname}")
+        except Exception as e:
+            raise Exception(f"str(e) in {dataname}")
         return Memlet.simple(dataname, rng, wcr_str=wcr)
 
     def __hash__(self):

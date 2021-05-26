@@ -10,7 +10,6 @@ the rest into a file in the codegen.
 
 from copy import deepcopy
 
-from dace.codegen import exceptions as cgx
 from dace.sdfg import utils as sdutil
 from dace.sdfg import nodes as nd
 from dace.sdfg import graph 
@@ -55,6 +54,23 @@ def downward_topological(state : statenamespace.SDFGState, source : nd.Node):
             visited.add(child)
             stack.extend(getDownChildren(child))
             yield child
+
+def get_unroll_map_properties(state : statenamespace.SDFGState, entry : nd.MapEntry) -> "Union[str, list[int]]":
+    if(len(entry.map.params) != 1):
+        return "only supported for 1 dimensional maps at the moment"
+    if(not entry.map.unroll):
+        return "map.unroll must be set to allow unrolling"
+    low, high, stride = entry.map.range[0]
+    try:    
+        low = int(str(low))
+        high = int(str(high))
+        stride = int(str(stride))
+    except:
+        return "all the arguments have to be integers to support unrolling"
+    paramvals = []
+    for i in range(low, high+1, stride):
+        paramvals.append(i)
+    return paramvals
 
 def unroll_map(state : statenamespace.SDFGState, entry : nd.MapEntry, exit : nd.MapExit):
     """
@@ -106,14 +122,15 @@ def unroll_map(state : statenamespace.SDFGState, entry : nd.MapEntry, exit : nd.
         if(v == exit):
             break
 
+"""
 def parseHBMBank(arrayname : str, array : data.Array) -> "tuple[int, int]": 
-    """
+    ""
     Reads the hbm bank-specification of an array if present.
 
     :param arrayname: The name of the array
     :param array: The array
     :return: None if not present, (low, high) otherwise, where low == high is possible.
-    """
+    ""
     if(not "hbmbank" in array.location):
         return None
     errormsg = ("location['hbmbank'] must be a string"
@@ -139,6 +156,7 @@ def parseHBMBank(arrayname : str, array : data.Array) -> "tuple[int, int]":
         except ValueError:
             raise ValueError(errormsg)
     raise ValueError(errormsg)
+"""
 
 def parseHBMAlignment(arrayname : str, array : data.Array) -> "list[int]":
     """
@@ -178,8 +196,8 @@ def parseHBMAlignment(arrayname : str, array : data.Array) -> "list[int]":
 
 def parseHBMArray(arrayname : str, array : data.Array) -> "dict[str, Any]":
     """
-    parses HBM properties of an array using parseHMBAlignment
-    and parseHBMBank.
+    parses HBM properties of an array (hbmbank and hbmalignment). 
+    Returns none if hbmbank is not present as property
 
     :return: A mapping from (arrayname, sdfg of the array) to a mapping
     from string that contains collected information.
@@ -191,17 +209,22 @@ def parseHBMArray(arrayname : str, array : data.Array) -> "dict[str, Any]":
     'splitaxes': List that contains axes along which the array is split
     'lowbank': The lowest bank index this array is placed on
     'shape': The shape of the whole array
+    'numbanks': The number of banks across which this array spans
     """
-    parsed = parseHBMBank(arrayname, array)
-    if(parsed == None):
+    if("hbmbank" not in array.location):
         return None
-    low, high = parsed
+    hbmbankrange : subsets.Range = array.location["hbmbank"]
+    if(not isinstance(hbmbankrange, subsets.Range)):
+        raise TypeError(f"Locationproperty 'hbmbank' must be of type subsets.Range for {arrayname}")
+    low, high, stride = hbmbankrange[0]
+    if(stride != 1):
+        raise NotImplementedError(f"Locationproperty 'hbmbank' does not support stride != 1 for {arrayname}")
     count = high - low + 1
     shape = array.shape
     ndim = len(shape)
     if(low == high):
         return {"ndim" : ndim, "shape" : array.shape,
-            "splitcount" : 1, "splitaxes" : [], "lowbank" : low}
+            "splitcount" : 1, "splitaxes" : [], "lowbank" : low, "numbank": 1}
     splitaxes = parseHBMAlignment(arrayname, array)
     splitdim = len(splitaxes)
     if(splitdim == 0):
@@ -218,7 +241,8 @@ def parseHBMArray(arrayname : str, array : data.Array) -> "dict[str, Any]":
             "in each direction is the same). This does not hold for "
             f"{arrayname}")
     return {"ndim" : ndim, "shape" : array.shape,
-            "splitcount" : splitcount, "splitaxes" : splitaxes, "lowbank" : low}
+            "splitcount" : splitcount, "splitaxes" : splitaxes, "lowbank" : low,
+            "numbank": len(splitaxes) * splitcount }
 
 def findAndParseHBMMultibank(sdfg : sd.SDFG) -> "dict[(str, sd.SDFG), dict[str, Any]]":
     """
@@ -396,6 +420,18 @@ def getHBMHostRange(bank : int, refInfo : "dict[str, Any]",
             hostsubset += ","
     return subsets.Range.from_string(hostsubset)
 
+def getHBMTrueShape(virtualshape : "Any", splitaxes : "list[int]", splitcount : int) -> "list[int]":
+    """
+    :returns: the shape of a part-array on one HBMbank for an HBM-multibank-array
+    """
+    newshapelist = []
+    for d in range(len(virtualshape)):
+        if d in splitaxes:
+            newshapelist.append(virtualshape[d] // splitcount)
+        else:
+            newshapelist.append(virtualshape[d])
+    return newshapelist
+
 def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
     """
     This function removes arrays split across k > 1 banks into k new arrays, 
@@ -428,17 +464,12 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
         shape = oldarray.shape
         splitcount = curinfo["splitcount"]
         axes = curinfo["splitaxes"]
+        numbanks = curinfo["numbanks"]
         arraylist[(arrayname, arraysdfg)] = []
-        for i in range(splitcount*len(axes)):
+        newshape = tuple(getHBMTrueShape(shape, axes, splitcount))
+        for i in range(numbanks):
             newname = f"{arrayname}_hbm{i}"
             newname = getNonExistingName(newname, arraysdfg.arrays)
-            newshapelist = []
-            for d in range(curinfo["ndim"]):
-                if d in axes:
-                    newshapelist.append(shape[d] // splitcount)
-                else:
-                    newshapelist.append(shape[d])
-            newshape = tuple(newshapelist)
 
             newname, newarray = arraysdfg.add_array(
                 newname, 
@@ -451,7 +482,7 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
                 debuginfo=deepcopy(oldarray.debuginfo),
                 allow_conflicts=deepcopy(oldarray.allow_conflicts)
             )
-            newarray.location["hbmbank"] = f"{curinfo['lowbank'] + i}"
+            newarray.location["hbmbank"] = subsets.Range.from_string(str(curinfo['lowbank'] + i))
             arraylist[(arrayname, arraysdfg)].append((newname, newarray))
             newcreatedarrays.add((newname, arraysdfg))
         arraysdfg.remove_data(arrayname, validate=False)

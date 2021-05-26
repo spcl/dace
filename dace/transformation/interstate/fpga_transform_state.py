@@ -198,9 +198,6 @@ class FPGATransformState(transformation.Transformation):
 
                 pre_node = pre_state.add_read(node.data)
                 pre_fpga_node = pre_state.add_write('fpga_' + node.data)
-
-                #full_range = subsets.Range([(0, s - 1, 1) for s in desc.shape])
-                #mem = memlet.Memlet.simple(node.data, full_range)
                 full_range = subsets.Range.from_array(fpga_array[1])
                 mem = memlet.Memlet(node.data)
                 if("hbmbank" in fpga_array[1].location and full_range[0][0] != full_range[0][1]):
@@ -254,8 +251,6 @@ class FPGATransformState(transformation.Transformation):
 
                 post_node = post_state.add_write(node.data)
                 post_fpga_node = post_state.add_read('fpga_' + node.data)
-                #full_range = subsets.Range([(0, s - 1, 1) for s in desc.shape])
-                #mem = memlet.Memlet.simple('fpga_' + node.data, full_range)
                 full_range = subsets.Range.from_array(fpga_array[1])
                 mem = memlet.Memlet(f"fpga_{node.data}", None, full_range)
                 post_state.add_edge(post_fpga_node, None, post_node, None, mem)
