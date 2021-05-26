@@ -191,30 +191,33 @@ class FPGACodeGen(TargetCodeGenerator):
 
         subgraphs = collections.defaultdict(set)  # {pe_id: {nodes in subgraph}}
 
-        # Go over the nodes and populate the subgraphs
+        # Go over the nodes and populate the kernels subgraphs
         for node, _ in graph.all_nodes_recursive():
+            print("---", node, type(node))
             #TODO: access node may not have  Kernel ID
-            # - cleanup and refactor
+            # - cleanup and refactor, also considering how Kern ID are assigned
 
-            # add this node to the corresponding subgraph
+            assigned = False
             if hasattr(node, "_kernel"):
                 if node._kernel in subgraphs:
                     subgraphs[node._kernel].add(node)
                 else:
                     subgraphs[node._kernel] = {node}
-            else:
-                if isinstance(node, dace.nodes.AccessNode):
-                    # AccessNodes can be read from multiple PEs, so
-                    # check all out edges
-                    start_nodes = [e.dst for e in graph.out_edges(node)]
-                    for n in start_nodes:
-                        if hasattr(n, "_kernel"):
-                            if n._kernel in subgraphs:
-                                subgraphs[n._kernel].add(node)
-                            else:
-                                subgraphs[n._kernel] = {node}
-                else:
-                    print("Node: ", node, " does not have the pe label")
+                assigned=True
+            # add this node to the corresponding subgraph
+            if isinstance(node, dace.nodes.AccessNode):
+                # AccessNodes can be read from multiple kernels, so
+                # check all out edges
+                start_nodes = [e.dst for e in graph.out_edges(node)]
+                for n in start_nodes:
+                    if hasattr(n, "_kernel"):
+                        if n._kernel in subgraphs:
+                            subgraphs[n._kernel].add(node)
+                        else:
+                            subgraphs[n._kernel] = {node}
+                        assigned = True
+            if not assigned:
+                    print("Node: ", node, " is not assigned to any kernel---------------")
 
         # Check: if some subgraph overlaps with any other, then there is something wrong:
         # TODO:
@@ -232,94 +235,97 @@ class FPGACodeGen(TargetCodeGenerator):
     def generate_state(self, sdfg, state, function_stream, callsite_stream):
         """Generate a kernel that runs all Processing Elements within a state
            as concurrent dataflow modules."""
+        # TODO: add proper docs and type hint
+
 
         # TODO: add something on top of this (or here) to detect all KERNELS first
         state_id = sdfg.node_id(state)
 
+
         # Determine independent components
-        subgraphs = dace.sdfg.concurrent_subgraphs(state)
+        # subgraphs = dace.sdfg.concurrent_subgraphs(state)
 
-        for i, sg in enumerate(subgraphs):
-            print("Subgraph: ", i, " Nodes: ", sg.nodes())
+        # Get all the kernels inside this graph
+        kernels = self._kernels_subgraphs(state)
+        for kern_id, kern in enumerate(kernels):
 
-        subgraphs2 = self._kernels_subgraphs(state)
+            #TODO: use the real kernel_id
+            subgraphs = dace.sdfg.concurrent_subgraphs(kern)
+            for i, sg in enumerate(subgraphs):
+                print("Kernel: ", kern, "Subgraph: ", i, " Nodes: ", sg.nodes())
 
-        for i, sg in enumerate(subgraphs2):
-            print("Subgraph2: ", i, " Nodes: ", sg.nodes())
-
-        # Determine independent processing elements
-
-        # Generate kernel code
-        shared_transients = set(sdfg.shared_transients())
-
-        if not self._in_device_code:
-
-            # Allocate global memory transients, unless they are shared with
-            # other states
-            all_transients = set(state.all_transients())
-            allocated = set(shared_transients)
-            for node in state.data_nodes():
-                data = node.desc(sdfg)
-                if node.data not in all_transients or node.data in allocated:
-                    continue
-                if (data.storage == dtypes.StorageType.FPGA_Global
-                        # and isinstance(data, dt.Array)
-                        and not isinstance(data, dt.View)):
-                    allocated.add(node.data)
-                    self._dispatcher.dispatch_allocate(sdfg, state, state_id,
-                                                       node, function_stream,
-                                                       callsite_stream)
-
-            # Create a unique kernel name to avoid name clashes
-            # If this kernels comes from a Nested SDFG, use that name also
-            if sdfg.parent_nsdfg_node is not None:
-                kernel_name = "{}_{}_{}".format(sdfg.parent_nsdfg_node.label,
-                                                state.label, sdfg.sdfg_id)
-            else:
-                kernel_name = "{}_{}".format(state.label, sdfg.sdfg_id)
-            # Vitis HLS removes double underscores, which leads to a compilation
-            # error down the road due to kernel name mismatch. Remove them here
-            # to prevent this
-            while True:
-                _kernel_name = kernel_name.replace("__", "_")
-                if kernel_name == _kernel_name:
-                    break
-                else:
-                    kernel_name = _kernel_name
 
             # Generate kernel code
-            self.generate_kernel(sdfg, state, kernel_name, subgraphs,
-                                 function_stream, callsite_stream)
-            # Emit the connections ini file
-            if len(self._stream_connections) > 0:
-                ini_stream = CodeIOStream()
-                ini_stream.write('[connectivity]')
-                for _, (src, dst) in self._stream_connections.items():
-                    ini_stream.write('stream_connect={}:{}'.format(src, dst))
-                self._other_codes['link.ini'] = ini_stream
+            shared_transients = set(sdfg.shared_transients())
+            if not self._in_device_code:
 
-        else:  # self._in_device_code == True
+                # Allocate global memory transients, unless they are shared with
+                # other states
+                all_transients = set(kern.all_transients())
+                allocated = set(shared_transients)
+                for node in kern.data_nodes():
+                    data = node.desc(sdfg)
+                    if node.data not in all_transients or node.data in allocated:
+                        continue
+                    if (data.storage == dtypes.StorageType.FPGA_Global
+                            # and isinstance(data, dt.Array)
+                            and not isinstance(data, dt.View)):
+                        allocated.add(node.data)
+                        self._dispatcher.dispatch_allocate(sdfg, kern, state_id,
+                                                           node, function_stream,
+                                                           callsite_stream)
 
-            to_allocate = dace.sdfg.local_transients(sdfg, state, None)
-            allocated = set()
-            for node in state.data_nodes():
-                data = node.desc(sdfg)
-                if node.data not in to_allocate or node.data in allocated:
-                    continue
-                # Make sure there are no global transients in the nested state
-                # that are thus not gonna be allocated
-                if data.storage == dtypes.StorageType.FPGA_Global and not isinstance(
-                        data, dt.View):
-                    raise cgx.CodegenError(
-                        "Cannot allocate global memory from device code.")
-                allocated.add(node.data)
-                # Allocate transients
-                self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                                   function_stream,
-                                                   callsite_stream)
+                # Create a unique kernel name to avoid name clashes
+                # If this kernels comes from a Nested SDFG, use that name also
+                if sdfg.parent_nsdfg_node is not None:
+                    kernel_name = f"{sdfg.parent_nsdfg_node.label}_{state.label}_{kern_id}_{sdfg.sdfg_id}"
+                else:
+                    kernel_name = f"{state.label}_{kern_id}_{sdfg.sdfg_id}"
+                # Vitis HLS removes double underscores, which leads to a compilation
+                # error down the road due to kernel name mismatch. Remove them here
+                # to prevent this
+                while True:
+                    _kernel_name = kernel_name.replace("__", "_")
+                    if kernel_name == _kernel_name:
+                        break
+                    else:
+                        kernel_name = _kernel_name
 
-            self.generate_nested_state(sdfg, state, state.label, subgraphs,
-                                       function_stream, callsite_stream)
+                # Generate kernel code
+                print("Generating kernel: ", kern_id)
+                self.generate_kernel(sdfg, state, kern, kernel_name, subgraphs,
+                                     function_stream, callsite_stream)
+                # Emit the connections ini file
+                if len(self._stream_connections) > 0:
+                    ini_stream = CodeIOStream()
+                    ini_stream.write('[connectivity]')
+                    for _, (src, dst) in self._stream_connections.items():
+                        ini_stream.write('stream_connect={}:{}'.format(src, dst))
+                    self._other_codes['link.ini'] = ini_stream
+
+            else:  # self._in_device_code == True
+                assert False #TODO
+
+                to_allocate = dace.sdfg.local_transients(sdfg, state, None)
+                allocated = set()
+                for node in state.data_nodes():
+                    data = node.desc(sdfg)
+                    if node.data not in to_allocate or node.data in allocated:
+                        continue
+                    # Make sure there are no global transients in the nested state
+                    # that are thus not gonna be allocated
+                    if data.storage == dtypes.StorageType.FPGA_Global and not isinstance(
+                            data, dt.View):
+                        raise cgx.CodegenError(
+                            "Cannot allocate global memory from device code.")
+                    allocated.add(node.data)
+                    # Allocate transients
+                    self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
+                                                       function_stream,
+                                                       callsite_stream)
+
+                self.generate_nested_state(sdfg, state, state.label, subgraphs,
+                                           function_stream, callsite_stream)
 
     @staticmethod
     def shared_data(subgraphs):
@@ -760,10 +766,10 @@ class FPGACodeGen(TargetCodeGenerator):
                          default_event=0):
         """ Annotates  SDFG nodes (and all nested ones) to include a `_kernel_id`
             field. This field is applied to all FPGA maps, tasklets, and copies
-            that can be executed in parallel in separate PEs.
+            that can be executed in parallel in separate kernels.
 
-            :param sdfg: The sdfg to modify.
-            :param default_ker: The Kernel ID to start counting from (used
+            :param sdfg: The sdfg to analyze.
+            :param default_kernel: The Kernel ID to start counting from (used
                                    in recursion to nested SDFGs).
             :param default_event: The event ID to start counting from (used
                                   in recursion to nested SDFGs).
@@ -1681,7 +1687,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                                 function_stream,
                                                 callsite_stream)
 
-    def generate_kernel(self, sdfg, state, kernel_name, subgraphs,
+    def generate_kernel(self, sdfg, state, kernel, kernel_name, subgraphs,
                         function_stream, callsite_stream):
         if self._in_device_code:
             raise cgx.CodegenError("Tried to generate kernel from device code")
@@ -1690,7 +1696,7 @@ class FPGACodeGen(TargetCodeGenerator):
         kernel_stream = CodeIOStream()
 
         # Actual kernel code generation
-        self.generate_kernel_internal(sdfg, state, kernel_name, subgraphs,
+        self.generate_kernel_internal(sdfg, state, kernel, kernel_name, subgraphs,
                                       kernel_stream, function_stream,
                                       callsite_stream)
         self._kernel_count = self._kernel_count + 1
