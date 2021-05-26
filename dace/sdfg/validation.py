@@ -1,13 +1,25 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
+from dace.sdfg.nodes import Tasklet
+from threading import local
+
+from numpy import isin, true_divide
 from dace.dtypes import StorageType
 import os
 from typing import Dict, Tuple, Union
 import warnings
 
-from dace import dtypes
+from dace import dtypes, memlet, data
 from dace import symbolic
+
+#TODO: HBM
+        #Checks:
+        #Hbm multibank can be parsed
+        #magic index exists for multibanks resp. not exists for single banks (dimension check)
+        #Update dst and src subset check to support divison: TODO -> volume not checked at the moment
+        #Check that magic index is symbolic fixed bound or integer and in bounds
+        #no multibank memlet is attached to a tasklet: part of the subset check
 
 ###########################################
 # Validation
@@ -157,6 +169,20 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             and sdfg.out_degree(state) == 0):
         raise InvalidSDFGError("Unreachable state", sdfg, state_id)
 
+    #Correctly defined HBM-Arrays
+    ########################################
+    from dace.sdfg import hbm_multibank_expansion #Avoid circular import
+
+    local_hbmmultibank_arrays = {}
+    for name, array in sdfg.arrays.items():
+        if("hbmbank" in array.location):
+            try:
+                currenthbmarray = hbm_multibank_expansion.parseHBMArray(name, array)
+                if(currenthbmarray['splitcount'] > 1):
+                    local_hbmmultibank_arrays[name] = currenthbmarray
+            except Exception as e:
+                raise InvalidSDFGError(f"Invalid HBM-info on array {name}: {str(e)}", sdfg, state_id)
+
     for nid, node in enumerate(state.nodes()):
         # Node validation
         try:
@@ -278,7 +304,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 sdfg,
                 state_id,
                 nid,
-            )
+            )   
 
         # Connector tests
         ########################################
@@ -409,47 +435,125 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             other_subset_node = (dst_node if isinstance(dst_node, nd.AccessNode)
                                  and e.data.data != dst_node.data else src_node)
 
+            def getArrayCheckOffset(checknode : nd.AccessNode, arr : data.Array):
+                if(checknode.data in local_hbmmultibank_arrays):
+                    currentarrayoffset = [0]
+                    currentarrayoffset.extend(arr.shape)
+                else:
+                    currentarrayoffset = arr.offset
+                return currentarrayoffset
+
+            def getArrayCheckShape(checknode : nd.AccessNode, arr : data.Array):
+                if(checknode.data in local_hbmmultibank_arrays):
+                    mbinfo = local_hbmmultibank_arrays[checknode.data]
+                    currentarrayshape = [mbinfo['numbank']]
+                    currentarrayshape.extend(hbm_multibank_expansion.getHBMTrueShape(
+                        arr.shape, mbinfo['splitaxes'], mbinfo['splitcount']
+                    ))
+                else:
+                    currentarrayshape = arr.shape
+                return tuple(currentarrayshape)
+                
+            def findMapDefiningSymbol(symbolstr : str, startnode : nd.Node):
+                scopeHere = scope[startnode]
+                if(scopeHere is None):
+                    return None
+                if(symbolstr in scopeHere.params):
+                    return scopeHere
+                return findMapDefiningSymbol(symbolstr, scopeHere)
+
+            def checkIsValidMultiBankSubset(checksubset, associatedEdge, arrayinfo):
+                low, high, stride = checksubset[0]
+                allowed_number_types = low.is_Atom and high.is_Atom and stride.is_Atom
+                isSymbolicIndex = low.is_Symbol and high.is_Symbol and low==high and str(stride) == "1"
+                #allowed_number_types = allowed_number_types and ((low.is_Symbol or high.is_Symbol) and (not isSymbolicIndex))
+                allowed_number_types = allowed_number_types and not ((low.is_Symbol or high.is_Symbol) and (not isSymbolicIndex))
+                allowed_number_types = allowed_number_types and not stride.is_Symbol
+                if(not allowed_number_types):
+                    raise InvalidSDFGEdgeError("a HBM index may only be either a constant range" 
+                            "of integers, or a variable bound by a map that is unrolled", sdfg, state_id, eid)
+                if(isSymbolicIndex):
+                    deepScopeNode = associatedEdge.src
+                    if(scope[associatedEdge.dst] == associatedEdge.src):
+                        deepScopeNode = associatedEdge.dst
+                    map = findMapDefiningSymbol(str(low), deepScopeNode)
+                    if(map is None):
+                        raise InvalidSDFGEdgeError("symbol is used as HBM index, but a map" 
+                            f"defining symbol {str(low)} was not found", sdfg, state_id, eid)
+                    generated_values = hbm_multibank_expansion.get_unroll_map_properties(state, map)
+                    if(isinstance(generated_values, str)):
+                        raise InvalidSDFGEdgeError("Cannot unroll the map defining the" 
+                            f"hbm index variable {str(low)}, because: {generated_values}", 
+                            sdfg, state_id, eid)
+                    lowerbound = generated_values[0]
+                    upperbound = generated_values[-1]
+                else:
+                    lowerbound = int(str(low))
+                    upperbound = int(str(high))
+                if not (lowerbound >= 0 and upperbound < arrayinfo['numbank']):
+                    raise InvalidSDFGEdgeError("HBM index is out of bounds", sdfg, state_id, eid)
+                if(isinstance(associatedEdge.dst, nd.Tasklet) or isinstance(associatedEdge.src, nd.Tasklet)):
+                    if(lowerbound != upperbound and not isSymbolicIndex):
+                        raise InvalidSDFGEdgeError("A memlet accessing a range of HBM banks may not"
+                                "be attached to a Tasklet", sdfg, state_id, eid)
+
             if isinstance(subset_node, nd.AccessNode):
                 arr = sdfg.arrays[subset_node.data]
                 # Dimensionality
-                if e.data.subset.dims() != len(arr.shape):
+                expectedDim = len(arr.shape)
+                if(subset_node.data in local_hbmmultibank_arrays):
+                    expectedDim += 1
+                if (e.data.subset.dims() != expectedDim):
                     raise InvalidSDFGEdgeError(
                         "Memlet subset does not match node dimension "
                         "(expected %d, got %d)" %
-                        (len(arr.shape), e.data.subset.dims()),
+                        (expectedDim, e.data.subset.dims()),
                         sdfg,
                         state_id,
                         eid,
                     )
+                if(subset_node.data in local_hbmmultibank_arrays):
+                    checkIsValidMultiBankSubset(e.data.subset, e, 
+                                local_hbmmultibank_arrays[subset_node.data])
+                    
 
                 # Bounds
+                arroffset = getArrayCheckOffset(subset_node, arr)
                 if any(((minel + off) < 0) == True for minel, off in zip(
-                        e.data.subset.min_element(), arr.offset)):
+                        e.data.subset.min_element(), arroffset)):
                     raise InvalidSDFGEdgeError(
                         "Memlet subset negative out-of-bounds", sdfg, state_id,
                         eid)
                 if any(((maxel + off) >= s) == True for maxel, s, off in zip(
-                        e.data.subset.max_element(), arr.shape, arr.offset)):
+                        e.data.subset.max_element(), getArrayCheckShape(subset_node, arr), arroffset)):
                     raise InvalidSDFGEdgeError("Memlet subset out-of-bounds",
                                                sdfg, state_id, eid)
+
             # Test other_subset as well
             if e.data.other_subset is not None and isinstance(
                     other_subset_node, nd.AccessNode):
                 arr = sdfg.arrays[other_subset_node.data]
                 # Dimensionality
-                if e.data.other_subset.dims() != len(arr.shape):
+                expectedOtherDim = len(arr.shape)
+                if other_subset_node.data in local_hbmmultibank_arrays:
+                    expectedOtherDim += 1
+                if e.data.other_subset.dims() != expectedOtherDim:
                     raise InvalidSDFGEdgeError(
                         "Memlet other_subset does not match node dimension "
                         "(expected %d, got %d)" %
-                        (len(arr.shape), e.data.other_subset.dims()),
+                        (expectedOtherDim, e.data.other_subset.dims()),
                         sdfg,
                         state_id,
                         eid,
                     )
+                if(other_subset_node.data in local_hbmmultibank_arrays):
+                    checkIsValidMultiBankSubset(e.data.other_subset, e, 
+                        local_hbmmultibank_arrays[other_subset_node.data])
 
                 # Bounds
+                arroffset = getArrayCheckOffset(other_subset_node, arr)
                 if any(((minel + off) < 0) == True for minel, off in zip(
-                        e.data.other_subset.min_element(), arr.offset)):
+                        e.data.other_subset.min_element(), arroffset)):
                     raise InvalidSDFGEdgeError(
                         "Memlet other_subset negative out-of-bounds",
                         sdfg,
@@ -457,14 +561,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         eid,
                     )
                 if any(((maxel + off) >= s) == True for maxel, s, off in zip(
-                        e.data.other_subset.max_element(), arr.shape,
-                        arr.offset)):
+                        e.data.other_subset.max_element(), getArrayCheckShape(other_subset_node, arr),
+                        arroffset)):
                     raise InvalidSDFGEdgeError(
                         "Memlet other_subset out-of-bounds", sdfg, state_id,
                         eid)
 
             # Test subset and other_subset for undefined symbols
-            if Config.get_bool('experimental', 'validate_undefs'):
+            if Config.get_bool('experimental', 'validate_undefs') or True:
                 # TODO: Traverse by scopes and accumulate data
                 defined_symbols = state.symbols_defined_at(e.dst)
                 undefs = (e.data.subset.free_symbols -
@@ -505,6 +609,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes",
                                        sdfg, state_id, eid)
 
+        #TODO: Isn't this already checked at 485?
+        """
         # Check dimensionality of memory access
         if isinstance(e.data.subset, (sbs.Range, sbs.Indices)):
             if e.data.subset.dims() != len(sdfg.arrays[e.data.data].shape):
@@ -516,6 +622,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     state_id,
                     eid,
                 )
+        """
 
         # Verify that source and destination subsets contain the same
         # number of elements
@@ -528,7 +635,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         sdfg.arrays[src_node.data].veclen)
             dst_expr = (e.data.dst_subset.num_elements() *
                         sdfg.arrays[dst_node.data].veclen)
-            if symbolic.inequal_symbols(src_expr, dst_expr):
+            if src_node.data in local_hbmmultibank_arrays or dst_node.data in local_hbmmultibank_arrays:
+                pass #TODO: This does not yet work, because we have to add the assumption that N / numbanks == floor(N / numbanks)
+            elif symbolic.inequal_symbols(src_expr, dst_expr):
                 raise InvalidSDFGEdgeError(
                     'Dimensionality mismatch between src/dst subsets', sdfg,
                     state_id, eid)
