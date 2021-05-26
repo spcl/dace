@@ -185,11 +185,11 @@ class DaceProgram:
         self._cache: Tuple[ArgTypes, SDFG,
                            compiled_sdfg.CompiledSDFG] = (None, None, None)
 
-    def _auto_optimize(self, sdfg: SDFG) -> SDFG:
+    def _auto_optimize(self, sdfg: SDFG, symbols: Dict[str, int] = None) -> SDFG:
         """ Invoke automatic optimization heuristics on internal program. """
         # Avoid import loop
         from dace.transformation.auto import auto_optimize as autoopt
-        return autoopt.auto_optimize(sdfg, self.device)
+        return autoopt.auto_optimize(sdfg, self.device, symbols = symbols)
 
     def to_sdfg(self, *args, strict=None, save=False) -> SDFG:
         """ Parses the DaCe function into an SDFG. """
@@ -248,7 +248,7 @@ class DaceProgram:
 
         # Invoke auto-optimization as necessary
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
-            sdfg = self._auto_optimize(sdfg)
+            sdfg = self._auto_optimize(sdfg, symbols = kwargs)
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
