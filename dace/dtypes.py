@@ -570,6 +570,9 @@ class pointer(typeclass):
         if json_obj['type'] != 'pointer':
             raise TypeError("Invalid type for pointer")
 
+        if json_obj['dtype'] is None:
+            return pointer(typeclass(None))
+
         return pointer(json_to_typeclass(json_obj['dtype'], context))
 
     def as_ctypes(self):
