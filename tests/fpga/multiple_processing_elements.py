@@ -40,7 +40,7 @@ def test_PEs_inside_component_0():
     sdfg.save('/tmp/out.sdfg')
     program = sdfg.compile()
     for node, state in program.sdfg.all_nodes_recursive():
-        if hasattr(node, '_pe'):
+        if hasattr(node, '_kernel'):
             print(node, node._pe)
 
     z = program(x=x, y=y, v=v, w=w)
@@ -93,7 +93,7 @@ def test_PEs_inside_component_1():
     sdfg.save('/tmp/out.sdfg')
     program = sdfg.compile()
     for node, state in program.sdfg.all_nodes_recursive():
-        if hasattr(node, '_pe'):
+        if hasattr(node, '_kernel'):
             print(node, node._pe)
 
     program(x=x, y=y, v=v, w=w, z=z, t=t, alpha=alpha, beta=beta)
@@ -141,7 +141,7 @@ def test_PEs_inside_component_2():
     sdfg.save('/tmp/out.sdfg')
     program = sdfg.compile()
     for node, state in program.sdfg.all_nodes_recursive():
-        if hasattr(node, '_pe'):
+        if hasattr(node, '_kernel'):
             print(node, node._pe)
 
     program(x=x, y=y, v=v, t=t, z=z)
@@ -184,7 +184,7 @@ def test_PEs_LNs_inside_component():
     sdfg.save('/tmp/out.sdfg')
     program = sdfg.compile()
     for node, state in program.sdfg.all_nodes_recursive():
-        if hasattr(node, '_pe'):
+        if hasattr(node, '_kernel'):
             print(node, node._pe)
 
     z = program(A=A, x=x, B=B, y=y)
@@ -194,7 +194,7 @@ def test_PEs_LNs_inside_component():
 
 
 if __name__ == "__main__":
-    test_PEs_inside_component_0()
+    # test_PEs_inside_component_0()
     # test_PEs_inside_component_1()
-    # test_PEs_inside_component_2()
+    test_PEs_inside_component_2()
     # test_PEs_LNs_inside_component()
