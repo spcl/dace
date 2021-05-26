@@ -122,7 +122,8 @@ class LoopToMap(DetectLoop):
                     # of the form "a*i+b" where a >= 1, and i is the iteration
                     # variable. The iteration variable must be used.
                     if e.data.wcr is None:
-                        if not _check_range(e.data.dst_subset, a, itersym, b, step):
+                        dst_subset = e.data.get_dst_subset(e, begin)
+                        if not _check_range(dst_subset, a, itersym, b, step):
                             return False
                     # End of check
 
@@ -143,7 +144,8 @@ class LoopToMap(DetectLoop):
                     if e.data.dynamic and e.data.src_subset.num_elements() != 1:
                         # If pointers are involved, give up
                         return False
-                    if not _check_range(e.data.src_subset, a, itersym, b, step):
+                    src_subset = e.data.get_src_subset(e, begin)
+                    if not _check_range(src_subset, a, itersym, b, step):
                         return False
 
                     pread = propagate_subset([e.data], sdfg.arrays[data],
