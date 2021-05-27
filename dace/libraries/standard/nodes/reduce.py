@@ -43,10 +43,17 @@ class ExpandReducePure(pm.ExpandTransformation):
         node.validate(sdfg, state)
         inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
-        input_dims = len(inedge.data.subset)
-        output_dims = len(outedge.data.subset)
+        insubset = dcpy(inedge.data.subset)
+        isqdim = insubset.squeeze()
+        outsubset = dcpy(outedge.data.subset)
+        osqdim = outsubset.squeeze()
+        input_dims = len(insubset)
+        output_dims = len(outsubset)
         input_data = sdfg.arrays[inedge.data.data]
         output_data = sdfg.arrays[outedge.data.data]
+
+        if len(osqdim) == 0:  # Fix for scalars
+            osqdim = [0]
 
         # Standardize axes
         axes = node.axes if node.axes else [i for i in range(input_dims)]
@@ -55,15 +62,21 @@ class ExpandReducePure(pm.ExpandTransformation):
         nsdfg = SDFG('reduce')
 
         nsdfg.add_array('_in',
-                        inedge.data.subset.size(),
+                        insubset.size(),
                         input_data.dtype,
-                        strides=input_data.strides,
+                        strides=[
+                            s for i, s in enumerate(input_data.strides)
+                            if i in isqdim
+                        ],
                         storage=input_data.storage)
 
         nsdfg.add_array('_out',
-                        outedge.data.subset.size(),
+                        outsubset.size(),
                         output_data.dtype,
-                        strides=output_data.strides,
+                        strides=[
+                            s for i, s in enumerate(output_data.strides)
+                            if i in osqdim
+                        ],
                         storage=output_data.storage)
 
         # If identity is defined, add an initialization state
@@ -94,7 +107,7 @@ class ExpandReducePure(pm.ExpandTransformation):
             # Interleave input and output axes to match input memlet
             ictr, octr = 0, 0
             input_subset = []
-            for i in range(input_dims):
+            for i in isqdim:
                 if i in axes:
                     input_subset.append('_i%d' % ictr)
                     ictr += 1
@@ -102,12 +115,10 @@ class ExpandReducePure(pm.ExpandTransformation):
                     input_subset.append('_o%d' % octr)
                     octr += 1
 
-            output_size = outedge.data.subset.size()
-
             ome, omx = nstate.add_map(
                 'reduce_output', {
                     '_o%d' % i: '0:%s' % symstr(sz)
-                    for i, sz in enumerate(outedge.data.subset.size())
+                    for i, sz in enumerate(outsubset.size())
                 })
             outm = dace.Memlet.simple(
                 '_out',
@@ -124,7 +135,7 @@ class ExpandReducePure(pm.ExpandTransformation):
         # an identity tasklet
         ime, imx = nstate.add_map(
             'reduce_values', {
-                '_i%d' % i: '0:%s' % symstr(inedge.data.subset.size()[axis])
+                '_i%d' % i: '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
                 for i, axis in enumerate(sorted(axes))
             })
 
@@ -372,13 +383,16 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         if input_data.storage not in [
                 dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned
         ]:
-            raise ValueError('Input of GPU reduction must either reside '
-                             ' in global GPU memory or pinned CPU memory')
+            warnings.warn('Input of GPU reduction must either reside '
+                          ' in global GPU memory or pinned CPU memory')
+            return ExpandReducePure.expansion(node, state, sdfg)
+
         if output_data.storage not in [
                 dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned
         ]:
-            raise ValueError('Output of GPU reduction must either reside '
-                             ' in global GPU memory or pinned CPU memory')
+            warnings.warn('Output of GPU reduction must either reside '
+                          ' in global GPU memory or pinned CPU memory')
+            return ExpandReducePure.expansion(node, state, sdfg)
 
         # Determine reduction type
         kname = (ExpandReduceCUDADevice._SPECIAL_RTYPES[redtype] if redtype
@@ -466,8 +480,7 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
         # Call reduction function where necessary
         host_localcode.write(
             '__dace_reduce_{id}(_in, _out, {reduce_range_call}, __dace_current_stream);'
-            .format(id=idstr,
-                    reduce_range_call=reduce_range_call))
+            .format(id=idstr, reduce_range_call=reduce_range_call))
 
         # Make tasklet
         tnode = dace.nodes.Tasklet('reduce',
@@ -939,13 +952,13 @@ class ExpandReduceFPGAPartialReduction(pm.ExpandTransformation):
         if redtype not in ExpandReduceFPGAPartialReduction._REDUCTION_TYPE_EXPR:
             raise ValueError('Reduction type not supported for "%s"' % node.wcr)
         else:
-            reduction_expr = ExpandReduceFPGAPartialReduction._REDUCTION_TYPE_EXPR[redtype]
+            reduction_expr = ExpandReduceFPGAPartialReduction._REDUCTION_TYPE_EXPR[
+                redtype]
 
         # generate flatten index considering inner map: will be used for indexing into partial results
         ranges_size = ime.range.size()
-        inner_index = '+'.join([
-            f'_i{i} * {ranges_size[i + 1]}' for i in range(len(axes) - 1)
-        ])
+        inner_index = '+'.join(
+            [f'_i{i} * {ranges_size[i + 1]}' for i in range(len(axes) - 1)])
         inner_op = ' + ' if len(axes) > 1 else ''
         inner_index = inner_index + f'{inner_op}_i{(len(axes) - 1)}'
         partial_reduce_tasklet = nstate.add_tasklet(
