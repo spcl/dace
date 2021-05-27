@@ -459,7 +459,7 @@ def result_type_of(lhs, *rhs):
     according to C semantics.
     """
     if len(rhs) == 0:
-        rhs = None
+        rhs = lhs
     elif len(rhs) > 1:
         result = lhs
         for r in rhs:
