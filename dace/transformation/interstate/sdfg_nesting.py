@@ -323,8 +323,11 @@ class InlineSDFG(transformation.Transformation):
             if (isinstance(node, nodes.AccessNode)
                     and node.data not in transients
                     and node.data not in reshapes):
-                new_incoming_edges[node] = inputs[node.data]
-                source_accesses.add(node)
+                try:
+                    new_incoming_edges[node] = inputs[node.data]
+                    source_accesses.add(node)
+                except KeyError:
+                    pass
         for node in nstate.sink_nodes():
             if (isinstance(node, nodes.AccessNode)
                     and node.data not in transients
