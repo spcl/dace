@@ -242,7 +242,7 @@ def parseHBMArray(arrayname : str, array : data.Array) -> "dict[str, Any]":
             f"{arrayname}")
     return {"ndim" : ndim, "shape" : array.shape,
             "splitcount" : splitcount, "splitaxes" : splitaxes, "lowbank" : low,
-            "numbank": len(splitaxes) * splitcount }
+            "numbank": splitcount ** len(splitaxes)}
 
 def findAndParseHBMMultibank(sdfg : sd.SDFG) -> "dict[(str, sd.SDFG), dict[str, Any]]":
     """
@@ -253,7 +253,7 @@ def findAndParseHBMMultibank(sdfg : sd.SDFG) -> "dict[(str, sd.SDFG), dict[str, 
         #{ndim -> int, splitcount->int, splitaxes->[int]}
     for currentsdfg, arrayname, array in arrays:
         collected = parseHBMArray(arrayname, array)
-        if(collected == None or collected['splitcount'] == 0):
+        if(collected == None or collected['numbank'] == 1):
             continue
         handledArrays[(arrayname, currentsdfg)] = collected
     return handledArrays
@@ -371,7 +371,7 @@ def recursive_splice_hbmmemlettree(state : statenamespace.SDFGState,
 
 def getHBMBankOffset(refInfo : "dict[str, Any]", bank : int) -> "list[str]":
     """
-    Returns the offset (as string) of a bank in a hbm multibankarray
+    Returns the offset of a bank in a hbm multibankarray
     :param refInfo: A dict containing info about the array as returned by parseHBMArray
     :param bank: The bank for which to compute the offset
     """
@@ -380,15 +380,13 @@ def getHBMBankOffset(refInfo : "dict[str, Any]", bank : int) -> "list[str]":
     splitcount = refInfo['splitcount']
     oldshape = refInfo['shape']
     bankoffset = []
-    countAlreadySplit = 0
     for d in range(dim):
         if(d not in splitaxes):
             bankoffset.append(0)
         else:
-            countAlreadySplit += 1
-            currentoffset = bank % (splitcount**countAlreadySplit)
+            currentoffset = bank % splitcount
             bankoffset.append(currentoffset)
-            bank = bank - currentoffset
+            bank = bank // splitcount
     trueoffset = []
     for d in range(dim):
         if(bankoffset[d] == 0):
@@ -464,23 +462,22 @@ def expand_hbm_multiarrays(sdfg : sd.SDFG) -> sd.SDFG:
         shape = oldarray.shape
         splitcount = curinfo["splitcount"]
         axes = curinfo["splitaxes"]
-        numbanks = curinfo["numbanks"]
+        numbanks = curinfo["numbank"]
         arraylist[(arrayname, arraysdfg)] = []
         newshape = tuple(getHBMTrueShape(shape, axes, splitcount))
+
         for i in range(numbanks):
             newname = f"{arrayname}_hbm{i}"
             newname = getNonExistingName(newname, arraysdfg.arrays)
-
-            newname, newarray = arraysdfg.add_array(
-                newname, 
-                newshape, 
-                oldarray.dtype,
-                transient=False,
-                strides=deepcopy(oldarray.strides),
+            newname, newarray = arraysdfg.add_array(    #TODO: See if alignment=0 is actually ok, add support for offset != 0 
+                newname, newshape, oldarray.dtype,
+                oldarray.storage, oldarray.transient,
                 offset=deepcopy(oldarray.offset),
-                lifetime=deepcopy(oldarray.lifetime),
+                lifetime=deepcopy(oldarray.lifetime), 
                 debuginfo=deepcopy(oldarray.debuginfo),
-                allow_conflicts=deepcopy(oldarray.allow_conflicts)
+                allow_conflicts=oldarray.allow_conflicts, 
+                alignment=0,
+                may_alias=oldarray.may_alias,
             )
             newarray.location["hbmbank"] = subsets.Range.from_string(str(curinfo['lowbank'] + i))
             arraylist[(arrayname, arraysdfg)].append((newname, newarray))

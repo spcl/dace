@@ -20,10 +20,10 @@ from dace import symbolic
         #Update dst and src subset check to support divison: TODO -> volume not checked at the moment
         #Check that magic index is symbolic fixed bound or integer and in bounds
         #no multibank memlet is attached to a tasklet: part of the subset check
+        #TODO: Check that strides are ok, no left out elements (only simple 2d/3d allowed)
 
 ###########################################
 # Validation
-
 
 def validate(graph: 'dace.sdfg.graph.SubgraphView'):
     from dace.sdfg import SDFG, SDFGState, SubgraphView

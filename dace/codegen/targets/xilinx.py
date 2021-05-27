@@ -26,7 +26,6 @@ REDUCTION_TYPE_TO_HLSLIB = {
     dace.dtypes.ReductionType.Logical_And: "hlslib::op::And",
 }
 
-
 @registry.autoregister_params(name='xilinx')
 class XilinxCodeGen(fpga.FPGACodeGen):
     """ Xilinx FPGA code generator. """
@@ -171,6 +170,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         else:
             are_assigned = False
         bank_assignment_code = []
+        #HBMJAN -> Create Interface Assignment
         for name, _ in self._host_codes:
             # Only iterate over assignments if any exist
             if are_assigned:
@@ -480,7 +480,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             state_id)
 
         # Insert interface pragmas
-        #HBMJAN
+        #HBMJAN -> Interface pragmas, probably good as is
         num_mapped_args = 0
         for arg, dataname in array_args:
             var_name = re.findall(r"\w+", arg)[-1]
@@ -488,8 +488,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 interface_name = "gmem{}".format(num_mapped_args)
                 kernel_stream.write(
                     "#pragma HLS INTERFACE m_axi port={} "
-                    "offset=slave bundle={}".format(var_name, interface_name),
-                    sdfg, state_id)
+                    "offset=slave bundle={}".format(var_name, interface_name),)
                 # Map this interface to the corresponding location
                 # specification to be passed to the Xilinx compiler
                 memorybank = bank_assignments[dataname]
