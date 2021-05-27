@@ -506,7 +506,7 @@ class InlineSDFG(transformation.Transformation):
                 node = next(n for n in reversed(order)
                             if n.data == edge.data.data)
             except StopIteration:
-                raise NameError(f'Access node with data "{n.data}" not found in'
+                raise NameError(f'Access node with data "{edge.data.data}" not found in'
                                 f' nested SDFG "{nsdfg.name}" while inlining '
                                 '(reconnecting outputs)')
             state.add_edge(node, edge.src_conn, edge.dst, edge.dst_conn,
