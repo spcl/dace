@@ -153,8 +153,8 @@ class Transformation(TransformationBase):
 
         self.sdfg_id = sdfg_id
         self.state_id = state_id
-        expr = self.expressions()[expr_index]
         if not override:
+            expr = self.expressions()[expr_index]
             for value in subgraph.values():
                 if not isinstance(value, int):
                     raise TypeError('All values of '
@@ -372,11 +372,18 @@ class Transformation(TransformationBase):
 
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
-        return {
-            'type': 'Transformation',
-            'transformation': type(self).__name__,
-            **props
-        }
+        if hasattr(self, 'dummy_for'):
+            return {
+                'type': 'Transformation',
+                'transformation': self.dummy_for,
+                **props
+            }
+        else:
+            return {
+                'type': 'Transformation',
+                'transformation': type(self).__name__,
+                **props
+            }
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any],
@@ -385,6 +392,23 @@ class Transformation(TransformationBase):
             xform = next(ext for ext in Transformation.extensions().keys()
                          if ext.__name__ == json_obj['transformation'])
         except StopIteration:
+            # This json object indicates that it is a transformation, but the
+            # corresponding serializable class cannot be found (i.e. the
+            # transformation is not known to DaCe). Handle this by creating a
+            # dummy transformation to keep serialization intact.
+            if all(attr in json_obj for attr in [
+                'sdfg_id', 'state_id', '_subgraph', 'expr_index',
+                'transformation'
+            ]):
+                xform = Transformation(
+                    sdfg_id=json_obj['sdfg_id'],
+                    state_id=json_obj['state_id'],
+                    subgraph=json_obj['_subgraph'],
+                    expr_index=json_obj['expr_index'],
+                    override=True
+                )
+                xform.dummy_for = json_obj['transformation']
+                return xform
             return None
 
         # Recreate subgraph
@@ -697,11 +721,18 @@ class SubgraphTransformation(TransformationBase):
 
     def to_json(self, parent=None):
         props = serialize.all_properties_to_json(self)
-        return {
-            'type': 'SubgraphTransformation',
-            'transformation': type(self).__name__,
-            **props
-        }
+        if hasattr(self, 'dummy_for'):
+            return {
+                'type': 'SubgraphTransformation',
+                'transformation': self.dummy_for,
+                **props
+            }
+        else:
+            return {
+                'type': 'SubgraphTransformation',
+                'transformation': type(self).__name__,
+                **props
+            }
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any],
@@ -710,6 +741,20 @@ class SubgraphTransformation(TransformationBase):
             xform = next(ext for ext in SubgraphTransformation.extensions().keys()
                          if ext.__name__ == json_obj['transformation'])
         except StopIteration:
+            # This json object indicates that it is a transformation, but the
+            # corresponding serializable class cannot be found (i.e. the
+            # transformation is not known to DaCe). Handle this by creating a
+            # dummy transformation to keep serialization intact.
+            if all(attr in json_obj for attr in [
+                'sdfg_id', 'state_id', '_subgraph', 'transformation'
+            ]):
+                xform = SubgraphTransformation(
+                    sdfg_id=json_obj['sdfg_id'],
+                    state_id=json_obj['state_id'],
+                    subgraph=json_obj['_subgraph']
+                )
+                xform.dummy_for = json_obj['transformation']
+                return xform
             return None
 
         # Reconstruct transformation
