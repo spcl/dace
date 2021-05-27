@@ -727,9 +727,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         return transients_created
 
     def determine_invariant_dimensions(
-        self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
-        intermediate_nodes: List[nodes.AccessNode],
-        map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit]):
+            self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
+            intermediate_nodes: List[nodes.AccessNode],
+            map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit]):
         ''' Determines the invariant dimensions for each node -- dimensions in 
             which the access set of the memlets propagated through map entries and 
             exits does not change.
