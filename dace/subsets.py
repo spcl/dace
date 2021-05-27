@@ -211,9 +211,11 @@ class Range(Subset):
             #TODO: Rewrite this code once the hbm-stuff is at the final destination, maybe change the errors for parsing
             #and imports
             import dace.sdfg.hbm_multibank_expansion as hbm
-            parsed = hbm.parseHBMArray("", array)    
+            parsed = hbm.parseHBMArray("", array)
+            if(parsed["numbank"] == 1):
+                return Range([(0, s - 1, 1) for s in array.shape])
             res = []
-            res.append((0, parsed['splitcount'] * len(parsed['splitaxes']) -1, 1))
+            res.append((0, parsed['numbank'] -1, 1))
             for i in range(len(array.shape)):
                 if (i in parsed['splitaxes']):
                     res.append((0, array.shape[i] // parsed['splitcount'] -1, 1))

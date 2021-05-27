@@ -414,6 +414,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     inner_node = data_to_node[dataname]
                     trace = utils.trace_nested_access(inner_node, subgraph,
                                                       sdfg)
+                    #HBMJAN -> initialize bank_assignments
                     bank = None
                     banktype = None
                     for (trace_in, trace_out), _, _, trace_sdfg in trace:
@@ -424,25 +425,21 @@ class FPGACodeGen(TargetCodeGenerator):
                             if "bank" in trace_desc.location and "hbmbank" in trace_desc.location:
                                 raise cgx.CodegenError("Found memory bank specifier "
                                     f"with bank and hbmbank defined for {trace_name}")
-                            trace_bank = None
-                            trace_type = None
                             if("bank" in trace_desc.location):
                                 trace_bank = trace_desc.location["bank"]
                                 trace_type = "DDR"
                             else:
-                                trace_bank = trace_desc.location["hbmbank"]
+                                low, high, stride = trace_desc.location["hbmbank"][0]
+                                if(low != high or stride != 1):
+                                    raise cgx.CodegenError(f"Found not expanded HBM memory" 
+                                        "bank during codegen: {trace_name}")
+                                trace_bank = str(low)
                                 trace_type = "HBM"
                             if (bank is not None and banktype is not None
                                     and (bank != trace_bank or banktype != trace_type)):
                                 raise cgx.CodegenError(
                                     "Found inconsistent memory bank "
                                     f"specifier for {trace_name}.")
-                            try:
-                                check = int(trace_bank)
-                            except ValueError:
-                                raise cgx.CodegenError("Memory bank specifier must"
-                                    f"be an integer at {trace_name}")
-
                             bank = trace_bank
                             banktype = trace_type
                         
@@ -451,7 +448,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     if bank is not None:
                         outer_node = trace[0][0][0] or trace[0][0][1]
                         outer_desc = outer_node.desc(trace[0][2])
-                        okhbm = "hbmbank" in outer_desc.location and str(outer_desc.location["hbmbank"]) == str(bank)
+                        okhbm = "hbmbank" in outer_desc.location and str(outer_desc.location["hbmbank"][0][0]) == str(bank)
                         okbank = "bank" in outer_desc.location and str(outer_desc.location["bank"]) == str(bank)
                         if (not (okhbm or okbank)):
                             raise cgx.CodegenError(
@@ -622,43 +619,33 @@ class FPGACodeGen(TargetCodeGenerator):
                                     "FPGA memory bank specifier "
                                     "must be an integer: {}".format(
                                         nodedesc.location["bank"]))
-                            memory_bank_arg = (
-                                f"hlslib::ocl::MemoryBank::bank{bank}, ")
-                        #HBMJAN
+                            memory_bank_arg_type = f"hlslib::ocl::StorageType::DDR"
+                            memory_bank_arg_num = bank
+                        #HBMJAN -> Array Allocation
                         elif "hbmbank" in nodedesc.location:
-                            hbmbank = None
-                            try:
-                                hbmbank = int(nodedesc.location["hbmbank"])
-                            except ValueError:
-                                split = nodedesc.location["hbmbank"].split(":")
-                                ishbmrange = False
-                                if(len(split) == 2):
-                                    try:
-                                        check1 = int(split[0])
-                                        check2 = int(split[1])
-                                        ishbmrange = True
-                                    except ValueError:
-                                        pass
-                                if(ishbmrange):
-                                    raise ValueError("Found a not expanded"
-                                            f"(hbm-) array during codegen in {node.data}")
-                                else:
-                                    raise cgx.CodegenError(
-                                        "FPGA HBM bank specifier "
-                                        f"must be an integer for {node.data}")
-                            #TODO: generate actual HBM code
-                            memory_bank_arg = f"hlslib::ocl::IwouldLikeToHaveHBM{hbmbank}, "
+                            hbmbank = nodedesc.location["hbmbank"]
+                            memory_bank_arg_type = f"hlslib::ocl::StorageType::HBM"
+                            memory_bank_arg_num = hbmbank
 
                         # Define buffer, using proper type
                         result_decl.write(
                             "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};"
                             .format(nodedesc.dtype.ctype, dataname))
+                        """
                         result_alloc.write(
                             "{} = __state->fpga_context->Get()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                             "({}{});".format(allocname, nodedesc.dtype.ctype,
                                              memory_bank_arg,
                                              cpp.sym2cpp(arrsize)))
+                        """
+                        result_alloc.write(
+                            "{} = __state->fpga_context->Get()."
+                            "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
+                            "({}, {}, {});".format(allocname, nodedesc.dtype.ctype,
+                                                    memory_bank_arg_type, memory_bank_arg_num,
+                                                    cpp.sym2cpp(arrsize))
+                        )
                         self._dispatcher.defined_vars.add(
                             dataname, DefinedType.Pointer,
                             'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
@@ -723,6 +710,7 @@ class FPGACodeGen(TargetCodeGenerator):
                    dst_storage, dst_schedule, edge, dfg, function_stream,
                    callsite_stream):
 
+        #HBMJAN -> true memory copy
         u, v, memlet = edge.src, edge.dst, edge.data
 
         # Determine directionality
@@ -755,6 +743,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
         if (host_to_device or device_to_host
                 or (device_to_device and not self._in_device_code)):
+
+            #TODO: HBMJAN Support 2D and 3D copies here
 
             dims = memlet.subset.dims()
             copy_shape = memlet.subset.bounding_box_size()
@@ -1091,6 +1081,7 @@ class FPGACodeGen(TargetCodeGenerator):
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge,
                     function_stream, callsite_stream):
 
+        #HBMJAN -> Copy Memory
         if isinstance(src_node, dace.sdfg.nodes.CodeNode):
             src_storage = dtypes.StorageType.Register
             try:
