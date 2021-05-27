@@ -205,12 +205,18 @@ required:
                     will crash if this is not the case.
 
             unique_functions:
-                type: bool
-                default: true
+                type: str
+                default: hash
                 title: Generate unique functions
                 description: >
-                    If set to true, if multiple nested SDFGs with equivalent contents exist,
-                    the code is generated only once.
+                    Determine if and how to generate the code for equivalent NestedSDFGs:
+                    "hash": hashing is used to determine if multiple NestedSDFGs with equivalent contents exist.
+                    If this is the case, the code is generated only once.
+                    "unique_name": the unique_name property of SDFG is used to determine if two NestedSDFGs are equal,
+                    generating the code only once.  This gives more control to the programmer, that can explicitly
+                    decide what NestedSDFG code can be replicated and what not.
+                    "none": a separate function is code generated for each NestedSDFG
+
 
             inline_sdfgs:
                 type: bool
@@ -839,3 +845,33 @@ required:
                                     Default FPGA stream depth used in the BLAS
                                     library nodes and the corresponding
                                     streaming transformations
+            lapack:
+                type: dict
+                title: LAPACK
+                description: Built-in LAPACK DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: OpenBLAS
+                        description: Default implementation of LAPACK library nodes.
+                    override:
+                        type: bool
+                        default: false
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.
+            linalg:
+                type: dict
+                title: linalg
+                description: Built-in NumPy linalg DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: OpenBLAS
+                        description: Default implementation of linalg library nodes.
+                    override:
+                        type: bool
+                        default: false
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.

@@ -366,6 +366,7 @@ def _Compare(t, symbols, inferred_symbols):
 
     return dtypes.vector(dace.bool, -1) if any_vector else dtypes.bool
 
+  
 def _BoolOp(t, symbols, inferred_symbols):
     # If any vector occurs in the bool op, the inferred type is also a bool vector
     any_vector = False

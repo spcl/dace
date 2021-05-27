@@ -96,11 +96,13 @@ def test_p1():
     expansion = MultiExpansion(subgraph)
     fusion = SubgraphFusion(subgraph)
 
-    assert MultiExpansion.can_be_applied(sdfg, subgraph)
-    expansion.apply(sdfg)
+    me = MultiExpansion(subgraph)
+    assert me.can_be_applied(sdfg, subgraph)
+    me.apply(sdfg)
 
-    assert SubgraphFusion.can_be_applied(sdfg, subgraph)
-    fusion.apply(sdfg)
+    sf = SubgraphFusion(subgraph)
+    assert sf.can_be_applied(sdfg, subgraph)
+    sf.apply(sdfg)
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C, D=D, E=E, F=F, G=G, H=H, I=I, J=J, X=X, Y=Y, Z=Z,\

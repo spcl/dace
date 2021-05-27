@@ -44,7 +44,7 @@ def test_pow(A: dace.int64[5, 5], B: dace.int64[5, 5]):
 
 
 @compare_numpy_output()
-def test_matmult(A: dace.int64[5, 5], B: dace.int64[5, 5]):
+def test_matmult(A: dace.float64[5, 5], B: dace.float64[5, 5]):
     return A @ B
 
 

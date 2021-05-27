@@ -6,12 +6,12 @@ from networkx import MultiDiGraph
 
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set, Union
 
-from dace import symbolic
+from dace import dtypes, symbolic
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
-from dace.sdfg.scope import ScopeSubgraphView
+from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg import graph
 from dace.memlet import Memlet
@@ -71,14 +71,18 @@ def nest_state_subgraph(sdfg: SDFG,
 
     # Consolidate edges in top scope
     utils.consolidate_edges(sdfg, scope)
+    snodes = subgraph.nodes()
 
     # Collect inputs and outputs of the nested SDFG
     inputs: List[MultiConnectorEdge] = []
     outputs: List[MultiConnectorEdge] = []
-    for node in subgraph.source_nodes():
-        inputs.extend(state.in_edges(node))
-    for node in subgraph.sink_nodes():
-        outputs.extend(state.out_edges(node))
+    for node in snodes:
+        for edge in state.in_edges(node):
+            if edge.src not in snodes:
+                inputs.append(edge)
+        for edge in state.out_edges(node):
+            if edge.dst not in snodes:
+                outputs.append(edge)
 
     # Collect transients not used outside of subgraph (will be removed of
     # top-level graph)
@@ -193,7 +197,8 @@ def nest_state_subgraph(sdfg: SDFG,
     # Add subgraph nodes and edges to nested state
     nstate.add_nodes_from(subgraph.nodes())
     for e in subgraph.edges():
-        nstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+        nstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn,
+                        copy.deepcopy(e.data))
 
     # Modify nested SDFG parents in subgraph
     for node in subgraph.nodes():
@@ -331,21 +336,31 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
 
     # Mark boundary access nodes to keep after fission
     nodes_to_remove = set(subgraph.nodes())
-    nodes_to_remove -= set(n for n in subgraph.source_nodes()
-                           if state.out_degree(n) > 1)
-    nodes_to_remove -= set(n for n in subgraph.sink_nodes()
-                           if state.in_degree(n) > 1)
+    boundary_nodes = [
+        n for n in subgraph.nodes()
+        if len(state.out_edges(n)) > len(subgraph.out_edges(n))
+    ] + [
+        n for n in subgraph.nodes()
+        if len(state.in_edges(n)) > len(subgraph.in_edges(n))
+    ]
+
+    # Make dictionary of nodes to add to new state
+    new_nodes = {n: n for n in subgraph.nodes()}
+    new_nodes.update({b: copy.deepcopy(b) for b in boundary_nodes})
+
+    nodes_to_remove -= set(boundary_nodes)
     state.remove_nodes_from(nodes_to_remove)
 
-    for n in subgraph.nodes():
+    for n in new_nodes.values():
         if isinstance(n, nodes.NestedSDFG):
             # Set the new parent state
             n.sdfg.parent = newstate
 
-    newstate.add_nodes_from(subgraph.nodes())
+    newstate.add_nodes_from(new_nodes.values())
 
     for e in orig_edges:
-        newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+        newstate.add_edge(new_nodes[e.src], e.src_conn, new_nodes[e.dst],
+                          e.dst_conn, e.data)
 
     return newstate
 
@@ -382,9 +397,8 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         # Special case: If internal memlet is one element and the top
         # memlet uses all its dimensions, ignore the internal element
         # TODO: There must be a better solution
-        if (len(internal_subset) == 1 and ones == list(range(len(shape)))
-                and (internal_subset[0] == (0, 0, 1)
-                     or internal_subset[0] == 0)):
+        if (len(internal_subset) == 1 and ones == list(range(len(shape))) and
+            (internal_subset[0] == (0, 0, 1) or internal_subset[0] == 0)):
             to_unsqueeze = ones[1:]
         else:
             to_unsqueeze = ones
@@ -733,3 +747,176 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry,
         )
 
     return extracted_map, map_to_collapse
+
+
+def scope_tree_recursive(state: SDFGState,
+                         entry: Optional[nodes.EntryNode] = None) -> ScopeTree:
+    """ 
+    Returns a scope tree that includes scopes from nested SDFGs. 
+    :param state: The state that contains the root of the scope tree.
+    :param entry: A scope entry node to set as root, otherwise the state is 
+                  the root if None is given.
+    """
+    stree = state.scope_tree()[entry]
+    stree.state = state  # Annotate state in tree
+
+    # Add nested SDFGs as children
+    def traverse(state: SDFGState, treenode: ScopeTree):
+        snodes = state.scope_children()[treenode.entry]
+        for node in snodes:
+            if isinstance(node, nodes.NestedSDFG):
+                for nstate in node.sdfg.nodes():
+                    ntree = nstate.scope_tree()[None]
+                    ntree.state = nstate
+                    treenode.children.append(ntree)
+        for child in treenode.children:
+            traverse(getattr(child, 'state', state), child)
+
+    traverse(state, stree)
+    return stree
+
+
+def get_internal_scopes(
+        state: SDFGState,
+        entry: nodes.EntryNode,
+        immediate: bool = False) -> List[Tuple[SDFGState, nodes.EntryNode]]:
+    """ 
+    Returns all internal scopes within a given scope, including if they 
+    reside in nested SDFGs.
+    :param state: State in which entry node resides.
+    :param entry: The entry node to start from.
+    :param immediate: If True, only returns the scopes that are immediately
+                      nested in the map.
+    """
+    stree = scope_tree_recursive(state, entry)
+    result = []
+
+    def traverse(state: SDFGState, treenode: ScopeTree):
+        for child in treenode.children:
+            if child.entry is not None:
+                result.append((state, child.entry))
+                if not immediate:
+                    traverse(state, child)
+            else:  # Nested SDFG
+                traverse(child.state, child)
+
+    traverse(state, stree)
+    return result
+
+
+def gpu_map_has_explicit_threadblocks(state: SDFGState,
+                                      entry: nodes.EntryNode) -> bool:
+    """ 
+    Returns True if GPU_Device map has explicit thread-block maps nested within.
+    """
+    internal_maps = get_internal_scopes(state, entry)
+    if any(m.schedule in (dtypes.ScheduleType.GPU_ThreadBlock,
+                          dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
+           for _, m in internal_maps):
+        return True
+    imm_maps = get_internal_scopes(state, entry, immediate=True)
+    if any(m.schedule == dtypes.ScheduleType.Default for _, m in imm_maps):
+        return True
+
+    return False
+
+
+def reconnect_edge_through_map(
+    state: SDFGState, edge: graph.MultiConnectorEdge[Memlet],
+    new_node: Union[nodes.EntryNode, nodes.ExitNode], keep_src: bool
+) -> Tuple[graph.MultiConnectorEdge[Memlet], graph.MultiConnectorEdge[Memlet]]:
+    """
+    Reconnects an edge through a map scope, removes old edge, and returns the 
+    two new edges.
+    :param state: The state in which the edge and map reside.
+    :param edge: The edge to reconnect and remove.
+    :param new_node: The scope (map) entry or exit to reconnect through.
+    :param keep_src: If True, keeps the source of the edge intact, otherwise
+                     keeps destination of edge.
+    :return: A 2-tuple of (incoming edge, outgoing edge).
+    """
+    if keep_src:
+        result = state.add_edge_pair(new_node,
+                                     edge.dst,
+                                     edge.src,
+                                     edge.data,
+                                     internal_connector=edge.dst_conn,
+                                     external_connector=edge.src_conn)
+    else:
+        result = state.add_edge_pair(new_node,
+                                     edge.src,
+                                     edge.dst,
+                                     edge.data,
+                                     internal_connector=edge.src_conn,
+                                     external_connector=edge.dst_conn)
+    state.remove_edge(edge)
+    return result
+
+
+def contained_in(state: SDFGState, node: nodes.Node,
+                 scope: nodes.EntryNode) -> bool:
+    """
+    Returns true if the specified node is contained within the scope opened
+    by the given entry node (including through nested SDFGs).
+    """
+    # A node is contained within itself
+    if node is scope:
+        return True
+    cursdfg = state.parent
+    curstate = state
+    curscope = state.entry_node(node)
+    while cursdfg is not None:
+        while curscope is not None:
+            if curscope is scope:
+                return True
+            curscope = curstate.entry_node(curscope)
+        curstate = cursdfg.parent
+        curscope = cursdfg.parent_nsdfg_node
+        cursdfg = cursdfg.parent_sdfg
+    return False
+
+
+def redirect_edge(
+        state: SDFGState,
+        edge: graph.MultiConnectorEdge[Memlet],
+        new_src: Optional[nodes.Node] = None,
+        new_dst: Optional[nodes.Node] = None,
+        new_src_conn: Optional[str] = None,
+        new_dst_conn: Optional[str] = None,
+        new_data: Optional[str] = None,
+        new_memlet: Optional[Memlet] = None
+) -> graph.MultiConnectorEdge[Memlet]:
+    """
+    Redirects an edge in a state. Choose which elements to override by setting
+    the keyword arguments.
+    :param state: The SDFG state in which the edge resides.
+    :param edge: The edge to redirect.
+    :param new_src: If provided, redirects the source of the new edge.
+    :param new_dst: If provided, redirects the destination of the new edge.
+    :param new_src_conn: If provided, renames the source connector of the edge.
+    :param new_dst_conn: If provided, renames the destination connector of the 
+                         edge.
+    :param new_data: If provided, changes the data on the memlet of the edge,
+                     and the entire associated memlet tree.
+    :param new_memlet: If provided, changes only the memlet of the new edge.
+    :return: The new, redirected edge.
+    :note: ``new_data`` and ``new_memlet`` cannot be used at the same time.
+    """
+    if new_data is not None and new_memlet is not None:
+        raise ValueError('new_data and new_memlet cannot both be given.')
+    mtree = None
+    if new_data is not None:
+        mtree = state.memlet_tree(edge)
+    state.remove_edge(edge)
+    if new_data is not None:
+        memlet = copy.deepcopy(edge.data)
+        memlet.data = new_data
+        # Rename on full memlet tree
+        for e in mtree:
+            e.data.data = new_data
+    else:
+        memlet = new_memlet or edge.data
+    new_edge = state.add_edge(new_src or edge.src, new_src_conn
+                              or edge.src_conn, new_dst or edge.dst,
+                              new_dst_conn or edge.dst_conn, memlet)
+    return new_edge
