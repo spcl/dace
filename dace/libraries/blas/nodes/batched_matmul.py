@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
-from dace import dtypes, data as dt
+from dace import dtypes, memlet as mm, properties, data as dt
 from typing import Any, Dict, Optional
 from dace.symbolic import symstr
 import dace.library
 import dace.properties
+from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_access)
@@ -219,8 +220,35 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
         else:
             raise ValueError("Unsupported type: " + str(dtype))
 
-        alpha = "__state->cublas_handle.Constants(__dace_cuda_device).%sPone()" % factort
-        beta = "__state->cublas_handle.Constants(__dace_cuda_device).%sZero()" % factort
+        call_prefix = ''
+        call_suffix = ''
+        # Handle alpha / beta
+        constants = {
+            1.0:
+                f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()",
+            0.0:
+                f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()",
+        }
+        if node.alpha not in constants:
+            # Deal with complex input constants
+            if isinstance(node.alpha, complex):
+                alpha = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
+            else:
+                alpha = f'{dtype.ctype}({node.alpha})'
+
+            # Set pointer mode to host
+            call_prefix += f'''cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST);
+                {dtype.ctype} alpha = {alpha};
+                {dtype.ctype} beta = 0;
+                '''
+            call_suffix += '''
+    cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
+                '''
+            beta = f'({cdtype} *)&beta'
+            alpha = f'({cdtype} *)&alpha'
+        else:
+            alpha = constants[node.alpha]
+            beta = "__state->cublas_handle.Constants(__dace_cuda_device).%sZero()" % factort
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
@@ -239,7 +267,7 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
 
         opt['array_prefix'] = ''
 
-        code = (environments.cublas.cuBLAS.handle_setup_code(node) +
+        code = (environments.cublas.cuBLAS.handle_setup_code(node) + call_prefix +
                 call.format_map(opt))
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -309,6 +337,10 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandBatchedMatMulOpenBLAS,
         "cuBLAS": ExpandBatchedMatMulCuBLAS
     }
+    alpha = properties.Property(
+        allow_none=False,
+        default=1,
+        desc="A scalar which will be multiplied with A @ B before adding C")
     default_implementation = None
 
     def __init__(self, name, location=None):
@@ -352,3 +384,28 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         if len(size2) != 3:
             raise ValueError(
                 "batched matrix-matrix product only supported on matrices")
+
+# Numpy replacement
+@oprepo.replaces('dace.libraries.blas.bmm')
+def bmmnode(pv, sdfg: dace.SDFG,
+                 state: dace.SDFGState,
+                 A,
+                 B,
+                 C,
+                 alpha,
+                 trans_a=False,
+                 trans_b=False):
+    # Add nodes
+    A_in, B_in = (state.add_read(name) for name in (A, B))
+    C_out = state.add_write(C)
+
+    libnode = BatchedMatMul('bmm')
+    libnode.alpha = alpha
+    state.add_node(libnode)
+
+    # Connect nodes
+    state.add_edge(A_in, None, libnode, '_a', mm.Memlet(A))
+    state.add_edge(B_in, None, libnode, '_b', mm.Memlet(B))
+    state.add_edge(libnode, '_c', C_out, None, mm.Memlet(C))
+
+    return []
