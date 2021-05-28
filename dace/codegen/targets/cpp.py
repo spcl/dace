@@ -11,7 +11,7 @@ import warnings
 
 import sympy as sp
 from six import StringIO
-from typing import IO, Optional, Tuple, Union
+from typing import IO, Optional, Tuple, Union, Iterable, Any
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
@@ -365,6 +365,23 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
 
     return reshaped_copy, new_strides
 
+def to_cpp_array(arr : "Iterable[str]", ctype : str, makestd : bool = False) -> str:
+    """
+    Converts a given list to a c++ array
+    :param makestd: Return as std array
+    """
+    if makestd:
+        result = f"std::array<{ctype}, {len(arr)}>(" + "{"
+    else:
+        result = "{"
+    for i, value in enumerate(arr):
+        result += value
+        if(i != len(arr) -1):
+            result += ", "
+    result += "}"
+    if makestd:
+        result += ")"
+    return result
 
 def _is_c_contiguous(shape, strides):
     """ 
@@ -375,6 +392,59 @@ def _is_c_contiguous(shape, strides):
         data._prod(shape[i + 1:]) for i in range(len(shape)))
     return tuple(strides) == computed_strides
 
+def is_1d_nostrided_copy(
+    copy_shape,
+    src_shape,
+    src_strides,
+    dst_shape,
+    dst_strides,
+    subset,
+    src_subset,
+    dst_subset,
+):
+    """ 
+        :return: True if this is a 1d copy without strides, False otherwise
+    """
+
+    # tiled copies
+    if any(ts != 1 for ts in subset.tile_sizes):
+        return False
+
+    # If the copy is contiguous, the difference between the first and last
+    # pointers should be the shape of the copy
+    first_src_index = src_subset.at([0] * src_subset.dims(), src_strides)
+    first_dst_index = dst_subset.at([0] * dst_subset.dims(), dst_strides)
+    last_src_index = src_subset.at([d - 1 for d in src_subset.size()],
+                                   src_strides)
+    last_dst_index = dst_subset.at([d - 1 for d in dst_subset.size()],
+                                   dst_strides)
+    copy_length = functools.reduce(lambda x, y: x * y, copy_shape)
+    src_copylen = last_src_index - first_src_index + 1
+    dst_copylen = last_dst_index - first_dst_index + 1
+
+    # Make expressions symbolic and simplify
+    copy_length = symbolic.pystr_to_symbolic(copy_length).simplify()
+    src_copylen = symbolic.pystr_to_symbolic(src_copylen).simplify()
+    dst_copylen = symbolic.pystr_to_symbolic(dst_copylen).simplify()
+
+    #The first condition is the general one, whereas the
+    # second one applies when the arrays are completely equivalent in strides
+    # and shapes to the copy. The second condition is there because sometimes
+    # the symbolic math engine fails to produce the same expressions for both
+    # arrays.
+    cornercase1 = (tuple(src_strides) == tuple(dst_strides)
+            and ((src_copylen == copy_length and dst_copylen == copy_length) or
+                 (tuple(src_shape) == tuple(copy_shape)
+                  and tuple(dst_shape) == tuple(copy_shape))))
+
+    # Another case of non-strided 1D copy: all indices match and copy length
+    # matches pointer difference, as well as match in contiguity and padding
+    cornercase2 = (first_src_index == first_dst_index
+          and last_src_index == last_dst_index and copy_length == src_copylen
+          and _is_c_contiguous(src_shape, src_strides)
+          and _is_c_contiguous(dst_shape, dst_strides))
+            
+    return cornercase1 or cornercase2
 
 def ndcopy_to_strided_copy(
     copy_shape,
@@ -397,41 +467,15 @@ def ndcopy_to_strided_copy(
     if any(ts != 1 for ts in subset.tile_sizes):
         return None
 
-    # If the copy is contiguous, the difference between the first and last
-    # pointers should be the shape of the copy
-    first_src_index = src_subset.at([0] * src_subset.dims(), src_strides)
-    first_dst_index = dst_subset.at([0] * dst_subset.dims(), dst_strides)
-    last_src_index = src_subset.at([d - 1 for d in src_subset.size()],
-                                   src_strides)
-    last_dst_index = dst_subset.at([d - 1 for d in dst_subset.size()],
-                                   dst_strides)
-    copy_length = functools.reduce(lambda x, y: x * y, copy_shape)
-    src_copylen = last_src_index - first_src_index + 1
-    dst_copylen = last_dst_index - first_dst_index + 1
-
-    # Make expressions symbolic and simplify
-    copy_length = symbolic.pystr_to_symbolic(copy_length).simplify()
-    src_copylen = symbolic.pystr_to_symbolic(src_copylen).simplify()
-    dst_copylen = symbolic.pystr_to_symbolic(dst_copylen).simplify()
-
-    # Detect 1D copies. The first condition is the general one, whereas the
-    # second one applies when the arrays are completely equivalent in strides
-    # and shapes to the copy. The second condition is there because sometimes
-    # the symbolic math engine fails to produce the same expressions for both
-    # arrays.
-    if (tuple(src_strides) == tuple(dst_strides)
-            and ((src_copylen == copy_length and dst_copylen == copy_length) or
-                 (tuple(src_shape) == tuple(copy_shape)
-                  and tuple(dst_shape) == tuple(copy_shape)))):
-        # Emit 1D copy of the whole array
-        copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
-        return copy_shape, [1], [1]
-    # Another case of non-strided 1D copy: all indices match and copy length
-    # matches pointer difference, as well as match in contiguity and padding
-    elif (first_src_index == first_dst_index
-          and last_src_index == last_dst_index and copy_length == src_copylen
-          and _is_c_contiguous(src_shape, src_strides)
-          and _is_c_contiguous(dst_shape, dst_strides)):
+    # Detect 1D copies.
+    if is_1d_nostrided_copy(copy_shape,
+                            src_shape,
+                            src_strides,
+                            dst_shape,
+                            dst_strides,
+                            subset,
+                            src_subset,
+                            dst_subset,):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
