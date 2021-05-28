@@ -65,38 +65,13 @@ def create_vadd_multibank_sdfg(ndim = 1, nCutPerDim = 2, unroll_map_inside = Fal
     sdfg.apply_fpga_transformations()
     return sdfg
 
-def random_stuff():
+if __name__ == '__main__':
     N = dace.symbol("N")
     M = dace.symbol("M")
 
-    @dace.program
-    def vadd(out : dace.float32[N, M]):
-        for i in dace.map[0:N]:
-            for j in dace.map[0:M]:
-                out[i, j] = 0
-        out[0, M-1] = 1
-            
-    @dace.program
-    def subs(inp : dace.float32[N, M], out : dace.float32[N, M]):
-        out[:, 1] = inp[:, 0]
-
-    sdfg = vadd.to_sdfg()
-    sdfg = subs.to_sdfg()
-    #sdfg.apply_fpga_transformations()
-    sdfg.fill_scope_connectors()
-    sdfg.view()
-    exe = sdfg.compile()
-    out=numpy.zeros((3, 6), dtype=numpy.float32)
-    exe(out=out, N=3, M=6)
-    pass
-    #return sdfg
-
-if __name__ == '__main__':
-    #random_stuff()
-    #sdfg = create_vadd_sdfg_without_hbm()
-    sdfg = create_vadd_multibank_sdfg(2, 2)
+    sdfg = create_vadd_multibank_sdfg(3, 2)
     expander.expand_hbm_multiarrays(sdfg)
-    sdfg.validate()
+    #sdfg.validate()
     #sdfg.view()
     code = Code(sdfg.generate_code()[0].code, language='cpp')
     print(code)

@@ -610,7 +610,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
                         # TODO: Distinguish between read, write, and read+write
                         self._allocated_global_arrays.add(node.data)
-                        memory_bank_arg = ""
+                        memory_bank_arg_type = "DDR"
+                        memory_bank_arg_num = "0"
                         if "bank" in nodedesc.location:
                             try:
                                 bank = int(nodedesc.location["bank"])
@@ -744,12 +745,15 @@ class FPGACodeGen(TargetCodeGenerator):
         if (host_to_device or device_to_host
                 or (device_to_device and not self._in_device_code)):
 
-            #TODO: HBMJAN Support 2D and 3D copies here
-
-            dims = memlet.subset.dims()
+            """
+            copy_shape, src_strides, dst_strides, src_expr, dst_expr = cpp.memlet_copy_to_absolute_strides(
+                self._dispatcher, sdfg, memlet, src_node, dst_node, False)
+            if(copy_shape != copy_shape_old): #TODO: HBMJAN Remove this check
+                raise NotImplementedError()
+            """
             copy_shape = memlet.subset.bounding_box_size()
             offset = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
-
+            
             if (not sum(copy_shape) == 1
                     and (not isinstance(memlet.subset, subsets.Range)
                          or any([step != 1 for _, _, step in memlet.subset]))):
@@ -781,53 +785,122 @@ class FPGACodeGen(TargetCodeGenerator):
                         "Memory copy type mismatch: {} vs {}".format(
                             host_dtype, device_dtype))
 
+            src_nodedesc = src_node.desc(sdfg)
+            dst_nodedesc = dst_node.desc(sdfg)
+            absolute_src_strides = memlet.src_subset.absolute_strides(src_nodedesc.strides)
+            absolute_dst_strides = memlet.dst_subset.absolute_strides(dst_nodedesc.strides)
+
+            #Distinguish 1d and 2 or 3d copies
+            isNDCopy = not cpp.is_1d_nostrided_copy(copy_shape, 
+                                                src_nodedesc.shape, 
+                                                absolute_src_strides,
+                                                dst_nodedesc.shape,
+                                                absolute_dst_strides,
+                                                memlet.subset,
+                                                memlet.src_subset,
+                                                memlet.dst_subset,
+                                                )
+            if isNDCopy:
+                src_copy_offset = [cpp.sym2cpp(start) for start, _, _ in memlet.src_subset]
+                dst_copy_offset = [cpp.sym2cpp(start) for start, _, _ in memlet.dst_subset]
+                src_blocksize = [cpp.sym2cpp(v) for v in src_nodedesc.shape]
+                dst_blocksize = [cpp.sym2cpp(v) for v in dst_nodedesc.shape]
+                copy_shape_cpp = [cpp.sym2cpp(v) for v in copy_shape]
+                if(len(src_copy_offset) < 3):
+                    src_copy_offset.append('0')
+                if(len(dst_copy_offset) < 3):
+                    dst_copy_offset.append('0')
+                if(len(src_blocksize) < 3):
+                    src_blocksize.append('1')
+                if(len(dst_blocksize) < 3):
+                    dst_blocksize.append('1')
+                if(len(copy_shape_cpp) < 3):
+                    copy_shape_cpp.append('1')
+
+            #1d copy
             copysize = " * ".join([
                 cppunparse.pyexpr2cpp(dace.symbolic.symstr(s))
                 for s in copy_shape
             ])
 
-            src_nodedesc = src_node.desc(sdfg)
-            dst_nodedesc = dst_node.desc(sdfg)
-
             if host_to_device:
 
                 ptr_str = (cpp.ptr(src_node.data, src_nodedesc) +
-                           (" + {}".format(offset)
+                        (" + {}".format(offset)
                             if outgoing_memlet and str(offset) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} const *>({})".format(
                         device_dtype.ctype, ptr_str)
 
-                callsite_stream.write(
-                    "{}.CopyFromHost({}, {}, {});".format(
-                        cpp.ptr(dst_node.data, dst_nodedesc),
-                        (offset if not outgoing_memlet else 0), copysize,
-                        ptr_str), sdfg, state_id, [src_node, dst_node])
+                if isNDCopy:
+                    callsite_stream.write(
+                        "{}.CopyBlockFromHost({}, {}, {}, {}, {}, {});".format(
+                            cpp.ptr(dst_node.data, dst_nodedesc),
+                            cpp.to_cpp_array(src_copy_offset, "size_t"),
+                            cpp.to_cpp_array(dst_copy_offset, "size_t"),
+                            cpp.to_cpp_array(copy_shape_cpp, "size_t"),
+                            cpp.to_cpp_array(src_blocksize, "size_t"),
+                            cpp.to_cpp_array(dst_blocksize, "size_t"),
+                            cpp.ptr(src_node.data, src_nodedesc)
+                        )
+                    )
+                else:
+                    callsite_stream.write(
+                        "{}.CopyFromHost({}, {}, {});".format(
+                            cpp.ptr(dst_node.data, dst_nodedesc),
+                            (offset if not outgoing_memlet else 0), copysize,
+                            ptr_str), sdfg, state_id, [src_node, dst_node])
 
             elif device_to_host:
 
                 ptr_str = (cpp.ptr(dst_node.data, dst_nodedesc) +
-                           (" + {}".format(offset)
+                        (" + {}".format(offset)
                             if outgoing_memlet and str(offset) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} *>({})".format(
                         device_dtype.ctype, ptr_str)
 
-                callsite_stream.write(
-                    "{}.CopyToHost({}, {}, {});".format(
-                        cpp.ptr(src_node.data, src_nodedesc),
-                        (offset if outgoing_memlet else 0), copysize, ptr_str),
-                    sdfg, state_id, [src_node, dst_node])
+                if isNDCopy:
+                    callsite_stream.write(
+                        "{}.CopyBlockToHost({}, {}, {}, {}, {}, {});".format(
+                            cpp.ptr(src_node.data, src_nodedesc),
+                            cpp.to_cpp_array(dst_copy_offset, "size_t"),
+                            cpp.to_cpp_array(src_copy_offset, "size_t"),
+                            cpp.to_cpp_array(copy_shape_cpp, "size_t"),
+                            cpp.to_cpp_array(dst_blocksize, "size_t"),
+                            cpp.to_cpp_array(src_blocksize, "size_t"),
+                            cpp.ptr(dst_node.data, dst_nodedesc)
+                        )
+                    )
+                else:
+                    callsite_stream.write(
+                        "{}.CopyToHost({}, {}, {});".format(
+                            cpp.ptr(src_node.data, src_nodedesc),
+                            (offset if outgoing_memlet else 0), copysize, ptr_str),
+                        sdfg, state_id, [src_node, dst_node])
 
             elif device_to_device:
 
-                callsite_stream.write(
-                    "{}.CopyToDevice({}, {}, {}, {});".format(
-                        cpp.ptr(src_node.data, src_nodedesc),
-                        (offset if outgoing_memlet else 0), copysize,
-                        cpp.ptr(dst_node.data, dst_nodedesc),
-                        (offset if not outgoing_memlet else 0)), sdfg, state_id,
-                    [src_node, dst_node])
+                if isNDCopy:
+                    callsite_stream.write(
+                        "{}.CopyBlockToDevice({}, {}, {}, {}, {}, {});".format(
+                            cpp.ptr(src_node.data, src_nodedesc),
+                            cpp.to_cpp_array(src_copy_offset, "size_t"),
+                            cpp.to_cpp_array(dst_copy_offset, "size_t"),
+                            cpp.to_cpp_array(copy_shape_cpp, "size_t"),
+                            cpp.to_cpp_array(src_blocksize, "size_t"),
+                            cpp.to_cpp_array(dst_blocksize, "size_t"),
+                            cpp.ptr(dst_node.data, dst_nodedesc)
+                        )
+                    )
+                else:
+                    callsite_stream.write(
+                        "{}.CopyToDevice({}, {}, {}, {});".format(
+                            cpp.ptr(src_node.data, src_nodedesc),
+                            (offset if outgoing_memlet else 0), copysize,
+                            cpp.ptr(dst_node.data, dst_nodedesc),
+                            (offset if not outgoing_memlet else 0)), sdfg, state_id,
+                        [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data
