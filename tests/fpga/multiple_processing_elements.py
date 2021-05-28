@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-# Tests for PE detections, both among and within connected components
+# Tests for kernel detections, both among and within connected components
 
 import dace
 import numpy as np
@@ -25,7 +25,7 @@ def test_PEs_inside_component_0():
     '''
     @dace.program
     def PEs_inside_component_0(x: dace.float32[8], y: dace.float32[8],
-                             v: dace.float32[8], w: dace.float32[8]):
+                               v: dace.float32[8], w: dace.float32[8]):
         tmp1 = x + y
         tmp2 = v + w
         return tmp1 + tmp2
@@ -41,7 +41,7 @@ def test_PEs_inside_component_0():
     program = sdfg.compile()
     for node, state in program.sdfg.all_nodes_recursive():
         if hasattr(node, '_kernel'):
-            print(node, node._pe)
+            print(node, node._kernel)
 
     z = program(x=x, y=y, v=v, w=w)
     assert np.allclose(z, x + y + v + w)
@@ -71,8 +71,9 @@ def test_PEs_inside_component_1():
     '''
     @dace.program
     def PEs_inside_component_1(x: dace.float32[8], y: dace.float32[8],
-                             v: dace.float32[8], w: dace.float32[8], z: dace.float32[8], t: dace.float32[8],
-                             alpha: dace.float32, beta: dace.float32):
+                               v: dace.float32[8], w: dace.float32[8],
+                               z: dace.float32[8], t: dace.float32[8],
+                               alpha: dace.float32, beta: dace.float32):
         tmp1 = x + y
         tmp2 = v + w
         tmp3 = tmp1 + tmp2
@@ -94,13 +95,14 @@ def test_PEs_inside_component_1():
     program = sdfg.compile()
     for node, state in program.sdfg.all_nodes_recursive():
         if hasattr(node, '_kernel'):
-            print(node, node._pe)
+            print(node, node._kernel)
 
     program(x=x, y=y, v=v, w=w, z=z, t=t, alpha=alpha, beta=beta)
     ref_z = alpha * (x + y + v + w)
     ref_t = beta * (x + y + v + w)
-    assert np.allclose(z, ref_z )
-    assert np.allclose(t, ref_t )
+    assert np.allclose(z, ref_z)
+    assert np.allclose(t, ref_t)
+
 
 def test_PEs_inside_component_2():
     '''
@@ -125,10 +127,10 @@ def test_PEs_inside_component_2():
     '''
     @dace.program
     def PEs_inside_component_2(x: dace.float32[8], y: dace.float32[8],
-                             v: dace.float32[8], z: dace.float32[8], t:dace.float32[8]):
+                               v: dace.float32[8], z: dace.float32[8],
+                               t: dace.float32[8]):
         z[:] = x + y
         t[:] = y + v
-
 
     x = np.random.rand(8).astype(np.float32)
     y = np.random.rand(8).astype(np.float32)
@@ -142,7 +144,7 @@ def test_PEs_inside_component_2():
     program = sdfg.compile()
     for node, state in program.sdfg.all_nodes_recursive():
         if hasattr(node, '_kernel'):
-            print(node, node._pe)
+            print(node, node._kernel)
 
     program(x=x, y=y, v=v, t=t, z=z)
     assert np.allclose(z, x + y)
@@ -182,10 +184,12 @@ def test_PEs_LNs_inside_component():
     from dace.transformation.interstate import GPUTransformSDFG
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
     sdfg.save('/tmp/out.sdfg')
+    # sdfg.expand_library_nodes()
+    # sdfg.save('/tmp/expanded.sdfg')
     program = sdfg.compile()
     for node, state in program.sdfg.all_nodes_recursive():
         if hasattr(node, '_kernel'):
-            print(node, node._pe)
+            print(node, node._kernel)
 
     z = program(A=A, x=x, B=B, y=y)
 
@@ -193,8 +197,47 @@ def test_PEs_LNs_inside_component():
     assert np.allclose(z, ref)
 
 
+def test_kernel_LN(flatten):
+    '''
+    A single NSDFG originated by a LibNode expansion (Matmul)
+    :return:
+    '''
+    @dace.program
+    def test_kernel_LN(A: dace.float32[32, 32], B: dace.float32[32, 32]):
+        return A @ B
+
+    A = np.random.rand(32, 32).astype(np.float32)
+    B = np.random.rand(32, 32).astype(np.float32)
+
+    sdfg = test_kernel_LN.to_sdfg()
+    sdfg.save('/tmp/pre.sdfg')
+    from dace.transformation.interstate import GPUTransformSDFG
+
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+    from dace.libraries.blas import Gemm
+    Gemm.default_implementation = "FPGA1DSystolic"
+    sdfg.save('/tmp/out.sdfg')
+    if flatten:
+        sdfg.expand_library_nodes()
+        sdfg.apply_transformations_repeated([InlineSDFG])
+
+    # sdfg.save('/tmp/expanded.sdfg')
+    program = sdfg.compile()
+    for node, state in program.sdfg.all_nodes_recursive():
+        if hasattr(node, '_kernel'):
+            print(node, node._kernel)
+
+    C = program(A=A, B=B)
+
+    assert np.allclose(C, A @ B)
+
+
 if __name__ == "__main__":
     # test_PEs_inside_component_0()
     # test_PEs_inside_component_1()
-    test_PEs_inside_component_2()
-    # test_PEs_LNs_inside_component()
+    # test_PEs_inside_component_2()
+    test_PEs_LNs_inside_component()
+
+    # TODO: for this, we should see if we are able to find cuts or not
+
+    # test_kernel_LN(True)

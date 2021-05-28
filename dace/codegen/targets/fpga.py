@@ -90,9 +90,6 @@ class FPGACodeGen(TargetCodeGenerator):
         self._allocated_global_arrays = set()
         self._unrolled_pes = set()
 
-        # Annotate FPGA PEs
-        self._kernel_precedences = self._compute_kernels(sdfg)
-
         # Register dispatchers
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
 
@@ -162,7 +159,7 @@ class FPGACodeGen(TargetCodeGenerator):
         # Right before finalizing code, write FPGA context to state structure
         self._frame.statestruct.append('dace::fpga::Context *fpga_context;')
 
-    def _kernels_subgraphs(self, graph):
+    def _kernels_subgraphs(self, graph, precedences):
         """ Finds subgraphs of an SDFGState or ScopeSubgraphView that identifies Kernels
         """
         from dace.sdfg.scope import ScopeSubgraphView
@@ -191,13 +188,17 @@ class FPGACodeGen(TargetCodeGenerator):
         subgraphs = collections.defaultdict(set)  # {pe_id: {nodes in subgraph}}
 
         # Go over the nodes and populate the kernels subgraphs
-        for node, _ in graph.all_nodes_recursive():
-            print("---", node, type(node))
+        print("--------------------")
+        #TODO: Should we go recursive???
+        for node, node_state in graph.all_nodes_recursive():
+            # print(subgraphs.keys())
+            # print("---", node, type(node))
             #TODO: access node may not have  Kernel ID
             # - cleanup and refactor, also considering how Kern ID are assigned
 
             assigned = False
             if hasattr(node, "_kernel"):
+                print("* Node ", node, " belongs to kernel", node._kernel)
                 if node._kernel in subgraphs:
                     subgraphs[node._kernel].add(node)
                 else:
@@ -207,9 +208,11 @@ class FPGACodeGen(TargetCodeGenerator):
             if isinstance(node, dace.nodes.AccessNode):
                 # AccessNodes can be read from multiple kernels, so
                 # check all out edges
-                start_nodes = [e.dst for e in graph.out_edges(node)]
+                # NOTE: we may recur on NSDFG
+                start_nodes = [e.dst for e in node_state.out_edges(node)]
                 for n in start_nodes:
                     if hasattr(n, "_kernel"):
+                        print("* Node ", n, " belongs to kernel", n._kernel)
                         if n._kernel in subgraphs:
                             subgraphs[n._kernel].add(node)
                         else:
@@ -234,11 +237,12 @@ class FPGACodeGen(TargetCodeGenerator):
         for k in subgraphs.keys():
             # we could have no dependencies at all
             kernels_graph.add_node(k)
-            if k in self._kernel_precedences:
-                precedences = self._kernel_precedences[k]
-
-                for p in precedences:
-                    kernels_graph.add_edge(p, k)
+            if k in precedences:
+                kernel_precedences = precedences[k]
+                #TODO: this dependency can come from outside
+                for p in kernel_precedences:
+                    if p in kernels_graph:
+                        kernels_graph.add_edge(p, k)
 
         subgraph_views = []
         all_nodes = graph.nodes()
@@ -264,11 +268,20 @@ class FPGACodeGen(TargetCodeGenerator):
         # TODO: add something on top of this (or here) to detect all KERNELS first
         state_id = sdfg.node_id(state)
 
+        # Determine kernels in state
+        num_kernels = 1
+        if state.parent.parent == None:
+            # Top Level State
+            num_kernels, precedences = self.compute_kernels(state)
+
         # Determine independent components
         # subgraphs = dace.sdfg.concurrent_subgraphs(state)
-
+        print("Found ", num_kernels, "kernels")
         # Get all the kernels inside this graph
-        kernels = self._kernels_subgraphs(state)
+        if num_kernels == 1 or state.parent.parent != None:  # Top-Level State
+            kernels = [state]
+        else:
+            kernels = self._kernels_subgraphs(state, precedences)
         for kern_id, kern in enumerate(kernels):
 
             #TODO: use the real kernel_id
@@ -326,11 +339,11 @@ class FPGACodeGen(TargetCodeGenerator):
                     self._other_codes['link.ini'] = ini_stream
 
             else:  # self._in_device_code == True
-                assert False  #TODO
+                #TODO: not sure if this recognize kern. Previously it was state
+                to_allocate = dace.sdfg.local_transients(sdfg, kern, None)
 
-                to_allocate = dace.sdfg.local_transients(sdfg, state, None)
                 allocated = set()
-                for node in state.data_nodes():
+                for node in kern.data_nodes():
                     data = node.desc(sdfg)
                     if node.data not in to_allocate or node.data in allocated:
                         continue
@@ -345,7 +358,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     self._dispatcher.dispatch_allocate(sdfg, state, state_id,
                                                        node, function_stream,
                                                        callsite_stream)
-
+                #TODO complete
                 self.generate_nested_state(sdfg, state, state.label, subgraphs,
                                            function_stream, callsite_stream)
 
@@ -782,8 +795,11 @@ class FPGACodeGen(TargetCodeGenerator):
                          callsite_stream):
         pass  # Handled by destructor
 
-    def _compute_kernels(self, sdfg: SDFG, default_kernel=0, default_event=0):
-        """ Annotates  SDFG nodes (and all nested ones) to include a `_kernel_id`
+    def compute_kernels(self,
+                        state: dace.SDFGState,
+                        default_kernel=0,
+                        default_event=0):
+        """ Annotates  state nodes (and all nested ones) to include a `_kernel_id`
             field. This field is applied to all FPGA maps, tasklets, and copies
             that can be executed in parallel in separate kernels.
 
@@ -801,6 +817,7 @@ class FPGACodeGen(TargetCodeGenerator):
         #  - how to deal with AccessNode: Should they have a PE id? they can be accessed by multiple PEs?
         kernels = 0
         concurrent_kernels = 0
+        sdfg = state.parent
 
         def increment(kernel_id):
             if concurrent_kernels > 0:
@@ -816,129 +833,194 @@ class FPGACodeGen(TargetCodeGenerator):
 
         precedences = dict()
 
-        for state in sdfg.nodes():
-            if not is_fpga_kernel(sdfg, state):
-                # if this is not an FPGA Kernel, we can skip PEs detection
-                # TODO: FIX THIS OFC
-                state_kernels.append(0)
-                state_subsdfg_events.append(max_events)
+        if not is_fpga_kernel(state.parent, state):
+            # if this is not an FPGA Kernel, we can skip PEs detection
+            # TODO: FIX THIS OFC
+            state_kernels.append(0)
+            state_subsdfg_events.append(max_events)
+            return 1, precedences  # No kernel in here
+
+        # Start by annotating source nodes
+
+        # In the following:
+        # node._kernel: Kernel ID associated to the node
+        # node._kernel_childpath: if present indicates if a node is "parent" of more than one Kernel
+
+        source_nodes = state.source_nodes()
+
+        # Concurrency can only be found in each state
+        max_kernels = default_kernel
+        # max_events = default_event
+
+        # First step: assign a diffeent Kernel ID
+        # to each source node which is not an AccessNode
+        for i, node in enumerate(source_nodes):
+            if isinstance(node, nodes.AccessNode):
                 continue
 
-            # Start by annotating source nodes
+            # ATM we are not recurring into NestedSDFG. They are treated as a kernel
+            # if isinstance(node, nodes.NestedSDFG):
+            #     if node.schedule == dtypes.ScheduleType.FPGA_Device:
+            #         continue
+            node._kernel = max_kernels
+            print("Source node ", node, " has associated PE: ", max_kernels)
+            node._kernel_childpath = False
+            max_kernels = increment(max_kernels)
 
-            # In the following:
-            # node._kernel: Kernel ID associated to the node
-            # node._kernel_childpath: if present indicates if a node is "parent" of more than one Kernel
+        # Consecutive nodes that are not crossroads can be in
+        # the same Kernel
 
-            source_nodes = state.source_nodes()
+        for e in state.dfs_edges(source_nodes):
+            if hasattr(e.dst, '_kernel'):
+                # but this one could be another precedence
+                # print("DST ", e.dst, " already has a PE ID")
+                # Node has been already visited (THIS SHOULD NEVER OCCUR WITH DFS_EDGES, there is something strange)
+                assert (False)
+                continue
 
-            # Concurrency can only be found in each state
-            max_kernels = default_kernel
-            # max_events = default_event
+            if hasattr(e.src, '_kernel'):
+                kernel = e.src._kernel
 
-            # First step: assign a diffeent Kernel ID
-            # to each source node which is not an AccessNode
-            for i, node in enumerate(source_nodes):
-                if isinstance(node, nodes.AccessNode):
-                    continue
-                if isinstance(node, nodes.NestedSDFG):
-                    if node.schedule == dtypes.ScheduleType.FPGA_Device:
-                        continue
-                node._kernel = max_kernels
-                # print("Source node ", node, " has associated PE: ", max_kernels)
-                node._kernel_childpath = False
-                max_kernels = increment(max_kernels)
-
-            # Consecutive nodes that are not crossroads can be in
-            # the same Kernel
-
-            for e in state.dfs_edges(source_nodes):
-                if hasattr(e.dst, '_kernel'):
-                    # but this one could be another precedence
-                    # print("DST ", e.dst, " already has a PE ID")
-                    # Node has been already visited (THIS SHOULD NEVER OCCUR WITH DFS_EDGES, there is something strange)
-                    assert (False)
+                if (isinstance(e.dst, nodes.AccessNode)
+                        and isinstance(sdfg.arrays[e.dst.data], dt.View)):
+                    # Skip views
+                    e.dst._kernel = kernel
+                    e.dst._kernel_childpath = False
                     continue
 
-                if hasattr(e.src, '_kernel'):
-                    kernel = e.src._kernel
+                # Does this node need to be in another Kernel?
+                # TODO: find a more robust way of checking this
+                # If this node is a crossroad node (has more than one predecessor)
+                # i than it should be on a seperate Kernel
+                # This is a crossroad node: A node with more than one precessor
+                # and its predecessor contains some compute (so not just access nodes)
 
-                    if (isinstance(e.dst, nodes.AccessNode)
-                            and isinstance(sdfg.arrays[e.dst.data], dt.View)):
-                        # Skip views
-                        e.dst._kernel = kernel
-                        e.dst._kernel_childpath = False
-                        continue
+                def trace_back_is_compute(edge, state):
+                    '''
+                    Given ad edge, this traverses the edges backwards.
+                    The goal is to understand if the backward path has some compute in it or not
+                    :return:
+                    '''
+                    # TODO: do reverse DFG till we reach another kernel boundaries
+                    # TODO: should we return this?
+                    backward_path = [edge]
 
-                    # Does this node need to be in another Kernel?
-                    # TODO: find a more robust way of checking this
-                    # If this node is a crossroad node (has more than one predecessor)
-                    # i than it should be on a seperate Kernel
-                    if len(list(state.predecessors(e.dst))) > 1:
+                    # If empty memlet, return itself as the path
+                    if (edge.src_conn is None and edge.dst_conn is None
+                            and edge.data.is_empty()):
+                        return True
+
+                    #Continue Until we find some compute part
+                    curedge = edge
+                    source_nodes = state.source_nodes()
+                    while not curedge.src in source_nodes:
+
+                        if isinstance(curedge.src, nodes.CodeNode):
+                            # We can stop here
+                            return True
+                        elif isinstance(curedge.src,
+                                        (nodes.EntryNode, nodes.ExitNode)):
+                            # We can stop here, there is a Map which will contain some compute
+                            return True
+                        elif isinstance(curedge.src, nodes.AccessNode):
+                            assert (
+                                len(list(state.predecessors(curedge.src))) <= 1
+                            )  # TODO we may have more than one pred
+                            next_edge = next(
+                                e for e in state.in_edges(curedge.src))
+                            curedge = next_edge
+                        # Trace through scopes using OUT_# -> IN_#
+                        # if isinstance(curedge.src, (nodes.EntryNode, nodes.ExitNode)):
+                        #     if curedge.src_conn is None:
+                        #         raise ValueError(
+                        #             "Source connector cannot be None for {}".format(
+                        #                 curedge.src))
+                        #     assert curedge.src_conn.startswith("OUT_")
+                        #     next_edge = next(e for e in state.in_edges(curedge.src)
+                        #                      if e.dst_conn == "IN_" + curedge.src_conn[4:])
+                        #     backward_path.insert(0, next_edge)
+                    #If we didn't return before, then there is no compute in here
+                    return False
+
+                # TODO: corner cases
+                # - this is an exit node
+                # - Systolic array? Not sure about this
+                if len(list(state.predecessors(e.dst))) > 1 and not isinstance(
+                        e.dst, nodes.ExitNode):
+                    # Loop over all predecessor (except this edge) and see if there is some compute inside
+                    crossroad_node = False
+                    for pred_edge in state.predecessors(e.dst):
+                        if pred_edge != e and trace_back_is_compute(e, state):
+                            crossroad_node = True
+                            break
+
+                    if crossroad_node:
                         print(
                             "Node ", e.dst,
                             " has more than one predecessor. Put it in another Kernel"
                         )
+                        if isinstance(e.dst, nodes.ExitNode):
+                            print("!!!!!! But this was an Exit Node!!!!!")
                         kernel = max_kernels
                         max_kernels = increment(max_kernels)
-                    elif e.src._kernel_childpath == True:
-                        kernel = max_kernels
-                        max_kernels = increment(max_kernels)
-
-                    e.src._kernel_childpath = True
-
-                    # Do not create multiple kernels within FPGA scopes
-                    if (isinstance(e.src, nodes.EntryNode) and e.src.schedule
-                            == dtypes.ScheduleType.FPGA_Device):
-                        e.src._kernel_childpath = False
-                    elif state.entry_node(e.src) is not None:
-                        parent = state.entry_node(e.src)
-                        if parent.schedule == dtypes.ScheduleType.FPGA_Device:
-                            e.src._kernel_childpath = False
-                else:
-                    print("Use a new Kernel id")
-                    # New PE: this should not have any predecessor
+                elif e.src._kernel_childpath == True:
                     kernel = max_kernels
-                    if (isinstance(e.dst, nodes.AccessNode)
-                            and isinstance(sdfg.arrays[e.dst.data], dt.View)):
-                        # Skip views
-                        pass
-                    else:
-                        max_kernels = increment(max_kernels)
-                e.dst._kernel = kernel
-                print(e.dst, " has associated kernel ID ", kernel)
+                    max_kernels = increment(max_kernels)
 
-                if not hasattr(e.dst, '_kernel_childpath'):
-                    e.dst._kernel_childpath = False
-                if isinstance(e.dst, nodes.NestedSDFG):
-                    if e.dst.schedule != dtypes.ScheduleType.FPGA_Device:
-                        # TODO: what to do here? We may want to not always  recur
-                        continue
-                        # max_streams, max_events = self._compute_cudastreams(
-                        #     e.dst.sdfg, e.dst._cuda_stream, max_events + 1)
+                e.src._kernel_childpath = True
 
-            # do another pass and keep track of precedences among Kernels
-            for node in state.nodes():
-                if hasattr(node, '_kernel'):
+                # Do not create multiple kernels within FPGA scopes
+                if (isinstance(e.src, nodes.EntryNode)
+                        and e.src.schedule == dtypes.ScheduleType.FPGA_Device):
+                    e.src._kernel_childpath = False
+                elif state.entry_node(e.src) is not None:
+                    parent = state.entry_node(e.src)
+                    if parent.schedule == dtypes.ScheduleType.FPGA_Device:
+                        e.src._kernel_childpath = False
+            else:
+                # print("Use a new Kernel id")
+                # New PE: this should not have any predecessor
+                kernel = max_kernels
+                if (isinstance(e.dst, nodes.AccessNode)
+                        and isinstance(sdfg.arrays[e.dst.data], dt.View)):
+                    # Skip views
+                    pass
+                else:
+                    max_kernels = increment(max_kernels)
+            e.dst._kernel = kernel
+            # print(e.dst, " has associated kernel ID ", kernel)
 
-                    this_kernel = node._kernel
-                    # get all predecessors and see their associated kernel ID
-                    for pred in state.predecessors(node):
-                        if hasattr(pred,
-                                   '_kernel') and pred._kernel != this_kernel:
-                            if this_kernel not in precedences:
-                                precedences[this_kernel] = set()
-                            precedences[this_kernel].add(pred._kernel)
+            if not hasattr(e.dst, '_kernel_childpath'):
+                e.dst._kernel_childpath = False
+            # if isinstance(e.dst, nodes.NestedSDFG):
+            # We don't recur on NESTED SDFG
+            # if e.dst.schedule == dtypes.ScheduleType.FPGA_Device:
+            #     Recur into the nested SDFG
+            # print("Recurring on nested SDFG", e.dst.sdfg.name)
+            # max_kernels, _ = self._compute_kernels(e.dst.sdfg, e.dst._kernel, max_events +1)
 
-            # TODO: are events useful?
-            state_kernels.append(max_kernels if concurrent_kernels ==
-                                 0 else concurrent_kernels)
-            state_subsdfg_events.append(max_events)
+        # do another pass and keep track of precedences among Kernels
+        for node in state.nodes():
+            if hasattr(node, '_kernel'):
+
+                this_kernel = node._kernel
+                # get all predecessors and see their associated kernel ID
+                for pred in state.predecessors(node):
+                    if hasattr(pred, '_kernel') and pred._kernel != this_kernel:
+                        if this_kernel not in precedences:
+                            precedences[this_kernel] = set()
+                        precedences[this_kernel].add(pred._kernel)
+
+        # TODO: are events useful?
+        state_kernels.append(max_kernels if concurrent_kernels ==
+                             0 else concurrent_kernels)
+        state_subsdfg_events.append(max_events)
 
         # Cleanup Kernels in the following cases:
         # For the moment being we are assuming that everything here is for FPGA Kernels
         # TODO: this may change
-        for node, graph in sdfg.all_nodes_recursive():
+        # DO we want to recur?
+        for node, graph in state.all_nodes_recursive():
             if isinstance(graph, dace.sdfg.SDFGState):
                 cur_sdfg = graph.parent
 
@@ -982,27 +1064,27 @@ class FPGACodeGen(TargetCodeGenerator):
 
         # Compute maximal number of events by counting edges (within the same
         # state) that point from one stream to another
-        state_events = []
-        for i, state in enumerate(sdfg.nodes()):
-            events = state_subsdfg_events[i]
-
-            for e in state.edges():
-                if hasattr(e.src, '_kernel'):
-                    # If there are two or more Kernels involved in this
-                    # edge, or the destination is unrelated to CUDA
-                    if (not hasattr(e.dst, '_kernel')
-                            or e.src._kernel != e.dst._kernel):
-                        for mpe in state.memlet_path(e):
-                            mpe._kernel_event = events
-                        events += 1
-
-            state_events.append(events)
+        # state_events = []
+        # for i, state in enumerate(sdfg.nodes()):
+        #     events = state_subsdfg_events[i]
+        #
+        #     for e in state.edges():
+        #         if hasattr(e.src, '_kernel'):
+        #             # If there are two or more Kernels involved in this
+        #             # edge, or the destination is unrelated to CUDA
+        #             if (not hasattr(e.dst, '_kernel')
+        #                     or e.src._kernel != e.dst._kernel):
+        #                 for mpe in state.memlet_path(e):
+        #                     mpe._kernel_event = events
+        #                 events += 1
+        #
+        #     state_events.append(events)
 
         # Maximum over all states
         max_kernels = max(state_kernels)
-        max_events = max(state_events)
-        print(precedences)
-        return precedences
+        # max_events = max(state_events)
+        print("************ Kernel precedences: ", precedences)
+        return max_kernels, precedences
 
     def _emit_copy(self, sdfg, state_id, src_node, src_storage, dst_node,
                    dst_storage, dst_schedule, edge, dfg, function_stream,
