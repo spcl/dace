@@ -1,10 +1,6 @@
-import numpy
-import dace
-import dace.sdfg.nodes
-from IPython.display import Code
-import dace.sdfg.hbm_multibank_expansion as expander
 from dace import subsets
-import dace.libraries.blas as blas
+import dace
+import numpy as np
 
 def create_vadd_multibank_sdfg(ndim = 1, nCutPerDim = 2, unroll_map_inside = False):
     N = dace.symbol("N")
@@ -65,34 +61,28 @@ def create_vadd_multibank_sdfg(ndim = 1, nCutPerDim = 2, unroll_map_inside = Fal
     sdfg.apply_fpga_transformations()
     return sdfg
 
-def bug():
+def createTestSet(dim, sizePerDim):
+    shape = []
+    for i in range(dim):
+        shape.append(sizePerDim)
+    in1 = np.random.rand(shape)
+    in2 = np.random.rand(shape)
+    expected = in1 + in2
+    out = np.empty(shape)
+    return (in1, in2, expected, out)
+
+def exec_test(dim, sizePerDim, numSplits, unroll_map_inside=False):
     N = dace.symbol("N")
     M = dace.symbol("M")
-    oldlib = dace.SDFG("gemv_test")
-    state = oldlib.add_state("main", True)
-    A = oldlib.add_array("A", [M, N], dace.float32)
-    vin = oldlib.add_array("vin", [N], dace.float32)
-    vout = oldlib.add_array("vout", [M], dace.float32)
-    Aread = state.add_read("A")
-    vinRead = state.add_read("vin")
-    voutWrite = state.add_write("vout")
-    libnode = blas.Gemv("myGemv")
-    libnode.implementation = "FPGA_Accumulate"
-    state.add_node(libnode)
-    state.add_memlet_path(Aread, libnode, memlet=dace.Memlet.from_array("A", A[1]), dst_conn="_A")
-    state.add_memlet_path(vinRead, libnode, memlet=dace.Memlet.from_array("vin", vin[1]), dst_conn="_x")
-    state.add_memlet_path(libnode, voutWrite, memlet=dace.Memlet.from_array("vout", vout[1]), src_conn="_y")
-        
-    oldlib.expand_library_nodes()
-    #oldlib.view()
-    oldlib.apply_fpga_transformations()
-    code = Code(oldlib.generate_code()[2].code, language='cpp')
+
+    in1, in2, expected, target = createTestSet(dim, sizePerDim)
+    sdfg = create_vadd_multibank_sdfg(dim, numSplits, unroll_map_inside)
+    sdfg(in1=in1, in2=in2, out=target)
+    assert np.allclose(expected, target, rtol=1e-10)
+    del sdfg
 
 if __name__ == '__main__':
-    #sdfg = create_vadd_multibank_sdfg(1, 2)
-    #expander.expand_hbm_multiarrays(sdfg)
-    #sdfg.validate()
-    #sdfg.view()
-    #code = Code(sdfg.generate_code()[0].code, language='cpp')
-    #print(code)
-    bug()
+    exec_test(1, 2*1024, 2) #2 banks, 1 dimensional
+    exec_test(2, 2*1024, 2) #4 banks, 2d, evenly split
+    exec_test(3, 2*1024, 2) #8 banks 3d, evenly split
+    exec_test(1, 2*1024, 8, True) #8 banks 1d, 1 pipeline

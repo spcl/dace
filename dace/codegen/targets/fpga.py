@@ -787,8 +787,18 @@ class FPGACodeGen(TargetCodeGenerator):
 
             src_nodedesc = src_node.desc(sdfg)
             dst_nodedesc = dst_node.desc(sdfg)
-            absolute_src_strides = memlet.src_subset.absolute_strides(src_nodedesc.strides)
-            absolute_dst_strides = memlet.dst_subset.absolute_strides(dst_nodedesc.strides)
+            
+            if(memlet.src_subset != None):
+                src_subset = memlet.src_subset
+            else:
+                src_subset = subsets.Range.from_array(src_nodedesc)
+            if(memlet.dst_subset != None):
+                dst_subset = memlet.dst_subset
+            else:
+                dst_subset = subsets.Range.from_array(dst_nodedesc)
+
+            absolute_src_strides = src_subset.absolute_strides(src_nodedesc.strides)
+            absolute_dst_strides = dst_subset.absolute_strides(dst_nodedesc.strides)
 
             #Distinguish 1d and 2 or 3d copies
             isNDCopy = not cpp.is_1d_nostrided_copy(copy_shape, 
@@ -797,8 +807,8 @@ class FPGACodeGen(TargetCodeGenerator):
                                                 dst_nodedesc.shape,
                                                 absolute_dst_strides,
                                                 memlet.subset,
-                                                memlet.src_subset,
-                                                memlet.dst_subset,
+                                                src_subset,
+                                                dst_subset,
                                                 )
             if isNDCopy:
                 src_copy_offset = [cpp.sym2cpp(start) for start, _, _ in memlet.src_subset]

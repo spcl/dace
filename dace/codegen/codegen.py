@@ -11,6 +11,7 @@ from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
 from dace.sdfg import infer_types
+import dace.sdfg.hbm_multibank_expansion
 
 # Import CPU code generator. TODO: Remove when refactored
 from dace.codegen.targets import cpp, cpu
@@ -128,6 +129,9 @@ def generate_code(sdfg) -> List[CodeObject]:
 
     # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()
+
+    #TODO: Trace modifications and correct error messages occuring at a later stage
+    dace.sdfg.hbm_multibank_expansion.expand_hbm_multiarrays(sdfg)
 
     # After expansion, run another pass of connector/type inference
     infer_types.infer_connector_types(sdfg)
