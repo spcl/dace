@@ -220,6 +220,7 @@ def test_kernel_LN(flatten):
     if flatten:
         sdfg.expand_library_nodes()
         sdfg.apply_transformations_repeated([InlineSDFG])
+        sdfg.save('/tmp/expanded.sdfg')
 
     # sdfg.save('/tmp/expanded.sdfg')
     program = sdfg.compile()
@@ -236,8 +237,17 @@ if __name__ == "__main__":
     # test_PEs_inside_component_0()
     # test_PEs_inside_component_1()
     # test_PEs_inside_component_2()
-    test_PEs_LNs_inside_component()
+    # test_PEs_LNs_inside_component()
 
     # TODO: for this, we should see if we are able to find cuts or not
-
-    # test_kernel_LN(True)
+    # If this is inlined we have 2 possibilities:
+    # - either we detect the right number of kernels (4)
+    # - or we detect that for each indipendent component there is no split....then we just
+    #   use the previous version.
+    # THEREFORE, one way of doing this is 1) we split into indipendent compoenents 2) for each of them
+    # we see if they can be further split 3) PEs remains only for systolic arrays
+    # IN GENERALE, DOVREMMO RISOLVERE QUESTA SITUAZIONE E DETERMINARE IL NUMERO DI KERNEL GIUSTI
+    # anche se eper questo particolare caso ci possiamo girare intorno
+    # Un altro probelma che c'e' qui e' il seguente: quando andiamo a leggere la mappa B, per via
+    # dei dfs_edges mi segue prima il path dal source node, e quindi mi va ad usare un nuovo kernel id
+    test_kernel_LN(True)

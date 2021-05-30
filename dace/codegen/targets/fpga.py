@@ -851,7 +851,7 @@ class FPGACodeGen(TargetCodeGenerator):
         # Concurrency can only be found in each state
         max_kernels = default_kernel
         # max_events = default_event
-
+        assigned = set()  # tmp, for check
         # First step: assign a diffeent Kernel ID
         # to each source node which is not an AccessNode
         for i, node in enumerate(source_nodes):
@@ -866,14 +866,14 @@ class FPGACodeGen(TargetCodeGenerator):
             print("Source node ", node, " has associated PE: ", max_kernels)
             node._kernel_childpath = False
             max_kernels = increment(max_kernels)
+            assigned.add(node)
 
         # Consecutive nodes that are not crossroads can be in
         # the same Kernel
+        scopes = state.scope_dict()
 
         for e in state.dfs_edges(source_nodes):
             if hasattr(e.dst, '_kernel'):
-                # but this one could be another precedence
-                # print("DST ", e.dst, " already has a PE ID")
                 # Node has been already visited (THIS SHOULD NEVER OCCUR WITH DFS_EDGES, there is something strange)
                 assert (False)
                 continue
@@ -886,6 +886,8 @@ class FPGACodeGen(TargetCodeGenerator):
                     # Skip views
                     e.dst._kernel = kernel
                     e.dst._kernel_childpath = False
+                    assert e.dst not in assigned
+                    assigned.add(e.dst)
                     continue
 
                 # Does this node need to be in another Kernel?
@@ -905,16 +907,15 @@ class FPGACodeGen(TargetCodeGenerator):
                     # TODO: should we return this?
                     backward_path = [edge]
 
-                    # If empty memlet, return itself as the path
+                    # If empty memlet, return False
                     if (edge.src_conn is None and edge.dst_conn is None
                             and edge.data.is_empty()):
-                        return True
+                        return False
 
                     #Continue Until we find some compute part
                     curedge = edge
                     source_nodes = state.source_nodes()
                     while not curedge.src in source_nodes:
-
                         if isinstance(curedge.src, nodes.CodeNode):
                             # We can stop here
                             return True
@@ -929,28 +930,22 @@ class FPGACodeGen(TargetCodeGenerator):
                             next_edge = next(
                                 e for e in state.in_edges(curedge.src))
                             curedge = next_edge
-                        # Trace through scopes using OUT_# -> IN_#
-                        # if isinstance(curedge.src, (nodes.EntryNode, nodes.ExitNode)):
-                        #     if curedge.src_conn is None:
-                        #         raise ValueError(
-                        #             "Source connector cannot be None for {}".format(
-                        #                 curedge.src))
-                        #     assert curedge.src_conn.startswith("OUT_")
-                        #     next_edge = next(e for e in state.in_edges(curedge.src)
-                        #                      if e.dst_conn == "IN_" + curedge.src_conn[4:])
-                        #     backward_path.insert(0, next_edge)
-                    #If we didn't return before, then there is no compute in here
+                        print(curedge)
+                    print("Return FAlse")
                     return False
 
                 # TODO: corner cases
                 # - this is an exit node
                 # - Systolic array? Not sure about this
+                # - If i am in a Scope, then there is no need to check, we keep the same kernel
+                # - TODO: we should not do this for Access Nodes? Maybe just code node and Entry Node
                 if len(list(state.predecessors(e.dst))) > 1 and not isinstance(
-                        e.dst, nodes.ExitNode):
+                        e.dst, nodes.ExitNode) and scopes[e.dst] == None:
                     # Loop over all predecessor (except this edge) and see if there is some compute inside
                     crossroad_node = False
-                    for pred_edge in state.predecessors(e.dst):
-                        if pred_edge != e and trace_back_is_compute(e, state):
+                    for pred_edge in state.in_edges(e.dst):
+                        if pred_edge != e and trace_back_is_compute(pred_edge, state):
+                            print(f"{e.dst} is crossroad node because of edge {pred_edge}")
                             crossroad_node = True
                             break
 
@@ -978,17 +973,35 @@ class FPGACodeGen(TargetCodeGenerator):
                     if parent.schedule == dtypes.ScheduleType.FPGA_Device:
                         e.src._kernel_childpath = False
             else:
-                # print("Use a new Kernel id")
-                # New PE: this should not have any predecessor
-                kernel = max_kernels
-                if (isinstance(e.dst, nodes.AccessNode)
-                        and isinstance(sdfg.arrays[e.dst.data], dt.View)):
-                    # Skip views
-                    pass
+
+                # From this edge we don't have any kernel id.
+                # Look up for the other predecessors node, if any of them has a kernel
+                # id, use that. Since we are in a DFS we visit this only once
+
+                # TODO: guardare al nodo immediatamente successivo non va bene
+                # dovremmo risalire e vedere se qualcuno c'e' l'ha
+                # Onestamente e' un po' brutto fatto cosi. Forse dovremmo cambiare modo di visitare
+                # il grafo
+                for pred_edge in state.in_edges(e.dst):
+                    if pred_edge != e:
+                        if hasattr(pred_edge.src, '_kernel'):
+                            kernel = pred_edge.src._kernel
+                            print("Reuse Kernel id for ", e.dst, " from parent")
+                            break
                 else:
-                    max_kernels = increment(max_kernels)
+                    # New PE: this should not have any predecessor
+                    print("Use a new Kernel id for ", e.dst)
+                    kernel = max_kernels
+                    if (isinstance(e.dst, nodes.AccessNode)
+                            and isinstance(sdfg.arrays[e.dst.data], dt.View)):
+                        # Skip views
+                        pass
+                    else:
+                        max_kernels = increment(max_kernels)
+            assert(e.dst not in assigned)
+            assigned.add(e.dst)
             e.dst._kernel = kernel
-            # print(e.dst, " has associated kernel ID ", kernel)
+            print(e.dst, " has associated kernel ID ", kernel)
 
             if not hasattr(e.dst, '_kernel_childpath'):
                 e.dst._kernel_childpath = False
