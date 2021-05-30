@@ -403,8 +403,8 @@ class RedundantArray(pm.Transformation):
                 del sdfg.arrays[in_array.data]
             return
         view_strides = in_desc.strides
-        if (b_dims_to_pop and
-                len(b_dims_to_pop) == len(out_desc.shape) - len(in_desc.shape)):
+        if (b_dims_to_pop and len(b_dims_to_pop)
+                == len(out_desc.shape) - len(in_desc.shape)):
             view_strides = [
                 s for i, s in enumerate(out_desc.strides)
                 if i not in b_dims_to_pop
@@ -643,7 +643,9 @@ class RedundantSecondArray(pm.Transformation):
                     for a in accesses:
                         subsets_intersect = False
                         for e in graph.in_edges(a):
-                            _, subset = _validate_subsets(e, sdfg.arrays, dst_name=a.data)
+                            _, subset = _validate_subsets(e,
+                                                          sdfg.arrays,
+                                                          dst_name=a.data)
                             res = subsets.intersects(a_subset, subset)
                             if res == True or res is None:
                                 subsets_intersect = True
@@ -823,8 +825,8 @@ class RedundantSecondArray(pm.Transformation):
                     del sdfg.arrays[out_array.data]
                 return
             view_strides = out_desc.strides
-            if (a_dims_to_pop and len(a_dims_to_pop) == len(in_desc.shape) -
-                    len(out_desc.shape)):
+            if (a_dims_to_pop and len(a_dims_to_pop)
+                    == len(in_desc.shape) - len(out_desc.shape)):
                 view_strides = [
                     s for i, s in enumerate(in_desc.strides)
                     if i not in a_dims_to_pop
@@ -927,6 +929,10 @@ class SqueezeViewRemove(pm.Transformation):
 
         vsqdims = view_subset.squeeze()
 
+        # View may modify the behavior of a library node
+        if strict and isinstance(vedge.dst, nodes.LibraryNode):
+            return False
+
         # Check that subsets are equivalent
         if array_subset != view_subset:
             return False
@@ -969,3 +975,94 @@ class SqueezeViewRemove(pm.Transformation):
         # Remove node and descriptor
         state.remove_node(out_array)
         sdfg.remove_data(out_array.data)
+
+
+@registry.autoregister_params(singlestate=True, strict=True)
+class UnsqueezeViewRemove(pm.Transformation):
+    in_array = pm.PatternNode(nodes.AccessNode)
+    out_array = pm.PatternNode(nodes.AccessNode)
+
+    @staticmethod
+    def expressions():
+        return [
+            sdutil.node_path_graph(UnsqueezeViewRemove.in_array,
+                                   UnsqueezeViewRemove.out_array)
+        ]
+
+    def can_be_applied(self,
+                       state: SDFGState,
+                       candidate,
+                       expr_index: int,
+                       sdfg: SDFG,
+                       strict: bool = False):
+        in_array = self.in_array(sdfg)
+        out_array = self.out_array(sdfg)
+
+        in_desc = in_array.desc(sdfg)
+        out_desc = out_array.desc(sdfg)
+
+        if state.in_degree(in_array) != 1:
+            return False
+
+        if not isinstance(in_desc, data.View):
+            return False
+
+        vedge = state.in_edges(in_array)[0]
+        if vedge.data.data != in_array.data:  # Ensures subset comes from view
+            return False
+        view_subset = copy.deepcopy(vedge.data.subset)
+
+        aedge = state.edges_between(in_array, out_array)[0]
+        if aedge.data.data != out_array.data:
+            return False
+        array_subset = copy.deepcopy(aedge.data.subset)
+
+        asqdims = array_subset.squeeze()
+
+        # View may modify the behavior of a library node
+        if strict and isinstance(vedge.src, nodes.LibraryNode):
+            return False
+
+        # Check that subsets are equivalent
+        if array_subset != view_subset:
+            return False
+
+        # Verify strides after squeeze
+        vstrides = tuple(in_desc.strides)
+        astrides = tuple(s for i, s in enumerate(out_desc.strides)
+                         if i in asqdims)
+        if astrides != vstrides:
+            return False
+
+        return True
+
+    def apply(self, sdfg: SDFG):
+        state: SDFGState = sdfg.node(self.state_id)
+        in_array = self.in_array(sdfg)
+        out_array = self.out_array(sdfg)
+        out_desc = out_array.desc(sdfg)
+
+        vedge = state.in_edges(in_array)[0]
+        view_subset = copy.deepcopy(vedge.data.subset)
+
+        aedge = state.edges_between(in_array, out_array)[0]
+        array_subset = copy.deepcopy(aedge.data.subset)
+
+        asqdims = array_subset.squeeze()
+        asqdims_mirror = [
+            i for i in range(aedge.data.subset.dims()) if i not in asqdims
+        ]
+
+        # Modify data and subset on all outgoing edges
+        for e in state.memlet_tree(vedge):
+            e.data.data = out_array.data
+            e.data.subset.unsqueeze(asqdims_mirror)
+
+        # Redirect original edge to point to data
+        state.remove_edge(vedge)
+        state.add_edge(vedge.src, vedge.src_conn, out_array, vedge.dst_conn,
+                       vedge.data)
+
+        # Remove node and descriptor
+        state.remove_node(in_array)
+        sdfg.remove_data(in_array.data)

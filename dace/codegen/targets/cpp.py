@@ -794,6 +794,19 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
     if not node.code:
         return ""
 
+    # Not [], "" or None
+    if node.code_global and node.code_global.code:
+        function_stream.write(
+            codeblock_to_cpp(node.code_global),
+            sdfg,
+            state_id,
+            node,
+        )
+        function_stream.write("\n", sdfg, state_id, node)
+
+    # add node state_fields to the statestruct
+    codegen._frame.statestruct.extend(node.state_fields)
+
     # If raw C++ code, return the code directly
     if node.language != dtypes.Language.Python:
         # If this code runs on the host and is associated with a GPU stream,
@@ -1163,6 +1176,19 @@ class DaCeKeywordRemover(ExtNodeTransformer):
     def visit_FunctionDef(self, node):
         # Do not parse internal functions
         return None
+
+    def visit_BinOp(self, node: ast.BinOp):
+        # Special case for integer powers
+        if isinstance(node.op, ast.Pow):
+            try:
+                unparsed = symbolic.pystr_to_symbolic(unparse(node.right))
+                evaluated = symbolic.symstr(
+                    symbolic.evaluate(unparsed, self.constants))
+                node.right = ast.parse(evaluated).body[0].value
+            except (TypeError, AttributeError, NameError, KeyError, ValueError):
+                return self.generic_visit(node)
+
+        return self.generic_visit(node)
 
     # Replace default modules (e.g., math) with dace::math::
     def visit_Attribute(self, node):
