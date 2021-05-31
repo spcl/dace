@@ -8,8 +8,6 @@ import sympy.core.sympify
 from typing import List, Optional, Set, Union
 import warnings
 from dace.config import Config
-import dace.sdfg.hbm_helper
-
 
 class Subset(object):
     """ Defines a subset of a data descriptor. """
