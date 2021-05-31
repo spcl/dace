@@ -8,12 +8,7 @@ def parseHBMArray(arrayname : str, array : data.Array) -> "dict[str, Any]":
 
     :return: A mapping from (arrayname, sdfg of the array) to a mapping
     from string that contains collected information.
-    'ndim': contains the dimension of the array
-    'splitcount': contains how many times this array is split
-        on each of the axes along which it is split 
-        (ie splitcount==2 on an 2d-array which is split along axis 0
-        and axis 1 => There are 4 parts)
-    'splitaxes': List that contains axes along which the array is split
+    'ndim': contains the dimension of the array == len(shape)
     'lowbank': The lowest bank index this array is placed on
     'shape': The shape of the whole array
     'numbanks': The number of banks across which this array spans

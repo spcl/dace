@@ -191,19 +191,18 @@ class FPGATransformState(transformation.Transformation):
                     if("hbmbank" in desc.location):
                         fpga_array[1].location["hbmbank"] = desc.location["hbmbank"]
                         desc.location.pop("hbmbank")
-                    if("hbmalignment" in desc.location):
-                        fpga_array[1].location["hbmalignment"] = desc.location["hbmalignment"]
-                        desc.location.pop("hbmalignment")
                     fpga_data[node.data] = fpga_array
 
                 pre_node = pre_state.add_read(node.data)
                 pre_fpga_node = pre_state.add_write('fpga_' + node.data)
-                full_range = subsets.Range.from_array(fpga_array[1])
-                mem = memlet.Memlet(node.data)
+                mem = memlet.Memlet(data=node.data, 
+                                    subset=subsets.Range.from_array(fpga_array[1]))
+                """
                 if("hbmbank" in fpga_array[1].location and full_range[0][0] != full_range[0][1]):
                     mem.dst_subset = full_range
                 else:
                     mem.src_subset = full_range
+                """
                 pre_state.add_edge(pre_node, None, pre_fpga_node, None, mem)
 
                 if node not in wcr_input_nodes:
@@ -243,9 +242,6 @@ class FPGATransformState(transformation.Transformation):
                     if("hbmbank" in desc.location):
                         fpga_array[1].location["hbmbank"] = desc.location["hbmbank"]
                         desc.location.pop("hbmbank")
-                    if("hbmalignment" in desc.location):
-                        fpga_array[1].location["hbmalignment"] = desc.location["hbmalignment"]
-                        desc.location.pop("hbmalignment")
                     fpga_data[node.data] = fpga_array
                 # fpga_node = type(node)(fpga_array)
 
