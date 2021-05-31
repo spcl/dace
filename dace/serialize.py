@@ -139,8 +139,11 @@ def from_json(obj, context=None, known_type=None):
                         known_type.__name__)
 
     if t:
-        deserialized = _DACE_SERIALIZE_TYPES[t].from_json(obj, context=context)
-        if deserialized is None:
+        try:
+            deserialized = _DACE_SERIALIZE_TYPES[t].from_json(
+                obj, context=context
+            )
+        except Exception:
             deserialized = SerializableObject.from_json(
                 obj, context=context, typename=t
             )
