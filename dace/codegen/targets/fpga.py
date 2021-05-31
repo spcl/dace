@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from copy import deepcopy
 from six import StringIO
 import collections
 import enum
@@ -13,6 +14,7 @@ from typing import Dict
 import dace
 from dace.codegen.targets import cpp
 from dace import subsets, data as dt, dtypes
+from dace import memlet
 from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import SDFG, nodes, utils, dynamic_map_inputs
@@ -745,12 +747,6 @@ class FPGACodeGen(TargetCodeGenerator):
         if (host_to_device or device_to_host
                 or (device_to_device and not self._in_device_code)):
 
-            """
-            copy_shape, src_strides, dst_strides, src_expr, dst_expr = cpp.memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, memlet, src_node, dst_node, False)
-            if(copy_shape != copy_shape_old): #TODO: HBMJAN Remove this check
-                raise NotImplementedError()
-            """
             copy_shape = memlet.subset.bounding_box_size()
             offset = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
             
@@ -1188,10 +1184,37 @@ class FPGACodeGen(TargetCodeGenerator):
         dst_schedule = None if dst_parent is None else dst_parent.map.schedule
         state_dfg = sdfg.nodes()[state_id]
 
+        #Check if this is a copy memlet between HBM-Arrays
+        doDefaultCopy = True
+        if(isinstance(src_node, dace.sdfg.nodes.AccessNode) and 
+            isinstance(dst_node, dace.sdfg.nodes.AccessNode)):
+            src_array = src_node.desc(sdfg)
+            dst_array = dst_node.desc(sdfg)
+            src_hbm_info = utils.parseHBMArray(src_node.data, src_array)
+            dst_hbm_info = utils.parseHBMArray(dst_node.data, dst_array)
+            if src_hbm_info is None or dst_hbm_info is None:
+                doDefaultCopy = False
+                modedge = deepcopy(edge)
+                mem : memlet.Memlet = modedge.data
+                if mem.src_subset is None:
+                    mem.src_subset = subsets.Range.from_array(src_array)
+                if mem.dst_subset is None:
+                    mem.dst_subset = subsets.Range.from_array(dst_array)
+                src_index = mem.src_subset[0][0]
+                dst_index = mem.dst_subset[0][0]
+                bankAccessCount = mem.src_subset[0][1] - src_index + 1
+                for i in range(bankAccessCount):
+                    mem.src_subset[0] = (src_index + i, src_index + i, 1)
+                    mem.dst_subset[0] = (dst_index + i, dst_index + i, 1)
+                    self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
+                                    dst_storage, dst_schedule, modedge, state_dfg,
+                                    function_stream, callsite_stream)
+            
         # Emit actual copy
-        self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
-                        dst_storage, dst_schedule, edge, state_dfg,
-                        function_stream, callsite_stream)
+        if doDefaultCopy:
+            self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
+                            dst_storage, dst_schedule, edge, state_dfg,
+                            function_stream, callsite_stream)
 
     def _generate_PipelineEntry(self, *args, **kwargs):
         self._generate_MapEntry(*args, **kwargs)
