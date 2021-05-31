@@ -1033,7 +1033,7 @@ def parseHBMArray(arrayname : str, array : dt.Array) -> "dict[str, Any]":
     'ndim': contains the dimension of the array == len(shape)
     'lowbank': The lowest bank index this array is placed on
     'shape': The shape of the whole array
-    'numbanks': The number of banks across which this array spans
+    'numbank': The number of banks across which this array spans
     """
     if("hbmbank" not in array.location):
         return None
