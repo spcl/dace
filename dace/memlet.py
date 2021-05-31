@@ -390,11 +390,7 @@ class Memlet(object):
             :param wcr: The conflict resolution lambda.
             :type datadesc: Data
         """
-        try:
-            rng = subsets.Range.from_array(datadesc)
-        except Exception as e:
-            raise Exception(f"{str(e)} in {dataname}")
-        return Memlet.simple(dataname, rng, wcr_str=wcr)
+        return Memlet.simple(dataname, subsets.Range.from_array(datadesc) , wcr_str=wcr)
 
     def __hash__(self):
         return hash(
