@@ -11,7 +11,7 @@ from dace.sdfg.state import SDFGState
 from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from string import ascii_uppercase
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union, Any
 
 
 def node_path_graph(*args):
@@ -1022,3 +1022,36 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
     result = {s for s in result if not s.is_empty()}
 
     return result
+
+def parseHBMArray(arrayname : str, array : data.Array) -> "dict[str, Any]":
+    """
+    Parses HBM properties of an array. 
+    Returns none if hbmbank is not present as property in location.
+
+    :return: A mapping from (arrayname, sdfg of the array) to a mapping
+    from string that contains collected information.
+    'ndim': contains the dimension of the array == len(shape)
+    'lowbank': The lowest bank index this array is placed on
+    'shape': The shape of the whole array
+    'numbanks': The number of banks across which this array spans
+    """
+    if("hbmbank" not in array.location):
+        return None
+    hbmbankrange : subsets.Range = array.location["hbmbank"]
+    if(not isinstance(hbmbankrange, subsets.Range)):
+        raise TypeError(f"Locationproperty 'hbmbank' must be of type subsets.Range for {arrayname}")
+    low, high, stride = hbmbankrange[0]
+    if(stride != 1):
+        raise NotImplementedError(f"Locationproperty 'hbmbank' does not support stride != 1 for {arrayname}")
+    numbank = high - low + 1
+    shape = array.shape
+    ndim = len(shape)
+    if(low == high):
+        return {"ndim" : ndim, "shape" : array.shape,
+            "lowbank" : low, "numbank": 1}
+    if(shape[0] != numbank):
+        raise ValueError("The size of the first dimension for an array divided "
+            "accross k HBM-Banks must equal k. This does not hold for "
+            f"{arrayname}")
+    return {"ndim" : ndim, "shape" : array.shape, "lowbank" : low,
+            "numbank": numbank}
