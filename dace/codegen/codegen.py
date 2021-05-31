@@ -11,7 +11,6 @@ from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
 from dace.sdfg import infer_types
-import dace.sdfg.hbm_multibank_expansion
 
 # Import CPU code generator. TODO: Remove when refactored
 from dace.codegen.targets import cpp, cpu
