@@ -393,23 +393,6 @@ class Transformation(TransformationBase):
             xform = next(ext for ext in Transformation.extensions().keys()
                          if ext.__name__ == json_obj['transformation'])
         except StopIteration:
-            # This json object indicates that it is a transformation, but the
-            # corresponding serializable class cannot be found (i.e. the
-            # transformation is not known to DaCe). Handle this by creating a
-            # dummy transformation to keep serialization intact.
-            if all(attr in json_obj for attr in [
-                'sdfg_id', 'state_id', '_subgraph', 'expr_index',
-                'transformation'
-            ]):
-                xform = Transformation(
-                    sdfg_id=json_obj['sdfg_id'],
-                    state_id=json_obj['state_id'],
-                    subgraph=json_obj['_subgraph'],
-                    expr_index=json_obj['expr_index'],
-                    override=True
-                )
-                xform.dummy_for = json_obj['transformation']
-                return xform
             return None
 
         # Recreate subgraph
@@ -743,20 +726,6 @@ class SubgraphTransformation(TransformationBase):
             xform = next(ext for ext in SubgraphTransformation.extensions().keys()
                          if ext.__name__ == json_obj['transformation'])
         except StopIteration:
-            # This json object indicates that it is a transformation, but the
-            # corresponding serializable class cannot be found (i.e. the
-            # transformation is not known to DaCe). Handle this by creating a
-            # dummy transformation to keep serialization intact.
-            if all(attr in json_obj for attr in [
-                'sdfg_id', 'state_id', '_subgraph', 'transformation'
-            ]):
-                xform = SubgraphTransformation(
-                    sdfg_id=json_obj['sdfg_id'],
-                    state_id=json_obj['state_id'],
-                    subgraph=json_obj['_subgraph']
-                )
-                xform.dummy_for = json_obj['transformation']
-                return xform
             return None
 
         # Reconstruct transformation
