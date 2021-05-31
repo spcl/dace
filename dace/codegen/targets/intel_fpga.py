@@ -470,7 +470,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                                     var_name=None):
         pass
 
-    def generate_kernel_internal(self, sdfg, state, kernel, kernel_name, subgraphs,
+    def generate_kernel_internal(self, sdfg, state, kernel_name, subgraphs,
                                  kernel_stream, function_stream,
                                  callsite_stream):
 

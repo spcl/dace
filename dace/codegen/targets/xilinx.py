@@ -745,7 +745,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         return "{}_{}_{}_{}".format(node.name, sdfg.sdfg_id,
                                     sdfg.node_id(state), state.node_id(node))
 
-    def generate_kernel_internal(self, sdfg, state, kernel, kernel_name,
+    def generate_kernel_internal(self, sdfg, state, kernel_name,
                                  subgraphs, kernel_stream, function_stream,
                                  callsite_stream):
         """Main entry function for generating a Xilinx kernel."""

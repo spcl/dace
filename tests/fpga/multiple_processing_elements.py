@@ -36,7 +36,9 @@ def test_PEs_inside_component_0():
     w = np.random.rand(8).astype(np.float32)
 
     sdfg = PEs_inside_component_0.to_sdfg()
-    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+    from dace.transformation.interstate import GPUTransformSDFG
+    sdfg.apply_transformations([GPUTransformSDFG])
+    # sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
     sdfg.save('/tmp/out.sdfg')
     program = sdfg.compile()
     for node, state in program.sdfg.all_nodes_recursive():
@@ -181,7 +183,7 @@ def test_PEs_LNs_inside_component():
 
     sdfg = PEs_LNs_inside_component.to_sdfg()
     sdfg.save('/tmp/pre.sdfg')
-    from dace.transformation.interstate import GPUTransformSDFG
+    # from dace.transformation.interstate import GPUTransformSDFG
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
     sdfg.save('/tmp/out.sdfg')
     # sdfg.expand_library_nodes()
@@ -234,9 +236,9 @@ def test_kernel_LN(flatten):
 
 
 if __name__ == "__main__":
-    # test_PEs_inside_component_0()
-    # test_PEs_inside_component_1()
-    # test_PEs_inside_component_2()
+    test_PEs_inside_component_0()
+    test_PEs_inside_component_1()
+    test_PEs_inside_component_2()
     # test_PEs_LNs_inside_component()
 
     # TODO: for this, we should see if we are able to find cuts or not
@@ -250,4 +252,7 @@ if __name__ == "__main__":
     # anche se eper questo particolare caso ci possiamo girare intorno
     # Un altro probelma che c'e' qui e' il seguente: quando andiamo a leggere la mappa B, per via
     # dei dfs_edges mi segue prima il path dal source node, e quindi mi va ad usare un nuovo kernel id
-    test_kernel_LN(True)
+    # test_kernel_LN(True)
+
+
+    #TODO: add a test case with two components, each one with multiple kernels inside
