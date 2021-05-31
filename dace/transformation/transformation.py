@@ -376,6 +376,7 @@ class Transformation(TransformationBase):
             return {
                 'type': 'Transformation',
                 'transformation': self.dummy_for,
+                'dummy_transformation': True,
                 **props
             }
         else:
@@ -725,6 +726,7 @@ class SubgraphTransformation(TransformationBase):
             return {
                 'type': 'SubgraphTransformation',
                 'transformation': self.dummy_for,
+                'dummy_transformation': True,
                 **props
             }
         else:
