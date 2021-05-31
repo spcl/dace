@@ -372,19 +372,11 @@ class Transformation(TransformationBase):
 
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
-        if hasattr(self, 'dummy_for'):
-            return {
-                'type': 'Transformation',
-                'transformation': self.dummy_for,
-                'dummy_transformation': True,
-                **props
-            }
-        else:
-            return {
-                'type': 'Transformation',
-                'transformation': type(self).__name__,
-                **props
-            }
+        return {
+            'type': 'Transformation',
+            'transformation': type(self).__name__,
+            **props
+        }
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any],
@@ -705,19 +697,11 @@ class SubgraphTransformation(TransformationBase):
 
     def to_json(self, parent=None):
         props = serialize.all_properties_to_json(self)
-        if hasattr(self, 'dummy_for'):
-            return {
-                'type': 'SubgraphTransformation',
-                'transformation': self.dummy_for,
-                'dummy_transformation': True,
-                **props
-            }
-        else:
-            return {
-                'type': 'SubgraphTransformation',
-                'transformation': type(self).__name__,
-                **props
-            }
+        return {
+            'type': 'SubgraphTransformation',
+            'transformation': type(self).__name__,
+            **props
+        }
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any],
