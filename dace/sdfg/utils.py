@@ -1023,7 +1023,7 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
 
     return result
 
-def parseHBMArray(arrayname : str, array : data.Array) -> "dict[str, Any]":
+def parseHBMArray(arrayname : str, array : dt.Array) -> "dict[str, Any]":
     """
     Parses HBM properties of an array. 
     Returns none if hbmbank is not present as property in location.
@@ -1037,8 +1037,8 @@ def parseHBMArray(arrayname : str, array : data.Array) -> "dict[str, Any]":
     """
     if("hbmbank" not in array.location):
         return None
-    hbmbankrange : subsets.Range = array.location["hbmbank"]
-    if(not isinstance(hbmbankrange, subsets.Range)):
+    hbmbankrange : sbs.Range = array.location["hbmbank"]
+    if(not isinstance(hbmbankrange, sbs.Range)):
         raise TypeError(f"Locationproperty 'hbmbank' must be of type subsets.Range for {arrayname}")
     low, high, stride = hbmbankrange[0]
     if(stride != 1):
