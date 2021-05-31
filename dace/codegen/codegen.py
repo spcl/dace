@@ -129,9 +129,6 @@ def generate_code(sdfg) -> List[CodeObject]:
     # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()
 
-    #TODO: Trace modifications and correct error messages occuring at a later stage
-    dace.sdfg.hbm_multibank_expansion.expand_hbm_multiarrays(sdfg)
-
     # After expansion, run another pass of connector/type inference
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
