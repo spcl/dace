@@ -1237,6 +1237,9 @@ def _result_type(
         elif symbolic.issymbolic(arg):
             datatypes.append(_sym_type(arg))
             dtypes_for_result.append(_representative_num(_sym_type(arg)))
+        elif isinstance(arg, dtypes.typeclass):
+            datatypes.append(arg)
+            dtypes_for_result.append(_representative_num(arg))
         else:
             raise TypeError("Type {t} of argument {a} is not supported".format(
                 t=type(arg), a=arg))
