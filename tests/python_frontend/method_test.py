@@ -100,6 +100,42 @@ def test_nested_methods():
     assert np.allclose(cls.other_method_caller(A), (A * 5) + (A + 5) + 2)
 
 
+def mydec(a):
+    def mutator(func):
+        dp = dace.program(func)
+
+        @dace.program
+        def mmm(A: dace.float64[20]):
+            res = dp(A, a)
+            return res
+
+        sdfg = mmm.to_sdfg()
+        return sdfg
+
+    return mutator
+
+
+def someprog(A: dace.float64[20], a: dace.float64):
+    res = A + a
+    return res
+
+
+def someprog_indirection(a):
+    return mydec(a)(someprog)
+
+
+def test_decorator():
+    @dace.program
+    def otherprog(A: dace.float64[20]):
+        res = np.empty_like(A)
+        someprog_indirection(3)(A=A, __return=res)
+        return res
+
+    sdfg = otherprog.to_sdfg()
+    A = np.random.rand(20)
+    assert np.allclose(sdfg(A), A + 3)
+
+
 if __name__ == '__main__':
     test_method_jit()
     test_method()
@@ -109,3 +145,4 @@ if __name__ == '__main__':
     test_static_withclass()
     test_classmethod()
     test_nested_methods()
+    test_decorator()
