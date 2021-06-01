@@ -17,7 +17,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     transient = storage != dace.StorageType.Default
 
     sdfg = dace.SDFG("matrix_lufact_getrf_{}_{}".format(implementation,
-                                                        str(dtype)))
+                                                        dtype.ocltype))
     state = sdfg.add_state("dataflow")
 
     xhost_arr = sdfg.add_array("x", [n, n],
