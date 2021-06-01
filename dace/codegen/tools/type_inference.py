@@ -370,9 +370,14 @@ def _BoolOp(t, symbols, inferred_symbols):
     # If any vector occurs in the bool op, the inferred type is also a bool vector
     any_vector = False
     for v in t.values:
+<<<<<<< HEAD
         inf_type = _dispatch(v, symbols, inferred_symbols)
         any_vector = any_vector or isinstance(inf_type, dtypes.vector)
     return dtypes.vector(dace.bool, -1) if any_vector else dtypes.bool
+=======
+        _dispatch(v, symbols, inferred_symbols)
+    return dtypes.typeclass(bool)
+>>>>>>> 5ce2c6b8fbcbe762b055de415b938c8564510eb0
 
 
 def _Attribute(t, symbols, inferred_symbols):

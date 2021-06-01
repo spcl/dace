@@ -113,6 +113,10 @@ def _test_quantitatively(sdfg, graph):
     csdfg(A=A, B=B, C=C1, N=N, M=M, O=O)
     del csdfg
 
+    subgraph = SubgraphView(graph, graph.nodes())
+    sf = SubgraphFusion(subgraph)
+    assert sf.can_be_applied(sdfg, subgraph)
+
     fusion(sdfg, graph)
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, N=N, M=M, O=O)

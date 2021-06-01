@@ -8,7 +8,7 @@ from collections.abc import KeysView
 import dace
 import itertools
 import dace.serialize
-from typing import Any, Dict, Set
+from typing import Any, Dict, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
@@ -328,6 +328,16 @@ class Tasklet(CodeNode):
     """
 
     code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
+    state_fields = ListProperty(element_type=str, desc="Fields that are added to the global state")
+    code_global = CodeProperty(
+        desc="Global scope code needed for tasklet execution",
+        default=CodeBlock("", dtypes.Language.CPP))
+    code_init = CodeProperty(
+        desc="Extra code that is called on DaCe runtime initialization",
+        default=CodeBlock("", dtypes.Language.CPP))
+    code_exit = CodeProperty(
+        desc="Extra code that is called on DaCe runtime cleanup",
+        default=CodeBlock("", dtypes.Language.CPP))
     debuginfo = DebugInfoProperty()
 
     instrument = Property(choices=dtypes.InstrumentationType,
@@ -340,11 +350,20 @@ class Tasklet(CodeNode):
                  outputs=None,
                  code="",
                  language=dtypes.Language.Python,
+                 state_fields=None,
+                 code_global="",
+                 code_init="",
+                 code_exit="",
                  location=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
         self.code = CodeBlock(code, language)
+
+        self.state_fields = state_fields or []
+        self.code_global = CodeBlock(code_global, dtypes.Language.CPP)
+        self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
+        self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
         self.debuginfo = debuginfo
 
     @property
@@ -478,6 +497,10 @@ class NestedSDFG(CodeNode):
         desc="If True, this nested SDFG will not be inlined in strict mode "
         "(in the InlineSDFG transformation)",
         default=False)
+
+    unique_name = Property(dtype=str,
+                           desc="Unique name of the SDFG",
+                           default="")
 
     def __init__(self,
                  label,
@@ -1140,6 +1163,19 @@ PipelineEntry = indirect_properties(Pipeline,
 # ------------------------------------------------------------------------------
 
 
+# Based on https://stackoverflow.com/a/2020083/6489142
+def full_class_path(cls_or_obj: Union[type, object]):
+    if isinstance(cls_or_obj, type):
+        cls = cls_or_obj
+    else:
+        cls = type(cls_or_obj)
+    module = cls.__module__
+    if module is None or module == str.__class__.__module__:
+        return cls.__name__  # Avoid reporting __builtin__
+    else:
+        return module + '.' + cls.__name__
+
+
 @make_properties
 class LibraryNode(CodeNode):
 
@@ -1168,17 +1204,9 @@ class LibraryNode(CodeNode):
     def __jsontype__(self):
         return 'LibraryNode'
 
-    # Based on https://stackoverflow.com/a/2020083/6489142
-    def _fullclassname(self):
-        module = self.__class__.__module__
-        if module is None or module == str.__class__.__module__:
-            return self.__class__.__name__  # Avoid reporting __builtin__
-        else:
-            return module + '.' + self.__class__.__name__
-
     def to_json(self, parent):
         jsonobj = super().to_json(parent)
-        jsonobj['classpath'] = self._fullclassname()
+        jsonobj['classpath'] = full_class_path(self)
         return jsonobj
 
     @classmethod
@@ -1251,6 +1279,9 @@ class LibraryNode(CodeNode):
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation = transformation_type(sdfg_id, state_id, subgraph, 0)
+        if not transformation.can_be_applied(state, self, 0, sdfg): 
+            raise RuntimeError("Library node "
+               "expansion applicability check failed.")
         transformation.apply(sdfg, *args, **kwargs)
         return implementation
 
