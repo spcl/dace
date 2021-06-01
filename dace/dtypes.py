@@ -177,7 +177,6 @@ _CTYPES = {
     int: "dace::int32",
     float: "dace::float64",
     complex: "dace::complex64",
-<<<<<<< HEAD
     bool: "dace::bool_",
     numpy.bool: "dace::bool_",
     numpy.bool_: "dace::bool_",
@@ -189,18 +188,6 @@ _CTYPES = {
     numpy.uint16: "dace::uint16",
     numpy.uint32: "dace::uint32",
     numpy.uint64: "dace::uint64",
-=======
-    bool: "bool",
-    numpy.bool_: "bool",
-    numpy.int8: "char",
-    numpy.int16: "short",
-    numpy.int32: "int",
-    numpy.int64: "long long",
-    numpy.uint8: "unsigned char",
-    numpy.uint16: "unsigned short",
-    numpy.uint32: "unsigned int",
-    numpy.uint64: "unsigned long long",
->>>>>>> 5ce2c6b8fbcbe762b055de415b938c8564510eb0
     numpy.float16: "dace::float16",
     numpy.float32: "dace::float32",
     numpy.float64: "dace::float64",
