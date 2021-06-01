@@ -17,7 +17,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     transient = storage != dace.StorageType.Default
 
     sdfg = dace.SDFG("matrix_solve_getrf_getrs_{}_{}".format(
-        implementation, dtype))
+        implementation, dtype.ocltype))
     state = sdfg.add_state("dataflow")
 
     Ahost_arr = sdfg.add_array("A", [n, n],
