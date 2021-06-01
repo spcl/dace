@@ -2,6 +2,7 @@
 """ Tests dace.program as class methods """
 import dace
 import numpy as np
+import sys
 
 
 class MyTestClass:
@@ -81,10 +82,12 @@ def test_static_withclass():
 
 
 def test_classmethod():
-    A = np.random.rand(20)
-    # Modify value first
-    MyTestClass.classvalue = 4
-    assert np.allclose(MyTestClass.clsmethod(A), A + 4)
+    # Only available in Python 3.9+
+    if sys.version_info >= (3, 9):
+        A = np.random.rand(20)
+        # Modify value first
+        MyTestClass.classvalue = 4
+        assert np.allclose(MyTestClass.clsmethod(A), A + 4)
 
 
 if __name__ == '__main__':

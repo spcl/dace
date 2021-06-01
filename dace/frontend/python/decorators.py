@@ -65,20 +65,21 @@ def method(f: F,
            **kwargs) -> parser.DaceProgram:
     """ Entry point to a data-centric program that is a method or 
         a ``classmethod``. """
-    prog = parser.DaceProgram(f,
-                              args,
-                              kwargs,
-                              auto_optimize,
-                              device,
-                              method=True)
 
-    # Returning a method here is necessary to get Python to bind it to objects
-    @wraps(method)
-    def _impl(self, *method_args, **method_kwargs):
-        prog.methodobj = self
-        return prog(*method_args, **method_kwargs)
+    # Create a wrapper class that can bind to the object instance
+    class MethodWrapper:
+        def __init__(self, prog):
+            self.prog = prog
 
-    return _impl
+        def __get__(self, obj, objtype=None):
+            # Modify wrapped instance as necessary, only clearing
+            # compiled program cache if needed.
+            if self.prog.methodobj is not obj:
+                self.prog.methodobj = obj
+            return self.prog
+
+    return MethodWrapper(
+        parser.DaceProgram(f, args, kwargs, auto_optimize, device, method=True))
 
 
 # Internal DaCe decorators, these are not actually run, but rewritten
