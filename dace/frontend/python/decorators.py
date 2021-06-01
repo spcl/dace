@@ -2,6 +2,7 @@
 """ Python decorators for DaCe functions. """
 
 from __future__ import print_function
+from functools import wraps
 
 from dace import dtypes
 from dace.dtypes import paramdec
@@ -41,6 +42,44 @@ def program(f: F,
 
 
 function = program
+
+
+@overload
+def method(f: F) -> parser.DaceProgram:
+    ...
+
+
+@overload
+def method(*args,
+           auto_optimize=False,
+           device=dtypes.DeviceType.CPU,
+           **kwargs) -> parser.DaceProgram:
+    ...
+
+
+@paramdec
+def method(f: F,
+           *args,
+           auto_optimize=False,
+           device=dtypes.DeviceType.CPU,
+           **kwargs) -> parser.DaceProgram:
+    """ Entry point to a data-centric program that is a method or 
+        a ``classmethod``. """
+    prog = parser.DaceProgram(f,
+                              args,
+                              kwargs,
+                              auto_optimize,
+                              device,
+                              method=True)
+
+    # Returning a method here is necessary to get Python to bind it to objects
+    @wraps(method)
+    def _impl(self, *method_args, **method_kwargs):
+        prog.methodobj = self
+        return prog(*method_args, **method_kwargs)
+
+    return _impl
+
 
 # Internal DaCe decorators, these are not actually run, but rewritten
 
