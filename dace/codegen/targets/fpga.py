@@ -9,7 +9,7 @@ import re
 import warnings
 import sympy as sp
 import numpy as np
-from typing import Dict
+from typing import Dict, Union
 
 import dace
 from dace.codegen.targets import cpp
@@ -302,7 +302,7 @@ class FPGACodeGen(TargetCodeGenerator):
         external_streams: Set[tuple[bool, str, dt, dict[str, int]]] = set()
 
         # Mapping from global arrays to memory interfaces
-        bank_assignments: Dict[str, (str, str)] = {}
+        bank_assignments: Dict[str, (str, Union[int, (int, int)])] = {}
 
         # Mapping from symbol to a unique parameter tuple
         all_symbols = {
@@ -431,11 +431,8 @@ class FPGACodeGen(TargetCodeGenerator):
                                 trace_bank = trace_desc.location["bank"]
                                 trace_type = "DDR"
                             else:
-                                low, high, stride = trace_desc.location["hbmbank"][0]
-                                if(low != high or stride != 1):
-                                    raise cgx.CodegenError(f"Found not expanded HBM memory" 
-                                        "bank during codegen: {trace_name}")
-                                trace_bank = str(low)
+                                low, high, _ = trace_desc.location["hbmbank"][0]
+                                trace_bank = (low, high)
                                 trace_type = "HBM"
                             if (bank is not None and banktype is not None
                                     and (bank != trace_bank or banktype != trace_type)):
@@ -450,9 +447,13 @@ class FPGACodeGen(TargetCodeGenerator):
                     if bank is not None:
                         outer_node = trace[0][0][0] or trace[0][0][1]
                         outer_desc = outer_node.desc(trace[0][2])
-                        okhbm = "hbmbank" in outer_desc.location and str(outer_desc.location["hbmbank"][0][0]) == str(bank)
-                        okbank = "bank" in outer_desc.location and str(outer_desc.location["bank"]) == str(bank)
-                        if (not (okhbm or okbank)):
+                        okhbm1, okhbm2 = False
+                        if bank == "HBM":
+                            okhbm1 = "hbmbank" in outer_desc.location and outer_desc.location["hbmbank"][0][0] == bank[0]
+                            okhbm2 = "hbmbank" in outer_desc.location and outer_desc.location["hbmbank"][0][1] == bank[1]
+                        if bank == "DDR":
+                            okbank = "bank" in outer_desc.location and outer_desc.location["bank"] == bank
+                        if not ((okhbm1 and okhbm2) or okbank):
                             raise cgx.CodegenError(
                                 "Memory bank allocation must be present on "
                                 f"outermost data descriptor {outer_node.data} "
@@ -556,8 +557,6 @@ class FPGACodeGen(TargetCodeGenerator):
             except KeyError:
                 pass  # The variable was not defined,  we can continue
 
-        allocname = cpp.ptr(dataname, nodedesc)
-
         if isinstance(nodedesc, dt.View):
             return self.allocate_view(sdfg, dfg, state_id, node,
                                       function_stream, declaration_stream,
@@ -613,7 +612,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         # TODO: Distinguish between read, write, and read+write
                         self._allocated_global_arrays.add(node.data)
                         memory_bank_arg_type = "DDR"
-                        memory_bank_arg_num = "0"
+                        memory_bank_arg_num = (0, 0)
                         if "bank" in nodedesc.location:
                             try:
                                 bank = int(nodedesc.location["bank"])
@@ -623,36 +622,31 @@ class FPGACodeGen(TargetCodeGenerator):
                                     "must be an integer: {}".format(
                                         nodedesc.location["bank"]))
                             memory_bank_arg_type = f"hlslib::ocl::StorageType::DDR"
-                            memory_bank_arg_num = bank
+                            memory_bank_arg_num = (bank, bank)
                         #HBMJAN -> Array Allocation
                         elif "hbmbank" in nodedesc.location:
                             hbmbank = nodedesc.location["hbmbank"]
                             memory_bank_arg_type = f"hlslib::ocl::StorageType::HBM"
-                            memory_bank_arg_num = hbmbank
+                            memory_bank_arg_num = (hbmbank[0], hbmbank[1])
 
                         # Define buffer, using proper type
-                        result_decl.write(
-                            "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};"
-                            .format(nodedesc.dtype.ctype, dataname))
-                        """
-                        result_alloc.write(
-                            "{} = __state->fpga_context->Get()."
-                            "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                            "({}{});".format(allocname, nodedesc.dtype.ctype,
-                                             memory_bank_arg,
-                                             cpp.sym2cpp(arrsize)))
-                        """
-                        result_alloc.write(
-                            "{} = __state->fpga_context->Get()."
-                            "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                            "({}, {}, {});".format(allocname, nodedesc.dtype.ctype,
-                                                    memory_bank_arg_type, memory_bank_arg_num,
-                                                    cpp.sym2cpp(arrsize))
-                        )
-                        self._dispatcher.defined_vars.add(
-                            dataname, DefinedType.Pointer,
-                            'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
-                            .format(nodedesc.dtype.ctype))
+                        for bank_index in range(memory_bank_arg_num[0], memory_bank_arg_num[1]+1):
+                            allocname = cpp.ptr(dataname, nodedesc, bank_index)
+                            result_decl.write(
+                                "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};"
+                                .format(nodedesc.dtype.ctype, allocname)) #HOW TO UPDATE THE NAME???????????????? xD
+                            result_alloc.write(
+                                "{} = __state->fpga_context->Get()."
+                                "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
+                                "({}, {}, {});".format(allocname, nodedesc.dtype.ctype,
+                                                        memory_bank_arg_type, bank_index,
+                                                        cpp.sym2cpp(arrsize))
+                            )
+                            self._dispatcher.defined_vars.add(
+                                allocname, DefinedType.Pointer,
+                                'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
+                                .format(nodedesc.dtype.ctype))
+
             elif (nodedesc.storage in (dtypes.StorageType.FPGA_Local,
                                        dtypes.StorageType.FPGA_Registers,
                                        dtypes.StorageType.FPGA_ShiftRegister)):

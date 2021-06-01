@@ -216,11 +216,12 @@ def memlet_copy_to_absolute_strides(dispatcher,
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
 
-def ptr(name: str, desc: data.Data) -> str:
+def ptr(name: str, desc: data.Data, subset_info : Any = None) -> str:
     """
     Returns a string that points to the data based on its name and descriptor.
     :param name: Data name.
     :param desc: Data descriptor.
+    :param subset_info: Any additional information about the accessed subset. 
     :return: C-compatible name that can be used to access the data.
     """
     # Special case: If memory is persistent and defined in this SDFG, add state
