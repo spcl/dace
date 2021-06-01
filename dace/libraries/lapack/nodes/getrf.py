@@ -35,11 +35,16 @@ class ExpandGetrfOpenBLAS(ExpandTransformation):
              parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
+        cast = ""
+        if lapack_dtype == 'c':
+            cast = "(lapack_complex_float*)"
+        elif lapack_dtype == 'z':
+            cast = "(lapack_complex_double*)"
         if desc_x.dtype.veclen > 1:
-            raise(NotImplementedError)
+            raise (NotImplementedError)
 
         n = n or node.n
-        code = f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, _xin, {stride_x}, _ipiv);"
+        code = f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,

@@ -1214,8 +1214,7 @@ class LibraryNode(CodeNode):
         if cls == LibraryNode:
             clazz = pydoc.locate(json_obj['classpath'])
             if clazz is None:
-                raise TypeError('Unrecognized library node type "%s"' %
-                                json_obj['classpath'])
+                return UnregisteredLibraryNode.from_json(json_obj, context)
             return clazz.from_json(json_obj, context)
         else:  # Subclasses are actual library nodes
             ret = cls(json_obj['attributes']['name'])
@@ -1290,3 +1289,21 @@ class LibraryNode(CodeNode):
         """Register an implementation to belong to this library node type."""
         cls.implementations[name] = transformation_type
         transformation_type._match_node = cls
+
+
+class UnregisteredLibraryNode(LibraryNode):
+
+    original_json = {}
+
+    def __init__(self, json_obj={}, label=None):
+        self.original_json = json_obj
+        super().__init__(label)
+
+    def to_json(self):
+        return self.original_json
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        return UnregisteredLibraryNode(
+            json_obj=json_obj, label=json_obj['attributes']['name']
+        )
