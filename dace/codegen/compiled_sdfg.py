@@ -280,7 +280,6 @@ class CompiledSDFG(object):
             if self._initialized is False:
                 self._lib.load()
                 self.initialize(*initargtuple)
-
             # PROFILING
             if Config.get_bool('profiling'):
                 operations.timethis(self._sdfg, 'DaCe', 0, self._cfunc,
@@ -338,7 +337,6 @@ class CompiledSDFG(object):
             argtypes = []
             argnames = []
             sig = []
-
         # Type checking
         for a, arg, atype in zip(argnames, arglist, argtypes):
             if not dtypes.is_array(arg) and isinstance(atype, dt.Array):
@@ -349,9 +347,11 @@ class CompiledSDFG(object):
                         'Passing an object (type %s) to an array in argument "%s"'
                         % (type(arg).__name__, a))
             elif dtypes.is_array(arg) and not isinstance(atype, dt.Array):
-                raise TypeError(
-                    'Passing an array to a scalar (type %s) in argument "%s"' %
-                    (atype.dtype.ctype, a))
+                # GPU scalars are pointers, so this is fine
+                if atype.storage != dtypes.StorageType.GPU_Global:
+                    raise TypeError(
+                        'Passing an array to a scalar (type %s) in argument "%s"'
+                        % (atype.dtype.ctype, a))
             elif not isinstance(atype, dt.Array) and not isinstance(
                     atype.dtype, dtypes.callback) and not isinstance(
                         arg, (atype.dtype.type, sp.Basic)) and not (isinstance(
@@ -505,7 +505,7 @@ class CompiledSDFG(object):
             if arrname.startswith('__return') and not arr.transient:
                 if arrname in kwargs:
                     self._return_arrays.append(kwargs[arrname])
-                    self._retarray_shapes.append((arrname,))
+                    self._retarray_shapes.append((arrname, ))
                     continue
 
                 if isinstance(arr, dt.Stream):

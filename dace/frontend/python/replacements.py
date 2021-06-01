@@ -80,7 +80,8 @@ def _define_local_scalar(
         storage: dtypes.StorageType = dtypes.StorageType.Default):
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
-    sdfg.add_scalar(name, dtype, transient=True, storage=storage)
+    _, desc = sdfg.add_scalar(name, dtype, transient=True, storage=storage)
+    pv.variables[name] = name
     return name
 
 
@@ -660,6 +661,75 @@ def _min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
                    identity=dtypes.max_value(sdfg.arrays[a].dtype))
 
 
+def _min2(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, b: str):
+    """ Implements the min function with 2 scalar arguments. """
+
+    in_conn = set()
+    out_conn = {'__out'}
+
+    if isinstance(a, str) and a in sdfg.arrays.keys():
+        desc_a = sdfg.arrays[a]
+        read_a = state.add_read(a)
+        conn_a = '__in_a'
+        in_conn.add(conn_a)
+    else:
+        desc_a = a
+        read_a = None
+        conn_a = symbolic.symstr(a)
+
+    if isinstance(b, str) and b in sdfg.arrays.keys():
+        desc_b = sdfg.arrays[b]
+        read_b = state.add_read(b)
+        conn_b = '__in_b'
+        in_conn.add(conn_b)
+    else:
+        desc_b = b
+        read_b = None
+        conn_b = symbolic.symstr(b)
+
+    dtype_c, [cast_a, cast_b] = _result_type([desc_a, desc_b])
+    arg_a, arg_b = "{in1}".format(in1=conn_a), "{in2}".format(in2=conn_b)
+    if cast_a:
+        arg_a = "{ca}({in1})".format(ca=str(cast_a).replace('::', '.'),
+                                     in1=conn_a)
+    if cast_b:
+        arg_b = "{cb}({in2})".format(cb=str(cast_b).replace('::', '.'),
+                                     in2=conn_b)
+
+    tasklet = nodes.Tasklet('__min2', in_conn, out_conn,
+                            "__out = min({a}, {b})".format(a=arg_a, b=arg_b))
+
+    c = _define_local_scalar(pv, sdfg, state, dtype_c)
+    desc_c = sdfg.arrays[c]
+    write_c = state.add_write(c)
+    if read_a:
+        state.add_edge(read_a, None, tasklet, '__in_a',
+                       Memlet.from_array(a, desc_a))
+    if read_b:
+        state.add_edge(read_b, None, tasklet, '__in_b',
+                       Memlet.from_array(b, desc_b))
+    state.add_edge(tasklet, '__out', write_c, None,
+                   Memlet.from_array(c, desc_c))
+
+    return c
+
+
+# NOTE: We support only the version of Python min that takes scalar arguments.
+# For iterable arguments one must use the equivalent NumPy methods.
+@oprepo.replaces('min')
+def _pymin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+           a: Union[str, Number, symbolic.symbol], *args):
+    left_arg = a
+    current_state = state
+    for i, b in enumerate(args):
+        if i > 0:
+            pv._add_state('__min2_%d' % i)
+            pv.last_state.set_default_lineinfo(pv.current_lineinfo)
+            current_state = pv.last_state
+        left_arg = _min2(pv, sdfg, current_state, left_arg, b)
+    return left_arg
+
+
 @oprepo.replaces('numpy.argmax')
 def _argmax(pv: 'ProgramVisitor',
             sdfg: SDFG,
@@ -808,6 +878,86 @@ def _argminmax(pv: 'ProgramVisitor',
             sdfg.arrays[reduced_structs].shape, result_type)
         nest(_elementwise)("lambda x: x.idx", reduced_structs, out_array=out)
         return nest, out
+
+@oprepo.replaces('numpy.where')
+def _array_array_where(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                       cond_operand: str, left_operand: str = None, right_operand: str = None):
+    if left_operand is None or right_operand is None:
+        raise ValueError('numpy.where is only supported for the case where x and y are given')
+
+    cond_arr = sdfg.arrays[cond_operand]
+    left_arr = sdfg.arrays.get(left_operand, None)
+    right_arr = sdfg.arrays.get(right_operand, None)
+
+    left_type = left_arr.dtype if left_arr else dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
+    right_type = right_arr.dtype if right_arr else dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+
+    # Implicit Python coversion implemented as casting
+    arguments = [cond_arr, left_arr or left_type, right_arr or right_type]
+    tasklet_args = ['__incond', '__in1' if left_arr else left_operand, '__in2' if right_arr else right_operand]
+    result_type, casting = _result_type(arguments[1:])
+    left_cast = casting[0]
+    right_cast = casting[1]
+
+    if left_cast is not None:
+        tasklet_args[0] = "{}(__in1)".format(str(left_cast).replace('::', '.'))
+    if right_cast is not None:
+        tasklet_args[1] = "{}(__in2)".format(str(right_cast).replace('::', '.'))
+
+    left_shape = left_arr.shape if left_arr else [1]
+    right_shape = right_arr.shape if right_arr else [1]
+
+    (out_shape, all_idx_dict, out_idx, left_idx,
+     right_idx) = _broadcast_together(left_shape, right_shape)
+
+    # Fix for Scalars
+    if isinstance(left_arr, data.Scalar):
+        left_idx = subsets.Range([(0, 0, 1)])
+    if isinstance(right_arr, data.Scalar):
+        right_idx = subsets.Range([(0, 0, 1)])
+
+    if left_arr is None and right_arr is None:
+        raise ValueError('Both x and y cannot be scalars in numpy.where')
+    storage = left_arr.storage if left_arr else right_arr.storage
+
+    out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
+                                                   storage)
+
+    if list(out_shape) == [1]:
+        tasklet = state.add_tasklet(
+            '_where_', {'__incond', '__in1', '__in2'}, {'__out'},
+            '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1],
+                                                        i2=tasklet_args[2]))
+        n0 = state.add_read(cond_operand)
+        n3 = state.add_write(out_operand)
+        state.add_edge(n0, None, tasklet, '__incond',
+                       dace.Memlet.from_array(cond_operand, cond_arr))
+        if left_arr:
+            n1 = state.add_read(left_operand)
+            state.add_edge(n1, None, tasklet, '__in1',
+                           dace.Memlet.from_array(left_operand, left_arr))
+        if right_arr:
+            n2 = state.add_read(right_operand)
+            state.add_edge(n2, None, tasklet, '__in2',
+                           dace.Memlet.from_array(right_operand, right_arr))
+        state.add_edge(tasklet, '__out', n3, None,
+                       dace.Memlet.from_array(out_operand, out_arr))
+    else:
+        inputs = {}
+        inputs['__incond'] = Memlet.simple(cond_operand, left_idx if left_arr else right_idx)
+        if left_arr:
+            inputs['__in1'] = Memlet.simple(left_operand, left_idx)
+        if right_arr:
+            inputs['__in2'] = Memlet.simple(right_operand, right_idx)
+        state.add_mapped_tasklet(
+            "_where_",
+            all_idx_dict, inputs,
+            '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1],
+                                                        i2=tasklet_args[2]),
+            {'__out': Memlet.simple(out_operand, out_idx)},
+            external_edges=True)
+
+    return out_operand
 
 
 ##############################################################################
@@ -1108,6 +1258,9 @@ def _result_type(
         elif symbolic.issymbolic(arg):
             datatypes.append(_sym_type(arg))
             dtypes_for_result.append(_representative_num(_sym_type(arg)))
+        elif isinstance(arg, dtypes.typeclass):
+            datatypes.append(arg)
+            dtypes_for_result.append(_representative_num(arg))
         else:
             raise TypeError("Type {t} of argument {a} is not supported".format(
                 t=type(arg), a=arg))

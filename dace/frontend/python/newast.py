@@ -381,13 +381,11 @@ def add_indirection_subgraph(sdfg: SDFG,
         for i, r in enumerate(memlet.subset):
             if i in nonsqz_dims:
                 mapped_rng.append(r)
-        ind_entry, ind_exit = graph.add_map(
-            'indirection',
-            {
-                '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
-                for i, (s, e, t) in enumerate(mapped_rng)
-            },
-            debuginfo=pvisitor.current_lineinfo)
+        ind_entry, ind_exit = graph.add_map('indirection', {
+            '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
+            for i, (s, e, t) in enumerate(mapped_rng)
+        },
+                                            debuginfo=pvisitor.current_lineinfo)
         inp_base_path.insert(0, ind_entry)
         out_base_path.append(ind_exit)
 
@@ -723,6 +721,9 @@ class TaskletTransformer(ExtNodeTransformer):
 
         self.extcode = None
         self.lang = lang
+        self.globalcode = ''
+        self.initcode = ''
+        self.exitcode = ''
         self.location = location
 
         self.nested = nested
@@ -771,6 +772,9 @@ class TaskletTransformer(ExtNodeTransformer):
                                    set(self.outputs.keys()),
                                    self.extcode or tasklet_ast.body,
                                    language=self.lang,
+                                   code_global=self.globalcode,
+                                   code_init=self.initcode,
+                                   code_exit=self.exitcode,
                                    location=self.location,
                                    debuginfo=locinfo)
 
@@ -1429,7 +1433,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 result[name] = symbolic.symbol(name, dtype=val)
             else:
                 values = str(val).split(':')
-                if len(values) == 2:
+                if len(values) == 1:
+                    result[name] = symbolic.symbol(
+                        name,
+                        infer_expr_type(values[0], {
+                            **self.globals,
+                            **dyn_inputs
+                        }))
+                elif len(values) == 2:
                     result[name] = symbolic.symbol(
                         name,
                         dtypes.result_type_of(
@@ -1441,13 +1452,18 @@ class ProgramVisitor(ExtNodeVisitor):
                                 **self.globals,
                                 **dyn_inputs
                             })))
-                else:
+                elif len(values) == 3:
                     result[name] = symbolic.symbol(
                         name,
                         infer_expr_type(values[0], {
                             **self.globals,
                             **dyn_inputs
                         }))
+                else:
+                    raise DaceSyntaxError(
+                        self, None,
+                        "Invalid number of arguments in a range iterator. "
+                        "You may use up to 3 arguments (start:stop:step).")
 
         return result
 
@@ -1654,7 +1670,7 @@ class ProgramVisitor(ExtNodeVisitor):
         elif isinstance(node, ast.Constant):
             return str(node.value)
         else:
-            return str(pyexpr_to_symbolic(self.defined, node))
+            return str(self.visit(node))
 
     def _parse_slice(self, node: ast.Slice):
         """Parses a range
@@ -1717,18 +1733,26 @@ class ProgramVisitor(ExtNodeVisitor):
             zero = ast.parse('0').body[0]
             one = ast.parse('1').body[0]
 
+            def visit_ast_or_value(arg):
+                ast_res = self._visit_ast_or_value(arg)
+                val_res = self._parse_value(ast_res)
+                return val_res, ast_res
+
             if len(node.args) == 1:  # (par)range(stop)
-                ranges = [('0', self._parse_value(node.args[0]), '1')]
-                ast_ranges = [(zero, node.args[0], one)]
+                valr, astr = visit_ast_or_value(node.args[0])
+                ranges = [('0', valr, '1')]
+                ast_ranges = [(zero, astr, one)]
             elif len(node.args) == 2:  # (par)range(start, stop)
-                ranges = [(self._parse_value(node.args[0]),
-                           self._parse_value(node.args[1]), '1')]
-                ast_ranges = [(node.args[0], node.args[1], one)]
+                valr0, astr0 = visit_ast_or_value(node.args[0])
+                valr1, astr1 = visit_ast_or_value(node.args[1])
+                ranges = [(valr0, valr1, '1')]
+                ast_ranges = [(astr0, astr1, one)]
             elif len(node.args) == 3:  # (par)range(start, stop, step)
-                ranges = [(self._parse_value(node.args[0]),
-                           self._parse_value(node.args[1]),
-                           self._parse_value(node.args[2]))]
-                ast_ranges = [(node.args[0], node.args[1], node.args[2])]
+                valr0, astr0 = visit_ast_or_value(node.args[0])
+                valr1, astr1 = visit_ast_or_value(node.args[1])
+                valr2, astr2 = visit_ast_or_value(node.args[2])
+                ranges = [(valr0, valr1, valr2)]
+                ast_ranges = [(astr0, astr1, astr2)]
             else:
                 raise DaceSyntaxError(
                     self, node,
@@ -2200,7 +2224,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if iterator == 'dace.map':
             state = self._add_state('MapState')
-            params = [(k, ':'.join(v)) for k, v in zip(indices, ranges)]
+            params = [(k, ':'.join([str(t) for t in v]))
+                      for k, v in zip(indices, ranges)]
             params, map_inputs = self._parse_map_inputs('map_%d' % node.lineno,
                                                         params, node)
             me, mx = state.add_map(name='%s_%d' % (self.name, node.lineno),
@@ -2993,6 +3018,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.outputs[var_name] = (dace.Memlet.simple(parent_name, rng),
                                           inner_indices)
 
+        self.variables[var_name] = var_name
         return (var_name, squeezed_rng)
 
     def _add_read_access(self,
@@ -4016,7 +4042,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_Constant(self, node: ast.Constant):
         if isinstance(node.value, bool):
-            return dace.bool_(node.n)
+            return dace.bool_(node.value)
         if isinstance(node.value, (int, float, complex)):
             return dtypes.DTYPE_TO_TYPECLASS[type(node.value)](node.value)
         return node.value
@@ -4213,9 +4239,24 @@ class ProgramVisitor(ExtNodeVisitor):
                     new_name, _ = self.make_slice(new_name, new_rng)
                     return new_name
 
-        # Obtain array
+        # Obtain array/tuple
         node_parsed = self._gettype(node.value)
+
         if len(node_parsed) > 1:
+            # If the value is a tuple of constants (e.g., array.shape) and the
+            # slice is constant, return the value itself
+            nslice = self.visit(node.slice)
+            if isinstance(nslice, (ast.Index, Number)):
+                if isinstance(nslice, ast.Index):
+                    v = self._parse_value(nslice.value)
+                else:
+                    v = nslice
+                try:
+                    value, valtype = node_parsed[int(v)]
+                    return value
+                except (TypeError, ValueError):
+                    pass  # Passthrough to exception
+
             raise DaceSyntaxError(self, node.value, 'Subscripted object cannot '
                                   'be a tuple')
         array, arrtype = node_parsed[0]
@@ -4293,17 +4334,28 @@ class ProgramVisitor(ExtNodeVisitor):
         newnode = None
         if result is None:
             return node
-        if isinstance(result, ast.AST):
-            newnode = result
-        elif isinstance(result, (Number, numpy.bool_)):
-            # Compatibility check since Python changed their AST nodes
-            if sys.version_info >= (3, 8):
-                newnode = ast.Constant(value=result, kind='')
-            else:
-                newnode = ast.Num(n=result)
+        if isinstance(result, (list, tuple)):
+            res_num = len(result)
         else:
-            newnode = ast.Name(id=result)
-        return ast.copy_location(newnode, node)
+            res_num = 1
+            result = [result]
+        out = []
+        for i, r in enumerate(result):
+            if isinstance(r, ast.AST):
+                newnode = r
+            elif isinstance(r, (Number, numpy.bool_)):
+                # Compatibility check since Python changed their AST nodes
+                if sys.version_info >= (3, 8):
+                    newnode = ast.Constant(value=r, kind='')
+                else:
+                    newnode = ast.Num(n=r)
+            else:
+                newnode = ast.Name(id=r)
+            ast.copy_location(newnode, node)
+            out.append(newnode)
+        if res_num == 1:
+            out = out[0]
+        return out
 
     def visit_Index(self, node: ast.Index) -> Any:
         if isinstance(node.value, ast.Tuple):
@@ -4374,6 +4426,10 @@ class ProgramVisitor(ExtNodeVisitor):
                                     f'"{aname}" not found')
                 shape = desc.shape
             else:  # Literal list or tuple, add as constant and use shape
+                arrname = [
+                    v if isinstance(v, Number) else self._parse_value(v)
+                    for v in arrname
+                ]
                 carr = numpy.array(arrname, dtype=dtypes.typeclass(int).type)
                 cname = self.sdfg.find_new_constant(f'__ind{i}_{aname}')
                 self.sdfg.add_constant(cname, carr)

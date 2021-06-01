@@ -328,6 +328,16 @@ class Tasklet(CodeNode):
     """
 
     code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
+    state_fields = ListProperty(element_type=str, desc="Fields that are added to the global state")
+    code_global = CodeProperty(
+        desc="Global scope code needed for tasklet execution",
+        default=CodeBlock("", dtypes.Language.CPP))
+    code_init = CodeProperty(
+        desc="Extra code that is called on DaCe runtime initialization",
+        default=CodeBlock("", dtypes.Language.CPP))
+    code_exit = CodeProperty(
+        desc="Extra code that is called on DaCe runtime cleanup",
+        default=CodeBlock("", dtypes.Language.CPP))
     debuginfo = DebugInfoProperty()
 
     instrument = Property(choices=dtypes.InstrumentationType,
@@ -340,11 +350,20 @@ class Tasklet(CodeNode):
                  outputs=None,
                  code="",
                  language=dtypes.Language.Python,
+                 state_fields=None,
+                 code_global="",
+                 code_init="",
+                 code_exit="",
                  location=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
         self.code = CodeBlock(code, language)
+
+        self.state_fields = state_fields or []
+        self.code_global = CodeBlock(code_global, dtypes.Language.CPP)
+        self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
+        self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
         self.debuginfo = debuginfo
 
     @property
@@ -1195,8 +1214,7 @@ class LibraryNode(CodeNode):
         if cls == LibraryNode:
             clazz = pydoc.locate(json_obj['classpath'])
             if clazz is None:
-                raise TypeError('Unrecognized library node type "%s"' %
-                                json_obj['classpath'])
+                return UnregisteredLibraryNode.from_json(json_obj, context)
             return clazz.from_json(json_obj, context)
         else:  # Subclasses are actual library nodes
             ret = cls(json_obj['attributes']['name'])
@@ -1260,6 +1278,9 @@ class LibraryNode(CodeNode):
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation = transformation_type(sdfg_id, state_id, subgraph, 0)
+        if not transformation.can_be_applied(state, self, 0, sdfg): 
+            raise RuntimeError("Library node "
+               "expansion applicability check failed.")
         transformation.apply(sdfg, *args, **kwargs)
         return implementation
 
@@ -1268,3 +1289,21 @@ class LibraryNode(CodeNode):
         """Register an implementation to belong to this library node type."""
         cls.implementations[name] = transformation_type
         transformation_type._match_node = cls
+
+
+class UnregisteredLibraryNode(LibraryNode):
+
+    original_json = {}
+
+    def __init__(self, json_obj={}, label=None):
+        self.original_json = json_obj
+        super().__init__(label)
+
+    def to_json(self):
+        return self.original_json
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        return UnregisteredLibraryNode(
+            json_obj=json_obj, label=json_obj['attributes']['name']
+        )

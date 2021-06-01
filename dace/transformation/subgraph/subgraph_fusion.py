@@ -9,7 +9,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.scope import ScopeTree
 from dace.memlet import Memlet
 from dace.transformation import transformation
-from dace.properties import make_properties, Property
+from dace.properties import ListProperty, make_properties, Property
 from dace.symbolic import symstr, overapproximate
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet, propagate_memlets_scope, _propagate_node
 from dace.transformation.subgraph import helpers
@@ -77,6 +77,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         "independent per iteration space to avoid race conditions.",
         dtype=bool,
         default=True)
+
+    keep_global = ListProperty(
+        str,
+        desc="A list of array names to treat as non-transients and not compress",
+    )
 
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         '''
@@ -720,9 +725,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         return transients_created
 
     def determine_invariant_dimensions(
-            self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
-            intermediate_nodes: List[nodes.AccessNode],
-            map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit]):
+        self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
+        intermediate_nodes: List[nodes.AccessNode],
+        map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit]):
         ''' Determines the invariant dimensions for each node -- dimensions in 
             which the access set of the memlets propagated through map entries and 
             exits does not change.
@@ -828,6 +833,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             return
 
         do_not_override = do_not_override or []
+        do_not_override.extend(self.keep_global)
 
         # get maps and map exits
         maps = [map_entry.map for map_entry in map_entries]

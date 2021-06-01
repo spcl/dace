@@ -8,7 +8,7 @@ import dace.sdfg.nodes
 from dace.libraries.blas import blas_helpers
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-
+import warnings
 
 def _get_transpose_input(node, state, sdfg):
     """Returns the transpose input edge, array, and shape."""
@@ -118,21 +118,27 @@ class ExpandTransposeMKL(ExpandTransformation):
         if dtype == dace.float32:
             func = "somatcopy"
             alpha = "1.0f"
+            cast = ''
         elif dtype == dace.float64:
             func = "domatcopy"
             alpha = "1.0"
+            cast = ''
         elif dtype == dace.complex64:
             func = "comatcopy"
             alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
+            cast = '(MKL_Complex8*)'
         elif dtype == dace.complex128:
             func = "zomatcopy"
             alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
+            cast = '(MKL_Complex16*)'
         else:
-            raise ValueError("Unsupported type for MKL omatcopy extension: " +
-                             str(dtype))
+            warnings.warn("Unsupported type for MKL omatcopy extension: " +
+                                str(dtype) + ", falling back to pure")
+            return ExpandTransposePure.expansion(node, state, sdfg)
+
         _, _, (m, n) = _get_transpose_input(node, state, sdfg)
-        code = ("mkl_{f}('R', 'T', {m}, {n}, {a}, _inp, "
-                "{n}, _out, {m});").format(f=func, m=m, n=n, a=alpha)
+        code = ("mkl_{f}('R', 'T', {m}, {n}, {a}, {cast}_inp, "
+                "{n}, {cast}_out, {m});").format(f=func, m=m, n=n, a=alpha, cast=cast)
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
