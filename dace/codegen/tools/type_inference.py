@@ -12,8 +12,7 @@ import ast
 from dace import dtypes
 from dace import symbolic
 from dace.codegen import cppunparse
-from dace.symbolic import SymExpr
-from dace.symbolic import symstr
+from dace.symbolic import symbol, SymExpr, symstr
 import sympy
 import sys
 

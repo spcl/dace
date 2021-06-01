@@ -220,6 +220,7 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
             # Casting is already done in emit_memlet_reference
+            aname = cpp.ptr(aname, nodedesc)
             allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
@@ -1256,6 +1257,10 @@ class CPUCodeGen(TargetCodeGenerator):
         outer_stream_begin = CodeIOStream()
         outer_stream_end = CodeIOStream()
         inner_stream = CodeIOStream()
+
+        # Add code to init and exit functions
+        self._frame._initcode.write(codeblock_to_cpp(node.code_init), sdfg)
+        self._frame._exitcode.write(codeblock_to_cpp(node.code_exit), sdfg)
 
         state_dfg = sdfg.nodes()[state_id]
 
