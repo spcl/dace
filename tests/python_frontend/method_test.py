@@ -24,6 +24,10 @@ class MyTestClass:
     def __call__(self, A: dace.float64[20]):
         return A * self.n
 
+    @dace.method
+    def other_method_caller(self, A: dace.float64[20]):
+        return self.method(A) + 2 + self(A)
+
     @staticmethod
     @dace.program
     def static(A: dace.float64[20]):
@@ -90,6 +94,12 @@ def test_classmethod():
         assert np.allclose(MyTestClass.clsmethod(A), A + 4)
 
 
+def test_nested_methods():
+    A = np.random.rand(20)
+    cls = MyTestClass()
+    assert np.allclose(cls.other_method_caller(A), (A * 5) + (A + 5) + 2)
+
+
 if __name__ == '__main__':
     test_method_jit()
     test_method()
@@ -98,3 +108,4 @@ if __name__ == '__main__':
     test_static()
     test_static_withclass()
     test_classmethod()
+    test_nested_methods()

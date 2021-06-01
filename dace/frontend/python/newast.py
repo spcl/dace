@@ -178,7 +178,7 @@ def parse_dace_program(f,
     global_vars = {
         k: v
         for k, v in global_vars.items()
-        if k not in argtypes and dtypes.isallowed(v)
+        if k not in argtypes  #and dtypes.isallowed(v)
     }
 
     pv = ProgramVisitor(name=name,
@@ -708,6 +708,8 @@ class GlobalResolver(ast.NodeTransformer):
             return super().generic_visit(node)
 
     def global_value_to_node(self, value, parent_node, recurse=False):
+        from dace.frontend.python.parser import DaceProgram  # Avoid import loops
+
         # if recurse is false, we don't allow recursion into lists
         # this should not happen anyway; the globals dict should only contain
         # single "level" lists
@@ -728,7 +730,7 @@ class GlobalResolver(ast.NodeTransformer):
         elif isinstance(value, symbolic.symbol):
             # symbols resolve to the symbol name
             newnode = ast.Name(id=value.name, ctx=ast.Load())
-        elif dtypes.isconstant(value):
+        elif dtypes.isconstant(value) or isinstance(value, (SDFG, DaceProgram)):
             # otherwise we must have a non list or tuple constant; emit a constant node
 
             # Compatibility check since Python changed their AST nodes
@@ -3548,25 +3550,42 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Call(self, node: ast.Call):
         from dace.frontend.python.parser import DaceProgram  # Avoiding import loop
 
-        funcname = rname(node)
         func = None
+        # If the call directly refers to an SDFG or DaceProgram
+        if (isinstance(node.func, ast.Num)
+                and isinstance(node.func.n, (SDFG, DaceProgram))):
+            func = node.func.n
+            funcname = func.name
+        elif (isinstance(node.func, ast.Constant)
+              and isinstance(node.func.value, (SDFG, DaceProgram))):
+            func = node.func.value
+            funcname = func.name
 
-        # Check if the function exists as an SDFG in a different module
-        modname = until(funcname, '.')
-        if ('.' in funcname and len(modname) > 0 and modname in self.globals
-                and dtypes.ismodule(self.globals[modname])):
-            try:
-                func = getattr(self.globals[modname],
-                               funcname[len(modname) + 1:])
-            except AttributeError:
-                func = None
+        if func is None:
+            funcname = rname(node)
+            # Check if the function exists as an SDFG in a different module
+            modname = until(funcname, '.')
+            if ('.' in funcname and len(modname) > 0 and modname in self.globals
+                    and dtypes.ismodule(self.globals[modname])):
+                try:
+                    func = getattr(self.globals[modname],
+                                   funcname[len(modname) + 1:])
+                except AttributeError:
+                    func = None
 
-            # Not an SDFG, ignore (might be a recognized function, see below)
-            if not isinstance(func, (SDFG, DaceProgram)):
-                func = None
-            else:
-                # An SDFG, replace dots in name with underscores
-                funcname = funcname.replace('.', '_')
+                # Not an SDFG, ignore (might be a recognized function, see below)
+                if not isinstance(func, (SDFG, DaceProgram)):
+                    func = None
+                else:
+                    # An SDFG, replace dots in name with underscores
+                    funcname = funcname.replace('.', '_')
+        
+            # If the function is a callable object
+            elif funcname in self.globals and callable(self.globals[funcname]):
+                fcall = getattr(self.globals[funcname], '__call__', False)
+                if isinstance(fcall, (SDFG, DaceProgram)):
+                    func = fcall
+                    funcname = fcall.name
 
         # If the function exists as a global SDFG or @dace.program, use it
         if func or funcname in self.other_sdfgs:
@@ -3588,15 +3607,15 @@ class ProgramVisitor(ExtNodeVisitor):
                          for arg in node.keywords]
                 required_args = func.argnames
 
-                sdfg = copy.deepcopy(
-                    func.to_sdfg(*({
-                        **self.defined,
-                        **self.sdfg.arrays,
-                        **self.sdfg.symbols
-                    }[arg] if isinstance(arg, str) else arg
-                                   for aname, arg in args),
-                                 strict=self.strict,
-                                 save=False))
+                fcopy = copy.copy(func)
+                fcopy._cache = (None, None, None)
+                fcopy.global_vars = {**func.global_vars, **self.globals}
+                fargs = ({
+                    **self.defined,
+                    **self.sdfg.arrays,
+                    **self.sdfg.symbols
+                }[arg] if isinstance(arg, str) else arg for aname, arg in args)
+                sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
 
             else:
                 raise DaceSyntaxError(
