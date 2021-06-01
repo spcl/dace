@@ -2049,7 +2049,10 @@ class ProgramVisitor(ExtNodeVisitor):
                         raise SyntaxError('Cannot determine connector type for '
                                           'tasklet input dependency')
                     self.sdfg.add_scalar(new_scalar, dtype, transient=True)
-                    state.add_edge(v, conn, internal_node, conn,
+                    accessnode = state.add_access(new_scalar)
+                    state.add_edge(v, conn, accessnode, None,
+                                   dace.Memlet.simple(new_scalar, '0'))
+                    state.add_edge(accessnode, None, internal_node, conn,
                                    dace.Memlet.simple(new_scalar, '0'))
                     if entry_node is not None:
                         state.add_edge(entry_node, None, v, None, dace.Memlet())
@@ -3579,7 +3582,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     # An SDFG, replace dots in name with underscores
                     funcname = funcname.replace('.', '_')
-        
+
             # If the function is a callable object
             elif funcname in self.globals and callable(self.globals[funcname]):
                 fcall = getattr(self.globals[funcname], '__call__', False)
