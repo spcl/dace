@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from copy import deepcopy
 import dace
 from dace import registry
 from dace.sdfg.scope import ScopeSubgraphView
@@ -44,9 +45,11 @@ class UnrollCodeGen(TargetCodeGenerator):
 
         for indices in product(*index_list):
             callsite_stream.write('{')
+            subs_scope = deepcopy(scope)
             for param, index in zip(entry_node.map.params, indices):
-                callsite_stream.write(f'auto {param} = {sym2cpp(index)};')
-            self._dispatcher.dispatch_subgraph(sdfg, scope, state_id,
+                #callsite_stream.write(f'auto {param} = {sym2cpp(index)};')
+                subs_scope.replace(str(param), str(index))
+            self._dispatcher.dispatch_subgraph(sdfg, subs_scope, state_id,
                                             function_stream, callsite_stream,
                                             skip_entry_node=True,
                                             skip_exit_node=True)
