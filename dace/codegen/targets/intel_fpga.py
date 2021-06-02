@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+
 import astunparse
 import functools
 import copy
@@ -470,14 +471,15 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                                     var_name=None):
         pass
 
-    def generate_kernel_internal(self, sdfg, state, kernel_name, subgraphs,
-                                 kernel_stream, function_stream,
-                                 callsite_stream):
+    def generate_kernel_internal(self, sdfg, state, kernel_name, subgraphs, kernel_stream,
+                                 kernel_host_header_stream, kernel_host_body_stream, function_stream,
+                                 callsite_stream, state_parameters):
 
         state_id = sdfg.node_id(state)
 
         kernel_header_stream = CodeIOStream()
         kernel_body_stream = CodeIOStream()
+
 
         #reset list of needed converters
         self.converters_to_generate = set()
@@ -491,8 +493,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
          nested_global_transients, bank_assignments,
          external_streams) = self.make_parameters(sdfg, state, subgraphs)
 
-        host_code_header_stream = CodeIOStream()
-        host_code_body_stream = CodeIOStream()
+        # host_code_header_stream = CodeIOStream()
+        # host_code_body_stream = CodeIOStream()
 
         # Emit allocations of inter-kernel memories
         for node in top_level_local_data:
@@ -501,20 +503,20 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                                                kernel_body_stream)
 
         kernel_body_stream.write("\n")
-
+        state_parameters.extend(global_data_parameters)
         # Generate host code
         self.generate_host_function_boilerplate(sdfg, state, kernel_name,
                                                 global_data_parameters,
                                                 nested_global_transients,
-                                                host_code_body_stream,
+                                                kernel_host_body_stream,
                                                 function_stream,
                                                 callsite_stream)
 
-        self.generate_host_function_prologue(sdfg, state, host_code_body_stream)
+        self.generate_host_function_prologue(sdfg, state, kernel_host_body_stream, kernel_name)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, kernel_body_stream,
-                              host_code_header_stream, host_code_body_stream)
+                              kernel_host_header_stream, kernel_host_body_stream)
 
         kernel_body_stream.write("\n")
 
@@ -524,26 +526,54 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_stream.write(kernel_header_stream.getvalue() +
                             kernel_body_stream.getvalue())
 
-        self.generate_host_function_epilogue(sdfg, state, host_code_body_stream)
+        self.generate_host_function_epilogue(sdfg, state, kernel_host_body_stream, kernel_name)
 
-        # Store code to be passed to compilation phase
-        self._host_codes.append(
-            (kernel_name, host_code_header_stream.getvalue() +
-             host_code_body_stream.getvalue()))
+        # # Store code to be passed to compilation phase
+        # self._host_codes.append(
+        #     (kernel_name, host_code_header_stream.getvalue() +
+        #      host_code_body_stream.getvalue()))
 
-    @staticmethod
-    def generate_host_function_prologue(sdfg, state, host_stream):
-        host_stream.write("std::vector<hlslib::ocl::Kernel> kernels;", sdfg,
+    def generate_host_function_prologue(self, sdfg, state, host_stream, kernel_name):
+        seperator = "/" * 59
+        host_stream.write(f"\n{seperator}\n// Kernel: {kernel_name}\n{seperator}\n\n")
+
+        host_stream.write(f"std::vector<hlslib::ocl::Kernel> {kernel_name}_kernels;", sdfg,
                           sdfg.node_id(state))
 
-    @staticmethod
-    def generate_host_function_epilogue(sdfg, state, host_stream):
+    def generate_host_function_epilogue(self, sdfg, state, host_stream, kernel_name):
         state_id = sdfg.node_id(state)
-        host_stream.write(
-            "const auto start = std::chrono::high_resolution_clock::now();",
-            sdfg, state_id)
+        # TODO profiling
+        # host_stream.write(
+        #     "const auto start = std::chrono::high_resolution_clock::now();",
+        #     sdfg, state_id)
         launch_async = Config.get_bool("compiler", "intel_fpga", "launch_async")
+        kernel_id = self._kernels_names_to_id[kernel_name]
+
+        # Check if this kernel depends from other
+        needs_synch = False
+        if kernel_id in self._kernels_dependencies:
+            needs_synch = True
+        kernel_deps_name = "nullptr"
+        if needs_synch:
+            #THIS MUST BE DONE IN THE VENDOR SPECIFIC FUCNTION
+            host_stream.write(f"// {kernel_name} depends on {self._kernels_dependencies[kernel_id]}")
+            # Build a vector containing all the events associated with the kernels from which this one depends
+            def get_kernel_name(val):
+                for key, value in self._kernels_names_to_id.items():
+                    if val == value:
+                        return key
+                raise RuntimeError("Error while generating kernel dependencies")
+            kernel_deps_name = f"deps_{kernel_name}"
+            host_stream.write(f"std::vector<cl::Event > *{kernel_deps_name} = new std::vector<cl::Event >();")
+            for predecessor in self._kernels_dependencies[kernel_id]:
+                pred_name = get_kernel_name(predecessor)
+                # concatenate events from predecessor kernel
+                host_stream.write(f"{kernel_deps_name}->insert({kernel_deps_name}->end(), {pred_name}_events->begin(), {pred_name}_events->end());")
+
+
         if launch_async:
+            #TODO remove this
+
             # hlslib uses std::async to launch each kernel launch as an
             # asynchronous task in a separate C++ thread. This seems to cause
             # problems with some versions of the Intel FPGA runtime, despite it
@@ -560,22 +590,24 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         else:
             # Launch one-by-one and wait for the cl::Events
             host_stream.write(
-                """\
-  std::vector<cl::Event> events;
-  for (auto &k : kernels) {
-    events.emplace_back(k.ExecuteTaskFork());
-  }
-  cl::Event::waitForEvents(events);""", sdfg, state_id)
-        host_stream.write(
-            """\
-  const auto end = std::chrono::high_resolution_clock::now();
-  const double elapsedChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-  std::cout << "Kernel executed in " << elapsedChrono << " seconds.\\n" << std::flush;
-}""", sdfg, sdfg.node_id(state))
+                f"""\
+  //if (wait_events)
+    //cl::Event::waitForEvents(*wait_events);
+  std::vector<cl::Event> * {kernel_name}_events = new std::vector<cl::Event>();
+  for (auto &k : {kernel_name}_kernels) {{
+    {kernel_name}_events->emplace_back(k.ExecuteTaskFork({kernel_deps_name}));
+  }}
+  cl::Event::waitForEvents(*{kernel_name}_events);
+""", sdfg, state_id)
+#         host_stream.write(
+#             """\
+#   const auto end = std::chrono::high_resolution_clock::now();
+#   const double elapsedChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+#   std::cout << "Kernel executed in " << elapsedChrono << " seconds.\\n" << std::flush;
+# """, sdfg, sdfg.node_id(state))
 
-    def generate_module(self, sdfg, state, name, subgraph, parameters,
+    def generate_module(self, sdfg, state, kernel_name, module_name, subgraph, parameters,
                         module_stream, host_header_stream, host_body_stream):
-
         state_id = sdfg.node_id(state)
         dfg = sdfg.nodes()[state_id]
 
@@ -596,7 +628,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         is_autorun = len(kernel_args_opencl) == 0
 
         # create a unique module name to prevent name clashes
-        module_function_name = "mod_" + str(sdfg.sdfg_id) + "_" + name
+        module_function_name = "mod_" + str(sdfg.sdfg_id) + "_" + module_name
         # The official limit suggested by Intel for module name is 61. However, the compiler
         # can also append text to the module. Longest seen so far is
         # "_cra_slave_inst", which is 15 characters, so we restrict to
@@ -634,8 +666,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         if not is_autorun:
             if unrolled_loop is None:
                 host_body_stream.write(
-                    "kernels.emplace_back(program.MakeKernel(\"{}\"{}));".
-                    format(
+                    "{}_kernels.emplace_back(program.MakeKernel(\"{}\"{}));".
+                    format(kernel_name,
                         module_function_name, ", ".join([""] + kernel_args_call)
                         if len(kernel_args_call) > 0 else ""), sdfg, state_id)
             else:
@@ -655,8 +687,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                     # this is already written in stone in the OpenCL generated
                     # code
                     host_body_stream.write(
-                        "kernels.emplace_back(program.MakeKernel(\"{}_{}\"{}));"
-                        .format(
+                        "{}_kernels.emplace_back(program.MakeKernel(\"{}_{}\"{}));"
+                        .format(kernel_name,
                             module_function_name, p,
                             ", ".join([""] + kernel_args_call[:-1]) if
                             len(kernel_args_call) > 1 else ""), sdfg, state_id)
@@ -683,7 +715,7 @@ __attribute__((autorun))\n"""
             # a function that will be used create a kernel multiple times
 
             # generate a unique name for this function
-            pe_function_name = "pe_" + str(sdfg.sdfg_id) + "_" + name + "_func"
+            pe_function_name = "pe_" + str(sdfg.sdfg_id) + "_" + module_name + "_func"
             module_body_stream.write(
                 "inline void {}({}) {{".format(pe_function_name,
                                                ", ".join(kernel_args_opencl)),
