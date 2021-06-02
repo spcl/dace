@@ -11,14 +11,14 @@ def program_generator(size, factor):
                   dace.float64[size],
                   size=size,
                   factor=factor)
-    def reloadable_lib(input, output):
+    def program(input, output):
         @dace.map(_[0:size])
         def tasklet(i):
             a << input[i]
             b >> output[i]
             b = a * factor
 
-    return reloadable_lib
+    return program
 
 
 def test():

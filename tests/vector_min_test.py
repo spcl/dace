@@ -19,13 +19,10 @@ def test():
 
     # Construct SDFG
     mysdfg = SDFG('myvmin')
-    mysdfg.add_array('A', [N], dp.float32)
-    mysdfg.add_array('B', [N], dp.float32)
-    mysdfg.add_array('C', [N], dp.float32)
     state = mysdfg.add_state()
-    A = state.add_access('A')
-    B = state.add_access('B')
-    C = state.add_access('C')
+    A = state.add_array('A', [N], dp.float32)
+    B = state.add_array('B', [N], dp.float32)
+    C = state.add_array('C', [N], dp.float32)
 
     tasklet, map_entry, map_exit = state.add_mapped_tasklet(
         'mytasklet', dict(i='0:N:2'),

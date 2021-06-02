@@ -409,23 +409,16 @@ public:
             std::copy(event_override, event_override + sizeof...(events), event_tags);
         }
         std::string entry_name = "papi_entry";
-        const char *counter_name = nullptr;
 
         if(m_flags == ValueSetType::Default || m_flags == ValueSetType::Copy)
-        {
             entry_name += " (" + std::to_string(m_nodeid) + ", " + std::to_string(m_coreid) + ", " +
                           std::to_string(m_iteration) + ", " + std::to_string((int)m_flags) + ") ";
-            counter_name = entry_name.c_str();
-        }
         else if(m_flags == ValueSetType::OverheadComp)
-        {
             entry_name = "papi_overhead";
-            counter_name = entry_name.c_str();
-        }
         else if(m_flags == ValueSetType::marker_section_start)
         {
             entry_name = "papi_section_start (node " + std::to_string(m_nodeid) + ", core " + std::to_string(m_coreid) + ") ";
-            counter_name = (entry_name + "bytes").c_str();
+            const char *counter_name = (entry_name + "bytes").c_str();
             rep.add_counter(
                 (entry_name + "bytes").c_str(),
                 "papi",
@@ -433,11 +426,11 @@ public:
                 static_cast<double>(m_values[0])
             );
             if(m_values[1] != 0) {
-                counter_name = (entry_name + "input_bytes").c_str();
+                const char *ip_counter_name = (entry_name + "input_bytes").c_str();
                 rep.add_counter(
                     (entry_name + "input_bytes").c_str(),
                     "papi",
-                    counter_name,
+                    ip_counter_name,
                     static_cast<double>(m_values[1])
                 );
             }

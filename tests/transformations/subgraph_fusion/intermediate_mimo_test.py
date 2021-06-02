@@ -19,8 +19,8 @@ N.set(1000)
 
 
 @dace.program
-def mimo(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
-         D: dace.float64[N]):
+def program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
+            D: dace.float64[N]):
 
     for i in dace.map[0:N // 2]:
         with dace.tasklet:
@@ -61,14 +61,10 @@ def _test_quantitatively(sdfg):
     del csdfg
 
     subgraph = SubgraphView(graph, [node for node in graph.nodes()])
-
-    me = MultiExpansion(subgraph)
-    assert me.can_be_applied(sdfg, subgraph) == True
-    me.apply(sdfg)
-
-    sf = SubgraphFusion(subgraph)
-    assert sf.can_be_applied(sdfg, subgraph) == True
-    sf.apply(sdfg)
+    assert MultiExpansion.can_be_applied(sdfg, subgraph) == True
+    MultiExpansion(subgraph).apply(sdfg)
+    assert SubgraphFusion.can_be_applied(sdfg, subgraph) == True
+    SubgraphFusion(subgraph).apply(sdfg)
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, D=D2, N=N)
@@ -78,7 +74,7 @@ def _test_quantitatively(sdfg):
 
 
 def test_mimo():
-    sdfg = mimo.to_sdfg()
+    sdfg = program.to_sdfg()
     from dace.transformation.interstate.state_fusion import StateFusion
     sdfg.apply_transformations_repeated(StateFusion)
     # merge the C array

@@ -4,9 +4,7 @@ import numpy as np
 import dace
 from dace import nodes
 from dace.libraries.blas import Transpose
-from dace.transformation.dataflow import (RedundantArray, RedundantSecondArray,
-                                          RedundantArrayCopying,
-                                          RedundantArrayCopyingIn)
+from dace.transformation.dataflow import RedundantArray, RedundantSecondArray
 
 
 def test_out():
@@ -31,7 +29,6 @@ def test_out():
     state.add_edge(trans, "_out", D, None, sdfg.make_array_memlet("D"))
 
     sdfg.apply_strict_transformations()
-    sdfg.apply_transformations_repeated(RedundantArrayCopying)
     assert len(state.nodes()) == 3
     assert B not in state.nodes()
     sdfg.validate()
@@ -55,9 +52,8 @@ def test_out_success():
     C = state.add_access("C")
 
     state.add_nedge(A, B, dace.Memlet.simple("A", "0, 0:3, 2:5"))
-    state.add_nedge(
-        B, C, dace.Memlet.simple("B", "0:3, 2",
-                                 other_subset_str="1, 2, 0:3, 4"))
+    state.add_nedge(B, C, dace.Memlet.simple("B", "0:3, 2",
+                                             other_subset_str="1, 2, 0:3, 4"))
 
     sdfg.add_scalar("D", dace.float32, transient=True)
     sdfg.add_array("E", [3, 3, 3], dace.float32)
@@ -68,18 +64,13 @@ def test_out_success():
     D = state.add_access("D")
     E = state.add_access("E")
 
-    state.add_memlet_path(B,
-                          me,
-                          t,
-                          memlet=dace.Memlet.simple("B", "i, j"),
+    state.add_memlet_path(B, me, t, memlet=dace.Memlet.simple("B", "i, j"),
                           dst_conn='__in1')
     state.add_memlet_path(B, me, D, memlet=dace.Memlet.simple("B", "j, k"))
     state.add_edge(D, None, t, '__in2', dace.Memlet.simple("D", "0"))
-    state.add_memlet_path(t,
-                          mx,
-                          E,
-                          memlet=dace.Memlet.simple("E", "i, j, k"),
+    state.add_memlet_path(t, mx, E, memlet=dace.Memlet.simple("E", "i, j, k"),
                           src_conn='__out')
+
 
     sdfg.validate()
     sdfg.apply_strict_transformations()
@@ -123,9 +114,8 @@ def test_out_failure_subset_mismatch():
     C = state.add_access("C")
 
     state.add_nedge(A, B, dace.Memlet.simple("A", "0, 0:3, 2:5"))
-    state.add_nedge(
-        B, C, dace.Memlet.simple("B", "0:3, 2",
-                                 other_subset_str="1, 2, 0:3, 4"))
+    state.add_nedge(B, C, dace.Memlet.simple("B", "0:3, 2",
+                                             other_subset_str="1, 2, 0:3, 4"))
 
     sdfg.validate()
     sdfg.apply_strict_transformations()
@@ -145,13 +135,10 @@ def test_out_failure_no_overlap():
     B = state.add_access("B")
     C = state.add_access("C")
 
-    state.add_nedge(
-        A, B, dace.Memlet.simple("A",
-                                 "0, 0:3, 2:5",
-                                 other_subset_str="5:8, 5:8"))
-    state.add_nedge(
-        B, C, dace.Memlet.simple("B", "0:3, 2",
-                                 other_subset_str="1, 2, 0:3, 4"))
+    state.add_nedge(A, B, dace.Memlet.simple("A", "0, 0:3, 2:5",
+                                             other_subset_str="5:8, 5:8"))
+    state.add_nedge(B, C, dace.Memlet.simple("B", "0:3, 2",
+                                             other_subset_str="1, 2, 0:3, 4"))
 
     sdfg.validate()
     sdfg.apply_strict_transformations()
@@ -171,13 +158,10 @@ def test_out_failure_partial_overlap():
     B = state.add_access("B")
     C = state.add_access("C")
 
-    state.add_nedge(
-        A, B, dace.Memlet.simple("A",
-                                 "0, 0:3, 2:5",
-                                 other_subset_str="5:8, 5:8"))
-    state.add_nedge(
-        B, C, dace.Memlet.simple("B", "4:7, 6",
-                                 other_subset_str="1, 2, 0:3, 4"))
+    state.add_nedge(A, B, dace.Memlet.simple("A", "0, 0:3, 2:5",
+                                             other_subset_str="5:8, 5:8"))
+    state.add_nedge(B, C, dace.Memlet.simple("B", "4:7, 6",
+                                             other_subset_str="1, 2, 0:3, 4"))
 
     sdfg.validate()
     sdfg.apply_strict_transformations()
@@ -208,7 +192,6 @@ def test_in():
     state.add_edge(C, None, D, None, sdfg.make_array_memlet("C"))
 
     sdfg.apply_strict_transformations()
-    sdfg.apply_transformations_repeated(RedundantArrayCopyingIn)
     assert len(state.nodes()) == 3
     assert C not in state.nodes()
     sdfg.validate()
@@ -275,14 +258,14 @@ C_in, C_out, H, K, N, W = (dace.symbol(s, dace.int64)
 
 # Deep learning convolutional operator (stride = 1)
 @dace.program
-def conv2d(input: dace.float32[N, H, W, C_in], weights: dace.float32[K, K, C_in,
-                                                                     C_out]):
-    output = np.ndarray((N, H - K + 1, W - K + 1, C_out), dtype=np.float32)
+def conv2d(input: dace.float32[N, H, W, C_in],
+           weights: dace.float32[K, K, C_in, C_out]):
+    output = np.ndarray((N, H-K+1, W-K+1, C_out), dtype=np.float32)
 
     # Loop structure adapted from https://github.com/SkalskiP/ILearnDeepLearning.py/blob/ba0b5ba589d4e656141995e8d1a06d44db6ce58d/01_mysteries_of_neural_networks/06_numpy_convolutional_neural_net/src/layers/convolutional.py#L88
     # for i, j in dace.map[0:H-K+1, 0:W-K+1]:
-    for i in range(H - K + 1):
-        for j in range(W - K + 1):
+    for i in range(H-K+1):
+        for j in range(W-K+1):
             output[:, i, j, :] = np.sum(
                 input[:, i:i + K, j:j + K, :, np.newaxis] *
                 weights[np.newaxis, :, :, :],
@@ -294,12 +277,10 @@ def conv2d(input: dace.float32[N, H, W, C_in], weights: dace.float32[K, K, C_in,
 
 def test_conv2d():
     sdfg = conv2d.to_sdfg(strict=True)
-    access_nodes = [
-        n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, nodes.AccessNode)
-        and not isinstance(sdfg.arrays[n.data], dace.data.View)
-    ]
-    assert (len(access_nodes) == 4)
+    access_nodes = [n for n, _ in sdfg.all_nodes_recursive()
+                    if isinstance(n, nodes.AccessNode) and
+                    not isinstance(sdfg.arrays[n.data], dace.data.View)]
+    assert(len(access_nodes) == 4)
 
 
 if __name__ == '__main__':

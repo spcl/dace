@@ -6,7 +6,7 @@ W = dace.symbol('W')
 
 
 @dace.program
-def multistate_init(A):
+def prog(A):
     number = dace.define_local([1], dace.float32)
 
     @dace.map(_[0:W])
@@ -35,7 +35,7 @@ def test():
     A[:] = np.mgrid[0:W.get()]
     regression[:] = A[:]
 
-    multistate_init(A, W=W)
+    prog(A, W=W)
 
     diff = np.linalg.norm(4 * regression - A) / W.get()
     print("Difference:", diff)

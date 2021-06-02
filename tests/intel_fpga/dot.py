@@ -4,12 +4,11 @@
 
 #!/usr/bin/env python
 
-import click
+from __future__ import print_function
+
+import argparse
 import dace
 import numpy as np
-
-from dace.transformation.dataflow import MapTiling
-from dace.transformation.interstate import FPGATransformSDFG
 
 N = dace.symbol("N")
 
@@ -24,11 +23,13 @@ def dot(A: dace.float32[N], B: dace.float32[N], out: dace.float32[1]):
         o = a * b
 
 
-@click.command()
-@click.option("--n", type=int, default=64)
-@click.option("--tile-first/--no-tile-first", default=False)
-def cli(n, tile_first):
-    N.set(n)
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("N", type=int, nargs="?", default=64)
+    args = vars(parser.parse_args())
+
+    N.set(args["N"])
     A = dace.ndarray([N], dtype=dace.float32)
     B = dace.ndarray([N], dtype=dace.float32)
     out_AB = dace.scalar(dace.float32)
@@ -38,21 +39,8 @@ def cli(n, tile_first):
     A[:] = np.random.rand(N.get()).astype(dace.float32.type)
     B[:] = np.random.rand(N.get()).astype(dace.float32.type)
     out_AB[0] = dace.float32(0)
-
-    sdfg = dot.to_sdfg()
-    if tile_first:
-        sdfg.apply_transformations(MapTiling)
-        sdfg.apply_transformations(FPGATransformSDFG)
-    else:
-        sdfg.apply_transformations(FPGATransformSDFG)
-        sdfg.apply_transformations(MapTiling)
-
-    sdfg(A=A, B=B, out=out_AB, N=N)
+    dot(A, B, out_AB)
 
     diff_ab = np.linalg.norm(np.dot(A, B) - out_AB) / float(N.get())
     print("Difference (A*B):", diff_ab)
     exit(0 if (diff_ab <= 1e-5) else 1)
-
-
-if __name__ == "__main__":
-    cli()

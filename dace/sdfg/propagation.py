@@ -292,9 +292,8 @@ class AffineSMemlet(SeparableMemletPattern):
                 candidate_skip = rs
                 candidate_tile = rt * node_rlen
                 candidate_lstart_pt = result_end - result_begin + 1 - candidate_tile
-                if simplify(
-                        candidate_lstart_pt /
-                    (num_elements / candidate_tile - 1)) == candidate_skip:
+                if simplify(candidate_lstart_pt / (num_elements / candidate_tile - 1)
+                    ) == candidate_skip:
                     result_skip = rs
                     result_tile = rt * node_rlen
                 else:
@@ -1411,18 +1410,10 @@ def propagate_subset(memlets: List[Memlet],
                 break
         else:
             # No patterns found. Emit a warning and propagate the entire
-            # array whenever symbols are used
+            # array
             warnings.warn('Cannot find appropriate memlet pattern to '
                           'propagate %s through %s' % (str(subset), str(rng)))
-            entire_array = subsets.Range.from_array(arr)
-            paramset = set(map(str, params))
-            # Fill in the entire array only if one of the parameters appears in the
-            # free symbols list of the subset dimension
-            tmp_subset = subsets.Range([
-                ea if any(set(map(str, _freesyms(sd))) & paramset
-                          for sd in s) else s
-                for s, ea in zip(subset, entire_array)
-            ])
+            tmp_subset = subsets.Range.from_array(arr)
 
         # Union edges as necessary
         if new_subset is None:
@@ -1459,13 +1450,3 @@ def propagate_subset(memlets: List[Memlet],
         new_memlet.volume = 0
 
     return new_memlet
-
-
-def _freesyms(expr):
-    """ 
-    Helper function that either returns free symbols for sympy expressions
-    or an empty set if constant.
-    """
-    if isinstance(expr, sympy.Basic):
-        return expr.free_symbols
-    return {}

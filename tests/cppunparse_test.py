@@ -116,17 +116,5 @@ l = dace::math::ifloor(l / 8);""")
     assert success
 
 
-def test_annotated_definition():
-    success = _test_py2cpp('''a: dace.float32
-if something:
-    a = 5
-    ''', '''dace::float32 a;
-if (something) {
-    a = 5;
-}''')
-    assert success
-
-
 if __name__ == "__main__":
     test()
-    test_annotated_definition()

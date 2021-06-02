@@ -130,7 +130,6 @@ class InstrumentationType(aenum.AutoNumberEnum):
     PAPI_Counters = ()
     GPU_Events = ()
 
-
 @extensible_enum
 class TilingType(aenum.AutoNumberEnum):
     """ Available tiling types in a `StripMining` transformation. """
@@ -178,6 +177,7 @@ _CTYPES = {
     float: "float",
     complex: "dace::complex64",
     bool: "bool",
+    numpy.bool: "bool",
     numpy.bool_: "bool",
     numpy.int8: "char",
     numpy.int16: "short",
@@ -200,6 +200,7 @@ _OCL_TYPES = {
     int: "int",
     float: "float",
     bool: "bool",
+    numpy.bool: "bool",
     numpy.bool_: "bool",
     numpy.int8: "char",
     numpy.int16: "short",
@@ -239,6 +240,7 @@ _FFI_CTYPES = {
     float: ctypes.c_float,
     complex: ctypes.c_uint64,
     bool: ctypes.c_bool,
+    numpy.bool: ctypes.c_bool,
     numpy.bool_: ctypes.c_bool,
     numpy.int8: ctypes.c_int8,
     numpy.int16: ctypes.c_int16,
@@ -262,6 +264,7 @@ _BYTES = {
     float: 4,
     complex: 8,
     bool: 1,
+    numpy.bool: 1,
     numpy.bool_: 1,
     numpy.int8: 1,
     numpy.int16: 2,
@@ -403,7 +406,7 @@ class typeclass(object):
 def max_value(dtype: typeclass):
     """Get a max value literal for `dtype`."""
     nptype = dtype.as_numpy_dtype()
-    if nptype == numpy.bool_:
+    if nptype == numpy.bool:
         return True
     elif numpy.issubdtype(nptype, numpy.integer):
         return numpy.iinfo(nptype).max
@@ -416,7 +419,7 @@ def max_value(dtype: typeclass):
 def min_value(dtype: typeclass):
     """Get a min value literal for `dtype`."""
     nptype = dtype.as_numpy_dtype()
-    if nptype == numpy.bool_:
+    if nptype == numpy.bool:
         return False
     elif numpy.issubdtype(nptype, numpy.integer):
         return numpy.iinfo(nptype).min
@@ -520,33 +523,6 @@ def result_type_of(lhs, *rhs):
     if size_lhs > size_rhs:
         return lhs
     return rhs  # RHS is bigger
-
-
-class opaque(typeclass):
-    """ A data type for an opaque object, useful for C bindings/libnodes, i.e., MPI_Request. """
-    def __init__(self, typename):
-        self.type = typename
-        self.ctype = typename
-        self.ctype_unaligned = typename
-        self.dtype = self
-
-    def to_json(self):
-        return {'type': 'opaque', 'name': self.ctype}
-
-    @staticmethod
-    def from_json(json_obj, context=None):
-        if json_obj['type'] != 'opaque':
-            raise TypeError("Invalid type for opaque object")
-
-        return opaque(json_to_typeclass(json_obj['ctype'], context))
-
-    def as_ctypes(self):
-        """ Returns the ctypes version of the typeclass. """
-        return self
-
-    def as_numpy_dtype(self):
-        raise NotImplementedError(
-            "Not sure how to make a numpy type from an opaque C type.")
 
 
 class pointer(typeclass):
@@ -938,7 +914,7 @@ def isconstant(var):
     return type(var) in _CONSTANT_TYPES
 
 
-bool = typeclass(numpy.bool_)
+bool = typeclass(numpy.bool)
 bool_ = typeclass(numpy.bool_)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
@@ -954,30 +930,11 @@ float64 = typeclass(numpy.float64)
 complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 
-
-@extensible_enum
-class Typeclasses(aenum.AutoNumberEnum):
-    bool = bool
-    bool_ = bool_
-    int8 = int8
-    int16 = int16
-    int32 = int32
-    int64 = int64
-    uint8 = uint8
-    uint16 = uint16
-    uint32 = uint32
-    uint64 = uint64
-    float16 = float16
-    float32 = float32
-    float64 = float64
-    complex64 = complex64
-    complex128 = complex128
-
-
 DTYPE_TO_TYPECLASS = {
     int: typeclass(int),
     float: typeclass(float),
     complex: typeclass(complex),
+    numpy.bool: bool,
     numpy.bool_: bool_,
     numpy.int8: int8,
     numpy.int16: int16,
@@ -1249,16 +1206,10 @@ def is_array(obj: Any) -> bool:
     (supported by NumPy, Numba, CuPy, PyTorch, etc.). If the interface is
     supported, pointers can be directly obtained using the
     ``_array_interface_ptr`` function.
-
     :param obj: The given object.
     :return: True iff the object implements the array interface.
     """
-    try:
-        if hasattr(obj, '__cuda_array_interface__'):
-            return True
-    except RuntimeError:
-        # In PyTorch, accessing this attribute throws a runtime error for variables that require grad
-        return True
-    if hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__'):
+    if (hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__')
+            or hasattr(obj, '__cuda_array_interface__')):
         return hasattr(obj, 'shape') and len(obj.shape) > 0
     return False

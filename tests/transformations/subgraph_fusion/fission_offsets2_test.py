@@ -132,9 +132,6 @@ def test_offsets():
     del csdfg
     assert (np.allclose(A_cpy, expected))
 
-    subgraph = SubgraphView(sdfg.nodes()[0], sdfg.nodes()[0].nodes())
-    sf = SubgraphFusion(subgraph)
-    assert sf.can_be_applied(sdfg, subgraph)
     fusion(sdfg, sdfg.nodes()[0], None)
 
     csdfg = sdfg.compile()

@@ -8,7 +8,7 @@ number = 42
 
 
 @dace.program
-def duplicate_naming_inner(A, number):
+def f(A, number):
     @dace.map(_[0:W])
     def bla(i):
         inp << A[i]
@@ -17,11 +17,11 @@ def duplicate_naming_inner(A, number):
 
 
 @dace.program
-def duplicate_naming(A, B):
+def prog(A, B):
     no = dace.define_local([number], dace.float32)
     number = dace.define_local([W], dace.float32)
 
-    duplicate_naming_inner(A, number)
+    f(A, number)
 
     @dace.map(_[0:W])
     def bla2(i):
@@ -39,7 +39,7 @@ def test():
     A[:] = np.mgrid[0:W.get()]
     B[:] = dace.float32(0.0)
 
-    duplicate_naming(A, B, W=W)
+    prog(A, B, W=W)
 
     diff = np.linalg.norm(4 * A - B) / W.get()
     print("Difference:", diff)

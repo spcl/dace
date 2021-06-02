@@ -11,7 +11,7 @@ import dace
 from dace.frontend import operations
 from dace import registry, subsets, symbolic, dtypes, data as dt
 from dace.config import Config
-from dace.sdfg import nodes, utils as sdutil
+from dace.sdfg import nodes
 from dace.sdfg import (ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope,
                        is_devicelevel_gpu, is_array_stream_view,
                        has_dynamic_map_inputs, dynamic_map_inputs)
@@ -579,14 +579,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     continue
                 if hasattr(e.src, '_cuda_stream'):
                     c = e.src._cuda_stream
-
-                    if (isinstance(e.dst, nodes.AccessNode)
-                            and isinstance(sdfg.arrays[e.dst.data], dt.View)):
-                        # Skip views
-                        e.dst._cuda_stream = c
-                        e.dst._cs_childpath = False
-                        continue
-
                     if e.src._cs_childpath == True:
                         c = max_streams
                         max_streams = increment(max_streams)
@@ -602,12 +594,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             e.src._cs_childpath = False
                 else:
                     c = max_streams
-                    if (isinstance(e.dst, nodes.AccessNode)
-                            and isinstance(sdfg.arrays[e.dst.data], dt.View)):
-                        # Skip views
-                        pass
-                    else:
-                        max_streams = increment(max_streams)
+                    max_streams = increment(max_streams)
                 e.dst._cuda_stream = c
                 if not hasattr(e.dst, '_cs_childpath'):
                     e.dst._cs_childpath = False
@@ -782,10 +769,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 # Example: dcol[0:I, 0:J, k] -> datacol[0:I, 0:J]
                 # with copy shape [I, J] and strides [J*K, K], [J, 1]
                 try:
-                    is_src_cont = src_strides[0] / src_strides[1] == copy_shape[
-                        1]
-                    is_dst_cont = dst_strides[0] / dst_strides[1] == copy_shape[
-                        1]
+                    is_src_cont = src_strides[0]/src_strides[1] == copy_shape[1]
+                    is_dst_cont = dst_strides[0]/dst_strides[1] == copy_shape[1]
                 except (TypeError, ValueError):
                     is_src_cont = False
                     is_dst_cont = False
@@ -1038,24 +1023,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Call CPU implementation with this code generator as callback
         self._cpu_codegen.process_out_memlets(*args, codegen=self, **kwargs)
 
-    def _begin_streams(self, sdfg, state):
-        result = set()
-        for node in state.source_nodes():
-            if hasattr(node, '_cuda_stream'):
-                if (isinstance(node, nodes.AccessNode)
-                        and isinstance(sdfg.arrays[node.data], dt.View)):
-                    continue
-                result.add(node._cuda_stream)
-            else:
-                # Collect other streams in state start
-                for e in state.out_edges(node):
-                    if hasattr(e.dst, '_cuda_stream'):
-                        if (isinstance(node, nodes.AccessNode) and isinstance(
-                                sdfg.arrays[node.data], dt.View)):
-                            continue
-                        result.add(e.dst._cuda_stream)
-        return result
-
     def generate_state(self, sdfg, state, function_stream, callsite_stream):
         # Two modes: device-level state and if this state has active streams
         if CUDACodeGen._in_device_code:
@@ -1079,20 +1046,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         for e in state.in_edges(node):
                             if hasattr(e.src, '_cuda_stream'):
                                 streams_to_sync.add(e.src._cuda_stream)
-
-                # Relaxed condition for skipping synchronization:
-                # if ALL the immediately reachable non-empty states (i.e.,
-                # ignoring guard states) use ONLY the same streams as the
-                # current state does, and there is only one such stream,
-                # then we can skip synchronization.
-                next_states = sdutil.get_next_nonempty_states(sdfg, state)
-                if next_states and len(streams_to_sync) == 1:
-                    if all(
-                            self._begin_streams(sdfg, ns) == streams_to_sync
-                            for ns in next_states):
-                        # Relax synchronization
-                        streams_to_sync = set()
-
                 for stream in streams_to_sync:
                     callsite_stream.write(
                         'DACE_CUDA_CHECK(%sStreamSynchronize(__state->gpu_context->streams[%d]));'
@@ -1584,11 +1537,10 @@ DACE_CUDA_CHECK({backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims
                                             'dynamic_map_block_size').split(',')
                     ]
             else:
-                if Config.get_bool('debugprint'):
-                    warnings.warn(
-                        'Thread-block maps not found in kernel, assuming ' +
-                        'block size of (%s)' %
-                        Config.get('compiler', 'cuda', 'default_block_size'))
+                warnings.warn(
+                    'Thread-block maps not found in kernel, assuming ' +
+                    'block size of (%s)' %
+                    Config.get('compiler', 'cuda', 'default_block_size'))
 
                 if (Config.get('compiler', 'cuda',
                                'default_block_size') == 'max'):

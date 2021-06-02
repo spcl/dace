@@ -3,12 +3,10 @@ import argparse
 import dace
 import numpy as np
 import os
-import tempfile
 from dace.transformation.interstate import LoopToMap
 
 
-def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after,
-              log_path):
+def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after):
 
     sdfg = dace.SDFG(f"loop_to_map_test_{with_wcr}_{map_in_guard}_"
                      f"{reverse_loop}_{use_variable}_{assign_after}")
@@ -65,10 +63,10 @@ def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after,
                                 "d = sqrt(a**2 + b**2)")
 
     tasklet2 = body.add_tasklet("tasklet2", {}, {},
-                                f"""\
+                                """\
 static std::mutex mutex;
 std::unique_lock<std::mutex> lock(mutex);
-std::ofstream of("{log_path}", std::ofstream::app);
+std::ofstream of("loop_to_map_test.txt", std::ofstream::app);
 of << i << "\\n";""",
                                 language=dace.Language.CPP)
 
@@ -100,13 +98,7 @@ of << i << "\\n";""",
     return sdfg
 
 
-def run_loop_to_map(n, *args):
-
-    # Use mangled temporary file to avoid name clashes when run in parallel
-    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_path = temp_file.name
-
-    sdfg = make_sdfg(*args, temp_path)
+def apply_and_verify(sdfg, n):
 
     if n is None:
         n = dace.int32(16)
@@ -119,6 +111,11 @@ def run_loop_to_map(n, *args):
 
     num_transformations = sdfg.apply_transformations(LoopToMap)
 
+    try:
+        os.remove("loop_to_map_test.txt")
+    except FileNotFoundError:
+        pass
+
     sdfg(A=a, B=b, C=c, D=d, E=e, N=n)
 
     if not all(c[:] == 0.25) or not all(d[:] == 5):
@@ -128,57 +125,57 @@ def run_loop_to_map(n, *args):
         raise ValueError("Validation failed.")
 
     numbers_written = []
-    with open(temp_path, "r") as f:
+    with open("loop_to_map_test.txt", "r") as f:
         for line in f:
             numbers_written.append(int(line.strip()))
     if not all(sorted(numbers_written) == np.arange(n)):
         raise ValueError("Validation failed.")
 
-    os.remove(temp_path)  # Clean up
+    os.remove("loop_to_map_test.txt")
 
     return num_transformations
 
 
 def test_loop_to_map(n=None):
     # Case 0: no wcr, no dataflow in guard. Transformation should apply
-    if run_loop_to_map(n, False, False, False, False, False) != 1:
+    if apply_and_verify(make_sdfg(False, False, False, False, False), n) != 1:
         raise RuntimeError("LoopToMap was not applied.")
 
 
 def test_loop_to_map_wcr(n=None):
     # Case 1: WCR on the edge. Transformation should apply
-    if run_loop_to_map(n, True, False, False, False, False) != 1:
+    if apply_and_verify(make_sdfg(True, False, False, False, False), n) != 1:
         raise RuntimeError("LoopToMap was not applied.")
 
 
 def test_loop_to_map_dataflow_on_guard(n=None):
     # Case 2: there is dataflow on the guard state. Should not apply
-    if run_loop_to_map(n, False, True, False, False, False) != 0:
+    if apply_and_verify(make_sdfg(False, True, False, False, False), n) != 0:
         raise RuntimeError("LoopToMap should not have been applied.")
 
 
 def test_loop_to_map_negative_step(n=None):
     # Case 3: loop order reversed. Transformation should still apply
-    if run_loop_to_map(n, False, False, True, False, False) != 1:
+    if apply_and_verify(make_sdfg(False, False, True, False, False), n) != 1:
         raise RuntimeError("LoopToMap was not applied.")
 
 
 def test_loop_to_map_variable_used(n=None):
     # Case 4: the loop variable is used in a later state: should not apply
-    if run_loop_to_map(n, False, False, False, True, False) != 0:
+    if apply_and_verify(make_sdfg(False, False, False, True, False), n) != 0:
         raise RuntimeError("LoopToMap should not have been applied.")
 
 
 def test_loop_to_map_variable_reassigned(n=None):
     # Case 5: the loop variable is used in a later state, but reassigned first:
     # should apply
-    if run_loop_to_map(n, False, False, False, True, True) != 1:
+    if apply_and_verify(make_sdfg(False, False, False, True, True), n) != 1:
         raise RuntimeError("LoopToMap was not applied.")
 
 
 def test_output_copy():
     @dace.program
-    def l2mtest_copy(A: dace.float64[20, 20]):
+    def l2mtest(A: dace.float64[20, 20]):
         for i in range(1, 20):
             A[i, :] = A[i - 1] + 5
 
@@ -187,7 +184,7 @@ def test_output_copy():
     for i in range(1, 20):
         regression[i, :] = regression[i - 1] + 5
 
-    sdfg = l2mtest_copy.to_sdfg()
+    sdfg = l2mtest.to_sdfg()
 
     assert sdfg.apply_transformations(LoopToMap) == 0
     sdfg(A=A)
@@ -197,7 +194,7 @@ def test_output_copy():
 
 def test_output_accumulate():
     @dace.program
-    def l2mtest_accumulate(A: dace.float64[20, 20]):
+    def l2mtest(A: dace.float64[20, 20]):
         for i in range(1, 20):
             A[i, :] += A[i - 1] + 5
 
@@ -206,7 +203,7 @@ def test_output_accumulate():
     for i in range(1, 20):
         regression[i, :] += regression[i - 1] + 5
 
-    sdfg = l2mtest_accumulate.to_sdfg()
+    sdfg = l2mtest.to_sdfg()
 
     assert sdfg.apply_transformations(LoopToMap) == 0
     sdfg(A=A)

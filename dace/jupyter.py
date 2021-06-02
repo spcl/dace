@@ -82,11 +82,7 @@ def preamble():
     return result
 
 
-def enable():
-    from IPython.display import display, HTML
-    display(HTML(preamble()))
-
-
 # Code that runs on "import dace"
 if isnotebook():
-    enable()
+    from IPython.display import display, HTML
+    display(HTML(preamble()))

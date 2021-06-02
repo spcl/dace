@@ -72,7 +72,7 @@ def _ndslice_to_subset(ndslice):
                 if not is_tuple[i]:
                     ndslice[i] = (ndslice[i], ndslice[i], 1)
         return subsets.Range(ndslice)
-
+    
 
 def _parse_dim_atom(das, atom):
     result = pyexpr_to_symbolic(das, atom)
@@ -91,12 +91,10 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     idx = 0
     has_ellipsis = False
     for dim in ast_ndslice:
-        if isinstance(dim, (str, list)):
-            dim = ast.Name(id=dim)
-
         if isinstance(dim, tuple):
             rb = _parse_dim_atom(das, dim[0] or 0)
-            re = _parse_dim_atom(das, dim[1] or array.shape[indices[idx]]) - 1
+            re = _parse_dim_atom(das, dim[1]
+                                    or array.shape[indices[idx]]) - 1
             rs = _parse_dim_atom(das, dim[2] or 1)
             # NOTE: try/except for cases where rb/re are not symbols/numbers
             try:
@@ -112,7 +110,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             ndslice[idx] = (rb, re, rs)
             offsets.append(idx)
             idx += 1
-        elif (isinstance(dim, ast.Ellipsis) or dim is Ellipsis
+        elif (isinstance(dim, ast.Ellipsis)
               or (isinstance(dim, ast.Constant) and dim.value is Ellipsis)
               or (isinstance(dim, ast.Name) and dim.id is Ellipsis)):
             if has_ellipsis:
@@ -123,8 +121,8 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             for j in range(idx, len(ndslice) - remaining_dims):
                 ndslice[j] = (0, array.shape[j] - 1, 1)
                 idx += 1
-        elif (dim is None or (isinstance(dim, (ast.Constant, ast.NameConstant))
-                              and dim.value is None)):
+        elif (isinstance(dim, (ast.Constant, ast.NameConstant))
+              and dim.value is None):
             new_axes.append(idx)
             # NOTE: Do not increment idx here
         elif isinstance(dim, ast.Name) and isinstance(dim.id, (list, tuple)):
@@ -161,7 +159,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             else:
                 ndslice[idx] = (0, array.shape[idx] - 1, 1)
                 arrdims[indices[idx]] = dim.id
-
+                
             idx += 1
         elif (isinstance(dim, ast.Name) and dim.id in das
               and isinstance(das[dim.id], data.Scalar)):

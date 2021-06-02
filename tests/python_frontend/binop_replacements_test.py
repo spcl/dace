@@ -109,7 +109,7 @@ def array_bool(A: dace.bool[N]):
 
 
 def test_array_bool():
-    A = np.random.randint(0, high=2, size=(N.get(), ), dtype=bool)
+    A = np.random.randint(0, high=2, size=(N.get(), ), dtype=np.bool)
     B = array_bool(A)
     assert(np.array_equal(np.logical_and(A, True), B))
 
@@ -120,7 +120,7 @@ def bool_array(A: dace.bool[N]):
 
 
 def test_bool_array():
-    A = np.random.randint(0, high=2, size=(N.get(), ), dtype=bool)
+    A = np.random.randint(0, high=2, size=(N.get(), ), dtype=np.bool)
     B = bool_array(A)
     assert(np.array_equal(np.logical_and(True, A), B))
 
@@ -209,7 +209,7 @@ def scal_bool(A: dace.bool):
 
 
 def test_scal_bool():
-    A = np.random.randint(0, high=2, size=(1, ), dtype=bool)[0]
+    A = np.random.randint(0, high=2, size=(1, ), dtype=np.bool)[0]
     B = scal_bool(A)
     assert(np.array_equal(np.logical_and(A, True), B[0]))
 
@@ -220,7 +220,7 @@ def bool_scal(A: dace.bool):
 
 
 def test_bool_scal():
-    A = np.random.randint(0, high=2, size=(1, ), dtype=bool)[0]
+    A = np.random.randint(0, high=2, size=(1, ), dtype=np.bool)[0]
     B = bool_scal(A)
     assert(np.array_equal(np.logical_and(True, A), B[0]))
 

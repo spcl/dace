@@ -146,7 +146,7 @@ def test_2d_assignment():
 
 def test_while_symbol():
     @dace.program
-    def whiletest_symbol(A: dace.int32[1]):
+    def whiletest(A: dace.int32[1]):
         i = 6
         while i > 0:
             A[0] -= 1
@@ -155,19 +155,19 @@ def test_while_symbol():
     A = dace.ndarray([1], dace.int32)
     A[0] = 5
 
-    whiletest_symbol(A)
+    whiletest(A)
 
     assert A[0] == 4
 
     if dace.Config.get_bool('optimizer', 'detect_control_flow'):
-        code = whiletest_symbol.to_sdfg().generate_code()[0].clean_code
+        code = whiletest.to_sdfg().generate_code()[0].clean_code
         assert 'while ' in code
         assert 'goto ' not in code
 
 
 def test_while_data():
     @dace.program
-    def whiletest_data(A: dace.int32[1]):
+    def whiletest(A: dace.int32[1]):
         while A[0] > 0:
             with dace.tasklet:
                 a << A[0]
@@ -177,13 +177,13 @@ def test_while_data():
     A = dace.ndarray([1], dace.int32)
     A[0] = 5
 
-    whiletest_data(A)
+    whiletest(A)
 
     assert A[0] == 0
 
     # Disable check due to CFG generation in Python frontend
     # if dace.Config.get_bool('optimizer', 'detect_control_flow'):
-    #     code = whiletest_data.to_sdfg().generate_code()[0].clean_code
+    #     code = whiletest.to_sdfg().generate_code()[0].clean_code
     #     assert 'while ' in code
 
 
@@ -219,7 +219,7 @@ def test_dowhile():
 
 def test_ifchain():
     @dace.program
-    def ifchain_program(A: dace.int32[2]):
+    def casetest(A: dace.int32[2]):
         if A[0] == 0:
             A[1] = 5
         elif A[0] == 1:
@@ -229,7 +229,7 @@ def test_ifchain():
         elif A[0] == 5:
             A[1] = 0
 
-    sdfg: dace.SDFG = ifchain_program.to_sdfg()
+    sdfg: dace.SDFG = casetest.to_sdfg()
     A = np.array([3, 0], dtype=np.int32)
     sdfg(A=A)
     assert A[1] == 1
@@ -240,7 +240,7 @@ def test_ifchain():
 
 
 def test_ifchain_manual():
-    sdfg = dace.SDFG('ifchain')
+    sdfg = dace.SDFG('casetest')
     sdfg.add_array('A', [2], dace.int32)
     init = sdfg.add_state()
     case0 = sdfg.add_state()
@@ -268,7 +268,7 @@ def test_ifchain_manual():
 
 
 def test_switchcase():
-    sdfg = dace.SDFG('switchcase')
+    sdfg = dace.SDFG('casetest')
     sdfg.add_array('A', [2], dace.int32)
     init = sdfg.add_state()
     case0 = sdfg.add_state()

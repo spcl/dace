@@ -314,7 +314,6 @@ class ForScope(ControlFlow):
     condition: CodeBlock  #: For-loop condition
     update: str  #: C++ code for updating iteration variable
     body: GeneralBlock  #: Loop body as a control flow block
-    init_edges: List[InterstateEdge]  #: All initialization edges
 
     def as_cpp(self, defined_vars, symbols) -> str:
         # Initialize to either "int i = 0" or "i = 0" depending on whether
@@ -327,17 +326,8 @@ class ForScope(ControlFlow):
                 init = f'{symbols[self.itervar]} {self.itervar}'
             init += ' = ' + self.init
 
-        sdfg = self.guard.parent
-
-        preinit = ''
-        if self.init_edges:
-            for edge in self.init_edges:
-                for k, v in edge.data.assignments.items():
-                    if k != self.itervar:
-                        cppinit = cpp.unparse_interstate_edge(v, sdfg)
-                        preinit += f'{k} = {cppinit};\n'
-
         if self.condition is not None:
+            sdfg = self.guard.parent
             cond = cpp.unparse_interstate_edge(self.condition.code[0], sdfg)
         else:
             cond = ''
@@ -346,7 +336,7 @@ class ForScope(ControlFlow):
         if self.update is not None:
             update = f'{self.itervar} = {self.update}'
 
-        expr = f'{preinit}\nfor ({init}; {cond}; {update}) {{\n'
+        expr = f'for ({init}; {cond}; {update}) {{\n'
         expr += self.body.as_cpp(defined_vars, symbols)
         expr += '\n}\n'
         return expr
@@ -501,7 +491,7 @@ def _loop_from_structure(
                 and len(increment_edge.data.assignments) == 1):
             update = increment_edge.data.assignments[itvar]
             return ForScope(dispatch_state, itvar, guard, init, condition,
-                            update, body, init_edges)
+                            update, body)
 
     # Otherwise, it is a while loop
     return WhileScope(dispatch_state, guard, condition, body)

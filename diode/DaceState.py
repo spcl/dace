@@ -13,6 +13,7 @@ from dace import dtypes
 from dace.transformation import optimizer
 from dace.sdfg import SDFG
 from dace.frontend.python import parser
+from dace.frontend.python.parser import DaceProgram
 
 
 class DaceState:
@@ -77,9 +78,9 @@ class DaceState:
                 self.errors.append(ex)
 
             # Find dace programs
-            self.sdfgs = [(name, obj.parse())
+            self.sdfgs = [(name, parser.parse_from_function(obj))
                           for name, obj in gen_module.items()
-                          if isinstance(obj, parser.DaceProgram)]
+                          if isinstance(obj, DaceProgram)]
             self.sdfgs += [(name, obj) for name, obj in gen_module.items()
                            if isinstance(obj, SDFG)]
             try:

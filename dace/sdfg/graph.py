@@ -436,7 +436,7 @@ class Graph(Generic[NodeT, EdgeT]):
             node_out_edges = self.out_edges(n)
             if len(node_out_edges) == 0:
                 # We traversed to the end without finding the end
-                return set()
+                return None
             for e in node_out_edges:
                 next_node = e.dst
                 if next_node != end and next_node not in seen:

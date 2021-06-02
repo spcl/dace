@@ -30,7 +30,6 @@ class Memlet(object):
                               'using this memlet, or the maximum number '
                               'if dynamic=True (with 0 as unbounded)')
     dynamic = Property(default=False,
-                       dtype=bool,
                        desc='Is the number of elements moved determined at '
                        'runtime (e.g., data dependent)')
     subset = SubsetProperty(allow_none=True,

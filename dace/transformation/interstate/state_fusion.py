@@ -485,9 +485,6 @@ class StateFusion(transformation.Transformation):
             if isinstance(x, nodes.AccessNode) and sdict[x] is None
         ]
         for node in second_state.nodes():
-            if isinstance(node, nodes.NestedSDFG):
-                # update parent information
-                node.sdfg.parent = first_state
             first_state.add_node(node)
         for src, src_conn, dst, dst_conn, data in second_state.edges():
             first_state.add_edge(src, src_conn, dst, dst_conn, data)

@@ -6,7 +6,7 @@ W = dace.symbol('W')
 
 
 @dace.program
-def local_inline_inner(AA, BB):
+def bla(AA, BB):
     tmp = dace.define_local([W], AA.dtype)
 
     @dace.map(_[0:W])
@@ -23,9 +23,9 @@ def local_inline_inner(AA, BB):
 
 
 @dace.program
-def local_inline(A: dace.float64[W], B: dace.float64[W], C: dace.float64[W]):
-    local_inline_inner(A, B)
-    local_inline_inner(B, C)
+def prog(A: dace.float64[W], B: dace.float64[W], C: dace.float64[W]):
+    bla(A, B)
+    bla(B, C)
 
 
 def test():
@@ -39,7 +39,7 @@ def test():
     B[:] = 0.0
     C[:] = 0.0
 
-    local_inline(A, B, C)
+    prog(A, B, C)
 
     diff = np.linalg.norm((-(-A + 1) + 1) - C) / W.get()
     print("Difference:", diff)

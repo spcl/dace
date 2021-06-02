@@ -8,7 +8,7 @@ N = 12
 
 
 @dace.program
-def cr_complex(input, output):
+def program(input, output):
     @dace.map(_[0:N])
     def tasklet(i):
         a << input[i]
@@ -24,7 +24,7 @@ def test_cr_complex():
     B = np.ndarray([1], dtype=A.dtype)
     B[0] = 0
 
-    cr_complex(A, B)
+    program(A, B)
 
     diff = abs(np.sum(A) - B[0])
     print("Difference:", diff)

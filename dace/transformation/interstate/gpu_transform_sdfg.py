@@ -261,8 +261,7 @@ class GPUTransformSDFG(transformation.Transformation):
                         # Try to move allocation/deallocation out of loops
                         dsyms = set(map(str, nodedesc.free_symbols))
                         if (self.toplevel_trans
-                                and not isinstance(nodedesc, (data.Stream,
-                                                              data.View))
+                                and not isinstance(nodedesc, data.Stream)
                                 and len(dsyms - const_syms) == 0):
                             nodedesc.lifetime = dtypes.AllocationLifetime.SDFG
                     elif nodedesc.storage not in gpu_storage:
@@ -298,7 +297,7 @@ class GPUTransformSDFG(transformation.Transformation):
             if isinstance(node, nodes.Tasklet):
                 if (state.entry_node(node) is None
                         and not scope.is_devicelevel_gpu(
-                            state.parent, state, node, with_gpu_default=True)):
+                            state.parent, state, node)):
                     global_code_nodes[state].append(node)
 
         for state, gcodes in global_code_nodes.items():

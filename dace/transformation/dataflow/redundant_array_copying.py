@@ -8,7 +8,7 @@ from dace.transformation import transformation as pm
 from dace.config import Config
 
 
-@registry.autoregister_params(singlestate=True, strict=False)
+@registry.autoregister_params(singlestate=True, strict=True)
 class RedundantArrayCopyingIn(pm.Transformation):
     """ Implements the redundant array removal transformation. Removes the first and second access nodeds
         in pattern A -> B -> A
@@ -93,7 +93,7 @@ class RedundantArrayCopyingIn(pm.Transformation):
         graph.remove_node(in_array)
 
 
-@registry.autoregister_params(singlestate=True, strict=False)
+@registry.autoregister_params(singlestate=True, strict=True)
 class RedundantArrayCopying(pm.Transformation):
     """ Implements the redundant array removal transformation. Removes the last access node
         in pattern A -> B -> A, and the second (if possible)

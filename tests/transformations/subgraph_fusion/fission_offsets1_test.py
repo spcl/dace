@@ -135,9 +135,6 @@ def test_offsets_array():
     print(np.linalg.norm(expected))
     assert (np.allclose(A_cpy, expected))
 
-    subgraph = SubgraphView(sdfg.nodes()[0], sdfg.nodes()[0].nodes())
-    sf = SubgraphFusion(subgraph)
-    assert sf.can_be_applied(sdfg, subgraph)
     fusion(sdfg, sdfg.nodes()[0], None)
     A_cpy = A.copy()
     csdfg = sdfg.compile()

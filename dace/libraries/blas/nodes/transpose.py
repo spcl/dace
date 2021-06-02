@@ -5,7 +5,6 @@ from dace.config import Config
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.libraries.blas import blas_helpers
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
@@ -141,76 +140,6 @@ class ExpandTransposeMKL(ExpandTransformation):
         return tasklet
 
 
-@dace.library.expansion
-class ExpandTransposeOpenBLAS(ExpandTransformation):
-
-    environments = [environments.openblas.OpenBLAS]
-
-    @staticmethod
-    def expansion(node, state, sdfg):
-        node.validate(sdfg, state)
-        dtype = node.dtype
-        if dtype == dace.float32:
-            func = "somatcopy"
-            alpha = "1.0f"
-        elif dtype == dace.float64:
-            func = "domatcopy"
-            alpha = "1.0"
-        elif dtype == dace.complex64:
-            func = "comatcopy"
-            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
-        elif dtype == dace.complex128:
-            func = "zomatcopy"
-            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
-        else:
-            raise ValueError("Unsupported type for OpenBLAS omatcopy extension: " +
-                             str(dtype))
-        _, _, (m, n) = _get_transpose_input(node, state, sdfg)
-        # Adaptations for BLAS API
-        order = 'CblasRowMajor'
-        trans = 'CblasTrans'
-        code = ("cblas_{f}({o}, {t}, {m}, {n}, {a}, _inp, "
-                "{n}, _out, {m});").format(f=func, o=order, t=trans, m=m, n=n, a=alpha)
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
-        return tasklet
-
-
-@dace.library.expansion
-class ExpandTransposeCuBLAS(ExpandTransformation):
-
-    environments = [environments.cublas.cuBLAS]
-
-    @staticmethod
-    def expansion(node, state, sdfg, **kwargs):
-        node.validate(sdfg, state)
-        dtype = node.dtype
-
-        func, cdtype, factort = blas_helpers.cublas_type_metadata(dtype)
-        func = func + 'geam'
-
-        alpha = f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()"
-        beta = f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()"
-        _, _, (m, n) = _get_transpose_input(node, state, sdfg)
-
-        code = (environments.cublas.cuBLAS.handle_setup_code(node) +
-                f"""cublas{func}(
-                    __dace_cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N,
-                    {m}, {n}, {alpha}, ({cdtype}*)_inp, {n}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {m});
-                """)
-
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
-
-        return tasklet
-
-
 @dace.library.node
 class Transpose(dace.sdfg.nodes.LibraryNode):
 
@@ -218,8 +147,6 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "pure": ExpandTransposePure,
         "MKL": ExpandTransposeMKL,
-        "OpenBLAS": ExpandTransposeOpenBLAS,
-        "cuBLAS": ExpandTransposeCuBLAS
     }
     default_implementation = None
 

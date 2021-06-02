@@ -18,8 +18,8 @@ O.set(70)
 
 
 @dace.program
-def program1(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M,
-                                                                           N]):
+def program1(A: dace.float64[M, N], B: dace.float64[M, N],
+                 C: dace.float64[M, N]):
     for i, j in dace.map[0:M, 0:N]:
         with dace.tasklet:
             in1 << A[i, j]
@@ -42,11 +42,10 @@ def program1(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M,
         out1 >> C[:]
         out1 = in1
 
-
 @dace.program
-def program2(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M,
-                                                                           N]):
-    tmp = np.ndarray(shape=(M, N), dtype=np.float64)
+def program2(A: dace.float64[M, N], B: dace.float64[M, N],
+                 C: dace.float64[M, N]):
+    tmp = np.ndarray(shape = (M,N), dtype = np.float64)
     for i, j in dace.map[0:M, 0:N]:
         with dace.tasklet:
             in1 << A[i, j]
@@ -94,13 +93,13 @@ def test_out_transient1():
     graph = sdfg.nodes()[0]
     _test_quantitatively(sdfg, graph)
 
-
 def test_out_transient2():
     # transient
     sdfg = program2.to_sdfg()
     sdfg.apply_strict_transformations()
     graph = sdfg.nodes()[0]
     _test_quantitatively(sdfg, graph)
+
 
 
 if __name__ == "__main__":

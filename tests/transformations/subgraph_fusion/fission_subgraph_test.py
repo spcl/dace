@@ -109,9 +109,6 @@ def test_subgraph():
 
     graph.validate()
 
-    subgraph = SubgraphView(graph.nodes()[0], graph.nodes()[0].nodes())
-    sf = SubgraphFusion(subgraph)
-    assert sf.can_be_applied(graph, subgraph)
     fusion(graph, graph.nodes()[0], None)
     ccgraph = graph.compile()
 

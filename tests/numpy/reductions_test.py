@@ -159,12 +159,12 @@ def test_mean_reduce_symbolic_shape():
     N = dace.symbol('N')
 
     @dace.program
-    def mean_reduce_symbolic_shape(A: dace.float64[10, N, 3]):
+    def prog(A: dace.float64[10, N, 3]):
         return np.mean(A, axis=(-2, 0))
 
     X = np.random.normal(scale=10, size=(10, 12, 3)).astype(np.float64)
 
-    dace_result = mean_reduce_symbolic_shape(A=X)
+    dace_result = prog(A=X)
     numpy_result = np.mean(X, axis=(-2, 0))
 
     assert np.allclose(dace_result, numpy_result)

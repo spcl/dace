@@ -111,7 +111,8 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
     if view:
         sdfg.view()
     # baseline
-    sdfg.name = 'baseline'
+    sdfg._name = 'baseline'
+    sdfg.save('baseline.sdfg')
     csdfg = sdfg.compile()
     csdfg(A=A, B=B1, N=N)
     del csdfg
@@ -126,8 +127,9 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
     st.apply(sdfg)
     if view:
         sdfg.view()
-    sdfg.name = 'tiled'
+    sdfg._name = 'tiled'
     sdfg.validate()
+    sdfg.save('tiled.sdfg')
     csdfg = sdfg.compile()
     csdfg(A=A, B=B2, N=N)
     del csdfg
@@ -136,11 +138,11 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
     sdfg.apply_strict_transformations()
     subgraph = SubgraphView(graph, [n for n in graph.nodes()])
     sf = SubgraphFusion(subgraph)
-    assert sf.can_be_applied(sdfg, subgraph)
     # also test consolidation
     sf.consolidate = True
     sf.apply(sdfg)
-    sdfg.name = 'fused'
+    sdfg._name = 'fused'
+    sdfg.save('fused.sdfg')
     csdfg = sdfg.compile()
     csdfg(A=A, B=B3, N=N)
     del csdfg
@@ -151,14 +153,11 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
     assert np.allclose(B1, B3)
     print("PASS")
 
-
 test_settings = list(itertools.product([1, 8], [False, True], [False, True]))
-
 
 @pytest.mark.parametrize(["tile", "offset", "unroll"], test_settings)
 def test_all(tile, offset, unroll):
     invoke_stencil(tile, offset, unroll)
-
 
 if __name__ == '__main__':
     for (t, o, u) in itertools.product([1, 8], [False, True], [False, True]):

@@ -216,7 +216,7 @@ if __name__ == "__main__":
 
     from dace.config import Config
     # set unique function to false to generate both sdfgs
-    Config.set("compiler", "unique_functions", value="none")
+    Config.set("compiler", "unique_functions", value=False)
     sdfg = make_nested_sdfg_fpga()
 
     X = np.random.rand(size_n).astype(np.float32)

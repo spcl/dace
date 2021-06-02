@@ -11,7 +11,7 @@ import warnings
 
 import sympy as sp
 from six import StringIO
-from typing import IO, Optional, Tuple, Union
+from typing import IO, Tuple, Union
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
@@ -32,7 +32,6 @@ def copy_expr(
     sdfg,
     dataname,
     memlet,
-    is_write=None,  # Otherwise it's a read
     offset=None,
     relative_offset=True,
     packed_types=False,
@@ -62,12 +61,6 @@ def copy_expr(
     add_offset = offset_cppstr != "0"
 
     if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
-        if def_type == DefinedType.ArrayInterface:
-            # If this is a view, it has already been renamed
-            if not isinstance(datadesc, data.View):
-                if is_write is None:
-                    raise ValueError("is_write must be set for ArrayInterface.")
-                expr = array_interface_variable(expr, is_write, dispatcher)
         return "{}{}{}".format(
             dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
 
@@ -109,15 +102,13 @@ def memlet_copy_to_absolute_strides(dispatcher,
                              sdfg,
                              src_node.data,
                              memlet,
-                             is_write=False,
                              packed_types=packed_types)
         dst_expr = copy_expr(dispatcher,
                              sdfg,
                              dst_node.data,
                              memlet,
-                             is_write=True,
-                             offset=None,
-                             relative_offset=False,
+                             None,
+                             False,
                              packed_types=packed_types)
         if memlet.other_subset is not None:
             dst_expr = copy_expr(
@@ -125,9 +116,8 @@ def memlet_copy_to_absolute_strides(dispatcher,
                 sdfg,
                 dst_node.data,
                 memlet,
-                is_write=True,
-                offset=memlet.other_subset,
-                relative_offset=False,
+                memlet.other_subset,
+                False,
                 packed_types=packed_types,
             )
             dst_subset = memlet.other_subset
@@ -140,15 +130,13 @@ def memlet_copy_to_absolute_strides(dispatcher,
                              sdfg,
                              src_node.data,
                              memlet,
-                             is_write=False,
-                             offset=None,
-                             relative_offset=False,
+                             None,
+                             False,
                              packed_types=packed_types)
         dst_expr = copy_expr(dispatcher,
                              sdfg,
                              dst_node.data,
                              memlet,
-                             is_write=True,
                              packed_types=packed_types)
         if memlet.other_subset is not None:
             src_expr = copy_expr(
@@ -156,9 +144,8 @@ def memlet_copy_to_absolute_strides(dispatcher,
                 sdfg,
                 src_node.data,
                 memlet,
-                is_write=False,
-                offset=memlet.other_subset,
-                relative_offset=False,
+                memlet.other_subset,
+                False,
                 packed_types=packed_types,
             )
             src_subset = memlet.other_subset
@@ -239,13 +226,10 @@ def emit_memlet_reference(dispatcher,
                           memlet: mmlt.Memlet,
                           pointer_name: str,
                           conntype: dtypes.typeclass,
-                          ancestor: int = 1,
-                          is_write=None,
-                          device_code=False) -> Tuple[str, str, str]:
+                          ancestor: int = 1) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
-    :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
     :return: A tuple of the form (type, name, value).
     """
     desc = sdfg.arrays[memlet.data]
@@ -260,24 +244,13 @@ def emit_memlet_reference(dispatcher,
     # accordingly.
     defined_type, defined_ctype = dispatcher.defined_vars.get(
         memlet.data, ancestor)
-    if (defined_type == DefinedType.Pointer
-            or (defined_type == DefinedType.ArrayInterface
-                and isinstance(desc, data.View))):
+    if defined_type == DefinedType.Pointer:
         if not is_scalar and desc.dtype == conntype.base_type:
             # Cast potential consts
             typedef = defined_ctype
         if is_scalar:
             defined_type = DefinedType.Scalar
             ref = '&'
-    elif defined_type == DefinedType.ArrayInterface:
-        if is_write is None:
-            raise ValueError("is_write must be defined for ArrayInterface.")
-        else:
-            base_ctype = conntype.base_type.ctype
-            typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
-            datadef = array_interface_variable(datadef, is_write, dispatcher,
-                                               ancestor)
-        is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
         ref = '&' if is_scalar else ''
@@ -290,6 +263,12 @@ def emit_memlet_reference(dispatcher,
         if not is_scalar:
             conntype = conntype.base_type
             is_scalar = True
+    elif defined_type == DefinedType.ArrayInterface:
+        ref = ''
+        typedef = defined_ctype
+        is_scalar = True  # Avoid "&" in expression below
+        offset_expr = ' + ' + offset_expr[1:-1]  # Trim brackets
+        conntype = conntype.base_type  # Avoid vector-esque casts
     elif defined_type == DefinedType.StreamArray:
         # Stream array to stream (reference)
         if memlet.subset.num_elements() == 1:
@@ -309,7 +288,7 @@ def emit_memlet_reference(dispatcher,
     else:
         raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
 
-    if (not device_code and defined_type != DefinedType.ArrayInterface
+    if (defined_type != DefinedType.ArrayInterface
             and desc.storage == dace.StorageType.FPGA_Global):
         # This is a device buffer accessed on the host.
         # Can not be accessed with offset different than zero. Check this if we can:
@@ -318,6 +297,7 @@ def emit_memlet_reference(dispatcher,
             raise TypeError(
                 "Can not offset device buffers from host code ({}, offset {})".
                 format(datadef, offset))
+
         # Device buffers are passed by reference
         expr = datadef
         ref = '&'
@@ -364,16 +344,6 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
             tiledim += 1
 
     return reshaped_copy, new_strides
-
-
-def _is_c_contiguous(shape, strides):
-    """ 
-    Returns True if the strides represent a non-padded, C-contiguous (last 
-    dimension contiguous) array.
-    """
-    computed_strides = tuple(
-        data._prod(shape[i + 1:]) for i in range(len(shape)))
-    return tuple(strides) == computed_strides
 
 
 def ndcopy_to_strided_copy(
@@ -426,18 +396,8 @@ def ndcopy_to_strided_copy(
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
-    # Another case of non-strided 1D copy: all indices match and copy length
-    # matches pointer difference, as well as match in contiguity and padding
-    elif (first_src_index == first_dst_index
-          and last_src_index == last_dst_index and copy_length == src_copylen
-          and _is_c_contiguous(src_shape, src_strides)
-          and _is_c_contiguous(dst_shape, dst_strides)):
-        # Emit 1D copy of the whole array
-        copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
-        return copy_shape, [1], [1]
     # 1D strided copy
-    elif (sum([0 if c == 1 else 1 for c in copy_shape]) == 1
-          and len(src_subset) == len(dst_subset)):
+    elif sum([0 if c == 1 else 1 for c in copy_shape]) == 1:
         # Find the copied dimension:
         # In copy shape
         copydim = next(i for i, c in enumerate(copy_shape) if c != 1)
@@ -544,7 +504,7 @@ def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar,
             dst_expr = '*(%s *)(&%s)' % (src_dtype.ctype, dst_expr)
         elif src_dtype.base_type != dst_dtype:
             dst_expr = '(%s)(&%s)' % (src_dtype.ctype, dst_expr)
-        elif defined_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
+        elif defined_type == DefinedType.Pointer:
             dst_expr = '&' + dst_expr
     elif not is_scalar:
         dst_expr = '&' + dst_expr
@@ -557,8 +517,7 @@ def cpp_ptr_expr(sdfg,
                  offset=None,
                  relative_offset=True,
                  use_other_subset=False,
-                 indices=None,
-                 is_write=None):
+                 indices=None):
     """ Converts a memlet to a C++ pointer expression. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
@@ -569,11 +528,6 @@ def cpp_ptr_expr(sdfg,
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     dname = ptr(memlet.data, desc)
-
-    if defined_type == DefinedType.ArrayInterface:
-        if is_write is None:
-            raise ValueError("is_write must be set for ArrayInterface.")
-        dname = array_interface_variable(dname, is_write, None)
 
     if defined_type == DefinedType.Scalar:
         dname = '&' + dname
@@ -794,19 +748,6 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
     if not node.code:
         return ""
 
-    # Not [], "" or None
-    if node.code_global and node.code_global.code:
-        function_stream.write(
-            codeblock_to_cpp(node.code_global),
-            sdfg,
-            state_id,
-            node,
-        )
-        function_stream.write("\n", sdfg, state_id, node)
-
-    # add node state_fields to the statestruct
-    codegen._frame.statestruct.extend(node.state_fields)
-
     # If raw C++ code, return the code directly
     if node.language != dtypes.Language.Python:
         # If this code runs on the host and is associated with a GPU stream,
@@ -1006,9 +947,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
     def _subscript_expr(self, slicenode: ast.AST,
                         target: str) -> symbolic.SymbolicType:
         visited_slice = self.visit(slicenode)
-
-        if isinstance(visited_slice, ast.Index):
-            visited_slice = visited_slice.value
+        if not isinstance(visited_slice, ast.Index):
+            raise NotImplementedError("Range subscripting not implemented")
 
         # Collect strides for index expressions
         if target in self.constants:
@@ -1029,15 +969,15 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 and not (s == 1 and subset_size[i] == dimlen)
             ]
 
-        if isinstance(visited_slice, ast.Tuple):
-            if len(strides) != len(visited_slice.elts):
+        if isinstance(visited_slice.value, ast.Tuple):
+            if len(strides) != len(visited_slice.value.elts):
                 raise SyntaxError(
                     'Invalid number of dimensions in expression (expected %d, '
-                    'got %d)' % (len(strides), len(visited_slice.elts)))
+                    'got %d)' % (len(strides), len(visited_slice.value.elts)))
 
             return sum(
                 symbolic.pystr_to_symbolic(unparse(elt)) * s
-                for elt, s in zip(visited_slice.elts, strides))
+                for elt, s in zip(visited_slice.value.elts, strides))
 
         if len(strides) != 1:
             raise SyntaxError('Missing dimensions in expression (expected %d, '
@@ -1091,15 +1031,14 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 cppunparse.cppunparse(value,
                                                       expr_semicolon=False),
                             ))
-                        elif (var_type != DefinedType.ArrayInterface
-                              or isinstance(desc, data.View)):
+                        elif var_type != DefinedType.ArrayInterface:
                             newnode = ast.Name(id="%s = %s;" % (
                                 cpp_array_expr(self.sdfg, memlet),
                                 cppunparse.cppunparse(value,
                                                       expr_semicolon=False),
                             ))
                         else:
-                            newnode = ast.Name(id="__%s_out[%s] = %s;" % (
+                            newnode = ast.Name(id="%s_out[%s] = %s;" % (
                                 memlet.data,
                                 cpp_array_expr(
                                     self.sdfg, memlet, with_brackets=False),
@@ -1147,17 +1086,6 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
         return ast.copy_location(newnode, node)
 
-    def visit_Name(self, node: ast.Name):
-        name = rname(node)
-        if name not in self.memlets:
-            return self.generic_visit(node)
-        memlet, nc, wcr, dtype = self.memlets[name]
-        if (isinstance(dtype, dtypes.pointer)
-                and memlet.subset.num_elements() == 1):
-            return ast.Name(id="(*{})".format(name), ctx=node.ctx)
-        else:
-            return self.generic_visit(node)
-
     def visit_Expr(self, node):
         # Check for DaCe function calls
         if isinstance(node.value, ast.Call):
@@ -1176,19 +1104,6 @@ class DaCeKeywordRemover(ExtNodeTransformer):
     def visit_FunctionDef(self, node):
         # Do not parse internal functions
         return None
-
-    def visit_BinOp(self, node: ast.BinOp):
-        # Special case for integer powers
-        if isinstance(node.op, ast.Pow):
-            try:
-                unparsed = symbolic.pystr_to_symbolic(unparse(node.right))
-                evaluated = symbolic.symstr(
-                    symbolic.evaluate(unparsed, self.constants))
-                node.right = ast.parse(evaluated).body[0].value
-            except (TypeError, AttributeError, NameError, KeyError, ValueError):
-                return self.generic_visit(node)
-
-        return self.generic_visit(node)
 
     # Replace default modules (e.g., math) with dace::math::
     def visit_Attribute(self, node):
@@ -1282,13 +1197,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                 )
                 continue
 
-            # If a view, get the relevant access node
-            dstnode = edge.dst
-            while isinstance(sdfg.arrays[dstnode.data], data.View):
-                dstnode = dfg.out_edges(dstnode)[0].dst
-
             # We need the streams leading out of the output data
-            for e in dfg.out_edges(dstnode):
+            for e in dfg.out_edges(edge.dst):
                 if isinstance(e.dst, nodes.AccessNode):
                     continue
                 # If no stream at destination: synchronize stream with host.
@@ -1314,30 +1224,3 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                         [e.src, e.dst],
                     )
                 # Otherwise, no synchronization necessary
-
-
-def array_interface_variable(var_name: str,
-                             is_write: bool,
-                             dispatcher: Optional["TargetDispatcher"],
-                             ancestor: int = 0):
-    """
-    Generates the variable name of an ArrayInterface variable.
-    """
-    ptr_in = f"__{var_name}_in"
-    ptr_out = f"__{var_name}_out"
-    if dispatcher is not None:
-        # DaCe allows reading from an output connector, even though it
-        # is not an input connector. If this occurs, panic and read
-        # from the output interface instead
-        if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
-            # Throw a KeyError if this pointer also doesn't exist
-            dispatcher.defined_vars.get(ptr_out, ancestor)
-            # Otherwise use it
-            return ptr_out
-        else:
-            return ptr_in
-    else:
-        # We might call this before the variable is even defined (e.g., because
-        # we are about to define it), so if the dispatcher is not passed, just
-        # return the appropriate string
-        return ptr_out if is_write else ptr_in

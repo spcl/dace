@@ -256,10 +256,6 @@ template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T heaviside(const T& a, const T& b) {
     return (a < 0) ? 0 : ( (a > 0) ? 1 : b); 
 }
-template<typename T>
-static DACE_CONSTEXPR DACE_HDFI T heaviside(const T& a) {
-    return (a > 0) ? 1 : 0;
-}
 
 // Computes the conjugate of a number (support for non-complex numbers)
 template<typename T>

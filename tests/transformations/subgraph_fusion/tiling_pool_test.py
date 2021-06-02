@@ -69,7 +69,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False):
     graph = sdfg.nodes()[0]
 
     # baseline
-    sdfg.name = f'baseline_{tile_size}_{offset}_{unroll}'
+    sdfg._name = 'baseline'
     csdfg = sdfg.compile()
     csdfg(A=A, B=B1, N=N)
     del csdfg
@@ -83,7 +83,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False):
     st.schedule = dace.dtypes.ScheduleType.Sequential
     st.apply(sdfg)
 
-    sdfg.name = f'tiled_{tile_size}_{offset}_{unroll}'
+    sdfg._name = 'tiled'
     csdfg = sdfg.compile()
     csdfg(A=A, B=B2, N=N)
     del csdfg
@@ -91,10 +91,9 @@ def invoke_stencil(tile_size, offset=False, unroll=False):
     sdfg.apply_strict_transformations()
     subgraph = SubgraphView(graph, [n for n in graph.nodes()])
     sf = SubgraphFusion(subgraph)
-    assert sf.can_be_applied(sdfg, subgraph)
     sf.apply(sdfg)
 
-    sdfg.name = f'fused_{tile_size}_{offset}_{unroll}'
+    sdfg._name = 'fused'
     csdfg = sdfg.compile()
     csdfg(A=A, B=B3, N=N)
     del csdfg

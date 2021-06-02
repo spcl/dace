@@ -75,7 +75,7 @@ def get_partition(sdfg, graph):
 
 def test_2fuse():
     sdfg = softmax.to_sdfg()
-    sdfg.name = 'softmax_2part'
+    sdfg._name = 'softmax_2part'
     sdfg.apply_strict_transformations()
     X_in = np.random.rand(H.get(), B.get(), SN.get(),
                           SM.get()).astype(np.float32)
@@ -100,7 +100,7 @@ def test_2fuse():
 
 def test_1fuse():
     sdfg = softmax.to_sdfg()
-    sdfg.name = 'softmax_fused'
+    sdfg._name = 'softmax_fused'
     sdfg.apply_strict_transformations()
     X_in = np.random.rand(H.get(), B.get(), SN.get(),
                           SM.get()).astype(np.float32)
@@ -123,10 +123,9 @@ def test_1fuse():
     print("PASS")
     return
 
-
 def test_1fuse():
     sdfg = softmax.to_sdfg()
-    sdfg.name = 'softmax_fused'
+    sdfg._name = 'softmax_fused'
     sdfg.apply_strict_transformations()
     X_in = np.random.rand(H.get(), B.get(), SN.get(),
                           SM.get()).astype(np.float32)
@@ -148,7 +147,6 @@ def test_1fuse():
     print(np.linalg.norm(res2))
     assert np.allclose(res1, res2)
     print("PASS")
-
 
 if __name__ == "__main__":
     test_2fuse()
