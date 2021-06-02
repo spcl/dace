@@ -4,70 +4,97 @@
 """
 
 import dace
-import dace.codegen.targets.sve.util
+import dace.codegen.targets.sve.util as util
 import dace.codegen.targets.sve.codegen
 from dace.transformation.optimizer import Optimizer
 import dace.dtypes
+import dace.sdfg.infer_types
+import dace.sdfg.graph as graph
+import dace.sdfg.nodes as nodes
+import dace.data as data
+import dace.symbolic as symbolic
 
 
-def vectorize(sdfg, par, weak=False, special=False):
+def get_connector_edge(dfg: dace.SDFGState, node: nodes.Node, conn: str, is_in_conn: bool) -> graph.Edge:
+    for e in dfg.all_edges(node):
+        if (is_in_conn and e.dst == node and e.dst_conn == conn) or (not is_in_conn and e.src == node and e.src_conn == conn):
+            return e
+    return None
 
-    if weak:
-        for xform in Optimizer(sdfg).get_pattern_matches(patterns=[
-                dace.transformation.dataflow.vectorization.Vectorization
-        ]):
-            xform.apply(sdfg)
+
+def is_single_element_subset(subset) -> bool:
+    for s in subset:
+        if isinstance(s, tuple):
+            print(s)
+            if s[0] != s[1]:
+                return False
+    return True
+
+
+def vectorize_connector(sdfg: dace.SDFG, dfg: dace.SDFGState, node: dace.nodes.Node, par: str, conn: str, is_input: bool):
+    edge = get_connector_edge(dfg, node, conn, is_input)
+    connectors = node.in_connectors if is_input else node.out_connectors
+
+    if edge.data.data is None:
+        # Empty memlets
         return
 
-    if len(set([sdfg.arrays[a].dtype.bytes for a in sdfg.arrays])) > 1:
+    desc = sdfg.arrays[edge.data.data]
+
+    if isinstance(desc, data.Stream):
+        # Streams are treated differently in SVE, instead of pointers they become vectors of unknown size
+        connectors[conn] = dace.dtypes.vector(connectors[conn].base_type, -1)
+        return
+
+    if isinstance(connectors[conn], (dace.dtypes.vector, dace.dtypes.pointer)):
+        # No need for vectorization
+        return
+
+    subset = edge.data.subset
+    
+    if is_single_element_subset(subset):
+        sve_axis = -1
+        for i, axis in enumerate(subset):
+            for expr in axis:
+                sym = symbolic.pystr_to_symbolic(expr)
+                if par in sym.free_symbols:
+                    # TODO: What if it occurs multiple times?
+                    sve_axis = i
+        sve_subset = subset[sve_axis]
+        # TODO: Set proper stride
+        edge.data.subset[sve_axis] = (
+            sve_subset[0], sve_subset[0] + util.SVE_LEN - sve_subset[2], sve_subset[2])
+   
+    connectors[conn] = dace.dtypes.vector(connectors[conn], util.SVE_LEN)
+
+
+def vectorize(sdfg: dace.SDFG, par: str, ignored_conns: list=[]):
+    input_bits = set([sdfg.arrays[a].dtype.bytes * 8 for a in sdfg.arrays])
+    if len(input_bits) > 1:
         raise NotImplementedError('Different data type sizes as inputs')
+    input_bit_width = list(input_bits)[0]
 
     dace.ScheduleType.register('SVE_Map')
 
+    # FIXME: Hardcoded for the demo machine (512 bits)
+    util.SVE_LEN.set(512 / input_bit_width)
+
+    dace.sdfg.infer_types.infer_connector_types(sdfg)
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.MapEntry):
             if node.params[-1] == par:
                 node.schedule = dace.ScheduleType.SVE_Map
         elif isinstance(node, dace.nodes.Tasklet):
             for c in node.in_connectors:
-                if isinstance(node.in_connectors[c],
-                              (dace.dtypes.vector, dace.dtypes.pointer)):
+                if c in ignored_conns:
                     continue
-                edges = sdfg.start_state.in_edges_by_connector(node, c)
-                for e in edges:
-                    data = e.data.data
-                    if data is None:
-                        continue
-                    desc = sdfg.arrays[data]
-                    if e.dst_conn == c:
-                        if e.data.subset.ranges[0][0] != e.data.subset.ranges[
-                                0][1]:
-                            node.in_connectors[c] = dace.dtypes.pointer(
-                                desc.dtype)
-                        elif len(e.data.subset.free_symbols) == 0 and special:
-                            node.in_connectors[c] = desc.dtype
-                        else:
-                            node.in_connectors[c] = dace.dtypes.vector(
-                                desc.dtype, -1)
-
+                vectorize_connector(sdfg, sdfg.start_state,
+                                    node, par, c, True)
             for c in node.out_connectors:
-                if isinstance(node.out_connectors[c],
-                              (dace.dtypes.vector, dace.dtypes.pointer)):
+                if c in ignored_conns:
                     continue
-                edges = sdfg.start_state.out_edges_by_connector(node, c)
-                for e in edges:
-                    data = e.data.data
-                    if data is None:
-                        continue
-                    desc = sdfg.arrays[data]
-                    if e.src_conn == c:
-                        if e.data.subset.ranges[0][0] != e.data.subset.ranges[
-                                0][1]:
-                            node.out_connectors[c] = dace.dtypes.pointer(
-                                desc.dtype)
-                        else:
-                            node.out_connectors[c] = dace.dtypes.vector(
-                                desc.dtype, -1)
+                vectorize_connector(sdfg, sdfg.start_state,
+                                    node, par, c, False)
 
     dace.SCOPEDEFAULT_SCHEDULE[
         dace.ScheduleType.SVE_Map] = dace.ScheduleType.Sequential
