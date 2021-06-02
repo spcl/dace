@@ -12,6 +12,9 @@ import astunparse
 import collections
 import itertools
 
+# Used as the unknown SVE vector size in the graph
+SVE_LEN = dace.symbol('__dace_sve_len')
+
 class NotSupportedError(Exception):
     def __init__(self, message):
         super().__init__(message)
