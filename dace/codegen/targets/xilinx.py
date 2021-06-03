@@ -2,6 +2,7 @@
 import collections
 import itertools
 import os
+import pdb
 import re
 import numpy as np
 
@@ -527,9 +528,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # Launch HLS kernel
         kernel_stream.write(
             f"""\
-  auto kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});
-  cl::Event {kernel_name}_event =  kernel.ExecuteTaskFork();
-  all_events.push_back({kernel_name}_event)""", sdfg,
+  auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});
+  cl::Event {kernel_name}_event =  {kernel_name}_kernel.ExecuteTaskFork();
+  all_events.push_back({kernel_name}_event);""", sdfg,
             sdfg.node_id(state))
 
         # Join RTL tasklets
@@ -763,9 +764,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # host_code_stream = CodeIOStream()
 
         # Generate host code
-        # TODO: is this needed?
-        # self.generate_host_header(sdfg, kernel_name, global_data_parameters,
-        #                           host_code_stream)
+        self.generate_host_header(sdfg, kernel_name, global_data_parameters,
+                                  kernel_host_header_stream)
         self.generate_host_function_boilerplate(sdfg, state, kernel_name,
                                                 global_data_parameters,
                                                 nested_global_transients,
@@ -824,7 +824,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 kernel_args.append(arg.as_arg(with_types=True, name=argname))
             else:
                 kernel_args.append(arg.as_arg(with_types=True, name=name))
-
         host_code_stream.write(
             """\
 // Signature of kernel function (with raw pointers) for argument matching

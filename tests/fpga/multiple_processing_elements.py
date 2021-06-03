@@ -237,11 +237,11 @@ def test_kernel_LN(flatten):
     print("OK")
 
 if __name__ == "__main__":
-    test_PEs_inside_component_0()
+    # test_PEs_inside_component_0()
 
     # test_PEs_inside_component_1()
     # test_PEs_inside_component_2()
-    # test_PEs_LNs_inside_component()
+    test_PEs_LNs_inside_component()
 
     # TODO: for this, we should see if we are able to find cuts or not
     # If this is inlined we have 2 possibilities:

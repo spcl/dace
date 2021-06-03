@@ -463,6 +463,10 @@ class FPGACodeGen(TargetCodeGenerator):
             function_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(
                 host_function_name, ", ".join(kernel_args_opencl)))
             # Write OpenCL host function
+
+            # add generated header information
+            kernel_host_stream.write(kernel_host_header_stream.getvalue())
+
             kernel_host_stream.write(
                 f"""\
 DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
@@ -471,8 +475,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             # joining before exiting this state
             kernel_host_stream.write(f"std::vector<cl::Event> all_events;", )
 
-            kernel_host_stream.write(kernel_host_header_stream.getvalue() +
-                                     kernel_host_body_stream.getvalue())
+            kernel_host_stream.write(kernel_host_body_stream.getvalue())
 
             ## Wait for all the events
             kernel_host_stream.write(" cl::Event::waitForEvents(all_events);")
