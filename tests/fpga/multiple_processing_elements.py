@@ -37,8 +37,8 @@ def test_PEs_inside_component_0():
 
     sdfg = PEs_inside_component_0.to_sdfg()
     from dace.transformation.interstate import GPUTransformSDFG
-    sdfg.apply_transformations([GPUTransformSDFG])
-    # sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+    # sdfg.apply_transformations([GPUTransformSDFG])
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
     sdfg.save('/tmp/out.sdfg')
     program = sdfg.compile()
     for node, state in program.sdfg.all_nodes_recursive():
@@ -47,6 +47,7 @@ def test_PEs_inside_component_0():
 
     z = program(x=x, y=y, v=v, w=w)
     assert np.allclose(z, x + y + v + w)
+    print("OK")
 
 
 def test_PEs_inside_component_1():
@@ -104,7 +105,7 @@ def test_PEs_inside_component_1():
     ref_t = beta * (x + y + v + w)
     assert np.allclose(z, ref_z)
     assert np.allclose(t, ref_t)
-
+    print("OK")
 
 def test_PEs_inside_component_2():
     '''
@@ -151,7 +152,7 @@ def test_PEs_inside_component_2():
     program(x=x, y=y, v=v, t=t, z=z)
     assert np.allclose(z, x + y)
     assert np.allclose(t, v + y)
-
+    print("OK")
 
 def test_PEs_LNs_inside_component():
     '''
@@ -197,7 +198,7 @@ def test_PEs_LNs_inside_component():
 
     ref = np.dot(A @ x, B @ y)
     assert np.allclose(z, ref)
-
+    print("OK")
 
 def test_kernel_LN(flatten):
     '''
@@ -233,12 +234,13 @@ def test_kernel_LN(flatten):
     C = program(A=A, B=B)
 
     assert np.allclose(C, A @ B)
-
+    print("OK")
 
 if __name__ == "__main__":
     test_PEs_inside_component_0()
-    test_PEs_inside_component_1()
-    test_PEs_inside_component_2()
+
+    # test_PEs_inside_component_1()
+    # test_PEs_inside_component_2()
     # test_PEs_LNs_inside_component()
 
     # TODO: for this, we should see if we are able to find cuts or not
@@ -255,4 +257,6 @@ if __name__ == "__main__":
     # test_kernel_LN(True)
 
 
-    #TODO: add a test case with two components, each one with multiple kernels inside
+    #TODO:
+    # - add a test case with two components, each one with multiple kernels inside
+    # - add a test case with two states

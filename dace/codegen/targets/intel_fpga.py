@@ -157,7 +157,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
                       emulation_flag=emulation_flag,
                       kernel_file_name=kernel_file_name,
                       host_code="".join([
-                          "{separator}\n// Kernel: {kernel_name}"
+                          "{separator}\n// State: {kernel_name}"
                           "\n{separator}\n\n{code}\n\n".format(separator="/" *
                                                                79,
                                                                kernel_name=name,
@@ -474,7 +474,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
     def generate_kernel_internal(self, sdfg, state, kernel_name, subgraphs, kernel_stream,
                                  kernel_host_header_stream, kernel_host_body_stream, function_stream,
                                  callsite_stream, state_parameters):
-
+        # TODO: add docstring
+        # TODO: is really needed this differentiation between kernel_host_header and host_body
+        # In xilnx one of them is not used because part of the code goes in another place (entry_stream)
         state_id = sdfg.node_id(state)
 
         kernel_header_stream = CodeIOStream()
@@ -526,7 +528,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_stream.write(kernel_header_stream.getvalue() +
                             kernel_body_stream.getvalue())
 
-        self.generate_host_function_epilogue(sdfg, state, kernel_host_body_stream, kernel_name)
+        self.generate_host_function_body(sdfg, state, kernel_host_body_stream, kernel_name)
 
         # # Store code to be passed to compilation phase
         # self._host_codes.append(
@@ -540,7 +542,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         host_stream.write(f"std::vector<hlslib::ocl::Kernel> {kernel_name}_kernels;", sdfg,
                           sdfg.node_id(state))
 
-    def generate_host_function_epilogue(self, sdfg, state, host_stream, kernel_name):
+
+
+    def generate_host_function_body(self, sdfg, state, host_stream, kernel_name):
         state_id = sdfg.node_id(state)
         # TODO profiling
         # host_stream.write(
@@ -553,7 +557,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         needs_synch = False
         if kernel_id in self._kernels_dependencies:
             needs_synch = True
-        kernel_deps_name = "nullptr"
+
         if needs_synch:
             #THIS MUST BE DONE IN THE VENDOR SPECIFIC FUCNTION
             host_stream.write(f"// {kernel_name} depends on {self._kernels_dependencies[kernel_id]}")
@@ -564,11 +568,11 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                         return key
                 raise RuntimeError("Error while generating kernel dependencies")
             kernel_deps_name = f"deps_{kernel_name}"
-            host_stream.write(f"std::vector<cl::Event > *{kernel_deps_name} = new std::vector<cl::Event >();")
+            host_stream.write(f"std::vector<cl::Event > {kernel_deps_name};")
             for predecessor in self._kernels_dependencies[kernel_id]:
                 pred_name = get_kernel_name(predecessor)
                 # concatenate events from predecessor kernel
-                host_stream.write(f"{kernel_deps_name}->insert({kernel_deps_name}->end(), {pred_name}_events->begin(), {pred_name}_events->end());")
+                host_stream.write(f"{kernel_deps_name}.insert({kernel_deps_name}.end(), {pred_name}_events.begin(), {pred_name}_events.end());")
 
 
         if launch_async:
@@ -591,13 +595,11 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             # Launch one-by-one and wait for the cl::Events
             host_stream.write(
                 f"""\
-  //if (wait_events)
-    //cl::Event::waitForEvents(*wait_events);
-  std::vector<cl::Event> * {kernel_name}_events = new std::vector<cl::Event>();
+  std::vector<cl::Event> {kernel_name}_events;
   for (auto &k : {kernel_name}_kernels) {{
-    {kernel_name}_events->emplace_back(k.ExecuteTaskFork({kernel_deps_name}));
+    {kernel_name}_events.emplace_back(k.ExecuteTaskFork({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''}));
   }}
-  cl::Event::waitForEvents(*{kernel_name}_events);
+  all_events.insert(all_events.end(), {kernel_name}_events.begin(), {kernel_name}_events.end());
 """, sdfg, state_id)
 #         host_stream.write(
 #             """\

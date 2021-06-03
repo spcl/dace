@@ -456,20 +456,27 @@ class FPGACodeGen(TargetCodeGenerator):
             kernel_args_opencl = dtypes.deduplicate(kernel_args_opencl)
 
             ## Generate the global function here
+
+            # TODO: add profiling
             kernel_host_stream = CodeIOStream()
             host_function_name = f"__dace_runstate_{sdfg.sdfg_id}_{state.name}_{state_id}"
             function_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(
                 host_function_name, ", ".join(kernel_args_opencl)))
             # Write OpenCL host function
             kernel_host_stream.write(
-                """\
-DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
-      hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();"""
-                .format(host_function_name=host_function_name,
-                        kernel_args_opencl=", ".join(kernel_args_opencl)))
+                f"""\
+DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
+      hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();""")
+            # Create a vector to collect all events that are being generate to facilitate
+            # joining before exiting this state
+            kernel_host_stream.write(f"std::vector<cl::Event> all_events;", )
 
             kernel_host_stream.write(kernel_host_header_stream.getvalue() +
                                      kernel_host_body_stream.getvalue())
+
+            ## Wait for all the events
+            kernel_host_stream.write(" cl::Event::waitForEvents(all_events);")
+
             kernel_host_stream.write("}\n")
 
             callsite_stream.write("{}({});".format(
@@ -480,6 +487,8 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
 
             self._host_codes.append(
                 (kernel_name, kernel_host_stream.getvalue()))
+
+
 
         else:  # self._in_device_code == True
 

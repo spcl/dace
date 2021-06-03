@@ -528,7 +528,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_stream.write(
             f"""\
   auto kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});
-  const std::pair<double, double> elapsed = kernel.ExecuteTask();""", sdfg,
+  cl::Event {kernel_name}_event =  kernel.ExecuteTaskFork();
+  all_events.push_back({kernel_name}_event)""", sdfg,
             sdfg.node_id(state))
 
         # Join RTL tasklets
@@ -536,13 +537,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             kernel_stream.write(f"kernel_{name}.wait();\n", sdfg,
                                 sdfg.node_id(state))
 
-        # Report performance
-        kernel_stream.write(
-            """\
-  std::cout << "Kernel executed in " << elapsed.second << " seconds.\\n" << std::flush;
-}""", sdfg, sdfg.node_id(state))
 
-    def generate_module(self, sdfg, state, name, subgraph, parameters,
+
+    def generate_module(self, sdfg, state, kernel_name, name, subgraph, parameters,
                         module_stream, entry_stream, host_stream):
         """Generates a module that will run as a dataflow function in the FPGA
            kernel."""
@@ -746,13 +743,16 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                     sdfg.node_id(state), state.node_id(node))
 
     def generate_kernel_internal(self, sdfg, state, kernel_name,
-                                 subgraphs, kernel_stream, function_stream,
-                                 callsite_stream):
+                                 subgraphs, kernel_stream, kernel_host_header_stream, kernel_host_body_stream, function_stream,
+                                 callsite_stream, state_parameters):
+        # TODO: add docstring
         """Main entry function for generating a Xilinx kernel."""
 
         (global_data_parameters, top_level_local_data, subgraph_parameters,
          nested_global_transients, bank_assignments,
          external_streams) = self.make_parameters(sdfg, state, subgraphs)
+
+        state_parameters.extend(global_data_parameters)
 
         # Detect RTL tasklets, which will be launched as individual kernels
         rtl_tasklet_names = [
@@ -760,15 +760,16 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             if isinstance(nd, nodes.RTLTasklet)
         ]
 
-        host_code_stream = CodeIOStream()
+        # host_code_stream = CodeIOStream()
 
         # Generate host code
-        self.generate_host_header(sdfg, kernel_name, global_data_parameters,
-                                  host_code_stream)
+        # TODO: is this needed?
+        # self.generate_host_header(sdfg, kernel_name, global_data_parameters,
+        #                           host_code_stream)
         self.generate_host_function_boilerplate(sdfg, state, kernel_name,
                                                 global_data_parameters,
                                                 nested_global_transients,
-                                                host_code_stream,
+                                                kernel_host_body_stream,
                                                 function_stream,
                                                 callsite_stream)
 
@@ -797,14 +798,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, module_stream, entry_stream,
-                              host_code_stream)
+                              kernel_host_body_stream)
 
         self.generate_host_function_body(sdfg, state, kernel_name,
                                          global_data_parameters,
-                                         rtl_tasklet_names, host_code_stream)
+                                         rtl_tasklet_names, kernel_host_body_stream)
 
         # Store code to be passed to compilation phase
-        self._host_codes.append((kernel_name, host_code_stream.getvalue()))
+        # self._host_codes.append((kernel_name, host_code_stream.getvalue()))
         kernel_stream.write(module_stream.getvalue())
         kernel_stream.write(entry_stream.getvalue())
 
