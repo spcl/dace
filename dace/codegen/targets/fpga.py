@@ -302,7 +302,7 @@ class FPGACodeGen(TargetCodeGenerator):
         external_streams: Set[tuple[bool, str, dt, dict[str, int]]] = set()
 
         # Mapping from global arrays to memory interfaces
-        bank_assignments: Dict[str, (str, Union[int, (int, int)])] = {}
+        bank_assignments: Dict[str, (str, int)] = {}
 
         # Mapping from symbol to a unique parameter tuple
         all_symbols = {
@@ -314,6 +314,9 @@ class FPGACodeGen(TargetCodeGenerator):
 
         # Sorting by name, then by input/output, then by interface id
         sort_func = lambda t: f"{t[1]}{t[0]}{t[3]}"
+
+        # Stores all the names and info of hbmbanks
+        hbm_arrays = {}
 
         for subgraph in subgraphs:
             data_to_node.update({
@@ -447,18 +450,23 @@ class FPGACodeGen(TargetCodeGenerator):
                     if bank is not None:
                         outer_node = trace[0][0][0] or trace[0][0][1]
                         outer_desc = outer_node.desc(trace[0][2])
-                        okhbm1, okhbm2 = False
-                        if bank == "HBM":
+                        okhbm1, okhbm2 = False, False
+                        if banktype == "HBM":
                             okhbm1 = "hbmbank" in outer_desc.location and outer_desc.location["hbmbank"][0][0] == bank[0]
                             okhbm2 = "hbmbank" in outer_desc.location and outer_desc.location["hbmbank"][0][1] == bank[1]
-                        if bank == "DDR":
+                            hbm_arrays[]
+                        if banktype == "DDR":
                             okbank = "bank" in outer_desc.location and outer_desc.location["bank"] == bank
                         if not ((okhbm1 and okhbm2) or okbank):
                             raise cgx.CodegenError(
                                 "Memory bank allocation must be present on "
                                 f"outermost data descriptor {outer_node.data} "
                                 "to be allocated correctly.")
-                    bank_assignments[dataname] = (banktype, bank)
+                    if(banktype=="DDR"):
+                        bank_assignments[dataname] = (banktype, bank)
+                    else:
+                        for bankindex in range(bank[0], bank[1]):
+                            bank_assignments[cpp.ptr(dataname, desc, bankindex)] = bankindex
                 else:
                     interface_id = None
                 if (not desc.transient
@@ -627,14 +635,14 @@ class FPGACodeGen(TargetCodeGenerator):
                         elif "hbmbank" in nodedesc.location:
                             hbmbank = nodedesc.location["hbmbank"]
                             memory_bank_arg_type = f"hlslib::ocl::StorageType::HBM"
-                            memory_bank_arg_num = (hbmbank[0], hbmbank[1])
+                            memory_bank_arg_num = (hbmbank[0][0], hbmbank[0][1])
 
                         # Define buffer, using proper type
                         for bank_index in range(memory_bank_arg_num[0], memory_bank_arg_num[1]+1):
                             allocname = cpp.ptr(dataname, nodedesc, bank_index)
                             result_decl.write(
                                 "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};"
-                                .format(nodedesc.dtype.ctype, allocname)) #HOW TO UPDATE THE NAME???????????????? xD
+                                .format(nodedesc.dtype.ctype, allocname))
                             result_alloc.write(
                                 "{} = __state->fpga_context->Get()."
                                 "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
