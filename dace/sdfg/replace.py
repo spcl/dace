@@ -6,6 +6,7 @@ from dace.frontend.python.astutils import ASTFindReplace
 import re
 import sympy as sp
 from typing import Any, Dict, Union
+from dace.symbolic import pystr_to_symbolic, symstr
 import warnings
 
 
@@ -18,7 +19,8 @@ def _replsym(symlist, symrepl):
     for i, dim in enumerate(symlist):
         try:
             symlist[i] = tuple(
-                d.subs(symrepl) if symbolic.issymbolic(d) else d for d in dim)
+                pystr_to_symbolic(symstr(d)).subs({pystr_to_symbolic(k):v for k,v in symrepl.items()})
+                if symbolic.issymbolic(d) else d for d in dim)
         except TypeError:
             symlist[i] = (dim.subs(symrepl)
                           if symbolic.issymbolic(dim) else dim)
