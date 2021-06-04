@@ -48,6 +48,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     MPI = ()  #: MPI processes
     CPU_Multicore = ()  #: OpenMP
     Unrolled = ()  #: Unrolled code
+    SVE_Map = () #: Arm SVE
 
     #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
     GPU_Default = ()
@@ -174,23 +175,22 @@ SCOPEDEFAULT_SCHEDULE = {
 # Translation of types to C types
 _CTYPES = {
     None: "void",
-    int: "dace::int32",
-    float: "dace::float64",
+    int: "int",
+    float: "float",
     complex: "dace::complex64",
-    bool: "dace::bool_",
-    numpy.bool: "dace::bool_",
-    numpy.bool_: "dace::bool_",
-    numpy.int8: "dace::int8",
-    numpy.int16: "dace::int16",
-    numpy.int32: "dace::int32",
-    numpy.int64: "dace::int64",
-    numpy.uint8: "dace::uint8",
-    numpy.uint16: "dace::uint16",
-    numpy.uint32: "dace::uint32",
-    numpy.uint64: "dace::uint64",
+    bool: "bool",
+    numpy.bool_: "bool",
+    numpy.int8: "char",
+    numpy.int16: "short",
+    numpy.int32: "int",
+    numpy.int64: "long long",
+    numpy.uint8: "unsigned char",
+    numpy.uint16: "unsigned short",
+    numpy.uint32: "unsigned int",
+    numpy.uint64: "unsigned long long",
     numpy.float16: "dace::float16",
-    numpy.float32: "dace::float32",
-    numpy.float64: "dace::float64",
+    numpy.float32: "float",
+    numpy.float64: "double",
     numpy.complex64: "dace::complex64",
     numpy.complex128: "dace::complex128",
 }
@@ -457,7 +457,7 @@ def result_type_of(lhs, *rhs):
     according to C semantics.
     """
     if len(rhs) == 0:
-        rhs = lhs
+        rhs = None
     elif len(rhs) > 1:
         result = lhs
         for r in rhs:
