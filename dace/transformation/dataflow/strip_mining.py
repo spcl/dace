@@ -6,7 +6,7 @@ import dace
 from copy import deepcopy as dcpy
 from dace import dtypes, registry, subsets, symbolic
 from dace.sdfg import SDFG, SDFGState
-from dace.properties import make_properties, Property, SymbolicProperty
+from dace.properties import EnumProperty, make_properties, Property, SymbolicProperty
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.symbolic import issymbolic, overapproximate, SymExpr
@@ -155,14 +155,15 @@ class StripMining(transformation.Transformation):
         default=False,
         desc="Continuous (false) or strided (true) elements in tile")
 
-    tiling_type = Property(
+    tiling_type = EnumProperty(
+        enum_type=dtypes.TilingType,
         default=dtypes.TilingType.Normal,
-        choices=dtypes.TilingType,
         allow_none=True,
         desc="normal: the outerloop increments with tile_size, "
         "ceilrange: uses ceiling(N/tile_size) in outer range, "
         "number_of_tiles: tiles the map into the number of provided tiles, "
-        "provide the number of tiles over tile_size")
+        "provide the number of tiles over tile_size"
+    )
 
     skew = Property(
         dtype=bool,

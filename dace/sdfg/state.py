@@ -11,7 +11,7 @@ from dace.sdfg.graph import (OrderedMultiDiConnectorGraph, MultiConnectorEdge,
                              SubgraphView)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
-from dace.properties import (Property, DictProperty, SubsetProperty,
+from dace.properties import (EnumProperty, Property, DictProperty, SubsetProperty,
                              SymbolicProperty, CodeBlock, make_properties)
 from inspect import getframeinfo, stack
 import itertools
@@ -709,9 +709,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                       default=False,
                       desc="Do not synchronize at the end of the state")
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        enum_type=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation
+    )
 
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "

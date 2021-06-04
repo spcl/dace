@@ -216,8 +216,12 @@ class Property:
             val = int(val)
 
         # Check if type matches before setting
-        if (self.dtype is not None and not isinstance(val, self.dtype)
-                and not (val is None and self.allow_none)):
+        if isinstance(self, EnumProperty) and not val in self.choices:
+            raise TypeError(
+                'Expected value of type {}'.format(self.dtype.__name__)
+            )
+        elif (not isinstance(self, EnumProperty)) and (self.dtype is not None and
+                not isinstance(val, self.dtype) and not (val is None and self.allow_none)):
             if isinstance(val, str):
                 raise TypeError(
                     "Received str for property {} of type {}. Use "
@@ -475,6 +479,43 @@ def indirect_properties(indirect_class, indirect_function, override=False):
         return make_properties(cls)
 
     return indirection
+
+
+class EnumProperty(Property):
+
+    def __init__(self, enum_type, *args, **kwargs):
+        kwargs['dtype'] = enum_type
+        super().__init__(*args, **kwargs)
+
+        def f(s, *args, **kwargs):
+            if s is None:
+                return None
+            try:
+                return enum_type[s]
+            except KeyError:
+                enum_type.add_unregistered(s)
+                return enum_type[s]
+
+        self._choices = enum_type
+        self._from_json = f
+        self._from_string = f
+
+        def g(obj):
+            return obj.__name__
+
+        self._to_json = g
+
+'''
+    def setter(self, obj, val):
+        if not hasattr(self, 'attr_name'):
+            raise RuntimeError('Attribute name not set')
+        if not val in self.choices:
+            raise TypeError('Expected value of type {}'.format(
+                self.dtype.__name__
+            ))
+        setattr(obj, '_' + self.attr_name, val)
+        '''
+
 
 
 class OrderedDictProperty(Property):

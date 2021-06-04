@@ -2,60 +2,198 @@
 """ A module that contains various DaCe type definitions. """
 from __future__ import print_function
 import ctypes
-import aenum
 import inspect
 import numpy
 import re
 from functools import wraps
 from typing import Any
 from dace.config import Config
-from dace.registry import extensible_enum
 
 
-@extensible_enum
-class DeviceType(aenum.AutoNumberEnum):
-    CPU = ()  #: Multi-core CPU
-    GPU = ()  #: GPU (AMD or NVIDIA)
-    FPGA = ()  #: FPGA (Intel or Xilinx)
+'''
+def undefined_safe_enum(cls: Type):
+    """
+    Decorator that adds a value ``Undefined`` to an enumeration.
+    """
+    if not issubclass(cls, ExtensibleEnum):
+        raise TypeError(
+            "Only ExtensibleEnum subclasses may be used with undefined values"
+        )
+    setattr(cls, 'Undefined', UndefinedEnumEntry)
+    return cls
+    '''
 
 
-@extensible_enum
-class StorageType(aenum.AutoNumberEnum):
+class EnumEntry(object):
+    pass
+
+
+class UnregisteredEnumEntry(EnumEntry):
+    pass
+
+
+'''
+class UndefinedEnumEntry(EnumEntry):
+
+    name = None
+
+    def __init__(self, name):
+        self.name = name
+        '''
+
+
+class ExtensibleEnumMeta(type):
+
+    def __getitem__(cls, key):
+        return cls.__getitem__(key)
+
+
+class ExtensibleEnum(object, metaclass=ExtensibleEnumMeta):
+
+    @classmethod
+    def register(cls, name):
+        setattr(cls, name, type(cls.__name__ + '.' + name, (EnumEntry,), {}))
+
+    @classmethod
+    def unregister(cls, name):
+        delattr(cls, name)
+
+    @classmethod
+    def add_unregistered(cls, name):
+        setattr(cls, name,
+                type(cls.__name__ + '.' + name, (UnregisteredEnumEntry,), {}))
+
+    @classmethod
+    def clear_unregistered(cls):
+        for k, v in cls.__dict__.items():
+            if isinstance(v, type) and issubclass(v, UnregisteredEnumEntry):
+                cls.unregister(k)
+
+    @classmethod
+    def __getitem__(cls, key):
+        if isinstance(key, str):
+            return cls.__dict__[key]
+        else:
+            return cls.values()[key]
+
+    @classmethod
+    def values(cls):
+        return [
+            cls.__dict__[k] for k, v in cls.__dict__.items()
+            if isinstance(v, type) and issubclass(v, EnumEntry)
+        ]
+
+
+class DeviceType(ExtensibleEnum):
+
+    class CPU(EnumEntry):
+        # Multi-core CPU
+        pass
+
+    class GPU(EnumEntry):
+        # GPU (AMD or NVIDIA)
+        pass
+
+    class FPGA(EnumEntry):
+        # FPGA (Intel or Xilinx)
+        pass
+
+
+class StorageType(ExtensibleEnum):
     """ Available data storage types in the SDFG. """
 
-    Default = ()  #: Scope-default storage location
-    Register = ()  #: Local data on registers, stack, or equivalent memory
-    CPU_Pinned = ()  #: Host memory that can be DMA-accessed from accelerators
-    CPU_Heap = ()  #: Host memory allocated on heap
-    CPU_ThreadLocal = ()  #: Thread-local host memory
-    GPU_Global = ()  #: Global memory
-    GPU_Shared = ()  #: Shared memory
-    FPGA_Global = ()  #: Off-chip global memory (DRAM)
-    FPGA_Local = ()  #: On-chip memory (bulk storage)
-    FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
-    FPGA_ShiftRegister = ()  #: Only accessible at constant indices
+    class Default(EnumEntry):
+        # Scope-default storage location
+        pass
+    
+    class Register(EnumEntry):
+        # Local data on registers, stack, or equivalent memory
+        pass
+
+    class CPU_Pinned(EnumEntry):
+        # Host memory that can be DMA-accessed from accelerators
+        pass
+
+    class CPU_Heap(EnumEntry):
+        # Host memory allocated on heap
+        pass
+
+    class CPU_ThreadLocal(EnumEntry):
+        # Thread-local host memory
+        pass
+
+    class GPU_Global(EnumEntry):
+        # Global memory
+        pass
+
+    class GPU_Shared(EnumEntry):
+        # Shared memory
+        pass
+
+    class FPGA_Global(EnumEntry):
+        # Off-chip global memory (DRAM)
+        pass
+
+    class FPGA_Local(EnumEntry):
+        # On-chip memory (bulk storage)
+        pass
+
+    class FPGA_Registers(EnumEntry):
+        # On-chip memory (fully partitioned registers)
+        pass
+
+    class FPGA_ShiftRegister(EnumEntry):
+        # Only accessible at constant indices
+        pass
 
 
-@extensible_enum
-class ScheduleType(aenum.AutoNumberEnum):
+class ScheduleType(ExtensibleEnum):
     """ Available map schedule types in the SDFG. """
     # TODO: Address different targets w.r.t. sequential
     # TODO: Add per-type properties for scope nodes. Consider TargetType enum
     #       and a MapScheduler class
 
-    Default = ()  #: Scope-default parallel schedule
-    Sequential = ()  #: Sequential code (single-thread)
-    MPI = ()  #: MPI processes
-    CPU_Multicore = ()  #: OpenMP
-    Unrolled = ()  #: Unrolled code
+    class Default(EnumEntry):
+        # Scope-default parallel schedule
+        pass
+    class Sequential(EnumEntry):
+        # Sequential code (single-thread)
+        pass
 
-    #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
-    GPU_Default = ()
-    GPU_Device = ()  #: Kernel
-    GPU_ThreadBlock = ()  #: Thread-block code
-    GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
-    GPU_Persistent = ()
-    FPGA_Device = ()
+    class MPI(EnumEntry):
+        # MPI processes
+        pass
+
+    class CPU_Multicore(EnumEntry):
+        # OpenMP
+        pass
+
+    class Unrolled(EnumEntry):
+        # Unrolled code
+        pass
+
+    class GPU_Default(EnumEntry):
+        # Default scope schedule for GPU code. Specializes to schedule 
+        # GPU_Device and GPU_Global during inference.
+        pass
+
+    class GPU_Device(EnumEntry):
+        # Kernel
+        pass
+
+    class GPU_ThreadBlock(EnumEntry):
+        # Thread-block code
+        pass
+
+    class GPU_ThreadBlock_Dynamic(EnumEntry):
+        # Allows rescheduling work within a block
+        pass
+
+    class GPU_Persistent(EnumEntry):
+        pass
+
+    class FPGA_Device(EnumEntry):
+        pass
 
 
 # A subset of GPU schedule types
@@ -67,77 +205,154 @@ GPU_SCHEDULES = [
 ]
 
 
-class ReductionType(aenum.AutoNumberEnum):
+class ReductionType(ExtensibleEnum):
     """ Reduction types natively supported by the SDFG compiler. """
 
-    Custom = ()  #: Defined by an arbitrary lambda function
-    Min = ()  #: Minimum value
-    Max = ()  #: Maximum value
-    Sum = ()  #: Sum
-    Product = ()  #: Product
-    Logical_And = ()  #: Logical AND (&&)
-    Bitwise_And = ()  #: Bitwise AND (&)
-    Logical_Or = ()  #: Logical OR (||)
-    Bitwise_Or = ()  #: Bitwise OR (|)
-    Logical_Xor = ()  #: Logical XOR (!=)
-    Bitwise_Xor = ()  #: Bitwise XOR (^)
-    Min_Location = ()  #: Minimum value and its location
-    Max_Location = ()  #: Maximum value and its location
-    Exchange = ()  #: Set new value, return old value
+    class Custom(EnumEntry):
+        # Defined by an arbitrary lambda function
+        pass
+
+    class Min(EnumEntry):
+        # Minimum value
+        pass
+
+    class Max(EnumEntry):
+        # Maximum value
+        pass
+
+    class Sum(EnumEntry):
+        # Sum
+        pass
+
+    class Product(EnumEntry):
+        # Product
+        pass
+
+    class Logical_And(EnumEntry):
+        # Logical AND (&&)
+        pass
+
+    class Bitwise_And(EnumEntry):
+        # Bitwise AND (&)
+        pass
+
+    class Logical_Or(EnumEntry):
+        # Logical OR (||)
+        pass
+
+    class Bitwise_Or(EnumEntry):
+        # Bitwise OR (|)
+        pass
+
+    class Logical_Xor(EnumEntry):
+        # Logical XOR (!=)
+        pass
+
+    class Bitwise_Xor(EnumEntry):
+        # Bitwise XOR (^)
+        pass
+
+    class Min_Location(EnumEntry):
+        # Minimum value and its location
+        pass
+
+    class Max_Location(EnumEntry):
+        # Maximum value and its location
+        pass
+
+    class Exchange(EnumEntry):
+        # Set new value, return old value
+        pass
+
 
     # Only supported in OpenMP
-    Sub = ()  #: Subtraction (only supported in OpenMP)
-    Div = ()  #: Division (only supported in OpenMP)
+    class Sub(EnumEntry):
+        # Subtraction (only supported in OpenMP)
+        pass
+
+    class Div(EnumEntry):
+        # Division (only supported in OpenMP)
+        pass
 
 
-@extensible_enum
-class AllocationLifetime(aenum.AutoNumberEnum):
+
+class AllocationLifetime(ExtensibleEnum):
     """ Options for allocation span (when to allocate/deallocate) of data. """
 
-    Scope = ()  #: Allocated/Deallocated on innermost scope start/end
-    State = ()  #: Allocated throughout the containing state
-    SDFG = ()  #: Allocated throughout the innermost SDFG (possibly nested)
-    Global = ()  #: Allocated throughout the entire program (outer SDFG)
-    Persistent = ()  #: Allocated throughout multiple invocations (init/exit)
+    class Scope(EnumEntry):
+        # Allocated/Deallocated on innermost scope start/end
+        pass
+
+    class State(EnumEntry):
+        # Allocated throughout the containing state
+        pass
+
+    class SDFG(EnumEntry):
+        # Allocated throughout the innermost SDFG (possibly nested)
+        pass
+
+    class Global(EnumEntry):
+        # Allocated throughout the entire program (outer SDFG)
+        pass
+
+    class Persistent(EnumEntry):
+        # Allocated throughout multiple invocations (init/exit)
+        pass
 
 
-@extensible_enum
-class Language(aenum.AutoNumberEnum):
+class Language(ExtensibleEnum):
     """ Available programming languages for SDFG tasklets. """
 
-    Python = ()
-    CPP = ()
-    OpenCL = ()
-    SystemVerilog = ()
+    class Python(EnumEntry):
+        pass
+
+    class CPP(EnumEntry):
+        pass
+
+    class OpenCL(EnumEntry):
+        pass
+
+    class SystemVerilog(EnumEntry):
+        pass
 
 
-class AccessType(aenum.AutoNumberEnum):
+class AccessType(ExtensibleEnum):
     """ Types of access to an `AccessNode`. """
 
-    ReadOnly = ()
-    WriteOnly = ()
-    ReadWrite = ()
+    class ReadOnly(EnumEntry):
+        pass
+
+    class WriteOnly(EnumEntry):
+        pass
+
+    class ReadWrite(EnumEntry):
+        pass
 
 
-@extensible_enum
-class InstrumentationType(aenum.AutoNumberEnum):
+class InstrumentationType(ExtensibleEnum):
     """ Types of instrumentation providers.
         @note: Might be determined automatically in future versions.
     """
 
-    No_Instrumentation = ()
-    Timer = ()
-    PAPI_Counters = ()
-    GPU_Events = ()
+    class No_Instrumentation(EnumEntry):
+        pass
+
+    class Timer(EnumEntry):
+        pass
+
+    class PAPI_Counters(EnumEntry):
+        pass
+
+    class GPU_Events(EnumEntry):
+        pass
 
 
-@extensible_enum
-class TilingType(aenum.AutoNumberEnum):
+class TilingType(ExtensibleEnum):
     """ Available tiling types in a `StripMining` transformation. """
 
-    Normal = ()
-    CeilRange = ()
-    NumberOfTiles = ()
+    class Normal(EnumEntry): pass
+    class CeilRange(EnumEntry): pass
+    class NumberOfTiles(EnumEntry): pass
 
 
 # Maps from ScheduleType to default StorageType
@@ -955,8 +1170,7 @@ complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 
 
-@extensible_enum
-class Typeclasses(aenum.AutoNumberEnum):
+class Typeclasses(ExtensibleEnum):
     bool = bool
     bool_ = bool_
     int8 = int8

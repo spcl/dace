@@ -56,6 +56,7 @@ def autoregister_params(**params):
     return lambda cls: autoregister(cls, **params)
 
 
+'''
 def extensible_enum(cls: Type):
     """
     Decorator that adds a function called ``register`` to an enumeration,
@@ -73,3 +74,4 @@ def extensible_enum(cls: Type):
 
     cls.register = lambda name, *args: _extend_enum(cls, name, *args)
     return cls
+    '''

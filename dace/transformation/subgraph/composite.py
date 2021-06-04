@@ -13,7 +13,7 @@ from dace.transformation.subgraph.stencil_tiling import StencilTiling
 import dace.transformation.subgraph.helpers as helpers
 
 from dace import dtypes, registry, symbolic, subsets, data
-from dace.properties import make_properties, Property, ShapeProperty
+from dace.properties import EnumProperty, make_properties, Property, ShapeProperty
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
 
@@ -37,13 +37,12 @@ class CompositeFusion(transformation.SubgraphTransformation):
                             dtype = bool,
                             default = False)
 
-    transient_allocation = Property(
+    transient_allocation = EnumProperty(
         desc="Storage Location to push transients to that are "
              "fully contained within the subgraph.",
-        dtype=dtypes.StorageType,
-        choices=dtypes.StorageType, 
-        from_string=lambda x: dtypes.StorageType[x],
-        default=dtypes.StorageType.Default)
+        enum_type=dtypes.StorageType,
+        default=dtypes.StorageType.Default
+    )
 
     schedule_innermaps = Property(desc="Schedule of inner fused maps",
                                   dtype=dtypes.ScheduleType,

@@ -117,12 +117,11 @@ class StreamingMemory(xf.Transformation):
         default=1,
         desc='Set buffer size for the newly-created stream')
 
-    storage = properties.Property(
-        dtype=dtypes.StorageType,
+    storage = properties.EnumProperty(
+        enum_type=dtypes.StorageType,
         desc='Set storage type for the newly-created stream',
-        choices=dtypes.StorageType,
-        default=dtypes.StorageType.Default,
-        from_string=lambda x: dtypes.StorageType[x])
+        default=dtypes.StorageType.Default
+    )
 
     @staticmethod
     def expressions() -> List[gr.SubgraphView]:
@@ -392,12 +391,11 @@ class StreamingComposition(xf.Transformation):
         default=1,
         desc='Set buffer size for the newly-created stream')
 
-    storage = properties.Property(
-        dtype=dtypes.StorageType,
+    storage = properties.EnumProperty(
+        enum_type=dtypes.StorageType,
         desc='Set storage type for the newly-created stream',
-        choices=dtypes.StorageType,
-        default=dtypes.StorageType.Default,
-        from_string=lambda x: dtypes.StorageType[x])
+        default=dtypes.StorageType.Default
+    )
 
     @staticmethod
     def expressions() -> List[gr.SubgraphView]:

@@ -33,7 +33,7 @@ from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import validate_name
-from dace.properties import (ListProperty, make_properties, Property,
+from dace.properties import (EnumProperty, ListProperty, make_properties, Property,
                              CodeProperty, TransformationHistProperty,
                              SDFGReferenceProperty, DictProperty,
                              OrderedDictProperty, CodeBlock)
@@ -240,9 +240,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                            dtypes.typeclass,
                            desc="Global symbols for this SDFG")
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        enum_type=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation
+    )
 
     global_code = DictProperty(
         str,

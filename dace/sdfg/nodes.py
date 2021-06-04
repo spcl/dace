@@ -15,7 +15,7 @@ from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, CodeProperty, LambdaProperty,
                              RangeProperty, DebugInfoProperty, SetProperty,
                              make_properties, indirect_properties, DataProperty,
-                             SymbolicProperty, ListProperty,
+                             SymbolicProperty, ListProperty, EnumProperty,
                              SDFGReferenceProperty, DictProperty,
                              LibraryImplementationProperty, CodeBlock)
 from dace.frontend.operations import detect_reduction_type
@@ -222,9 +222,9 @@ class Node(object):
 class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
-    access = Property(choices=dtypes.AccessType,
-                      desc="Type of access to this array",
-                      default=dtypes.AccessType.ReadWrite)
+    access = EnumProperty(enum_type=dtypes.AccessType,
+                          desc="Type of access to this array",
+                          default=dtypes.AccessType.ReadWrite)
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
     debuginfo = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
@@ -340,9 +340,11 @@ class Tasklet(CodeNode):
         default=CodeBlock("", dtypes.Language.CPP))
     debuginfo = DebugInfoProperty()
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        enum_type=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation
+    )
 
     def __init__(self,
                  label,
@@ -472,25 +474,26 @@ class NestedSDFG(CodeNode):
 
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="SDFG schedule",
-                        allow_none=True,
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    schedule = EnumProperty(enum_type=dtypes.ScheduleType,
+                            desc="SDFG schedule",
+                            allow_none=True,
+                            default=dtypes.ScheduleType.Default)
     symbol_mapping = DictProperty(
         key_type=str,
         value_type=dace.symbolic.pystr_to_symbolic,
         desc="Mapping between internal symbols and their values, expressed as "
-        "symbolic expressions")
+        "symbolic expressions"
+    )
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(dtype=bool,
                             desc="Show this node/scope/state as collapsed",
                             default=False)
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        enum_type=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation
+    )
 
     no_inline = Property(
         dtype=bool,
@@ -772,11 +775,9 @@ class Map(object):
     params = ListProperty(element_type=str, desc="Mapped parameters")
     range = RangeProperty(desc="Ranges of map parameters",
                           default=sbs.Range([]))
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="Map schedule",
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    schedule = EnumProperty(enum_type=dtypes.ScheduleType,
+                            desc="Map schedule",
+                            default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
     collapse = Property(dtype=int,
                         default=1,
@@ -787,9 +788,11 @@ class Map(object):
                             desc="Show this node/scope/state as collapsed",
                             default=False)
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        enum_type=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation
+    )
 
     def __init__(self,
                  label,
@@ -979,11 +982,9 @@ class Consume(object):
     pe_index = Property(dtype=str, desc="Processing element identifier")
     num_pes = SymbolicProperty(desc="Number of processing elements", default=1)
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="Consume schedule",
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    schedule = EnumProperty(enum_type=dtypes.ScheduleType,
+                            desc="Consume schedule",
+                            default=dtypes.ScheduleType.Default)
     chunksize = Property(dtype=int,
                          desc="Maximal size of elements to consume at a time",
                          default=1)
@@ -992,9 +993,11 @@ class Consume(object):
                             desc="Show this node/scope/state as collapsed",
                             default=False)
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        enum_type=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation
+    )
 
     def as_map(self):
         """ Compatibility function that allows to view the consume as a map,
@@ -1185,13 +1188,12 @@ class LibraryNode(CodeNode):
         allow_none=True,
         desc=("Which implementation this library node will expand into."
               "Must match a key in the list of possible implementations."))
-    schedule = Property(
-        dtype=dtypes.ScheduleType,
+    schedule = EnumProperty(
+        enum_type=dtypes.ScheduleType,
         desc="If set, determines the default device mapping of "
         "the node upon expansion, if expanded to a nested SDFG.",
-        choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x],
-        default=dtypes.ScheduleType.Default)
+        default=dtypes.ScheduleType.Default
+    )
     debuginfo = DebugInfoProperty()
 
     def __init__(self, name, *args, **kwargs):
