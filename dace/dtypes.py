@@ -17,7 +17,7 @@ class DeviceType(aenum.AutoNumberEnum):
     CPU = ()  #: Multi-core CPU
     GPU = ()  #: GPU (AMD or NVIDIA)
     FPGA = ()  #: FPGA (Intel or Xilinx)
-
+    Snitch = ()
 
 @extensible_enum
 class StorageType(aenum.AutoNumberEnum):
@@ -34,7 +34,9 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_Local = ()  #: On-chip memory (bulk storage)
     FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
     FPGA_ShiftRegister = ()  #: Only accessible at constant indices
-
+    Snitch_TCDM = () #: Cluster-private memory
+    Snitch_L2 = () #: External memory
+    Snitch_SSR = () #: Memory accessed by SSR streamer
 
 @extensible_enum
 class ScheduleType(aenum.AutoNumberEnum):
@@ -56,6 +58,8 @@ class ScheduleType(aenum.AutoNumberEnum):
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
     FPGA_Device = ()
+    Snitch = ()
+    Snitch_Multicore = ()
 
 
 # A subset of GPU schedule types
@@ -169,6 +173,8 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
+    ScheduleType.Snitch: ScheduleType.Snitch,
+    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
 }
 
 # Translation of types to C types
