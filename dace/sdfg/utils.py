@@ -1057,6 +1057,11 @@ def parseHBMArray(arrayname : str, array : dt.Array) -> "dict[str, Any]":
             "numbank": numbank}
 
 def iterateMultibankArrays(arrayname : str, array : dt.Array):
+    """
+    Small helper function that iterates over the bank indices
+    if the provided array is spanned across multiple hbmbanks.
+    Otherwise just returns 0 once.
+    """
     if("hbmbank" in array.location):
         low, high, _ = array.location["hbmbank"][0]
         for i in range(high+1-low):
