@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
+from typing import Any, Tuple
 import dace
 from dace import registry
 from dace.sdfg.scope import ScopeSubgraphView
@@ -10,6 +11,52 @@ from dace.codegen.targets.cpp import sym2cpp
 from dace.codegen import cppunparse
 from itertools import product
 
+from dace.sdfg import replace, state as state
+
+def backup_replacement_fields(subgraph: 'dace.sdfg.state.StateGraphView') -> Tuple:
+    """
+    Creates mappings from all nodes/edges to all the fields that are affected 
+    by replace, before overwritting all those fields with deepcopies of themselves.
+    The old fields can be restored using use_replacement_fields_backup
+    (Maybe this is usefull to someone else and should go to replace?)
+    """
+    oldproperties = {}
+    oldedgedata = {}
+    oldedgesubsets = {}
+    oldedgevolumes = {}
+
+    for node in subgraph.nodes():
+        for propclass, propval in node.properties():
+            pname = propclass.attr_name
+            oldproperties[node] = (pname, propval)
+            setattr(node, pname, deepcopy(propval))
+    for edge in subgraph.edges():
+        oldedgedata[edge] = edge.data.data
+        edge.data.data = deepcopy(edge.data.data)
+        oldedgesubsets[edge] = (edge.data.subset, edge.data.other_subset)
+        edge.data.subset = deepcopy(edge.data.subset)
+        edge.data.other_subset = deepcopy(edge.data.other_subset)
+        oldedgevolumes[edge] = edge.data.volume
+        edge.data.volume = deepcopy(edge.data.volume)
+    return (oldproperties, oldedgedata, oldedgesubsets, oldedgevolumes)
+
+def use_replacement_fields_backup(subgraph : "dace.sdfg.state.StateGraphView",
+                            backup : "Tuple"):
+    """
+    Restores values saved using backup_replacement_fields.
+    """
+    oldproperties, oldedgedata, oldedgesubsets, oldedgevolumes = backup
+    for node in oldproperties:
+        pname, v = oldproperties[node]
+        setattr(node, pname, v)
+    for edge, data in oldedgedata.items():
+        edge.data.data = data
+    for edge, subsets in oldedgesubsets.items():
+        sub, osub = subsets
+        edge.subset = sub
+        edge.other_subset = osub
+    for edge, volume in oldedgevolumes.items():
+        edge.data.volume = volume
 
 @registry.autoregister_params(name='unroll')
 class UnrollCodeGen(TargetCodeGenerator):
@@ -44,13 +91,15 @@ class UnrollCodeGen(TargetCodeGenerator):
             index_list.append(l)
 
         for indices in product(*index_list):
+            backup = backup_replacement_fields(scope)
             callsite_stream.write('{')
-            subs_scope = deepcopy(scope)
             for param, index in zip(entry_node.map.params, indices):
                 #callsite_stream.write(f'auto {param} = {sym2cpp(index)};')
-                subs_scope.replace(str(param), str(index))
-            self._dispatcher.dispatch_subgraph(sdfg, subs_scope, state_id,
+                scope.replace(str(param), str(index))
+                
+            self._dispatcher.dispatch_subgraph(sdfg, scope, state_id,
                                             function_stream, callsite_stream,
                                             skip_entry_node=True,
                                             skip_exit_node=True)
             callsite_stream.write('}')
+            use_replacement_fields_backup(scope, backup)
