@@ -235,8 +235,9 @@ def mlir_tasklet_double_return(A: dace.uint32[4], B: dace.uint32[3], C: dace.uin
         module  {
             func @mlir_entry(%a: i32, %b: i32) -> (i32, i32) {
                 %0 = addi %b, %a : i32
-                %1 = addi %0, constant 1 : i32
-                return %0, %1 : i32, i32
+                %1 = constant 1 : i32
+                %2 = addi %0, %1 : i32
+                return %0, %2 : i32, i32
             }
         }
         """
@@ -267,3 +268,21 @@ if __name__ == "__main__":
     test_mlir_tasklet_float()
     test_mlir_tasklet_double_return()
     
+
+'''
+#include <iostream>
+
+struct ret {
+    long long c;
+    long long d;
+};
+
+extern "C" ret mlir_entry(int a, int b);
+
+int main() {
+    ret r = mlir_entry(12, 5); // (17, 29)
+    std::cout << "Hello Main! " << r.c
+    << ", " << r.d 
+    << std::endl;
+}
+'''
