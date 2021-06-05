@@ -6,7 +6,7 @@ import re
 import numpy as np
 
 import dace
-from dace import data as dt, registry, dtypes
+from dace import data as dt, registry, dtypes, subsets
 from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import nodes, utils
@@ -170,7 +170,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         else:
             are_assigned = False
         bank_assignment_code = []
-        #HBMJAN -> Create Interface Assignment
         for name, _ in self._host_codes:
             # Only iterate over assignments if any exist
             if are_assigned:
@@ -258,9 +257,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                              with_vectorization,
                              interface_id=None):
         if isinstance(data, dt.Array):
-            var_name = cpp.array_interface_variable(var_name, is_output, None)
-            if interface_id is not None:
-                var_name = var_name = f"{var_name}_{interface_id}"
+            var_name = cpp.array_interface_variable(var_name, is_output, None, 0, 
+                interface_id, 0)
             if with_vectorization:
                 dtype = data.dtype
             else:
@@ -455,16 +453,31 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         self._frame.generate_fileheader(sdfg, module_stream, 'xilinx_device')
         module_stream.write("\n", sdfg)
 
+
+        argname_to_bank_assignment = {}
         # Build kernel signature
         kernel_args = []
         array_args = []
         for is_output, dataname, data, interface in parameters:
-            kernel_arg = self.make_kernel_argument(data, dataname, is_output,
-                                                   True, interface)
-            if kernel_arg:
-                kernel_args.append(kernel_arg)
-                if isinstance(data, dt.Array):
-                    array_args.append((kernel_arg, dataname))
+            if isinstance(data, dt.Array):
+                memorybank = bank_assignments[dataname]
+                if(isinstance(memorybank[1], subsets.Range)):
+                    lowest_bank_index = memorybank[1][0][0]
+                else:
+                    lowest_bank_index = memorybank[1]
+                for bank in utils.iterateMultibankArrays(dataname, data):
+                    kernel_arg = self.make_kernel_argument(data, cpp.ptr(dataname, data, bank)
+                                            ,is_output, True, interface)
+                    if kernel_arg:
+                        kernel_args.append(kernel_arg)
+                        array_args.append((kernel_arg, dataname))
+                        argname_to_bank_assignment[kernel_arg] = (memorybank[0], lowest_bank_index + bank)
+            else:
+                kernel_arg = self.make_kernel_argument(data, dataname
+                                            ,is_output, True, interface)
+                if kernel_arg:
+                    kernel_args.append(kernel_arg)
+            
 
         stream_args = []
         for is_output, dataname, data, interface in external_streams:
@@ -480,7 +493,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             state_id)
 
         # Insert interface pragmas
-        #HBMJAN -> Interface pragmas, probably good as is
         num_mapped_args = 0
         for arg, dataname in array_args:
             var_name = re.findall(r"\w+", arg)[-1]
@@ -491,7 +503,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     "offset=slave bundle={}".format(var_name, interface_name),)
                 # Map this interface to the corresponding location
                 # specification to be passed to the Xilinx compiler
-                memorybank = bank_assignments[dataname]
+                memorybank = argname_to_bank_assignment[arg]
                 self._bank_assignments[(kernel_name, interface_name)] = memorybank
                 num_mapped_args += 1
 
@@ -553,17 +565,19 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args_module = []
         for is_output, pname, p, interface_id in parameters:
             if isinstance(p, dt.Array):
-                arr_name = cpp.array_interface_variable(pname, is_output, None)
-                # Add interface ID to called module, but not to the module
-                # arguments
-                argname = arr_name
-                if interface_id is not None:
-                    argname = f"{arr_name}_{interface_id}"
+                for bank in utils.iterateMultibankArrays(pname, p):
+                    arr_name = cpp.array_interface_variable(cpp.ptr(pname, p, bank),
+                                                is_output, None)
+                    # Add interface ID to called module, but not to the module
+                    # arguments
+                    argname = cpp.array_interface_variable(cpp.ptr(pname, p, bank),
+                                                is_output, None, interface_id=interface_id,
+                                                accessed_subset=bank)
 
-                kernel_args_call.append(argname)
-                dtype = p.dtype
-                kernel_args_module.append("{} {}*{}".format(
-                    dtype.ctype, "const " if not is_output else "", arr_name))
+                    kernel_args_call.append(argname)
+                    dtype = p.dtype
+                    kernel_args_module.append("{} {}*{}".format(
+                        dtype.ctype, "const " if not is_output else "", arr_name))
             else:
                 if isinstance(p, dt.Stream):
                     kernel_args_call.append(
@@ -815,11 +829,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args = []
         for is_output, name, arg, if_id in parameters:
             if isinstance(arg, dt.Array):
-                argname = cpp.array_interface_variable(name, is_output, None)
-                if if_id is not None:
-                    argname = f"{argname}_{if_id}"
-
-                kernel_args.append(arg.as_arg(with_types=True, name=argname))
+                for bank in utils.iterateMultibankArrays(name, arg):
+                    argname = cpp.array_interface_variable(cpp.ptr(name, arg, bank), is_output, None, if_id, bank)
+                    kernel_args.append(arg.as_arg(with_types=True, name=argname))
             else:
                 kernel_args.append(arg.as_arg(with_types=True, name=name))
 
@@ -876,7 +888,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                     interface_name,
                     conntype=node.in_connectors[vconn],
                     is_write=False)
-                memlet_references.append(interface_ref)
+                memlet_references.extend(interface_ref)
             if vconn in inout:
                 continue
             ref = cpp.emit_memlet_reference(self._dispatcher,
@@ -886,7 +898,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                             conntype=node.in_connectors[vconn],
                                             is_write=False)
             if not is_memory_interface:
-                memlet_references.append(ref)
+                memlet_references.extend(ref)
 
         for _, uconn, _, _, out_memlet in sorted(
                 state.out_edges(node), key=lambda e: e.src_conn or ""):
@@ -906,7 +918,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                 self._dispatcher.defined_vars.add(
                     interface_name, DefinedType.Pointer,
                     node.out_connectors[uconn].ctype)
-                memlet_references.append(
+                memlet_references.extend(
                     cpp.emit_memlet_reference(
                         self._dispatcher,
                         sdfg,
@@ -915,7 +927,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                         conntype=node.out_connectors[uconn],
                         is_write=True))
             else:
-                memlet_references.append(ref)
+                memlet_references.extend(ref)
 
         return memlet_references
 
