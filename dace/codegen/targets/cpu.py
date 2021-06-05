@@ -213,7 +213,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         dtypes.pointer(
                                                             nodedesc.dtype),
                                                         ancestor=0,
-                                                        is_write=is_write)
+                                                        is_write=is_write)[0]
         if declaration_stream == allocation_stream:
             declaration_stream.write(f'{atype} {aname} = {value};', sdfg,
                                      state_id, node)
@@ -1139,7 +1139,11 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet_type = conntype.dtype.ctype
 
         desc = sdfg.arrays[memlet.data]
-        ptr = cpp.ptr(memlet.data, desc)
+        try:
+            ptr = cpp.ptr(memlet.data, desc, memlet.subset)
+        except ValueError:
+            raise cgx.CodegenError("Only memlets accessing a single HBM-bank may be "
+                                    f"attached to a tasklet. See {str(memlet)}")
 
         var_type, ctypedef = self._dispatcher.defined_vars.get(memlet.data)
         result = ''
@@ -1155,7 +1159,9 @@ class CPUCodeGen(TargetCodeGenerator):
             # Views have already been renamed
             if not isinstance(desc, data.View):
                 ptr = cpp.array_interface_variable(ptr, output,
-                                                   self._dispatcher)
+                                    self._dispatcher if "hbmbank" not in desc.location
+                                    else None)
+
         if expr != _ptr:
             expr = '%s[%s]' % (ptr, expr)
         # If there is a type mismatch, cast pointer
@@ -1541,7 +1547,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                           sdfg,
                                           in_memlet,
                                           vconn,
-                                          conntype=node.in_connectors[vconn]))
+                                          conntype=node.in_connectors[vconn])[0])
 
         for _, uconn, _, _, out_memlet in sorted(
                 state.out_edges(node), key=lambda e: e.src_conn or ''):
@@ -1552,7 +1558,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         sdfg,
                         out_memlet,
                         uconn,
-                        conntype=node.out_connectors[uconn]))
+                        conntype=node.out_connectors[uconn])[0])
         return memlet_references
 
     def _generate_NestedSDFG(
