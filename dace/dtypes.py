@@ -109,6 +109,7 @@ class Language(aenum.AutoNumberEnum):
     CPP = ()
     OpenCL = ()
     SystemVerilog = ()
+    MLIR = ()
 
 
 class AccessType(aenum.AutoNumberEnum):
