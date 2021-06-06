@@ -85,7 +85,7 @@ def test_indirect_load_explicit():
 
     code = get_code(program, 'i')
 
-    assert 'svld1_gather_index(__pg_i, a, b)' in code
+    assert 'svld1_gather_index' in code
 
 
 def test_indirect_load_implicit():

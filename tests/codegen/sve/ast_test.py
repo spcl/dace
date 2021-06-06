@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.codegen.targets.sve.util import NotSupportedError
 import dace
+import dace.dtypes
 from tests.codegen.sve.common import get_code
 import pytest
 from dace.codegen.targets.sve.type_compatibility import IncompatibleTypeError
@@ -22,7 +23,7 @@ def test_assign_scalar():
 
     # Scalar must be duplicated and brought into right type
     assert 'svdup_f32' in code
-    assert '(dace::float32)' in code
+    assert f'({dace.float32})' in code
 
 
 def test_assign_pointer():
@@ -82,12 +83,13 @@ def test_assign_new_variable():
                     c = a
                 else:
                     c = 0
+                b = a
 
     code = get_code(program, 'i')
 
     # c will be once defined as vector, once as scalar (locally)
     assert 'svfloat64_t c = ' in code
-    assert 'dace::int64 c = ' in code
+    assert f'{dace.int64} c = ' in code
 
 
 def test_math_functions():

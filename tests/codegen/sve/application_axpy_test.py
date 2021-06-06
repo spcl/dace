@@ -40,7 +40,7 @@ def test_axpy():
     Y_regression[:] = Y[:]
 
     sdfg = axpy.to_sdfg()
-    vectorize(sdfg, 'i', ignored_conns=['in_A'])
+    vectorize(sdfg, 'i')
 
     if common.SHOULD_EXECUTE_SVE:
         sdfg(A=A, X=X, Y=Y, N=N)

@@ -41,7 +41,7 @@ def test_filter():
     outsize[0] = 0
 
     sdfg = pbf.to_sdfg()
-    vectorize(sdfg, 'i', ignored_conns=['r'])
+    vectorize(sdfg, 'i')
 
     if common.SHOULD_EXECUTE_SVE:
         sdfg(A=A, B=B, outsz=outsize, ratio=ratio, N=N)
