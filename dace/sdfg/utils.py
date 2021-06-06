@@ -1023,7 +1023,7 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
 
     return result
 
-def parseHBMArray(arrayname : str, array : dt.Array) -> "dict[str, Any]":
+def parse_HBM_array(arrayname : str, array : dt.Array) -> "dict[str, Any]":
     """
     Parses HBM properties of an array. 
     Returns none if hbmbank is not present as property in location.
@@ -1056,7 +1056,7 @@ def parseHBMArray(arrayname : str, array : dt.Array) -> "dict[str, Any]":
     return {"ndim" : ndim, "shape" : array.shape, "lowbank" : low,
             "numbank": numbank}
 
-def iterateMultibankArrays(arrayname : str, array : dt.Array):
+def iterate_multibank_arrays(arrayname : str, array : dt.Array):
     """
     Small helper function that iterates over the bank indices
     if the provided array is spanned across multiple hbmbanks.
@@ -1068,3 +1068,21 @@ def iterateMultibankArrays(arrayname : str, array : dt.Array):
             yield i
     else:
         yield 0 
+
+def modify_subset_magic(array : dt.Data, subset : sbs.Subset, remove : bool =False):
+    """
+    Applies changes to magic indices from a subset if array is a HBM-array, otherwise
+    returns subset. subset is deepcopied before any modification to it is done.
+    :param remove: If True magic indices are removed. If false they are set to zero.
+    """
+    if(not isinstance(array, dt.Array)):
+        return subset
+    if("hbmbank" in array.location):
+        cps = copy.deepcopy(subset)
+        if remove:
+            cps.pop([0])
+        else:
+            cps[0] = (0, 0, 1)
+    else:
+        cps = subset
+    return cps

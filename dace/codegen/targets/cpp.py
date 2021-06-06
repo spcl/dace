@@ -22,7 +22,7 @@ from dace.codegen.dispatcher import DefinedType
 from dace.config import Config
 from dace.frontend import operations
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.sdfg import nodes, graph as gr
+from dace.sdfg import nodes, graph as gr, utils
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 
@@ -577,11 +577,13 @@ def cpp_offset_expr(d: data.Data,
         :return: A string in C++ syntax with the correct offset
     """
     # Offset according to parameters, then offset according to array
+    nomagicsubset = utils.modify_subset_magic(d, subset_in, False)
+
     if offset is not None:
-        subset = subset_in.offset_new(offset, False)
+        subset = nomagicsubset.offset_new(offset, False)
         subset.offset(d.offset, False)
     else:
-        subset = subset_in.offset_new(d.offset, False)
+        subset = nomagicsubset.offset_new(d.offset, False)
 
     # Obtain start range from offsetted subset
     indices = indices or ([0] * len(d.strides))
