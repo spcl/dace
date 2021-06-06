@@ -237,11 +237,11 @@ def test_kernel_LN(flatten):
     print("OK")
 
 if __name__ == "__main__":
-    # test_PEs_inside_component_0()
-
-    # test_PEs_inside_component_1()
-    # test_PEs_inside_component_2()
-    test_PEs_LNs_inside_component()
+    test_PEs_inside_component_0()
+    #
+    test_PEs_inside_component_1()
+    test_PEs_inside_component_2()
+    # test_PEs_LNs_inside_component()
 
     # TODO: for this, we should see if we are able to find cuts or not
     # If this is inlined we have 2 possibilities:
@@ -254,7 +254,7 @@ if __name__ == "__main__":
     # anche se eper questo particolare caso ci possiamo girare intorno
     # Un altro probelma che c'e' qui e' il seguente: quando andiamo a leggere la mappa B, per via
     # dei dfs_edges mi segue prima il path dal source node, e quindi mi va ad usare un nuovo kernel id
-    # test_kernel_LN(True)
+    test_kernel_LN(True)
 
 
     #TODO:
