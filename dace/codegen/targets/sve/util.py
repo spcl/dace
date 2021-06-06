@@ -11,9 +11,52 @@ import dace.codegen.targets.sve.infer as infer
 import astunparse
 import collections
 import itertools
+import numpy
+
+
+# Translation of types to C++ types
+_SVE_CTYPES = {
+    None: "void",
+    int: "dace::int32",
+    float: "dace::float64",
+    complex: "dace::complex64",
+    bool: "dace::bool_",
+    numpy.bool: "dace::bool_",
+    numpy.bool_: "dace::bool_",
+    numpy.int8: "dace::int8",
+    numpy.int16: "dace::int16",
+    numpy.int32: "dace::int32",
+    numpy.int64: "dace::int64",
+    numpy.uint8: "dace::uint8",
+    numpy.uint16: "dace::uint16",
+    numpy.uint32: "dace::uint32",
+    numpy.uint64: "dace::uint64",
+    numpy.float16: "dace::float16",
+    numpy.float32: "dace::float32",
+    numpy.float64: "dace::float64",
+    numpy.complex64: "dace::complex64",
+    numpy.complex128: "dace::complex128",
+}
+
+# Used for patching dtypes._CTYPES due to `long long` (>=64 bit) issue in SVE
+original_ctypes = None
+
+
+def patch_ctypes():
+    global original_ctypes
+    if original_ctypes is None:
+        original_ctypes = dace.dtypes._CTYPES
+    dace.dtypes._CTYPES = _SVE_CTYPES
+
+
+def restore_ctypes():
+    assert original_ctypes
+    dace.dtypes._CTYPES = original_ctypes
+
 
 # Used as the unknown SVE vector size in the graph
 SVE_LEN = dace.symbol('__dace_sve_len')
+
 
 class NotSupportedError(Exception):
     def __init__(self, message):
@@ -21,6 +64,17 @@ class NotSupportedError(Exception):
 
 
 REGISTER_BYTE_SIZE = '__SVE_REGISTER_BYTES'
+
+
+def long_fix(dtype: dace.typeclass) -> dace.typeclass:
+    import copy
+    import numpy as np
+    cpy = copy.copy(dtype)
+    if cpy.type == np.int64:
+        cpy.ctype = 'int64_t'
+    elif cpy.type == np.uint64:
+        cpy.ctype = 'uint64_t'
+    return cpy
 
 
 def instr(name: str,
@@ -164,14 +218,18 @@ FUSED_OPERATION_TO_SVE = {
     '__svmls': 'svmls'
 }
 
+
 def get_internal_symbols() -> dict:
     res = {}
     for func, type in itertools.product(FUSED_OPERATION_TO_SVE, TYPE_TO_SVE_SUFFIX):
-        res[f'{func}_{TYPE_TO_SVE_SUFFIX[type]}'] = dtypes.vector(type if isinstance(type, dtypes.typeclass) else dtypes.typeclass(type), -1)
+        res[f'{func}_{TYPE_TO_SVE_SUFFIX[type.type if isinstance(type, dace.dtypes.typeclass) else type]}'] = dtypes.vector(
+            type if isinstance(type, dtypes.typeclass) else dtypes.typeclass(type), -1)
     return res
+
 
 def is_sve_internal(name: str) -> bool:
     return name.startswith('__sv')
+
 
 def internal_to_external(name: str) -> tuple:
     und = name.rfind('_')
@@ -180,7 +238,7 @@ def internal_to_external(name: str) -> tuple:
     if meth not in FUSED_OPERATION_TO_SVE:
         raise NotSupportedError('Unknown internal function')
     return (FUSED_OPERATION_TO_SVE[meth] + '_' + ext, SVE_SUFFIX_TO_TYPE[ext])
-    
+
 
 def get_base_type(type: dace.typeclass) -> dace.typeclass:
     """ Returns the underlying type for any dtype. """
