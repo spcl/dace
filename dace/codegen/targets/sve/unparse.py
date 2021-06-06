@@ -3,6 +3,7 @@
     AST to SVE: This module is responsible for converting an AST into SVE code.
 """
 
+from dace.frontend.python.wrappers import stream
 import dace
 import ast
 import astunparse
@@ -17,6 +18,7 @@ from dace.codegen.targets.sve.type_compatibility import assert_type_compatibilit
 import copy
 import collections
 import itertools
+import numpy as np
 
 class SVEUnparser(cppunparse.CPPUnparser):
     def __init__(self,
@@ -94,7 +96,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         return (left, right)
 
-    def dispatch_expect(self, tree: ast.AST, expect: dtypes.typeclass):
+    def dispatch_expect(self, tree: ast.AST, expect: dtypes.typeclass, in_sve_instr: bool = False):
         inf = self.infer(tree)[0]
 
         # Sanity check
@@ -106,7 +108,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
             # Unparsing a vector
             if isinstance(expect, dtypes.vector):
                 # A vector is expected
-                if inf.vtype == expect.vtype:
+                if inf.vtype.type == expect.vtype.type:
                     # No cast required
                     self.dispatch(tree)
                 else:
@@ -121,8 +123,12 @@ class SVEUnparser(cppunparse.CPPUnparser):
             # Unparsing a pointer
             if isinstance(expect, dtypes.pointer):
                 # Expecting a pointer
-                if inf.base_type == expect.base_type:
-                    # No cast required
+                if inf.base_type.type == expect.base_type.type:
+                    # No cast required, expect for `long long` fix
+                    if expect.base_type.type == np.int64:
+                        self.write('(int_64_t*) ')
+                    if expect.base_type.type == np.uint64:
+                        self.write('(uint_64_t*) ')
                     self.dispatch(tree)
                 else:
                     raise util.NotSupportedError('Inconsistent pointer types')
@@ -142,15 +148,21 @@ class SVEUnparser(cppunparse.CPPUnparser):
                 raise util.NotSupportedError(
                     'Given a scalar, expected a pointer')
             else:
-                # Expecting a scalar: cast if possible
-                if inf.type == expect.type:
-                    # No cast required
-                    self.dispatch(tree)
-                else:
-                    # Cast in C notation
-                    # TODO: Add suffixes if only a number is present
-                    self.write(f'({expect.ctype}) ')
-                    self.dispatch(tree)
+                # Expecting a scalar: cast if needed
+                cast_ctype = None
+                if inf.type != expect.type:
+                    cast_ctype = expect.ctype
+
+                # Special casting for `long long`
+                if expect.type == np.int64:
+                    cast_ctype = 'int64_t'
+                elif expect.type == np.uint64:
+                    cast_ctype = 'uint64_t'
+
+                if cast_ctype:
+                    self.write(f'({cast_ctype}) ')
+
+                self.dispatch(tree)
 
     def generate_case_predicate(self, t: ast.If, acc_pred: str, id: int) -> str:
         test_pred = f'__pg_test_{self.if_depth}_{id}'
@@ -237,8 +249,10 @@ class SVEUnparser(cppunparse.CPPUnparser):
         self.enter()
         self.fill('\n// === Stream push ===')
 
+        stream_type = util.long_fix(stream_type)
+
         # Create a temporary array on the heap, where we will copy the SVE register contents to
-        self.fill('{} __tmp[{} / {}];'.format(stream_type.ctype,
+        self.fill('{} __tmp[{} / {}];'.format(stream_type,
                                               util.REGISTER_BYTE_SIZE,
                                               stream_type.bytes))
 
@@ -256,8 +270,15 @@ class SVEUnparser(cppunparse.CPPUnparser):
         self.dispatch_expect(t.value, dtypes.vector(stream_type, -1))
         self.write('));')
 
+        ptr_cast = ''
+        # Special casting for int64_t back to `long long`
+        if stream_type.type == np.int64:
+            ptr_cast = '(long long*) '
+        elif stream_type.type == np.uint64:
+            ptr_cast = '(unsigned long long*) '
+
         # Push the temporary array onto the stream using DaCe's push
-        self.fill(f'{target_stream[0]}.push(&__tmp[0], __cnt);')
+        self.fill(f'{target_stream[0]}.push(&__tmp[0], {ptr_cast}__cnt);')
         self.leave()
 
     def _Assign(self, t):
@@ -274,7 +295,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         lhs_type, rhs_type = self.infer(target, t.value)
 
         if rhs_type is None:
-            raise NotImplementedError('Can not infer RHS of assignment')
+            raise NotImplementedError(f'Can not infer RHS of assignment ({astunparse.unparse(t.value)})')
 
         is_new_variable = False
 
@@ -531,7 +552,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         if isinstance(type, dtypes.pointer) and isinstance(slice, dtypes.vector):
             # Indirect load
             self.write(f'svld1_gather_index({self.pred_name}, ')
-            self.dispatch(t.value)
+            self.dispatch_expect(t.value, type)
             self.write(', ')
             self.dispatch(t.slice)
             self.write(')')
