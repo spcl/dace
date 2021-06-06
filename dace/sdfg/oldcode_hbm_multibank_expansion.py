@@ -130,7 +130,7 @@ def findAndParseHBMMultibank(sdfg : sd.SDFG) -> "dict[(str, sd.SDFG), dict[str, 
     handledArrays = {}  #(oldarrayname, sdfg) -> 
         #{ndim -> int, splitcount->int, splitaxes->[int]}
     for currentsdfg, arrayname, array in arrays:
-        collected = parseHBMArray(arrayname, array)
+        collected = parse_HBM_array(arrayname, array)
         if(collected == None or collected['numbank'] == 1):
             continue
         handledArrays[(arrayname, currentsdfg)] = collected
@@ -250,7 +250,7 @@ def recursive_splice_hbmmemlettree(state : statenamespace.SDFGState,
 def getHBMBankOffset(refInfo : "dict[str, Any]", bank : int) -> "list[str]":
     """
     Returns the offset of a bank in a hbm multibankarray
-    :param refInfo: A dict containing info about the array as returned by parseHBMArray
+    :param refInfo: A dict containing info about the array as returned by parse_HBM_array
     :param bank: The bank for which to compute the offset
     """
     dim = refInfo['ndim']
@@ -282,7 +282,7 @@ def getHBMHostRange(bank : int, refInfo : "dict[str, Any]",
     hbm-array given a bank and a range off the array on that bank
     
     :param bank: The bank
-    :param refInfo: A dict containing info about the array as returned by parseHBMArray
+    :param refInfo: A dict containing info about the array as returned by parse_HBM_array
     :param hbmrange: The subset on the hbm bank. Note that this is assumed to have a
     bank index (as it's first index) which is equal to :param bank:
     """

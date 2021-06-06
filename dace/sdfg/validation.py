@@ -179,7 +179,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     for name, array in sdfg.arrays.items():
         if("hbmbank" in array.location):
             try:
-                currenthbmarray = hbm_multibank_expansion.parseHBMArray(name, array)
+                currenthbmarray = hbm_multibank_expansion.parse_HBM_array(name, array)
                 if(currenthbmarray['splitcount'] > 1):
                     local_hbmmultibank_arrays[name] = currenthbmarray
             except Exception as e:

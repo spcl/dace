@@ -465,7 +465,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     lowest_bank_index = memorybank[1][0][0]
                 else:
                     lowest_bank_index = memorybank[1]
-                for bank in utils.iterateMultibankArrays(dataname, data):
+                for bank in utils.iterate_multibank_arrays(dataname, data):
                     kernel_arg = self.make_kernel_argument(data, cpp.ptr(dataname, data, bank)
                                             ,is_output, True, interface)
                     if kernel_arg:
@@ -565,7 +565,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args_module = []
         for is_output, pname, p, interface_id in parameters:
             if isinstance(p, dt.Array):
-                for bank in utils.iterateMultibankArrays(pname, p):
+                for bank in utils.iterate_multibank_arrays(pname, p):
                     arr_name = cpp.array_interface_variable(cpp.ptr(pname, p, bank),
                                                 is_output, None)
                     # Add interface ID to called module, but not to the module
@@ -829,7 +829,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args = []
         for is_output, name, arg, if_id in parameters:
             if isinstance(arg, dt.Array):
-                for bank in utils.iterateMultibankArrays(name, arg):
+                for bank in utils.iterate_multibank_arrays(name, arg):
                     argname = cpp.array_interface_variable(cpp.ptr(name, arg, bank), is_output, None, if_id, bank)
                     kernel_args.append(arg.as_arg(with_types=True, name=argname))
             else:

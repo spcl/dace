@@ -409,7 +409,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         # Get and update global memory interface ID
                         if("hbmbank" in desc.location):
                             if_ids = []
-                            for bank in utils.iterateMultibankArrays(dataname, desc):
+                            for bank in utils.iterate_multibank_arrays(dataname, desc):
                                 ptr_str = cpp.ptr(dataname, desc, bank)
                                 if_id = global_interfaces[ptr_str]
                                 global_interfaces[ptr_str] += 1
@@ -1194,8 +1194,8 @@ class FPGACodeGen(TargetCodeGenerator):
             isinstance(dst_node, dace.sdfg.nodes.AccessNode)):
             src_array = src_node.desc(sdfg)
             dst_array = dst_node.desc(sdfg)
-            src_hbm_info = utils.parseHBMArray(src_node.data, src_array)
-            dst_hbm_info = utils.parseHBMArray(dst_node.data, dst_array)
+            src_hbm_info = utils.parse_HBM_array(src_node.data, src_array)
+            dst_hbm_info = utils.parse_HBM_array(dst_node.data, dst_array)
             if src_hbm_info is None or dst_hbm_info is None:
                 doDefaultCopy = False
                 modedge = deepcopy(edge)
@@ -1638,7 +1638,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # Streams and Views are not passed as arguments
             if not isinstance(arg, dt.Stream) and not isinstance(arg, dt.View):
                 if(isinstance(arg, dt.Array)):
-                    for bank in utils.iterateMultibankArrays(argname, arg):
+                    for bank in utils.iterate_multibank_arrays(argname, arg):
                         currentname = cpp.ptr(argname, arg, bank)
                         kernel_args_call_host.append(arg.as_arg(False, name=currentname))
                         kernel_args_opencl.append(
