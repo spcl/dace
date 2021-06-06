@@ -30,9 +30,9 @@ def bug():
     code = Code(oldlib.generate_code()[2].code, language='cpp')
 
 if __name__ == '__main__':
-    sdfg = create_vadd_multibank_sdfg(2, 1)
+    sdfg = create_vadd_multibank_sdfg(4, 1, True)
     #sdfg.validate()
     #sdfg.view()
-    code = Code(sdfg.generate_code()[0].code, language='cpp')
+    code = Code(sdfg.generate_code()[2].code, language='cpp')
     print(code)
     #bug()

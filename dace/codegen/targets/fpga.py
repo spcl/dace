@@ -630,12 +630,12 @@ class FPGACodeGen(TargetCodeGenerator):
                                         nodedesc.location["bank"]))
                             memory_bank_arg_type = f"hlslib::ocl::StorageType::DDR"
                             memory_bank_arg_num = (bank, bank)
-                        #HBMJAN -> Array Allocation
                         elif "hbmbank" in nodedesc.location:
                             hbmbank = nodedesc.location["hbmbank"]
                             memory_bank_arg_type = f"hlslib::ocl::StorageType::HBM"
                             memory_bank_arg_num = (hbmbank[0][0], hbmbank[0][1])
-
+                            arrsize = dace.symbolic.pystr_to_symbolic(
+                                f"({str(arrsize)}) / {str(hbmbank[0][1] - hbmbank[0][0] + 1)}")
                         # Define buffer, using proper type
                         for bank_index in range(memory_bank_arg_num[0], memory_bank_arg_num[1]+1):
                             allocname = cpp.ptr(dataname, nodedesc, bank_index)
