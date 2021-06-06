@@ -1,3 +1,7 @@
+"""
+A test checking wcr with HBM arrays as inputs and output
+"""
+
 from dace import subsets
 import dace
 import numpy as np

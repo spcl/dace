@@ -1,3 +1,7 @@
+"""
+A test executing vector addition (potentially with multidimensional arrays) with HBM arrays.
+"""
+
 from dace import subsets
 import dace
 import numpy as np
