@@ -861,8 +861,8 @@ class FPGACodeGen(TargetCodeGenerator):
             elif device_to_host:
                 
                 ptr_str = (cpp.ptr(dst_node.data, dst_nodedesc, dst_subset) +
-                        (" + {}".format(offset))
-                           if outgoing_memlet and str(offset) != "0" else "")
+                        (" + {}".format(offset)
+                            if outgoing_memlet and str(offset) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} *>({})".format(
                         device_dtype.ctype, ptr_str)

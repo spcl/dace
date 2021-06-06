@@ -262,15 +262,9 @@ def emit_memlet_reference(dispatcher,
     if(isMultiBankMemlet):
         iterlow, iterhigh, _ = memlet.subset[0]
         iterhigh += 1
-        nomagicsubset = copy.deepcopy(memlet.subset)
-        #nomagicsubset.pop([0])
-        nomagicsubset[0] = (0, 0, 1)
-        offset = cpp_offset_expr(desc, nomagicsubset)
-        nomagicsubset.pop([0])
     else:
         iterlow, iterhigh = 0, 1
-        nomagicsubset = memlet.subset
-        offset = cpp_offset_expr(desc, memlet.subset)
+    offset = cpp_offset_expr(desc, memlet.subset)
 
     defined_type, defined_ctype = dispatcher.defined_vars.get(
             memlet.data, ancestor)
