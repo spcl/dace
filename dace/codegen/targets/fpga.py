@@ -465,7 +465,10 @@ class FPGACodeGen(TargetCodeGenerator):
                                 "Memory bank allocation must be present on "
                                 f"outermost data descriptor {outer_node.data} "
                                 "to be allocated correctly.")
-                    bank_assignments[dataname] = (banktype, bank)                
+                        bank_assignments[dataname] = (banktype, bank)
+                    else:
+                        #Is it ok to default set this?
+                        bank_assignments[dataname] = ("DDR", 0) 
                 else:
                     interface_id = None
                 if (not desc.transient
