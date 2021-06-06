@@ -717,6 +717,7 @@ class FPGACodeGen(TargetCodeGenerator):
         #HBMJAN -> true memory copy
         u, v, memlet = edge.src, edge.dst, edge.data
 
+        """
         # Determine directionality
         if isinstance(
                 src_node,
@@ -728,6 +729,7 @@ class FPGACodeGen(TargetCodeGenerator):
             outgoing_memlet = False
         else:
             raise LookupError("Memlet does not point to any of the nodes")
+        """ #TODO: Remove Dead Code
 
         data_to_data = (isinstance(src_node, dace.sdfg.nodes.AccessNode)
                         and isinstance(dst_node, dace.sdfg.nodes.AccessNode))
@@ -749,7 +751,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 or (device_to_device and not self._in_device_code)):
 
             copy_shape = memlet.subset.bounding_box_size()
-            offset = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
             
             if (not sum(copy_shape) == 1
                     and (not isinstance(memlet.subset, subsets.Range)
@@ -785,6 +786,7 @@ class FPGACodeGen(TargetCodeGenerator):
             src_nodedesc = src_node.desc(sdfg)
             dst_nodedesc = dst_node.desc(sdfg)
             
+            #computes strides and offsets for source and destination
             if(memlet.src_subset != None):
                 src_subset = memlet.src_subset
             else:
@@ -793,9 +795,10 @@ class FPGACodeGen(TargetCodeGenerator):
                 dst_subset = memlet.dst_subset
             else:
                 dst_subset = subsets.Range.from_array(dst_nodedesc)
-
             absolute_src_strides = src_subset.absolute_strides(src_nodedesc.strides)
             absolute_dst_strides = dst_subset.absolute_strides(dst_nodedesc.strides)
+            offset_src = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, referenced_array=src_nodedesc)
+            offset_dst = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, referenced_array=dst_nodedesc)
 
             #Distinguish 1d and 2 or 3d copies
             isNDCopy = not cpp.is_1d_nostrided_copy(copy_shape, 
@@ -823,7 +826,9 @@ class FPGACodeGen(TargetCodeGenerator):
                     dst_blocksize.append('1')
                 if(len(copy_shape_cpp) < 3):
                     copy_shape_cpp.append('1')
-                offset = 0
+                #will be handled by the ND-copy
+                offset_src = 0
+                offset_dst = 0
 
             #1d copy
             copysize = " * ".join([
@@ -833,8 +838,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
             if host_to_device:
                 ptr_str = (cpp.ptr(src_node.data, src_nodedesc, src_subset) +
-                        (" + {}".format(offset)
-                            if outgoing_memlet and str(offset) != "0" else ""))
+                        (" + {}".format(offset_src)
+                            if str(offset_src) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} const *>({})".format(
                         device_dtype.ctype, ptr_str)
@@ -855,14 +860,14 @@ class FPGACodeGen(TargetCodeGenerator):
                     callsite_stream.write(
                         "{}.CopyFromHost({}, {}, {});".format(
                             cpp.ptr(dst_node.data, dst_nodedesc, dst_subset),
-                            (offset if not outgoing_memlet else 0), copysize,
+                            offset_dst, copysize,
                             ptr_str), sdfg, state_id, [src_node, dst_node])
 
             elif device_to_host:
                 
                 ptr_str = (cpp.ptr(dst_node.data, dst_nodedesc, dst_subset) +
-                        (" + {}".format(offset)
-                            if outgoing_memlet and str(offset) != "0" else ""))
+                        (" + {}".format(offset_dst)
+                            if str(offset_dst) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} *>({})".format(
                         device_dtype.ctype, ptr_str)
@@ -883,7 +888,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     callsite_stream.write(
                         "{}.CopyToHost({}, {}, {});".format(
                             cpp.ptr(src_node.data, src_nodedesc, src_subset),
-                            (offset if outgoing_memlet else 0), 
+                            offset_src, 
                             copysize, ptr_str),
                         sdfg, state_id, [src_node, dst_node])
 
@@ -907,9 +912,9 @@ class FPGACodeGen(TargetCodeGenerator):
                     callsite_stream.write(
                         "{}.CopyToDevice({}, {}, {}, {});".format(
                             ptr_str_src,
-                            (offset if outgoing_memlet else 0), copysize,
+                            offset_src, copysize,
                             ptr_str_dst,
-                            (offset if not outgoing_memlet else 0)), sdfg, state_id,
+                            offset_dst), sdfg, state_id,
                         [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA

@@ -596,16 +596,18 @@ def cpp_array_expr(sdfg,
                    relative_offset=True,
                    packed_veclen=1,
                    use_other_subset=False,
-                   indices=None):
+                   indices=None, 
+                   referenced_array=None):
     """ Converts an Indices/Range object to a C++ array access string. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
-    desc = sdfg.arrays[memlet.data]
+    desc = (sdfg.arrays[memlet.data] if referenced_array
+            is None else referenced_array)
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     if with_brackets:
-        ptrname = ptr(memlet.data, desc, memlet.subset)
+        ptrname = ptr(memlet.data, desc, subset)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
