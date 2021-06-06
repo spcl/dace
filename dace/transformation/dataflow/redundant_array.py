@@ -371,6 +371,50 @@ class RedundantArray(pm.Transformation):
 
         return "Remove " + str(in_array)
 
+    def _make_view(self, sdfg: SDFG, graph: SDFGState,
+                   in_array: nodes.AccessNode, out_array: nodes.AccessNode,
+                   e1: graph.MultiConnectorEdge[mm.Memlet],
+                   b_subset: subsets.Subset, b_dims_to_pop: typing.List[int]):
+        in_desc = sdfg.arrays[in_array.data]
+        out_desc = sdfg.arrays[out_array.data]
+        # NOTE: We do not want to create another view, if the immediate
+        # ancestors of in_array are views as well. We just remove it.
+        in_ancestors_desc = [
+            e.src.desc(sdfg) if isinstance(e.src, nodes.AccessNode) else None
+            for e in graph.in_edges(in_array)
+        ]
+        if all([
+                desc and isinstance(desc, data.View)
+                for desc in in_ancestors_desc
+        ]):
+            for e in graph.in_edges(in_array):
+                a_subset, _ = _validate_subsets(e, sdfg.arrays)
+                graph.add_edge(
+                    e.src, e.src_conn, out_array, None,
+                    mm.Memlet(out_array.data,
+                              subset=b_subset,
+                              other_subset=a_subset,
+                              wcr=e1.data.wcr,
+                              wcr_nonatomic=e1.data.wcr_nonatomic))
+                graph.remove_edge(e)
+            graph.remove_edge(e1)
+            graph.remove_node(in_array)
+            if in_array.data in sdfg.arrays:
+                del sdfg.arrays[in_array.data]
+            return
+        view_strides = in_desc.strides
+        if (b_dims_to_pop and len(b_dims_to_pop)
+                == len(out_desc.shape) - len(in_desc.shape)):
+            view_strides = [
+                s for i, s in enumerate(out_desc.strides)
+                if i not in b_dims_to_pop
+            ]
+        sdfg.arrays[in_array.data] = data.View(
+            in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
+            out_desc.storage, out_desc.location, view_strides, in_desc.offset,
+            out_desc.may_alias, dtypes.AllocationLifetime.Scope,
+            in_desc.alignment, in_desc.debuginfo, in_desc.total_size)
+
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         in_array = self.in_array(sdfg)
@@ -402,48 +446,41 @@ class RedundantArray(pm.Transformation):
             if isinstance(e.src, Reduce):
                 reduction = True
 
-        # If the memlet does not cover the removed array, create a view.
-        if reduction or any(m != a
-                            for m, a in zip(a1_subset.size(), in_desc.shape)):
-            # NOTE: We do not want to create another view, if the immediate
-            # ancestors of in_array are views as well. We just remove it.
-            in_ancestors_desc = [
-                e.src.desc(sdfg)
-                if isinstance(e.src, nodes.AccessNode) else None
-                for e in graph.in_edges(in_array)
-            ]
-            if all([
-                    desc and isinstance(desc, data.View)
-                    for desc in in_ancestors_desc
-            ]):
-                for e in graph.in_edges(in_array):
-                    a_subset, _ = _validate_subsets(e, sdfg.arrays)
-                    graph.add_edge(
-                        e.src, e.src_conn, out_array, None,
-                        mm.Memlet(out_array.data,
-                                  subset=b_subset,
-                                  other_subset=a_subset,
-                                  wcr=e1.data.wcr,
-                                  wcr_nonatomic=e1.data.wcr.nonatomic))
-                    graph.remove_edge(e)
-                graph.remove_edge(e1)
-                graph.remove_node(in_array)
-                if in_array.data in sdfg.arrays:
-                    del sdfg.arrays[in_array.data]
-                return
-            view_strides = in_desc.strides
-            if (b_dims_to_pop and len(b_dims_to_pop)
-                    == len(out_desc.shape) - len(in_desc.shape)):
-                view_strides = [
-                    s for i, s in enumerate(out_desc.strides)
-                    if i not in b_dims_to_pop
-                ]
-            sdfg.arrays[in_array.data] = data.View(
-                in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
-                out_desc.storage, out_desc.location, view_strides,
-                in_desc.offset, out_desc.may_alias,
-                dtypes.AllocationLifetime.Scope, in_desc.alignment,
-                in_desc.debuginfo, in_desc.total_size)
+        # If:
+        # 1. A reduce node is involved;
+        # 2. The memlet does not cover the removed array; or
+        # 3. Dimensions are mismatching (all dimensions are popped);
+        # create a view.
+        if reduction or len(a_dims_to_pop) == len(in_desc.shape) or any(
+                m != a for m, a in zip(a1_subset.size(), in_desc.shape)):
+            self._make_view(sdfg, graph, in_array, out_array, e1, b_subset,
+                            b_dims_to_pop)
+            return
+
+        # Validate that subsets are composable. If not, make a view
+        try:
+            for e2 in graph.in_edges(in_array):
+                path = graph.memlet_tree(e2)
+                wcr = e1.data.wcr
+                wcr_nonatomic = e1.data.wcr_nonatomic
+                for e3 in path:
+                    # 2-a. Extract subsets for array B and others
+                    other_subset, a3_subset = _validate_subsets(
+                        e3, sdfg.arrays, dst_name=in_array.data)
+                    # 2-b. Modify memlet to match array B.
+                    dname = out_array.data
+                    src_is_data = False
+                    a3_subset.offset(a1_subset, negative=True)
+
+                    if a3_subset and a_dims_to_pop:
+                        aset, _ = pop_dims(a3_subset, a_dims_to_pop)
+                    else:
+                        aset = a3_subset
+
+                    compose_and_push_back(bset, aset, b_dims_to_pop, popped)
+        except (ValueError, NotImplementedError):
+            self._make_view(sdfg, graph, in_array, out_array, e1, b_subset,
+                            b_dims_to_pop)
             return
 
         # 2. Iterate over the e2 edges and traverse the memlet tree
@@ -536,7 +573,7 @@ class RedundantSecondArray(pm.Transformation):
 
         # 1. Get edge e1 and extract/validate subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
-        _, b1_subset = _validate_subsets(e1, sdfg.arrays)
+        a_subset, b1_subset = _validate_subsets(e1, sdfg.arrays)
 
         if strict:
             # In strict mode, make sure the memlet covers the removed array
@@ -604,6 +641,17 @@ class RedundantSecondArray(pm.Transformation):
                     G = helpers.simplify_state(graph)
                     # Loop over the accesses
                     for a in accesses:
+                        subsets_intersect = False
+                        for e in graph.in_edges(a):
+                            _, subset = _validate_subsets(e,
+                                                          sdfg.arrays,
+                                                          dst_name=a.data)
+                            res = subsets.intersects(a_subset, subset)
+                            if res == True or res is None:
+                                subsets_intersect = True
+                                break
+                        if not subsets_intersect:
+                            continue
                         try:
                             has_bward_path = nx.has_path(G, a, in_array)
                         except NodeNotFound:
@@ -620,7 +668,13 @@ class RedundantSecondArray(pm.Transformation):
                         # If there is a forward path then a must not be a direct
                         # successor of in_array.
                         if has_fward_path and a in G.successors(in_array):
-                            return False
+                            for src, _ in G.in_edges(a):
+                                if src is in_array:
+                                    continue
+                                if (nx.has_path(G, in_array, src)
+                                        and src != out_array):
+                                    continue
+                                return False
 
         # Make sure that both arrays are using the same storage location
         # and are of the same type (e.g., Stream->Stream)
@@ -875,6 +929,10 @@ class SqueezeViewRemove(pm.Transformation):
 
         vsqdims = view_subset.squeeze()
 
+        # View may modify the behavior of a library node
+        if strict and isinstance(vedge.dst, nodes.LibraryNode):
+            return False
+
         # Check that subsets are equivalent
         if array_subset != view_subset:
             return False
@@ -917,3 +975,94 @@ class SqueezeViewRemove(pm.Transformation):
         # Remove node and descriptor
         state.remove_node(out_array)
         sdfg.remove_data(out_array.data)
+
+
+@registry.autoregister_params(singlestate=True, strict=True)
+class UnsqueezeViewRemove(pm.Transformation):
+    in_array = pm.PatternNode(nodes.AccessNode)
+    out_array = pm.PatternNode(nodes.AccessNode)
+
+    @staticmethod
+    def expressions():
+        return [
+            sdutil.node_path_graph(UnsqueezeViewRemove.in_array,
+                                   UnsqueezeViewRemove.out_array)
+        ]
+
+    def can_be_applied(self,
+                       state: SDFGState,
+                       candidate,
+                       expr_index: int,
+                       sdfg: SDFG,
+                       strict: bool = False):
+        in_array = self.in_array(sdfg)
+        out_array = self.out_array(sdfg)
+
+        in_desc = in_array.desc(sdfg)
+        out_desc = out_array.desc(sdfg)
+
+        if state.in_degree(in_array) != 1:
+            return False
+
+        if not isinstance(in_desc, data.View):
+            return False
+
+        vedge = state.in_edges(in_array)[0]
+        if vedge.data.data != in_array.data:  # Ensures subset comes from view
+            return False
+        view_subset = copy.deepcopy(vedge.data.subset)
+
+        aedge = state.edges_between(in_array, out_array)[0]
+        if aedge.data.data != out_array.data:
+            return False
+        array_subset = copy.deepcopy(aedge.data.subset)
+
+        asqdims = array_subset.squeeze()
+
+        # View may modify the behavior of a library node
+        if strict and isinstance(vedge.src, nodes.LibraryNode):
+            return False
+
+        # Check that subsets are equivalent
+        if array_subset != view_subset:
+            return False
+
+        # Verify strides after squeeze
+        vstrides = tuple(in_desc.strides)
+        astrides = tuple(s for i, s in enumerate(out_desc.strides)
+                         if i in asqdims)
+        if astrides != vstrides:
+            return False
+
+        return True
+
+    def apply(self, sdfg: SDFG):
+        state: SDFGState = sdfg.node(self.state_id)
+        in_array = self.in_array(sdfg)
+        out_array = self.out_array(sdfg)
+        out_desc = out_array.desc(sdfg)
+
+        vedge = state.in_edges(in_array)[0]
+        view_subset = copy.deepcopy(vedge.data.subset)
+
+        aedge = state.edges_between(in_array, out_array)[0]
+        array_subset = copy.deepcopy(aedge.data.subset)
+
+        asqdims = array_subset.squeeze()
+        asqdims_mirror = [
+            i for i in range(aedge.data.subset.dims()) if i not in asqdims
+        ]
+
+        # Modify data and subset on all outgoing edges
+        for e in state.memlet_tree(vedge):
+            e.data.data = out_array.data
+            e.data.subset.unsqueeze(asqdims_mirror)
+
+        # Redirect original edge to point to data
+        state.remove_edge(vedge)
+        state.add_edge(vedge.src, vedge.src_conn, out_array, vedge.dst_conn,
+                       vedge.data)
+
+        # Remove node and descriptor
+        state.remove_node(in_array)
+        sdfg.remove_data(in_array.data)
