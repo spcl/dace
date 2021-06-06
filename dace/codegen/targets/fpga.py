@@ -202,7 +202,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 start_nodes = [e.dst for e in node_state.out_edges(node)]
                 for n in start_nodes:
                     if hasattr(n, "_kernel"):
-                        print("* Node ", n, " belongs to kernel", n._kernel)
+                        # print("* Node ", n, " belongs to kernel", n._kernel)
                         if n._kernel in subgraphs:
                             subgraphs[n._kernel].add(node)
                         else:
@@ -959,8 +959,6 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 '''
                 # TODO: do reverse DFG till we reach another kernel boundaries
                 # TODO: should we return this?
-                import pdb
-                pdb.set_trace()
                 # If empty memlet, continue
                 # if (edge.src_conn is None and edge.dst_conn is None
                 #         and edge.data.is_empty() and look_for_kernel_id):
@@ -1027,12 +1025,12 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                             break
 
                     if crossroad_node:
-                        print(
-                            "Node ", e.dst,
-                            " has more than one predecessor. Put it in another Kernel"
-                        )
-                        if isinstance(e.dst, nodes.ExitNode):
-                            print("!!!!!! But this was an Exit Node!!!!!")
+                        # print(
+                        #     "Node ", e.dst,
+                        #     " has more than one predecessor. Put it in another Kernel"
+                        # )
+                        # if isinstance(e.dst, nodes.ExitNode):
+                        #     print("!!!!!! But this was an Exit Node!!!!!")
                         kernel = max_kernels
                         max_kernels = increment(max_kernels)
 
@@ -1056,11 +1054,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                                  state,
                                                  look_for_kernel_id=True)
                         if kernel is not None:
-                            print("Reuse kernel ID from a parent for ", e.dst)
+                            # print("Reuse kernel ID from a parent for ", e.dst)
                             break
                 else:
                     # New PE: this should not have any predecessor
-                    print("Use a new Kernel id for ", e.dst)
+                    # print("Use a new Kernel id for ", e.dst)
                     kernel = max_kernels
                     if (isinstance(e.dst, nodes.AccessNode)
                             and isinstance(sdfg.arrays[e.dst.data], dt.View)):
@@ -1071,7 +1069,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             assert (e.dst not in assigned)
             assigned.add(e.dst)
             e.dst._kernel = kernel
-            print(e.dst, " has associated kernel ID ", kernel)
+            # print(e.dst, " has associated kernel ID ", kernel)
 
         # do another pass and keep track of precedences among Kernels
         for node in state.nodes():
