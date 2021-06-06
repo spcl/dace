@@ -128,7 +128,7 @@ class SVEMap(TargetCodeGenerator):
         self.dispatcher.register_node_dispatcher(
             self, lambda state, sdfg, node: is_in_scope(
                 state, sdfg, node, [dace.ScheduleType.SVE_Map]))
-        self.dispatcher.register_state_dispatcher(self, lambda sdfg, state: contains_any_sve(sdfg))
+        #self.dispatcher.register_state_dispatcher(self, lambda sdfg, state: contains_any_sve(sdfg))
 
         self.cpu_codegen = self.dispatcher.get_generic_node_dispatcher()
         self.state_gen = self.dispatcher.get_generic_state_dispatcher()
@@ -138,11 +138,6 @@ class SVEMap(TargetCodeGenerator):
             self.dispatcher.register_copy_dispatcher(src_storage, dst_storage,
                                                      dace.ScheduleType.SVE_Map,
                                                      self)
-
-    def generate_state(self, sdfg: SDFG, state: SDFGState, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
-        #util.patch_ctypes()
-        self.state_gen.generate_state(sdfg, state, function_stream, callsite_stream)
-        #util.restore_ctypes()
 
     def create_empty_definition(self,
                                 conn: dace.typeclass,
