@@ -12,6 +12,7 @@ from dace.codegen import cppunparse
 from itertools import product
 
 from dace.sdfg import replace, state as state
+import dace.subsets
 
 def backup_replacement_fields(subgraph: 'dace.sdfg.state.StateGraphView') -> Tuple:
     """
@@ -53,8 +54,8 @@ def use_replacement_fields_backup(subgraph : "dace.sdfg.state.StateGraphView",
         edge.data.data = data
     for edge, subsets in oldedgesubsets.items():
         sub, osub = subsets
-        edge.subset = sub
-        edge.other_subset = osub
+        edge.data.subset = sub
+        edge.data.other_subset = osub
     for edge, volume in oldedgevolumes.items():
         edge.data.volume = volume
 
@@ -96,7 +97,6 @@ class UnrollCodeGen(TargetCodeGenerator):
             for param, index in zip(entry_node.map.params, indices):
                 #callsite_stream.write(f'auto {param} = {sym2cpp(index)};')
                 scope.replace(str(param), str(index))
-                
             self._dispatcher.dispatch_subgraph(sdfg, scope, state_id,
                                             function_stream, callsite_stream,
                                             skip_entry_node=True,

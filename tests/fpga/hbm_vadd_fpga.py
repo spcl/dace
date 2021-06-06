@@ -2,26 +2,25 @@ from dace import subsets
 import dace
 import numpy as np
 
-def create_vadd_multibank_sdfg(ndim = 1, nCutPerDim = 2, unroll_map_inside = False):
+def create_vadd_multibank_sdfg(bankcountPerArray = 2, ndim = 1, unroll_map_inside = False):
     N = dace.symbol("N")
     M = dace.symbol("M")
     S = dace.symbol("S")
 
     sdfg = dace.SDFG('vadd_hbm')
     state = sdfg.add_state('vadd_hbm', True)
-    shape = [N]
+    shape = [bankcountPerArray, N]
     accstr = "i"
     innermaprange = dict()
-    innermaprange["i"] = f"0:N//{nCutPerDim}"
-    bankcountPerArray = nCutPerDim ** ndim
+    innermaprange["i"] = "0:N"
     if(ndim >= 2):
-        shape = [N, M]
+        shape = [bankcountPerArray, N, M]
         accstr = "i, j"
-        innermaprange["j"] = f"0:M//{nCutPerDim}"
+        innermaprange["j"] = "0:M"
     if(ndim >= 3):
-        shape = [N, M, S]
+        shape = [bankcountPerArray, N, M, S]
         accstr = "i, j, t"
-        innermaprange["t"] = f"0:S//{nCutPerDim}"
+        innermaprange["t"] = "0:S"
 
     in1 = sdfg.add_array("in1", shape, dace.float32)
     in2 = sdfg.add_array("in2", shape, dace.float32)
@@ -30,9 +29,6 @@ def create_vadd_multibank_sdfg(ndim = 1, nCutPerDim = 2, unroll_map_inside = Fal
     in1[1].location["hbmbank"] = subsets.Range.from_string(f"0:{bankcountPerArray}")
     in2[1].location["hbmbank"] = subsets.Range.from_string(f"{bankcountPerArray}:{2*bankcountPerArray}")
     out[1].location["hbmbank"] = subsets.Range.from_string(f"{2*bankcountPerArray}:{3*bankcountPerArray}")
-    in1[1].location["hbmalignment"] = 'even'
-    in2[1].location["hbmalignment"] = 'even'
-    out[1].location["hbmalignment"] = 'even'
     
     readin1 = state.add_read("in1")
     readin2 = state.add_read("in2")
@@ -46,7 +42,7 @@ def create_vadd_multibank_sdfg(ndim = 1, nCutPerDim = 2, unroll_map_inside = Fal
     map_entry, map_exit = state.add_map("vadd_inner_map", innermaprange)
     tasklet = state.add_tasklet("addandwrite", dict(__in1=None, __in2=None), 
         dict(__out=None), '__out = __in1 + __in2')
-    outer_entry.map.unroll = True
+    outer_entry.map.schedule = dace.ScheduleType.Unrolled
 
     if(unroll_map_inside):
         state.add_memlet_path(readin1, map_entry, outer_entry, tasklet, memlet=tmpin1_memlet, dst_conn="__in1")
@@ -58,7 +54,7 @@ def create_vadd_multibank_sdfg(ndim = 1, nCutPerDim = 2, unroll_map_inside = Fal
         state.add_memlet_path(tasklet, map_exit, outer_exit, outwrite, memlet=tmpout_memlet, src_conn="__out")
 
     sdfg.fill_scope_connectors()
-    sdfg.apply_fpga_transformations()
+    sdfg.apply_fpga_transformations(validate=False)
     return sdfg
 
 def createTestSet(dim, sizePerDim):
