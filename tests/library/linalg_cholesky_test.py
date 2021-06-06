@@ -17,7 +17,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
     n = dace.symbol("n", dace.int64)
 
-    sdfg = dace.SDFG("linalg_cholesky_{}_{}".format(implementation, dtype.ocltype))
+    sdfg = dace.SDFG("linalg_cholesky_{}_{}".format(implementation, dtype))
     state = sdfg.add_state("dataflow")
 
     inp = sdfg.add_array("xin", [n, n], dtype)

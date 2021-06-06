@@ -13,7 +13,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     n = dace.symbol("n")
 
     sdfg = dace.SDFG("matrix_inv_getrf_getri_{}_{}".format(
-        implementation, dtype.ocltype))
+        implementation, dtype))
     state = sdfg.add_state("dataflow")
 
     sdfg.add_array("x", [n, n], dtype, storage=storage, transient=False)

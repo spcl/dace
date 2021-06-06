@@ -26,6 +26,35 @@ import dace.symbolic
 from dace.codegen.targets.cpp import sym2cpp
 from dace.sdfg import utils as sdutil
 from dace.codegen.dispatcher import DefinedType
+import copy
+import numpy as np
+
+def contains_any_sve(sdfg: SDFG):
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.Map) and node.schedule == dace.ScheduleType.SVE_Map:
+            return True
+    return True
+
+old_generate_header = None
+old_generate_footer = None
+
+def generate_header_hook(self, sdfg: SDFG, global_stream: CodeIOStream,
+                        callsite_stream: CodeIOStream):
+    global old_generate_header
+    if contains_any_sve(sdfg):
+        util.patch_ctypes()
+    res = old_generate_header(self, sdfg, global_stream, callsite_stream)
+    return res
+
+
+def generate_footer_hook(self, sdfg: SDFG, global_stream: CodeIOStream,
+                        callsite_stream: CodeIOStream):
+    global old_generate_footer
+    if contains_any_sve(sdfg):
+        util.patch_ctypes()
+    res = old_generate_footer(self, sdfg, global_stream, callsite_stream)
+    util.restore_ctypes()
+    return res
 
 
 @dace.registry.autoregister_params(name='sve')
@@ -76,25 +105,44 @@ class SVEMap(TargetCodeGenerator):
         function_stream.write(f'#define {util.REGISTER_BYTE_SIZE} 64\n')
 
     def __init__(self, frame_codegen: DaCeCodeGenerator, sdfg: dace.SDFG):
-        dace.ScheduleType.register('SVE_Map')
         dace.SCOPEDEFAULT_SCHEDULE[
             dace.ScheduleType.SVE_Map] = dace.ScheduleType.Sequential
         dace.SCOPEDEFAULT_STORAGE[
             dace.ScheduleType.SVE_Map] = dace.StorageType.CPU_Heap
         self.has_generated_header = False
+
+        """
+        # Hook the generate_header in DaCeCodeGenerator
+        global old_generate_footer, old_generate_header
+        if old_generate_footer is None:
+            old_generate_header = DaCeCodeGenerator.generate_header
+            old_generate_footer = DaCeCodeGenerator.generate_footer
+        DaCeCodeGenerator.generate_header = generate_header_hook
+        DaCeCodeGenerator.generate_footer = generate_footer_hook
+        """
+
         self.frame = frame_codegen
         self.dispatcher = frame_codegen._dispatcher
-        self.dispatcher.register_map_dispatcher(dace.ScheduleType.SVE_Map, self)
+        self.dispatcher.register_map_dispatcher(
+            dace.ScheduleType.SVE_Map, self)
         self.dispatcher.register_node_dispatcher(
             self, lambda state, sdfg, node: is_in_scope(
                 state, sdfg, node, [dace.ScheduleType.SVE_Map]))
+        self.dispatcher.register_state_dispatcher(self, lambda sdfg, state: contains_any_sve(sdfg))
+
         self.cpu_codegen = self.dispatcher.get_generic_node_dispatcher()
+        self.state_gen = self.dispatcher.get_generic_state_dispatcher()
 
         for src_storage, dst_storage in itertools.product(
                 dtypes.StorageType, dtypes.StorageType):
             self.dispatcher.register_copy_dispatcher(src_storage, dst_storage,
                                                      dace.ScheduleType.SVE_Map,
                                                      self)
+
+    def generate_state(self, sdfg: SDFG, state: SDFGState, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        #util.patch_ctypes()
+        self.state_gen.generate_state(sdfg, state, function_stream, callsite_stream)
+        #util.restore_ctypes()
 
     def create_empty_definition(self,
                                 conn: dace.typeclass,
@@ -136,7 +184,7 @@ class SVEMap(TargetCodeGenerator):
             callsite_stream.write('{} {}{};'.format(var_ctype, var_name,
                                                     init_str))
         else:
-            raise NotImplementedError(f'Output into pointer not supported')
+            raise NotImplementedError(f'Output into scalar or pointer is not supported ({var_name})')
 
         self.dispatcher.defined_vars.add(var_name, var_type, var_ctype)
 
@@ -213,6 +261,7 @@ class SVEMap(TargetCodeGenerator):
 
         callsite_stream.write('}')
 
+
     def generate_scope(self, sdfg: dace.SDFG, scope: ScopeSubgraphView,
                        state_id: int, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream):
@@ -221,13 +270,16 @@ class SVEMap(TargetCodeGenerator):
         loop_type = list(set([sdfg.arrays[a].dtype for a in sdfg.arrays]))[0]
         ltype_size = loop_type.bytes
 
+        long_type = copy.copy(dace.int64)
+        long_type.ctype = 'int64_t'
+
         self.counter_type = {
             1: dace.int8,
             2: dace.int16,
             4: dace.int32,
-            8: dace.int64
+            8: long_type
         }[ltype_size]
-
+        
         callsite_stream.write('{')
 
         # Define all input connectors of the map entry
@@ -378,10 +430,16 @@ class SVEMap(TargetCodeGenerator):
             load_lhs = '{} {}'.format(util.TYPE_TO_SVE[in_conn.type],
                                       edge.dst_conn)
 
+            ptr_cast = ''
+            if in_conn.type == np.int64:
+                ptr_cast = '(int64_t*) '
+            elif in_conn.type == np.uint64:
+                ptr_cast = '(uint64_t*) '
+
             # Regular load and gather share the first arguments
             load_args = '{}, {}'.format(
                 util.get_loop_predicate(sdfg, dfg, dst_node),
-                cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer))
+                ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer))
 
             if stride == 1:
                 callsite_stream.write('{} = svld1({});'.format(
@@ -436,9 +494,15 @@ class SVEMap(TargetCodeGenerator):
 
                 stride = self.get_load_stride(sdfg, dfg, src_node, edge.data)
 
+                ptr_cast = ''
+                if out_conn.type == np.int64:
+                    ptr_cast = '(int64_t*) '
+                elif out_conn.type == np.uint64:
+                    ptr_cast = '(uint64_t*) '
+
                 store_args = '{}, {}'.format(
                     util.get_loop_predicate(sdfg, dfg, src_node),
-                    cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer),
+                    ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer),
                 )
 
                 if stride == 1:
@@ -473,12 +537,18 @@ class SVEMap(TargetCodeGenerator):
                 util.REDUCTION_TYPE_TO_SVE[reduction_type],
                 util.get_loop_predicate(sdfg, dfg, src_node), edge.src_conn)
 
+            ptr_cast = ''
+            if out_conn.type == np.int64:
+                ptr_cast = '(long long*) '
+            elif out_conn.type == np.uint64:
+                ptr_cast = '(unsigned long long*) '
+
             wcr_expr = self.cpu_codegen.write_and_resolve_expr(
                 sdfg,
                 edge.data,
                 edge.data.wcr_nonatomic,
                 None,
-                sve_reduction,
+                ptr_cast + sve_reduction,
                 dtype=out_conn.vtype)
 
             callsite_stream.write(wcr_expr + ';')

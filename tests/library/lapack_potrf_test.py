@@ -24,7 +24,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     transient = storage != dace.StorageType.Default
 
     sdfg = dace.SDFG("matrix_choleskyfact_potrf_{}_{}".format(
-        implementation, dtype.ocltype))
+        implementation, str(dtype)))
     state = sdfg.add_state("dataflow")
 
     xhost_arr = sdfg.add_array("x", [n, n],

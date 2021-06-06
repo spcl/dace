@@ -37,7 +37,7 @@ def test_vectorization():
     sdfg: dace.SDFG = tovec.to_sdfg()
     assert sdfg.apply_transformations(Vectorization, options={'vector_len':
                                                               2}) == 1
-    assert 'vec<dace::float64, 2>' in sdfg.generate_code()[0].code
+    assert 'vec<double, 2>' in sdfg.generate_code()[0].code
     A = np.random.rand(20)
     B = sdfg(A=A)
     assert np.allclose(B, A * 2)
@@ -54,7 +54,7 @@ def test_vectorization_uneven():
     sdfg.apply_strict_transformations()
     assert sdfg.apply_transformations(Vectorization, options={'vector_len':
                                                               2}) == 1
-    assert 'vec<dace::float64, 2>' in sdfg.generate_code()[0].code
+    assert 'vec<double, 2>' in sdfg.generate_code()[0].code
 
     A = np.ones([22], np.float64)
     sdfg(A=A, N=20)
@@ -65,7 +65,7 @@ def test_vectorization_postamble():
     sdfg: dace.SDFG = tovec_sym.to_sdfg()
     sdfg.apply_strict_transformations()
     assert sdfg.apply_transformations(Vectorization) == 1
-    assert 'vec<dace::float32, 4>' in sdfg.generate_code()[0].code
+    assert 'vec<float, 4>' in sdfg.generate_code()[0].code
     csdfg = sdfg.compile()
 
     for N in range(24, 29):
@@ -85,7 +85,7 @@ def test_propagate_parent():
                                           'vector_len': 2,
                                           'propagate_parent': True
                                       }) == 1
-    assert 'vec<dace::float64, 2>' in sdfg.generate_code()[0].code
+    assert 'vec<double, 2>' in sdfg.generate_code()[0].code
     A = np.random.rand(20)
     B = sdfg(A=A)
     assert np.allclose(B.reshape(20), A * 2)
