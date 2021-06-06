@@ -418,6 +418,8 @@ def _Subscript(t, symbols, inferred_symbols):
 
     # A vector as subscript of a pointer returns a vector of the base type
     if isinstance(value_type, dtypes.pointer) and isinstance(slice_type, dtypes.vector):
+        if not np.issubdtype(slice_type.type, np.integer):
+            raise SyntaxError('Subscript must be some integer type')
         return dtypes.vector(value_type.base_type, slice_type._veclen)
 
     # Otherwise (some index as subscript) we return the base type
@@ -428,7 +430,7 @@ def _Subscript(t, symbols, inferred_symbols):
 
 
 def _Index(t, symbols, inferred_symbols):
-    _dispatch(t.value, symbols, inferred_symbols)
+    return _dispatch(t.value, symbols, inferred_symbols)
 
 
 def _Slice(t, symbols, inferred_symbols):
