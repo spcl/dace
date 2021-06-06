@@ -545,7 +545,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         self.write(')')
 
     def _Subscript(self, t):
-        type, slice = self.infer(t.value, t.slice.value)
+        type, slice = self.infer(t.value, t.slice)
         self.assert_type_compatibility(type)
         self.assert_type_compatibility(slice)
 
