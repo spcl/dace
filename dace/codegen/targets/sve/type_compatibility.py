@@ -44,7 +44,7 @@ def assert_type_compatibility(defined_symbols: collections.OrderedDict,
 
     # Check if we can represent the types in SVE
     for t in types:
-        if util.get_base_type(t) not in util.TYPE_TO_SVE:
+        if util.get_base_type(t).type not in util.TYPE_TO_SVE:
             raise IncompatibleTypeError('Not available in SVE', types)
 
     # Check if we have different vector types (would require casting, not implemented yet)
