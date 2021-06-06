@@ -3,7 +3,6 @@
     Vectorization: This module allows to force vectorization of an SDFG.
 """
 
-from samples.tensorflow.lenet import NUM_LABELS
 import dace
 import dace.codegen.targets.sve.util as util
 import dace.codegen.targets.sve.codegen
@@ -87,7 +86,7 @@ def vectorize(sdfg: dace.SDFG, par: str, ignored_conns: list = []):
     input_bit_width = list(input_bits)[0]
 
     sdfg.apply_strict_transformations()
-    
+
     # FIXME: Hardcoded for the demo machine (512 bits)
     util.SVE_LEN.set(512 / input_bit_width)
 
