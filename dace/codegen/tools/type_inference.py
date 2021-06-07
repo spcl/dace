@@ -54,7 +54,7 @@ def infer_expr_type(code, symbols=None):
     if isinstance(code, (str, float, int, complex)):
         parsed_ast = ast.parse(str(code))
     elif isinstance(code, sympy.Basic) or isinstance(code, SymExpr):
-        parsed_ast = ast.parse(symstr(code))
+        parsed_ast = ast.parse(sympy.printing.pycode(code))
     else:
         raise TypeError(f"Cannot convert type {type(code)} to a Python AST.")
 
