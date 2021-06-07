@@ -15,7 +15,6 @@ from dace.sdfg import state
 import dace.subsets
 import dace.sdfg
 from dace.sdfg.replace import deepreplace
-from dace.sdfg import utils
 from dace.sdfg import nodes as nd
 from dace import Config
 
@@ -65,32 +64,11 @@ def use_statescope_fields_backup(backup : "Tuple"):
     for edge, volume in oldedgevolumes.items():
         edge.data.volume = volume
 
-"""
-symrepl = {
-            symbolic.symbol(name):
-            symbolic.pystr_to_symbolic(new_name)
-            if isinstance(new_name, str) else new_name
-        }
-
-        # Replace in arrays and symbols (if a variable name)
-        if validate_name(new_name):
-            _replace_dict(self._arrays, name, new_name)
-            _replace_dict(self.symbols, name, new_name)
-
-        # Replace inside data descriptors
-        for array in self.arrays.values():
-            replace_properties(array, symrepl, name, new_name)
-
-        # Replace in inter-state edges
-        for edge in self.edges():
-            edge.data.replace(name, new_name)
-
-        # Replace in states
-        for state in self.nodes():
-            state.replace(name, new_name)
-"""
-
 def backup_sdfg_fields(sdfg : dace.SDFG) -> Tuple:
+    """
+    Backup all the fields of an sdfg that are changed on call to replace.
+    Can be restored using use_sdfg_field_backup
+    """
     arrback = sdfg._arrays
     sdfg._arrays = deepcopy(sdfg._arrays)
     symback = sdfg.symbols
@@ -118,6 +96,10 @@ def backup_sdfg_fields(sdfg : dace.SDFG) -> Tuple:
     return (sdfg, arrback, symback, arrpropstore, edgefields, statefields)
 
 def use_sdfg_field_backup(backup : Tuple):
+    """
+    Counterpart to backup_sdfg_fields. Restores the fields with the values
+    from the backup
+    """
     sdfg, arrback, symback, arrpropstore, edgefields, statefields = backup
     sdfg._arrays = arrback
     sdfg.symbols = symback
@@ -239,13 +221,11 @@ class UnrollCodeGen(TargetCodeGenerator):
             callsite_stream.write('{')
             nsdfg_unroll_info = None
             for param, index in zip(entry_node.map.params, indices):
-                #callsite_stream.write(f'auto {param} = {sym2cpp(index)};')
                 deepreplace(scope, str(param), str(index))
                 if nsdfg_unroll_info is None:
                     nsdfg_unroll_info = nsdfg_prepare_unroll(scope, str(param), str(index))
                 else:
                     nsdfg_prepare_unroll(scope, str(param), str(index))
-            #sdfg.view()
             self._dispatcher.dispatch_subgraph(sdfg, scope, state_id,
                                             function_stream, callsite_stream,
                                             skip_entry_node=True,
