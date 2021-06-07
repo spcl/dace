@@ -3,7 +3,7 @@ import dace
 import numpy as np
 from IPython.display import Code
 
-def create_deeply_nested_sdfg():
+def create_deeply_nested_sdfg(giveUniqueName=True):
     sdfg = dace.SDFG("deepnest_test")
     state : dace.SDFGState = sdfg.add_state("init")
     xarr = state.add_array("x", [4, 100], dace.float32)
@@ -26,6 +26,8 @@ def create_deeply_nested_sdfg():
     nstate.add_memlet_path(xRead, mapEntry, noUnrollEntry, nope, memlet=inputMem, dst_conn="_in")
     nstate.add_memlet_path(nope, mapExit, noUnrollExit, xWrite, memlet=outputMem, src_conn="_out")
     nsdfg_node = state.add_nested_sdfg(nsdfg, state, set(["xin"]), set(['xout']))
+    if giveUniqueName:
+        nsdfg_node.unique_name = "someUniqueName"
 
     state.add_memlet_path(xarr, topMapEntry, nsdfg_node, 
                         memlet=mem.Memlet.from_array("x", sdfg.arrays["x"]), dst_conn="xin")
@@ -44,7 +46,7 @@ def test_unrolled_schedule():
 
 if __name__ == "__main__":
     #test_unrolled_schedule()
-    sdfg = create_deeply_nested_sdfg()
+    sdfg = create_deeply_nested_sdfg(True)
     code = Code(sdfg.generate_code()[2].code, language='cpp')
     print(code)
 

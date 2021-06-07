@@ -17,6 +17,7 @@ import dace.sdfg
 from dace.sdfg.replace import deepreplace
 from dace.sdfg import utils
 from dace.sdfg import nodes as nd
+from dace import Config
 
 def backup_replacement_fields(subgraph: 'dace.sdfg.state.StateGraphView') -> Tuple:
     """
@@ -108,10 +109,44 @@ class UnrollCodeGen(TargetCodeGenerator):
         entry_node = scope.source_nodes()[0]
         index_list = []
 
-        #def nsdfg_replace_name(scope, param):
-            #for node in scope.nodes():
-                #if(isinstance(node, nd.NestedSDFG)):
+        #Generate new names for nsdfgs, as they will be generated multiple times
+        def nsdfg_replace_name(scope, paramname, paramval):
+            unique_functions_conf = Config.get('compiler', 'unique_functions')
+            if unique_functions_conf is True:
+                unique_functions_conf = 'hash'
+            elif unique_functions_conf is False:
+                unique_functions_conf = 'none'
+            if unique_functions_conf == 'hash':
+                unique_functions = True
+                unique_functions_hash = True
+            elif unique_functions_conf == 'unique_name':
+                unique_functions = True
+                unique_functions_hash = False
+            elif unique_functions_conf == 'none':
+                unique_functions = False
+            else:
+                raise ValueError(
+                    f'Unknown unique_functions configuration: {unique_functions_conf}'
+                )
+            backup = []
+            for node in scope.nodes():
+                if(isinstance(node, nd.NestedSDFG)):
+                    if unique_functions and not unique_functions_hash and node.unique_name != "":
+                        backup.append((node, True, node.unique_name))
+                        node.unique_name = f"{node.unique_name}_{param}{paramval}"
+                    else:
+                        backup.append((node, False, node.sdfg.name))
+                        node.sdfg.name = f"{node.sdfg.name}_{param}{paramval}"
+                    for nstate in node.sdfg.nodes():
+                        backup.extend(nsdfg_replace_name(nstate, paramname, paramval))
+            return backup
 
+        def nsdfg_restore_name(backup):
+            for node, isUniqueName, value in backup:
+                if isUniqueName:
+                    node.unique_name = value
+                else:
+                    node.sdfg.name = value
 
         for begin, end, stride in entry_node.map.range:
             l = []
@@ -123,13 +158,19 @@ class UnrollCodeGen(TargetCodeGenerator):
         for indices in product(*index_list):
             backups = deep_replacement_field_backup(scope)
             callsite_stream.write('{')
+            nsdfg_names = None
             for param, index in zip(entry_node.map.params, indices):
                 #callsite_stream.write(f'auto {param} = {sym2cpp(index)};')
                 deepreplace(scope, str(param), str(index))
+                if nsdfg_names is None:
+                    nsdfg_names = nsdfg_replace_name(scope, str(param), str(index))
+                else:
+                    nsdfg_replace_name(scope, str(param), str(index))
             #sdfg.view()
             self._dispatcher.dispatch_subgraph(sdfg, scope, state_id,
                                             function_stream, callsite_stream,
                                             skip_entry_node=True,
                                             skip_exit_node=True)
             callsite_stream.write('}')
+            nsdfg_restore_name(nsdfg_names)
             use_deep_replacement_fields_backup(backups)
