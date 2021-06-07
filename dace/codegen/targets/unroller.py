@@ -239,7 +239,8 @@ class UnrollCodeGen(TargetCodeGenerator):
                                                function_stream,
                                                callsite_stream,
                                                skip_entry_node=True,
-                                               skip_exit_node=True)
+                                               skip_exit_node=True,
+                                               )
             callsite_stream.write('}')
             nsdfg_after_unroll(nsdfg_unroll_info)
             use_deep_replacement_fields_backup(backups)

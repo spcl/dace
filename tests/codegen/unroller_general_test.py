@@ -31,13 +31,15 @@ def create_deeply_nested_sdfg():
                            noUnrollEntry,
                            nope,
                            memlet=inputMem,
-                           dst_conn="_in")
+                           dst_conn="_in",
+                           )
     nstate.add_memlet_path(nope,
                            mapExit,
                            noUnrollExit,
                            xWrite,
                            memlet=outputMem,
-                           src_conn="_out")
+                           src_conn="_out",
+                           )
 
     nstate2 = nsdfg.add_state("second_nest")
     tasklet = nstate2.add_tasklet("overwrite", set(), set(["_out"]),
@@ -46,7 +48,8 @@ def create_deeply_nested_sdfg():
     nstate2.add_memlet_path(tasklet,
                             xWrite2,
                             memlet=mem.Memlet("xout[mpt, 0]"),
-                            src_conn="_out")
+                            src_conn="_out",
+                            )
 
     nsdfg.add_edge(nstate, nstate2, InterstateEdge(None, dict(mpt="k")))
     nsdfg_node = state.add_nested_sdfg(nsdfg, state, set(["xin"]),
@@ -56,12 +59,14 @@ def create_deeply_nested_sdfg():
                           topMapEntry,
                           nsdfg_node,
                           memlet=mem.Memlet.from_array("x", sdfg.arrays["x"]),
-                          dst_conn="xin")
+                          dst_conn="xin",
+                          )
     state.add_memlet_path(nsdfg_node,
                           topMapExit,
                           yarr,
                           memlet=mem.Memlet.from_array("y", sdfg.arrays["y"]),
-                          src_conn="xout")
+                          src_conn="xout",
+                          )
 
     return sdfg
 
