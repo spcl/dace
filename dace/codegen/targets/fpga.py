@@ -255,7 +255,6 @@ class FPGACodeGen(TargetCodeGenerator):
         # TODO: add something on top of this (or here) to detect all KERNELS first
         state_id = sdfg.node_id(state)
 
-
         if not self._in_device_code:
 
             # List of tuples (subgraph, kernel_id)
@@ -302,8 +301,6 @@ class FPGACodeGen(TargetCodeGenerator):
                     f"---- Found {len(kernels)} kernel in state {state.name}! ----"
                 )
                 are_there_kernels = True
-
-
 
             state_parameters = []
 
@@ -366,7 +363,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 self.generate_kernel(sdfg, state, kernel_name, subgraphs,
                                      function_stream, callsite_stream,
                                      kernel_host_header_stream,
-                                     kernel_host_body_stream, state_parameters, kern_id)
+                                     kernel_host_body_stream, state_parameters,
+                                     kern_id)
 
                 # Emit the connections ini file
                 if len(self._stream_connections) > 0:
@@ -451,12 +449,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         "Cannot allocate global memory from device code.")
                 allocated.add(node.data)
                 # Allocate transients
-                self._dispatcher.dispatch_allocate(sdfg, state, state_id,
-                                                   node, function_stream,
+                self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
+                                                   function_stream,
                                                    callsite_stream)
 
-            self.generate_nested_state(sdfg, state, state.label,
-                                       subgraphs,
+            self.generate_nested_state(sdfg, state, state.label, subgraphs,
                                        function_stream, callsite_stream)
 
     @staticmethod
@@ -892,7 +889,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                          callsite_stream):
         pass  # Handled by destructor
 
-    def compute_kernels(self, state: dace.SDFGState, default_kernel=0):
+    def compute_kernels(self, state: dace.SDFGState, default_kernel: int = 0):
         """ Annotates  state nodes (and all nested ones) to include a `_kernel_id`
             field. This field is applied to all FPGA maps, tasklets, and copies
             that can be executed in parallel in separate kernels.
@@ -904,10 +901,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
         # TODO:
         #  - control  this by some dace configuration flag?
-        #  - Kernel numbering can be misleading (probably not solvable)
-        #  - how to deal with AccessNode: Should they have a PE id? they can be accessed by multiple PEs?
-        kernels = 0
-        concurrent_kernels = 0
+
+        concurrent_kernels = 0  # Max number of kernels
         sdfg = state.parent
 
         def increment(kernel_id):
@@ -915,35 +910,21 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 return (kernel_id + 1) % concurrent_kernels
             return kernel_id + 1
 
-        # Keep track of PEs per state
-        state_kernels = []
-        state_subsdfg_events = []
-        max_events = 0
-
         # Dictionary containing dependencies among kernels:
         # dependencies[K] = [list of kernel IDs from which K depends]
         dependencies = dict()
 
         source_nodes = state.source_nodes()
         max_kernels = default_kernel
-        assigned = set()  # TODO: tmp, for checks
 
-        # TODO: remove debug prints
         # First step: assign a different Kernel ID
         # to each source node which is not an AccessNode
         for i, node in enumerate(source_nodes):
             if isinstance(node, nodes.AccessNode):
                 continue
 
-            # ATM we are not recurring into NestedSDFG. They are treated as a kernel
-            # if isinstance(node, nodes.NestedSDFG):
-            #     if node.schedule == dtypes.ScheduleType.FPGA_Device:
-            #         continue
             node._kernel = max_kernels
-            print("Source node ", node, " has associated PE: ", max_kernels)
-            node._kernel_childpath = False
             max_kernels = increment(max_kernels)
-            assigned.add(node)
 
         # Consecutive nodes that are not crossroads can be in the same Kernel
         # A node is said to be a crossroad, if it belongs in more that two
@@ -960,18 +941,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 '''
                 Given ad edge, this traverses the edges backwards.
                 It can be used either for:
-                - understanding if along the backward path thre is some compute
+                - understanding if along the backward path there is some compute node, or
                 - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
                 :return:
                 '''
-                # TODO: do reverse DFG till we reach another kernel boundaries
-                # TODO: should we return this?
-                # If empty memlet, continue
-                # if (edge.src_conn is None and edge.dst_conn is None
-                #         and edge.data.is_empty() and look_for_kernel_id):
-                #     return False
 
-                # Continue Until we find some compute part or a predecessor with a kernel ID
                 curedge = edge
                 source_nodes = state.source_nodes()
                 while not curedge.src in source_nodes:
@@ -995,8 +969,6 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     return curedge.src._kernel if hasattr(
                         curedge.src, "_kernel") else None
 
-
-
             if hasattr(e.src, '_kernel'):
                 kernel = e.src._kernel
 
@@ -1004,51 +976,25 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         and isinstance(sdfg.arrays[e.dst.data], dt.View)):
                     # Skip views
                     e.dst._kernel = kernel
-                    e.dst._kernel_childpath = False
-                    assert e.dst not in assigned
-                    assigned.add(e.dst)
                     continue
 
                 # Does this node need to be in another Kernel?
-                # If this node is a crossroad node (has more than one predecessor)
-                # than it should be on a separate Kernel. Check if this node has more than one predecessor
-                # and its predecessors contain some compute (so not just access nodes)
+                # If it is a crossroad node (has more than one predecessor and its predecessors contain some compute)
+                # then it should be on a separate Kernel.
 
-                # TODO: corner cases
-                # - this is an exit node
-                # - Systolic array? Not sure about this
-                # - If i am in a Scope, then there is no need to check, we keep the same kernel
-                # - TODO: we should not do this for Access Nodes? Maybe just code node and Entry Node
                 if len(list(state.predecessors(e.dst))) > 1 and not isinstance(
                         e.dst, nodes.ExitNode) and scopes[e.dst] == None:
-                    # Loop over all predecessor (except this edge) and see if there is some compute inside
+                    # Loop over all predecessors (except this edge)
                     crossroad_node = False
                     for pred_edge in state.in_edges(e.dst):
                         if pred_edge != e and trace_back_edge(pred_edge, state):
-                            # print(
-                            #     f"{e.dst} is crossroad node because of edge {pred_edge}"
-                            # )
                             crossroad_node = True
                             break
 
                     if crossroad_node:
-                        # print(
-                        #     "Node ", e.dst,
-                        #     " has more than one predecessor. Put it in another Kernel"
-                        # )
-                        # if isinstance(e.dst, nodes.ExitNode):
-                        #     print("!!!!!! But this was an Exit Node!!!!!")
                         kernel = max_kernels
                         max_kernels = increment(max_kernels)
 
-                # Do not create multiple kernels within FPGA scopes
-                if (isinstance(e.src, nodes.EntryNode)
-                        and e.src.schedule == dtypes.ScheduleType.FPGA_Device):
-                    e.src._kernel_childpath = False
-                elif state.entry_node(e.src) is not None:
-                    parent = state.entry_node(e.src)
-                    if parent.schedule == dtypes.ScheduleType.FPGA_Device:
-                        e.src._kernel_childpath = False
             else:
 
                 # From this edge we don't have any kernel id.
@@ -1061,11 +1007,9 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                                  state,
                                                  look_for_kernel_id=True)
                         if kernel is not None:
-                            # print("Reuse kernel ID from a parent for ", e.dst)
                             break
                 else:
-                    # New PE: this should not have any predecessor
-                    # print("Use a new Kernel id for ", e.dst)
+                    # New kernel: this should not have any predecessor
                     kernel = max_kernels
                     if (isinstance(e.dst, nodes.AccessNode)
                             and isinstance(sdfg.arrays[e.dst.data], dt.View)):
@@ -1073,10 +1017,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         pass
                     else:
                         max_kernels = increment(max_kernels)
-            assert (e.dst not in assigned)
-            assigned.add(e.dst)
             e.dst._kernel = kernel
-            # print(e.dst, " has associated kernel ID ", kernel)
 
         # do another pass and keep track of precedences among Kernels
         for node in state.nodes():
@@ -1090,15 +1031,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                             dependencies[this_kernel] = set()
                         dependencies[this_kernel].add(pred._kernel)
 
-        state_kernels.append(max_kernels if concurrent_kernels ==
-                             0 else concurrent_kernels)
-
-        # TODO: Can we relax some kernel in some case?
-
-        # Maximum over all states
-        max_kernels = max(state_kernels)
-        # max_events = max(state_events)
-        # print("************ Kernel precedences: ", dependencies)
+        max_kernels = max_kernels if concurrent_kernels == 0 else concurrent_kernels
         return max_kernels, dependencies
 
     def _emit_copy(self, sdfg, state_id, src_node, src_storage, dst_node,
@@ -1815,10 +1748,17 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                                 function_stream,
                                                 callsite_stream)
 
-    def generate_kernel(self, sdfg, state, kernel_name, subgraphs,
-                        function_stream, callsite_stream,
-                        kernel_host_header_stream, kernel_host_body_stream,
-                        state_parameters, kernel_id = None):
+    def generate_kernel(self,
+                        sdfg,
+                        state,
+                        kernel_name,
+                        subgraphs,
+                        function_stream,
+                        callsite_stream,
+                        kernel_host_header_stream,
+                        kernel_host_body_stream,
+                        state_parameters,
+                        kernel_id=None):
         if self._in_device_code:
             raise cgx.CodegenError("Tried to generate kernel from device code")
         self._in_device_code = True
@@ -1839,10 +1779,10 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             for pred in self._kernels_dependencies[kernel_id]:
                 predecessors.append(get_kernel_name(pred))
 
-
         # Actual kernel code generation
-        self.generate_kernel_internal(sdfg, state, kernel_name, predecessors, subgraphs,
-                                      kernel_stream, kernel_host_header_stream,
+        self.generate_kernel_internal(sdfg, state, kernel_name, predecessors,
+                                      subgraphs, kernel_stream,
+                                      kernel_host_header_stream,
                                       kernel_host_body_stream, function_stream,
                                       callsite_stream, state_parameters)
         self._kernel_count = self._kernel_count + 1
@@ -1950,69 +1890,6 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 kernel_args_opencl.append(
                     FPGACodeGen.make_opencl_parameter(argname, arg))
 
-        # TODO: remove this
-        kernel_args_call_host = dtypes.deduplicate(kernel_args_call_host)
-        kernel_args_opencl = dtypes.deduplicate(kernel_args_opencl)
-
-        # add promise parameter to return to the caller the events associated to created kernels
-        # kernel_args_opencl.append("std::promise<std::vector<cl::Event> *> promise")
-        # kernel_args_opencl.append("std::vector<cl::Event> * wait_events")
-        # promise_name = f"promise_{kernel_name}"
-        # kernel_args_call_host.append(f"std::move({promise_name})")
-
-        # host_function_name = "__dace_runkernel_{}".format(kernel_name)
-        # Write OpenCL host function
-        #         host_code_stream.write(
-        #             """\
-        # DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
-        #   hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();"""
-        #             .format(host_function_name=host_function_name,
-        #                     kernel_args_opencl=", ".join(kernel_args_opencl)))
-        #
-        #         header_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(
-        #             host_function_name, ", ".join(kernel_args_opencl)))
-
-        # callsite_stream.write("{}({});".format(
-        #     host_function_name, ", ".join(kernel_args_call_host)))
-        # Create a promise and a future to get from kernel launcing function the vector
-        # of events associated to the kernel executed
-
-        # kernel_id = self._kernels_names_to_id[kernel_name]
-        # needs_synch = False
-        # if kernel_id in self._kernels_dependencies:
-        #     needs_synch = True
-        #
-        #
-        # if needs_synch:
-        #     #THIS MUST BE DONE IN THE VENDOR SPECIFIC FUCNTION
-        #     callsite_stream.write(f"// {kernel_name} depends on {self._kernels_dependencies[kernel_id]}")
-        #     # Build a vector containing all the events associated with the kernels from which this one depends
-        #     def get_kernel_name(val):
-        #         for key, value in self._kernels_names_to_id.items():
-        #             if val == value:
-        #                 return key
-        #         raise RuntimeError("Error while generating kernel dependencies")
-        #     kernel_deps_name = f"deps_{kernel_name}"
-        #     callsite_stream.write(f"std::vector<cl::Event > *{kernel_deps_name} = new std::vector<cl::Event >();")
-        #     for predecessor in self._kernels_dependencies[kernel_id]:
-        #         pred_name = get_kernel_name(predecessor)
-        #         # concatenate events from predecessor kernel
-        #         callsite_stream.write(f"{kernel_deps_name}->insert({kernel_deps_name}->end(), events_{pred_name}->begin(), events_{pred_name}->end());")
-        #
-        #
-        #     kernel_args_call_host.append(f"{kernel_deps_name}")
-        # else:
-        #     # must be always passed
-        #     kernel_args_call_host.append(f"nullptr")
-        # future_name = f"future_{kernel_name}"
-        # events_name = f"events_{kernel_name}"
-        # callsite_stream.write(f"std::promise<std::vector<cl::Event> *> {promise_name};")
-        # callsite_stream.write(f"std::future<std::vector<cl::Event> *> {future_name} = {promise_name}.get_future();")
-        # callsite_stream.write("std::thread thread_{}({}, {});".format(
-        #     host_function_name, host_function_name, ", ".join(kernel_args_call_host)))
-
-        # callsite_stream.write(f"std::vector<cl::Event> *  {events_name} = {future_name}.get();")
-        # callsite_stream.write(f"std::cout << \"Kernel {kernel_name} has events: \" << {events_name}->size()<<std::endl;")
         # Any extra transients stored in global memory on the FPGA must now be
         # allocated and passed to the kernel
         for arr_node in nested_global_transients:

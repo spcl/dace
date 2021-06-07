@@ -536,7 +536,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             for pred in predecessors:
                 # concatenate events from predecessor kernel
                 kernel_stream.write(
-                    f"{kernel_deps_name}.insert({kernel_deps_name}.end(), {pred}_events.begin(), {pred}_events.end());"
+                    f"{kernel_deps_name}.push_back({pred}_event);"
                 )
 
         # Launch HLS kernel
