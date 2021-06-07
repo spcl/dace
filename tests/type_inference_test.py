@@ -175,7 +175,7 @@ res = var1 + var3 * var2
 
         defined_symbols = {'n': dtypes.typeclass(np.int8)}
         inf_symbol = type_inference.infer_expr_type(n * 5.0, defined_symbols)
-        self.assertEqual(inf_symbol, dtypes.typeclass(int))
+        self.assertEqual(inf_symbol, dtypes.typeclass(float))
 
         defined_symbols = {'n': dtypes.typeclass(np.int8)}
         inf_symbol = type_inference.infer_expr_type(n * 5.01, defined_symbols)
