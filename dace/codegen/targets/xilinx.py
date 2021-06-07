@@ -515,8 +515,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
     def generate_kernel_boilerplate_post(kernel_stream, sdfg, state_id):
         kernel_stream.write("HLSLIB_DATAFLOW_FINALIZE();\n}\n", sdfg, state_id)
 
-    def generate_host_function_body(self, sdfg, state, kernel_name, parameters,
-                                    rtl_tasklet_names, kernel_stream):
+    def generate_host_function_body(self, sdfg, state, kernel_name,
+                                    predecessors, parameters, rtl_tasklet_names,
+                                    kernel_stream):
 
         kernel_args = []
         for _, name, p, _ in parameters:
@@ -525,23 +526,33 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_function_name = kernel_name
         kernel_file_name = "{}.xclbin".format(kernel_name)
 
+        # Check if this kernel depends from other kernels
+        needs_synch = len(predecessors) > 0
+
+        if needs_synch:
+            # Build a vector containing all the events associated with the kernels from which this one depends
+            kernel_deps_name = f"deps_{kernel_name}"
+            kernel_stream.write(f"std::vector<cl::Event > {kernel_deps_name};")
+            for pred in predecessors:
+                # concatenate events from predecessor kernel
+                kernel_stream.write(
+                    f"{kernel_deps_name}.insert({kernel_deps_name}.end(), {pred}_events.begin(), {pred}_events.end());"
+                )
+
         # Launch HLS kernel
         kernel_stream.write(
             f"""\
   auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});
-  cl::Event {kernel_name}_event =  {kernel_name}_kernel.ExecuteTaskFork();
-  all_events.push_back({kernel_name}_event);""", sdfg,
-            sdfg.node_id(state))
+  cl::Event {kernel_name}_event =  {kernel_name}_kernel.ExecuteTaskFork({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''});
+  all_events.push_back({kernel_name}_event);""", sdfg, sdfg.node_id(state))
 
         # Join RTL tasklets
         for name in rtl_tasklet_names:
             kernel_stream.write(f"kernel_{name}.wait();\n", sdfg,
                                 sdfg.node_id(state))
 
-
-
-    def generate_module(self, sdfg, state, kernel_name, name, subgraph, parameters,
-                        module_stream, entry_stream, host_stream):
+    def generate_module(self, sdfg, state, kernel_name, name, subgraph,
+                        parameters, module_stream, entry_stream, host_stream):
         """Generates a module that will run as a dataflow function in the FPGA
            kernel."""
 
@@ -743,8 +754,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         return "{}_{}_{}_{}".format(node.name, sdfg.sdfg_id,
                                     sdfg.node_id(state), state.node_id(node))
 
-    def generate_kernel_internal(self, sdfg, state, kernel_name,
-                                 subgraphs, kernel_stream, kernel_host_header_stream, kernel_host_body_stream, function_stream,
+    def generate_kernel_internal(self, sdfg, state, kernel_name, predecessors,
+                                 subgraphs, kernel_stream,
+                                 kernel_host_header_stream,
+                                 kernel_host_body_stream, function_stream,
                                  callsite_stream, state_parameters):
         # TODO: add docstring
         """Main entry function for generating a Xilinx kernel."""
@@ -800,9 +813,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                               subgraph_parameters, module_stream, entry_stream,
                               kernel_host_body_stream)
 
-        self.generate_host_function_body(sdfg, state, kernel_name,
+        self.generate_host_function_body(sdfg, state, kernel_name, predecessors,
                                          global_data_parameters,
-                                         rtl_tasklet_names, kernel_host_body_stream)
+                                         rtl_tasklet_names,
+                                         kernel_host_body_stream)
 
         # Store code to be passed to compilation phase
         # self._host_codes.append((kernel_name, host_code_stream.getvalue()))

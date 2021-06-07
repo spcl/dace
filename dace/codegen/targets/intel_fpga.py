@@ -471,7 +471,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                                     var_name=None):
         pass
 
-    def generate_kernel_internal(self, sdfg, state, kernel_name, subgraphs, kernel_stream,
+    def generate_kernel_internal(self, sdfg, state, kernel_name, predecessors, subgraphs, kernel_stream,
                                  kernel_host_header_stream, kernel_host_body_stream, function_stream,
                                  callsite_stream, state_parameters):
         # TODO: add docstring
@@ -528,7 +528,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_stream.write(kernel_header_stream.getvalue() +
                             kernel_body_stream.getvalue())
 
-        self.generate_host_function_body(sdfg, state, kernel_host_body_stream, kernel_name)
+        self.generate_host_function_body(sdfg, state, kernel_host_body_stream, kernel_name, predecessors)
 
         # # Store code to be passed to compilation phase
         # self._host_codes.append(
@@ -544,39 +544,24 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
 
 
-    def generate_host_function_body(self, sdfg, state, host_stream, kernel_name):
+    def generate_host_function_body(self, sdfg, state, host_stream, kernel_name, predecessors):
         state_id = sdfg.node_id(state)
-        # TODO profiling
-        # host_stream.write(
-        #     "const auto start = std::chrono::high_resolution_clock::now();",
-        #     sdfg, state_id)
         launch_async = Config.get_bool("compiler", "intel_fpga", "launch_async")
-        kernel_id = self._kernels_names_to_id[kernel_name]
 
-        # Check if this kernel depends from other
-        needs_synch = False
-        if kernel_id in self._kernels_dependencies:
-            needs_synch = True
+        # Check if this kernel depends from other kernels
+        needs_synch = len(predecessors) > 0
 
         if needs_synch:
-            #THIS MUST BE DONE IN THE VENDOR SPECIFIC FUCNTION
-            host_stream.write(f"// {kernel_name} depends on {self._kernels_dependencies[kernel_id]}")
             # Build a vector containing all the events associated with the kernels from which this one depends
-            def get_kernel_name(val):
-                for key, value in self._kernels_names_to_id.items():
-                    if val == value:
-                        return key
-                raise RuntimeError("Error while generating kernel dependencies")
             kernel_deps_name = f"deps_{kernel_name}"
             host_stream.write(f"std::vector<cl::Event > {kernel_deps_name};")
-            for predecessor in self._kernels_dependencies[kernel_id]:
-                pred_name = get_kernel_name(predecessor)
+            for pred in predecessors:
                 # concatenate events from predecessor kernel
-                host_stream.write(f"{kernel_deps_name}.insert({kernel_deps_name}.end(), {pred_name}_events.begin(), {pred_name}_events.end());")
+                host_stream.write(f"{kernel_deps_name}.insert({kernel_deps_name}.end(), {pred}_events.begin(), {pred}_events.end());")
 
 
         if launch_async:
-            #TODO remove this
+            #TODO remove this?
 
             # hlslib uses std::async to launch each kernel launch as an
             # asynchronous task in a separate C++ thread. This seems to cause
@@ -601,12 +586,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
   }}
   all_events.insert(all_events.end(), {kernel_name}_events.begin(), {kernel_name}_events.end());
 """, sdfg, state_id)
-#         host_stream.write(
-#             """\
-#   const auto end = std::chrono::high_resolution_clock::now();
-#   const double elapsedChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-#   std::cout << "Kernel executed in " << elapsedChrono << " seconds.\\n" << std::flush;
-# """, sdfg, sdfg.node_id(state))
+
 
     def generate_module(self, sdfg, state, kernel_name, module_name, subgraph, parameters,
                         module_stream, host_header_stream, host_body_stream):
