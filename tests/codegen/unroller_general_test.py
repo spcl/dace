@@ -42,8 +42,11 @@ def create_deeply_nested_sdfg():
 
     return sdfg
 
-def test_unrolled_schedule():
+#code printing comments are left in case anyone would like to see the generated code at some point
+
+def test_unrolled_deeply_nested():
     sdfg = create_deeply_nested_sdfg()
+    #print(Code(sdfg.generate_code()[0].code, language='cpp'))
     passed = np.full((4, 100), 42.0, dtype=np.float32)
     returns = np.zeros((4, 100), np.float32)
     sdfg(x=passed, y=returns)
@@ -51,6 +54,26 @@ def test_unrolled_schedule():
     passed[0, 0] = 15.0
     assert(np.allclose(passed, returns, 1e-6))
 
+def create_simple_unrolled_sdfg():
+    @dace.program
+    def ucopy(input : dace.float32[4], output : dace.float32[4]):
+        for i in dace.map[0:4]:
+            output[i] = input[i]
+    sdfg = ucopy.to_sdfg()
+    for node in sdfg.states()[0].nodes():
+        if(isinstance(node, dace.sdfg.nodes.MapEntry)):
+            node.schedule = dace.ScheduleType.Unrolled
+    return sdfg
+    
+def test_unrolled_simple_map():
+    sdfg = create_simple_unrolled_sdfg()
+    #print(Code(sdfg.generate_code()[0].code, language='cpp'))
+    passed = np.full((4), 42.0, dtype=np.float32)
+    returns = np.zeros((4), np.float32)
+    sdfg(input=passed, output=returns)
+    assert(np.allclose(passed, returns, 1e-6))
+
 if __name__ == "__main__":
-    test_unrolled_schedule()
+    test_unrolled_deeply_nested()
+    test_unrolled_simple_map()
 
