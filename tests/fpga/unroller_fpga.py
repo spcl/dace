@@ -1,6 +1,7 @@
 from dace import subsets as sbs, dtypes, memlet as mem
 import dace
 import numpy as np
+from IPython.display import Code
 
 def create_deeply_nested_sdfg():
     sdfg = dace.SDFG("deepnest_test")
@@ -42,4 +43,8 @@ def test_unrolled_schedule():
     assert(np.allclose(passed, returns, 1e-6))
 
 if __name__ == "__main__":
-    test_unrolled_schedule()
+    #test_unrolled_schedule()
+    sdfg = create_deeply_nested_sdfg()
+    code = Code(sdfg.generate_code()[2].code, language='cpp')
+    print(code)
+

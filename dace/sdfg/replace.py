@@ -7,6 +7,7 @@ import re
 import sympy as sp
 from typing import Any, Dict, Union
 import warnings
+from dace.sdfg import nodes as nd
 
 
 def _replsym(symlist, symrepl):
@@ -24,6 +25,16 @@ def _replsym(symlist, symrepl):
                           if symbolic.issymbolic(dim) else dim)
     return symlist
 
+def deepreplace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
+                new_name: str):
+    """
+    Deeply replaces all occurences of name using replace, also in NestedSDFGs.
+    """
+    replace(subgraph, name, new_name)
+    for node in subgraph.nodes():
+        if(isinstance(node, nd.NestedSDFG)):
+            for nstate in node.sdfg.nodes():
+                deepreplace(nstate, name, new_name)
 
 def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
             new_name: str):

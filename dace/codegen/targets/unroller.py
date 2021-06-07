@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
 from typing import Any, Tuple
+
 import dace
 from dace import registry
 from dace.sdfg.scope import ScopeSubgraphView
@@ -12,6 +13,10 @@ from dace.codegen import cppunparse
 from itertools import product
 from dace.sdfg import state
 import dace.subsets
+import dace.sdfg
+from dace.sdfg.replace import deepreplace
+from dace.sdfg import utils
+from dace.sdfg import nodes as nd
 
 def backup_replacement_fields(subgraph: 'dace.sdfg.state.StateGraphView') -> Tuple:
     """
@@ -40,10 +45,11 @@ def backup_replacement_fields(subgraph: 'dace.sdfg.state.StateGraphView') -> Tup
         edge.data.volume = deepcopy(edge.data.volume)
     return (oldproperties, oldedgedata, oldedgesubsets, oldedgevolumes)
 
-def use_replacement_fields_backup(subgraph : "dace.sdfg.state.StateGraphView",
-                            backup : "Tuple"):
+def use_replacement_fields_backup(backup : "Tuple"):
     """
-    Restores values saved using backup_replacement_fields.
+    Restores values saved using backup_replacement_fields. Will apply
+    the changes to the nodes/edges objects it saw during backup, in other
+    words those must still exist.
     """
     oldproperties, oldedgedata, oldedgesubsets, oldedgevolumes = backup
     for node in oldproperties:
@@ -57,6 +63,25 @@ def use_replacement_fields_backup(subgraph : "dace.sdfg.state.StateGraphView",
         edge.data.other_subset = osub
     for edge, volume in oldedgevolumes.items():
         edge.data.volume = volume
+
+def deep_replacement_field_backup(subgraph: 'dace.sdfg.state.StateGraphView') -> "list[Tuple]":
+    """
+    Same as replacement_field_backup, but saves also inside of NestedSDFG's
+    """
+    backups = []
+    backups.append(backup_replacement_fields(subgraph))
+    for node in subgraph.nodes():
+        if(isinstance(node, nd.NestedSDFG)):
+            for ns in node.sdfg.nodes():
+                backups.extend(deep_replacement_field_backup(ns))
+    return backups
+
+def use_deep_replacement_fields_backup(backups: "list[Tuple]"):
+    """
+    Counterpart to deep_replacement_field_backup,restores all values saved by it.
+    """
+    for backup in backups:
+        use_replacement_fields_backup(backup)
 
 @registry.autoregister_params(name='unroll')
 class UnrollCodeGen(TargetCodeGenerator):
@@ -81,8 +106,13 @@ class UnrollCodeGen(TargetCodeGenerator):
                        callsite_stream: CodeIOStream):
         
         entry_node = scope.source_nodes()[0]
-
         index_list = []
+
+        #def nsdfg_replace_name(scope, param):
+            #for node in scope.nodes():
+                #if(isinstance(node, nd.NestedSDFG)):
+
+
         for begin, end, stride in entry_node.map.range:
             l = []
             while begin <= end:
@@ -91,14 +121,15 @@ class UnrollCodeGen(TargetCodeGenerator):
             index_list.append(l)
 
         for indices in product(*index_list):
-            backup = backup_replacement_fields(scope)
+            backups = deep_replacement_field_backup(scope)
             callsite_stream.write('{')
             for param, index in zip(entry_node.map.params, indices):
                 #callsite_stream.write(f'auto {param} = {sym2cpp(index)};')
-                scope.replace(str(param), str(index))
+                deepreplace(scope, str(param), str(index))
+            #sdfg.view()
             self._dispatcher.dispatch_subgraph(sdfg, scope, state_id,
                                             function_stream, callsite_stream,
                                             skip_entry_node=True,
                                             skip_exit_node=True)
             callsite_stream.write('}')
-            use_replacement_fields_backup(scope, backup)
+            use_deep_replacement_fields_backup(backups)
