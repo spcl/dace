@@ -30,7 +30,7 @@ def create_deeply_nested_sdfg():
     nstate2 = nsdfg.add_state("second_nest")
     tasklet = nstate2.add_tasklet("overwrite", set(), set(["_out"]), "_out = 15.0")
     xWrite2 = nstate2.add_write("xout")
-    nstate2.add_memlet_path(tasklet, xWrite2, memlet=mem.Memlet("xout[0, 0]"), src_conn="_out")
+    nstate2.add_memlet_path(tasklet, xWrite2, memlet=mem.Memlet("xout[k, 0]"), src_conn="_out")
 
     nsdfg.add_edge(nstate, nstate2, InterstateEdge("k==1"))
     nsdfg_node = state.add_nested_sdfg(nsdfg, state, set(["xin"]), set(['xout']))
