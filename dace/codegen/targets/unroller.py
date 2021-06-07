@@ -19,7 +19,7 @@ from dace.sdfg import utils
 from dace.sdfg import nodes as nd
 from dace import Config
 
-def backup_replacement_fields(subgraph: 'dace.sdfg.state.StateGraphView') -> Tuple:
+def backup_statescope_fields(subgraph: 'dace.sdfg.state.StateGraphView') -> Tuple:
     """
     Creates mappings from all nodes/edges to all the fields that are affected 
     by replace, before overwritting all those fields with deepcopies of themselves.
@@ -46,7 +46,7 @@ def backup_replacement_fields(subgraph: 'dace.sdfg.state.StateGraphView') -> Tup
         edge.data.volume = deepcopy(edge.data.volume)
     return (oldproperties, oldedgedata, oldedgesubsets, oldedgevolumes)
 
-def use_replacement_fields_backup(backup : "Tuple"):
+def use_statescope_fields_backup(backup : "Tuple"):
     """
     Restores values saved using backup_replacement_fields. Will apply
     the changes to the nodes/edges objects it saw during backup, in other
@@ -65,24 +65,100 @@ def use_replacement_fields_backup(backup : "Tuple"):
     for edge, volume in oldedgevolumes.items():
         edge.data.volume = volume
 
+"""
+symrepl = {
+            symbolic.symbol(name):
+            symbolic.pystr_to_symbolic(new_name)
+            if isinstance(new_name, str) else new_name
+        }
+
+        # Replace in arrays and symbols (if a variable name)
+        if validate_name(new_name):
+            _replace_dict(self._arrays, name, new_name)
+            _replace_dict(self.symbols, name, new_name)
+
+        # Replace inside data descriptors
+        for array in self.arrays.values():
+            replace_properties(array, symrepl, name, new_name)
+
+        # Replace in inter-state edges
+        for edge in self.edges():
+            edge.data.replace(name, new_name)
+
+        # Replace in states
+        for state in self.nodes():
+            state.replace(name, new_name)
+"""
+
+def backup_sdfg_fields(sdfg : dace.SDFG) -> Tuple:
+    arrback = sdfg._arrays
+    sdfg._arrays = deepcopy(sdfg._arrays)
+    symback = sdfg.symbols
+    sdfg.symbols = deepcopy(sdfg.symbols)
+
+    arrpropstore = {}
+    for array in sdfg.arrays.values():
+        for propclass, propval in array.properties():
+            propname = propclass.attr_name
+            arrpropstore[array] = (propname, propval)
+            setattr(array, propname, deepcopy(propval))
+
+    edgefields = []
+    for edge in sdfg.edges():
+        edgeAssign = edge.data.assignments
+        edge.data.assignments = deepcopy(edge.data.assignments)
+        edgeCond = edge.data.condition
+        edge.data.condition = deepcopy(edge.data.condition)
+        edgefields.append((edge, edgeAssign, edgeCond))
+    
+    statefields = []
+    for state in sdfg.nodes():
+        statefields.append(backup_statescope_fields(state))
+    
+    return (sdfg, arrback, symback, arrpropstore, edgefields, statefields)
+
+def use_sdfg_field_backup(backup : Tuple):
+    sdfg, arrback, symback, arrpropstore, edgefields, statefields = backup
+    sdfg._arrays = arrback
+    sdfg.symbols = symback
+
+    for array in arrpropstore:
+        pname, pval = arrpropstore[array]
+        setattr(array, pname, pval)
+
+    for edge, edgeAssignBack, edgeCondBack in edgefields:
+        edge.data.assignments = edgeAssignBack
+        edge.data.condition = edgeCondBack
+
+    for stateback in statefields:
+        use_statescope_fields_backup(stateback)
+
 def deep_replacement_field_backup(subgraph: 'dace.sdfg.state.StateGraphView') -> "list[Tuple]":
     """
-    Same as replacement_field_backup, but saves also inside of NestedSDFG's
+    Stores all occurences of a symbol in a scope and in the nestedSDFGs inside of it. 
+    The backup can be applied using use_deep_replacement_fields_backup
     """
-    backups = []
-    backups.append(backup_replacement_fields(subgraph))
-    for node in subgraph.nodes():
-        if(isinstance(node, nd.NestedSDFG)):
-            for ns in node.sdfg.nodes():
-                backups.extend(deep_replacement_field_backup(ns))
+    def _backupNSDFG(sg):
+        backups = []
+        for node in sg.nodes():
+            if(isinstance(node, nd.NestedSDFG)):
+                backups.append(backup_sdfg_fields(node.sdfg))
+                for nsdfg_state in node.sdfg.nodes():
+                    backups.extend(_backupNSDFG(nsdfg_state))
+        return backups
+
+    backups = [backup_statescope_fields(subgraph)]
+    backups.extend(_backupNSDFG(subgraph))
     return backups
 
 def use_deep_replacement_fields_backup(backups: "list[Tuple]"):
     """
     Counterpart to deep_replacement_field_backup,restores all values saved by it.
     """
-    for backup in backups:
-        use_replacement_fields_backup(backup)
+    use_statescope_fields_backup(backups[0])
+    for i in range(1, len(backups)):
+        use_sdfg_field_backup(backups[i])
+        
 
 @registry.autoregister_params(name='unroll')
 class UnrollCodeGen(TargetCodeGenerator):

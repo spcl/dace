@@ -33,6 +33,7 @@ def deepreplace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
     replace(subgraph, name, new_name)
     for node in subgraph.nodes():
         if(isinstance(node, nd.NestedSDFG)):
+            node.sdfg.replace(name, new_name)
             for nstate in node.sdfg.nodes():
                 deepreplace(nstate, name, new_name)
 
