@@ -25,7 +25,6 @@ def _replsym(symlist, symrepl):
                           if symbolic.issymbolic(dim) else dim)
     return symlist
 
-
 def deepreplace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
                 new_name: str):
     """
@@ -40,7 +39,6 @@ def deepreplace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
             node.sdfg.replace(name, new_name)
             for nstate in node.sdfg.nodes():
                 deepreplace(nstate, name, new_name)
-
 
 def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
             new_name: str):
@@ -75,7 +73,6 @@ def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
             edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
         if symname in edge.data.volume.free_symbols:
             edge.data.volume = _replsym(edge.data.volume, symrepl)
-
 
 def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
                                                 symbolic.SymbolicType],

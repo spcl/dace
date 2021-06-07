@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from typing import Any, Dict, Tuple
-
 import dace
 from dace import registry
 from dace.sdfg.scope import ScopeSubgraphView
@@ -17,7 +16,6 @@ import dace.sdfg
 from dace.sdfg.replace import deepreplace
 from dace.sdfg import nodes as nd
 from dace import Config
-
 
 def backup_statescope_fields(
         subgraph: 'dace.sdfg.state.StateGraphView') -> Tuple:
@@ -47,7 +45,6 @@ def backup_statescope_fields(
         edge.data.volume = copy.deepcopy(edge.data.volume)
     return (oldproperties, oldedgedata, oldedgesubsets, oldedgevolumes)
 
-
 def use_statescope_fields_backup(backup: "Tuple"):
     """
     Restores values saved using backup_replacement_fields. Will apply
@@ -66,7 +63,6 @@ def use_statescope_fields_backup(backup: "Tuple"):
         edge.data.other_subset = osub
     for edge, volume in oldedgevolumes.items():
         edge.data.volume = volume
-
 
 def backup_sdfg_fields(sdfg: dace.SDFG) -> Tuple:
     """
@@ -99,7 +95,6 @@ def backup_sdfg_fields(sdfg: dace.SDFG) -> Tuple:
 
     return (sdfg, arrback, symback, arrpropstore, edgefields, statefields)
 
-
 def use_sdfg_field_backup(backup: Tuple):
     """
     Counterpart to backup_sdfg_fields. Restores the fields with the values
@@ -119,8 +114,7 @@ def use_sdfg_field_backup(backup: Tuple):
 
     for stateback in statefields:
         use_statescope_fields_backup(stateback)
-
-
+    
 def deep_replacement_field_backup(
         subgraph: 'dace.sdfg.state.StateGraphView') -> "list[Tuple]":
     """
@@ -140,7 +134,6 @@ def deep_replacement_field_backup(
     backups.extend(_backupNSDFG(subgraph))
     return backups
 
-
 def use_deep_replacement_fields_backup(backups: "list[Tuple]"):
     """
     Counterpart to deep_replacement_field_backup,restores all values saved by it.
@@ -148,7 +141,6 @@ def use_deep_replacement_fields_backup(backups: "list[Tuple]"):
     use_statescope_fields_backup(backups[0])
     for i in range(1, len(backups)):
         use_sdfg_field_backup(backups[i])
-
 
 @registry.autoregister_params(name='unroll')
 class UnrollCodeGen(TargetCodeGenerator):
