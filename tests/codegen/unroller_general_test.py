@@ -6,7 +6,6 @@ import dace
 import numpy as np
 from IPython.display import Code
 
-
 def create_deeply_nested_sdfg():
     sdfg = dace.SDFG("deepnest_test")
     state: dace.SDFGState = sdfg.add_state("init")
@@ -66,9 +65,7 @@ def create_deeply_nested_sdfg():
 
     return sdfg
 
-
 #code printing comments are left in case anyone would like to see the generated code at some point
-
 
 def test_unrolled_deeply_nested():
     sdfg = create_deeply_nested_sdfg()
@@ -79,7 +76,6 @@ def test_unrolled_deeply_nested():
     passed[1, 0] = 15.0
     passed[0, 0] = 15.0
     assert (np.allclose(passed, returns, 1e-6))
-
 
 def create_simple_unrolled_sdfg():
     @dace.program
@@ -93,7 +89,6 @@ def create_simple_unrolled_sdfg():
             node.schedule = dace.ScheduleType.Unrolled
     return sdfg
 
-
 def test_unrolled_simple_map():
     sdfg = create_simple_unrolled_sdfg()
     #print(Code(sdfg.generate_code()[0].code, language='cpp'))
@@ -101,7 +96,6 @@ def test_unrolled_simple_map():
     returns = np.zeros((4), np.float32)
     sdfg(input=passed, output=returns)
     assert (np.allclose(passed, returns, 1e-6))
-
 
 if __name__ == "__main__":
     test_unrolled_deeply_nested()
