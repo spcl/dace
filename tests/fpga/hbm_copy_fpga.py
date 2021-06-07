@@ -54,7 +54,7 @@ def create_deeply_nested_sdfg():
     xarr = state.add_array("x", [4, 100, 100], dace.float32)
     sdfg.arrays["x"].location["hbmbank"] = "0:4"
     yarr = state.add_array("y", [4, 100, 100], dace.float32)
-    sdfg.arrays["y"].location["hbmbank"] = "5:8"
+    sdfg.arrays["y"].location["hbmbank"] = "4:8"
 
     topMapEntry, topMapExit = state.add_map("topmap", dict(k="0:2"))
     
@@ -79,6 +79,25 @@ def create_deeply_nested_sdfg():
 
     return sdfg
 
+def create_HBM_stream_and_DDR_test():
+    sdfg = dace.SDFG("hbmstream")
+    state = sdfg.add_state("hbmstream")
+
+    xarr = sdfg.add_array("x", [2, 10], dace.float32)
+    yarr = sdfg.add_array("y", [2, 10, 10], dace.float32)
+    sdfg.arrays["x"].location["hbmbank"] = sbs.Range("0:1")
+    sdfg.arrays["y"].location["hbmbank"] = sbs.Range("2:3")
+    streamarr = sdfg.add_stream("st", dace.float32, 1, [10, 10])
+    ddrarr0 = sdfg.add_array("z", [10], dace.float32)
+    ddrarr1 = sdfg.add_array("w", [10], dace.float32)
+    sdfg.arrays["z"].location["bank"] = 0
+    sdfg.arrays["w"].location["bank"] = 1
+
+    hbm2stream = mem.Memlet("y[0, 0:10, 0:10]->0:10, 0:10")
+    stream2ddr = mem.Memlet("st[0, 0:10]->0:10")
+    hbm2ddr = mem.Memlet("x[0, 5:10]->5:10")
+
+    
 
 sdfg = create_deeply_nested_sdfg()
 sdfg.view()
