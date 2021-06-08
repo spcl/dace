@@ -29,36 +29,17 @@ from dace.codegen.dispatcher import DefinedType
 import copy
 import numpy as np
 
+
 def contains_any_sve(sdfg: SDFG):
     for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.Map) and node.schedule == dace.ScheduleType.SVE_Map:
+        if isinstance(node,
+                      nodes.Map) and node.schedule == dace.ScheduleType.SVE_Map:
             return True
-    return True
-
-old_generate_header = None
-old_generate_footer = None
-
-def generate_header_hook(self, sdfg: SDFG, global_stream: CodeIOStream,
-                        callsite_stream: CodeIOStream):
-    global old_generate_header
-    if contains_any_sve(sdfg):
-        util.patch_ctypes()
-    res = old_generate_header(self, sdfg, global_stream, callsite_stream)
-    return res
-
-
-def generate_footer_hook(self, sdfg: SDFG, global_stream: CodeIOStream,
-                        callsite_stream: CodeIOStream):
-    global old_generate_footer
-    if contains_any_sve(sdfg):
-        util.patch_ctypes()
-    res = old_generate_footer(self, sdfg, global_stream, callsite_stream)
-    util.restore_ctypes()
-    return res
+    return False
 
 
 @dace.registry.autoregister_params(name='sve')
-class SVEMap(TargetCodeGenerator):
+class SVECodeGenerator(TargetCodeGenerator):
     target_name = 'armv8'
     title = 'sve'
     language = 'cpp'
@@ -111,20 +92,9 @@ class SVEMap(TargetCodeGenerator):
             dace.ScheduleType.SVE_Map] = dace.StorageType.CPU_Heap
         self.has_generated_header = False
 
-        """
-        # Hook the generate_header in DaCeCodeGenerator
-        global old_generate_footer, old_generate_header
-        if old_generate_footer is None:
-            old_generate_header = DaCeCodeGenerator.generate_header
-            old_generate_footer = DaCeCodeGenerator.generate_footer
-        DaCeCodeGenerator.generate_header = generate_header_hook
-        DaCeCodeGenerator.generate_footer = generate_footer_hook
-        """
-
         self.frame = frame_codegen
         self.dispatcher = frame_codegen._dispatcher
-        self.dispatcher.register_map_dispatcher(
-            dace.ScheduleType.SVE_Map, self)
+        self.dispatcher.register_map_dispatcher(dace.ScheduleType.SVE_Map, self)
         self.dispatcher.register_node_dispatcher(
             self, lambda state, sdfg, node: is_in_scope(
                 state, sdfg, node, [dace.ScheduleType.SVE_Map]))
@@ -179,7 +149,8 @@ class SVEMap(TargetCodeGenerator):
             callsite_stream.write('{} {}{};'.format(var_ctype, var_name,
                                                     init_str))
         else:
-            raise NotImplementedError(f'Output into scalar or pointer is not supported ({var_name})')
+            raise NotImplementedError(
+                f'Output into scalar or pointer is not supported ({var_name})')
 
         self.dispatcher.defined_vars.add(var_name, var_type, var_ctype)
 
@@ -256,7 +227,6 @@ class SVEMap(TargetCodeGenerator):
 
         callsite_stream.write('}')
 
-
     def generate_scope(self, sdfg: dace.SDFG, scope: ScopeSubgraphView,
                        state_id: int, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream):
@@ -274,7 +244,7 @@ class SVEMap(TargetCodeGenerator):
             4: dace.int32,
             8: long_type
         }[ltype_size]
-        
+
         callsite_stream.write('{')
 
         # Define all input connectors of the map entry
@@ -359,7 +329,7 @@ class SVEMap(TargetCodeGenerator):
 
         if isinstance(src_node, dace.nodes.Tasklet):
             # Copy from tasklet is just copying the shared register
-            # HACK: We abuse defined_vars to get the C++ type of the shared register
+            # Use defined_vars to get the C++ type of the shared register
             callsite_stream.write(
                 f'{self.dispatcher.defined_vars.get(edge.data.data)[1]} {edge.dst_conn} = {edge.data.data};'
             )
@@ -433,8 +403,8 @@ class SVEMap(TargetCodeGenerator):
 
             # Regular load and gather share the first arguments
             load_args = '{}, {}'.format(
-                util.get_loop_predicate(sdfg, dfg, dst_node),
-                ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer))
+                util.get_loop_predicate(sdfg, dfg, dst_node), ptr_cast +
+                cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer))
 
             if stride == 1:
                 callsite_stream.write('{} = svld1({});'.format(
@@ -453,7 +423,8 @@ class SVEMap(TargetCodeGenerator):
     def define_out_memlet(self, sdfg: SDFG, dfg: state.StateSubgraphView,
                           state_id: int, src_node: nodes.Node,
                           dst_node: nodes.Node, edge: graph.MultiConnectorEdge,
-                          function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+                          function_stream: CodeIOStream,
+                          callsite_stream: CodeIOStream):
         scope = util.get_sve_scope(sdfg, dfg, src_node)
         if scope is None:
             raise NotImplementedError('Not in an SVE scope')
@@ -497,7 +468,8 @@ class SVEMap(TargetCodeGenerator):
 
                 store_args = '{}, {}'.format(
                     util.get_loop_predicate(sdfg, dfg, src_node),
-                    ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer),
+                    ptr_cast +
+                    cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer),
                 )
 
                 if stride == 1:
@@ -581,8 +553,8 @@ class SVEMap(TargetCodeGenerator):
             result = StringIO()
             dace.codegen.targets.sve.unparse.SVEUnparser(
                 sdfg, stmt, result, body, memlets,
-                util.get_loop_predicate(sdfg, dfg, node),
-                self.counter_type, defined_symbols, self.stream_associations)
+                util.get_loop_predicate(sdfg, dfg, node), self.counter_type,
+                defined_symbols, self.stream_associations)
             callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
         callsite_stream.write('///////////////////\n\n')
