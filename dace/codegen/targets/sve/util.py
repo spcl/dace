@@ -38,21 +38,6 @@ _SVE_CTYPES = {
     numpy.complex128: "dace::complex128",
 }
 
-# Used for patching dtypes._CTYPES due to `long long` (>=64 bit) issue in SVE
-original_ctypes = None
-
-
-def patch_ctypes():
-    global original_ctypes
-    if original_ctypes is None:
-        original_ctypes = dace.dtypes._CTYPES
-    dace.dtypes._CTYPES = _SVE_CTYPES
-
-
-def restore_ctypes():
-    assert original_ctypes
-    dace.dtypes._CTYPES = original_ctypes
-
 
 # Used as the unknown SVE vector size in the graph
 SVE_LEN = dace.symbol('__dace_sve_len')
