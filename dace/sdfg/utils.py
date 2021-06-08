@@ -1062,7 +1062,7 @@ def iterate_multibank_arrays(arrayname : str, array : dt.Array):
     if the provided array is spanned across multiple hbmbanks.
     Otherwise just returns 0 once.
     """
-    if("hbmbank" in array.location):
+    if(array.storage == dtypes.StorageType.FPGA_Global and "hbmbank" in array.location):
         low, high, _ = array.location["hbmbank"][0]
         for i in range(high+1-low):
             yield i
@@ -1077,7 +1077,7 @@ def modify_subset_magic(array : dt.Data, subset : sbs.Subset, remove : bool):
     """
     if(not isinstance(array, dt.Array)):
         return subset
-    if("hbmbank" in array.location):
+    if(array.storage == dtypes.StorageType.FPGA_Global and "hbmbank" in array.location):
         cps = copy.deepcopy(subset)
         if remove:
             cps.pop([0])

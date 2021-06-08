@@ -231,7 +231,8 @@ def ptr(name: str, desc: data.Data, subset_info : "Union[subsets.Subset, int]" =
         from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
         if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
             return f'__state->{name}'
-    if("hbmbank" in desc.location):
+    if(isinstance(desc, data.Array) and desc.storage == dtypes.StorageType.FPGA_Global
+        and "hbmbank" in desc.location):
         if(subset_info == None):
             raise ValueError("Cannot generate name for hbmbank without subset info")
         elif(isinstance(subset_info, int)):
@@ -260,7 +261,7 @@ def emit_memlet_reference(dispatcher,
     """
     results = []
     desc = sdfg.arrays[memlet.data]
-    isMultiBankMemlet = "hbmbank" in desc.location
+    isMultiBankMemlet = desc.storage == dtypes.StorageType.FPGA_Global and "hbmbank" in desc.location
     if(isMultiBankMemlet):
         iterlow, iterhigh, _ = memlet.subset[0]
         iterhigh += 1
