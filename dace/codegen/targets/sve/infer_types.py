@@ -8,8 +8,7 @@ from typing import Dict, List
 
 #############################################################################
 # Connector type inference
-# Playground for the new vectorization (is not passing tests)
-# 
+#
 # The modification in this vectorization is to infer the input connectors,
 # then let the node infer the outputs _before_ infering the output connectors
 # (basically moved this line up), because type_inference is now able to infer indirection
