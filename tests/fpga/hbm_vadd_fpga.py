@@ -1,5 +1,5 @@
 """
-A test executing vector addition (potentially with multidimensional arrays) with HBM arrays.
+A test executing vector addition with multidimensional arrays using HBM.
 """
 
 from dace import subsets
@@ -65,8 +65,8 @@ def createTestSet(dim, sizePerDim):
     shape = []
     for i in range(dim):
         shape.append(sizePerDim)
-    in1 = np.random.rand(shape)
-    in2 = np.random.rand(shape)
+    in1 = np.random.rand(*shape)
+    in2 = np.random.rand(*shape)
     expected = in1 + in2
     out = np.empty(shape)
     return (in1, in2, expected, out)
@@ -76,7 +76,7 @@ def exec_test(dim, sizePerDim, numSplits, unroll_map_inside=False):
     M = dace.symbol("M")
 
     in1, in2, expected, target = createTestSet(dim, sizePerDim)
-    sdfg = create_vadd_multibank_sdfg(dim, numSplits, unroll_map_inside)
+    sdfg = create_vadd_multibank_sdfg(numSplits, dim, unroll_map_inside)
     sdfg(in1=in1, in2=in2, out=target)
     assert np.allclose(expected, target, rtol=1e-10)
     del sdfg

@@ -42,8 +42,8 @@ def create_hbm_reduce_sdfg(banks=2):
     return sdfg
 
 def createTestSet(N, M):
-    in1 = np.random.rand([N, M])
-    in2 = np.random.rand([N, M])
+    in1 = np.random.rand(*[N, M])
+    in2 = np.random.rand(*[N, M])
     expected = np.sum(in1 * in2, axis=1)
     out = np.empty([N])
     return (in1, in2, expected, out)
