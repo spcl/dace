@@ -13,6 +13,7 @@ import sympy
 import sys
 import astunparse
 
+
 def infer_expr_type(ast, symbols=None):
     symbols = symbols or {}
     inferred_symbols = {}
@@ -38,27 +39,15 @@ def _dispatch(tree, symbols, inferred_symbols):
 
         return meth(tree, symbols, inferred_symbols)
 
+
 def _IfExp(t, symbols, inferred_symbols):
     type_test = _dispatch(t.test, symbols, inferred_symbols)
     type_body = _dispatch(t.body, symbols, inferred_symbols)
     type_orelse = _dispatch(t.orelse, symbols, inferred_symbols)
     res_type = dtypes.result_type_of(type_body, type_orelse)
-    if isinstance(type_test, dtypes.vector) and not isinstance(res_type, (dtypes.vector, dtypes.pointer)):
-        # If we test on a vector, the result should be a vector aswell so we can do a selection based on the test predicate
+    if isinstance(type_test, dtypes.vector) and not isinstance(
+            res_type, (dtypes.vector, dtypes.pointer)):
+        # If we test on a vector, the result should be a vector aswell
+        # so we can do a selection based on the test predicate
         res_type = dtypes.vector(res_type, type_test.veclen)
     return res_type
-
-"""
-def _Call(t, symbols, inferred_symbols):
-    func_type = _dispatch(t.func, symbols, inferred_symbols)
-    if func_type:
-        return func_type
-
-    arg_types = []
-    print(astunparse.unparse(t.func))
-    for e in t.args:
-        arg_types.append(_dispatch(e, symbols, inferred_symbols))
-    for e in t.keywords:
-        _dispatch(e, symbols, inferred_symbols)
-    return func_type or dtypes.result_type_of(arg_types[0], *arg_types)
-"""
