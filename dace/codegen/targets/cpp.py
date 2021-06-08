@@ -235,9 +235,11 @@ def ptr(name: str, desc: data.Data, subset_info : "Union[subsets.Subset, int]" =
         if(subset_info == None):
             raise ValueError("Cannot generate name for hbmbank without subset info")
         elif(isinstance(subset_info, int)):
-            return f"{name}_hbm{subset_info}" #for hbm banks this is an int
+            #return f"{name}_hbm{subset_info}" #for hbm banks this is an int
+            return f"hbm{subset_info}_{name}"
         elif(isinstance(subset_info, subsets.Subset)):
-            return f"{name}_hbm{subset_info[0][0]}"
+            #return f"{name}_hbm{subset_info[0][0]}"
+            return f"hbm{subset_info[0][0]}_{name}"
 
     return name
 
@@ -1404,8 +1406,10 @@ def array_interface_variable(var_name: str,
     """
     Generates the variable name of an ArrayInterface variable.
     """
-    ptr_in = f"__{var_name}_in"
-    ptr_out = f"__{var_name}_out"
+    #May I remove the prefixes here? (Was __ before) Makes integration of hbm easier, because when
+    #adding HBM as a prefix to the name the order of calls to ptr and array_interface_variable does not matter
+    ptr_in = f"{var_name}_in"
+    ptr_out = f"{var_name}_out"
     if dispatcher is not None:
         # DaCe allows reading from an output connector, even though it
         # is not an input connector. If this occurs, panic and read
