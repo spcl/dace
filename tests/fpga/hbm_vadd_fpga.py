@@ -61,28 +61,35 @@ def create_vadd_multibank_sdfg(bankcountPerArray = 2, ndim = 1, unroll_map_insid
     sdfg.apply_fpga_transformations(validate=False)
     return sdfg
 
-def createTestSet(dim, sizePerDim):
+def createTestSet(dim, sizePerBank, banksPerDimension):
     shape = []
     for i in range(dim):
-        shape.append(sizePerDim)
-    in1 = np.random.rand(*shape)
-    in2 = np.random.rand(*shape)
+        shape.append(sizePerBank*banksPerDimension)
+    #in1 = np.random.rand(*shape)
+    #in2 = np.random.rand(*shape)
+    in1 = np.ones(shape, dtype=np.float32)
+    in2 = np.ones(shape, dtype=np.float32)
     expected = in1 + in2
     out = np.empty(shape)
     return (in1, in2, expected, out)
 
-def exec_test(dim, sizePerDim, numSplits, unroll_map_inside=False):
-    N = dace.symbol("N")
-    M = dace.symbol("M")
-
-    in1, in2, expected, target = createTestSet(dim, sizePerDim)
-    sdfg = create_vadd_multibank_sdfg(numSplits, dim, unroll_map_inside)
-    sdfg(in1=in1, in2=in2, out=target)
-    assert np.allclose(expected, target, rtol=1e-10)
+def exec_test(dim, sizePerBank, banksPerDimension, unroll_map_inside=False):
+    in1, in2, expected, target = createTestSet(dim, sizePerBank, banksPerDimension)
+    sdfg = create_vadd_multibank_sdfg(banksPerDimension, dim, unroll_map_inside)
+    if(dim == 1):
+        sdfg(in1=in1, in2=in2, out=target, N=sizePerBank)
+    elif(dim==2):
+        sdfg(in1=in1, in2=in2, out=target, N=sizePerBank, M=sizePerBank)
+    else:
+        sdfg(in1=in1, in2=in2, out=target, N=sizePerBank, M=sizePerBank, S=sizePerBank)
+    print(in1)
+    print(in2)
+    print(target)
+    assert np.allclose(expected, target, rtol=1e-6)
     del sdfg
 
 if __name__ == '__main__':
-    exec_test(1, 2*1024, 2) #2 banks, 1 dimensional
-    exec_test(2, 2*1024, 2) #4 banks, 2d, evenly split
-    exec_test(3, 2*1024, 2) #8 banks 3d, evenly split
-    exec_test(1, 2*1024, 8, True) #8 banks 1d, 1 pipeline
+    exec_test(1, 5, 1) #2 banks, 1 dimensional
+    #exec_test(2, 2*1024, 2) #4 banks, 2d, evenly split
+    #exec_test(3, 2*1024, 2) #8 banks 3d, evenly split
+    #exec_test(1, 2*1024, 8, True) #8 banks 1d, 1 pipeline
