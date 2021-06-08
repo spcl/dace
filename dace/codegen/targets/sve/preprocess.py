@@ -13,7 +13,7 @@ import dace
 import dace.dtypes
 
 
-class SVEPreprocessor(ast.NodeTransformer):
+class SVEBinOpFuser(ast.NodeTransformer):
     def __init__(self, defined_symbols):
         self.defined_symbols = defined_symbols
 
@@ -66,8 +66,8 @@ class SVEPreprocessor(ast.NodeTransformer):
                 return self.generic_visit(t)
             # Add the type suffix for internal representation
             name += util.TYPE_TO_SVE_SUFFIX[util.get_base_type(dace.dtypes.result_type_of(*inferred))]
-            return ast.Call(func=ast.Name(name, ast.Load()),
+            return ast.copy_location(ast.Call(func=ast.Name(name, ast.Load()),
                             args=args,
-                            keywords=[])
+                            keywords=[]), t)
 
         return self.generic_visit(t)
