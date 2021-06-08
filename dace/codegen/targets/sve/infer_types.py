@@ -10,7 +10,7 @@ from typing import Dict, List
 # Connector type inference
 #
 # The modification in this vectorization is to infer the input connectors,
-# then let the node infer the outputs _before_ infering the output connectors
+# then let the node infer the outputs _before_ inferring the output connectors
 # (basically moved this line up), because type_inference is now able to infer indirection
 
 
