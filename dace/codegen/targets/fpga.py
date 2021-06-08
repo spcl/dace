@@ -622,7 +622,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         # TODO: Distinguish between read, write, and read+write
                         self._allocated_global_arrays.add(node.data)
                         memory_bank_arg_type = "DDR"
-                        memory_bank_arg_num = (0, 0)
+                        memory_bank_arg_count = 1
                         if "bank" in nodedesc.location:
                             try:
                                 bank = int(nodedesc.location["bank"])
@@ -632,15 +632,14 @@ class FPGACodeGen(TargetCodeGenerator):
                                     "must be an integer: {}".format(
                                         nodedesc.location["bank"]))
                             memory_bank_arg_type = f"hlslib::ocl::StorageType::DDR"
-                            memory_bank_arg_num = (bank, bank)
                         elif "hbmbank" in nodedesc.location:
                             hbmbank = nodedesc.location["hbmbank"]
                             memory_bank_arg_type = f"hlslib::ocl::StorageType::HBM"
-                            memory_bank_arg_num = (hbmbank[0][0], hbmbank[0][1])
+                            memory_bank_arg_count = hbmbank[0][1] - hbmbank[0][0] + 1
                             arrsize = dace.symbolic.pystr_to_symbolic(
                                 f"({str(arrsize)}) / {str(hbmbank[0][1] - hbmbank[0][0] + 1)}")
                         # Define buffer, using proper type
-                        for bank_index in range(memory_bank_arg_num[0], memory_bank_arg_num[1]+1):
+                        for bank_index in range(memory_bank_arg_count):
                             allocname = cpp.ptr(dataname, nodedesc, bank_index)
                             result_decl.write(
                                 "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n"
