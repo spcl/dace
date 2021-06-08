@@ -5,7 +5,7 @@ import itertools
 
 import dace
 from dace import nodes, data
-from dace.transformation.dataflow.redundant_array import RedundantArray
+from dace.transformation.dataflow.redundant_array import RedundantArray, UnsqueezeViewRemove
 
 
 def test_redundant_array_removal():
@@ -82,7 +82,7 @@ def test_redundant_array_1_into_2_dims(copy_subset, nonstrict):
             if type(n.desc(sdfg)) is data.Array
         ]) == 2)
 
-    I = np.ones((9,)).astype(np.float32)
+    I = np.ones((9, )).astype(np.float32)
     O = np.zeros((3, 3)).astype(np.float32)
     sdfg(I=I, O=O)
     assert np.allclose(O.flatten(), I + 1)
@@ -120,9 +120,39 @@ def test_redundant_array_2_into_1_dim(copy_subset, nonstrict):
         ]) == 2)
 
     I = np.ones((3, 3)).astype(np.float32)
-    O = np.zeros((9,)).astype(np.float32)
+    O = np.zeros((9, )).astype(np.float32)
     sdfg(I=I, O=O)
     assert np.allclose(O, (I + 1).flatten())
+
+
+def test_unsqueeze_view_removal():
+    sdfg = dace.SDFG("testing")
+    state = sdfg.add_state()
+
+    sdfg.add_view("T", [9], dtype=dace.float32)
+    sdfg.add_array("O", [1, 9, 1], dtype=dace.float32, transient=False)
+
+    tnode = state.add_access("T")
+    state.add_edge(tnode, None, state.add_write("O"), None,
+                   sdfg.make_array_memlet("O"))
+    state.add_mapped_tasklet("set_one",
+                             dict(i="0:9"), {},
+                             "out = 1",
+                             dict(out=dace.Memlet("T[i]")),
+                             external_edges=True,
+                             output_nodes=dict(T=tnode))
+
+    sdfg.apply_transformations_repeated(UnsqueezeViewRemove)
+
+    # Ensure view is removed
+    assert (len([
+        n for n in sdfg.node(0).data_nodes()
+        if isinstance(n.desc(sdfg), data.View)
+    ]) == 0)
+
+    O = np.zeros((1, 9, 1)).astype(np.float32)
+    sdfg(O=O)
+    assert np.allclose(O, 1)
 
 
 if __name__ == '__main__':
@@ -135,3 +165,4 @@ if __name__ == '__main__':
     test_redundant_array_2_into_1_dim("T", False)
     test_redundant_array_2_into_1_dim("O", True)
     test_redundant_array_2_into_1_dim("T", True)
+    test_unsqueeze_view_removal()

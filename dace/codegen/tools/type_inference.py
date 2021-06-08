@@ -11,8 +11,7 @@ import numpy as np
 import ast
 from dace import dtypes
 from dace.codegen import cppunparse
-from dace.symbolic import SymExpr
-from dace.symbolic import symstr
+from dace.symbolic import symbol, SymExpr, symstr
 import sympy
 import sys
 
@@ -54,8 +53,10 @@ def infer_expr_type(code, symbols=None):
     inferred_symbols = {}
     if isinstance(code, (str, float, int, complex)):
         parsed_ast = ast.parse(str(code))
-    elif isinstance(code, sympy.Basic) or isinstance(code, SymExpr):
-        parsed_ast = ast.parse(symstr(code))
+    elif isinstance(code, sympy.Basic):
+        parsed_ast = ast.parse(sympy.printing.pycode(code))
+    elif isinstance(code, SymExpr):
+        parsed_ast = ast.parse(sympy.printing.pycode(code.expr))
     else:
         raise TypeError(f"Cannot convert type {type(code)} to a Python AST.")
 
@@ -276,6 +277,8 @@ def _Name(t, symbols, inferred_symbols):
             inferred_type = symbols[t_id]
             if isinstance(inferred_type, np.dtype):
                 inferred_type = dtypes.typeclass(inferred_type.type)
+            elif isinstance(inferred_type, symbol):
+                inferred_type = inferred_type.dtype
         elif t_id in inferred_symbols:
             inferred_type = inferred_symbols[t_id]
         return inferred_type
