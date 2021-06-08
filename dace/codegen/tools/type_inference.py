@@ -17,6 +17,7 @@ import sys
 import dace.frontend.python.astutils
 import inspect
 
+
 def infer_types(code, symbols=None):
     """
     Perform type inference on the given code
@@ -360,23 +361,32 @@ def _BinOp(t, symbols, inferred_symbols):
 def _Compare(t, symbols, inferred_symbols):
     # If any vector occurs in the comparision, the inferred type is a bool vector
     inf_type = _dispatch(t.left, symbols, inferred_symbols)
-    any_vector = isinstance(inf_type, dtypes.vector)
+    vec_len = None
+    if isinstance(inf_type, dtypes.vector):
+        vec_len = inf_type.veclen
     for o, e in zip(t.ops, t.comparators):
         if o.__class__.__name__ not in cppunparse.CPPUnparser.cmpops:
             continue
         inf_type = _dispatch(e, symbols, inferred_symbols)
-        any_vector = any_vector or isinstance(inf_type, dtypes.vector)
+        if isinstance(inf_type, dtypes.vector):
+            # Make sure all occuring vectors are of same size
+            if vec_len is not None and vec_len != inf_type.veclen:
+                raise SyntaxError('Inconsistent vector lengths in Compare')
+            vec_len = inf_type.veclen
+    return dtypes.vector(dace.bool, vec_len) if vec_len is not None else dtypes.bool
 
-    return dtypes.vector(dace.bool, -1) if any_vector else dtypes.bool
 
-  
 def _BoolOp(t, symbols, inferred_symbols):
     # If any vector occurs in the bool op, the inferred type is also a bool vector
-    any_vector = False
+    vec_len = None
     for v in t.values:
         inf_type = _dispatch(v, symbols, inferred_symbols)
-        any_vector = any_vector or isinstance(inf_type, dtypes.vector)
-    return dtypes.vector(dace.bool, -1) if any_vector else dtypes.bool
+        if isinstance(inf_type, dtypes.vector):
+            # Make sure all occuring vectors are of same size
+            if vec_len is not None and vec_len != inf_type.veclen:
+                raise SyntaxError('Inconsistent vector lengths in BoolOp')
+            vec_len = inf_type.veclen
+    return dtypes.vector(dace.bool, vec_len) if vec_len is not None else dtypes.bool
 
 
 def _Attribute(t, symbols, inferred_symbols):
@@ -396,13 +406,13 @@ def _Call(t, symbols, inferred_symbols):
     # If the function symbol is known, always return the defined type
     if inf_type:
         return inf_type
-    
+
     # In case of a typeless math function, determine the return type based on the arguments
     name = dace.frontend.python.astutils.rname(t)
     module = name[:name.rfind('.')]
     if module == 'math':
         return dtypes.result_type_of(arg_types[0], *arg_types)
-    
+
     # In any other case simply return None
     return None
 
@@ -419,10 +429,11 @@ def _Subscript(t, symbols, inferred_symbols):
         return value_type
 
     # A vector as subscript of a pointer returns a vector of the base type
-    if isinstance(value_type, dtypes.pointer) and isinstance(slice_type, dtypes.vector):
+    if isinstance(value_type, dtypes.pointer) and isinstance(
+            slice_type, dtypes.vector):
         if not np.issubdtype(slice_type.type, np.integer):
             raise SyntaxError('Subscript must be some integer type')
-        return dtypes.vector(value_type.base_type, slice_type._veclen)
+        return dtypes.vector(value_type.base_type, slice_type.veclen)
 
     # Otherwise (some index as subscript) we return the base type
     if isinstance(value_type, dtypes.typeclass):
