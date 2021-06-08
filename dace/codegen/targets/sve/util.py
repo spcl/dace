@@ -51,23 +51,12 @@ class NotSupportedError(Exception):
 REGISTER_BYTE_SIZE = '__SVE_REGISTER_BYTES'
 
 
-def long_fix(dtype: dace.typeclass) -> dace.typeclass:
-    import copy
-    import numpy as np
-    cpy = copy.copy(dtype)
-    if cpy.type == np.int64:
-        cpy.ctype = 'int64_t'
-    elif cpy.type == np.uint64:
-        cpy.ctype = 'uint64_t'
-    return cpy
-
-
 def instr(name: str,
           type: dace.typeclass = None,
           suffix: bool = True,
           pred_mode: str = None) -> str:
     """
-    WIP: Generates the name of the SVE instruction with possibly suffixes and flags.
+    Generates the name of the SVE instruction with possibly suffixes and flags.
     param name: Instruction name (without `sv` prefix)
     param type: The type of the involved operands
     param suffix: If True, the type suffix (e.g. _f32) is added
@@ -93,10 +82,9 @@ BIN_OP_TO_SVE = {
     ast.BitXor: 'sveor',
     ast.BitAnd: 'svand',
     ast.BitOr: 'svorr',
-    # Logical shifts!
+    # Logical shifts
     ast.LShift: 'svlsl',
-    ast.RShift: 'svlsr',
-    ast.FloorDiv: 'svdiv'  # TODO: Is this correct?
+    ast.RShift: 'svlsr'
 }
 
 COMPARE_TO_SVE = {
