@@ -530,7 +530,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         kernel_args = []
         for _, name, p, _ in parameters:
-            kernel_args.append(p.as_arg(False, name=name))
+            if isinstance(p, dt.Array):
+                for bank in utils.iterate_multibank_arrays(name, p):
+                    kernel_args.append(p.as_arg(False, name=cpp.ptr(name, p, bank)))
+            else:
+                kernel_args.append(p.as_arg(False, name=name))
 
         kernel_function_name = kernel_name
         kernel_file_name = "{}.xclbin".format(kernel_name)
