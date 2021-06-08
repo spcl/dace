@@ -125,11 +125,11 @@ class ExpandTransposeMKL(ExpandTransformation):
             cast = ''
         elif dtype == dace.complex64:
             func = "comatcopy"
-            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
+            alpha = "*(MKL_Complex8*)dace::blas::BlasConstants::Get().Complex64Pone()"
             cast = '(MKL_Complex8*)'
         elif dtype == dace.complex128:
             func = "zomatcopy"
-            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
+            alpha = "*(MKL_Complex16*)dace::blas::BlasConstants::Get().Complex128Pone()"
             cast = '(MKL_Complex16*)'
         else:
             warnings.warn("Unsupported type for MKL omatcopy extension: " +
