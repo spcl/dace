@@ -57,31 +57,31 @@ def create_vadd_multibank_sdfg(bankcountPerArray = 2, ndim = 1, unroll_map_insid
         state.add_memlet_path(readin2, outer_entry, map_entry, tasklet, memlet=tmpin2_memlet, dst_conn="__in2")
         state.add_memlet_path(tasklet, map_exit, outer_exit, outwrite, memlet=tmpout_memlet, src_conn="__out")
 
-    sdfg.fill_scope_connectors()
     sdfg.apply_fpga_transformations(validate=False)
     return sdfg
 
-def createTestSet(dim, sizePerBank, banksPerDimension):
-    shape = []
+def createTestSet(dim, size1D, banks):
+    shape = [banks]
     for i in range(dim):
-        shape.append(sizePerBank*banksPerDimension)
+        shape.append(size1D)
     #in1 = np.random.rand(*shape)
     #in2 = np.random.rand(*shape)
     in1 = np.ones(shape, dtype=np.float32)
     in2 = np.ones(shape, dtype=np.float32)
     expected = in1 + in2
-    out = np.empty(shape)
+    out = np.empty(shape, dtype=np.float32)
     return (in1, in2, expected, out)
 
-def exec_test(dim, sizePerBank, banksPerDimension, unroll_map_inside=False):
-    in1, in2, expected, target = createTestSet(dim, sizePerBank, banksPerDimension)
-    sdfg = create_vadd_multibank_sdfg(banksPerDimension, dim, unroll_map_inside)
+def exec_test(dim, size1D, banks, unroll_map_inside=False):
+    in1, in2, expected, target = createTestSet(dim, size1D, banks)
+    sdfg = create_vadd_multibank_sdfg(banks, dim, unroll_map_inside)
+    sdfg.view()
     if(dim == 1):
-        sdfg(in1=in1, in2=in2, out=target, N=sizePerBank)
+        sdfg(in1=in1, in2=in2, out=target, N=size1D)
     elif(dim==2):
-        sdfg(in1=in1, in2=in2, out=target, N=sizePerBank, M=sizePerBank)
+        sdfg(in1=in1, in2=in2, out=target, N=size1D, M=size1D)
     else:
-        sdfg(in1=in1, in2=in2, out=target, N=sizePerBank, M=sizePerBank, S=sizePerBank)
+        sdfg(in1=in1, in2=in2, out=target, N=size1D, M=size1D, S=size1D)
     print(in1)
     print(in2)
     print(target)
@@ -89,7 +89,7 @@ def exec_test(dim, sizePerBank, banksPerDimension, unroll_map_inside=False):
     del sdfg
 
 if __name__ == '__main__':
-    exec_test(1, 5, 1) #2 banks, 1 dimensional
+    exec_test(1, 5, 2) #2 banks, 1 dimensional
     #exec_test(2, 2*1024, 2) #4 banks, 2d, evenly split
     #exec_test(3, 2*1024, 2) #8 banks 3d, evenly split
     #exec_test(1, 2*1024, 8, True) #8 banks 1d, 1 pipeline
