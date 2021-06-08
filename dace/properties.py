@@ -725,7 +725,7 @@ class EnumProperty(Property):
 
         def g(obj):
             if self._undefined_val is None:
-                return obj._name_
+                return dace.serialize.to_json(obj)
             else:
                 return self._undefined_val
 
