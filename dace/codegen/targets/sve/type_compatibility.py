@@ -28,6 +28,10 @@ def assert_type_compatibility(defined_symbols: collections.OrderedDict,
     This is sometimes more, sometimes less restrictive than C standards.
     """
 
+    # Sanity check for any failed inference
+    if None in types:
+        raise IncompatibleTypeError('`None` was given', types)
+
     # Find all unique vector, pointer and scalar types
     # TODO: Better way to determine uniqueness
     vec_types = list(set([t for t in types if isinstance(t, dtypes.vector)]))
@@ -37,10 +41,6 @@ def assert_type_compatibility(defined_symbols: collections.OrderedDict,
             t for t in types
             if not isinstance(t, (dtypes.vector, dtypes.pointer))
         ]))
-
-    # Sanity check for any failed inference
-    if None in vec_types or None in ptr_types or None in scal_types:
-        raise IncompatibleTypeError('`None` was given', types)
 
     # Check if we can represent the types in SVE
     for t in types:
