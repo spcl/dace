@@ -701,6 +701,38 @@ class DictProperty(Property):
 ###############################################################################
 
 
+class EnumProperty(Property):
+
+    def __init__(self, dtype, *args, **kwargs):
+        kwargs['dtype'] = dtype
+        super().__init__(*args, **kwargs)
+
+        def f(s, *args, **kwargs):
+            if s is None:
+                return None
+            try:
+                self._undefined_val = None
+                return dtype[s]
+            except KeyError:
+                self._undefined_val = s
+                return dtype['Undefined']
+
+        self._choices = dtype
+        self._from_json = f
+        self._from_string = f
+
+        self._undefined_val = None
+
+        def g(obj):
+            if self._undefined_val is None:
+                return obj._name_
+            else:
+                return self._undefined_val
+
+        self._to_json = g
+        self._to_string = g
+
+
 class SDFGReferenceProperty(Property):
     def to_json(self, obj):
         if obj is None:
