@@ -7,13 +7,10 @@ from dace.sdfg.scope import ScopeSubgraphView
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.targets.framecode import DaCeCodeGenerator
-from dace.codegen.targets.cpp import sym2cpp
-from dace.codegen import cppunparse
 from itertools import product
 from dace.sdfg import state
 import dace.subsets
 import dace.sdfg
-from dace.sdfg.replace import deepreplace
 from dace.sdfg import nodes as nd
 from dace import Config
 
@@ -113,29 +110,35 @@ class UnrollCodeGen(TargetCodeGenerator):
             for node in scope.nodes():
                 if (isinstance(node, nd.NestedSDFG)):
                     if unique_functions and not unique_functions_hash and node.unique_name != "":
-                        backup.append(
-                            (node, True, copy.deepcopy(node.unique_name),
-                             copy.deepcopy(node.symbol_mapping)))
+                        backup.append((node, 
+                                    True, 
+                                    copy.deepcopy(node.unique_name),
+                                    copy.deepcopy(node.symbol_mapping),
+                                    copy.deepcopy(node.sdfg.constants_prop)))
                         node.unique_name = f"{node.unique_name}_{param}{paramval}"
                     else:
-                        backup.append(
-                            (node, False, copy.deepcopy(node.sdfg.name),
-                             copy.deepcopy(node.symbol_mapping)))
+                        backup.append((node, 
+                                    False, 
+                                    copy.deepcopy(node.sdfg.name),
+                                    copy.deepcopy(node.symbol_mapping),
+                                    copy.deepcopy(node.sdfg.constants_prop)))
                         node.sdfg.name = f"{node.sdfg.name}_{param}{paramval}"
                     for nstate in node.sdfg.nodes():
                         backup.extend(
                             nsdfg_prepare_unroll(nstate, paramname, paramval))
                     if param in node.symbol_mapping:
                         node.symbol_mapping.pop(param)
+                    node.sdfg.add_constant(param, int(paramval)) 
             return backup
 
         def nsdfg_after_unroll(backup):
-            for node, isUniqueName, name, symbols in backup:
+            for node, isUniqueName, name, symbols, constants in backup:
                 if isUniqueName:
                     node.unique_name = name
                 else:
                     node.sdfg.name = name
                 node.symbol_mapping = symbols
+                node.sdfg.constants_prop = constants
 
         for begin, end, stride in entry_node.map.range:
             l = []
@@ -145,11 +148,11 @@ class UnrollCodeGen(TargetCodeGenerator):
             index_list.append(l)
 
         for indices in product(*index_list):
-            backups = deep_replacement_field_backup(scope)
+            backups = backup_statescope_fields(scope)
             callsite_stream.write('{')
             nsdfg_unroll_info = None
             for param, index in zip(entry_node.map.params, indices):
-                deepreplace(scope, str(param), str(index))
+                dace.sdfg.replace(scope, str(param), str(index))
                 if nsdfg_unroll_info is None:
                     nsdfg_unroll_info = nsdfg_prepare_unroll(
                         scope, str(param), str(index))
@@ -165,4 +168,4 @@ class UnrollCodeGen(TargetCodeGenerator):
                                                )
             callsite_stream.write('}')
             nsdfg_after_unroll(nsdfg_unroll_info)
-            use_deep_replacement_fields_backup(backups)
+            use_statescope_fields_backup(backups)
