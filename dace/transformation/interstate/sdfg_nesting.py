@@ -146,13 +146,36 @@ class InlineSDFG(transformation.Transformation):
 
         # Ensure that every connector has at least one corresponding access
         # node in the (nested) SDFG. Otherwise, inlining is not possible.
-        all_connectors = in_connectors | out_connectors
+        # NOTE: FPGA-compatible SDFGs can have input connectors for data that
+        # are only written.
+        inp_data = {conn: set() for conn in in_connectors}
+        for e in graph.in_edges(nested_sdfg):
+            src = graph.memlet_path(e)[0].src
+            if isinstance(src, nodes.AccessNode):
+                inp_data[e.dst_conn].add(src.data)
+        out_data = dict()
+        for e in graph.out_edges(nested_sdfg):
+            dst = graph.memlet_path(e)[-1].dst
+            if isinstance(dst, nodes.AccessNode):
+                out_data[dst.data] = e.src_conn
+        rem_inpconns = dc(in_connectors)
+        rem_outconns = dc(out_connectors)
         nstate = nested_sdfg.sdfg.node(0)
         for node in nstate.nodes():
-            if (isinstance(node, nodes.AccessNode)
-                    and node.data in all_connectors):
-                all_connectors.remove(node.data)
-        if len(all_connectors) > 0:
+            if isinstance(node, nodes.AccessNode):
+                if node.data in rem_inpconns:
+                    rem_inpconns.remove(node.data)
+                if node.data in rem_outconns:
+                    rem_outconns.remove(node.data)
+        if len(rem_outconns) > 0:
+            return False
+        if len(rem_inpconns) > 0:
+            for inpconn in list(rem_inpconns):
+                for access in inp_data[inpconn]:
+                    if access in out_data.keys():
+                        rem_inpconns.remove(inpconn)
+                        break
+        if len(rem_inpconns) > 0:
             return False
 
         return True
