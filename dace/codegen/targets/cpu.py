@@ -968,8 +968,15 @@ class CPUCodeGen(TargetCodeGenerator):
                             array_expr = cpp.cpp_array_expr(sdfg,
                                                             memlet,
                                                             with_brackets=False)
+                            ptr_str = cpp.array_interface_variable(
+                                        cpp.ptr(memlet.data, 
+                                        desc, 
+                                        memlet.subset),
+                                        True, 
+                                        None
+                                    )   
                             write_expr = (
-                                f"*(__{cpp.ptr(memlet.data, desc, memlet.subset)}_out + {array_expr}) "
+                                f"*({ptr_str} + {array_expr}) "
                                 f"= {in_local_name};")
                         else:
                             desc_dtype = desc.dtype
