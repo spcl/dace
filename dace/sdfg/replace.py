@@ -9,7 +9,6 @@ from typing import Any, Dict, Union
 import warnings
 from dace.sdfg import nodes as nd
 
-
 def _replsym(symlist, symrepl):
     """ Helper function to replace symbols in various symbolic expressions. """
     if symlist is None:

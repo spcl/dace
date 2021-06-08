@@ -110,25 +110,23 @@ class UnrollCodeGen(TargetCodeGenerator):
             for node in scope.nodes():
                 if (isinstance(node, nd.NestedSDFG)):
                     if unique_functions and not unique_functions_hash and node.unique_name != "":
-                        backup.append((node, 
-                                    True, 
-                                    copy.deepcopy(node.unique_name),
-                                    copy.deepcopy(node.symbol_mapping),
-                                    copy.deepcopy(node.sdfg.constants_prop)))
+                        backup.append(
+                            (node, True, copy.deepcopy(node.unique_name),
+                             copy.deepcopy(node.symbol_mapping),
+                             copy.deepcopy(node.sdfg.constants_prop)))
                         node.unique_name = f"{node.unique_name}_{param}{paramval}"
                     else:
-                        backup.append((node, 
-                                    False, 
-                                    copy.deepcopy(node.sdfg.name),
-                                    copy.deepcopy(node.symbol_mapping),
-                                    copy.deepcopy(node.sdfg.constants_prop)))
+                        backup.append(
+                            (node, False, copy.deepcopy(node.sdfg.name),
+                             copy.deepcopy(node.symbol_mapping),
+                             copy.deepcopy(node.sdfg.constants_prop)))
                         node.sdfg.name = f"{node.sdfg.name}_{param}{paramval}"
                     for nstate in node.sdfg.nodes():
                         backup.extend(
                             nsdfg_prepare_unroll(nstate, paramname, paramval))
                     if param in node.symbol_mapping:
                         node.symbol_mapping.pop(param)
-                    node.sdfg.add_constant(param, int(paramval)) 
+                    node.sdfg.add_constant(param, int(paramval))
             return backup
 
         def nsdfg_after_unroll(backup):
@@ -158,14 +156,15 @@ class UnrollCodeGen(TargetCodeGenerator):
                         scope, str(param), str(index))
                 else:
                     nsdfg_prepare_unroll(scope, str(param), str(index))
-            self._dispatcher.dispatch_subgraph(sdfg,
-                                               scope,
-                                               state_id,
-                                               function_stream,
-                                               callsite_stream,
-                                               skip_entry_node=True,
-                                               skip_exit_node=True,
-                                               )
+            self._dispatcher.dispatch_subgraph(
+                sdfg,
+                scope,
+                state_id,
+                function_stream,
+                callsite_stream,
+                skip_entry_node=True,
+                skip_exit_node=True,
+            )
             callsite_stream.write('}')
             nsdfg_after_unroll(nsdfg_unroll_info)
             use_statescope_fields_backup(backups)
