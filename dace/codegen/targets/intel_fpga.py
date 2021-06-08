@@ -471,11 +471,27 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                                     var_name=None):
         pass
 
-    def generate_kernel_internal(self, sdfg, state, kernel_name, predecessors,
-                                 subgraphs, kernel_stream,
-                                 kernel_host_header_stream,
-                                 kernel_host_body_stream, function_stream,
-                                 callsite_stream, state_parameters):
+    def generate_kernel_internal(
+            self, sdfg: dace.SDFG, state: dace.SDFGState, kernel_name: str,
+            predecessors: list, subgraphs: list, kernel_stream: CodeIOStream,
+            state_host_header_stream: CodeIOStream,
+            state_host_body_stream: CodeIOStream, function_stream: CodeIOStream,
+            callsite_stream: CodeIOStream, state_parameters: list):
+        '''
+        Generates device specific code for the kernel logic and for invoking the kernel
+        :param sdfg: 
+        :param state: 
+        :param kernel_name: 
+        :param predecessors: list containing all the name of kernels from which this one depends
+        :param subgraphs: 
+        :param kernel_stream: 
+        :param state_host_header_stream: 
+        :param state_host_body_stream: 
+        :param function_stream: 
+        :param callsite_stream: 
+        :param state_parameters: 
+        :return: 
+        '''
         # TODO: add docstring
         # TODO: is really needed this differentiation between kernel_host_header and host_body
         # In xilnx one of them is not used because part of the code goes in another place (entry_stream)
@@ -511,18 +527,17 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         self.generate_host_function_boilerplate(sdfg, state, kernel_name,
                                                 global_data_parameters,
                                                 nested_global_transients,
-                                                kernel_host_body_stream,
+                                                state_host_body_stream,
                                                 function_stream,
                                                 callsite_stream)
 
         self.generate_host_function_prologue(sdfg, state,
-                                             kernel_host_body_stream,
+                                             state_host_body_stream,
                                              kernel_name)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, kernel_body_stream,
-                              kernel_host_header_stream,
-                              kernel_host_body_stream)
+                              state_host_header_stream, state_host_body_stream)
 
         kernel_body_stream.write("\n")
 
@@ -532,13 +547,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_stream.write(kernel_header_stream.getvalue() +
                             kernel_body_stream.getvalue())
 
-        self.generate_host_function_body(sdfg, state, kernel_host_body_stream,
+        self.generate_host_function_body(sdfg, state, state_host_body_stream,
                                          kernel_name, predecessors)
-
-        # # Store code to be passed to compilation phase
-        # self._host_codes.append(
-        #     (kernel_name, host_code_header_stream.getvalue() +
-        #      host_code_body_stream.getvalue()))
 
     def generate_host_function_prologue(self, sdfg, state, host_stream,
                                         kernel_name):

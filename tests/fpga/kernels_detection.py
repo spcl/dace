@@ -1,11 +1,32 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-# Tests with state having multiple kernels inside
+# Tests for kernels detection
 
 import dace
 import numpy as np
 import pytest
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG, GPUTransformSDFG, NestSDFG
+
+
+def count_kernels(sdfg: dace.SDFG):
+    '''
+    Counts the number of kernels in the provided, annotated SDFG
+    :param sdfg:
+    :return: number of kernels
+    '''
+
+    found_kernels = dict(set())
+
+    for node, state in sdfg.all_nodes_recursive():
+        if hasattr(node, '_kernel'):
+            if state not in found_kernels:
+                found_kernels[state] = set()
+            found_kernels[state].add(node._kernel)
+
+    kernels = 0
+    for k,v in found_kernels.items():
+        kernels = kernels + len(v)
+    return kernels
 
 
 def test_kernels_inside_component_0():
@@ -14,46 +35,45 @@ def test_kernels_inside_component_0():
     It computes z =(x+y) + (v+w)
 
     High-level overview:
+     ┌───────────┐
+     │ Add_Map_0 │
+     └──────┬────┘
+            │
      ┌───────────┐        ┌───────────┐
-     │ Add_Map_0 │        │ Add_Map_1 │
+     │ Add_Map_1 │        │ Add_Map_2 │
      └──────┬────┘        └──────┬────┘
             │   ┌───────────┐    │
-            └─► │ Add_Map_2 │◄───┘
+            └─► │ Add_Map_3 │◄───┘
                 └───────────┘
-    The three maps, should belong to three distinct kernels
+    The 4 maps, should belong to three distinct kernels
     :return:
     '''
     @dace.program
     def kernels_inside_component_0(x: dace.float32[8], y: dace.float32[8],
-                                   v: dace.float32[8], w: dace.float32[8]):
-        tmp1 = x + y
-        tmp2 = v + w
-        return tmp1 + tmp2
+                                   v: dace.float32[8], w: dace.float32[8],
+                                   z: dace.float32[8]):
+        tmp = (x + y) + v
+        return tmp + (w + z)
 
     x = np.random.rand(8).astype(np.float32)
     y = np.random.rand(8).astype(np.float32)
     v = np.random.rand(8).astype(np.float32)
     w = np.random.rand(8).astype(np.float32)
+    z = np.random.rand(8).astype(np.float32)
 
     sdfg = kernels_inside_component_0.to_sdfg()
-    from dace.transformation.interstate import GPUTransformSDFG
-    # sdfg.apply_transformations([GPUTransformSDFG])
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    sdfg.save('/tmp/out.sdfg')
     program = sdfg.compile()
-    for node, state in program.sdfg.all_nodes_recursive():
-        if hasattr(node, '_kernel'):
-            print(node, node._kernel)
 
-    z = program(x=x, y=y, v=v, w=w)
-    assert np.allclose(z, x + y + v + w)
-    print("OK")
+    assert count_kernels(program.sdfg) == 3
+    res = program(x=x, y=y, v=v, w=w, z=z)
+    assert np.allclose(res, x + y + v + w + z)
 
 
 def test_kernels_inside_component_1():
     '''
     Tests for kernels detection inside a single connected component.
-    It computes
+    The program computes:
     - z = alpha*((x+y) + (v+w))
     - t = beta*((x+y) + (v+w))
 
@@ -70,7 +90,7 @@ def test_kernels_inside_component_1():
      └───────────┘        └───────────┘
 
     The five Maps should belong to 5 distinct kernels
-    :return:
+
     '''
     @dace.program
     def kernels_inside_component_1(x: dace.float32[8], y: dace.float32[8],
@@ -94,18 +114,13 @@ def test_kernels_inside_component_1():
 
     sdfg = kernels_inside_component_1.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    sdfg.save('/tmp/out.sdfg')
     program = sdfg.compile()
-    for node, state in program.sdfg.all_nodes_recursive():
-        if hasattr(node, '_kernel'):
-            print(node, node._kernel)
-
+    assert count_kernels(program.sdfg) == 5
     program(x=x, y=y, v=v, w=w, z=z, t=t, alpha=alpha, beta=beta)
     ref_z = alpha * (x + y + v + w)
     ref_t = beta * (x + y + v + w)
     assert np.allclose(z, ref_z)
     assert np.allclose(t, ref_t)
-    print("OK")
 
 
 def test_kernels_inside_component_2():
@@ -141,25 +156,18 @@ def test_kernels_inside_component_2():
 
     sdfg = kernels_inside_component_2.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    sdfg.save('/tmp/out.sdfg')
     program = sdfg.compile()
 
-    for node, state in program.sdfg.all_nodes_recursive():
-        if hasattr(node, '_kernel'):
-            print(node, node._kernel)
-
+    assert count_kernels(program.sdfg) == 2
     program(x=x, y=y, v=v, t=t, z=z)
     assert np.allclose(z, x + y)
     assert np.allclose(t, v + y)
-    print("OK")
 
 
 def test_kernels_lns_inside_component():
     '''
     Tests for kernels detection inside a single connected component where we
     have multiple library nodes.
-
-    This must work even if we have unique_functions.
 
     It computes z =(x+y) + (v+w)
 
@@ -170,12 +178,11 @@ def test_kernels_lns_inside_component():
             │   ┌───────────┐    │
             └─► │   Dot_2   │◄───┘
                 └───────────┘
-
-    :return:
     '''
 
-    # (Provisional) We disable unique function
-    unique_functions_conf = dace.config.Config.get('compiler', 'unique_functions')
+    # (Provisional) Disable unique function
+    unique_functions_conf = dace.config.Config.get('compiler',
+                                                   'unique_functions')
     dace.config.Config.set('compiler', 'unique_functions', value="none")
 
     @dace.program
@@ -191,70 +198,22 @@ def test_kernels_lns_inside_component():
     y = np.random.rand(8).astype(np.float32)
 
     sdfg = kernels_lns_inside_component.to_sdfg()
-    sdfg.save('/tmp/pre.sdfg')
-    # from dace.transformation.interstate import GPUTransformSDFG
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    # sdfg.expand_library_nodes()
-    sdfg.save('c/tmp/out.sdfg')
-    # sdfg.expand_library_nodes()
-    # sdfg.save('/tmp/expanded.sdfg')
     program = sdfg.compile()
-    for node, state in program.sdfg.all_nodes_recursive():
-        if hasattr(node, '_kernel'):
-            print(node, node._kernel)
 
+    assert count_kernels(program.sdfg) == 3
     z = program(A=A, x=x, B=B, y=y)
-
     ref = np.dot(A @ x, B @ y)
     assert np.allclose(z, ref)
-    dace.config.Config.set('compiler', 'unique_functions', value=unique_functions_conf)
-    print("OK")
-
-
-def test_kernel_LN(flatten):
-    '''
-    A single NSDFG originated by a LibNode expansion (Matmul).
-    In this case, we should have a single kernel, with multiple PEs.
-
-    #TODO: remove this one
-    :return:
-    '''
-    @dace.program
-    def test_kernel_LN(A: dace.float32[32, 32], B: dace.float32[32, 32]):
-        return A @ B
-
-    A = np.random.rand(32, 32).astype(np.float32)
-    B = np.random.rand(32, 32).astype(np.float32)
-
-    sdfg = test_kernel_LN.to_sdfg()
-    sdfg.save('/tmp/pre.sdfg')
-    from dace.transformation.interstate import GPUTransformSDFG
-
-    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    from dace.libraries.blas import Gemm
-    Gemm.default_implementation = "FPGA1DSystolic"
-    sdfg.save('/tmp/out.sdfg')
-    if flatten:
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG])
-        sdfg.save('/tmp/expanded.sdfg')
-
-    # sdfg.save('/tmp/expanded.sdfg')
-    program = sdfg.compile()
-    for node, state in program.sdfg.all_nodes_recursive():
-        if hasattr(node, '_kernel'):
-            print(node, node._kernel)
-
-    C = program(A=A, B=B)
-
-    assert np.allclose(C, A @ B)
-    print("OK")
+    dace.config.Config.set('compiler',
+                           'unique_functions',
+                           value=unique_functions_conf)
 
 
 def test_kernels_inside_components_0():
     '''
-    Tests for kernels detection in two distinct connected component.
-    It computes
+    Tests for kernels detection in two distinct connected components.
+    The program computes:
     z = (x+y) + (v+w)
     zz = (xx+yy) + (vv+ww)
 
@@ -267,7 +226,7 @@ def test_kernels_inside_components_0():
             └─► │ Add_Map_2 │◄───┘
                 └───────────┘
     The three maps, should belong to three distinct kernels
-    :return:
+
     '''
     @dace.program
     def kernels_inside_components_0(x: dace.float32[8], y: dace.float32[8],
@@ -288,19 +247,13 @@ def test_kernels_inside_components_0():
     ww = np.random.rand(8).astype(np.float32)
 
     sdfg = kernels_inside_components_0.to_sdfg()
-    from dace.transformation.interstate import GPUTransformSDFG
-    # sdfg.apply_transformations([GPUTransformSDFG])
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    sdfg.save('/tmp/out.sdfg')
     program = sdfg.compile()
-    for node, state in program.sdfg.all_nodes_recursive():
-        if hasattr(node, '_kernel'):
-            print(node, node._kernel)
 
+    assert count_kernels(program.sdfg) == 6
     z, zz = program(x=x, y=y, v=v, w=w, xx=xx, yy=yy, vv=vv, ww=ww)
     assert np.allclose(z, x + y + v + w)
     assert np.allclose(zz, xx + yy + vv + ww)
-    print("OK")
 
 
 def test_kernels_inside_components_multiple_states():
@@ -602,16 +555,11 @@ def test_kernels_inside_components_multiple_states():
     sdfg = make_sdfg()
     from dace.transformation.interstate import GPUTransformSDFG
     # sdfg.apply_transformations([GPUTransformSDFG])
-    sdfg.save('/tmp/out.sdfg')
     program = sdfg.compile()
-    for node, state in program.sdfg.all_nodes_recursive():
-        if hasattr(node, '_kernel'):
-            print(node, node._kernel)
-
+    assert count_kernels(program.sdfg) == 6
     program(z=z, zz=zz, x=x, y=y, v=v, w=w, xx=xx, yy=yy, vv=vv, ww=ww, size=8)
     assert np.allclose(z, x + y + v + w)
     assert np.allclose(zz, xx + yy + vv + ww)
-    print("OK")
 
 
 if __name__ == "__main__":
@@ -619,22 +567,5 @@ if __name__ == "__main__":
     test_kernels_inside_component_1()
     test_kernels_inside_component_2()
     test_kernels_lns_inside_component()
-
     test_kernels_inside_components_0()
     test_kernels_inside_components_multiple_states()
-    # TODO: for this, we should see if we are able to find cuts or not
-    # If this is inlined we have 2 possibilities:
-    # - either we detect the right number of kernels (4)
-    # - or we detect that for each indipendent component there is no split....then we just
-    #   use the previous version.
-    # THEREFORE, one way of doing this is 1) we split into indipendent compoenents 2) for each of them
-    # we see if they can be further split 3) PEs remains only for systolic arrays
-    # IN GENERALE, DOVREMMO RISOLVERE QUESTA SITUAZIONE E DETERMINARE IL NUMERO DI KERNEL GIUSTI
-    # anche se eper questo particolare caso ci possiamo girare intorno
-    # Un altro probelma che c'e' qui e' il seguente: quando andiamo a leggere la mappa B, per via
-    # dei dfs_edges mi segue prima il path dal source node, e quindi mi va ad usare un nuovo kernel id
-    # test_kernel_LN(True)
-
-    #TODO:
-    # - add a test case with two components, each one with multiple kernels inside
-    # - add a test case with two states

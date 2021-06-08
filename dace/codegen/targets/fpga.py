@@ -167,14 +167,14 @@ class FPGACodeGen(TargetCodeGenerator):
     def _kernels_subgraphs(self, graph: Union[dace.sdfg.SDFGState,
                                               ScopeSubgraphView],
                            dependencies: dict):
-        """
+        '''
             Finds subgraphs of an SDFGState or ScopeSubgraphView that identifies Kernels.
             This is done by looking at the kernel ID associated to each node
             :param graph, the state/subgraph to consider
             :param dependencies: a dictionary containing for each kernel ID, the IDs of the kernels from which it
                 depends on
-            :return a list of tuples (subgraph, kernel ID) topologically ordered according kernel dependencies
-        """
+            :return a list of tuples (subgraph, kernel ID) topologically ordered according kernel dependencies.
+        '''
         from dace.sdfg.scope import ScopeSubgraphView
 
         if not isinstance(graph, (dace.sdfg.SDFGState, ScopeSubgraphView)):
@@ -186,45 +186,30 @@ class FPGACodeGen(TargetCodeGenerator):
             set)  # {kernel_id: {nodes in subgraph}}
 
         # Go over the nodes and populate the kernels subgraphs
-
         for node, node_state in graph.all_nodes_recursive():
-            #TODO:
-            # - cleanup and refactor, a
-            # - also considering how Kern ID are assigned (e.g., do we recur inside NSDFG?)
-
-            assigned = False
             if hasattr(node, "_kernel"):
-                # print("* Node ", node, " belongs to kernel", node._kernel)
                 if node._kernel in subgraphs:
                     subgraphs[node._kernel].add(node)
                 else:
                     subgraphs[node._kernel] = {node}
-                assigned = True
+
             # add this node to the corresponding subgraph
             if isinstance(node, dace.nodes.AccessNode):
                 # AccessNodes can be read from multiple kernels, so
                 # check all out edges
-                # NOTE: we may recur on NSDFG
+
                 start_nodes = [e.dst for e in node_state.out_edges(node)]
                 for n in start_nodes:
                     if hasattr(n, "_kernel"):
-                        # print("* Node ", n, " belongs to kernel", n._kernel)
                         if n._kernel in subgraphs:
                             subgraphs[n._kernel].add(node)
                         else:
                             subgraphs[n._kernel] = {node}
-                        assigned = True
-            # TODO: remove debug print
-            # if not assigned:
-            #     print("Node: ", node,
-            #           " is not assigned to any kernel---------------")
 
-        # Now stick each of the found components in a ScopeSubgraphView and return
-        # them. Sort according kernel dependencies order
+        # Now stick each of the found components together in a ScopeSubgraphView and return
+        # them. Sort according kernel dependencies order.
 
-        #TODO: find a nice way of doing this or completely remove this if we can use dependencies in some other way
-
-        #####################################################
+        # Build a dependency graph
         import networkx as nx
         kernels_graph = nx.DiGraph()
         for k in subgraphs.keys():
@@ -232,59 +217,58 @@ class FPGACodeGen(TargetCodeGenerator):
             kernels_graph.add_node(k)
             if k in dependencies:
                 kernel_dependencies = dependencies[k]
-                #TODO: this dependency can come from outside
                 for p in kernel_dependencies:
-                    if p in kernels_graph:
-                        kernels_graph.add_edge(p, k)
+                    kernels_graph.add_edge(p, k)
 
         subgraph_views = []
         all_nodes = graph.nodes()
 
         # Use topological sort to order kernels according to their dependencies
         for kernel_id in nx.topological_sort(kernels_graph):
-            print("Adding to the list of kernels: ",
-                  kernel_id, " it depends on: ",
-                  list(kernels_graph.predecessors(kernel_id)))
+            # print("Adding to the list of kernels: ",
+            #       kernel_id, " it depends on: ",
+            #       list(kernels_graph.predecessors(kernel_id)))
             # Return the subgraph and the kernel id
             subgraph_views.append((ScopeSubgraphView(
                 graph, [n for n in all_nodes if n in subgraphs[kernel_id]],
                 None), kernel_id))
-            print(subgraph_views[-1][0].nodes())
         del kernels_graph
         return subgraph_views
 
     def generate_state(self, sdfg: dace.SDFG, state: dace.SDFGState,
                        function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream):
-        """Generate a State."""
-        # TODO: add proper docs and type hint
-
-        # TODO: add something on top of this (or here) to detect all KERNELS first
+        '''
+        Generate an FPGA State, possibly comprising multiple Kernels and/or PEs.
+        :param sdfg:
+        :param state:
+        :param function_stream: CPU code stream: will contain global declarations (e.g. exported forward declaration of
+            device specific host functions).
+        :param callsite_stream: CPU code stream, will contain the actual code for creating global buffers, invoking
+            device host functions, and so on.
+        '''
         state_id = sdfg.node_id(state)
 
         if not self._in_device_code:
+            kernels = []  # List of tuples (subgraph, kernel_id)
 
-            # List of tuples (subgraph, kernel_id)
-            kernels = []
-            # Determine independent components: these are our starting kernels
-            are_there_kernels = False  # TMP
+            # Start a new state code generation: reset previous dependencies if any
             self._kernels_dependencies.clear()
             self._kernels_names_to_id.clear()
 
-            # Then, if we are on a top-level state, try to split these components further
+            # Determine independent components: these are our starting kernels
+            # Then, try to split these components further
             subgraphs = dace.sdfg.concurrent_subgraphs(state)
 
             start_kernel = 0
             for sg in subgraphs:
-                # Top Level State: determine kernels in state
-
+                # Determine kernels in state
                 num_kernels, dependencies = self.compute_kernels(
                     sg, default_kernel=start_kernel)
 
                 if num_kernels > 1:
-                    # TODO find a better way of keeping track of deps
+                    # Derive subgraphs for each kernels and keep track of dependencies among kernels
                     kernels.extend(self._kernels_subgraphs(sg, dependencies))
-
                     self._kernels_dependencies.update(dependencies)
                 else:
                     kernels.append((sg, start_kernel))
@@ -292,36 +276,20 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # There is no need to generate additional kernels if the number of found kernels
             # is equal to the number of connected components: use PEs instead
-
             if len(subgraphs) == len(kernels):
                 kernels = [(state, 0)]
 
-                # reset kernel ids
-                # for node in state.
-                # delattr(node, '_cs_childpath')
-            else:
-                # TODO: remove debug print
-                print(
-                    f"---- Found {len(kernels)} kernel in state {state.name}! ----"
-                )
-                are_there_kernels = True
-
             state_parameters = []
 
-            # As long as we generate the  kernels these two are populated
-            kernel_host_header_stream = CodeIOStream()
-            kernel_host_body_stream = CodeIOStream()
+            # As long as we generate kernels, generate the host file for invoking kernels,
+            # synchronize them, create transient buffers.
+            state_host_header_stream = CodeIOStream()
+            state_host_body_stream = CodeIOStream()
 
-            # Kernels are now sorted by topological order of their dependencies
-            # Generate all kernels in this state
-
+            # Kernels are now sorted considering their dependencies
             for kern, kern_id in kernels:
-                # TODO: this should return the same number of kernels
+                # Generate all kernels in this state
                 subgraphs = dace.sdfg.concurrent_subgraphs(kern)
-                if are_there_kernels:
-                    # TODO: remove this check
-                    assert len(subgraphs) == 1
-
                 shared_transients = set(sdfg.shared_transients())
 
                 # Allocate global memory transients, unless they are shared with
@@ -333,7 +301,6 @@ class FPGACodeGen(TargetCodeGenerator):
                     if node.data not in all_transients or node.data in allocated:
                         continue
                     if (data.storage == dtypes.StorageType.FPGA_Global
-                            # and isinstance(data, dt.Array)
                             and not isinstance(data, dt.View)):
                         allocated.add(node.data)
                         self._dispatcher.dispatch_allocate(
@@ -360,14 +327,11 @@ class FPGACodeGen(TargetCodeGenerator):
 
                 self._kernels_names_to_id[kernel_name] = kern_id
 
-                # TODO: document all these type of streams
-                # Call site is the cpu/program.cpp file
-
                 # Generate kernel code
                 self.generate_kernel(sdfg, state, kernel_name, subgraphs,
                                      function_stream, callsite_stream,
-                                     kernel_host_header_stream,
-                                     kernel_host_body_stream, state_parameters,
+                                     state_host_header_stream,
+                                     state_host_body_stream, state_parameters,
                                      kern_id)
 
                 # Emit the connections ini file
@@ -405,10 +369,9 @@ class FPGACodeGen(TargetCodeGenerator):
             host_function_name = f"__dace_runstate_{sdfg.sdfg_id}_{state.name}_{state_id}"
             function_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(
                 host_function_name, ", ".join(kernel_args_opencl)))
-            # Write OpenCL host function
 
             # add generated header information
-            kernel_host_stream.write(kernel_host_header_stream.getvalue())
+            kernel_host_stream.write(state_host_header_stream.getvalue())
 
             kernel_host_stream.write(f"""\
 DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
@@ -418,7 +381,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             # joining before exiting this state
             kernel_host_stream.write(f"std::vector<cl::Event> all_events;", )
 
-            kernel_host_stream.write(kernel_host_body_stream.getvalue())
+            kernel_host_stream.write(state_host_body_stream.getvalue())
 
             ## Wait for all the events
             kernel_host_stream.write(" cl::Event::waitForEvents(all_events);")
@@ -1765,16 +1728,32 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                                 callsite_stream)
 
     def generate_kernel(self,
-                        sdfg,
-                        state,
-                        kernel_name,
-                        subgraphs,
-                        function_stream,
-                        callsite_stream,
-                        kernel_host_header_stream,
-                        kernel_host_body_stream,
-                        state_parameters,
-                        kernel_id=None):
+                        sdfg: dace.SDFG,
+                        state: dace.SDFGState,
+                        kernel_name: str,
+                        subgraphs: list,
+                        function_stream: CodeIOStream,
+                        callsite_stream: CodeIOStream,
+                        state_host_header_stream: CodeIOStream,
+                        state_host_body_stream: CodeIOStream,
+                        state_parameters: list,
+                        kernel_id: int = None):
+        '''
+        Entry point for generating an FPGA Kernel out of the given subgraphs.
+        :param sdfg:
+        :param state:
+        :param kernel_name: the generated kernel name.
+        :param subgraphs: the connected components that constitute this kernel.
+        :param function_stream: CPU stream, contains global declarations.
+        :param callsite_stream: CPU stream, contains code for invoking kernels, ...
+        :param state_host_header_stream: Device Stream: contains the host code for global declarations.
+        :param state_host_body_stream: Device Stream: contains all the code related to this state, for creating
+            transient buffers, spawning kernels, and synchronizing them.
+        :param state_parameters: a list of parameters that must be passed to the state. It will get populated
+            considering all the parameters needed by the kernels in this state.
+        :param kernel_id: Unique ID of this kernels as computed in the generate_state function
+        '''
+
         if self._in_device_code:
             raise cgx.CodegenError("Tried to generate kernel from device code")
         self._in_device_code = True
@@ -1789,7 +1768,9 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 for key, value in self._kernels_names_to_id.items():
                     if val == value:
                         return key
-                raise RuntimeError("Error while generating kernel dependencies")
+                raise RuntimeError(
+                    f"Error while generating kernel dependencies. Kernel {val} not found."
+                )
 
             # Build a list containing all the name of kernels from which this one depends
             for pred in self._kernels_dependencies[kernel_id]:
@@ -1798,8 +1779,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         # Actual kernel code generation
         self.generate_kernel_internal(sdfg, state, kernel_name, predecessors,
                                       subgraphs, kernel_stream,
-                                      kernel_host_header_stream,
-                                      kernel_host_body_stream, function_stream,
+                                      state_host_header_stream,
+                                      state_host_body_stream, function_stream,
                                       callsite_stream, state_parameters)
         self._kernel_count = self._kernel_count + 1
         self._in_device_code = False
