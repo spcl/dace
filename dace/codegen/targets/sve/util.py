@@ -194,9 +194,11 @@ FUSED_OPERATION_TO_SVE = {
 
 def get_internal_symbols() -> dict:
     res = {}
+    # Generates all internal symbols by crossing the internal function names with all possible type suffixes.
+    # Then defines the symbol with the corresponding return type (based on the suffix).
     for func, type in itertools.product(FUSED_OPERATION_TO_SVE, TYPE_TO_SVE_SUFFIX):
         res[f'{func}_{TYPE_TO_SVE_SUFFIX[type.type if isinstance(type, dace.dtypes.typeclass) else type]}'] = dtypes.vector(
-            type if isinstance(type, dtypes.typeclass) else dtypes.typeclass(type), -1)
+            type if isinstance(type, dtypes.typeclass) else dtypes.typeclass(type), SVE_LEN)
     return res
 
 
