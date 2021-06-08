@@ -13,7 +13,6 @@ import collections
 import itertools
 import numpy
 
-
 # Translation of types to C++ types
 _SVE_CTYPES = {
     None: "void",
@@ -37,7 +36,6 @@ _SVE_CTYPES = {
     numpy.complex64: "dace::complex64",
     numpy.complex128: "dace::complex128",
 }
-
 
 # Used as the unknown SVE vector size in the graph
 SVE_LEN = dace.symbol('__dace_sve_len')
@@ -193,12 +191,17 @@ FUSED_OPERATION_TO_SVE = {
 
 
 def get_internal_symbols() -> dict:
+    """
+    Generates all internal symbols by crossing the internal function names with all possible type suffixes.
+    Then defines the symbol with the corresponding return type (based on the suffix).
+    """
     res = {}
-    # Generates all internal symbols by crossing the internal function names with all possible type suffixes.
-    # Then defines the symbol with the corresponding return type (based on the suffix).
-    for func, type in itertools.product(FUSED_OPERATION_TO_SVE, TYPE_TO_SVE_SUFFIX):
+
+    for func, type in itertools.product(FUSED_OPERATION_TO_SVE,
+                                        TYPE_TO_SVE_SUFFIX):
         res[f'{func}_{TYPE_TO_SVE_SUFFIX[type.type if isinstance(type, dace.dtypes.typeclass) else type]}'] = dtypes.vector(
-            type if isinstance(type, dtypes.typeclass) else dtypes.typeclass(type), SVE_LEN)
+            type if isinstance(type, dtypes.typeclass) else
+            dtypes.typeclass(type), SVE_LEN)
     return res
 
 
@@ -207,6 +210,11 @@ def is_sve_internal(name: str) -> bool:
 
 
 def internal_to_external(name: str) -> tuple:
+    """
+    Converts the internal symbol (e.g. __svmad_f32) into the
+    external symbol (e.g. svmad_f32) and returns a tuple of
+    (external symbol, dtype).
+    """
     und = name.rfind('_')
     meth = name[:und]
     ext = name[und + 1:]
@@ -235,10 +243,7 @@ def is_scalar(type: dace.typeclass) -> bool:
 
 def infer_ast(defined_symbols: collections.OrderedDict, *args) -> tuple:
     """ Returns the inferred types of the arguments, which must be AST nodes, as tuples. """
-    return tuple([
-        infer.infer_expr_type(t, defined_symbols)
-        for t in args
-    ])
+    return tuple([infer.infer_expr_type(t, defined_symbols) for t in args])
 
 
 def only_scalars_involed(defined_symbols: collections.OrderedDict,
