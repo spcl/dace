@@ -110,7 +110,7 @@ FLIP_INEQUALITY = {
     ast.GtE: ast.Lt
 }
 
-# UAdd will be ignored (rather useless)
+# UAdd is ignored
 UN_OP_TO_SVE = {ast.USub: 'svneg', ast.Not: 'svnot'}
 
 # Used when a suffix for an SVE instruction is required.
