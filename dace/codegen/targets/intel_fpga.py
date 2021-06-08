@@ -471,8 +471,10 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                                     var_name=None):
         pass
 
-    def generate_kernel_internal(self, sdfg, state, kernel_name, predecessors, subgraphs, kernel_stream,
-                                 kernel_host_header_stream, kernel_host_body_stream, function_stream,
+    def generate_kernel_internal(self, sdfg, state, kernel_name, predecessors,
+                                 subgraphs, kernel_stream,
+                                 kernel_host_header_stream,
+                                 kernel_host_body_stream, function_stream,
                                  callsite_stream, state_parameters):
         # TODO: add docstring
         # TODO: is really needed this differentiation between kernel_host_header and host_body
@@ -481,7 +483,6 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
         kernel_header_stream = CodeIOStream()
         kernel_body_stream = CodeIOStream()
-
 
         #reset list of needed converters
         self.converters_to_generate = set()
@@ -514,11 +515,14 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                                                 function_stream,
                                                 callsite_stream)
 
-        self.generate_host_function_prologue(sdfg, state, kernel_host_body_stream, kernel_name)
+        self.generate_host_function_prologue(sdfg, state,
+                                             kernel_host_body_stream,
+                                             kernel_name)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, kernel_body_stream,
-                              kernel_host_header_stream, kernel_host_body_stream)
+                              kernel_host_header_stream,
+                              kernel_host_body_stream)
 
         kernel_body_stream.write("\n")
 
@@ -528,23 +532,26 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_stream.write(kernel_header_stream.getvalue() +
                             kernel_body_stream.getvalue())
 
-        self.generate_host_function_body(sdfg, state, kernel_host_body_stream, kernel_name, predecessors)
+        self.generate_host_function_body(sdfg, state, kernel_host_body_stream,
+                                         kernel_name, predecessors)
 
         # # Store code to be passed to compilation phase
         # self._host_codes.append(
         #     (kernel_name, host_code_header_stream.getvalue() +
         #      host_code_body_stream.getvalue()))
 
-    def generate_host_function_prologue(self, sdfg, state, host_stream, kernel_name):
+    def generate_host_function_prologue(self, sdfg, state, host_stream,
+                                        kernel_name):
         seperator = "/" * 59
-        host_stream.write(f"\n{seperator}\n// Kernel: {kernel_name}\n{seperator}\n\n")
+        host_stream.write(
+            f"\n{seperator}\n// Kernel: {kernel_name}\n{seperator}\n\n")
 
-        host_stream.write(f"std::vector<hlslib::ocl::Kernel> {kernel_name}_kernels;", sdfg,
-                          sdfg.node_id(state))
+        host_stream.write(
+            f"std::vector<hlslib::ocl::Kernel> {kernel_name}_kernels;", sdfg,
+            sdfg.node_id(state))
 
-
-
-    def generate_host_function_body(self, sdfg, state, host_stream, kernel_name, predecessors):
+    def generate_host_function_body(self, sdfg, state, host_stream, kernel_name,
+                                    predecessors):
         state_id = sdfg.node_id(state)
         launch_async = Config.get_bool("compiler", "intel_fpga", "launch_async")
 
@@ -557,8 +564,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             host_stream.write(f"std::vector<cl::Event > {kernel_deps_name};")
             for pred in predecessors:
                 # concatenate events from predecessor kernel
-                host_stream.write(f"{kernel_deps_name}.insert({kernel_deps_name}.end(), {pred}_events.begin(), {pred}_events.end());")
-
+                host_stream.write(
+                    f"{kernel_deps_name}.insert({kernel_deps_name}.end(), {pred}_events.begin(), {pred}_events.end());"
+                )
 
         if launch_async:
             #TODO remove this?
@@ -587,9 +595,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
   all_events.insert(all_events.end(), {kernel_name}_events.begin(), {kernel_name}_events.end());
 """, sdfg, state_id)
 
-
-    def generate_module(self, sdfg, state, kernel_name, module_name, subgraph, parameters,
-                        module_stream, host_header_stream, host_body_stream):
+    def generate_module(self, sdfg, state, kernel_name, module_name, subgraph,
+                        parameters, module_stream, host_header_stream,
+                        host_body_stream):
         state_id = sdfg.node_id(state)
         dfg = sdfg.nodes()[state_id]
 
@@ -649,8 +657,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             if unrolled_loop is None:
                 host_body_stream.write(
                     "{}_kernels.emplace_back(program.MakeKernel(\"{}\"{}));".
-                    format(kernel_name,
-                        module_function_name, ", ".join([""] + kernel_args_call)
+                    format(
+                        kernel_name, module_function_name,
+                        ", ".join([""] + kernel_args_call)
                         if len(kernel_args_call) > 0 else ""), sdfg, state_id)
             else:
                 # We will generate a separate kernel for each PE. Adds host call
@@ -670,8 +679,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                     # code
                     host_body_stream.write(
                         "{}_kernels.emplace_back(program.MakeKernel(\"{}_{}\"{}));"
-                        .format(kernel_name,
-                            module_function_name, p,
+                        .format(
+                            kernel_name, module_function_name, p,
                             ", ".join([""] + kernel_args_call[:-1]) if
                             len(kernel_args_call) > 1 else ""), sdfg, state_id)
 
@@ -697,7 +706,8 @@ __attribute__((autorun))\n"""
             # a function that will be used create a kernel multiple times
 
             # generate a unique name for this function
-            pe_function_name = "pe_" + str(sdfg.sdfg_id) + "_" + module_name + "_func"
+            pe_function_name = "pe_" + str(
+                sdfg.sdfg_id) + "_" + module_name + "_func"
             module_body_stream.write(
                 "inline void {}({}) {{".format(pe_function_name,
                                                ", ".join(kernel_args_opencl)),
@@ -1566,7 +1576,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 else:
                     code_str = "{dst}[{idx}] = {src};"
                 slice = self.visit(node.targets[0].slice)
-                if isinstance(slice.value, ast.Tuple):
+                if isinstance(slice, ast.Index) and isinstance(
+                        slice.value, ast.Tuple):
                     subscript = unparse(slice)[1:-1]
                 else:
                     subscript = unparse(slice)
