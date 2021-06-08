@@ -8,7 +8,7 @@ import re
 import warnings
 import sympy as sp
 import numpy as np
-from typing import Dict
+from typing import Dict, Union
 
 import dace
 from dace.codegen.targets import cpp
@@ -164,10 +164,16 @@ class FPGACodeGen(TargetCodeGenerator):
         # Right before finalizing code, write FPGA context to state structure
         self._frame.statestruct.append('dace::fpga::Context *fpga_context;')
 
-    def _kernels_subgraphs(self, graph, precedences, start_kernel=0):
+    def _kernels_subgraphs(self, graph: Union[dace.sdfg.SDFGState,
+                                              ScopeSubgraphView],
+                           dependencies: dict):
         """
-            Finds subgraphs of an SDFGState or ScopeSubgraphView that identifies Kernels,
-            by looking at the kernel id associated to each node
+            Finds subgraphs of an SDFGState or ScopeSubgraphView that identifies Kernels.
+            This is done by looking at the kernel ID associated to each node
+            :param graph, the state/subgraph to consider
+            :param dependencies: a dictionary containing for each kernel ID, the IDs of the kernels from which it
+                depends on
+            :return a list of tuples (subgraph, kernel ID) topologically ordered according kernel dependencies
         """
         from dace.sdfg.scope import ScopeSubgraphView
 
@@ -214,9 +220,9 @@ class FPGACodeGen(TargetCodeGenerator):
             #           " is not assigned to any kernel---------------")
 
         # Now stick each of the found components in a ScopeSubgraphView and return
-        # them. Sort according kernel precedences order
+        # them. Sort according kernel dependencies order
 
-        #TODO: find a nice way of doing this or completely remove this if we can use precedences in some other way
+        #TODO: find a nice way of doing this or completely remove this if we can use dependencies in some other way
 
         #####################################################
         import networkx as nx
@@ -224,10 +230,10 @@ class FPGACodeGen(TargetCodeGenerator):
         for k in subgraphs.keys():
             # we could have no dependencies at all
             kernels_graph.add_node(k)
-            if k in precedences:
-                kernel_precedences = precedences[k]
+            if k in dependencies:
+                kernel_dependencies = dependencies[k]
                 #TODO: this dependency can come from outside
-                for p in kernel_precedences:
+                for p in kernel_dependencies:
                     if p in kernels_graph:
                         kernels_graph.add_edge(p, k)
 
@@ -243,6 +249,7 @@ class FPGACodeGen(TargetCodeGenerator):
             subgraph_views.append((ScopeSubgraphView(
                 graph, [n for n in all_nodes if n in subgraphs[kernel_id]],
                 None), kernel_id))
+            print(subgraph_views[-1][0].nodes())
         del kernels_graph
         return subgraph_views
 
@@ -276,10 +283,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
                 if num_kernels > 1:
                     # TODO find a better way of keeping track of deps
-                    kernels.extend(
-                        self._kernels_subgraphs(sg,
-                                                dependencies,
-                                                start_kernel=start_kernel))
+                    kernels.extend(self._kernels_subgraphs(sg, dependencies))
 
                     self._kernels_dependencies.update(dependencies)
                 else:
@@ -954,7 +958,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         if isinstance(
                                 curedge.src,
                             (nodes.EntryNode, nodes.ExitNode, nodes.CodeNode)):
-                            # We can stop here, there is a Scope which will contain some compute, or a tasklet/libnode
+                            # We can stop here: this is a scope which will contain some compute, or a tasklet/libnode
                             return True
                     elif hasattr(curedge.src, "_kernel"):
                         # Found a node with a kernel id. Use that
@@ -998,7 +1002,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             else:
 
                 # From this edge we don't have any kernel id.
-                # Look up for the other predecessors node, if any of them has a kernel
+                # Look up for the other predecessor nodes, if any of them has a kernel
                 # ID, use that.
 
                 for pred_edge in state.in_edges(e.dst):
@@ -1009,17 +1013,29 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         if kernel is not None:
                             break
                 else:
-                    # New kernel: this should not have any predecessor
-                    kernel = max_kernels
-                    if (isinstance(e.dst, nodes.AccessNode)
-                            and isinstance(sdfg.arrays[e.dst.data], dt.View)):
-                        # Skip views
-                        pass
+                    # Look at the successor nodes: because of the DFS visit, it may occur
+                    # that one of them has already an associated kernel ID. If this is the case, and
+                    # if the edge that connects this node with it is a tasklet-to-tasklet
+                    # edge, then we use that kernel ID. In all the other cases, we use a new one.
+
+                    # TODO: support more robust detection
+                    for succ_edge in state.out_edges(e.dst):
+                        if hasattr(succ_edge.dst, "_kernel") and isinstance(
+                                succ_edge.src, nodes.Tasklet) and isinstance(
+                                    succ_edge.dst, nodes.Tasklet):
+                            kernel = succ_edge.dst._kernel
+                            break
                     else:
-                        max_kernels = increment(max_kernels)
+                        kernel = max_kernels
+                        if (isinstance(e.dst, nodes.AccessNode) and isinstance(
+                                sdfg.arrays[e.dst.data], dt.View)):
+                            # Skip views
+                            pass
+                        else:
+                            max_kernels = increment(max_kernels)
             e.dst._kernel = kernel
 
-        # do another pass and keep track of precedences among Kernels
+        # do another pass and track dependencies among Kernels
         for node in state.nodes():
             if hasattr(node, '_kernel'):
 
