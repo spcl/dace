@@ -4,6 +4,7 @@ import numpy as np
 import scipy as sp
 from tests.codegen.sve.vectorization import vectorize
 import tests.codegen.sve.common as common
+import pytest
 
 N = dace.symbol('N')
 
@@ -20,6 +21,7 @@ def axpy(A, X, Y):
         out = in_A * in_X + in_Y
 
 
+@pytest.mark.skip
 def test_axpy():
     print("==== Program start ====")
 
@@ -42,19 +44,18 @@ def test_axpy():
     sdfg = axpy.to_sdfg()
     vectorize(sdfg, 'i')
 
-    if common.SHOULD_EXECUTE_SVE:
-        sdfg(A=A, X=X, Y=Y, N=N)
+    sdfg(A=A, X=X, Y=Y, N=N)
 
-        c_axpy = sp.linalg.blas.get_blas_funcs('axpy',
-                                               arrays=(X_regression,
-                                                       Y_regression))
-        if dace.Config.get_bool('profiling'):
-            dace.timethis('axpy', 'BLAS', (2 * N.get()), c_axpy, X_regression,
-                          Y_regression, N.get(), A_regression)
-        else:
-            c_axpy(X_regression, Y_regression, N.get(), A_regression)
+    c_axpy = sp.linalg.blas.get_blas_funcs('axpy',
+                                            arrays=(X_regression,
+                                                    Y_regression))
+    if dace.Config.get_bool('profiling'):
+        dace.timethis('axpy', 'BLAS', (2 * N.get()), c_axpy, X_regression,
+                        Y_regression, N.get(), A_regression)
+    else:
+        c_axpy(X_regression, Y_regression, N.get(), A_regression)
 
-        diff = np.linalg.norm(Y_regression - Y) / N.get()
-        print("Difference:", diff)
-        print("==== Program end ====")
-        assert diff <= 1e-5
+    diff = np.linalg.norm(Y_regression - Y) / N.get()
+    print("Difference:", diff)
+    print("==== Program end ====")
+    assert diff <= 1e-5

@@ -9,6 +9,8 @@ import numpy as np
 import scipy
 from tests.codegen.sve.vectorization import vectorize
 import tests.codegen.sve.common as common
+import pytest
+
 
 W = dace.symbol('W')
 H = dace.symbol('H')
@@ -29,6 +31,7 @@ def spmv(A_row, A_col, A_val, x, b):
             out = a * in_x
 
 
+@pytest.mark.skip
 def test_spmv():
     W.set(64)
     H.set(64)
@@ -78,13 +81,12 @@ def test_spmv():
     sdfg = spmv.to_sdfg()
     vectorize(sdfg, 'j')
 
-    if common.SHOULD_EXECUTE_SVE:
-        sdfg(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=H, W=W, nnz=nnz)
+    sdfg(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=H, W=W, nnz=nnz)
 
-        if dace.Config.get_bool('profiling'):
-            dace.timethis('spmv', 'scipy', 0, A_sparse.dot, x)
+    if dace.Config.get_bool('profiling'):
+        dace.timethis('spmv', 'scipy', 0, A_sparse.dot, x)
 
-        diff = np.linalg.norm(A_sparse.dot(x) - b) / float(H.get())
-        print("Difference:", diff)
-        print("==== Program end ====")
-        assert diff <= 1e-5
+    diff = np.linalg.norm(A_sparse.dot(x) - b) / float(H.get())
+    print("Difference:", diff)
+    print("==== Program end ====")
+    assert diff <= 1e-5
