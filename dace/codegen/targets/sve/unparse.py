@@ -17,8 +17,8 @@ import dace.frontend.python.astutils as astutils
 from dace.codegen.targets.sve.type_compatibility import assert_type_compatibility
 import copy
 import collections
-import itertools
 import numpy as np
+
 
 class SVEUnparser(cppunparse.CPPUnparser):
     def __init__(self,
@@ -55,7 +55,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         self.stream_associations = stream_associations
 
         # Detect fused operations first (are converted into internal calls)
-        preprocessed = preprocess.SVEPreprocessor(defined_symbols).visit(tree)
+        preprocessed = preprocess.SVEBinOpFuser(defined_symbols).visit(tree)
 
         # Make sure all internal calls are defined for the inference
         defined_symbols.update(util.get_internal_symbols())
@@ -96,13 +96,22 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         return (left, right)
 
-    def dispatch_expect(self, tree: ast.AST, expect: dtypes.typeclass, in_sve_instr: bool = False):
+    def dispatch_expect(self, tree: ast.AST, expect: dtypes.typeclass):
+        """
+        This function is an extension to the dispatch() call and allows to pass
+        the type that is expected when unparsing the tree and will take care of
+        any casting that might be required. It is mainly used in SVE instructions
+        in cases where an argument must be of some type (otherwise the
+        compiler complains).
+        """
+
         inf = self.infer(tree)[0]
 
         # Sanity check
         if not inf:
             raise util.NotSupportedError(
-                f'Could not infer the expression type of `{astunparse.unparse(tree)}`')
+                f'Could not infer the expression type of `{astunparse.unparse(tree)}`'
+            )
 
         if isinstance(inf, dtypes.vector):
             # Unparsing a vector
@@ -220,8 +229,10 @@ class SVEUnparser(cppunparse.CPPUnparser):
             branches.append(t)
 
         # Precompute all case predicates
-        predicates = [self.generate_case_predicate(
-            b, acc_pred, i + 1) for i, b in enumerate(branches)]
+        predicates = [
+            self.generate_case_predicate(b, acc_pred, i + 1)
+            for i, b in enumerate(branches)
+        ]
 
         # Generate the cases
         for b, p in zip(branches, predicates):
@@ -249,7 +260,12 @@ class SVEUnparser(cppunparse.CPPUnparser):
         self.enter()
         self.fill('\n// === Stream push ===')
 
-        stream_type = util.long_fix(stream_type)
+        # Casting in case of `long long`
+        stream_type = copy.copy(stream_type)
+        if stream_type.type == np.int64:
+            stream_type.ctype = 'int64_t'
+        elif stream_type.type == np.uint64:
+            stream_type.ctype = 'uint64_t'
 
         # Create a temporary array on the heap, where we will copy the SVE register contents to
         self.fill('{} __tmp[{} / {}];'.format(stream_type,
@@ -287,7 +303,8 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         target = t.targets[0]
 
-        if isinstance(target, ast.Name) and target.id in self.stream_associations:
+        if isinstance(target,
+                      ast.Name) and target.id in self.stream_associations:
             # Assigning to a stream variable is equivalent to a push
             self.push_to_stream(t, target)
             return
@@ -295,7 +312,9 @@ class SVEUnparser(cppunparse.CPPUnparser):
         lhs_type, rhs_type = self.infer(target, t.value)
 
         if rhs_type is None:
-            raise NotImplementedError(f'Can not infer RHS of assignment ({astunparse.unparse(t.value)})')
+            raise NotImplementedError(
+                f'Can not infer RHS of assignment ({astunparse.unparse(t.value)})'
+            )
 
         is_new_variable = False
 
@@ -304,7 +323,8 @@ class SVEUnparser(cppunparse.CPPUnparser):
             if not isinstance(
                     target,
                     ast.Name) or target.id in self.get_defined_symbols():
-                # Either we don't assign to a name, or the variable name has already been declared (but infer still fails, i.e. something went wrong!)
+                # Either we don't assign to a name, or the variable name has
+                # already been declared (but infer still fails, i.e. something went wrong!)
                 raise NotImplementedError('Can not infer LHS of assignment')
 
             # Declare it as `type name`
@@ -319,7 +339,8 @@ class SVEUnparser(cppunparse.CPPUnparser):
                 raise util.NotSupportedError(
                     'Defining pointers in Tasklet code not supported')
 
-            # Otherwise, the fallback will grab the case of a scalar, because the RHS is scalar, and the LHS is the same
+            # Otherwise, the fallback will grab the case of a scalar,
+            # because the RHS is scalar, and the LHS is the same
             is_new_variable = True
 
         # LHS and RHS types are now both well defined
@@ -330,7 +351,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         """
         if self.if_depth > 0 and not lhs_vec:
             raise util.NotSupportedError(
-                'Assignments in an if block must be to a vector or stream (otherwise unvectorizable)')
+                'Assignments in an if block must be to a vector or stream (otherwise not vectorizable)')
         """
 
         if not lhs_vec and not rhs_vec:
@@ -348,7 +369,9 @@ class SVEUnparser(cppunparse.CPPUnparser):
         self.dispatch(target)
         self.write(' = ')
 
-        # Note, that if this variable is declared in the same line, we don't need to select at all (there is nothing to select from, because it just got declared)
+        # Note, that if this variable is declared in the same line, we
+        # don't need to select at all (there is nothing to select from,
+        # because it just got declared)
         if self.if_depth > 0 and not is_new_variable:
             # If we are in an If block, we assign based on the predicate
             # In case of "a = b", we do:
@@ -394,7 +417,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
                 self.dispatch(e)
             self.write(')')
             return
-            
+
         name = None
         if isinstance(t.func, ast.Name):
             # Could be an internal operation (provided by the preprocessor)
@@ -427,7 +450,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
             return super()._UnaryOp(t)
 
         if isinstance(t.op, ast.UAdd):
-            # A + infront is just ignored
+            # A + in front is just ignored
             t.dispatch(t.operand)
             return
 
@@ -442,13 +465,12 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
     def _AugAssign(self, t):
         # Break up statements like a += 5 into a = a + 5
-        self._Assign(ast.Assign(
-            [t.target], ast.BinOp(t.target, t.op, t.value)))
+        self._Assign(ast.Assign([t.target], ast.BinOp(t.target, t.op, t.value)))
 
     def _BinOp(self, t):
         lhs_type, rhs_type = self.infer(t.left, t.right)
         res_type = dtypes.result_type_of(lhs_type, rhs_type)
-        
+
         if not isinstance(res_type, (dtypes.vector, dtypes.pointer)):
             return super()._BinOp(t)
 
@@ -495,8 +517,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         # Bool ops are nested SVE instructions, so we must make sure they all act on vectors
         for type in types:
             if not isinstance(type, dtypes.vector):
-                raise util.NotSupportedError(
-                    'Unvectorizable boolean operation')
+                raise util.NotSupportedError('Unvectorizable boolean operation')
 
         # There can be many t.values, e.g. if
         # x or y or z
@@ -519,7 +540,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         if len(t.ops) != 1:
             # This includes things like  a < b <= c
             raise NotImplementedError(
-                'Multiple comparisions at once not implemented')
+                'Multiple comparisons at once not implemented')
 
         lhs = t.left
         op = t.ops[0]
@@ -549,7 +570,8 @@ class SVEUnparser(cppunparse.CPPUnparser):
         self.assert_type_compatibility(type)
         self.assert_type_compatibility(slice)
 
-        if isinstance(type, dtypes.pointer) and isinstance(slice, dtypes.vector):
+        if isinstance(type, dtypes.pointer) and isinstance(
+                slice, dtypes.vector):
             # Indirect load
             self.write(f'svld1_gather_index({self.pred_name}, ')
             self.dispatch_expect(t.value, type)
