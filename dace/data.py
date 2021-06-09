@@ -9,7 +9,7 @@ from typing import Set
 import dace.dtypes as dtypes
 from dace.codegen import cppunparse
 from dace import symbolic, serialize
-from dace.properties import (Property, make_properties, DictProperty,
+from dace.properties import (EnumProperty, Property, make_properties, DictProperty,
                              ReferenceProperty, ShapeProperty, SubsetProperty,
                              SymbolicProperty, TypeClassProperty,
                              DebugInfoProperty, CodeProperty, ListProperty)
@@ -48,16 +48,12 @@ class Data(object):
     dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
     shape = ShapeProperty(default=[])
     transient = Property(dtype=bool, default=False)
-    storage = Property(dtype=dtypes.StorageType,
-                       desc="Storage location",
-                       choices=dtypes.StorageType,
-                       default=dtypes.StorageType.Default,
-                       from_string=lambda x: dtypes.StorageType[x])
-    lifetime = Property(dtype=dtypes.AllocationLifetime,
-                        desc='Data allocation span',
-                        choices=dtypes.AllocationLifetime,
-                        default=dtypes.AllocationLifetime.Scope,
-                        from_string=lambda x: dtypes.AllocationLifetime[x])
+    storage = EnumProperty(dtype=dtypes.StorageType,
+                           desc="Storage location",
+                           default=dtypes.StorageType.Default)
+    lifetime = EnumProperty(dtype=dtypes.AllocationLifetime,
+                            desc='Data allocation span',
+                            default=dtypes.AllocationLifetime.Scope)
     location = DictProperty(
         key_type=str,
         value_type=symbolic.pystr_to_symbolic,
