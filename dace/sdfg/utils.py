@@ -1086,3 +1086,18 @@ def modify_subset_magic(array : dt.Data, subset : sbs.Subset, remove : bool):
     else:
         cps = subset
     return cps
+
+def get_multibank_ranges_from_subset(subset : sbs.Subset, sdfg : SDFG, 
+                                    assumeSingle : bool = False) -> Tuple[int, int]:
+    low, high, stride = subset[0]
+    if(stride != 1):
+        raise ValueError(f"Cannot handle strided HBM-subset")
+    try:
+        low = int(symbolic.resolve_symbol_to_constant(low, sdfg))
+        high = int(symbolic.resolve_symbol_to_constant(low, sdfg))
+    except:
+        raise ValueError("Only constant evaluatable indices allowed for HBM-memlets on the bank index")
+    if(assumeSingle and low != high):
+        raise ValueError("Found HBM-Memlet accessing multiple banks in a place"
+                        "where only one bank may be accessed")
+    return (low, high+1)
