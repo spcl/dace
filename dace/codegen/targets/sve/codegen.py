@@ -114,7 +114,7 @@ class SVECodeGenerator(TargetCodeGenerator):
                                 edge: gr.MultiConnectorEdge[mm.Memlet],
                                 callsite_stream: CodeIOStream,
                                 output: bool = False,
-                                is_interconnect: bool = False):
+                                is_code_code: bool = False):
         """ Creates a simple variable definition `type name;`, which works for both vectors and regular data types. """
 
         var_name = None
@@ -126,8 +126,8 @@ class SVECodeGenerator(TargetCodeGenerator):
         else:
             var_name = edge.src_conn
 
-        if is_interconnect:
-            # For edges between Tasklets (interconnect), we use the data as name because these registers are temporary and shared
+        if is_code_code:
+            # For edges between Tasklets (Code->Code), we use the data as name because these registers are temporary and shared
             var_name = edge.data.data
 
         if isinstance(conn, dtypes.vector):
@@ -168,7 +168,7 @@ class SVECodeGenerator(TargetCodeGenerator):
                 self.create_empty_definition(node.out_connectors[edge.src_conn],
                                              edge,
                                              callsite_stream,
-                                             is_interconnect=True)
+                                             is_code_code=True)
 
         callsite_stream.write('{')
 
