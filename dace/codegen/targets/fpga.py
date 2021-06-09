@@ -90,9 +90,8 @@ class FPGACodeGen(TargetCodeGenerator):
         self._allocated_global_arrays = set()
         self._unrolled_pes = set()
 
-        # Dependencies among kernels (if any)
+        # Keep track of dependencies among kernels (if any)
         self._kernels_dependencies = dict()
-        # TODO: is this ok, or do we want something else?
         self._kernels_names_to_id = dict()
 
         # Register dispatchers
@@ -168,8 +167,8 @@ class FPGACodeGen(TargetCodeGenerator):
                                               ScopeSubgraphView],
                            dependencies: dict):
         '''
-            Finds subgraphs of an SDFGState or ScopeSubgraphView that identifies kernels.
-            This is done by looking at the kernel ID associated to each node ('_kernel' field)
+            Finds subgraphs of an SDFGState or ScopeSubgraphView that correspond to kernels.
+            This is done by looking at the kernel ID associated to each node ('_kernel' field).
             :param graph, the state/subgraph to consider
             :param dependencies: a dictionary containing for each kernel ID, the IDs of the kernels from which it
                 depends on
@@ -352,8 +351,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 # Streams and Views are not passed as arguments
                 if not isinstance(arg, dt.Stream) and not isinstance(
                         arg, dt.View):
-                    kernel_args_call_host.append(
-                        FPGACodeGen.make_host_parameter(argname, arg))
+                    kernel_args_call_host.append(arg.as_arg(False,
+                                                            name=argname))
                     kernel_args_opencl.append(
                         FPGACodeGen.make_opencl_parameter(argname, arg))
 
@@ -1338,16 +1337,6 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     f"hlslib::ocl::Access::readWrite> &{name}")
         else:
             return (desc.as_arg(with_types=True, name=name))
-
-    @staticmethod
-    def make_host_parameter(name, desc):
-        # if isinstance(desc, dt.Array):
-        #     # Buffer are passed by reference, but std::thread can not accept a reference
-        #     # Use std::ref
-        #     return (f"std::ref({name})")
-        # else:
-        #TODO remove, if we don't use thread is useless
-        return (desc.as_arg(with_types=False, name=name))
 
     def get_next_scope_entries(self, sdfg, dfg, scope_entry):
         parent_scope_entry = dfg.entry_node(scope_entry)
