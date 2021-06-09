@@ -18,53 +18,6 @@ from dace import Config
 import dace.codegen.targets.common
 from dace import dtypes, data as dt
 
-def backup_statescope_fields(
-        subgraph: 'dace.sdfg.state.StateGraphView') -> Tuple:
-    """
-    Creates mappings from all nodes/edges to all the fields that are affected 
-    by replace, before overwritting all those fields with deepcopies of themselves.
-    The old fields can be restored using use_replacement_fields_backup
-    (Maybe this is usefull to someone else and should go to replace?)
-    """
-    oldproperties = {}
-    oldedgedata = {}
-    oldedgesubsets = {}
-    oldedgevolumes = {}
-
-    for node in subgraph.nodes():
-        for propclass, propval in node.properties():
-            pname = propclass.attr_name
-            oldproperties[node] = (pname, propval)
-            setattr(node, pname, copy.deepcopy(propval))
-    for edge in subgraph.edges():
-        oldedgedata[edge] = edge.data.data
-        edge.data.data = copy.deepcopy(edge.data.data)
-        oldedgesubsets[edge] = (edge.data.subset, edge.data.other_subset)
-        edge.data.subset = copy.deepcopy(edge.data.subset)
-        edge.data.other_subset = copy.deepcopy(edge.data.other_subset)
-        oldedgevolumes[edge] = edge.data.volume
-        edge.data.volume = copy.deepcopy(edge.data.volume)
-    return (oldproperties, oldedgedata, oldedgesubsets, oldedgevolumes)
-
-def use_statescope_fields_backup(backup: "Tuple"):
-    """
-    Restores values saved using backup_replacement_fields. Will apply
-    the changes to the nodes/edges objects it saw during backup, in other
-    words those must still exist.
-    """
-    oldproperties, oldedgedata, oldedgesubsets, oldedgevolumes = backup
-    for node in oldproperties:
-        pname, v = oldproperties[node]
-        setattr(node, pname, v)
-    for edge, data in oldedgedata.items():
-        edge.data.data = data
-    for edge, subsets in oldedgesubsets.items():
-        sub, osub = subsets
-        edge.data.subset = sub
-        edge.data.other_subset = osub
-    for edge, volume in oldedgevolumes.items():
-        edge.data.volume = volume
-
 @registry.autoregister_params(name='unroll')
 class UnrollCodeGen(TargetCodeGenerator):
     """ A constant-range map unroller code generator. """
@@ -182,5 +135,5 @@ class UnrollCodeGen(TargetCodeGenerator):
             callsite_stream.write('}')
             nsdfg_after_unroll(nsdfg_unroll_info)
             #use_statescope_fields_backup(backups)
-            
+
         sdfg.constants_prop = sdfgconsts
