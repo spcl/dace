@@ -43,8 +43,8 @@ def create_hbm_reduce_sdfg(banks=2):
 def createTestSet(N, M):
     #in1 = np.random.rand(*[N, M]).astype('f')
     #in2 = np.random.rand(*[N, M]).astype('f')
-    #in1 = np.ones([2, N, M], dtype=np.float32)
-    #in2 = np.ones([2, N, M], dtype=np.float32) * 2
+    in1 = np.ones([2, N, M], dtype=np.float32)
+    in2 = np.ones([2, N, M], dtype=np.float32) * 2
     expected = np.sum(in1 * in2, axis=2, dtype=np.float32)
     out = np.empty([2, N]).astype('f')
     return (in1, in2, expected, out)

@@ -1214,7 +1214,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     mem.dst_subset = subsets.Range.from_array(dst_array)
                 src_index, src_index_high  = utils.get_multibank_ranges_from_subset(mem.src_subset, sdfg)
                 dst_index, _ = utils.get_multibank_ranges_from_subset(mem.dst_subset, sdfg)
-                bank_access_count = src_index_high - src_index + 1
+                bank_access_count = src_index_high - src_index
                 for i in range(bank_access_count):
                     mem.src_subset[0] = (src_index + i, src_index + i, 1)
                     mem.dst_subset[0] = (dst_index + i, dst_index + i, 1)

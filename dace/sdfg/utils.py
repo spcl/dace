@@ -1100,4 +1100,5 @@ def get_multibank_ranges_from_subset(subset : sbs.Subset, sdfg : SDFG,
     if(assumeSingle and low != high):
         raise ValueError("Found HBM-Memlet accessing multiple banks in a place"
                         "where only one bank may be accessed")
-    return (low, high+1)
+    #+2 so we can use this as parameter to range in loops
+    return (low, high+2) 
