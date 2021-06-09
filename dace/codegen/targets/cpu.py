@@ -971,7 +971,8 @@ class CPUCodeGen(TargetCodeGenerator):
                             ptr_str = cpp.array_interface_variable(
                                         cpp.ptr(memlet.data, 
                                         desc, 
-                                        memlet.subset),
+                                        memlet.subset,
+                                        sdfg),
                                         True, 
                                         None
                                     )   
@@ -1147,7 +1148,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         desc = sdfg.arrays[memlet.data]
         try:
-            ptr = cpp.ptr(memlet.data, desc, memlet.subset)
+            ptr = cpp.ptr(memlet.data, desc, memlet.subset, sdfg)
         except ValueError:
             raise cgx.CodegenError("Only memlets accessing a single HBM-bank may be "
                                     f"attached to a tasklet. See {str(memlet)}")

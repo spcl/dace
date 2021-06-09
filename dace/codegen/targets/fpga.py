@@ -28,6 +28,7 @@ from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.symbolic import evaluate
+import dace.symbolic
 
 _CPU_STORAGE_TYPES = {
     dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal,
@@ -409,7 +410,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         # Get and update global memory interface ID
                         if("hbmbank" in desc.location):
                             if_ids = []
-                            for bank in utils.iterate_multibank_arrays(dataname, desc):
+                            for bank in utils.iterate_multibank_arrays(dataname, desc, ):
                                 ptr_str = cpp.ptr(dataname, desc, bank)
                                 if_id = global_interfaces[ptr_str]
                                 global_interfaces[ptr_str] += 1
@@ -839,7 +840,7 @@ class FPGACodeGen(TargetCodeGenerator):
             ])
 
             if host_to_device:
-                ptr_str = (cpp.ptr(src_node.data, src_nodedesc, src_subset) +
+                ptr_str = (cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg) +
                         (" + {}".format(offset_src)
                             if str(offset_src) != "0" else ""))
                 if cast:
@@ -849,7 +850,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 if isNDCopy:
                     callsite_stream.write(
                         "{}.CopyBlockFromHost({}, {}, {}, {}, {}, {});".format(
-                            cpp.ptr(dst_node.data, dst_nodedesc, dst_subset),
+                            cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg),
                             cpp.to_cpp_array(src_copy_offset, "size_t"),
                             cpp.to_cpp_array(dst_copy_offset, "size_t"),
                             cpp.to_cpp_array(copy_shape_cpp, "size_t"),
@@ -861,13 +862,13 @@ class FPGACodeGen(TargetCodeGenerator):
                 else:
                     callsite_stream.write(
                         "{}.CopyFromHost({}, {}, {});".format(
-                            cpp.ptr(dst_node.data, dst_nodedesc, dst_subset),
+                            cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg),
                             offset_dst, copysize,
                             ptr_str), sdfg, state_id, [src_node, dst_node])
 
             elif device_to_host:
                 
-                ptr_str = (cpp.ptr(dst_node.data, dst_nodedesc, dst_subset) +
+                ptr_str = (cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg) +
                         (" + {}".format(offset_dst)
                             if str(offset_dst) != "0" else ""))
                 if cast:
@@ -877,7 +878,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 if isNDCopy:
                     callsite_stream.write(
                         "{}.CopyBlockToHost({}, {}, {}, {}, {}, {});".format(
-                            cpp.ptr(src_node.data, src_nodedesc, src_subset),
+                            cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg),
                             cpp.to_cpp_array(dst_copy_offset, "size_t"),
                             cpp.to_cpp_array(src_copy_offset, "size_t"),
                             cpp.to_cpp_array(copy_shape_cpp, "size_t"),
@@ -889,14 +890,14 @@ class FPGACodeGen(TargetCodeGenerator):
                 else:
                     callsite_stream.write(
                         "{}.CopyToHost({}, {}, {});".format(
-                            cpp.ptr(src_node.data, src_nodedesc, src_subset),
+                            cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg),
                             offset_src, 
                             copysize, ptr_str),
                         sdfg, state_id, [src_node, dst_node])
 
             elif device_to_device:
-                ptr_str_src = cpp.ptr(src_node.data, src_nodedesc, src_subset)
-                ptr_str_dst = cpp.ptr(dst_node.data, dst_nodedesc, dst_subset)
+                ptr_str_src = cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg)
+                ptr_str_dst = cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg)
 
                 if isNDCopy:
                     callsite_stream.write(
@@ -1211,8 +1212,8 @@ class FPGACodeGen(TargetCodeGenerator):
                     mem.src_subset = subsets.Range.from_array(src_array)
                 if mem.dst_subset is None:
                     mem.dst_subset = subsets.Range.from_array(dst_array)
-                src_index = mem.src_subset[0][0]
-                dst_index = mem.dst_subset[0][0]
+                src_index = dace.symbolic.resolve_symbol_to_constant(mem.src_subset[0][0], sdfg)
+                dst_index = dace.symbolic.resolve_symbol_to_constant(mem.dst_subset[0][0], sdfg)
                 bankAccessCount = mem.src_subset[0][1] - src_index + 1
                 for i in range(bankAccessCount):
                     mem.src_subset[0] = (src_index + i, src_index + i, 1)

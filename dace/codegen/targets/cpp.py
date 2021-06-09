@@ -216,7 +216,8 @@ def memlet_copy_to_absolute_strides(dispatcher,
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
 
-def ptr(name: str, desc: data.Data, subset_info : "Union[subsets.Subset, int]" = None) -> str:
+def ptr(name: str, desc: data.Data, subset_info : "Union[subsets.Subset, int]" = None,
+        sdfg = None) -> str:
     """
     Returns a string that points to the data based on its name and descriptor.
     :param name: Data name.
@@ -236,11 +237,12 @@ def ptr(name: str, desc: data.Data, subset_info : "Union[subsets.Subset, int]" =
         if(subset_info == None):
             raise ValueError("Cannot generate name for hbmbank without subset info")
         elif(isinstance(subset_info, int)):
-            #return f"{name}_hbm{subset_info}" #for hbm banks this is an int
             return f"hbm{subset_info}_{name}"
         elif(isinstance(subset_info, subsets.Subset)):
-            #return f"{name}_hbm{subset_info[0][0]}"
-            return f"hbm{subset_info[0][0]}_{name}"
+            if(sdfg == None):
+                raise ValueError("Cannot generate name for hbmbank using subset if sdfg not provided")
+            low = symbolic.resolve_symbol_to_constant(subset_info[0][0], sdfg)
+            return f"hbm{low}_{name}"
 
     return name
 
