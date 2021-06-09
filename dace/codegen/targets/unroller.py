@@ -37,6 +37,7 @@ class UnrollCodeGen(TargetCodeGenerator):
     def get_generated_codeobjects(self):
         return []
 
+    #TODO: Expand the unroller so it can also generate openCL code
     def generate_scope(self, sdfg: dace.SDFG, scope: ScopeSubgraphView,
                        state_id: int, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream):

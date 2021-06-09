@@ -105,4 +105,4 @@ def test_unrolled_simple_map():
 
 if __name__ == "__main__":
     test_unrolled_deeply_nested()
-    #test_unrolled_simple_map()
+    test_unrolled_simple_map()
