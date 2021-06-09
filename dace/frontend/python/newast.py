@@ -342,11 +342,10 @@ class DeadCodeEliminator(ast.NodeTransformer):
 
 # AST node types that are disallowed in DaCe programs
 _DISALLOWED_STMTS = [
-    'Global', 'Delete', 'Import', 'ImportFrom', 'Assert', 'Pass', 'Exec',
-    'Print', 'Nonlocal', 'Yield', 'YieldFrom', 'Raise', 'Try', 'TryExcept',
-    'TryFinally', 'ExceptHandler', 'Starred', 'ClassDef', 'AsyncFor', 'Await',
-    'Bytes', 'Set', 'Dict', 'ListComp', 'GeneratorExp', 'SetComp', 'DictComp',
-    'comprehension'
+    'Global', 'Delete', 'Import', 'ImportFrom', 'Assert', 'Exec', 'Print',
+    'Nonlocal', 'Yield', 'YieldFrom', 'Raise', 'Try', 'TryExcept', 'TryFinally',
+    'ExceptHandler', 'Starred', 'ClassDef', 'AsyncFor', 'Await', 'Bytes', 'Set',
+    'Dict', 'ListComp', 'GeneratorExp', 'SetComp', 'DictComp', 'comprehension'
 ]
 
 TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
@@ -804,6 +803,29 @@ class GlobalResolver(ast.NodeTransformer):
             if newnode is not None:
                 return newnode
         return self.generic_visit(node)
+
+    def visit_Assert(self, node: ast.Assert) -> Any:
+        # Try to evaluate assertion statically
+        try:
+            global_val = astutils.evalnode(node.test, self.globals)
+            if global_val:  # Check condition the same way as assert does
+                return None
+            try:
+                msg = astutils.evalnode(node.msg, self.globals)
+                if msg is not None:
+                    msg = '. Message: ' + msg
+                else:
+                    msg = '.'
+            except SyntaxError:
+                msg = ' (ERROR: could not statically evaluate message).'
+
+            raise AssertionError('Assertion failed statically at line '
+                                 f'{node.lineno} during compilation of DaCe '
+                                 'program' + msg)
+        except SyntaxError:
+            warnings.warn(f'Runtime assertion at line {node.lineno} could not'
+                          ' be checked in DaCe program, skipping check.')
+        return None
 
 
 class TaskletTransformer(ExtNodeTransformer):
