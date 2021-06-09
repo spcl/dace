@@ -149,6 +149,9 @@ class UnrollCodeGen(TargetCodeGenerator):
                 begin += stride
             index_list.append(l)
 
+        sdfgconsts = sdfg.constants_prop
+        sdfg.constants_prop = copy.deepcopy(sdfgconsts)
+
         for indices in product(*index_list):
             #backups = backup_statescope_fields(scope)
             callsite_stream.write('{')
@@ -163,6 +166,7 @@ class UnrollCodeGen(TargetCodeGenerator):
                 callsite_stream.write(
                     "constexpr %s %s = %s;\n" %
                     ('long long', param, dace.codegen.targets.common.sym2cpp(index)), sdfg)
+                sdfg.add_constant(param, longlong(index))
             
             callsite_stream.write('{')
             self._dispatcher.dispatch_subgraph(
@@ -178,3 +182,5 @@ class UnrollCodeGen(TargetCodeGenerator):
             callsite_stream.write('}')
             nsdfg_after_unroll(nsdfg_unroll_info)
             #use_statescope_fields_backup(backups)
+            
+        sdfg.constants_prop = sdfgconsts
