@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import codegen
 import dace
 from tests.codegen.sve.common import get_code
 
