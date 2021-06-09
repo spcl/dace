@@ -9,9 +9,10 @@ import re
 from functools import wraps
 from typing import Any
 from dace.config import Config
-from dace.registry import extensible_enum
+from dace.registry import extensible_enum, undefined_safe_enum
 
 
+@undefined_safe_enum
 @extensible_enum
 class DeviceType(aenum.AutoNumberEnum):
     CPU = ()  #: Multi-core CPU
@@ -19,6 +20,7 @@ class DeviceType(aenum.AutoNumberEnum):
     FPGA = ()  #: FPGA (Intel or Xilinx)
 
 
+@undefined_safe_enum
 @extensible_enum
 class StorageType(aenum.AutoNumberEnum):
     """ Available data storage types in the SDFG. """
@@ -36,6 +38,7 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_ShiftRegister = ()  #: Only accessible at constant indices
 
 
+@undefined_safe_enum
 @extensible_enum
 class ScheduleType(aenum.AutoNumberEnum):
     """ Available map schedule types in the SDFG. """
@@ -48,6 +51,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     MPI = ()  #: MPI processes
     CPU_Multicore = ()  #: OpenMP
     Unrolled = ()  #: Unrolled code
+    SVE_Map = () #: Arm SVE
 
     #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
     GPU_Default = ()
@@ -67,6 +71,7 @@ GPU_SCHEDULES = [
 ]
 
 
+@undefined_safe_enum
 class ReductionType(aenum.AutoNumberEnum):
     """ Reduction types natively supported by the SDFG compiler. """
 
@@ -90,6 +95,7 @@ class ReductionType(aenum.AutoNumberEnum):
     Div = ()  #: Division (only supported in OpenMP)
 
 
+@undefined_safe_enum
 @extensible_enum
 class AllocationLifetime(aenum.AutoNumberEnum):
     """ Options for allocation span (when to allocate/deallocate) of data. """
@@ -101,6 +107,7 @@ class AllocationLifetime(aenum.AutoNumberEnum):
     Persistent = ()  #: Allocated throughout multiple invocations (init/exit)
 
 
+@undefined_safe_enum
 @extensible_enum
 class Language(aenum.AutoNumberEnum):
     """ Available programming languages for SDFG tasklets. """
@@ -111,6 +118,7 @@ class Language(aenum.AutoNumberEnum):
     SystemVerilog = ()
 
 
+@undefined_safe_enum
 class AccessType(aenum.AutoNumberEnum):
     """ Types of access to an `AccessNode`. """
 
@@ -119,6 +127,7 @@ class AccessType(aenum.AutoNumberEnum):
     ReadWrite = ()
 
 
+@undefined_safe_enum
 @extensible_enum
 class InstrumentationType(aenum.AutoNumberEnum):
     """ Types of instrumentation providers.
@@ -131,6 +140,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
     GPU_Events = ()
 
 
+@undefined_safe_enum
 @extensible_enum
 class TilingType(aenum.AutoNumberEnum):
     """ Available tiling types in a `StripMining` transformation. """
@@ -153,6 +163,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
+    ScheduleType.SVE_Map: StorageType.CPU_Heap
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
@@ -169,6 +180,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
+    ScheduleType.SVE_Map: ScheduleType.Sequential
 }
 
 # Translation of types to C types
@@ -955,6 +967,7 @@ complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 
 
+@undefined_safe_enum
 @extensible_enum
 class Typeclasses(aenum.AutoNumberEnum):
     bool = bool
