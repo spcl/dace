@@ -30,7 +30,7 @@ def regression(A, ratio):
     return A[np.where(A > ratio)]
 
 
-@pytest.mark.skip
+@pytest.mark.sve
 def test_filter():
     N.set(64)
     ratio = np.float32(0.5)

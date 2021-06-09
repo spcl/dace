@@ -21,7 +21,7 @@ def axpy(A, X, Y):
         out = in_A * in_X + in_Y
 
 
-@pytest.mark.skip
+@pytest.mark.sve
 def test_axpy():
     print("==== Program start ====")
 

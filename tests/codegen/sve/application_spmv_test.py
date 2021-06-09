@@ -31,7 +31,7 @@ def spmv(A_row, A_col, A_val, x, b):
             out = a * in_x
 
 
-@pytest.mark.skip
+@pytest.mark.sve
 def test_spmv():
     W.set(64)
     H.set(64)
