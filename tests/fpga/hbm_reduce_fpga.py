@@ -28,7 +28,7 @@ def create_hbm_reduce_sdfg(banks=2):
     tmpout_memlet = dace.Memlet(f"out[k, i]", wcr="lambda x,y: x+y")
 
     outer_entry, outer_exit = state.add_map("vadd_outer_map", dict(k=f'0:{banks}'))
-    map_entry, map_exit = state.add_map("vadd_inner_map", dict(i=str(N), j=str(M)))
+    map_entry, map_exit = state.add_map("vadd_inner_map", dict(i="0:N", j="0:M"))
     tasklet = state.add_tasklet("mul", dict(__in1=None, __in2=None), 
         dict(__out=None), '__out = __in1 * __in2')
     outer_entry.map.schedule = dace.ScheduleType.Unrolled
@@ -37,22 +37,28 @@ def create_hbm_reduce_sdfg(banks=2):
     state.add_memlet_path(readin2, outer_entry, map_entry, tasklet, memlet=tmpin2_memlet, dst_conn="__in2")
     state.add_memlet_path(tasklet, map_exit, outer_exit, outwrite, memlet=tmpout_memlet, src_conn="__out")
 
-    sdfg.fill_scope_connectors()
     sdfg.apply_fpga_transformations(validate=False)
     return sdfg
 
 def createTestSet(N, M):
-    in1 = np.random.rand(*[N, M])
-    in2 = np.random.rand(*[N, M])
-    expected = np.sum(in1 * in2, axis=1)
-    out = np.empty([N])
+    #in1 = np.random.rand(*[N, M]).astype('f')
+    #in2 = np.random.rand(*[N, M]).astype('f')
+    #in1 = np.ones([2, N, M], dtype=np.float32)
+    #in2 = np.ones([2, N, M], dtype=np.float32) * 2
+    expected = np.sum(in1 * in2, axis=2, dtype=np.float32)
+    out = np.empty([2, N]).astype('f')
     return (in1, in2, expected, out)
 
 if __name__ == '__main__':
     N = dace.symbol("N")
     M = dace.symbol("M")
-    in1, in2, expected, target = createTestSet(50, 1000)
+    Nsize = 2
+    Msize = 3
+    in1, in2, expected, target = createTestSet(Nsize, Msize)
     sdfg = create_hbm_reduce_sdfg(2)
-    sdfg(in1=in1, in2=in2, out=target)
+    sdfg(in1=in1, in2=in2, out=target, N=Nsize, M=Msize)
+    #print(in1)
+    #print(in2)
+    #print(target)
     assert np.allclose(expected, target, rtol=1e-6)
     del sdfg
