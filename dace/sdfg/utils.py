@@ -1094,11 +1094,11 @@ def get_multibank_ranges_from_subset(subset : sbs.Subset, sdfg : SDFG,
         raise ValueError(f"Cannot handle strided HBM-subset")
     try:
         low = int(symbolic.resolve_symbol_to_constant(low, sdfg))
-        high = int(symbolic.resolve_symbol_to_constant(low, sdfg))
+        high = int(symbolic.resolve_symbol_to_constant(high, sdfg))
     except:
         raise ValueError("Only constant evaluatable indices allowed for HBM-memlets on the bank index")
     if(assumeSingle and low != high):
         raise ValueError("Found HBM-Memlet accessing multiple banks in a place"
                         "where only one bank may be accessed")
     #+2 so we can use this as parameter to range in loops
-    return (low, high+2) 
+    return (low, high+1) 
