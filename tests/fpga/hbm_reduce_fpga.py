@@ -40,25 +40,23 @@ def create_hbm_reduce_sdfg(banks=2):
     sdfg.apply_fpga_transformations(validate=False)
     return sdfg
 
-def createTestSet(N, M):
-    #in1 = np.random.rand(*[N, M]).astype('f')
-    #in2 = np.random.rand(*[N, M]).astype('f')
-    in1 = np.ones([2, N, M], dtype=np.float32)
-    in2 = np.ones([2, N, M], dtype=np.float32) * 2
+def createTestSet(N, M, banks):
+    in1 = np.random.rand(*[banks, N, M]).astype('f')
+    in2 = np.random.rand(*[banks, N, M]).astype('f')
     expected = np.sum(in1 * in2, axis=2, dtype=np.float32)
-    out = np.empty([2, N]).astype('f')
+    out = np.zeros((banks, N), dtype=np.float32)
     return (in1, in2, expected, out)
 
-if __name__ == '__main__':
-    N = dace.symbol("N")
-    M = dace.symbol("M")
-    Nsize = 2
-    Msize = 3
-    in1, in2, expected, target = createTestSet(Nsize, Msize)
-    sdfg = create_hbm_reduce_sdfg(2)
-    sdfg(in1=in1, in2=in2, out=target, N=Nsize, M=Msize)
-    #print(in1)
-    #print(in2)
-    #print(target)
+def exec_test(N, M, banks):
+    in1, in2, expected, target = createTestSet(N, M, banks)
+    sdfg = create_hbm_reduce_sdfg(banks)
+    sdfg(in1=in1, in2=in2, out=target, N=N, M=M)
     assert np.allclose(expected, target, rtol=1e-6)
     del sdfg
+
+if __name__ == '__main__':
+    exec_test(2, 3, 2)
+    exec_test(10, 50, 4)
+    exec_test(1, 50, 1)
+    exec_test(1, 40, 10)
+    exec_test(2, 40, 6)
