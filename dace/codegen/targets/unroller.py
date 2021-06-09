@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from typing import Any, Dict, Tuple
+
+from numpy import longlong
 import dace
 from dace import registry
 from dace.sdfg.scope import ScopeSubgraphView
@@ -13,6 +15,8 @@ import dace.subsets
 import dace.sdfg
 from dace.sdfg import nodes as nd
 from dace import Config
+import dace.codegen.targets.common
+from dace import dtypes, data as dt
 
 def backup_statescope_fields(
         subgraph: 'dace.sdfg.state.StateGraphView') -> Tuple:
@@ -126,7 +130,7 @@ class UnrollCodeGen(TargetCodeGenerator):
                             nsdfg_prepare_unroll(nstate, paramname, paramval))
                     if param in node.symbol_mapping:
                         node.symbol_mapping.pop(param)
-                    node.sdfg.add_constant(param, int(paramval))
+                    node.sdfg.add_constant(param, longlong(paramval))
             return backup
 
         def nsdfg_after_unroll(backup):
@@ -146,16 +150,21 @@ class UnrollCodeGen(TargetCodeGenerator):
             index_list.append(l)
 
         for indices in product(*index_list):
-            backups = backup_statescope_fields(scope)
+            #backups = backup_statescope_fields(scope)
             callsite_stream.write('{')
             nsdfg_unroll_info = None
             for param, index in zip(entry_node.map.params, indices):
-                dace.sdfg.replace(scope, str(param), str(index))
+                #dace.sdfg.replace(scope, str(param), str(index))
                 if nsdfg_unroll_info is None:
                     nsdfg_unroll_info = nsdfg_prepare_unroll(
                         scope, str(param), str(index))
                 else:
                     nsdfg_prepare_unroll(scope, str(param), str(index))
+                callsite_stream.write(
+                    "constexpr %s %s = %s;\n" %
+                    ('long long', param, dace.codegen.targets.common.sym2cpp(index)), sdfg)
+            
+            callsite_stream.write('{')
             self._dispatcher.dispatch_subgraph(
                 sdfg,
                 scope,
@@ -166,5 +175,6 @@ class UnrollCodeGen(TargetCodeGenerator):
                 skip_exit_node=True,
             )
             callsite_stream.write('}')
+            callsite_stream.write('}')
             nsdfg_after_unroll(nsdfg_unroll_info)
-            use_statescope_fields_backup(backups)
+            #use_statescope_fields_backup(backups)
