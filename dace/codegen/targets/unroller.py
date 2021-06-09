@@ -2,7 +2,6 @@
 import copy
 from typing import Any, Dict, Tuple
 
-from numpy import longlong
 import dace
 from dace import registry
 from dace.sdfg.scope import ScopeSubgraphView
@@ -17,6 +16,7 @@ from dace.sdfg import nodes as nd
 from dace import Config
 import dace.codegen.targets.common
 from dace import dtypes, data as dt
+
 
 @registry.autoregister_params(name='unroll')
 class UnrollCodeGen(TargetCodeGenerator):
@@ -37,6 +37,7 @@ class UnrollCodeGen(TargetCodeGenerator):
     def get_generated_codeobjects(self):
         return []
 
+    #TODO: Expand the unroller so it can also generate openCL code
     def generate_scope(self, sdfg: dace.SDFG, scope: ScopeSubgraphView,
                        state_id: int, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream):
@@ -83,7 +84,7 @@ class UnrollCodeGen(TargetCodeGenerator):
                             nsdfg_prepare_unroll(nstate, paramname, paramval))
                     if param in node.symbol_mapping:
                         node.symbol_mapping.pop(param)
-                    node.sdfg.add_constant(param, longlong(paramval))
+                    node.sdfg.add_constant(param, int(paramval))
             return backup
 
         def nsdfg_after_unroll(backup):
@@ -118,9 +119,10 @@ class UnrollCodeGen(TargetCodeGenerator):
                     nsdfg_prepare_unroll(scope, str(param), str(index))
                 callsite_stream.write(
                     "constexpr %s %s = %s;\n" %
-                    ('long long', param, dace.codegen.targets.common.sym2cpp(index)), sdfg)
-                sdfg.add_constant(param, longlong(index))
-            
+                    ('long long', param,
+                     dace.codegen.targets.common.sym2cpp(index)), sdfg)
+                sdfg.add_constant(param, int(index))
+
             callsite_stream.write('{')
             self._dispatcher.dispatch_subgraph(
                 sdfg,
