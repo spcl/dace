@@ -478,22 +478,22 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             state_host_body_stream: CodeIOStream, function_stream: CodeIOStream,
             callsite_stream: CodeIOStream, state_parameters: list):
         '''
-        Generates device specific code for the kernel logic and for invoking the kernel
+        Generates Kernel code, both device and host side.
         :param sdfg: 
         :param state: 
         :param kernel_name: 
         :param predecessors: list containing all the name of kernels from which this one depends
         :param subgraphs: 
-        :param kernel_stream: 
-        :param state_host_header_stream: 
-        :param state_host_body_stream: 
-        :param function_stream: 
-        :param callsite_stream: 
-        :param state_parameters: 
-        :return: 
+        :param kernel_stream: Device code stream, contains the kernel code
+        :param state_host_header_stream: Device-specific code stream: contains the host code
+            for the state global declarations.
+        :param state_host_body_stream: Device-specific code stream: contains all the code related to
+            this state, for creating transient buffers, spawning kernels, and synchronizing them.
+        :param function_stream: CPU code stream.
+        :param callsite_stream: CPU code stream.
+        :param state_parameters: list of state parameters. The kernel-specific parameters will be appended to it.
         '''
-        # TODO: add docstring
-        # TODO: is really needed this differentiation between kernel_host_header and host_body
+
         # In xilnx one of them is not used because part of the code goes in another place (entry_stream)
         state_id = sdfg.node_id(state)
 
@@ -512,9 +512,6 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
          nested_global_transients, bank_assignments,
          external_streams) = self.make_parameters(sdfg, state, subgraphs)
 
-        # host_code_header_stream = CodeIOStream()
-        # host_code_body_stream = CodeIOStream()
-
         # Emit allocations of inter-kernel memories
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
@@ -523,18 +520,16 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
         kernel_body_stream.write("\n")
         state_parameters.extend(global_data_parameters)
-        # Generate host code
-        self.generate_host_function_boilerplate(sdfg, state, kernel_name,
-                                                global_data_parameters,
+        # Generate host code (Global transients)
+        self.generate_host_function_boilerplate(sdfg, state,
                                                 nested_global_transients,
-                                                state_host_body_stream,
-                                                function_stream,
-                                                callsite_stream)
+                                                state_host_body_stream)
 
         self.generate_host_function_prologue(sdfg, state,
                                              state_host_body_stream,
                                              kernel_name)
 
+        # Generate PEs code
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, kernel_body_stream,
                               state_host_header_stream, state_host_body_stream)
@@ -547,6 +542,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_stream.write(kernel_header_stream.getvalue() +
                             kernel_body_stream.getvalue())
 
+        # Generate host kernel invocation
         self.generate_host_function_body(sdfg, state, state_host_body_stream,
                                          kernel_name, predecessors)
 
@@ -560,8 +556,18 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             f"std::vector<hlslib::ocl::Kernel> {kernel_name}_kernels;", sdfg,
             sdfg.node_id(state))
 
-    def generate_host_function_body(self, sdfg, state, host_stream, kernel_name,
-                                    predecessors):
+    def generate_host_function_body(self, sdfg: dace.SDFG,
+                                    state: dace.SDFGState,
+                                    host_stream: CodeIOStream, kernel_name: str,
+                                    predecessors: list):
+        '''
+        Generate the host-specific code for spawning and synchronizing the given kernel.
+        :param sdfg:
+        :param state:
+        :param host_stream: Device-specific code stream
+        :param kernel_name:
+        :param predecessors: list containing all the name of kernels that must be finished before starting this one
+        '''
         state_id = sdfg.node_id(state)
         launch_async = Config.get_bool("compiler", "intel_fpga", "launch_async")
 
@@ -595,7 +601,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
     f.wait();
   }""", sdfg, state_id)
         else:
-            # Launch one-by-one and wait for the cl::Events
+            # While spawning the kernel, indicates the synchronization events (if any)
             host_stream.write(
                 f"""\
   std::vector<cl::Event> {kernel_name}_events;

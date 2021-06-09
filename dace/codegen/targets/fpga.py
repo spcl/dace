@@ -168,8 +168,8 @@ class FPGACodeGen(TargetCodeGenerator):
                                               ScopeSubgraphView],
                            dependencies: dict):
         '''
-            Finds subgraphs of an SDFGState or ScopeSubgraphView that identifies Kernels.
-            This is done by looking at the kernel ID associated to each node
+            Finds subgraphs of an SDFGState or ScopeSubgraphView that identifies kernels.
+            This is done by looking at the kernel ID associated to each node ('_kernel' field)
             :param graph, the state/subgraph to consider
             :param dependencies: a dictionary containing for each kernel ID, the IDs of the kernels from which it
                 depends on
@@ -225,9 +225,6 @@ class FPGACodeGen(TargetCodeGenerator):
 
         # Use topological sort to order kernels according to their dependencies
         for kernel_id in nx.topological_sort(kernels_graph):
-            # print("Adding to the list of kernels: ",
-            #       kernel_id, " it depends on: ",
-            #       list(kernels_graph.predecessors(kernel_id)))
             # Return the subgraph and the kernel id
             subgraph_views.append((ScopeSubgraphView(
                 graph, [n for n in all_nodes if n in subgraphs[kernel_id]],
@@ -242,10 +239,10 @@ class FPGACodeGen(TargetCodeGenerator):
         Generate an FPGA State, possibly comprising multiple Kernels and/or PEs.
         :param sdfg:
         :param state:
-        :param function_stream: CPU code stream: will contain global declarations (e.g. exported forward declaration of
+        :param function_stream: CPU code stream: contains global declarations (e.g. exported forward declaration of
             device specific host functions).
-        :param callsite_stream: CPU code stream, will contain the actual code for creating global buffers, invoking
-            device host functions, and so on.
+        :param callsite_stream: CPU code stream, contains the actual code (for creating global buffers, invoking
+            device host functions, and so on).
         '''
         state_id = sdfg.node_id(state)
 
@@ -256,7 +253,7 @@ class FPGACodeGen(TargetCodeGenerator):
             self._kernels_dependencies.clear()
             self._kernels_names_to_id.clear()
 
-            # Determine independent components: these are our starting kernels
+            # Determine independent components: these are our starting kernels.
             # Then, try to split these components further
             subgraphs = dace.sdfg.concurrent_subgraphs(state)
 
@@ -267,7 +264,8 @@ class FPGACodeGen(TargetCodeGenerator):
                     sg, default_kernel=start_kernel)
 
                 if num_kernels > 1:
-                    # Derive subgraphs for each kernels and keep track of dependencies among kernels
+                    # For each kernel, derive the corresponding subgraphs
+                    # and keep track of dependencies
                     kernels.extend(self._kernels_subgraphs(sg, dependencies))
                     self._kernels_dependencies.update(dependencies)
                 else:
@@ -377,13 +375,14 @@ class FPGACodeGen(TargetCodeGenerator):
 DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
       hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();"""
                                      )
-            # Create a vector to collect all events that are being generate to facilitate
-            # joining before exiting this state
+            # Create a vector to collect all events that are being generated to allow
+            # waiting before exiting this state
             kernel_host_stream.write(f"std::vector<cl::Event> all_events;", )
 
+            # Kernels invocations
             kernel_host_stream.write(state_host_body_stream.getvalue())
 
-            ## Wait for all the events
+            # Wait for all events
             kernel_host_stream.write(" cl::Event::waitForEvents(all_events);")
 
             kernel_host_stream.write("}\n")
@@ -392,14 +391,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 host_function_name, ", ".join(kernel_args_call_host)))
 
             # Store code strings to be passed to compilation phase
-            # self._kernel_codes.append((kernel_name, kernel_stream.getvalue()))
-
             self._host_codes.append(
                 (kernel_name, kernel_host_stream.getvalue()))
 
         else:  # self._in_device_code == True
 
-            # for kern, kern_id in kernels:
             to_allocate = dace.sdfg.local_transients(sdfg, state, None)
             allocated = set()
             subgraphs = dace.sdfg.concurrent_subgraphs(state)
@@ -857,11 +853,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         pass  # Handled by destructor
 
     def compute_kernels(self, state: dace.SDFGState, default_kernel: int = 0):
-        """ Annotates  state nodes (and all nested ones) to include a `_kernel_id`
-            field. This field is applied to all FPGA maps, tasklets, and copies
+        """ Annotates  state nodes to include a `_kernel` ID field.
+            This field is applied to all FPGA maps, tasklets, and library nodes
             that can be executed in parallel in separate kernels.
 
-            :param sdfg: The sdfg to analyze.
+            :param state: the state to analyze.
             :param default_kernel: The Kernel ID to start counting from.
             :return: a tuple containing the number of kernels and the dependencies among them
         """
@@ -910,7 +906,6 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 It can be used either for:
                 - understanding if along the backward path there is some compute node, or
                 - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
-                :return:
                 '''
 
                 curedge = edge
@@ -945,9 +940,9 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     e.dst._kernel = kernel
                     continue
 
-                # Does this node need to be in another Kernel?
+                # Does this node need to be in another kernel?
                 # If it is a crossroad node (has more than one predecessor and its predecessors contain some compute)
-                # then it should be on a separate Kernel.
+                # then it should be on a separate kernel.
 
                 if len(list(state.predecessors(e.dst))) > 1 and not isinstance(
                         e.dst, nodes.ExitNode) and scopes[e.dst] == None:
@@ -1744,11 +1739,12 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         :param state:
         :param kernel_name: the generated kernel name.
         :param subgraphs: the connected components that constitute this kernel.
-        :param function_stream: CPU stream, contains global declarations.
-        :param callsite_stream: CPU stream, contains code for invoking kernels, ...
-        :param state_host_header_stream: Device Stream: contains the host code for global declarations.
-        :param state_host_body_stream: Device Stream: contains all the code related to this state, for creating
-            transient buffers, spawning kernels, and synchronizing them.
+        :param function_stream: CPU code stream, contains global declarations.
+        :param callsite_stream: CPU code stream, contains code for invoking kernels, ...
+        :param state_host_header_stream: Device-specific host code stream: contains the host code
+            for the state global declarations.
+        :param state_host_body_stream: Device-specific host code stream: contains all the code related
+            to this state, for creating transient buffers, spawning kernels, and synchronizing them.
         :param state_parameters: a list of parameters that must be passed to the state. It will get populated
             considering all the parameters needed by the kernels in this state.
         :param kernel_id: Unique ID of this kernels as computed in the generate_state function
@@ -1857,35 +1853,12 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         return self._cpu_codegen.generate_nsdfg_arguments(
             sdfg, state, dfg, node)
 
-    def generate_host_function_boilerplate(self, sdfg, state, kernel_name,
-                                           parameters, nested_global_transients,
-                                           host_code_stream, header_stream,
-                                           callsite_stream):
-
-        # Generates:
-        # - Definition of wrapper function in caller code
-        # - Definition of kernel function in host code file
-        # - Signature and opening brace of host code function in host code file
-
-        # We exclude nested transients from the CPU code function call, as they
-        # have not yet been allocated at this point
-        nested_transient_set = {n.data for n in nested_global_transients}
-
-        seen = set(nested_transient_set)
-        kernel_args_call_host = []
-        kernel_args_opencl = []
-
-        # Include state in args
-        kernel_args_opencl.append(f"{self._global_sdfg.name}_t *__state")
-        kernel_args_call_host.append(f"__state")
-
-        for is_output, argname, arg, _ in parameters:
-            # Streams and Views are not passed as arguments
-            if not isinstance(arg, dt.Stream) and not isinstance(arg, dt.View):
-                kernel_args_call_host.append(
-                    FPGACodeGen.make_host_parameter(argname, arg))
-                kernel_args_opencl.append(
-                    FPGACodeGen.make_opencl_parameter(argname, arg))
+    def generate_host_function_boilerplate(self, sdfg, state,
+                                           nested_global_transients,
+                                           host_code_stream):
+        '''
+        Generates global transients that must be passed to the state (required by a kernel)
+        '''
 
         # Any extra transients stored in global memory on the FPGA must now be
         # allocated and passed to the kernel

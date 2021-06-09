@@ -515,9 +515,20 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
     def generate_kernel_boilerplate_post(kernel_stream, sdfg, state_id):
         kernel_stream.write("HLSLIB_DATAFLOW_FINALIZE();\n}\n", sdfg, state_id)
 
-    def generate_host_function_body(self, sdfg, state, kernel_name,
-                                    predecessors, parameters, rtl_tasklet_names,
-                                    kernel_stream):
+    def generate_host_function_body(self, sdfg: dace.SDFG,
+                                    state: dace.SDFGState, kernel_name: str,
+                                    predecessors: list, parameters: list,
+                                    rtl_tasklet_names: list,
+                                    kernel_stream: CodeIOStream):
+        '''
+        Generate the host-specific code for spawning and synchronizing the given kernel.
+        :param sdfg:
+        :param state:
+        :param predecessors: list containing all the name of kernels that must be finished before starting this one
+        :param parameters: list containing the kernel parameters (of all kernels in this state)
+        :param rtl_tasklet_names
+        :param kernel_stream: Device-specific code stream
+        '''
 
         kernel_args = []
         for _, name, p, _ in parameters:
@@ -536,10 +547,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             for pred in predecessors:
                 # concatenate events from predecessor kernel
                 kernel_stream.write(
-                    f"{kernel_deps_name}.push_back({pred}_event);"
-                )
+                    f"{kernel_deps_name}.push_back({pred}_event);")
 
-        # Launch HLS kernel
+        # Launch HLS kernel, passing synchronization events (if any)
         kernel_stream.write(
             f"""\
   auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});
@@ -754,13 +764,28 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         return "{}_{}_{}_{}".format(node.name, sdfg.sdfg_id,
                                     sdfg.node_id(state), state.node_id(node))
 
-    def generate_kernel_internal(self, sdfg, state, kernel_name, predecessors,
-                                 subgraphs, kernel_stream,
-                                 kernel_host_header_stream,
-                                 kernel_host_body_stream, function_stream,
-                                 callsite_stream, state_parameters):
-        # TODO: add docstring
-        """Main entry function for generating a Xilinx kernel."""
+    def generate_kernel_internal(
+            self, sdfg: dace.SDFG, state: dace.SDFGState, kernel_name: str,
+            predecessors: list, subgraphs: list, kernel_stream: CodeIOStream,
+            state_host_header_stream: CodeIOStream,
+            state_host_body_stream: CodeIOStream, function_stream: CodeIOStream,
+            callsite_stream: CodeIOStream, state_parameters: list):
+        '''
+        Generates Kernel code, both device and host side.
+        :param sdfg:
+        :param state:
+        :param kernel_name:
+        :param predecessors: list containing all the name of kernels from which this one depends
+        :param subgraphs:
+        :param kernel_stream: Device code stream, contains the kernel code
+        :param state_host_header_stream: Device-specific code stream: contains the host code
+            for the state global declarations.
+        :param state_host_body_stream: Device-specific code stream: contains all the code related to
+            this state, for creating transient buffers, spawning kernels, and synchronizing them.
+        :param function_stream: CPU code stream.
+        :param callsite_stream: CPU code stream.
+        :param state_parameters: list of state parameters. The kernel-specific parameters will be appended to it.
+        '''
 
         (global_data_parameters, top_level_local_data, subgraph_parameters,
          nested_global_transients, bank_assignments,
@@ -774,17 +799,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             if isinstance(nd, nodes.RTLTasklet)
         ]
 
-        # host_code_stream = CodeIOStream()
-
         # Generate host code
         self.generate_host_header(sdfg, kernel_name, global_data_parameters,
-                                  kernel_host_header_stream)
-        self.generate_host_function_boilerplate(sdfg, state, kernel_name,
-                                                global_data_parameters,
+                                  state_host_header_stream)
+        self.generate_host_function_boilerplate(sdfg, state,
                                                 nested_global_transients,
-                                                kernel_host_body_stream,
-                                                function_stream,
-                                                callsite_stream)
+                                                state_host_body_stream)
 
         # Now we write the device code
         module_stream = CodeIOStream()
@@ -811,12 +831,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, module_stream, entry_stream,
-                              kernel_host_body_stream)
+                              state_host_body_stream)
 
         self.generate_host_function_body(sdfg, state, kernel_name, predecessors,
                                          global_data_parameters,
                                          rtl_tasklet_names,
-                                         kernel_host_body_stream)
+                                         state_host_body_stream)
 
         # Store code to be passed to compilation phase
         # self._host_codes.append((kernel_name, host_code_stream.getvalue()))
