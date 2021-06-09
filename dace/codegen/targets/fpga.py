@@ -1197,25 +1197,25 @@ class FPGACodeGen(TargetCodeGenerator):
         state_dfg = sdfg.nodes()[state_id]
 
         #Check if this is a copy memlet using at least one HBM-Array
-        doDefaultCopy = True
+        do_default_copy = True
         if(isinstance(src_node, dace.sdfg.nodes.AccessNode) and 
             isinstance(dst_node, dace.sdfg.nodes.AccessNode)):
             src_array = src_node.desc(sdfg)
             dst_array = dst_node.desc(sdfg)
             src_hbm_info = utils.parse_HBM_array(src_node.data, src_array)
             dst_hbm_info = utils.parse_HBM_array(dst_node.data, dst_array)
-            if src_hbm_info is None or dst_hbm_info is None:
-                doDefaultCopy = False
+            if src_hbm_info is not None or dst_hbm_info is not None:
+                do_default_copy = False
                 modedge = deepcopy(edge)
                 mem : memlet.Memlet = modedge.data
                 if mem.src_subset is None:
                     mem.src_subset = subsets.Range.from_array(src_array)
                 if mem.dst_subset is None:
                     mem.dst_subset = subsets.Range.from_array(dst_array)
-                src_index = dace.symbolic.resolve_symbol_to_constant(mem.src_subset[0][0], sdfg)
-                dst_index = dace.symbolic.resolve_symbol_to_constant(mem.dst_subset[0][0], sdfg)
-                bankAccessCount = mem.src_subset[0][1] - src_index + 1
-                for i in range(bankAccessCount):
+                src_index, src_index_high  = utils.get_multibank_ranges_from_subset(mem.src_subset, sdfg)
+                dst_index, _ = utils.get_multibank_ranges_from_subset(mem.dst_subset, sdfg)
+                bank_access_count = src_index_high - src_index + 1
+                for i in range(bank_access_count):
                     mem.src_subset[0] = (src_index + i, src_index + i, 1)
                     mem.dst_subset[0] = (dst_index + i, dst_index + i, 1)
                     self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
@@ -1223,7 +1223,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                     function_stream, callsite_stream)
             
         # Emit actual copy
-        if doDefaultCopy:
+        if do_default_copy:
             self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
                             dst_storage, dst_schedule, edge, state_dfg,
                             function_stream, callsite_stream)

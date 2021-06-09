@@ -55,7 +55,7 @@ def copy_expr(
         offset_cppstr = "0"
     dt = ""
 
-    expr = ptr(dataname, datadesc, memlet.subset)
+    expr = ptr(dataname, datadesc, memlet.subset, sdfg)
 
     def_type, _ = dispatcher.defined_vars.get(dataname)
 
@@ -241,9 +241,8 @@ def ptr(name: str, desc: data.Data, subset_info : "Union[subsets.Subset, int]" =
         elif(isinstance(subset_info, subsets.Subset)):
             if(sdfg == None):
                 raise ValueError("Cannot generate name for hbmbank using subset if sdfg not provided")
-            low = symbolic.resolve_symbol_to_constant(subset_info[0][0], sdfg)
+            low, _ = utils.get_multibank_ranges_from_subset(subset_info, sdfg, True)
             return f"hbm{low}_{name}"
-
     return name
 
 
@@ -265,8 +264,7 @@ def emit_memlet_reference(dispatcher,
     desc = sdfg.arrays[memlet.data]
     isMultiBankMemlet = desc.storage == dtypes.StorageType.FPGA_Global and "hbmbank" in desc.location
     if(isMultiBankMemlet):
-        iterlow, iterhigh, _ = memlet.subset[0]
-        iterhigh += 1
+        iterlow, iterhigh = utils.get_multibank_ranges_from_subset(memlet.subset, sdfg)
     else:
         iterlow, iterhigh = 0, 1
     offset = cpp_offset_expr(desc, memlet.subset)
@@ -612,7 +610,7 @@ def cpp_array_expr(sdfg,
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     if with_brackets:
-        ptrname = ptr(memlet.data, desc, subset)
+        ptrname = ptr(memlet.data, desc, subset, sdfg)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
@@ -652,7 +650,7 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = indices
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
-    dname = ptr(memlet.data, desc, memlet.subset)
+    dname = ptr(memlet.data, desc, memlet.subset, sdfg)
 
     if defined_type == DefinedType.ArrayInterface:
         if is_write is None:
