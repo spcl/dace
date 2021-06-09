@@ -7,7 +7,7 @@ import re
 import sympy as sp
 from typing import Any, Dict, Union
 import warnings
-from dace.sdfg import nodes as nd
+
 
 def _replsym(symlist, symrepl):
     """ Helper function to replace symbols in various symbolic expressions. """
@@ -23,6 +23,7 @@ def _replsym(symlist, symrepl):
             symlist[i] = (dim.subs(symrepl)
                           if symbolic.issymbolic(dim) else dim)
     return symlist
+
 
 def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
             new_name: str):
@@ -57,6 +58,7 @@ def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
             edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
         if symname in edge.data.volume.free_symbols:
             edge.data.volume = _replsym(edge.data.volume, symrepl)
+
 
 def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
                                                 symbolic.SymbolicType],
