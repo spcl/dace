@@ -75,21 +75,17 @@ def createTestSet(dim, size1D, banks):
 def exec_test(dim, size1D, banks, unroll_map_inside=False):
     in1, in2, expected, target = createTestSet(dim, size1D, banks)
     sdfg = create_vadd_multibank_sdfg(banks, dim, unroll_map_inside)
-    sdfg.view()
     if(dim == 1):
         sdfg(in1=in1, in2=in2, out=target, N=size1D)
     elif(dim==2):
         sdfg(in1=in1, in2=in2, out=target, N=size1D, M=size1D)
     else:
         sdfg(in1=in1, in2=in2, out=target, N=size1D, M=size1D, S=size1D)
-    print(in1)
-    print(in2)
-    print(target)
     assert np.allclose(expected, target, rtol=1e-6)
     del sdfg
 
 if __name__ == '__main__':
-    exec_test(1, 5, 2) #2 banks, 1 dimensional
-    #exec_test(2, 2*1024, 2) #4 banks, 2d, evenly split
-    #exec_test(3, 2*1024, 2) #8 banks 3d, evenly split
-    #exec_test(1, 2*1024, 8, True) #8 banks 1d, 1 pipeline
+    exec_test(1, 50, 2) #2 banks, 1 dimensional
+    exec_test(2, 50, 2) #2 banks 2 dimensional
+    exec_test(3, 10, 2) #2 banks 3 dimensional
+    exec_test(1, 50, 8, True) #8 banks 1d, 1 pipeline
