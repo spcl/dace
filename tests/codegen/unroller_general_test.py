@@ -35,8 +35,8 @@ def create_deeply_nested_sdfg():
     )
     nstate.add_memlet_path(
         nope,
-        mapExit,
         noUnrollExit,
+        mapExit,
         xWrite,
         memlet=outputMem,
         src_conn="_out",
