@@ -1099,6 +1099,5 @@ def get_multibank_ranges_from_subset(subset : sbs.Subset, sdfg : SDFG,
         raise ValueError("Only constant evaluatable indices allowed for HBM-memlets on the bank index")
     if(assumeSingle and low != high):
         raise ValueError("Found HBM-Memlet accessing multiple banks in a place"
-                        "where only one bank may be accessed")
-    #+2 so we can use this as parameter to range in loops
+                         " where only one bank may be accessed")
     return (low, high+1) 

@@ -800,8 +800,12 @@ class FPGACodeGen(TargetCodeGenerator):
                 dst_subset = subsets.Range.from_array(dst_nodedesc)
             absolute_src_strides = src_subset.absolute_strides(src_nodedesc.strides)
             absolute_dst_strides = dst_subset.absolute_strides(dst_nodedesc.strides)
-            offset_src = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, referenced_array=src_nodedesc)
-            offset_dst = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, referenced_array=dst_nodedesc)
+            src_is_subset = memlet._is_data_src is None or memlet._is_data_src
+            offset_src = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, 
+                                referenced_array=src_nodedesc, use_other_subset=(not src_is_subset))
+            offset_dst = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False,
+                                referenced_array=dst_nodedesc, use_other_subset=src_is_subset)
+            
 
             #Distinguish 1d and 2 or 3d copies
             isNDCopy = not cpp.is_1d_nostrided_copy(copy_shape, 
@@ -814,8 +818,10 @@ class FPGACodeGen(TargetCodeGenerator):
                                                 dst_subset,
                                                 )
             if isNDCopy:
-                src_copy_offset = [cpp.sym2cpp(start) for start, _, _ in memlet.src_subset]
-                dst_copy_offset = [cpp.sym2cpp(start) for start, _, _ in memlet.dst_subset]
+                src_copy_offset = [cpp.sym2cpp(start) for start, _, _ in utils.modify_subset_magic(
+                    src_nodedesc, memlet.src_subset, False)]
+                dst_copy_offset = [cpp.sym2cpp(start) for start, _, _ in utils.modify_subset_magic(
+                    dst_nodedesc, memlet.dst_subset, False)]
                 src_blocksize = [cpp.sym2cpp(v) for v in src_nodedesc.shape]
                 dst_blocksize = [cpp.sym2cpp(v) for v in dst_nodedesc.shape]
                 copy_shape_cpp = [cpp.sym2cpp(v) for v in copy_shape]
@@ -1172,7 +1178,6 @@ class FPGACodeGen(TargetCodeGenerator):
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge,
                     function_stream, callsite_stream):
 
-        #HBMJAN -> Copy Memory
         if isinstance(src_node, dace.sdfg.nodes.CodeNode):
             src_storage = dtypes.StorageType.Register
             try:
@@ -1212,12 +1217,19 @@ class FPGACodeGen(TargetCodeGenerator):
                     mem.src_subset = subsets.Range.from_array(src_array)
                 if mem.dst_subset is None:
                     mem.dst_subset = subsets.Range.from_array(dst_array)
-                src_index, src_index_high  = utils.get_multibank_ranges_from_subset(mem.src_subset, sdfg)
-                dst_index, _ = utils.get_multibank_ranges_from_subset(mem.dst_subset, sdfg)
-                bank_access_count = src_index_high - src_index
-                for i in range(bank_access_count):
-                    mem.src_subset[0] = (src_index + i, src_index + i, 1)
-                    mem.dst_subset[0] = (dst_index + i, dst_index + i, 1)
+                if src_hbm_info is not None:
+                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(mem.src_subset, sdfg)
+                if dst_hbm_info is not None:
+                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(mem.dst_subset, sdfg)
+                num_accessed_banks = bankend - bankbeg
+                for i in range(num_accessed_banks):
+                    src_index = mem.src_subset[0][0] + i
+                    dst_index = mem.dst_subset[0][0] + i
+                    #Support for ignoring the magic index if it's not required e.g on host
+                    if src_hbm_info is not None or num_accessed_banks > 1:
+                        mem.src_subset[0] = (src_index, src_index, 1)
+                    if dst_hbm_info is not None or num_accessed_banks > 1:
+                        mem.dst_subset[0] = (dst_index, dst_index, 1)
                     self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
                                     dst_storage, dst_schedule, modedge, state_dfg,
                                     function_stream, callsite_stream)
