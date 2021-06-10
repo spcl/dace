@@ -2322,8 +2322,9 @@ class ProgramVisitor(ExtNodeVisitor):
                             raise DaceSyntaxError(
                                 self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols if not a scalar
-                        if (astr not in self.sdfg.symbols
-                                and astr not in self.variables):
+                        if (astr not in self.sdfg.symbols and not (
+                                astr in self.variables or
+                                astr in self.sdfg.arrays)):
                             self.sdfg.add_symbol(astr, atom.dtype)
 
             # Add an initial loop state with a None last_state (so as to not
