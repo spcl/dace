@@ -49,10 +49,14 @@ class UnrollCodeGen(TargetCodeGenerator):
             backup = []
             for node in scope.nodes():
                 if (isinstance(node, nd.NestedSDFG)):
-                    backup.append((node, copy.deepcopy(node.unique_name),
-                                   copy.deepcopy(node.sdfg.name),
-                                   copy.deepcopy(node.symbol_mapping),
-                                   copy.deepcopy(node.sdfg.constants_prop)))
+                    backup.append((node, node.unique_name,
+                                   node.sdfg.name,
+                                   node.symbol_mapping,
+                                   node.sdfg.constants_prop))
+                    node.unique_name = copy.deepcopy(node.unique_name)
+                    node.sdfg.name = copy.deepcopy(node.sdfg.name)
+                    node.symbol_mapping = copy.deepcopy(node.symbol_mapping)
+                    node.sdfg.constants_prop = copy.deepcopy(node.sdfg.constants_prop)
                     node.unique_name = f"{node.unique_name}_{param}{paramval}"
                     node.sdfg.name = f"{node.sdfg.name}_{param}{paramval}"
                     for nstate in node.sdfg.nodes():
@@ -78,7 +82,7 @@ class UnrollCodeGen(TargetCodeGenerator):
             index_list.append(l)
 
         sdfgconsts = sdfg.constants_prop
-        sdfg.constants_prop = copy.deepcopy(sdfgconsts)
+        sdfg.constants_prop = copy.deepcopy(sdfg.constants_prop)
 
         for indices in product(*index_list):
             callsite_stream.write('{')
