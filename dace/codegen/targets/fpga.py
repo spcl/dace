@@ -798,14 +798,17 @@ class FPGACodeGen(TargetCodeGenerator):
                 dst_subset = memlet.dst_subset
             else:
                 dst_subset = subsets.Range.from_array(dst_nodedesc)
+
+            src_is_subset = memlet._is_data_src is None or memlet._is_data_src
+            copy_shape = utils.modify_subset_magic(src_nodedesc if src_is_subset else dst_nodedesc,
+                memlet.subset.bounding_box_size(), True)
+
             absolute_src_strides = src_subset.absolute_strides(src_nodedesc.strides)
             absolute_dst_strides = dst_subset.absolute_strides(dst_nodedesc.strides)
-            src_is_subset = memlet._is_data_src is None or memlet._is_data_src
             offset_src = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, 
                                 referenced_array=src_nodedesc, use_other_subset=(not src_is_subset))
             offset_dst = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False,
                                 referenced_array=dst_nodedesc, use_other_subset=src_is_subset)
-            
 
             #Distinguish 1d and 2 or 3d copies
             isNDCopy = not cpp.is_1d_nostrided_copy(copy_shape, 
@@ -819,11 +822,13 @@ class FPGACodeGen(TargetCodeGenerator):
                                                 )
             if isNDCopy:
                 src_copy_offset = [cpp.sym2cpp(start) for start, _, _ in utils.modify_subset_magic(
-                    src_nodedesc, memlet.src_subset, False)]
+                    src_nodedesc, memlet.src_subset, True)]
                 dst_copy_offset = [cpp.sym2cpp(start) for start, _, _ in utils.modify_subset_magic(
-                    dst_nodedesc, memlet.dst_subset, False)]
-                src_blocksize = [cpp.sym2cpp(v) for v in src_nodedesc.shape]
-                dst_blocksize = [cpp.sym2cpp(v) for v in dst_nodedesc.shape]
+                    dst_nodedesc, memlet.dst_subset, True)]
+                src_blocksize = [cpp.sym2cpp(v) for v in utils.modify_subset_magic(
+                    src_nodedesc, src_nodedesc.shape, True)]
+                dst_blocksize = [cpp.sym2cpp(v) for v in utils.modify_subset_magic(
+                    dst_nodedesc, dst_nodedesc.shape, True)]
                 copy_shape_cpp = [cpp.sym2cpp(v) for v in copy_shape]
                 if(len(src_copy_offset) < 3):
                     src_copy_offset.append('0')
@@ -1222,9 +1227,10 @@ class FPGACodeGen(TargetCodeGenerator):
                 if dst_hbm_info is not None:
                     bankbeg, bankend = utils.get_multibank_ranges_from_subset(mem.dst_subset, sdfg)
                 num_accessed_banks = bankend - bankbeg
+                oldmem = deepcopy(mem)
                 for i in range(num_accessed_banks):
-                    src_index = mem.src_subset[0][0] + i
-                    dst_index = mem.dst_subset[0][0] + i
+                    src_index = oldmem.src_subset[0][0] + i
+                    dst_index = oldmem.dst_subset[0][0] + i
                     #Support for ignoring the magic index if it's not required e.g on host
                     if src_hbm_info is not None or num_accessed_banks > 1:
                         mem.src_subset[0] = (src_index, src_index, 1)

@@ -1069,7 +1069,7 @@ def iterate_multibank_arrays(arrayname : str, array : dt.Array):
     else:
         yield 0 
 
-def modify_subset_magic(array : dt.Data, subset : sbs.Subset, remove : bool):
+def modify_subset_magic(array : dt.Data, subset : Union[sbs.Subset, list, tuple], remove : bool):
     """
     Applies changes to magic indices from a subset if array is a HBM-array, otherwise
     returns subset. subset is deepcopied before any modification to it is done.
@@ -1079,10 +1079,22 @@ def modify_subset_magic(array : dt.Data, subset : sbs.Subset, remove : bool):
         return subset
     if(array.storage == dtypes.StorageType.FPGA_Global and "hbmbank" in array.location):
         cps = copy.deepcopy(subset)
-        if remove:
-            cps.pop([0])
+        if isinstance(subset, sbs.Subset):
+            if remove:
+                cps.pop([0])
+            else:
+                cps[0] = (0, 0, 1)
+        elif isinstance(subset, list) or isinstance(subset, tuple):
+            if isinstance(subset, tuple):
+                cps = list(cps)
+            if remove:
+                cps.pop(0)
+            else:
+                cps[0] = 0
+            if isinstance(subset, tuple):
+                cps = tuple(cps)
         else:
-            cps[0] = (0, 0, 1)
+            raise ValueError("unsupported type passed to modify_subset_magic")
     else:
         cps = subset
     return cps
