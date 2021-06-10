@@ -60,6 +60,7 @@ def check_host2copy1():
     s, _, c = mkc(sdfg, s, "b", "c", None, StorageType.Default,
         None, [2, 3, 3], "b")
     
+    #sdfg.view()
     a.fill(1)
     a[4, 4] = 4
     a[0, 0] = 5
@@ -87,7 +88,28 @@ def check_dev2host1():
     expect[0:2, 0:2] += 2
     sdfg(a=a, c=c)
     assert np.allclose(c, expect)
-    pass
+
+def check_dev2dev1():
+    sdfg = dace.SDFG("d2d1")
+    s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
+        StorageType.FPGA_Global, [3, 5, 5, 5], [3, 5, 5, 5],
+        "a", None, ("hbmbank", "0:3"))
+    s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global, 
+        None, [2, 10], "x[1, 2, 0:5, 2]->0, 0:5", None, ("hbmbank", "3:5"))
+    s.add_access("a") #prevents from falling in device code
+    _, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default,
+        None, [2, 10], "y")
+    
+    #sdfg.view()
+    a.fill(1)
+    a[1, 2, 0:5, 2] += 2
+    expect = np.copy(c)
+    expect.fill(1)
+    expect[0, 0:5] += 2
+    sdfg(a=a, c=c)
+    assert np.allclose(c, expect)
+
 
 #check_host2copy1()
-check_dev2host1()
+#check_dev2host1()
+check_dev2dev1()

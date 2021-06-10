@@ -830,17 +830,17 @@ class FPGACodeGen(TargetCodeGenerator):
                 dst_blocksize = [cpp.sym2cpp(v) for v in utils.modify_subset_magic(
                     dst_nodedesc, dst_nodedesc.shape, True)]
                 copy_shape_cpp = [cpp.sym2cpp(v) for v in copy_shape]
-                if(len(src_copy_offset) < 3):
+                while len(src_copy_offset) < 3:
                     src_copy_offset.append('0')
-                if(len(dst_copy_offset) < 3):
+                while len(dst_copy_offset) < 3:
                     dst_copy_offset.append('0')
-                if(len(src_blocksize) < 3):
+                while len(src_blocksize) < 3:
                     src_blocksize.append('1')
-                if(len(dst_blocksize) < 3):
+                while len(dst_blocksize) < 3:
                     dst_blocksize.append('1')
-                if(len(copy_shape_cpp) < 3):
+                while len(copy_shape_cpp) < 3:
                     copy_shape_cpp.append('1')
-                #will be handled by the ND-copy
+                #will be handled by the ND-copy -> must not be added anywhere
                 offset_src = 0
                 offset_dst = 0
 
