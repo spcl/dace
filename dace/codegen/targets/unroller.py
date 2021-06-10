@@ -135,6 +135,5 @@ class UnrollCodeGen(TargetCodeGenerator):
             callsite_stream.write('}')
             callsite_stream.write('}')
             nsdfg_after_unroll(nsdfg_unroll_info)
-            #use_statescope_fields_backup(backups)
 
         sdfg.constants_prop = sdfgconsts
