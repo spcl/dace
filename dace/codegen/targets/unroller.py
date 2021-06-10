@@ -13,7 +13,6 @@ from dace.sdfg import state
 import dace.subsets
 import dace.sdfg
 from dace.sdfg import nodes as nd
-from dace import Config
 import dace.codegen.targets.common
 from dace import dtypes, data as dt
 
@@ -47,38 +46,17 @@ class UnrollCodeGen(TargetCodeGenerator):
 
         #Generate new names for nsdfgs, and adds defined variables to constants
         def nsdfg_prepare_unroll(scope, paramname, paramval):
-            unique_functions_conf = Config.get('compiler', 'unique_functions')
-            if unique_functions_conf is True:
-                unique_functions_conf = 'hash'
-            elif unique_functions_conf is False:
-                unique_functions_conf = 'none'
-            if unique_functions_conf == 'hash':
-                unique_functions = True
-                unique_functions_hash = True
-            elif unique_functions_conf == 'unique_name':
-                unique_functions = True
-                unique_functions_hash = False
-            elif unique_functions_conf == 'none':
-                unique_functions = False
-            else:
-                raise ValueError(
-                    f'Unknown unique_functions configuration: {unique_functions_conf}'
-                )
+            #unique_functions_conf = Config.get('compiler', 'unique_functions')
             backup = []
             for node in scope.nodes():
                 if (isinstance(node, nd.NestedSDFG)):
-                    if unique_functions and not unique_functions_hash and node.unique_name != "":
-                        backup.append(
-                            (node, True, copy.deepcopy(node.unique_name),
-                             copy.deepcopy(node.symbol_mapping),
-                             copy.deepcopy(node.sdfg.constants_prop)))
-                        node.unique_name = f"{node.unique_name}_{param}{paramval}"
-                    else:
-                        backup.append(
-                            (node, False, copy.deepcopy(node.sdfg.name),
-                             copy.deepcopy(node.symbol_mapping),
-                             copy.deepcopy(node.sdfg.constants_prop)))
-                        node.sdfg.name = f"{node.sdfg.name}_{param}{paramval}"
+                    backup.append((node, 
+                                copy.deepcopy(node.unique_name),
+                                copy.deepcopy(node.sdfg.name),
+                                copy.deepcopy(node.symbol_mapping),
+                                copy.deepcopy(node.sdfg.constants_prop)))
+                    node.unique_name = f"{node.unique_name}_{param}{paramval}"
+                    node.sdfg.name = f"{node.sdfg.name}_{param}{paramval}"
                     for nstate in node.sdfg.nodes():
                         backup.extend(
                             nsdfg_prepare_unroll(nstate, paramname, paramval))
@@ -88,11 +66,9 @@ class UnrollCodeGen(TargetCodeGenerator):
             return backup
 
         def nsdfg_after_unroll(backup):
-            for node, isUniqueName, name, symbols, constants in backup:
-                if isUniqueName:
-                    node.unique_name = name
-                else:
-                    node.sdfg.name = name
+            for node, unique_name, name, symbols, constants in backup:
+                node.unique_name = unique_name
+                node.sdfg.name = name
                 node.symbol_mapping = symbols
                 node.sdfg.constants_prop = constants
 
@@ -117,9 +93,7 @@ class UnrollCodeGen(TargetCodeGenerator):
                 else:
                     nsdfg_prepare_unroll(scope, str(param), str(index))
                 callsite_stream.write(
-                    "constexpr %s %s = %s;\n" %
-                    ('long long', param,
-                     dace.codegen.targets.common.sym2cpp(index)), sdfg)
+                    f"constexpr long long {param} = {dace.codegen.targets.common.sym2cpp(index)};\n", sdfg)
                 sdfg.add_constant(param, int(index))
 
             callsite_stream.write('{')
