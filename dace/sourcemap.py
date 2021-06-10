@@ -76,6 +76,7 @@ def remove_tmp(name, remove_cache=False):
     try:
         os.remove(path + "/map/tmp.json")
     except OSError:
+        print("removing error 1")
         return
     
     if (
@@ -88,24 +89,24 @@ def remove_tmp(name, remove_cache=False):
                 os.rmdir(path + "/map")
                 os.rmdir(path)
             except OSError:
+                print("removing error 2")
                 return
         
 
 def send(data: json):
     """ Sends a json object to the port given as the 
-        env variable DACE_port. If the port isn't set or 0
+        env variable DACE_port. If the port isn't set
         we won't send anything
             :param data, json object to send
     """
 
-    if "DACE_port" not in os.environ:
+    if("DACE_port" not in os.environ):
         return
 
     HOST = socket.gethostname()
     PORT = os.environ["DACE_port"]
 
     data_bytes = bytes(json.dumps(data), "utf-8")
-
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((HOST, int(PORT)))
         s.sendall(data_bytes)
@@ -135,6 +136,7 @@ class MapCpp(MapCreater):
         super(MapCpp, self).__init__(name)
         self.code = code
         self.mapper()
+        self.map['target'] = target_name
 
         folder = self.save("cpp")
 
@@ -165,7 +167,12 @@ class MapCpp(MapCreater):
             self.map[node.sdfg_id][node.state_id] = {}
         for node_id in node.node_ids:
             if node_id not in self.map[node.sdfg_id][node.state_id]:
-                self.map[node.sdfg_id][node.state_id][node_id] = line_num
+                self.map[node.sdfg_id][node.state_id][node_id] = {
+                    'from': line_num,
+                    'to': line_num
+                }
+            elif self.map[node.sdfg_id][node.state_id][node_id]['to'] + 1 == line_num:
+                self.map[node.sdfg_id][node.state_id][node_id]['to'] += 1
 
     def get_node(self, line):
         line_identifiers = self.get_identifiers(line)
@@ -222,11 +229,12 @@ class MapPython(MapCreater):
             if "other_sdfgs" in line_info:
                 for other_sdfg_name in line_info["other_sdfgs"]:
                     other_tmp = get_tmp(other_sdfg_name)
-                    remove_tmp(other_sdfg_name, True)
-                    
-                    ranges.append(
-                        (other_tmp["start_line"], other_tmp["end_line"])
-                    )
+                    # SDFG's created with the API don't have tmp files
+                    if other_tmp is not None:
+                        remove_tmp(other_sdfg_name, True)
+                        ranges.append(
+                            (other_tmp["start_line"], other_tmp["end_line"])
+                        )
 
                 self.create_mapping(ranges)
 
