@@ -72,7 +72,6 @@ def create_deeply_nested_sdfg():
         src_conn="xout",
     )
 
-    #sdfg.view()
     return sdfg
 
 
