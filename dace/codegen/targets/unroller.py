@@ -107,7 +107,6 @@ class UnrollCodeGen(TargetCodeGenerator):
         sdfg.constants_prop = copy.deepcopy(sdfgconsts)
 
         for indices in product(*index_list):
-            #backups = backup_statescope_fields(scope)
             callsite_stream.write('{')
             nsdfg_unroll_info = None
             for param, index in zip(entry_node.map.params, indices):
