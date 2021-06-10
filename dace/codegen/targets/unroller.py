@@ -46,15 +46,13 @@ class UnrollCodeGen(TargetCodeGenerator):
 
         #Generate new names for nsdfgs, and adds defined variables to constants
         def nsdfg_prepare_unroll(scope, paramname, paramval):
-            #unique_functions_conf = Config.get('compiler', 'unique_functions')
             backup = []
             for node in scope.nodes():
                 if (isinstance(node, nd.NestedSDFG)):
-                    backup.append((node, 
-                                copy.deepcopy(node.unique_name),
-                                copy.deepcopy(node.sdfg.name),
-                                copy.deepcopy(node.symbol_mapping),
-                                copy.deepcopy(node.sdfg.constants_prop)))
+                    backup.append((node, copy.deepcopy(node.unique_name),
+                                   copy.deepcopy(node.sdfg.name),
+                                   copy.deepcopy(node.symbol_mapping),
+                                   copy.deepcopy(node.sdfg.constants_prop)))
                     node.unique_name = f"{node.unique_name}_{param}{paramval}"
                     node.sdfg.name = f"{node.sdfg.name}_{param}{paramval}"
                     for nstate in node.sdfg.nodes():
@@ -86,14 +84,14 @@ class UnrollCodeGen(TargetCodeGenerator):
             callsite_stream.write('{')
             nsdfg_unroll_info = None
             for param, index in zip(entry_node.map.params, indices):
-                #dace.sdfg.replace(scope, str(param), str(index))
                 if nsdfg_unroll_info is None:
                     nsdfg_unroll_info = nsdfg_prepare_unroll(
                         scope, str(param), str(index))
                 else:
                     nsdfg_prepare_unroll(scope, str(param), str(index))
                 callsite_stream.write(
-                    f"constexpr long long {param} = {dace.codegen.targets.common.sym2cpp(index)};\n", sdfg)
+                    f"constexpr long long {param} = {dace.codegen.targets.common.sym2cpp(index)};\n",
+                    sdfg)
                 sdfg.add_constant(param, int(index))
 
             callsite_stream.write('{')
