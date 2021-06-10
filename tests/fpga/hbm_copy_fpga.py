@@ -15,26 +15,27 @@ import dace
 import numpy as np
 from dace.dtypes import StorageType
 
+def mkarray(sdfg, name, shape, storage, loc):
+    if(name in sdfg.arrays):
+        return sdfg.arrays[name]
+    isTransient = False
+    if(storage in _FPGA_STORAGE_TYPES):
+        isTransient = True
+    arr = sdfg.add_array(name, shape, dace.int32, storage, transient=isTransient)
+    if loc is not None:
+        arr[1].location[loc[0]] = sbs.Range.from_string(loc[1])
+    return arr
+
+#Little helper that creates and appends states performing exactly one copy.
 def mkc(sdfg : dace.SDFG, statebefore, src_name, dst_name, src_storage, dst_storage, src_shape,
-        dst_shape, copy_expr, src_loc = None, dst_loc = None):
+        dst_shape, copy_expr, src_loc = None, dst_loc = None, giveCreatedObjects = False):
     if(statebefore == None):
         state = sdfg.add_state(is_start_state=True)
     else:
         state = sdfg.add_state_after(statebefore)
-
-    def mkarray(name, shape, storage, loc):
-        if(name in sdfg.arrays):
-            return sdfg.arrays[name]
-        isTransient = False
-        if(storage in _FPGA_STORAGE_TYPES):
-            isTransient = True
-        arr = sdfg.add_array(name, shape, dace.int32, storage, transient=isTransient)
-        if loc is not None:
-            arr[1].location[loc[0]] = sbs.Range.from_string(loc[1])
-        return arr
     
-    a = mkarray(src_name, src_shape, src_storage, src_loc)
-    b = mkarray(dst_name, dst_shape, dst_storage, dst_loc)
+    a = mkarray(sdfg, src_name, src_shape, src_storage, src_loc)
+    b = mkarray(sdfg, dst_name, dst_shape, dst_storage, dst_loc)
 
     aAcc = state.add_access(src_name)
     bAcc = state.add_access(dst_name)
@@ -44,7 +45,10 @@ def mkc(sdfg : dace.SDFG, statebefore, src_name, dst_name, src_storage, dst_stor
     
     aNpArr = np.zeros(src_shape, dtype=np.int32)
     bNpArr = np.zeros(dst_shape, dtype=np.int32)
-    return (state, aNpArr, bNpArr)
+    if giveCreatedObjects:
+        (state, aNpArr, bNpArr, aAcc, bAcc, edge)
+    else:
+        return (state, aNpArr, bNpArr)
 
 def mkcEx(sdfg, statebefore, src_name, dst_name, copy_expr):
     s, _, _, = mkc(sdfg, statebefore, src_name, dst_name, None,
@@ -109,7 +113,15 @@ def check_dev2dev1():
     sdfg(a=a, c=c)
     assert np.allclose(c, expect)
 
+"""
+def check_hbm_and_streams1():
+    sdfg = dace.SDFG("h2s1")
+    s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
+        StorageType.FPGA_Global, [4, 5], [4, 5], 
+        "a", None, ("hbmbank", "0:4"), )
+    s, 
+"""
 
 #check_host2copy1()
-#check_dev2host1()
-check_dev2dev1()
+check_dev2host1()
+#check_dev2dev1()

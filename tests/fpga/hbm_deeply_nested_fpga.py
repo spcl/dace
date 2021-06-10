@@ -23,7 +23,7 @@ def create_deeply_nested_sdfg():
     inputMem = mem.Memlet("xin[2*k+w]")
     outputMem = mem.Memlet("xout[2*k+w]")
     nstate.add_memlet_path(xRead, mapEntry, nope, memlet=inputMem, dst_conn="_in")
-    nstate.add_memlet_path(nope, mapExit, xWrite, memlet=outputMem, src_conn="_out")
+    nstate.add_memlet_path(nope, xWrite, mapExit, memlet=outputMem, src_conn="_out")
     nsdfg_node = state.add_nested_sdfg(nsdfg, state, set(["xin"]), set(['xout']))
 
     state.add_memlet_path(xarr, topMapEntry, nsdfg_node, 
