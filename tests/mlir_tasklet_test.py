@@ -72,6 +72,107 @@ def test_mlir_tasklet_implicit():
     assert C[0] == 7
 
 @dace.program
+def mlir_tasklet_type_inference_int(A, B, C):
+    @dace.tasklet('MLIR')
+    def add():
+        a << A[0]
+        b << B[0]
+        c >> C[0] 
+
+        """
+        module  {
+            func @mlir_entry(%a: i32, %b: i32) -> i32 {
+                %0 = addi %b, %a  : i32
+                return %0 : i32
+            }
+        }
+        """
+
+@dace.program
+def mlir_tasklet_type_inference_float(A, B, C):
+    @dace.tasklet('MLIR')
+    def add():
+        a << A[0]
+        b << B[0]
+        c >> C[0] 
+
+        """
+        module  {
+            func @mlir_entry(%a: f32, %b: f32) -> f32 {
+                %0 = addf %b, %a  : f32
+                return %0 : f32
+            }
+        }
+        """
+
+@dace.program
+def mlir_tasklet_type_inference_generic(A, B, C):
+    @dace.tasklet('MLIR')
+    def add():
+        a << A[0]
+        b << B[0]
+        c >> C[0] 
+
+        """
+        "module"() ( {
+        "func"() ( {
+        ^bb0(%a: i32, %b: i32):  // no predecessors
+            %0 = "std.addi"(%b, %a) : (i32, i32) -> i32
+            "std.return"(%0) : (i32) -> ()
+        }) {sym_name = "mlir_entry", type = (i32, i32) -> i32} : () -> ()
+        }) : () -> ()
+        """
+
+@dace.program
+def mlir_tasklet_type_inference_vec(A, B, C):
+    @dace.tasklet('MLIR')
+    def add():
+        a << A
+        b << B
+        c >> C
+
+        """
+        module  {
+            func @mlir_entry(%a: vector<4xi32>, %b: vector<4xi32>) -> vector<4xi32> {
+                %0 = addi %b, %a  : vector<4xi32>
+                return %0 : vector<4xi32>
+            }
+        }
+        """
+
+@pytest.mark.mlir
+def test_mlir_tasklet_type_inference():
+    A = dace.ndarray((4, 1), dace.uint32)
+    B = dace.ndarray((4, 1), dace.uint32)
+    C = dace.ndarray((4, 1), dace.uint32)
+
+    A[:] = 5
+    B[:] = 2
+    C[:] = 15
+
+    mlir_tasklet_type_inference_int(A, B, C)
+    assert C[0] == 7
+
+    C[:] = 15
+    mlir_tasklet_type_inference_float(A, B, C)
+    assert (C[0] - 7.0) < 0.00000001 #precision?
+
+    C[:] = 15
+    mlir_tasklet_type_inference_generic(A, B, C)
+    assert C[0] == 7
+
+    B[1] = 3
+    B[2] = 4
+    B[3] = 5
+    C[:] = 15
+
+    mlir_tasklet_type_inference_vec(A, B, C)
+    assert C[0] == 7
+    assert C[1] == 8
+    assert C[2] == 9
+    assert C[3] == 10
+
+@dace.program
 def mlir_tasklet_swapped(A: dace.uint32[3], B: dace.uint32[2], C: dace.uint32[1]):
     @dace.tasklet('MLIR')
     def add():
@@ -124,7 +225,7 @@ def test_mlir_tasklet_no_entry():
     B[:] = 2
     C[:] = 15
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(SyntaxError):
         mlir_tasklet_no_entry(A, B, C)
 
 @dace.program
@@ -159,11 +260,11 @@ def test_mlir_tasklet_double_entry():
     B[:] = 2
     C[:] = 15
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(SyntaxError):
         mlir_tasklet_double_entry(A, B, C)
 
 @dace.program
-def mlir_tasklet_llvm_dialect(A: dace.uint32[3], B: dace.uint32[2], C: dace.uint32[1]):
+def mlir_tasklet_llvm_dialect_opt(A: dace.uint32[3], B: dace.uint32[2], C: dace.uint32[1]):
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -171,12 +272,13 @@ def mlir_tasklet_llvm_dialect(A: dace.uint32[3], B: dace.uint32[2], C: dace.uint
         c >> C[0] 
 
         """
-        module  {
-            llvm.func @mlir_entry(%a: i32, %b: i32) -> i32 {
-                %0 = llvm.add %b, %a  : i32
-                llvm.return %0 : i32
-            }
-        }
+        "module"() ( {
+        "func"() ( {
+        ^bb0(%a: i32, %b: i32):  // no predecessors
+            %0 = "std.addi"(%b, %a) : (i32, i32) -> i32
+            "std.return"(%0) : (i32) -> ()
+        }) {sym_name = "mlir_entry", type = (i32, i32) -> i32} : () -> ()
+        }) : () -> ()
         """
 
 @pytest.mark.mlir
@@ -189,8 +291,8 @@ def test_mlir_tasklet_llvm_dialect():
     B[:] = 2
     C[:] = 15
 
-    #mlir_tasklet_llvm_dialect(A, B, C)
-    #assert C[0] == 7
+    mlir_tasklet_llvm_dialect_opt(A, B, C)
+    assert C[0] == 7
 
 @dace.program
 def mlir_tasklet_float(A: dace.float32[3], B: dace.float32[2], C: dace.float32[1]):
@@ -223,66 +325,58 @@ def test_mlir_tasklet_float():
     assert (C[0] - 7.7) < 0.00000001 #precision?
 
 @dace.program
-def mlir_tasklet_double_return(A: dace.uint32[4], B: dace.uint32[3], C: dace.uint32[2], D: dace.uint32[1]):
+def mlir_tasklet_recursion(A: dace.uint32[2], B: dace.uint32[1]):
     @dace.tasklet('MLIR')
-    def add():
+    def fib():
         a << A[0]
-        b << B[0]
-        c >> C[0]
-        d >> D[0] 
+        b >> B[0]
 
         """
         module  {
-            func @mlir_entry(%a: i32, %b: i32) -> (i32, i32) {
-                %0 = addi %b, %a : i32
+            func @mlir_entry(%a: i32) -> i32 {
+                %0 = constant 0 : i32
                 %1 = constant 1 : i32
-                %2 = addi %0, %1 : i32
-                return %0, %2 : i32, i32
+
+                %isZero = cmpi "eq", %a, %0 : i32
+                %isOne = cmpi "eq", %a, %1 : i32
+
+                cond_br %isZero, ^zero, ^secondCheck
+                ^secondCheck: cond_br %isOne, ^one, ^else
+
+                ^zero: return %0 : i32
+                ^one: return %1 : i32
+
+                ^else: 
+                %oneLess = subi %a, %1  : i32
+                %twoLess = subi %oneLess, %1  : i32
+
+                %oneLessRet = call @mlir_entry(%oneLess) : (i32) -> i32
+                %twoLessRet = call @mlir_entry(%twoLess) : (i32) -> i32
+
+                %ret = addi %oneLessRet, %twoLessRet  : i32
+                return %ret : i32
             }
         }
         """
 
 @pytest.mark.mlir
-def test_mlir_tasklet_double_return():
+def test_mlir_tasklet_recursion():
     A = dace.ndarray((1, ), dace.uint32)
     B = dace.ndarray((1, ), dace.uint32)
-    C = dace.ndarray((1, ), dace.uint32)
-    D = dace.ndarray((1, ), dace.uint32)
 
-    A[:] = 5
+    A[:] = 10
     B[:] = 2
-    C[:] = 15
-    D[:] = 12
 
-    #mlir_tasklet_double_return(A, B, C, D)
-    #assert C[0] == 7
-    #assert D[0] == 17
+    mlir_tasklet_recursion(A, B)
+    assert B[0] == 55
 
 if __name__ == "__main__":
     test_mlir_tasklet_explicit()
     test_mlir_tasklet_implicit()
+    test_mlir_tasklet_type_inference()
     test_mlir_tasklet_swapped()
     test_mlir_tasklet_no_entry()
     test_mlir_tasklet_double_entry()
     test_mlir_tasklet_llvm_dialect()
     test_mlir_tasklet_float()
-    test_mlir_tasklet_double_return()
-    
-
-'''
-#include <iostream>
-
-struct ret {
-    long long c;
-    long long d;
-};
-
-extern "C" ret mlir_entry(int a, int b);
-
-int main() {
-    ret r = mlir_entry(12, 5); // (17, 29)
-    std::cout << "Hello Main! " << r.c
-    << ", " << r.d 
-    << std::endl;
-}
-'''
+    test_mlir_tasklet_recursion()

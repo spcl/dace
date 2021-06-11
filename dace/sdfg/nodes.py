@@ -388,8 +388,14 @@ class Tasklet(CodeNode):
                 raise SyntaxError('Entry function in MLIR tasklet must return exactly one value.')
             
             mlir_to_dace_types = {
-                "f32": dtypes.typeclass.from_json("float32"),
-                "f64": dtypes.typeclass.from_json("float64"),
+                "i8": dace.int8,
+                "i16": dace.int16,
+                "i32": dace.int32,
+                "i64": dace.int64,
+
+                "f16": dace.float16,
+                "f32": dace.float32,
+                "f64": dace.float64
             }
 
             mlir_ast = mlir.parse_string(self.code.code)
@@ -429,10 +435,23 @@ class Tasklet(CodeNode):
 
                     if type(mlir_result_type) == mlir.astnodes.IntegerType:
                         mlir_result_width = mlir_result_type.width.value
-                        self.out_connectors[mlir_output_name] = dtypes.typeclass.from_json("int"+mlir_result_width)
+                        self.out_connectors[mlir_output_name] = mlir_to_dace_types["i"+mlir_result_width]
                         
                     if type(mlir_result_type) == mlir.astnodes.FloatType:
                         self.out_connectors[mlir_output_name] = mlir_to_dace_types[mlir_result_type.type.name]
+
+                    if type(mlir_result_type) == mlir.astnodes.VectorType:
+                        mlir_result_dim = mlir_result_type.dimensions[0]
+                        mlir_result_subtype = mlir_result_type.element_type
+
+                        if type(mlir_result_subtype) == mlir.astnodes.IntegerType:
+                            mlir_result_width = mlir_result_subtype.width.value
+                            mlir_result_subtypeclass = mlir_to_dace_types["i"+mlir_result_width]
+                            self.out_connectors[mlir_output_name] = dace.vector(mlir_result_subtypeclass, mlir_result_dim)
+                        
+                        if type(mlir_result_subtype) == mlir.astnodes.FloatType:
+                            mlir_result_subtypeclass = mlir_to_dace_types[mlir_result_subtype.type.name]
+                            self.out_connectors[mlir_output_name] = dace.vector(mlir_result_subtypeclass, mlir_result_dim)
 
             if mlir_entry_input_args is None:
                 raise SyntaxError('No entry function in MLIR tasklet, please make sure a "mlir_entry()" function is present.')
@@ -452,11 +471,24 @@ class Tasklet(CodeNode):
                     mlir_entry_input_type = mlir_arg.type
 
                 if type(mlir_entry_input_type) == mlir.astnodes.IntegerType:
-                        mlir_result_width = mlir_entry_input_type.width.value
-                        self.in_connectors[mlir_arg_name] = dtypes.typeclass.from_json("int"+mlir_result_width)
+                        mlir_entry_width = mlir_entry_input_type.width.value
+                        self.in_connectors[mlir_arg_name] = mlir_to_dace_types["i"+mlir_entry_width]
 
                 if type(mlir_entry_input_type) == mlir.astnodes.FloatType:
-                        self.in_connectors[mlir_arg_name] = mlir_to_dace_types[mlir_result_type.type.name]
+                        self.in_connectors[mlir_arg_name] = mlir_to_dace_types[mlir_entry_input_type.type.name]
+                
+                if type(mlir_entry_input_type) == mlir.astnodes.VectorType:
+                    mlir_entry_dim = mlir_entry_input_type.dimensions[0]
+                    mlir_entry_subtype = mlir_entry_input_type.element_type
+
+                    if type(mlir_entry_subtype) == mlir.astnodes.IntegerType:
+                        mlir_entry_width = mlir_entry_subtype.width.value
+                        mlir_entry_subtypeclass = mlir_to_dace_types["i"+mlir_entry_width]
+                        self.in_connectors[mlir_arg_name] = dace.vector(mlir_entry_subtypeclass, mlir_entry_dim)
+                    
+                    if type(mlir_entry_subtype) == mlir.astnodes.FloatType:
+                        mlir_entry_subtypeclass = mlir_to_dace_types[mlir_entry_subtype.type.name]
+                        self.in_connectors[mlir_arg_name] = dace.vector(mlir_entry_subtypeclass, mlir_entry_dim)
             return
 
 
