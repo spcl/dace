@@ -1433,7 +1433,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 result[name] = symbolic.symbol(name, dtype=val)
             else:
                 values = str(val).split(':')
-                if len(values) == 2:
+                if len(values) == 1:
+                    result[name] = symbolic.symbol(
+                        name,
+                        infer_expr_type(values[0], {
+                            **self.globals,
+                            **dyn_inputs
+                        }))
+                elif len(values) == 2:
                     result[name] = symbolic.symbol(
                         name,
                         dtypes.result_type_of(
@@ -1445,13 +1452,18 @@ class ProgramVisitor(ExtNodeVisitor):
                                 **self.globals,
                                 **dyn_inputs
                             })))
-                else:
+                elif len(values) == 3:
                     result[name] = symbolic.symbol(
                         name,
                         infer_expr_type(values[0], {
                             **self.globals,
                             **dyn_inputs
                         }))
+                else:
+                    raise DaceSyntaxError(
+                        self, None,
+                        "Invalid number of arguments in a range iterator. "
+                        "You may use up to 3 arguments (start:stop:step).")
 
         return result
 
@@ -2298,8 +2310,9 @@ class ProgramVisitor(ExtNodeVisitor):
                             raise DaceSyntaxError(
                                 self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols if not a scalar
-                        if (astr not in self.sdfg.symbols
-                                and astr not in self.variables):
+                        if (astr not in self.sdfg.symbols and not (
+                                astr in self.variables or
+                                astr in self.sdfg.arrays)):
                             self.sdfg.add_symbol(astr, atom.dtype)
 
             # Add an initial loop state with a None last_state (so as to not
@@ -2977,6 +2990,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.outputs[var_name] = (dace.Memlet.simple(parent_name, rng),
                                           inner_indices)
 
+        self.variables[var_name] = var_name
         return (var_name, squeezed_rng)
 
     def _add_read_access(self,
