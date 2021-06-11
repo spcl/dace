@@ -51,6 +51,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     MPI = ()  #: MPI processes
     CPU_Multicore = ()  #: OpenMP
     Unrolled = ()  #: Unrolled code
+    SVE_Map = () #: Arm SVE
 
     #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
     GPU_Default = ()
@@ -162,6 +163,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
+    ScheduleType.SVE_Map: StorageType.CPU_Heap
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
@@ -178,6 +180,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
+    ScheduleType.SVE_Map: ScheduleType.Sequential
 }
 
 # Translation of types to C types
