@@ -377,6 +377,89 @@ class Tasklet(CodeNode):
                                           | self.out_connectors.keys())
 
     def infer_connector_types(self, sdfg, state):
+        # If a MLIR tasklet, simply read out the types (it's explicit)
+        if self.code.language == dtypes.Language.MLIR:
+            try:
+                import mlir
+            except (ModuleNotFoundError, NameError, ImportError):
+                raise ImportError('To use MLIR tasklets, please install the "pymlir" package.')
+
+            if(len(self.out_connectors) != 1):
+                raise SyntaxError('Entry function in MLIR tasklet must return exactly one value.')
+            
+            mlir_to_dace_types = {
+                "f32": dtypes.typeclass.from_json("float32"),
+                "f64": dtypes.typeclass.from_json("float64"),
+            }
+
+            mlir_ast = mlir.parse_string(self.code.code)
+            mlir_is_generic = isinstance(mlir_ast, mlir.astnodes.GenericModule)
+            mlir_entry_input_args = None
+            mlir_entry_input_types = None
+            
+            for mlir_func in mlir_ast.body: # Iterating over every function in the body
+                mlir_func_name = None
+
+                # Reading out the function name
+                if mlir_is_generic:
+                    # In generic ast the name can be found in ast->body->func[]->attributes->values[0]->value
+                    # The consecutive .values ensure to read the name as a string
+                    mlir_func_name = mlir_func.attributes.values[0].value.value.value 
+                else:
+                    # In dialect ast the name can be found in ast->body->func[]->name->value
+                    mlir_func_name = mlir_func.name.value
+
+                if mlir_func_name == "mlir_entry":
+                    if mlir_entry_input_args is not None:
+                        raise SyntaxError("Duplicate entry function in MLIR tasklet.")
+                    
+                    mlir_result_type = None
+                    # Reading out the list of arguments and the return type
+                    if mlir_is_generic:
+                        # In generic ast the list of arguments can be found in ast->body->func[]->body[0]->label->arg_ids
+                        mlir_entry_input_args = mlir_func.body[0].label.arg_ids
+                        mlir_entry_input_types = mlir_func.body[0].label.arg_types
+                        mlir_result_type = mlir_func.attributes.values[1].value.value.result_types[0]
+                    else:
+                        # In dialect ast the list of arguments can be found in ast->body->func[]->args
+                        mlir_entry_input_args = mlir_func.args
+                        mlir_result_type = mlir_func.result_types
+                        
+                    mlir_output_name = next( iter(self.out_connectors.keys()) )[0]
+
+                    if type(mlir_result_type) == mlir.astnodes.IntegerType:
+                        mlir_result_width = mlir_result_type.width.value
+                        self.out_connectors[mlir_output_name] = dtypes.typeclass.from_json("int"+mlir_result_width)
+                        
+                    if type(mlir_result_type) == mlir.astnodes.FloatType:
+                        self.out_connectors[mlir_output_name] = mlir_to_dace_types[mlir_result_type.type.name]
+
+            if mlir_entry_input_args is None:
+                raise SyntaxError('No entry function in MLIR tasklet, please make sure a "mlir_entry()" function is present.')
+            
+
+            for idx, mlir_arg in enumerate(mlir_entry_input_args): # Iterating over every argument in the argument list
+                # Reading out the name and type
+                mlir_entry_input_type = None
+    
+                if mlir_is_generic:
+                    # In generic ast the name of an argument can be found in ast->body[]->func->body[0]->label->arg_ids[]->value
+                    mlir_arg_name = mlir_arg.value
+                    mlir_entry_input_type = mlir_entry_input_types[idx]
+                else:
+                    # In dialect ast the name of an argument can be found in ast->body[]->func->args[]->name->value
+                    mlir_arg_name = mlir_arg.name.value
+                    mlir_entry_input_type = mlir_arg.type
+
+                if type(mlir_entry_input_type) == mlir.astnodes.IntegerType:
+                        mlir_result_width = mlir_entry_input_type.width.value
+                        self.in_connectors[mlir_arg_name] = dtypes.typeclass.from_json("int"+mlir_result_width)
+
+                if type(mlir_entry_input_type) == mlir.astnodes.FloatType:
+                        self.in_connectors[mlir_arg_name] = mlir_to_dace_types[mlir_result_type.type.name]
+            return
+
+
         # If a Python tasklet, use type inference to figure out all None output
         # connectors
         if all(cval.type is not None for cval in self.out_connectors.values()):
