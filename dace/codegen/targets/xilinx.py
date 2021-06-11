@@ -462,7 +462,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             if isinstance(data, dt.Array):
                 memorybank = bank_assignments[dataname]
                 if(isinstance(memorybank[1], subsets.Range)):
-                    lowest_bank_index = memorybank[1][0][0]
+                    lowest_bank_index, _ = utils.get_multibank_ranges_from_subset(
+                        memorybank[1],
+                        sdfg,
+                    )
                 else:
                     lowest_bank_index = memorybank[1]
                 for bank in utils.iterate_multibank_arrays(dataname, data):
