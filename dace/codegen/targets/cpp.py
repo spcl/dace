@@ -813,64 +813,65 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
                 raise ImportError('To use MLIR tasklets, please install the "pymlir" package.')
 
             mlir_function_uid = str(sdfg.sdfg_id) + "_" + str(state_id) + "_" + str(dfg.node_id(node))
-
-            #import os
-            #mlir_opt = os.system("mlir-opt --mlir-print-op-generic file.mlir")
-
-            #import subprocess
-            #mlir_opt = subprocess.run(['mlir-opt --mlir-print-op-generic <(echo "hey")'], stdout=subprocess.PIPE).stdout.decode('utf-8')
-            ''' 
-            import os
-            import tempfile
-            from subprocess import Popen, PIPE, check_call
-            mlir_opt_ast = None
-
-            with tempfile.NamedTemporaryFile() as mlir_temp_file1, tempfile.NamedTemporaryFile() as mlir_temp_file2:
-                try:
-                    mlir_temp_file1.delete = True
-                    mlir_temp_file2.delete = True
-                    check_call(["echo", node.code.code], stdout=mlir_temp_file1)
-                    check_call(["mlir-opt", "--mlir-print-op-generic", mlir_temp_file1.name], stdout=mlir_temp_file2)
-                    mlir_opt_ast = mlir.parse_path(mlir_temp_file2.name)
-                
-                except:
-                    pass
-
-                finally:
-                    pass
-            '''
-
-            mlir_entry_func = None
             mlir_ast = mlir.parse_string(node.code.code)
-            for mlir_func in mlir_ast.body:
-                if mlir_func.name.value == "mlir_entry_" + mlir_function_uid:
-                    if mlir_entry_func is not None:
-                        raise RuntimeError("Duplicate entry function in MLIR tasklet.")
-                    mlir_entry_func = mlir_func
-            
-            if mlir_entry_func is None:
-                raise RuntimeError('No entry function in MLIR tasklet, please make sure a "mlir_entry()" function is present.')
+            mlir_is_generic = isinstance(mlir_ast, mlir.astnodes.GenericModule)
+            mlir_entry_args = None
+
+            for mlir_func in mlir_ast.body: # Iterating over every function in the body
+                mlir_func_name = None
+
+                # Reading out the function name
+                if mlir_is_generic:
+                    # In generic ast the name can be found in ast->body[]->func->attributes->values[0]->value
+                    # The consecutive .values ensure to read the name as a string
+                    mlir_func_name = mlir_func.attributes.values[0].value.value.value 
+                else:
+                    # In dialect ast the name can be found in ast->body[]->func->name->value
+                    mlir_func_name = mlir_func.name.value
+
+                if mlir_func_name == "mlir_entry_" + mlir_function_uid:
+                    if mlir_entry_args is not None:
+                        raise SyntaxError("Duplicate entry function in MLIR tasklet.")
+
+                    # Reading out the list of arguments
+                    if mlir_is_generic:
+                        # In generic ast the list of arguments can be found in ast->body[]->func->body[0]->label->arg_ids
+                        mlir_entry_args = mlir_func.body[0].label.arg_ids
+                    else:
+                        # In dialect ast the list of arguments can be found in ast->body[]->func->args
+                        mlir_entry_args = mlir_func.args
+
+            if mlir_entry_args is None:
+                raise SyntaxError('No entry function in MLIR tasklet, please make sure a "mlir_entry()" function is present.')
 
             mlir_input_signature_typed = ""
             mlir_input_signature_untyped = ""
 
-            for mlir_arg in mlir_entry_func.args:
-                mlir_arg_name = mlir_arg.name.value
+            for mlir_arg in mlir_entry_args: # Iterating over every argument in the argument list
+                mlir_arg_name = None
+
+                # Reading out the name to match and look up the type
+                if mlir_is_generic:
+                    # In generic ast the name of an argument can be found in ast->body[]->func->body[0]->label->arg_ids[]->value
+                    mlir_arg_name = mlir_arg.value
+                else:
+                    # In dialect ast the name of an argument can be found in ast->body[]->func->args[]->name->value
+                    mlir_arg_name = mlir_arg.name.value
+
                 mlir_arg_type = str(node.in_connectors[mlir_arg_name])
                 mlir_input_signature_typed = mlir_input_signature_typed + mlir_arg_type + " " + mlir_arg_name + ", "
                 mlir_input_signature_untyped = mlir_input_signature_untyped + mlir_arg_name + ", "
 
             mlir_input_signature_typed = mlir_input_signature_typed[:-2]
             mlir_input_signature_untyped = mlir_input_signature_untyped[:-2]
-
-            # TODO: Find a way to support multiple outputs (if even possible)
+    
             mlir_first_output = next( iter(node.out_connectors.items()) )
-            mlir_output_type = str(mlir_first_output[1])
+            mlir_output_type = mlir_first_output[1].ctype
             mlir_output_name = mlir_first_output[0]
-
+   
             function_stream.write('extern "C" ' + mlir_output_type + ' mlir_entry_' + mlir_function_uid + '(' + mlir_input_signature_typed + ');\n\n')
             callsite_stream.write(mlir_output_name + " = mlir_entry_" + mlir_function_uid + "(" + mlir_input_signature_untyped + ");")
-
+            
         
         if node.language == dtypes.Language.CPP:
             callsite_stream.write(
