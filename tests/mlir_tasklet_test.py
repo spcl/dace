@@ -215,6 +215,19 @@ def mlir_tasklet_no_entry(A: dace.uint32[3], B: dace.uint32[2], C: dace.uint32[1
         }
         """
 
+@dace.program
+def mlir_tasklet_no_entry_generic(A: dace.uint32[3], B: dace.uint32[2], C: dace.uint32[1]):
+    @dace.tasklet('MLIR')
+    def add():
+        a << A[0]
+        b << B[0]
+        c >> C[0] 
+
+        """
+        "module"() ( {
+        }) : () -> ()
+        """
+
 @pytest.mark.mlir
 def test_mlir_tasklet_no_entry():
     A = dace.ndarray((1, ), dace.uint32)
@@ -227,6 +240,9 @@ def test_mlir_tasklet_no_entry():
 
     with pytest.raises(SyntaxError):
         mlir_tasklet_no_entry(A, B, C)
+
+    with pytest.raises(SyntaxError):
+        mlir_tasklet_no_entry_generic(A, B, C)
 
 @dace.program
 def mlir_tasklet_double_entry(A: dace.uint32[3], B: dace.uint32[2], C: dace.uint32[1]):
@@ -262,6 +278,58 @@ def test_mlir_tasklet_double_entry():
 
     with pytest.raises(SyntaxError):
         mlir_tasklet_double_entry(A, B, C)
+
+
+@dace.program
+def mlir_tasklet_double_return(A: dace.uint32[3], B: dace.uint32[2], C: dace.uint32[1]):
+    @dace.tasklet('MLIR')
+    def add():
+        a << A[0]
+        b << B[0]
+        c >> C[0] 
+
+        """
+        module  {
+            func @mlir_entry(%a: i32, %b: i32) -> (i32, i32) {
+                %0 = addi %b, %a  : i32
+                return %0, %0 : i32, i32
+            }
+        }
+        """
+
+@dace.program
+def mlir_tasklet_double_return_generic(A: dace.uint32[3], B: dace.uint32[2], C: dace.uint32[1]):
+    @dace.tasklet('MLIR')
+    def add():
+        a << A[0]
+        b << B[0]
+        c >> C[0] 
+
+        """
+        "module"() ( {
+        "func"() ( {
+        ^bb0(%a: i32, %b: i32):  // no predecessors
+            %0 = "std.addi"(%b, %a) : (i32, i32) -> i32
+            "std.return"(%0, %0) : (i32, i32) -> ()
+        }) {sym_name = "mlir_entry", type = (i32, i32) -> (i32, i32)} : () -> ()
+        }) : () -> ()
+        """
+
+@pytest.mark.mlir
+def test_mlir_tasklet_double_return():
+    A = dace.ndarray((1, ), dace.uint32)
+    B = dace.ndarray((1, ), dace.uint32)
+    C = dace.ndarray((1, ), dace.uint32)
+
+    A[:] = 5
+    B[:] = 2
+    C[:] = 15
+
+    with pytest.raises(SyntaxError):
+        mlir_tasklet_double_return(A, B, C)
+
+    with pytest.raises(SyntaxError):
+        mlir_tasklet_double_return_generic(A, B, C)           
 
 @dace.program
 def mlir_tasklet_llvm_dialect_opt(A: dace.uint32[3], B: dace.uint32[2], C: dace.uint32[1]):
@@ -377,6 +445,7 @@ if __name__ == "__main__":
     test_mlir_tasklet_swapped()
     test_mlir_tasklet_no_entry()
     test_mlir_tasklet_double_entry()
+    test_mlir_tasklet_double_return()
     test_mlir_tasklet_llvm_dialect()
     test_mlir_tasklet_float()
     test_mlir_tasklet_recursion()
