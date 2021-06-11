@@ -730,13 +730,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     ctype = f"const {ctype}"
                 self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer,
                                                 ctype)
-            if argname in interfaces_added:
-                continue
-            interfaces_added.add(argname)
-            self._dispatcher.defined_vars.add(argname,
-                                            DefinedType.ArrayInterface,
-                                            ctype,
-                                            allow_shadowing=True)
+                if argname in interfaces_added:
+                    continue
+                interfaces_added.add(argname)
+                self._dispatcher.defined_vars.add(argname,
+                                                DefinedType.ArrayInterface,
+                                                ctype,
+                                                allow_shadowing=True)
         module_body_stream.write("\n")
 
         # Allocate local transients
@@ -891,10 +891,6 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                     interface_name = cpp.array_interface_variable(
                         cpp.ptr(vconn, sdfg.arrays[in_memlet.data], bank, sdfg)
                         , False, None)
-                    # Register the raw pointer as a defined variable
-                    self._dispatcher.defined_vars.add(
-                        interface_name, DefinedType.Pointer,
-                        node.in_connectors[vconn].ctype)
                     interface_ref = cpp.emit_memlet_reference(
                         self._dispatcher,
                         sdfg,
@@ -906,30 +902,36 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                     memlet_references.append(interface_ref)
             if vconn in inout:
                 continue
-            if not is_memory_interface:
+            for bank in utils.iterate_multibank_arrays(in_memlet.data, sdfg.arrays[in_memlet.data]):
                 ref = cpp.emit_memlet_reference(self._dispatcher,
                                                 sdfg,
                                                 in_memlet,
                                                 vconn,
                                                 conntype=node.in_connectors[vconn],
-                                                is_write=False)
+                                                is_write=False,
+                                                bank_info=bank)
+            if not is_memory_interface:
                 memlet_references.append(ref)
-
+        
         for _, uconn, _, _, out_memlet in sorted(
                 state.out_edges(node), key=lambda e: e.src_conn or ""):
             if out_memlet.data is None:
                 continue
+            for bank in utils.iterate_multibank_arrays(out_memlet.data, sdfg.arrays[out_memlet.data]):
+                ref = cpp.emit_memlet_reference(self._dispatcher,
+                                                sdfg,
+                                                out_memlet,
+                                                uconn,
+                                                conntype=node.out_connectors[uconn],
+                                                is_write=True,
+                                                bank_info=bank)
             is_memory_interface = (self._dispatcher.defined_vars.get(
                 out_memlet.data, 1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:
-                for bank in utils.iterate_multibank_arrays(interface_name, sdfg.arrays[out_memlet.data]):
+                for bank in utils.iterate_multibank_arrays(out_memlet.data, sdfg.arrays[out_memlet.data]):
                     interface_name = cpp.array_interface_variable(
                         cpp.ptr(uconn, sdfg.arrays[out_memlet.data], bank, sdfg)
-                        , False, None)
-                    # Register the raw pointer as a defined variable
-                    self._dispatcher.defined_vars.add(
-                        interface_name, DefinedType.Pointer,
-                        node.out_connectors[uconn].ctype)
+                        , True, None)
                     memlet_references.append(
                         cpp.emit_memlet_reference(
                             self._dispatcher,
@@ -940,12 +942,6 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                             is_write=True,
                             bank_info=bank))
             else:
-                ref = cpp.emit_memlet_reference(self._dispatcher,
-                                            sdfg,
-                                            out_memlet,
-                                            uconn,
-                                            conntype=node.out_connectors[uconn],
-                                            is_write=True)
                 memlet_references.append(ref)
 
         return memlet_references
