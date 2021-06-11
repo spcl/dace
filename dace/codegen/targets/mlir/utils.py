@@ -28,17 +28,14 @@ class MLIRUtils():
         self.ast = self.mlir.parse_string(self.code)
         self.is_generic = isinstance(self.ast, self.mlir.astnodes.GenericModule)
 
-        # Iterating over every function in the body to check if ast contains exactly one entry
-        self.__get_entry_func()
-
-    def __get_entry_func(self):
+        # Iterating over every function in the body to check if ast contains exactly one entry and saving the entry function
         self.entry_func = None
         for func in self.ast.body: 
             func_name = self.__get_func_name(func)
 
             if func_name == self.entry_func_name:
                 if self.entry_func is not None:
-                    raise SyntaxError("Duplicate entry function in MLIR tasklet.")
+                    raise SyntaxError("Multiple entry function in MLIR tasklet.")
                 self.entry_func = func
 
         if self.entry_func is None:
