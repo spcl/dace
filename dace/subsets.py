@@ -9,6 +9,7 @@ from typing import List, Optional, Set, Union
 import warnings
 from dace.config import Config
 
+
 class Subset(object):
     """ Defines a subset of a data descriptor. """
     def covers(self, other):
