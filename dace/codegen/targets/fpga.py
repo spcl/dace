@@ -26,6 +26,7 @@ from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.symbolic import evaluate
+from collections import defaultdict
 
 _CPU_STORAGE_TYPES = {
     dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal,
@@ -90,6 +91,8 @@ class FPGACodeGen(TargetCodeGenerator):
         self._allocated_global_arrays = set()
         self._unrolled_pes = set()
 
+        # Dictionary node->kernel_id
+        self._node_to_kernel = defaultdict()
         # Keep track of dependencies among kernels (if any)
         self._kernels_dependencies = dict()
         self._kernels_names_to_id = dict()
@@ -186,11 +189,13 @@ class FPGACodeGen(TargetCodeGenerator):
 
         # Go over the nodes and populate the kernels subgraphs
         for node, node_state in graph.all_nodes_recursive():
-            if hasattr(node, "_kernel"):
-                if node._kernel in subgraphs:
-                    subgraphs[node._kernel].add(node)
-                else:
-                    subgraphs[node._kernel] = {node}
+
+            if isinstance(node, dace.sdfg.SDFGState):
+                continue
+
+            node_repr = utils.unique_node_repr(node_state, node)
+            if node_repr in self._node_to_kernel:
+                subgraphs[self._node_to_kernel[node_repr]].add(node)
 
             # add this node to the corresponding subgraph
             if isinstance(node, dace.nodes.AccessNode):
@@ -199,11 +204,9 @@ class FPGACodeGen(TargetCodeGenerator):
 
                 start_nodes = [e.dst for e in node_state.out_edges(node)]
                 for n in start_nodes:
-                    if hasattr(n, "_kernel"):
-                        if n._kernel in subgraphs:
-                            subgraphs[n._kernel].add(node)
-                        else:
-                            subgraphs[n._kernel] = {node}
+                    n_repr = utils.unique_node_repr(node_state, n)
+                    if n_repr in self._node_to_kernel:
+                        subgraphs[self._node_to_kernel[n_repr]].add(node)
 
         # Now stick each of the found components together in a ScopeSubgraphView and return
         # them. Sort according kernel dependencies order.
@@ -852,7 +855,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         pass  # Handled by destructor
 
     def compute_kernels(self, state: dace.SDFGState, default_kernel: int = 0):
-        """ Annotates  state nodes to include a `_kernel` ID field.
+        """ Associate node to different kernels.
             This field is applied to all FPGA maps, tasklets, and library nodes
             that can be executed in parallel in separate kernels.
 
@@ -885,7 +888,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             if isinstance(node, nodes.AccessNode):
                 continue
 
-            node._kernel = max_kernels
+            self._node_to_kernel[utils.unique_node_repr(state,
+                                                        node)] = max_kernels
             max_kernels = increment(max_kernels)
 
         # Consecutive nodes that are not crossroads can be in the same Kernel
@@ -895,7 +899,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         scopes = state.scope_dict()
 
         for e in state.dfs_edges(source_nodes):
-            if hasattr(e.dst, '_kernel'):
+            if utils.unique_node_repr(state, e.dst) in self._node_to_kernel:
                 # Node has been already visited)
                 continue
 
@@ -917,9 +921,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                             (nodes.EntryNode, nodes.ExitNode, nodes.CodeNode)):
                             # We can stop here: this is a scope which will contain some compute, or a tasklet/libnode
                             return True
-                    elif hasattr(curedge.src, "_kernel"):
-                        # Found a node with a kernel id. Use that
-                        return curedge.src._kernel
+                    else:
+                        src_repr = utils.unique_node_repr(state, curedge.src)
+                        if src_repr in self._node_to_kernel:
+                            # Found a node with a kernel id. Use that
+                            return self._node_to_kernel[src_repr]
                     next_edge = next(e for e in state.in_edges(curedge.src))
                     curedge = next_edge
 
@@ -927,16 +933,19 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 if not look_for_kernel_id:
                     return False
                 else:
-                    return curedge.src._kernel if hasattr(
-                        curedge.src, "_kernel") else None
+                    src_repr = utils.unique_node_repr(state, curedge.src)
+                    return self._node_to_kernel[
+                        src_repr] if src_repr in self._node_to_kernel else None
 
-            if hasattr(e.src, '_kernel'):
-                kernel = e.src._kernel
+            e_src_repr = utils.unique_node_repr(state, e.src)
+            if e_src_repr in self._node_to_kernel:
+                kernel = self._node_to_kernel[e_src_repr]
 
                 if (isinstance(e.dst, nodes.AccessNode)
                         and isinstance(sdfg.arrays[e.dst.data], dt.View)):
                     # Skip views
-                    e.dst._kernel = kernel
+                    self._node_to_kernel[utils.unique_node_repr(state,
+                                                                e.dst)] = kernel
                     continue
 
                 # Does this node need to be in another kernel?
@@ -977,10 +986,12 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
                     # TODO: support more robust detection
                     for succ_edge in state.out_edges(e.dst):
-                        if hasattr(succ_edge.dst, "_kernel") and isinstance(
+                        succ_edge_dst_repr = utils.unique_node_repr(
+                            state, succ_edge.dst)
+                        if succ_edge_dst_repr in self._node_to_kernel and isinstance(
                                 succ_edge.src, nodes.Tasklet) and isinstance(
                                     succ_edge.dst, nodes.Tasklet):
-                            kernel = succ_edge.dst._kernel
+                            kernel = self._node_to_kernel[succ_edge_dst_repr]
                             break
                     else:
                         kernel = max_kernels
@@ -990,19 +1001,22 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                             pass
                         else:
                             max_kernels = increment(max_kernels)
-            e.dst._kernel = kernel
+            self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel
 
         # do another pass and track dependencies among Kernels
         for node in state.nodes():
-            if hasattr(node, '_kernel'):
-
-                this_kernel = node._kernel
+            node_repr = utils.unique_node_repr(state, node)
+            if node_repr in self._node_to_kernel:
+                this_kernel = self._node_to_kernel[node_repr]
                 # get all predecessors and see their associated kernel ID
                 for pred in state.predecessors(node):
-                    if hasattr(pred, '_kernel') and pred._kernel != this_kernel:
+                    pred_repr = utils.unique_node_repr(state, pred)
+                    if pred_repr in self._node_to_kernel and self._node_to_kernel[
+                            pred_repr] != this_kernel:
                         if this_kernel not in dependencies:
                             dependencies[this_kernel] = set()
-                        dependencies[this_kernel].add(pred._kernel)
+                        dependencies[this_kernel].add(
+                            self._node_to_kernel[pred_repr])
 
         max_kernels = max_kernels if concurrent_kernels == 0 else concurrent_kernels
         return max_kernels, dependencies

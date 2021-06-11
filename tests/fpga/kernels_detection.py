@@ -5,27 +5,23 @@
 import dace
 import numpy as np
 import pytest
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG, GPUTransformSDFG, NestSDFG
+from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 
 
-def count_kernels(sdfg: dace.SDFG):
+def count_kernels(cachedir: str):
     '''
-    Counts the number of kernels in the provided, annotated SDFG
-    :param sdfg:
+    Test utility functions: Counts the number of generated device kernels
+    :param cachedir: program cache directory
     :return: number of kernels
     '''
 
-    found_kernels = dict(set())
-
-    for node, state in sdfg.all_nodes_recursive():
-        if hasattr(node, '_kernel'):
-            if state not in found_kernels:
-                found_kernels[state] = set()
-            found_kernels[state].add(node._kernel)
-
+    import csv
     kernels = 0
-    for k,v in found_kernels.items():
-        kernels = kernels + len(v)
+    with open(f".dacecache/{cachedir}/dace_files.csv") as csv_file:
+        csv_reader = csv.reader(csv_file, delimiter=',')
+        for row in csv_reader:
+            if row[1] == "device" and not row[-1].endswith("csv"):
+                kernels = kernels + 1
     return kernels
 
 
@@ -65,7 +61,7 @@ def test_kernels_inside_component_0():
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
     program = sdfg.compile()
 
-    assert count_kernels(program.sdfg) == 3
+    assert count_kernels("kernels_inside_component_0_1") == 3
     res = program(x=x, y=y, v=v, w=w, z=z)
     assert np.allclose(res, x + y + v + w + z)
 
@@ -115,7 +111,7 @@ def test_kernels_inside_component_1():
     sdfg = kernels_inside_component_1.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
     program = sdfg.compile()
-    assert count_kernels(program.sdfg) == 5
+    assert count_kernels("kernels_inside_component_1_1") == 5
     program(x=x, y=y, v=v, w=w, z=z, t=t, alpha=alpha, beta=beta)
     ref_z = alpha * (x + y + v + w)
     ref_t = beta * (x + y + v + w)
@@ -158,7 +154,9 @@ def test_kernels_inside_component_2():
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
     program = sdfg.compile()
 
-    assert count_kernels(program.sdfg) == 2
+    # NOTE: here we have only one kernel since subgraph detection already
+    # detects two PEs
+    assert count_kernels("kernels_inside_component_2_1") == 1
     program(x=x, y=y, v=v, t=t, z=z)
     assert np.allclose(z, x + y)
     assert np.allclose(t, v + y)
@@ -201,7 +199,7 @@ def test_kernels_lns_inside_component():
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
     program = sdfg.compile()
 
-    assert count_kernels(program.sdfg) == 3
+    assert count_kernels("kernels_lns_inside_component_1") == 3
     z = program(A=A, x=x, B=B, y=y)
     ref = np.dot(A @ x, B @ y)
     assert np.allclose(z, ref)
@@ -250,7 +248,7 @@ def test_kernels_inside_components_0():
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
     program = sdfg.compile()
 
-    assert count_kernels(program.sdfg) == 6
+    assert count_kernels("kernels_inside_components_0_1") == 6
     z, zz = program(x=x, y=y, v=v, w=w, xx=xx, yy=yy, vv=vv, ww=ww)
     assert np.allclose(z, x + y + v + w)
     assert np.allclose(zz, xx + yy + vv + ww)
@@ -553,10 +551,8 @@ def test_kernels_inside_components_multiple_states():
     zz = np.random.rand(8).astype(np.float32)
 
     sdfg = make_sdfg()
-    from dace.transformation.interstate import GPUTransformSDFG
-    # sdfg.apply_transformations([GPUTransformSDFG])
     program = sdfg.compile()
-    assert count_kernels(program.sdfg) == 6
+    assert count_kernels("multiple_kernels_multiple_states") == 6
     program(z=z, zz=zz, x=x, y=y, v=v, w=w, xx=xx, yy=yy, vv=vv, ww=ww, size=8)
     assert np.allclose(z, x + y + v + w)
     assert np.allclose(zz, xx + yy + vv + ww)
