@@ -1128,10 +1128,26 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 oedge.data.dynamic = True
 
 
+def reset_state_annotations(sdfg):
+    """ Resets the state (loop-related) annotations of an SDFG.
+        :note: This operation is shallow (does not go into nested SDFGs).
+    """
+    for state in sdfg.nodes():
+        state.executions = 0
+        state.dynamic_executions = True
+        state.ranges = {}
+        state.condition_edge = None
+        state.is_loop_guard = False
+        state.itervar = None
+
+
 def propagate_memlets_sdfg(sdfg):
     """ Propagates memlets throughout an entire given SDFG. 
         :note: This is an in-place operation on the SDFG.
     """
+    # Reset previous annotations first
+    reset_state_annotations(sdfg)
+
     for state in sdfg.nodes():
         propagate_memlets_state(sdfg, state)
 
