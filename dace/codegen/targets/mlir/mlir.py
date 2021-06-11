@@ -24,7 +24,7 @@ class MLIRCodeGen(TargetCodeGenerator):
     def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         if self.node_dispatch_predicate(sdfg, dfg, node):
             function_uid = str(sdfg.sdfg_id) + "_" + str(state_id) + "_" + str(dfg.node_id(node))
-            node.code.code = node.code.code.replace("@mlir_entry","@mlir_entry_" + function_uid)
+            node.code.code = node.code.code.replace("mlir_entry","mlir_entry_" + function_uid)
             self._codeobjects.append( CodeObject(node.name, node.code.code, "mlir", MLIRCodeGen, node.name + "_Source") )
             
         self._cpu_codegen.generate_node(sdfg, dfg, state_id, node, function_stream, callsite_stream)
