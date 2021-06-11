@@ -812,6 +812,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
             mlir_func_uid = "_" + str(sdfg.sdfg_id) + "_" + str(state_id) + "_" + str(dfg.node_id(node))
             mlir_util = MLIRUtils(node.code.code, mlir_func_uid)
 
+            # Arguments of the MLIR must match the input connector names of the tasklet (the "%" excluded)
             mlir_in_typed = ""
             mlir_in_untyped = ""
 
@@ -827,7 +828,8 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
             mlir_out = next( iter(node.out_connectors.items()) )
             mlir_out_type = mlir_out[1].ctype
             mlir_out_name = mlir_out[0]
-   
+
+            # MLIR tools such as mlir-opt and mlir-translate as well as the LLVM compiler "lc" will be required to compile the MLIR tasklet
             function_stream.write('extern "C" ' + mlir_out_type + ' mlir_entry' + mlir_func_uid + '(' + mlir_in_typed + ');\n\n')
             callsite_stream.write(mlir_out_name + " = mlir_entry" + mlir_func_uid + "(" + mlir_in_untyped + ");")
             

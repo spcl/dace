@@ -6,6 +6,7 @@ import dace
 
 class MLIRUtils():
 
+    # Only these types and the vector version of them are supported
     TYPE_DICT = {
         "i8": dace.int8,
         "i16": dace.int16,
@@ -17,12 +18,15 @@ class MLIRUtils():
     }
 
     def __init__(self, code, func_uid=""):
+        # pyMLIR needed to generate and read the AST
         try:
             self.mlir =  __import__('mlir')
         except (ModuleNotFoundError, NameError, ImportError):
             raise ImportError('To use MLIR tasklets, please install the "pymlir" package.')
 
         self.code = code
+
+        # mlir_entry is a reserved keyword for the entry function. In order to allow for multiple MLIR tasklets we append a UID
         self.entry_func_name = "mlir_entry" + func_uid
 
         self.ast = self.mlir.parse_string(self.code)
@@ -72,12 +76,14 @@ class MLIRUtils():
     def get_entry_result_type(self):
         if self.is_generic:
             generic_result_list = self.entry_func.attributes.values[1].value.value.result_types
+            # Only one return value allowed as we can not match multiple return values
             if len(generic_result_list) != 1:
                 raise SyntaxError('Entry function in MLIR tasklet must return exactly one value.')
 
             return generic_result_list[0]
         
         dialect_result = self.entry_func.result_types
+        # Only one return value allowed as we can not match multiple return values
         if isinstance(dialect_result, list):
             raise SyntaxError('Entry function in MLIR tasklet must return exactly one value.')
             
