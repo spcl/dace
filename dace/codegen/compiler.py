@@ -5,6 +5,7 @@
 
 from __future__ import print_function
 
+import collections
 import os
 import six
 import shutil
@@ -89,8 +90,11 @@ def generate_program_folder(sdfg,
     if sdfg is not None:
         # Save the SDFG itself and its hash
         hash = sdfg.save(os.path.join(out_path, "program.sdfg"), hash=True)
-        with open(os.path.join(out_path, 'include', 'hash.h'), 'w') as hfile:
-            hfile.write(f'#define __HASH_{sdfg.name} "{hash}"\n')
+        filepath = os.path.join(out_path, 'include', 'hash.h') 
+        contents = f'#define __HASH_{sdfg.name} "{hash}"\n'
+        if not identical_file_exists(filepath, contents):
+            with open(filepath, 'w') as hfile:
+                hfile.write(contents)
 
     return out_path
 
@@ -170,14 +174,14 @@ def configure_and_compile(program_folder,
     environments = dace.library.get_environments_and_dependencies(environments)
 
     environment_flags, cmake_link_flags = get_environment_flags(environments)
-    cmake_command += environment_flags
+    cmake_command += sorted(environment_flags)
 
     # Replace backslashes with forward slashes
     cmake_command = [cmd.replace('\\', '/') for cmd in cmake_command]
 
     # Generate CMake options for each compiler
     libraries = set()
-    for target_name, target in targets.items():
+    for target_name, target in sorted(targets.items()):
         try:
             cmake_command += target.cmake_options()
             libraries |= unique_flags(
@@ -187,27 +191,31 @@ def configure_and_compile(program_folder,
         except ValueError as ex:  # Cannot find compiler executable
             raise cgx.CompilerConfigurationError(str(ex))
 
-    cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(libraries)))
+    cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
 
-    # Override linker and linker arguments
-    if Config.get('compiler', 'linker', 'executable'):
-        cmake_command.append("-DCMAKE_LINKER=\"{}\"".format(
-            make_absolute(Config.get('compiler', 'linker', 'executable'))))
-    if Config.get('compiler', 'linker', 'args'):
+    # Set linker and linker arguments, iff they have been specified
+    cmake_linker = Config.get('compiler', 'linker', 'executable') or ''
+    cmake_linker = cmake_linker.strip()
+    if cmake_linker:
+        cmake_linker = make_absolute(cmake_linker)
+        cmake_command.append(f'-DCMAKE_LINKER="{cmake_linker}"')
+    cmake_link_flags = (
+        ' '.join(sorted(cmake_link_flags)) + ' ' +
+        (Config.get('compiler', 'linker', 'args') or '')).strip()
+    if cmake_link_flags:
         cmake_command.append(
-            "-DCMAKE_SHARED_LINKER_FLAGS=\"{}\"".format(
-                Config.get('compiler', 'linker', 'args') + " " +
-                " ".join(cmake_link_flags)), )
+            f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
     cmake_command = ' '.join(cmake_command)
 
     cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
     ##############################################
     # Configure
     try:
-        _run_liveoutput(cmake_command,
-                        shell=True,
-                        cwd=build_folder,
-                        output_stream=output_stream)
+        if not identical_file_exists(cmake_filename, cmake_command):
+            _run_liveoutput(cmake_command,
+                            shell=True,
+                            cwd=build_folder,
+                            output_stream=output_stream)
     except subprocess.CalledProcessError as ex:
         # Clean CMake directory and try once more
         if Config.get_bool('debugprint'):
@@ -227,8 +235,8 @@ def configure_and_compile(program_folder,
                 raise cgx.CompilerConfigurationError(
                     'Configuration failure:\n' + ex.output)
 
-        with open(cmake_filename, "w") as fp:
-            fp.write(cmake_command)
+    with open(cmake_filename, "w") as fp:
+        fp.write(cmake_command)
 
     # Compile and link
     try:
@@ -253,7 +261,7 @@ def configure_and_compile(program_folder,
 
 
 def _get_or_eval(value_or_function: Union[T, Callable[[], T]]) -> T:
-    """ 
+    """
     Returns a stored value or lazily evaluates it. Used in environments
     for allowing potential runtime (rather than import-time) checks.
     """
@@ -263,15 +271,15 @@ def _get_or_eval(value_or_function: Union[T, Callable[[], T]]) -> T:
 
 
 def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
-    """ 
+    """
     Returns the CMake environment and linkage flags associated with the
     given input environments/libraries.
-    :param environments: A list of ``@dace.library.environment``-decorated 
+    :param environments: A list of ``@dace.library.environment``-decorated
                          classes.
     :return: A 2-tuple of (environment CMake flags, linkage CMake flags)
     """
     cmake_minimum_version = [0]
-    cmake_variables = dict()
+    cmake_variables = collections.OrderedDict()
     cmake_packages = set()
     cmake_includes = set()
     cmake_libraries = set()
@@ -331,16 +339,16 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
         "-DDACE_ENV_VAR_KEYS=\"{}\"".format(";".join(cmake_variables.keys())),
         "-DDACE_ENV_VAR_VALUES=\"{}\"".format(";".join(
             cmake_variables.values())),
-        "-DDACE_ENV_PACKAGES=\"{}\"".format(" ".join(cmake_packages)),
-        "-DDACE_ENV_INCLUDES=\"{}\"".format(" ".join(cmake_includes)),
-        "-DDACE_ENV_LIBRARIES=\"{}\"".format(" ".join(cmake_libraries)),
+        "-DDACE_ENV_PACKAGES=\"{}\"".format(" ".join(sorted(cmake_packages))),
+        "-DDACE_ENV_INCLUDES=\"{}\"".format(" ".join(sorted(cmake_includes))),
+        "-DDACE_ENV_LIBRARIES=\"{}\"".format(" ".join(sorted(cmake_libraries))),
         "-DDACE_ENV_COMPILE_FLAGS=\"{}\"".format(" ".join(cmake_compile_flags)),
         # "-DDACE_ENV_LINK_FLAGS=\"{}\"".format(" ".join(cmake_link_flags)),
-        "-DDACE_ENV_CMAKE_FILES=\"{}\"".format(";".join(cmake_files)),
+        "-DDACE_ENV_CMAKE_FILES=\"{}\"".format(";".join(sorted(cmake_files))),
     ]
     # Escape variable expansions to defer their evaluation
     environment_flags = [
-        cmd.replace("$", "_DACE_CMAKE_EXPAND") for cmd in environment_flags
+        cmd.replace("$", "_DACE_CMAKE_EXPAND") for cmd in sorted(environment_flags)
     ]
 
     return environment_flags, cmake_link_flags

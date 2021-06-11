@@ -66,22 +66,22 @@ class Property:
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
     def __init__(
-        self,
-        getter=None,
-        setter=None,
-        dtype=None,
-        default=None,
-        from_string=None,
-        to_string=None,
-        from_json=None,
-        to_json=None,
-        meta_to_json=None,
-        choices=None,  # Values must be present in this enum
-        unmapped=False,  # Don't enforce 1:1 mapping with a member variable
-        allow_none=False,
-        indirected=False,  # This property belongs to a different class
-        category='General',
-        desc=""):
+            self,
+            getter=None,
+            setter=None,
+            dtype=None,
+            default=None,
+            from_string=None,
+            to_string=None,
+            from_json=None,
+            to_json=None,
+            meta_to_json=None,
+            choices=None,  # Values must be present in this enum
+            unmapped=False,  # Don't enforce 1:1 mapping with a member variable
+            allow_none=False,
+            indirected=False,  # This property belongs to a different class
+            category='General',
+            desc=""):
 
         self._getter = getter
         self._setter = setter
@@ -536,7 +536,7 @@ class ListProperty(Property):
             return [elem.to_json() for elem in l]
         # If elements are one of the JSON basic types, use directly
         if self.element_type in (int, float, list, tuple, dict):
-            return l
+            return list(map(self.element_type, l))
         # Otherwise, convert to strings
         return list(map(str, l))
 
@@ -577,7 +577,7 @@ class TransformationHistProperty(Property):
     def to_json(self, hist):
         if hist is None:
             return None
-        return [elem.to_json() for elem in hist]
+        return [elem.to_json() if elem is not None else None for elem in hist]
 
     def from_json(self, data, sdfg=None):
         if data is None:
@@ -701,6 +701,38 @@ class DictProperty(Property):
 ###############################################################################
 
 
+class EnumProperty(Property):
+
+    def __init__(self, dtype, *args, **kwargs):
+        kwargs['dtype'] = dtype
+        super().__init__(*args, **kwargs)
+
+        def f(s, *args, **kwargs):
+            if s is None:
+                return None
+            try:
+                self._undefined_val = None
+                return dtype[s]
+            except KeyError:
+                self._undefined_val = s
+                return dtype['Undefined']
+
+        self._choices = dtype
+        self._from_json = f
+        self._from_string = f
+
+        self._undefined_val = None
+
+        def g(obj):
+            if self._undefined_val is None:
+                return dace.serialize.to_json(obj)
+            else:
+                return self._undefined_val
+
+        self._to_json = g
+        self._to_string = g
+
+
 class SDFGReferenceProperty(Property):
     def to_json(self, obj):
         if obj is None:
@@ -809,19 +841,19 @@ class DebugInfoProperty(Property):
 class SetProperty(Property):
     """Property for a set of elements of one type, e.g., connectors. """
     def __init__(
-        self,
-        element_type,
-        getter=None,
-        setter=None,
-        default=None,
-        from_string=None,
-        to_string=None,
-        from_json=None,
-        to_json=None,
-        unmapped=False,  # Don't enforce 1:1 mapping with a member variable
-        allow_none=False,
-        desc="",
-        **kwargs):
+            self,
+            element_type,
+            getter=None,
+            setter=None,
+            default=None,
+            from_string=None,
+            to_string=None,
+            from_json=None,
+            to_json=None,
+            unmapped=False,  # Don't enforce 1:1 mapping with a member variable
+            allow_none=False,
+            desc="",
+            **kwargs):
         if to_json is None:
             to_json = self.to_json
         super(SetProperty, self).__init__(getter=getter,
@@ -1140,8 +1172,8 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        if (val is not None and not isinstance(val, sp.Expr)
-                and not isinstance(val, Number) and not isinstance(val, str)):
+        if (val is not None
+                and not isinstance(val, (sp.Expr, Number, np.bool_, str))):
             raise TypeError(f"Property {self.attr_name} must be a literal "
                             f"or symbolic expression, got: {type(val)}")
         if isinstance(val, (Number, str)):

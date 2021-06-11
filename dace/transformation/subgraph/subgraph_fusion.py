@@ -9,7 +9,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.scope import ScopeTree
 from dace.memlet import Memlet
 from dace.transformation import transformation
-from dace.properties import make_properties, Property
+from dace.properties import EnumProperty, ListProperty, make_properties, Property
 from dace.symbolic import symstr, overapproximate
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet, propagate_memlets_scope, _propagate_node
 from dace.transformation.subgraph import helpers
@@ -45,10 +45,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
     debug = Property(desc="Show debug info", dtype=bool, default=False)
 
-    transient_allocation = Property(
+    transient_allocation = EnumProperty(
+        dtype=dtypes.StorageType,
         desc="Storage Location to push transients to that are "
         "fully contained within the subgraph.",
-        dtype=dtypes.StorageType,
         default=dtypes.StorageType.Default)
 
     schedule_innermaps = Property(desc="Schedule of inner maps. If none, "
@@ -75,6 +75,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         "independent per iteration space to avoid race conditions.",
         dtype=bool,
         default=True)
+
+    keep_global = ListProperty(
+        str,
+        desc="A list of array names to treat as non-transients and not compress",
+    )
 
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         '''
@@ -647,8 +652,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         scope_dict = graph.scope_dict()
         for state in sdfg.nodes():
             for node in state.nodes():
-                if isinstance(node,
-                            nodes.AccessNode) and node.data in data_intermediate:
+                if isinstance(
+                        node,
+                        nodes.AccessNode) and node.data in data_intermediate:
                     # add them to the counter set in all cases
                     data_counter[node.data] += 1
                     # see whether we are inside the subgraph scope
@@ -666,7 +672,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                         and data not in do_not_override \
                                   for data in data_intermediate}
         return subgraph_contains_data
-     
 
     def clone_intermediate_nodes(self, sdfg: dace.sdfg.SDFG,
                                  graph: dace.sdfg.SDFGState,
@@ -686,7 +691,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         :return: A dict that maps each intermediate node that also functions as an out node 
                        to the respective cloned transient node 
         '''
-       
+
         transients_created = {}
         for node in intermediate_nodes & out_nodes:
             # create new transient at exit replacing the array
@@ -702,14 +707,14 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             if node.setzero:
                 node_trans.setzero = True
 
-            # redirect all relevant traffic from node_trans to node 
+            # redirect all relevant traffic from node_trans to node
             edges = list(graph.out_edges(node))
             for edge in edges:
                 if edge.dst not in map_entries:
                     self.copy_edge(graph,
-                                    edge,
-                                    new_src=node_trans,
-                                    remove_old=True)
+                                   edge,
+                                   new_src=node_trans,
+                                   remove_old=True)
 
             graph.add_edge(node, None, node_trans, None, Memlet())
 
@@ -718,9 +723,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         return transients_created
 
     def determine_invariant_dimensions(
-            self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
-            intermediate_nodes: List[nodes.AccessNode],
-            map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit]):
+        self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
+        intermediate_nodes: List[nodes.AccessNode],
+        map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit]):
         ''' Determines the invariant dimensions for each node -- dimensions in 
             which the access set of the memlets propagated through map entries and 
             exits does not change.
@@ -826,6 +831,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             return
 
         do_not_override = do_not_override or []
+        do_not_override.extend(self.keep_global)
 
         # get maps and map exits
         maps = [map_entry.map for map_entry in map_entries]

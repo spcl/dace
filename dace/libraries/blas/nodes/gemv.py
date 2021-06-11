@@ -798,6 +798,10 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node: 'Gemv', state, sdfg, m=None, n=None, **kwargs):
+        from dace.sdfg.scope import is_devicelevel_gpu
+        if is_devicelevel_gpu(sdfg, state, node):
+            return ExpandGemvPure.expansion(node, state, sdfg)
+
         node.validate(sdfg, state)
 
         ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x,
@@ -873,6 +877,72 @@ class ExpandGemvMKL(ExpandTransformation):
         return ExpandGemvOpenBLAS.expansion(*args, **kwargs)
 
 
+@dace.library.expansion
+class ExpandGemvPBLAS(ExpandTransformation):
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: 'Gemv', state, sdfg, m=None, n=None, **kwargs):
+        node.validate(sdfg, state)
+        ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x,
+                                                       shape_x, strides_x),
+         (edge_y, outer_array_y, shape_y,
+          strides_y)) = _get_matmul_operands(node,
+                                             state,
+                                             sdfg,
+                                             name_lhs="_A",
+                                             name_rhs="_x",
+                                             name_out="_y")
+        dtype_a = outer_array_a.dtype.type
+        dtype = outer_array_x.dtype.base_type
+        veclen = outer_array_x.dtype.veclen
+        m = m or node.m
+        n = n or node.n
+        if m is None:
+            m = shape_y[0]
+        if n is None:
+            n = shape_x[0]
+
+        transA = node.transA
+
+        Px = dace.symbol('Px', dtype=dace.int32, integer=True, positive=True)
+        Py = dace.symbol('Py', dtype=dace.int32, integer=True, positive=True)
+        try:
+            sdfg.add_symbol('Px', dace.int32)
+            sdfg.add_symbol('Py', dace.int32)
+        except FileExistsError:
+            pass
+
+        @dace.program
+        def _gemNv_pblas(_A: dtype[m, n], _x: dtype[n], _y: dtype[m]):
+            lA = np.empty((m // Px, n // Py), dtype=_A.dtype)
+            lx = np.empty((n // Px,), dtype=_x.dtype)
+            dace.comm.BCScatter(_A, lA, (m//Px, n//Py))
+            dace.comm.BCScatter(_x, lx, (n//Px, 1))
+            ly = distr.MatMult(_A, _x, lA, lx, (m//Px, n//Py), (n//Px, 1))
+            dace.comm.BCGather(ly, _y, (m//Px, 1))
+        
+        @dace.program
+        def _gemTv_pblas(_A: dtype[m, n], _x: dtype[m], _y: dtype[n]):
+            lA = np.empty((m // Px, n // Py), dtype=_A.dtype)
+            lx = np.empty((m // Px,), dtype=_x.dtype)
+            dace.comm.BCScatter(_A, lA, (m//Px, n//Py))
+            dace.comm.BCScatter(_x, lx, (m//Px, 1))
+            ly = distr.MatMult(_x, _A, lx, lA, (m//Px, 1), (m//Px, n//Py))
+            dace.comm.BCGather(ly, _y, (n//Px, 1))
+
+        # NOTE: The following is done to avoid scalar promotion, which results
+        # in ValueError: Node type "BlockCyclicScatter" not supported for
+        # promotion
+        if transA:
+            sdfg = _gemTv_pblas.to_sdfg(strict=False)
+        else:
+            sdfg = _gemNv_pblas.to_sdfg(strict=False)
+        sdfg.apply_strict_transformations()
+        return sdfg
+
+
 @dace.library.node
 class Gemv(dace.sdfg.nodes.LibraryNode):
 
@@ -884,6 +954,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         "cuBLAS": ExpandGemvCuBLAS,
         "FPGA_Accumulate": ExpandGemvFpgaAccumulate,
         "FPGA_TilesByColumn": ExpandGemvFpgaTilesByColumn,
+        "PBLAS": ExpandGemvPBLAS
     }
     default_implementation = None
 

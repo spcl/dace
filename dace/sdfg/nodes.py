@@ -12,7 +12,7 @@ from typing import Any, Dict, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
-from dace.properties import (Property, CodeProperty, LambdaProperty,
+from dace.properties import (EnumProperty, Property, CodeProperty, LambdaProperty,
                              RangeProperty, DebugInfoProperty, SetProperty,
                              make_properties, indirect_properties, DataProperty,
                              SymbolicProperty, ListProperty,
@@ -222,9 +222,11 @@ class Node(object):
 class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
-    access = Property(choices=dtypes.AccessType,
-                      desc="Type of access to this array",
-                      default=dtypes.AccessType.ReadWrite)
+    access = EnumProperty(
+        dtype=dtypes.AccessType,
+        desc="Type of access to this array",
+        default=dtypes.AccessType.ReadWrite
+    )
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
     debuginfo = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
@@ -328,11 +330,23 @@ class Tasklet(CodeNode):
     """
 
     code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
+    state_fields = ListProperty(element_type=str, desc="Fields that are added to the global state")
+    code_global = CodeProperty(
+        desc="Global scope code needed for tasklet execution",
+        default=CodeBlock("", dtypes.Language.CPP))
+    code_init = CodeProperty(
+        desc="Extra code that is called on DaCe runtime initialization",
+        default=CodeBlock("", dtypes.Language.CPP))
+    code_exit = CodeProperty(
+        desc="Extra code that is called on DaCe runtime cleanup",
+        default=CodeBlock("", dtypes.Language.CPP))
     debuginfo = DebugInfoProperty()
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation
+    )
 
     def __init__(self,
                  label,
@@ -340,11 +354,20 @@ class Tasklet(CodeNode):
                  outputs=None,
                  code="",
                  language=dtypes.Language.Python,
+                 state_fields=None,
+                 code_global="",
+                 code_init="",
+                 code_exit="",
                  location=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
         self.code = CodeBlock(code, language)
+
+        self.state_fields = state_fields or []
+        self.code_global = CodeBlock(code_global, dtypes.Language.CPP)
+        self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
+        self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
         self.debuginfo = debuginfo
 
     @property
@@ -468,12 +491,10 @@ class NestedSDFG(CodeNode):
 
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="SDFG schedule",
-                        allow_none=True,
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    schedule = EnumProperty(dtype=dtypes.ScheduleType,
+                            desc="SDFG schedule",
+                            allow_none=True,
+                            default=dtypes.ScheduleType.Default)
     symbol_mapping = DictProperty(
         key_type=str,
         value_type=dace.symbolic.pystr_to_symbolic,
@@ -484,9 +505,11 @@ class NestedSDFG(CodeNode):
                             desc="Show this node/scope/state as collapsed",
                             default=False)
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation
+    )
 
     no_inline = Property(
         dtype=bool,
@@ -768,11 +791,9 @@ class Map(object):
     params = ListProperty(element_type=str, desc="Mapped parameters")
     range = RangeProperty(desc="Ranges of map parameters",
                           default=sbs.Range([]))
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="Map schedule",
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    schedule = EnumProperty(dtype=dtypes.ScheduleType,
+                            desc="Map schedule",
+                            default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
     collapse = Property(dtype=int,
                         default=1,
@@ -783,9 +804,11 @@ class Map(object):
                             desc="Show this node/scope/state as collapsed",
                             default=False)
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation
+    )
 
     def __init__(self,
                  label,
@@ -975,11 +998,9 @@ class Consume(object):
     pe_index = Property(dtype=str, desc="Processing element identifier")
     num_pes = SymbolicProperty(desc="Number of processing elements", default=1)
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="Consume schedule",
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    schedule = EnumProperty(dtype=dtypes.ScheduleType,
+                            desc="Consume schedule",
+                            default=dtypes.ScheduleType.Default)
     chunksize = Property(dtype=int,
                          desc="Maximal size of elements to consume at a time",
                          default=1)
@@ -988,9 +1009,11 @@ class Consume(object):
                             desc="Show this node/scope/state as collapsed",
                             default=False)
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation
+    )
 
     def as_map(self):
         """ Compatibility function that allows to view the consume as a map,
@@ -1181,13 +1204,12 @@ class LibraryNode(CodeNode):
         allow_none=True,
         desc=("Which implementation this library node will expand into."
               "Must match a key in the list of possible implementations."))
-    schedule = Property(
+    schedule = EnumProperty(
         dtype=dtypes.ScheduleType,
         desc="If set, determines the default device mapping of "
         "the node upon expansion, if expanded to a nested SDFG.",
-        choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x],
-        default=dtypes.ScheduleType.Default)
+        default=dtypes.ScheduleType.Default
+    )
     debuginfo = DebugInfoProperty()
 
     def __init__(self, name, *args, **kwargs):
@@ -1210,8 +1232,7 @@ class LibraryNode(CodeNode):
         if cls == LibraryNode:
             clazz = pydoc.locate(json_obj['classpath'])
             if clazz is None:
-                raise TypeError('Unrecognized library node type "%s"' %
-                                json_obj['classpath'])
+                return UnregisteredLibraryNode.from_json(json_obj, context)
             return clazz.from_json(json_obj, context)
         else:  # Subclasses are actual library nodes
             ret = cls(json_obj['attributes']['name'])
@@ -1275,6 +1296,9 @@ class LibraryNode(CodeNode):
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation = transformation_type(sdfg_id, state_id, subgraph, 0)
+        if not transformation.can_be_applied(state, self, 0, sdfg): 
+            raise RuntimeError("Library node "
+               "expansion applicability check failed.")
         transformation.apply(sdfg, *args, **kwargs)
         return implementation
 
@@ -1283,3 +1307,21 @@ class LibraryNode(CodeNode):
         """Register an implementation to belong to this library node type."""
         cls.implementations[name] = transformation_type
         transformation_type._match_node = cls
+
+
+class UnregisteredLibraryNode(LibraryNode):
+
+    original_json = {}
+
+    def __init__(self, json_obj={}, label=None):
+        self.original_json = json_obj
+        super().__init__(label)
+
+    def to_json(self):
+        return self.original_json
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        return UnregisteredLibraryNode(
+            json_obj=json_obj, label=json_obj['attributes']['name']
+        )

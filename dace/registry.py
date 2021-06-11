@@ -56,6 +56,18 @@ def autoregister_params(**params):
     return lambda cls: autoregister(cls, **params)
 
 
+def undefined_safe_enum(cls: Type):
+    """
+    Decorator that adds a value ``Undefined`` to an enumeration.
+    """
+    if not issubclass(cls, Enum):
+        raise TypeError(
+            "Only aenum.Enum subclasses may be used with undefined values"
+        )
+    extend_enum(cls, 'Undefined')
+    return cls
+
+
 def extensible_enum(cls: Type):
     """
     Decorator that adds a function called ``register`` to an enumeration,

@@ -80,7 +80,8 @@ def _define_local_scalar(
         storage: dtypes.StorageType = dtypes.StorageType.Default):
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
-    sdfg.add_scalar(name, dtype, transient=True, storage=storage)
+    _, desc = sdfg.add_scalar(name, dtype, transient=True, storage=storage)
+    pv.variables[name] = name
     return name
 
 
@@ -246,13 +247,15 @@ def _numpy_full(pv: 'ProgramVisitor',
                 sdfg: SDFG,
                 state: SDFGState,
                 shape: Shape,
-                fill_value: Number,
+                fill_value: Union[sp.Expr, Number],
                 dtype: dace.typeclass = None):
     """ Creates and array of the specified shape and initializes it with
         the fill value.
     """
-    if isinstance(fill_value, Number):
+    if isinstance(fill_value, (Number, np.bool_)):
         vtype = dtypes.DTYPE_TO_TYPECLASS[type(fill_value)]
+    elif isinstance(fill_value, sp.Expr):
+        vtype = _sym_type(fill_value)
     else:
         raise mem_parser.DaceSyntaxError(
             pv, None, "Fill value {f} must be a number!".format(f=fill_value))
@@ -658,6 +661,75 @@ def _min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
                    identity=dtypes.max_value(sdfg.arrays[a].dtype))
 
 
+def _min2(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, b: str):
+    """ Implements the min function with 2 scalar arguments. """
+
+    in_conn = set()
+    out_conn = {'__out'}
+
+    if isinstance(a, str) and a in sdfg.arrays.keys():
+        desc_a = sdfg.arrays[a]
+        read_a = state.add_read(a)
+        conn_a = '__in_a'
+        in_conn.add(conn_a)
+    else:
+        desc_a = a
+        read_a = None
+        conn_a = symbolic.symstr(a)
+
+    if isinstance(b, str) and b in sdfg.arrays.keys():
+        desc_b = sdfg.arrays[b]
+        read_b = state.add_read(b)
+        conn_b = '__in_b'
+        in_conn.add(conn_b)
+    else:
+        desc_b = b
+        read_b = None
+        conn_b = symbolic.symstr(b)
+
+    dtype_c, [cast_a, cast_b] = _result_type([desc_a, desc_b])
+    arg_a, arg_b = "{in1}".format(in1=conn_a), "{in2}".format(in2=conn_b)
+    if cast_a:
+        arg_a = "{ca}({in1})".format(ca=str(cast_a).replace('::', '.'),
+                                     in1=conn_a)
+    if cast_b:
+        arg_b = "{cb}({in2})".format(cb=str(cast_b).replace('::', '.'),
+                                     in2=conn_b)
+
+    tasklet = nodes.Tasklet('__min2', in_conn, out_conn,
+                            "__out = min({a}, {b})".format(a=arg_a, b=arg_b))
+
+    c = _define_local_scalar(pv, sdfg, state, dtype_c)
+    desc_c = sdfg.arrays[c]
+    write_c = state.add_write(c)
+    if read_a:
+        state.add_edge(read_a, None, tasklet, '__in_a',
+                       Memlet.from_array(a, desc_a))
+    if read_b:
+        state.add_edge(read_b, None, tasklet, '__in_b',
+                       Memlet.from_array(b, desc_b))
+    state.add_edge(tasklet, '__out', write_c, None,
+                   Memlet.from_array(c, desc_c))
+
+    return c
+
+
+# NOTE: We support only the version of Python min that takes scalar arguments.
+# For iterable arguments one must use the equivalent NumPy methods.
+@oprepo.replaces('min')
+def _pymin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+           a: Union[str, Number, symbolic.symbol], *args):
+    left_arg = a
+    current_state = state
+    for i, b in enumerate(args):
+        if i > 0:
+            pv._add_state('__min2_%d' % i)
+            pv.last_state.set_default_lineinfo(pv.current_lineinfo)
+            current_state = pv.last_state
+        left_arg = _min2(pv, sdfg, current_state, left_arg, b)
+    return left_arg
+
+
 @oprepo.replaces('numpy.argmax')
 def _argmax(pv: 'ProgramVisitor',
             sdfg: SDFG,
@@ -806,6 +878,86 @@ def _argminmax(pv: 'ProgramVisitor',
             sdfg.arrays[reduced_structs].shape, result_type)
         nest(_elementwise)("lambda x: x.idx", reduced_structs, out_array=out)
         return nest, out
+
+@oprepo.replaces('numpy.where')
+def _array_array_where(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                       cond_operand: str, left_operand: str = None, right_operand: str = None):
+    if left_operand is None or right_operand is None:
+        raise ValueError('numpy.where is only supported for the case where x and y are given')
+
+    cond_arr = sdfg.arrays[cond_operand]
+    left_arr = sdfg.arrays.get(left_operand, None)
+    right_arr = sdfg.arrays.get(right_operand, None)
+
+    left_type = left_arr.dtype if left_arr else dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
+    right_type = right_arr.dtype if right_arr else dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+
+    # Implicit Python coversion implemented as casting
+    arguments = [cond_arr, left_arr or left_type, right_arr or right_type]
+    tasklet_args = ['__incond', '__in1' if left_arr else left_operand, '__in2' if right_arr else right_operand]
+    result_type, casting = _result_type(arguments[1:])
+    left_cast = casting[0]
+    right_cast = casting[1]
+
+    if left_cast is not None:
+        tasklet_args[0] = "{}(__in1)".format(str(left_cast).replace('::', '.'))
+    if right_cast is not None:
+        tasklet_args[1] = "{}(__in2)".format(str(right_cast).replace('::', '.'))
+
+    left_shape = left_arr.shape if left_arr else [1]
+    right_shape = right_arr.shape if right_arr else [1]
+
+    (out_shape, all_idx_dict, out_idx, left_idx,
+     right_idx) = _broadcast_together(left_shape, right_shape)
+
+    # Fix for Scalars
+    if isinstance(left_arr, data.Scalar):
+        left_idx = subsets.Range([(0, 0, 1)])
+    if isinstance(right_arr, data.Scalar):
+        right_idx = subsets.Range([(0, 0, 1)])
+
+    if left_arr is None and right_arr is None:
+        raise ValueError('Both x and y cannot be scalars in numpy.where')
+    storage = left_arr.storage if left_arr else right_arr.storage
+
+    out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
+                                                   storage)
+
+    if list(out_shape) == [1]:
+        tasklet = state.add_tasklet(
+            '_where_', {'__incond', '__in1', '__in2'}, {'__out'},
+            '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1],
+                                                        i2=tasklet_args[2]))
+        n0 = state.add_read(cond_operand)
+        n3 = state.add_write(out_operand)
+        state.add_edge(n0, None, tasklet, '__incond',
+                       dace.Memlet.from_array(cond_operand, cond_arr))
+        if left_arr:
+            n1 = state.add_read(left_operand)
+            state.add_edge(n1, None, tasklet, '__in1',
+                           dace.Memlet.from_array(left_operand, left_arr))
+        if right_arr:
+            n2 = state.add_read(right_operand)
+            state.add_edge(n2, None, tasklet, '__in2',
+                           dace.Memlet.from_array(right_operand, right_arr))
+        state.add_edge(tasklet, '__out', n3, None,
+                       dace.Memlet.from_array(out_operand, out_arr))
+    else:
+        inputs = {}
+        inputs['__incond'] = Memlet.simple(cond_operand, left_idx if left_arr else right_idx)
+        if left_arr:
+            inputs['__in1'] = Memlet.simple(left_operand, left_idx)
+        if right_arr:
+            inputs['__in2'] = Memlet.simple(right_operand, right_idx)
+        state.add_mapped_tasklet(
+            "_where_",
+            all_idx_dict, inputs,
+            '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1],
+                                                        i2=tasklet_args[2]),
+            {'__out': Memlet.simple(out_operand, out_idx)},
+            external_edges=True)
+
+    return out_operand
 
 
 ##############################################################################
@@ -1026,8 +1178,11 @@ def _representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
     elif issubclass(nptype, np.bool_):
         return np.bool_(True)
     elif issubclass(nptype, Integral):
+        # NOTE: Returning the max representable integer seems a better choice
+        # than 1, however it was causing issues with some programs. This should
+        # be revisited in the future.
         # return nptype(np.iinfo(nptype).max)
-        return 0
+        return nptype(1)
     else:
         return nptype(np.finfo(nptype).resolution)
 
@@ -1076,12 +1231,15 @@ def _result_type(
         elif isinstance(arg, data.Scalar):
             datatypes.append(arg.dtype)
             dtypes_for_result.append(_representative_num(arg.dtype))
-        elif isinstance(arg, Number):
+        elif isinstance(arg, (Number, np.bool_)):
             datatypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
             dtypes_for_result.append(arg)
         elif symbolic.issymbolic(arg):
             datatypes.append(_sym_type(arg))
             dtypes_for_result.append(_representative_num(_sym_type(arg)))
+        elif isinstance(arg, dtypes.typeclass):
+            datatypes.append(arg)
+            dtypes_for_result.append(_representative_num(arg))
         else:
             raise TypeError("Type {t} of argument {a} is not supported".format(
                 t=type(arg), a=arg))
@@ -1730,11 +1888,11 @@ def _const_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
     left_cast = casting[0]
     right_cast = casting[1]
 
-    if isinstance(left_operand, Number) and left_cast is not None:
+    if isinstance(left_operand, (Number, np.bool_)) and left_cast is not None:
         left = eval(left_cast)(left_operand)
     else:
         left = left_operand
-    if isinstance(right_operand, Number) and right_cast is not None:
+    if isinstance(right_operand, (Number, np.bool_)) and right_cast is not None:
         right = eval(right_cast)(right_operand)
     else:
         right = right_operand
@@ -2098,6 +2256,13 @@ ufuncs = dict(
                    code="__out = py_mod(__in1, __in2)",
                    reduce="lambda a, b: py_mod(a, b)",
                    initial=np.remainder.identity),
+    mod=dict(name="_numpy_mod_",
+             operator="Mod",
+             inputs=["__in1", "__in2"],
+             outputs=["__out"],
+             code="__out = py_mod(__in1, __in2)",
+             reduce="lambda a, b: py_mod(a, b)",
+             initial=np.mod.identity),
     fmod=dict(name="_numpy_fmod_",
               operator="Mod",
               inputs=["__in1", "__in2"],
@@ -2807,7 +2972,7 @@ def _validate_where_kword(
         where = kwargs['where']
         if isinstance(where, str) and where in sdfg.arrays.keys():
             has_where = True
-        elif isinstance(where, bool):
+        elif isinstance(where, (bool, np.bool_)):
             has_where = True
         elif isinstance(where, (list, tuple)):
             raise mem_parser.DaceSyntaxError(
@@ -3078,10 +3243,10 @@ def _create_subgraph(visitor: 'ProgramVisitor',
     if list(output_shape) == [1]:
         # No map needed
         if has_where:
-            if isinstance(where, bool):
-                if where is True:
+            if isinstance(where, (bool, np.bool_)):
+                if where == True:
                     pass
-                elif where is False:
+                elif where == False:
                     return
             elif isinstance(where, str) and where in sdfg.arrays.keys():
                 cond_state = state
@@ -3120,10 +3285,10 @@ def _create_subgraph(visitor: 'ProgramVisitor',
     else:
         # Map needed
         if has_where:
-            if isinstance(where, bool):
-                if where is True:
+            if isinstance(where, (bool, np.bool_)):
+                if where == True:
                     pass
-                elif where is False:
+                elif where == False:
                     return
             elif isinstance(where, str) and where in sdfg.arrays.keys():
                 nested_sdfg = dace.SDFG(state.label + "_where")
@@ -3367,13 +3532,13 @@ def _validate_keepdims_kword(visitor: 'ProgramVisitor', ast_node: ast.Call,
     keepdims = False
     if 'keepdims' in kwargs.keys():
         keepdims = kwargs['keepdims']
-        if not isinstance(keepdims, (Integral, bool)):
+        if not isinstance(keepdims, (Integral, bool, np.bool_)):
             raise mem_parser.DaceSyntaxError(
                 visitor, ast_node,
                 "Integer or boolean value expected for keyword argument "
                 "'keepdims' in reduction operation {f} (got {v}).".format(
                     f=ufunc_name, v=keepdims))
-        if not isinstance(keepdims, bool):
+        if not isinstance(keepdims, (bool, np.bool_)):
             keepdims = bool(keepdims)
 
     return keepdims
@@ -3533,7 +3698,7 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call,
     if isinstance(arg, str):
         datadesc = sdfg.arrays[arg]
         result_type = datadesc.dtype
-    elif isinstance(arg, Number):
+    elif isinstance(arg, (Number, np.bool_)):
         result_type = dtypes.DTYPE_TO_TYPECLASS[type(arg)]
     elif isinstance(arg, sp.Basic):
         result_type = _sym_type(arg)
@@ -3871,7 +4036,7 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor', ast_node: ast.Call,
             input_idx = None
         input_indices.append(input_idx)
 
-    if has_where and not isinstance(where, bool):
+    if has_where and not isinstance(where, (bool, np.bool_)):
         where_shape = sdfg.arrays[where].shape
         try:
             bcast_out_shape, _, _, bcast_inp_indices = _broadcast(
@@ -4101,7 +4266,7 @@ def _ndarray_copy(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
 @oprepo.replaces_method('View', 'fill')
 def _ndarray_fill(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str,
                   value: Number) -> str:
-    if not isinstance(value, Number):
+    if not isinstance(value, (Number, np.bool_)):
         raise mem_parser.DaceSyntaxError(
             pv, None, "Fill value {f} must be a number!".format(f=value))
     return _elementwise(pv, sdfg, state, "lambda x: {}".format(value), arr, arr)
@@ -4201,9 +4366,7 @@ def _ndarray_min(pv: 'ProgramVisitor',
 @oprepo.replaces_method('Array', 'conj')
 @oprepo.replaces_method('Scalar', 'conj')
 @oprepo.replaces_method('View', 'conj')
-def _ndarray_conj(pv: 'ProgramVisitor',
-                  sdfg: SDFG,
-                  state: SDFGState,
+def _ndarray_conj(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
                   arr: str) -> str:
     return implement_ufunc(pv, None, sdfg, state, 'conj', [arr], {})[0]
 
@@ -4231,11 +4394,12 @@ def _ndarray_mean(pv: 'ProgramVisitor',
                   kwargs: Dict[str, Any] = None) -> str:
     nest = NestedCall(pv, sdfg, state)
     kwargs = kwargs or dict(axis=None)
-    sumarr = implement_ufunc_reduce(pv, None, sdfg, nest.add_state(), 'add', [arr],
-                                    kwargs)[0]
+    sumarr = implement_ufunc_reduce(pv, None, sdfg, nest.add_state(), 'add',
+                                    [arr], kwargs)[0]
     desc = sdfg.arrays[arr]
     sz = reduce(lambda x, y: x * y, desc.shape)
-    return nest, _elementwise(pv, sdfg, nest.add_state(), "lambda x: x / {}".format(sz), sumarr)
+    return nest, _elementwise(pv, sdfg, nest.add_state(),
+                              "lambda x: x / {}".format(sz), sumarr)
 
 
 @oprepo.replaces_method('Array', 'prod')
@@ -4276,11 +4440,14 @@ def _ndarray_any(pv: 'ProgramVisitor',
     return implement_ufunc_reduce(pv, None, sdfg, state, 'logical_or', [arr],
                                   kwargs)[0]
 
+
 # Datatype converter #########################################################
 
 
 def _make_datatype_converter(typeclass: str):
-    if typeclass in {"int", "float", "complex"}:
+    if typeclass == "bool":
+        dtype = dace.bool
+    elif typeclass in {"int", "float", "complex"}:
         dtype = dtypes.DTYPE_TO_TYPECLASS[eval(typeclass)]
     else:
         dtype = dtypes.DTYPE_TO_TYPECLASS[eval("np.{}".format(typeclass))]
@@ -4424,3 +4591,104 @@ def dot(pv: 'ProgramVisitor',
                    dace.Memlet.from_array(op_out, arr_out))
 
     return op_out
+
+
+# NumPy linalg replacements ###################################################
+
+
+@oprepo.replaces('dace.linalg.inv')
+@oprepo.replaces('numpy.linalg.inv')
+def _inv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inp_op: str):
+
+    if not isinstance(inp_op, str) or not inp_op in sdfg.arrays.keys():
+        raise SyntaxError()
+
+    inp_arr = sdfg.arrays[inp_op]
+    out_arr = sdfg.add_temp_transient(inp_arr.shape,
+                                      inp_arr.dtype,
+                                      storage=inp_arr.storage)
+
+    from dace.libraries.linalg import Inv
+
+    inp = state.add_read(inp_op)
+    out = state.add_write(out_arr[0])
+    inv_node = Inv("inv", overwrite_a=False, use_getri=True)
+
+    state.add_memlet_path(inp,
+                          inv_node,
+                          dst_conn="_ain",
+                          memlet=Memlet.from_array(inp_op, inp_arr))
+    state.add_memlet_path(inv_node,
+                          out,
+                          src_conn="_aout",
+                          memlet=Memlet.from_array(*out_arr))
+
+    return out_arr[0]
+
+
+@oprepo.replaces('dace.linalg.solve')
+@oprepo.replaces('numpy.linalg.solve')
+def _solve(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op_a: str,
+           op_b: str):
+
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or not op in sdfg.arrays.keys():
+            raise SyntaxError()
+
+    a_arr = sdfg.arrays[op_a]
+    b_arr = sdfg.arrays[op_b]
+    out_arr = sdfg.add_temp_transient(b_arr.shape,
+                                      b_arr.dtype,
+                                      storage=b_arr.storage)
+
+    from dace.libraries.linalg import Solve
+
+    a_inp = state.add_read(op_a)
+    b_inp = state.add_read(op_b)
+    out = state.add_write(out_arr[0])
+    solve_node = Solve("solve")
+
+    state.add_memlet_path(a_inp,
+                          solve_node,
+                          dst_conn="_ain",
+                          memlet=Memlet.from_array(op_a, a_arr))
+    state.add_memlet_path(b_inp,
+                          solve_node,
+                          dst_conn="_bin",
+                          memlet=Memlet.from_array(op_b, b_arr))
+    state.add_memlet_path(solve_node,
+                          out,
+                          src_conn="_bout",
+                          memlet=Memlet.from_array(*out_arr))
+
+    return out_arr[0]
+
+
+@oprepo.replaces('dace.linalg.cholesky')
+@oprepo.replaces('numpy.linalg.cholesky')
+def _inv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inp_op: str):
+
+    if not isinstance(inp_op, str) or not inp_op in sdfg.arrays.keys():
+        raise SyntaxError()
+
+    inp_arr = sdfg.arrays[inp_op]
+    out_arr = sdfg.add_temp_transient(inp_arr.shape,
+                                      inp_arr.dtype,
+                                      storage=inp_arr.storage)
+
+    from dace.libraries.linalg import Cholesky
+
+    inp = state.add_read(inp_op)
+    out = state.add_write(out_arr[0])
+    chlsky_node = Cholesky("cholesky", lower=True)
+
+    state.add_memlet_path(inp,
+                          chlsky_node,
+                          dst_conn="_a",
+                          memlet=Memlet.from_array(inp_op, inp_arr))
+    state.add_memlet_path(chlsky_node,
+                          out,
+                          src_conn="_b",
+                          memlet=Memlet.from_array(*out_arr))
+
+    return out_arr[0]
