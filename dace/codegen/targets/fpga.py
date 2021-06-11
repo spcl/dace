@@ -717,22 +717,7 @@ class FPGACodeGen(TargetCodeGenerator):
                    dst_storage, dst_schedule, edge, dfg, function_stream,
                    callsite_stream):
 
-        #HBMJAN -> true memory copy
         u, v, memlet = edge.src, edge.dst, edge.data
-
-        """
-        # Determine directionality
-        if isinstance(
-                src_node,
-                dace.sdfg.nodes.AccessNode) and memlet.data == src_node.data:
-            outgoing_memlet = True
-        elif isinstance(
-                dst_node,
-                dace.sdfg.nodes.AccessNode) and memlet.data == dst_node.data:
-            outgoing_memlet = False
-        else:
-            raise LookupError("Memlet does not point to any of the nodes")
-        """ #TODO: Remove Dead Code
 
         data_to_data = (isinstance(src_node, dace.sdfg.nodes.AccessNode)
                         and isinstance(dst_node, dace.sdfg.nodes.AccessNode))
