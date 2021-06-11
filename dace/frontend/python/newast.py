@@ -702,7 +702,7 @@ class TaskletTransformer(ExtNodeTransformer):
                  sdfg: SDFG,
                  state: SDFGState,
                  filename: str,
-                 lang=dtypes.Language.Python,
+                 lang=None,
                  location: dict = {},
                  nested: bool = False,
                  scope_arrays: Dict[str, data.Data] = dict(),
@@ -771,6 +771,9 @@ class TaskletTransformer(ExtNodeTransformer):
             name = getattr(tasklet_ast, 'name',
                            'tasklet_%d' % tasklet_ast.lineno)
 
+        if self.lang is None:
+            self.lang = dtypes.Language.Python
+            
         t = self.state.add_tasklet(name,
                                    set(self.inputs.keys()),
                                    set(self.outputs.keys()),
@@ -1074,8 +1077,6 @@ class TaskletTransformer(ExtNodeTransformer):
                 'Cannot provide more than one intrinsic implementation ' +
                 'for tasklet')
         self.extcode = node.s
-        # TODO(later): Syntax for other languages?
-        self.lang = dtypes.Language.CPP
 
         return node
 
@@ -2483,11 +2484,22 @@ class ProgramVisitor(ExtNodeVisitor):
             self.sdfg.add_edge(laststate, end_if_state,
                                dace.InterstateEdge(cond_else))
 
-    def _parse_tasklet(self, state: SDFGState, node: TaskletType, name=None):
+    def _parse_tasklet(self, state: SDFGState, node: TaskletType, name=None): 
+
+        langInf = None
+        if isinstance(node, ast.FunctionDef) and \
+            hasattr(node, 'decorator_list') and \
+            hasattr(node.decorator_list[0], 'args') and \
+            hasattr(node.decorator_list[0].args[0], 'value'):
+
+            langArg = node.decorator_list[0].args[0].value
+            langInf = dtypes.Language[langArg]
+
         ttrans = TaskletTransformer(self.defined,
                                     self.sdfg,
                                     state,
                                     self.filename,
+                                    lang = langInf,
                                     nested=self.nested,
                                     scope_arrays=self.scope_arrays,
                                     scope_vars=self.scope_vars,
