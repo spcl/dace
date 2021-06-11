@@ -15,6 +15,7 @@ from dace.properties import (Property, make_properties, DataProperty,
                              SubsetProperty, SymbolicProperty,
                              DebugInfoProperty, LambdaProperty)
 
+
 @make_properties
 class Memlet(object):
     """ Data movement object. Represents the data, the subset moved, and the
@@ -390,7 +391,8 @@ class Memlet(object):
             :param wcr: The conflict resolution lambda.
             :type datadesc: Data
         """
-        return Memlet.simple(dataname, subsets.Range.from_array(datadesc) , wcr_str=wcr)
+        rng = subsets.Range.from_array(datadesc)
+        return Memlet.simple(dataname, rng, wcr_str=wcr)
 
     def __hash__(self):
         return hash(
