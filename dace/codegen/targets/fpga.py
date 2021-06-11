@@ -185,7 +185,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     type(graph).__name__))
 
         subgraphs = collections.defaultdict(
-            set)  # {kernel_id: {nodes in subgraph}}
+            list)  # {kernel_id: {nodes in subgraph}}
 
         # Go over the nodes and populate the kernels subgraphs
         for node, node_state in graph.all_nodes_recursive():
@@ -195,7 +195,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
             node_repr = utils.unique_node_repr(node_state, node)
             if node_repr in self._node_to_kernel:
-                subgraphs[self._node_to_kernel[node_repr]].add(node)
+                subgraphs[self._node_to_kernel[node_repr]].append(node)
 
             # add this node to the corresponding subgraph
             if isinstance(node, dace.nodes.AccessNode):
@@ -206,7 +206,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 for n in start_nodes:
                     n_repr = utils.unique_node_repr(node_state, n)
                     if n_repr in self._node_to_kernel:
-                        subgraphs[self._node_to_kernel[n_repr]].add(node)
+                        subgraphs[self._node_to_kernel[n_repr]].append(node)
 
         # Now stick each of the found components together in a ScopeSubgraphView and return
         # them. Sort according kernel dependencies order.
@@ -318,12 +318,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 # Vitis HLS removes double underscores, which leads to a compilation
                 # error down the road due to kernel name mismatch. Remove them here
                 # to prevent this
-                while True:
-                    _kernel_name = kernel_name.replace("__", "_")
-                    if kernel_name == _kernel_name:
-                        break
-                    else:
-                        kernel_name = _kernel_name
+                kernel_name = re.sub(r"__+", "_", kernel_name)
 
                 self._kernels_names_to_id[kernel_name] = kern_id
 
@@ -467,7 +462,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         # Build a dictionary of arrays to arbitrary data nodes referring to
         # them, needed to trace memory bank assignments and to pass to the array
         # allocator
-        data_to_node: Dict[str:dace.nodes.Node] = {}
+        data_to_node: Dict[str, dace.nodes.Node] = {}
 
         global_data_parameters = set()
         # Count appearances of each global array to create multiple interfaces
@@ -985,6 +980,10 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     # edge, then we use that kernel ID. In all the other cases, we use a new one.
 
                     # TODO: support more robust detection
+                    # It could be the case that we need to look also at the predecessors:
+                    # if they are associated with a different kernel, and there is a tasklet-to-tasklet,
+                    # maybe we don't want to generate a different kernel.
+
                     for succ_edge in state.out_edges(e.dst):
                         succ_edge_dst_repr = utils.unique_node_repr(
                             state, succ_edge.dst)
