@@ -213,7 +213,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         dtypes.pointer(
                                                             nodedesc.dtype),
                                                         ancestor=0,
-                                                        is_write=is_write)[0]
+                                                        is_write=is_write)
         if declaration_stream == allocation_stream:
             declaration_stream.write(f'{atype} {aname} = {value};', sdfg,
                                      state_id, node)
@@ -1555,7 +1555,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                           sdfg,
                                           in_memlet,
                                           vconn,
-                                          conntype=node.in_connectors[vconn])[0])
+                                          conntype=node.in_connectors[vconn]))
 
         for _, uconn, _, _, out_memlet in sorted(
                 state.out_edges(node), key=lambda e: e.src_conn or ''):
@@ -1566,7 +1566,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         sdfg,
                         out_memlet,
                         uconn,
-                        conntype=node.out_connectors[uconn])[0])
+                        conntype=node.out_connectors[uconn]))
         return memlet_references
 
     def _generate_NestedSDFG(

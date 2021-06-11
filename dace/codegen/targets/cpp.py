@@ -253,31 +253,27 @@ def emit_memlet_reference(dispatcher,
                           conntype: dtypes.typeclass,
                           ancestor: int = 1,
                           is_write=None,
-                          device_code=False) -> "list[Tuple[str, str, str]]":
+                          device_code=False,
+                          bank_info = None) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
     :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
+    :param bank_info: An integer to declare for which bank the memlet is generated in case of multibank arrays
     :return: A tuple of the form (type, name, value).
     """
-    results = []
     desc = sdfg.arrays[memlet.data]
-    isMultiBankMemlet = desc.storage == dtypes.StorageType.FPGA_Global and "hbmbank" in desc.location
-    if(isMultiBankMemlet):
-        iterlow, iterhigh = utils.get_multibank_ranges_from_subset(memlet.subset, sdfg)
-    else:
-        iterlow, iterhigh = 0, 1
-    offset = cpp_offset_expr(desc, memlet.subset)
-
-    defined_type, defined_ctype = dispatcher.defined_vars.get(
-            memlet.data, ancestor)
     typedef = conntype.ctype
+    datadef = ptr(memlet.data, desc, bank_info)
+    offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ref = ''
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
+    defined_type, defined_ctype = dispatcher.defined_vars.get(
+        memlet.data, ancestor)
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface
                 and isinstance(desc, data.View))):
@@ -293,20 +289,8 @@ def emit_memlet_reference(dispatcher,
         else:
             base_ctype = conntype.base_type.ctype
             typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
-            for magicindex in range(iterlow, iterhigh):
-                datadef = ptr(memlet.data, desc, magicindex)
-                if(isMultiBankMemlet):
-                    #In this case datadef may refer to a variable which only
-                    #exists in the generated code, and will never be defined
-                    #hence it's definition mustn't be asked for
-                    datadef = array_interface_variable(datadef, is_write, None, 
-                                                    ancestor)
-                else:
-                    datadef = array_interface_variable(datadef, is_write, dispatcher,
-                                                    ancestor)
-                expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype,
-                                    False, defined_type)
-                results.append((typedef + ref, ptr(pointer_name, desc, magicindex), expr))
+            datadef = array_interface_variable(datadef, is_write, dispatcher,
+                                               ancestor)
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
@@ -356,17 +340,13 @@ def emit_memlet_reference(dispatcher,
         expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype,
                                     is_scalar, defined_type)
 
-    #Sections above may either write custom results, or just initialize the
-    #variables. In the second case this code will set results with default behaviour
-    if(len(results) == 0):
-        results.append((typedef + ref, pointer_name, expr))
-
+    # Register defined variable
     dispatcher.defined_vars.add(pointer_name,
                                 defined_type,
                                 typedef,
                                 allow_shadowing=True)
-    
-    return results
+
+    return (typedef + ref, pointer_name, expr)
 
 
 def reshape_strides(subset, strides, original_strides, copy_shape):

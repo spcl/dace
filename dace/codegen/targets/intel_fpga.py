@@ -852,7 +852,7 @@ __kernel void \\
                         sdfg,
                         in_memlet,
                         vconn,
-                        conntype=node.in_connectors[vconn])[0])
+                        conntype=node.in_connectors[vconn]))
 
         for _, uconn, _, _, out_memlet in state.out_edges(node):
             if out_memlet.data is not None:
@@ -907,7 +907,7 @@ __kernel void \\
                             sdfg,
                             out_memlet,
                             uconn,
-                            conntype=node.out_connectors[uconn])[0])
+                            conntype=node.out_connectors[uconn]))
 
         # Special case for Intel FPGA: this comes out from the unrolling processing elements:
         # if the first scope of the subgraph is an unrolled map, generates a processing element for each iteration
@@ -973,7 +973,7 @@ __kernel void \\
                 name,
                 dtypes.pointer(nodedesc.dtype),
                 ancestor=0,
-                device_code=self._in_device_code)[0]
+                device_code=self._in_device_code)
         else:
             qualifier = ""
             atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
@@ -982,7 +982,7 @@ __kernel void \\
                                                             name,
                                                             dtypes.pointer(
                                                                 nodedesc.dtype),
-                                                            ancestor=0)[0]
+                                                            ancestor=0)
         declaration_stream.write(f'{qualifier}{atype} {aname}  = {value};',
                                  sdfg, state_id, node)
 
