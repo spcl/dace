@@ -152,8 +152,6 @@ def check_hbm2hbm1():
         None, ("hbmbank", "3:5"))
     s, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default,
         None, [2, 3, 3, 3], "y")
-    
-    sdfg.view()
 
     a.fill(1)
     a[2, 1:3, 2] += 2
