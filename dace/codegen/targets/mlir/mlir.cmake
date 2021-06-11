@@ -32,8 +32,5 @@ foreach(DACE_MLIR_SRC_FILE ${DACE_MLIR_SRC_FILES})
     VERBATIM
   )
 
-  #add_custom_target(mlir_target_${DACE_MLIR_NAME} ALL DEPENDS ${DACE_MLIR_NAME}.o)
-  #add_dependencies(${DACE_PROGRAM_NAME} mlir_target_${DACE_MLIR_NAME})
-  #target_link_libraries(${DACE_PROGRAM_NAME} ${DACE_MLIR_WORK_DIR}/${DACE_MLIR_NAME}.o)
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_MLIR_OBJECT_FILE})
 endforeach()
