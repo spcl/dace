@@ -11,7 +11,7 @@ from dace.sdfg.graph import (OrderedMultiDiConnectorGraph, MultiConnectorEdge,
                              SubgraphView)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
-from dace.properties import (Property, DictProperty, SubsetProperty,
+from dace.properties import (EnumProperty, Property, DictProperty, SubsetProperty,
                              SymbolicProperty, CodeBlock, make_properties)
 from inspect import getframeinfo, stack
 import itertools
@@ -709,9 +709,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                       default=False,
                       desc="Do not synchronize at the end of the state")
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation
+    )
 
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "
@@ -1049,6 +1051,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         code: str,
         language: dtypes.Language = dtypes.Language.Python,
+        state_fields: Optional[List[str]] = None,
+        code_global: str = "",
+        code_init: str = "",
+        code_exit: str = "",
         location: dict = None,
         debuginfo=None,
     ):
@@ -1067,6 +1073,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             outputs,
             code,
             language,
+            state_fields=state_fields,
+            code_global=code_global,
+            code_init=code_init,
+            code_exit=code_exit,
             location=location,
             debuginfo=debuginfo,
         ) if language != dtypes.Language.SystemVerilog else nd.RTLTasklet(
@@ -1075,6 +1085,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             outputs,
             code,
             language,
+            state_fields=state_fields,
+            code_global=code_global,
+            code_init=code_init,
+            code_exit=code_exit,
             location=location,
             debuginfo=debuginfo,
         )
@@ -1707,7 +1721,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
 
         path = self.memlet_path(edge)
 
-        is_read = isinstance(path[0], nd.AccessNode)
+        is_read = isinstance(path[0].src, nd.AccessNode)
         if is_read:
             # Traverse from connector to access node, so we can check if it's
             # safe to delete edges going out of a scope

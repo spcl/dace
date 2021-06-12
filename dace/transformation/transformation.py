@@ -153,8 +153,8 @@ class Transformation(TransformationBase):
 
         self.sdfg_id = sdfg_id
         self.state_id = state_id
-        expr = self.expressions()[expr_index]
         if not override:
+            expr = self.expressions()[expr_index]
             for value in subgraph.values():
                 if not isinstance(value, int):
                     raise TypeError('All values of '

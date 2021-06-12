@@ -33,7 +33,7 @@ from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import validate_name
-from dace.properties import (ListProperty, make_properties, Property,
+from dace.properties import (EnumProperty, ListProperty, make_properties, Property,
                              CodeProperty, TransformationHistProperty,
                              SDFGReferenceProperty, DictProperty,
                              OrderedDictProperty, CodeBlock)
@@ -240,9 +240,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                            dtypes.typeclass,
                            desc="Global symbols for this SDFG")
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation
+    )
 
     global_code = DictProperty(
         str,
@@ -255,6 +257,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     orig_sdfg = SDFGReferenceProperty(allow_none=True)
     transformation_hist = TransformationHistProperty()
+
+    openmp_sections = Property(dtype=bool,
+                               default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
+                               desc='Whether to generate OpenMP sections in code')
+
 
     def __init__(self,
                  name: str,
@@ -2209,9 +2216,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     node.sdfg.expand_library_nodes()  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
                     impl_name = node.expand(self, state)
-                    print(
-                        "Automatically expanded library node \"{}\" with implementation \"{}\"."
-                        .format(str(node), impl_name))
+                    if Config.get_bool('debugprint'):
+                        print('Automatically expanded library node \"{}\" with '
+                              'implementation \"{}\".'.format(
+                                  str(node), impl_name))
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
                     if recursive:
