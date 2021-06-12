@@ -39,6 +39,8 @@ def copy_expr(
 ):
     datadesc = sdfg.arrays[dataname]
 
+    #Required to ensure that the right bank is generated in case 
+    #of multibanks
     if is_write:
         usedsubset = memlet.dst_subset
     else:

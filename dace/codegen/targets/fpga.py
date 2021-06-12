@@ -457,6 +457,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     if bank is not None:
                         outer_node = trace[0][0][0] or trace[0][0][1]
                         outer_desc = outer_node.desc(trace[0][2])
+                        okhbm, okbank = False, False
                         if banktype == "HBM":
                             okhbm = "hbmbank" in outer_desc.location and outer_desc.location["hbmbank"] == bank
                         if banktype == "DDR":
