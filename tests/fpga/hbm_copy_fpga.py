@@ -114,36 +114,6 @@ def check_dev2dev1():
     sdfg(a=a, c=c)
     assert np.allclose(c, expect)
 
-#TODO: Maybe use this check later for streams
-"""
-def check_hbm_and_streams1():
-    sdfg = dace.SDFG("h2s1")
-    s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
-        StorageType.FPGA_Global, [4, 5], [4, 5], 
-        "a", None, ("hbmbank", "0:4"))
-    
-    s = sdfg.add_state_after(s)
-    sdfg.add_stream("st", dace.int32, 1, [4], StorageType.FPGA_Global)
-    sdfg.add_array("y", [4, 5], dace.int32, StorageType.FPGA_Global)
-    sdfg.arrays["y"].location["hbmbank"] = sbs.Range.from_string("4:8")
-    xAcc = s.add_read("x")
-    yAcc = s.add_write("y")
-    stAcc = s.add_access("st")
-    s.add_edge(xAcc, None, stAcc, None, mem.Memlet("x"))
-    s.add_edge(stAcc, None, yAcc, None, mem.Memlet("st"))
-
-    s, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default,
-        None, [4, 5], "y")
-
-    #sdfg.view()
-    a.fill(1)
-    a[3, 0] = 8
-    expect = np.copy(c)
-    expect.fill(1)
-    expect[3, 0] = 8
-    sdfg(a=a, c=c)
-"""
-
 def check_hbm2hbm1():
     sdfg = dace.SDFG("hbm2hbm1")
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
