@@ -34,8 +34,10 @@ def mkc(sdfg : dace.SDFG, statebefore, src_name, dst_name, src_storage=None, dst
         if(storage in _FPGA_STORAGE_TYPES):
             isTransient = True
         arr = sdfg.add_array(name, shape, dace.int32, storage, transient=isTransient)
-        if loc is not None:
+        if loc is not None and loc[0] == "hbmbank":
             arr[1].location[loc[0]] = sbs.Range.from_string(loc[1])
+        elif loc is not None:
+            arr[1].location[loc[0]] = loc[1]
         return arr
     
     a = mkarray(src_name, src_shape, src_storage, src_loc)
@@ -112,7 +114,7 @@ def check_dev2dev1():
     sdfg(a=a, c=c)
     assert np.allclose(c, expect)
 
-#TODO: Ask if there is some protocol for the direct read/write between array - stream
+#TODO: Maybe use this check later for streams
 """
 def check_hbm_and_streams1():
     sdfg = dace.SDFG("h2s1")
@@ -150,8 +152,12 @@ def check_hbm2hbm1():
     s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global,
         None, [2, 3, 3, 3], "x[2, 1:3, 1:3]->1, 1, 1:3, 1:3",
         None, ("hbmbank", "3:5"))
-    s, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default,
-        None, [2, 3, 3, 3], "y")
+    s, _, _ = mkc(sdfg, s, "y", "z", None, StorageType.FPGA_Global,
+        None, [1, 3, 3, 3], "y[1, 0:3, 0:3, 0:3]", None, ("hbmbank", "5:6"))
+    s, _, _ = mkc(sdfg, s, "z", "w", None, StorageType.FPGA_Global,
+        None, [1, 3, 3, 3], "z", None, ("hbmbank", "6:7"))
+    s, _, c = mkc(sdfg, s, "z", "c", None, StorageType.Default,
+        None, [2, 3, 3, 3], "z")
 
     a.fill(1)
     a[2, 1:3, 2] += 2
@@ -161,7 +167,30 @@ def check_hbm2hbm1():
     sdfg(a=a, c=c)
     assert np.allclose(c, expect)
 
+def check_hbm2ddr1():
+    sdfg = dace.SDFG("hbm2ddr1")
+    s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
+        StorageType.FPGA_Global, [3, 5, 5], [3, 5, 5],
+        "a", None, ("hbmbank", "0:3"))
+    s, _, _ = mkc(sdfg, s, "x", "d1", None, StorageType.FPGA_Global,
+        None, [3, 5, 5], "x[2, 0:5, 0:5]->2, 0:5, 0:5", None, ("bank", 1))
+    s, _, _ = mkc(sdfg, s, "d1", "y", None, StorageType.FPGA_Global,
+        None, [1, 7, 7], "d1[2, 0:5,0:5]->0, 2:7, 2:7", None,
+        ("hbmbank", "3:4"))
+    s, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default,
+        None, [1, 7, 7], "y")
+
+    a.fill(1)
+    a[2, 1:4, 1:4] += 2
+    expect = np.copy(c)
+    expect.fill(1)
+    expect[0, 3:6, 4:6] += 2
+    sdfg(a=a, c=c)
+    assert np.allclose(c, expect)
+
+
 #check_host2copy1()
 #check_dev2host1()
 #check_dev2dev1()
 check_hbm2hbm1()
+check_hbm2ddr1()
