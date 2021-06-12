@@ -38,8 +38,15 @@ def copy_expr(
     packed_types=False,
 ):
     datadesc = sdfg.arrays[dataname]
+
+    if is_write:
+        usedsubset = memlet.dst_subset
+    else:
+        usedsubset = memlet.src_subset
+    usedsubset = usedsubset or memlet.subset
+
     if relative_offset:
-        s = memlet.subset
+        s = usedsubset
         o = offset
     else:
         if offset is None:
@@ -55,7 +62,7 @@ def copy_expr(
         offset_cppstr = "0"
     dt = ""
 
-    expr = ptr(dataname, datadesc, memlet.subset, sdfg)
+    expr = ptr(dataname, datadesc, usedsubset, sdfg)
 
     def_type, _ = dispatcher.defined_vars.get(dataname)
 
