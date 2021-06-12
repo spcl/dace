@@ -158,9 +158,9 @@ def check_hbm2ddr1():
     sdfg(a=a, c=c)
     assert np.allclose(c, expect)
 
-
-#check_host2copy1()
-#check_dev2host1()
-#check_dev2dev1()
-check_hbm2hbm1()
-check_hbm2ddr1()
+if __name__ == "__main__":
+    #check_host2copy1()
+    #check_dev2host1()
+    #check_dev2dev1()
+    #check_hbm2hbm1()
+    #check_hbm2ddr1()
