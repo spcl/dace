@@ -447,6 +447,8 @@ class StateFusion(transformation.Transformation):
         if first_state.is_empty():
             sdutil.change_edge_dest(sdfg, first_state, second_state)
             sdfg.remove_node(first_state)
+            if sdfg.start_state == first_state:
+                sdfg.start_state = sdfg.node_id(second_state)
             return
 
         # Special case 2: second state is empty
@@ -454,6 +456,8 @@ class StateFusion(transformation.Transformation):
             sdutil.change_edge_src(sdfg, second_state, first_state)
             sdutil.change_edge_dest(sdfg, second_state, first_state)
             sdfg.remove_node(second_state)
+            if sdfg.start_state == second_state:
+                sdfg.start_state = sdfg.node_id(first_state)
             return
 
         # Normal case: both states are not empty
@@ -532,3 +536,5 @@ class StateFusion(transformation.Transformation):
         # Redirect edges and remove second state
         sdutil.change_edge_src(sdfg, second_state, first_state)
         sdfg.remove_node(second_state)
+        if sdfg.start_state == second_state:
+            sdfg.start_state = sdfg.node_id(first_state)
