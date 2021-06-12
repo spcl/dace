@@ -1016,8 +1016,8 @@ class SnitchCodeGen(TargetCodeGenerator):
                             
                             my_chunk = f'{str(chunk + 1)} if {str(thd_sym)} < {str(leftOver)} else {str(chunk)}'
 
-                            beg_lt =   str(sp.simplify(thd_sym*strd*(chunk+1)))
-                            beg_else = sp.simplify(thd_sym*strd*chunk + leftOver)
+                            beg_lt =   str(thd_sym*strd*(chunk+1))
+                            beg_else = thd_sym*strd*chunk + leftOver
                             beg_else = str((beg_else if not isinstance(loopSize, dace.symbolic.symbol) else beg_else))
                             my_begin = f'{beg_lt} if {str(thd_sym)} < {str(leftOver)} else {beg_else}'
 
