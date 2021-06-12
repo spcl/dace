@@ -773,7 +773,7 @@ class TaskletTransformer(ExtNodeTransformer):
 
         if self.lang is None:
             self.lang = dtypes.Language.Python
-            
+
         t = self.state.add_tasklet(name,
                                    set(self.inputs.keys()),
                                    set(self.outputs.keys()),
@@ -2484,12 +2484,17 @@ class ProgramVisitor(ExtNodeVisitor):
             self.sdfg.add_edge(laststate, end_if_state,
                                dace.InterstateEdge(cond_else))
 
-    def _parse_tasklet(self, state: SDFGState, node: TaskletType, name=None): 
+    def _parse_tasklet(self, state: SDFGState, node: TaskletType, name=None):
 
+        # Looking for the first argument in a tasklet annotation: @dace.tasklet(STRING HERE)
         langInf = None
         if isinstance(node, ast.FunctionDef) and \
             hasattr(node, 'decorator_list') and \
+            isinstance(node.decorator_list, list) and \
+            len(node.decorator_list) > 0 and \
             hasattr(node.decorator_list[0], 'args') and \
+            isinstance(node.decorator_list[0].args, list) and \
+            len(node.decorator_list[0].args) > 0 and \
             hasattr(node.decorator_list[0].args[0], 'value'):
 
             langArg = node.decorator_list[0].args[0].value
@@ -2499,7 +2504,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                     self.sdfg,
                                     state,
                                     self.filename,
-                                    lang = langInf,
+                                    lang=langInf,
                                     nested=self.nested,
                                     scope_arrays=self.scope_arrays,
                                     scope_vars=self.scope_vars,

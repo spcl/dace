@@ -379,18 +379,42 @@ class Tasklet(CodeNode):
     def infer_connector_types(self, sdfg, state):
         # If a MLIR tasklet, simply read out the types (it's explicit)
         if self.code.language == dtypes.Language.MLIR:
-            from dace.codegen.targets.mlir import MLIRUtils
-            mlir_util = MLIRUtils(self.code.code)
+            from dace.codegen.targets.mlir import utils
 
-            mlir_result_type = mlir_util.get_entry_result_type()
-            mlir_out_name = next( iter(self.out_connectors.keys()) )[0]
-            self.out_connectors[mlir_out_name] = mlir_util.get_dace_type(mlir_result_type)
+            mlir = utils.get_pymlir()
+            mlir_ast = utils.get_ast(mlir, self.code.code)
+            mlir_is_generic = utils.is_generic(mlir, mlir_ast)
+            mlir_entry_func = utils.get_entry_func(mlir, mlir_ast,
+                                                   mlir_is_generic)
 
-            for mlir_arg in mlir_util.get_entry_args():
-                self.in_connectors[mlir_arg[0]] = mlir_util.get_dace_type(mlir_arg[1])
+            mlir_result_type = utils.get_entry_result_type(
+                mlir_entry_func, mlir_is_generic)
+            mlir_out_name = next(iter(self.out_connectors.keys()))[0]
+
+            if self.out_connectors[mlir_out_name] is None or self.out_connectors[
+                    mlir_out_name].ctype == "void":
+                self.out_connectors[mlir_out_name] = utils.get_dace_type(
+                    mlir, mlir_result_type)
+            elif self.out_connectors[mlir_out_name] != utils.get_dace_type(
+                    mlir, mlir_result_type):
+                warnings.warn(
+                    "Type mismatch between MLIR tasklet out connector and MLIR code"
+                )
+
+            for mlir_arg in utils.get_entry_args(mlir_entry_func,
+                                                 mlir_is_generic):
+                if self.in_connectors[
+                        mlir_arg[0]] is None or self.in_connectors[
+                            mlir_arg[0]].ctype == "void":
+                    self.in_connectors[mlir_arg[0]] = utils.get_dace_type(
+                        mlir, mlir_arg[1])
+                elif self.in_connectors[mlir_arg[0]] != utils.get_dace_type(
+                        mlir, mlir_arg[1]):
+                    warnings.warn(
+                        "Type mismatch between MLIR tasklet in connector and MLIR code"
+                    )
 
             return
-
 
         # If a Python tasklet, use type inference to figure out all None output
         # connectors

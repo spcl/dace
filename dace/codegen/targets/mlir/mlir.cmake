@@ -1,3 +1,4 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 set(DACE_MLIR_SRC_DIR ${CMAKE_CURRENT_BINARY_DIR}/../src/mlir)
 set(DACE_MLIR_WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/gen/mlir)
 
