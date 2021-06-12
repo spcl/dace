@@ -184,7 +184,8 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
-    ScheduleType.SVE_Map: StorageType.CPU_Heap
+    ScheduleType.SVE_Map: StorageType.CPU_Heap,
+    ScheduleType.Snitch: StorageType.Snitch_TCDM
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
