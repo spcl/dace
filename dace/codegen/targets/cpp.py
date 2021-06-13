@@ -840,7 +840,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
                 .format(node.language))
 
         if node.language == dtypes.Language.MLIR:
-            # Inline import because MLIRUtils depends on pyMLIR which may not be installed
+            # Inline import because mlir.utils depends on pyMLIR which may not be installed
             # Doesn't cause crashes due to missing pyMLIR if a MLIR tasklet is not present
             from dace.codegen.targets.mlir import utils
 
@@ -848,11 +848,9 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
                 sdfg.sdfg_id) + "_" + str(state_id) + "_" + str(
                     dfg.node_id(node))
 
-            mlir = utils.get_pymlir()
-            mlir_ast = utils.get_ast(mlir, node.code.code)
-            mlir_is_generic = utils.is_generic(mlir, mlir_ast)
-            mlir_entry_func = utils.get_entry_func(mlir, mlir_ast,
-                                                   mlir_is_generic,
+            mlir_ast = utils.get_ast(node.code.code)
+            mlir_is_generic = utils.is_generic(mlir_ast)
+            mlir_entry_func = utils.get_entry_func(mlir_ast, mlir_is_generic,
                                                    mlir_func_uid)
 
             # Arguments of the MLIR must match the input connector names of the tasklet (the "%" excluded)
