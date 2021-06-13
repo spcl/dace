@@ -849,7 +849,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     callsite_stream.write(
                         "{}.CopyBlockFromHost({}, {}, {}, {}, {}, {});".format(
                             cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg),
-                            cpp.to_cpp_array(src_copy_offset, "size_t"),
+                            cpp.to_cpp_array(src_copy_offset, "size_t", True),
                             cpp.to_cpp_array(dst_copy_offset, "size_t"),
                             cpp.to_cpp_array(copy_shape_cpp, "size_t"),
                             cpp.to_cpp_array(src_blocksize, "size_t"),
@@ -877,7 +877,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     callsite_stream.write(
                         "{}.CopyBlockToHost({}, {}, {}, {}, {}, {});".format(
                             cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg),
-                            cpp.to_cpp_array(dst_copy_offset, "size_t"),
+                            cpp.to_cpp_array(dst_copy_offset, "size_t", True),
                             cpp.to_cpp_array(src_copy_offset, "size_t"),
                             cpp.to_cpp_array(copy_shape_cpp, "size_t"),
                             cpp.to_cpp_array(dst_blocksize, "size_t"),
@@ -901,7 +901,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     callsite_stream.write(
                         "{}.CopyBlockToDevice({}, {}, {}, {}, {}, {});".format(
                             ptr_str_src,
-                            cpp.to_cpp_array(src_copy_offset, "size_t"),
+                            cpp.to_cpp_array(src_copy_offset, "size_t", True),
                             cpp.to_cpp_array(dst_copy_offset, "size_t"),
                             cpp.to_cpp_array(copy_shape_cpp, "size_t"),
                             cpp.to_cpp_array(src_blocksize, "size_t"),
