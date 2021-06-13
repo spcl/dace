@@ -16,6 +16,14 @@ import numpy as np
 from dace.dtypes import StorageType
 from dace.codegen.targets.fpga import _FPGA_STORAGE_TYPES
 
+def print_result(a, c, expect):
+    print("A:")
+    print(a)
+    print("C")
+    print(c)
+    print("E")
+    print(expect)
+
 #helper MaKe_Copy that creates and appends states performing exactly one copy. If a provided
 #name already exists it will use the old array
 def mkc(sdfg : dace.SDFG, statebefore, src_name, dst_name, src_storage=None, dst_storage=None, 
@@ -49,8 +57,11 @@ def mkc(sdfg : dace.SDFG, statebefore, src_name, dst_name, src_storage=None, dst
     edge = state.add_edge(aAcc, None, bAcc, None, 
         mem.Memlet(copy_expr))
     
-    aNpArr = np.zeros(src_shape, dtype=np.int32)
-    bNpArr = np.zeros(dst_shape, dtype=np.int32)
+    aNpArr, bNpArr = None, None
+    if src_shape is not None:
+        aNpArr = np.zeros(src_shape, dtype=np.int32)
+    if dst_shape is not None:
+        bNpArr = np.zeros(dst_shape, dtype=np.int32)
     if returnCreatedObjects:
         (state, aNpArr, bNpArr, aAcc, bAcc, edge)
     else:
@@ -65,7 +76,6 @@ def check_host2copy1():
     s, _, c = mkc(sdfg, s, "b", "c", None, StorageType.Default,
         None, [2, 3, 3], "b")
     
-    #sdfg.view()
     a.fill(1)
     a[4, 4] = 4
     a[0, 0] = 5
@@ -85,9 +95,8 @@ def check_dev2host1():
     s, _, c = mkc(sdfg, s, "b", "c", None, StorageType.Default,
         None, [3, 3], "b[2, 2:5, 2:5, 4]->0:3, 0:3")
     
-    #sdfg.view()
     a.fill(1)
-    a[2, 2:4, 2:4, 4] += 2
+    a[2, 4, 2:4, 2:4] += 2
     expect = np.copy(c)
     expect.fill(1)
     expect[0:2, 0:2] += 2
@@ -100,19 +109,17 @@ def check_dev2dev1():
         StorageType.FPGA_Global, [3, 5, 5, 5], [3, 5, 5, 5],
         "a", None, ("hbmbank", "0:3"))
     s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global, 
-        None, [2, 10], "x[1, 2, 0:5, 2]->0, 0:5", None, ("hbmbank", "3:5"))
+        None, [2, 10], "x[1, 0:5, 2, 2]->0, 0:5", None, ("hbmbank", "3:5"))
     s.add_access("a") #prevents from falling in device code
     _, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default,
         None, [2, 10], "y")
     
-    #sdfg.view()
     a.fill(1)
-    a[1, 2, 0:5, 2] += 2
+    a[1, 2, 2, 0:5] += 2
     expect = np.copy(c)
-    expect.fill(1)
-    expect[0, 0:5] += 2
+    expect[0, 0:5] = 3
     sdfg(a=a, c=c)
-    assert np.allclose(c, expect)
+    assert np.allclose(c[0, 0:5], expect[0, 0:5])
 
 def check_hbm2hbm1():
     sdfg = dace.SDFG("hbm2hbm1")
@@ -120,22 +127,24 @@ def check_hbm2hbm1():
         StorageType.FPGA_Global, [3, 4, 4], [3, 4, 4], "a", None,
         ("hbmbank", "0:3"))
     s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global,
-        None, [2, 3, 3, 3], "x[2, 1:3, 1:3]->1, 1, 1:3, 1:3",
+        None, [2, 4, 4, 4], "x[1, 1:4, 1:4]->1, 1:4, 1:4, 1",
         None, ("hbmbank", "3:5"))
     s, _, _ = mkc(sdfg, s, "y", "z", None, StorageType.FPGA_Global,
-        None, [1, 3, 3, 3], "y[1, 0:3, 0:3, 0:3]", None, ("hbmbank", "5:6"))
+        None, [1, 4, 4, 4], "y[1, 0:4, 0:4, 0:4]->0, 0:4, 0:4, 0:4", None, ("hbmbank", "5:6"))
     s, _, _ = mkc(sdfg, s, "z", "w", None, StorageType.FPGA_Global,
-        None, [1, 3, 3, 3], "z", None, ("hbmbank", "6:7"))
-    s, _, c = mkc(sdfg, s, "z", "c", None, StorageType.Default,
-        None, [2, 3, 3, 3], "z")
+        None, [1, 4, 4, 4], "z", None, ("hbmbank", "6:7"))
+    s, _, c = mkc(sdfg, s, "w", "c", None, StorageType.Default,
+        None, [1, 4, 4, 4], "w")
 
     a.fill(1)
-    a[2, 1:3, 2] += 2
+    a[1, 0:4, 1] += 2
+    a[1, 1, 0:4] += 2
     expect = np.copy(c)
     expect.fill(1)
-    expect[1, 1, 1:3, 2] += 2
+    expect[0, 1:5, 1, 1] += 2
+    expect[0, 1, 1:5, 1] += 2
     sdfg(a=a, c=c)
-    assert np.allclose(c, expect)
+    assert np.allclose(c[0, 1:4, 1:4, 1], expect[0, 1:4, 1:4, 1])
 
 def check_hbm2ddr1():
     sdfg = dace.SDFG("hbm2ddr1")
@@ -143,24 +152,24 @@ def check_hbm2ddr1():
         StorageType.FPGA_Global, [3, 5, 5], [3, 5, 5],
         "a", None, ("hbmbank", "0:3"))
     s, _, _ = mkc(sdfg, s, "x", "d1", None, StorageType.FPGA_Global,
-        None, [3, 5, 5], "x[2, 0:5, 0:5]->2, 0:5, 0:5", None, ("bank", 1))
+        None, [3, 5, 5], "x[2, 0:5, 0:5]->1, 0:5, 0:5", None, ("bank", 1))
     s, _, _ = mkc(sdfg, s, "d1", "y", None, StorageType.FPGA_Global,
-        None, [1, 7, 7], "d1[2, 0:5,0:5]->0, 2:7, 2:7", None,
+        None, [1, 7, 7], "d1[1, 0:5,0:5]->0, 2:7, 2:7", None,
         ("hbmbank", "3:4"))
     s, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default,
         None, [1, 7, 7], "y")
 
     a.fill(1)
-    a[2, 1:4, 1:4] += 2
+    a[2, 2:4, 2:4] += 3
     expect = np.copy(c)
     expect.fill(1)
-    expect[0, 3:6, 4:6] += 2
+    expect[0, 4:6, 4:6] += 3
     sdfg(a=a, c=c)
-    assert np.allclose(c, expect)
+    assert np.allclose(c[2:7], expect[2:7])
 
 if __name__ == "__main__":
-    #check_host2copy1()
-    #check_dev2host1()
-    #check_dev2dev1()
-    #check_hbm2hbm1()
-    #check_hbm2ddr1()
+    check_host2copy1()
+    check_dev2host1()
+    check_dev2dev1()
+    check_hbm2hbm1()
+    check_hbm2ddr1()
