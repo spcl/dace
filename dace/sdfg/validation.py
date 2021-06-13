@@ -5,7 +5,7 @@ from dace.dtypes import StorageType
 import os
 from typing import Dict, Tuple, Union
 import warnings
-
+from dace import subsets
 from dace import dtypes
 from dace import symbolic
 
@@ -54,6 +54,32 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                     "Array %s cannot be both persistent and use Register as "
                     "storage type. Please use a different storage location." %
                     name, sdfg, None)
+
+            #Check for valid bank assignments
+            from dace.sdfg import utils #avoid import loop
+            if("bank" in desc.location):
+                if not isinstance(desc.location["bank"], int):
+                    raise InvalidSDFGError(
+                        "bank assignment must be an integer",
+                        sdfg, None
+                    )
+            elif utils.is_HBM_array(desc):
+                if not isinstance(desc.location["hbmbank"], subsets.Range):
+                    raise InvalidSDFGError("locationproperty 'hbmbank' must be of type subsets.Range"
+                        f" for array {name}", sdfg, None)
+                try:
+                    low, high = utils.get_multibank_ranges_from_subset(desc.location["hbmbank"], sdfg)
+                except:
+                    raise InvalidSDFGError("All the indices in locationproperty 'hbmbank' must be"
+                        f" evaluatable to constants and have stride==1 for array {name}",
+                        sdfg, None)
+                if(high - low < 1):
+                    raise InvalidSDFGError("locationproperty 'hbmbank' must at least define one bank to be used",
+                        f" for array {name}", sdfg, None)
+                if(high - low != desc.shape[0] or len(desc.shape) < 2):
+                    raise InvalidSDFGError("arrays with locationproperty 'hbmbank' must have the size of the first"
+                        f" dimension equal the number of banks and have at least 2 dimensions for array {name}",
+                        sdfg, None)
 
         # Check every state separately
         start_state = sdfg.start_state
@@ -279,6 +305,18 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 state_id,
                 nid,
             )
+
+        #Tasklets may only access 1 HBM-bank at a time
+        from dace.sdfg import utils #avoid import loop
+        if isinstance(node, nd.Tasklet):
+            for attached in state.in_edges(node) + state.out_edges(node):
+                if utils.is_HBM_array(sdfg.arrays[attached.data.data]):
+                    low, high, _ = attached.data.subset[0]
+                    if(low != high):
+                        raise InvalidSDFGNodeError("Tasklets may only be connected"
+                            " to HBM-memlets accessing only one bank",
+                            sdfg, state_id, nid)
+
 
         # Connector tests
         ########################################
