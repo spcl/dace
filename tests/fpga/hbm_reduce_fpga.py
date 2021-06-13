@@ -37,7 +37,7 @@ def create_hbm_reduce_sdfg(banks=2):
     state.add_memlet_path(readin2, outer_entry, map_entry, tasklet, memlet=tmpin2_memlet, dst_conn="__in2")
     state.add_memlet_path(tasklet, map_exit, outer_exit, outwrite, memlet=tmpout_memlet, src_conn="__out")
 
-    sdfg.apply_fpga_transformations(validate=False)
+    sdfg.apply_fpga_transformations()
     return sdfg
 
 def createTestSet(N, M, banks):

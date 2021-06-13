@@ -110,7 +110,7 @@ def check_dev2dev1():
         "a", None, ("hbmbank", "0:3"))
     s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global, 
         None, [2, 10], "x[1, 0:5, 2, 2]->0, 0:5", None, ("hbmbank", "3:5"))
-    s.add_access("a") #prevents from falling in device code
+    #TODO: Find out how to run this test from the cpu without making the sdfg invalid
     _, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default,
         None, [2, 10], "y")
     
