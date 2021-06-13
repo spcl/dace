@@ -5,6 +5,8 @@ import collections
 import copy
 import os
 import networkx as nx
+from numpy import isin
+from sympy.tensor.array import Array
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
@@ -1023,38 +1025,16 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
 
     return result
 
-def parse_HBM_array(arrayname : str, array : dt.Array) -> "dict[str, Any]":
-    """
-    Parses HBM properties of an array. 
-    Returns none if hbmbank is not present as property in location.
-
-    :return: A mapping from (arrayname, sdfg of the array) to a mapping
-    from string that contains collected information.
-    'ndim': contains the dimension of the array == len(shape)
-    'lowbank': The lowest bank index this array is placed on
-    'shape': The shape of the whole array
-    'numbank': The number of banks across which this array spans
-    """
-    if("hbmbank" not in array.location):
-        return None
-    hbmbankrange : sbs.Range = array.location["hbmbank"]
-    if(not isinstance(hbmbankrange, sbs.Range)):
-        raise TypeError(f"Locationproperty 'hbmbank' must be of type subsets.Range for {arrayname}")
-    low, high, stride = hbmbankrange[0]
-    if(stride != 1):
-        raise NotImplementedError(f"Locationproperty 'hbmbank' does not support stride != 1 for {arrayname}")
-    numbank = high - low + 1
-    shape = array.shape
-    ndim = len(shape)
-    if(low == high):
-        return {"ndim" : ndim, "shape" : array.shape,
-            "lowbank" : low, "numbank": 1}
-    if(shape[0] != numbank):
-        raise ValueError("The size of the first dimension for an array divided "
-            "accross k HBM-Banks must equal k. This does not hold for "
-            f"{arrayname}")
-    return {"ndim" : ndim, "shape" : array.shape, "lowbank" : low,
-            "numbank": numbank}
+def is_HBM_array(array : dt.Data, onlyTrueIfMultibank : bool = False, sdfg : SDFG = None):
+    if (isinstance(array, dt.Array) and 
+        array.storage == dtypes.StorageType.FPGA_Global
+        and "hbmbank" in array.location):
+            if onlyTrueIfMultibank:
+                low, high = get_multibank_ranges_from_subset(array.shape, sdfg)
+                return high - low > 1
+            else:
+                return True
+    return False
 
 def iterate_multibank_arrays(arrayname : str, array : dt.Array):
     """
@@ -1062,7 +1042,7 @@ def iterate_multibank_arrays(arrayname : str, array : dt.Array):
     if the provided array is spanned across multiple hbmbanks.
     Otherwise just returns 0 once.
     """
-    if(array.storage == dtypes.StorageType.FPGA_Global and "hbmbank" in array.location):
+    if is_HBM_array(array):
         low, high, _ = array.location["hbmbank"][0]
         for i in range(high+1-low):
             yield i
@@ -1077,7 +1057,7 @@ def modify_subset_magic(array : dt.Data, subset : Union[sbs.Subset, list, tuple]
     """
     if(not isinstance(array, dt.Array)):
         return subset
-    if(array.storage == dtypes.StorageType.FPGA_Global and "hbmbank" in array.location):
+    if is_HBM_array(array):
         cps = copy.deepcopy(subset)
         if isinstance(subset, sbs.Subset):
             if remove:
