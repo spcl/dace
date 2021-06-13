@@ -637,7 +637,8 @@ class FPGACodeGen(TargetCodeGenerator):
                         elif "hbmbank" in nodedesc.location:
                             hbmbank = nodedesc.location["hbmbank"]
                             memory_bank_arg_type = f"hlslib::ocl::StorageType::HBM"
-                            banklow, bankhigh = utils.get_multibank_ranges_from_subset(hbmbank, sdfg)
+                            banklow, bankhigh = utils.get_multibank_ranges_from_subset(hbmbank, sdfg,
+                                False, f"array {dataname}")
                             memory_bank_arg_count = bankhigh - banklow
                             arrsize = dace.symbolic.pystr_to_symbolic(
                                 f"({str(arrsize)}) / {str(hbmbank[0][1] - hbmbank[0][0] + 1)}")
@@ -1210,9 +1211,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 if mem.dst_subset is None:
                     mem.dst_subset = subsets.Range.from_array(dst_array)
                 if src_is_hbm is not None:
-                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(mem.src_subset, sdfg)
+                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(mem.src_subset, sdfg,
+                        False, f"{src_node.data} with edge {str(edge)}")
                 if dst_is_hbm is not None:
-                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(mem.dst_subset, sdfg)
+                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(mem.dst_subset, sdfg,
+                        False, f"{dst_node.data} with edge {str(edge)}")
                 num_accessed_banks = bankend - bankbeg
                 oldmem = deepcopy(mem)
                 for i in range(num_accessed_banks):

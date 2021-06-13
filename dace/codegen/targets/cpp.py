@@ -250,7 +250,8 @@ def ptr(name: str, desc: data.Data, subset_info : "Union[subsets.Subset, int]" =
         elif(isinstance(subset_info, subsets.Subset)):
             if(sdfg == None):
                 raise ValueError("Cannot generate name for hbmbank using subset if sdfg not provided")
-            low, _ = utils.get_multibank_ranges_from_subset(subset_info, sdfg, True)
+            low, _ = utils.get_multibank_ranges_from_subset(subset_info, sdfg, True, 
+                f"{name} with subset {str(subset_info)}")
             return f"hbm{low}_{name}"
     return name
 

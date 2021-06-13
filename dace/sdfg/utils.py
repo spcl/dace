@@ -14,6 +14,7 @@ from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from string import ascii_uppercase
 from typing import Callable, Dict, List, Optional, Set, Tuple, Union, Any
+import dace.codegen.exceptions
 
 
 def node_path_graph(*args):
@@ -1030,12 +1031,13 @@ def is_HBM_array(array : dt.Data, onlyTrueIfMultibank : bool = False, sdfg : SDF
         array.storage == dtypes.StorageType.FPGA_Global
         and "hbmbank" in array.location):
             if onlyTrueIfMultibank:
-                low, high = get_multibank_ranges_from_subset(array.shape, sdfg)
+                low, high = get_multibank_ranges_from_subset(array.location, sdfg)
                 return high - low > 1
             else:
                 return True
     return False
 
+#TODO: Parse those values clean
 def iterate_multibank_arrays(arrayname : str, array : dt.Array):
     """
     Small helper function that iterates over the bank indices
@@ -1080,16 +1082,26 @@ def modify_subset_magic(array : dt.Data, subset : Union[sbs.Subset, list, tuple]
     return cps
 
 def get_multibank_ranges_from_subset(subset : sbs.Subset, sdfg : SDFG, 
-                                    assumeSingle : bool = False) -> Tuple[int, int]:
+                                    assumeSingle : bool = False, 
+                                    codegenlocation : str = None) -> Tuple[int, int]:
     low, high, stride = subset[0]
-    if(stride != 1):
-        raise ValueError(f"Cannot handle strided HBM-subset")
     try:
-        low = int(symbolic.resolve_symbol_to_constant(low, sdfg))
-        high = int(symbolic.resolve_symbol_to_constant(high, sdfg))
-    except:
-        raise ValueError("Only constant evaluatable indices allowed for HBM-memlets on the bank index")
-    if(assumeSingle and low != high):
-        raise ValueError("Found HBM-Memlet accessing multiple banks in a place"
-                         " where only one bank may be accessed")
+        if(stride != 1):
+            raise ValueError(f"Cannot handle strided HBM-subset")
+        try:
+            low = int(symbolic.resolve_symbol_to_constant(low, sdfg))
+            high = int(symbolic.resolve_symbol_to_constant(high, sdfg))
+        except:
+            raise ValueError(f"Only constant evaluatable indices allowed for HBM-memlets on the bank index ")
+        if(assumeSingle and low != high):
+            raise ValueError("Found HBM-Memlet accessing multiple banks in a place"
+                            " where only one bank may be accessed")
+    except ValueError as e:
+        errormsg = str(e)
+        if(codegenlocation is None):
+            raise ValueError(errormsg)
+        else:
+            raise dace.codegen.exceptions.CodegenError(
+                f"{errormsg} at {codegenlocation}"
+            )
     return (low, high+1) 
