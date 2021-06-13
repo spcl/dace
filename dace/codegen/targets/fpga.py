@@ -1202,7 +1202,7 @@ class FPGACodeGen(TargetCodeGenerator):
             dst_array = dst_node.desc(sdfg)
             src_is_hbm = utils.is_HBM_array(src_array)
             dst_is_hbm = utils.is_HBM_array(dst_array)
-            if src_is_hbm is not None or dst_is_hbm is not None:
+            if src_is_hbm or dst_is_hbm:
                 do_default_copy = False
                 modedge = deepcopy(edge)
                 mem : memlet.Memlet = modedge.data
@@ -1210,21 +1210,19 @@ class FPGACodeGen(TargetCodeGenerator):
                     mem.src_subset = subsets.Range.from_array(src_array)
                 if mem.dst_subset is None:
                     mem.dst_subset = subsets.Range.from_array(dst_array)
-                if src_is_hbm is not None:
-                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(mem.src_subset, sdfg,
-                        False, f"{src_node.data} with edge {str(edge)}")
-                if dst_is_hbm is not None:
-                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(mem.dst_subset, sdfg,
-                        False, f"{dst_node.data} with edge {str(edge)}")
+                if src_is_hbm:
+                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(mem.src_subset, sdfg)
+                if dst_is_hbm:
+                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(mem.dst_subset, sdfg)
                 num_accessed_banks = bankend - bankbeg
                 oldmem = deepcopy(mem)
                 for i in range(num_accessed_banks):
                     src_index = oldmem.src_subset[0][0] + i
                     dst_index = oldmem.dst_subset[0][0] + i
                     #Support for ignoring the magic index if it's not required e.g on host
-                    if src_is_hbm is not None or num_accessed_banks > 1:
+                    if src_is_hbm or num_accessed_banks > 1:
                         mem.src_subset[0] = (src_index, src_index, 1)
-                    if dst_is_hbm is not None or num_accessed_banks > 1:
+                    if dst_is_hbm or num_accessed_banks > 1:
                         mem.dst_subset[0] = (dst_index, dst_index, 1)
                     self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
                                     dst_storage, dst_schedule, modedge, state_dfg,
