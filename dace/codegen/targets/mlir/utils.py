@@ -11,6 +11,7 @@ except (ModuleNotFoundError, NameError, ImportError):
         'To use MLIR tasklets, please install the "pymlir" package.')
 
 import dace
+from typing import Union
 
 # Only these types and the vector version of them are supported
 TYPE_DICT = {
@@ -28,11 +29,12 @@ def get_ast(code: str):
     return mlir.parse_string(code)
 
 
-def is_generic(ast: mlir.astnodes.Module or mlir.astnodes.GenericModule):
+def is_generic(ast: Union[mlir.astnodes.Module, mlir.astnodes.GenericModule]):
     return isinstance(ast, mlir.astnodes.GenericModule)
 
 
-def get_entry_func(ast: mlir.astnodes.Module or mlir.astnodes.GenericModule,
+def get_entry_func(ast: Union[mlir.astnodes.Module,
+                              mlir.astnodes.GenericModule],
                    is_generic: bool,
                    func_uid: str = None):
     # mlir_entry is a reserved keyword for the entry function. In order to allow for multiple MLIR tasklets we append a UID
@@ -58,8 +60,8 @@ def get_entry_func(ast: mlir.astnodes.Module or mlir.astnodes.GenericModule,
     return entry_func
 
 
-def get_func_name(func: mlir.astnodes.Function or mlir.astnodes.GenericModule,
-                  is_generic: bool):
+def get_func_name(func: Union[mlir.astnodes.Function,
+                              mlir.astnodes.GenericModule], is_generic: bool):
     if is_generic:
         # In generic ast the name can be found in ast->body->func[]->attributes->values[0]->value
         # The consecutive .values ensure to read the name as a string
@@ -68,8 +70,9 @@ def get_func_name(func: mlir.astnodes.Function or mlir.astnodes.GenericModule,
     return func.name.value
 
 
-def get_entry_args(entry_func: mlir.astnodes.Function
-                   or mlir.astnodes.GenericModule, is_generic: bool):
+def get_entry_args(entry_func: Union[mlir.astnodes.Function,
+                                     mlir.astnodes.GenericModule],
+                   is_generic: bool):
     ret = []
 
     if is_generic:
@@ -90,8 +93,9 @@ def get_entry_args(entry_func: mlir.astnodes.Function
     return ret
 
 
-def get_entry_result_type(entry_func: mlir.astnodes.Function
-                          or mlir.astnodes.GenericModule, is_generic: bool):
+def get_entry_result_type(entry_func: Union[mlir.astnodes.Function,
+                                            mlir.astnodes.GenericModule],
+                          is_generic: bool):
     if is_generic:
         generic_result_list = entry_func.attributes.values[
             1].value.value.result_types
@@ -111,8 +115,9 @@ def get_entry_result_type(entry_func: mlir.astnodes.Function
     return dialect_result
 
 
-def get_dace_type(node: mlir.astnodes.IntegerType or mlir.astnodes.FloatType
-                  or mlir.astnodes.VectorType):
+def get_dace_type(node: Union[mlir.astnodes.IntegerType,
+                              mlir.astnodes.FloatType,
+                              mlir.astnodes.VectorType]):
     if isinstance(node, mlir.astnodes.IntegerType):
         result_width = node.width.value
         return TYPE_DICT["i" + result_width]
