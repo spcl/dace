@@ -410,7 +410,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         # Get and update global memory interface ID
                         if("hbmbank" in desc.location):
                             if_ids = []
-                            for bank in utils.iterate_multibank_arrays(dataname, desc, ):
+                            for bank in utils.iterate_multibank_arrays(dataname, desc, sdfg):
                                 ptr_str = cpp.ptr(dataname, desc, bank)
                                 if_id = global_interfaces[ptr_str]
                                 global_interfaces[ptr_str] += 1
@@ -1652,7 +1652,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # Streams and Views are not passed as arguments
             if not isinstance(arg, dt.Stream) and not isinstance(arg, dt.View):
                 if(isinstance(arg, dt.Array)):
-                    for bank in utils.iterate_multibank_arrays(argname, arg):
+                    for bank in utils.iterate_multibank_arrays(argname, arg, sdfg):
                         currentname = cpp.ptr(argname, arg, bank)
                         kernel_args_call_host.append(arg.as_arg(False, name=currentname))
                         kernel_args_opencl.append(

@@ -1027,6 +1027,11 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
     return result
 
 def is_HBM_array(array : dt.Data, onlyTrueIfMultibank : bool = False, sdfg : SDFG = None):
+    """
+    :return: True if this array is placed on HBM
+    :param onlyTrueIfMultibank: Return only True if this array is placed on more then
+        one HBM-bank. If True then :param sdfg: must be set.
+    """
     if (isinstance(array, dt.Array) and 
         array.storage == dtypes.StorageType.FPGA_Global
         and "hbmbank" in array.location):
@@ -1037,19 +1042,19 @@ def is_HBM_array(array : dt.Data, onlyTrueIfMultibank : bool = False, sdfg : SDF
                 return True
     return False
 
-#TODO: Parse those values clean
-def iterate_multibank_arrays(arrayname : str, array : dt.Array):
+def iterate_multibank_arrays(arrayname : str, array : dt.Array, sdfg : SDFG):
     """
     Small helper function that iterates over the bank indices
     if the provided array is spanned across multiple hbmbanks.
     Otherwise just returns 0 once.
     """
     if is_HBM_array(array):
-        low, high, _ = array.location["hbmbank"][0]
-        for i in range(high+1-low):
+        #it's ok not to pass any codegen error info here, since locationproperty validated
+        low, high = get_multibank_ranges_from_subset(array.location["hbmbank"], sdfg)
+        for i in range(high-low):
             yield i
     else:
-        yield 0 
+        yield 0
 
 def modify_subset_magic(array : dt.Data, subset : Union[sbs.Subset, list, tuple], remove : bool):
     """
@@ -1084,6 +1089,16 @@ def modify_subset_magic(array : dt.Data, subset : Union[sbs.Subset, list, tuple]
 def get_multibank_ranges_from_subset(subset : sbs.Subset, sdfg : SDFG, 
                                     assumeSingle : bool = False, 
                                     codegenlocation : str = None) -> Tuple[int, int]:
+    """
+    Returns the upper and lower end of the accessed HBM-range, evaluated using the
+    constants on the SDFG.
+    :param assumeSingle: Throw error if more then a single bank is accessed
+    :param codegenlocation: An optional string describing where in the SDFG 
+        codegen the evaluation takes place. If set, this function will throw 
+        codegenerrors instead of ValueErrors.
+    :returns: (low, high) where low = the lowest accessed bank and high the 
+        highest accessed bank + 1.
+    """
     low, high, stride = subset[0]
     try:
         if(stride != 1):
