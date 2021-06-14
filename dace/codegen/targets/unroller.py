@@ -36,6 +36,36 @@ class UnrollCodeGen(TargetCodeGenerator):
     def get_generated_codeobjects(self):
         return []
 
+    #Generate new names for nsdfgs, and adds defined variables to constants
+    def nsdfg_prepare_unroll(self, scope : ScopeSubgraphView, paramname : str, paramval : str):
+        backup = []
+        for node in scope.nodes():
+            if (isinstance(node, nd.NestedSDFG)):
+                backup.append((node, node.unique_name,
+                                node.sdfg.name,
+                                node.symbol_mapping,
+                                node.sdfg.constants_prop))
+                node.unique_name = copy.deepcopy(node.unique_name)
+                node.sdfg.name = copy.deepcopy(node.sdfg.name)
+                node.symbol_mapping = copy.deepcopy(node.symbol_mapping)
+                node.sdfg.constants_prop = copy.deepcopy(node.sdfg.constants_prop)
+                node.unique_name = f"{node.unique_name}_{paramname}{paramval}"
+                node.sdfg.name = f"{node.sdfg.name}_{paramname}{paramval}"
+                for nstate in node.sdfg.nodes():
+                    backup.extend(
+                        self.nsdfg_prepare_unroll(nstate, paramname, paramval))
+                if paramname in node.symbol_mapping:
+                    node.symbol_mapping.pop(paramname)
+                node.sdfg.add_constant(paramname, int(paramval))
+        return backup
+
+    def nsdfg_after_unroll(self, backup : "list[tuple[str, str, dict, dict]]"):
+        for node, unique_name, name, symbols, constants in backup:
+            node.unique_name = unique_name
+            node.sdfg.name = name
+            node.symbol_mapping = symbols
+            node.sdfg.constants_prop = constants
+
     #TODO: Expand the unroller so it can also generate openCL code
     def generate_scope(self, sdfg: dace.SDFG, scope: ScopeSubgraphView,
                        state_id: int, function_stream: CodeIOStream,
@@ -43,36 +73,6 @@ class UnrollCodeGen(TargetCodeGenerator):
 
         entry_node = scope.source_nodes()[0]
         index_list = []
-
-        #Generate new names for nsdfgs, and adds defined variables to constants
-        def nsdfg_prepare_unroll(scope, paramname, paramval):
-            backup = []
-            for node in scope.nodes():
-                if (isinstance(node, nd.NestedSDFG)):
-                    backup.append((node, node.unique_name,
-                                   node.sdfg.name,
-                                   node.symbol_mapping,
-                                   node.sdfg.constants_prop))
-                    node.unique_name = copy.deepcopy(node.unique_name)
-                    node.sdfg.name = copy.deepcopy(node.sdfg.name)
-                    node.symbol_mapping = copy.deepcopy(node.symbol_mapping)
-                    node.sdfg.constants_prop = copy.deepcopy(node.sdfg.constants_prop)
-                    node.unique_name = f"{node.unique_name}_{param}{paramval}"
-                    node.sdfg.name = f"{node.sdfg.name}_{param}{paramval}"
-                    for nstate in node.sdfg.nodes():
-                        backup.extend(
-                            nsdfg_prepare_unroll(nstate, paramname, paramval))
-                    if param in node.symbol_mapping:
-                        node.symbol_mapping.pop(param)
-                    node.sdfg.add_constant(param, int(paramval))
-            return backup
-
-        def nsdfg_after_unroll(backup):
-            for node, unique_name, name, symbols, constants in backup:
-                node.unique_name = unique_name
-                node.sdfg.name = name
-                node.symbol_mapping = symbols
-                node.sdfg.constants_prop = constants
 
         for begin, end, stride in entry_node.map.range:
             l = []
@@ -89,10 +89,10 @@ class UnrollCodeGen(TargetCodeGenerator):
             nsdfg_unroll_info = None
             for param, index in zip(entry_node.map.params, indices):
                 if nsdfg_unroll_info is None:
-                    nsdfg_unroll_info = nsdfg_prepare_unroll(
+                    nsdfg_unroll_info = self.nsdfg_prepare_unroll(
                         scope, str(param), str(index))
                 else:
-                    nsdfg_prepare_unroll(scope, str(param), str(index))
+                    self.nsdfg_prepare_unroll(scope, str(param), str(index))
                 callsite_stream.write(
                     f"constexpr long long {param} = {dace.codegen.targets.common.sym2cpp(index)};\n",
                     sdfg)
@@ -110,6 +110,6 @@ class UnrollCodeGen(TargetCodeGenerator):
             )
             callsite_stream.write('}')
             callsite_stream.write('}')
-            nsdfg_after_unroll(nsdfg_unroll_info)
+            self.nsdfg_after_unroll(nsdfg_unroll_info)
 
         sdfg.constants_prop = sdfgconsts
