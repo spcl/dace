@@ -53,7 +53,7 @@ def test_unsupported_type():
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
-                c >> B[i]
+                b >> B[i]
                 b = a
 
     sdfg = program.to_sdfg()
