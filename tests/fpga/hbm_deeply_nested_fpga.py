@@ -41,13 +41,12 @@ def create_deeply_nested_sdfg():
 
 def exec_deeply_nested_test():
     sdfg = create_deeply_nested_sdfg()
-    #sdfg.view()
     a = np.zeros((4, 10), np.float32)
     a[2, 4:9] += 1
     a[3, 3:8] += 2
     a[0, 7] += 3
     c = np.ones((4, 10), np.float32)
-    sdfg(a=a, c=c)
+    sdfg(x=a, y=c)
     assert np.allclose(a, c, 10e-6)
 
 exec_deeply_nested_test()
