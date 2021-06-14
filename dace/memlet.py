@@ -500,11 +500,11 @@ class Memlet(object):
                    sdfg: 'dace.sdfg.SDFG',
                    map: 'dace.sdfg.nodes.Map',
                    dim: int = -1) -> 'dace.symbolic.SymExpr':
-        """ Returns the stride of the underlying memory, when traversing a Map.
+        """ Returns the stride of the underlying memory when traversing a Map.
             
             :param sdfg: The SDFG in which the memlet resides.
             :param map: The map in which the memlet resides.
-            :param dim: The dimension that is incremented. Per default it is the innermost.
+            :param dim: The dimension that is incremented. By default it is the innermost.
         """
         param = symbolic.symbol(map.params[dim])
         array = sdfg.arrays[self.data]
