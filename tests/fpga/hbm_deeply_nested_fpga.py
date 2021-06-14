@@ -1,4 +1,3 @@
-from sympy.abc import Z
 from dace import subsets as sbs, dtypes, memlet as mem
 import dace
 import numpy as np
@@ -49,4 +48,5 @@ def exec_deeply_nested_test():
     sdfg(x=a, y=c)
     assert np.allclose(a, c, 10e-6)
 
-exec_deeply_nested_test()
+if __name__ == "__main__":
+    exec_deeply_nested_test()
