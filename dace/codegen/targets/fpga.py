@@ -303,7 +303,7 @@ class FPGACodeGen(TargetCodeGenerator):
         external_streams: Set[tuple[bool, str, dt, dict[str, int]]] = set()
 
         # Mapping from global arrays to memory interfaces
-        bank_assignments: Dict[str, (str, int)] = {}
+        bank_assignments: Dict[str, (str, Union[int, subsets.Range])] = {}
 
         # Mapping from symbol to a unique parameter tuple
         all_symbols = {

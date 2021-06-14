@@ -29,9 +29,9 @@ def create_dynamic_memlet_sdfg():
 
 def exec_dynamic_memlet_test():
     sdfg = create_dynamic_memlet_sdfg()
-    #sdfg.view()
     x = np.zeros((4, 10), dtype=np.int32)
-    y = np.ones((4, 10), dtype=np.int32) #has to be copied to sdfg
+    #has to be copied to sdfg
+    y = np.ones((4, 10), dtype=np.int32) 
     x[0:4, 8] = 2
     x[1, 0] = 10
     expected = np.copy(x)
