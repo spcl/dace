@@ -742,9 +742,6 @@ class TaskletTransformer(ExtNodeTransformer):
         for stmt in _DISALLOWED_STMTS:
             setattr(self, 'visit_' + stmt, lambda n: _disallow_stmt(self, n))
 
-        if self.lang is None:
-            self.lang = dtypes.Language.Python
-
     def parse_tasklet(self,
                       tasklet_ast: TaskletType,
                       name: Optional[str] = None):
@@ -769,6 +766,9 @@ class TaskletTransformer(ExtNodeTransformer):
         else:
             name = getattr(tasklet_ast, 'name',
                            'tasklet_%d' % tasklet_ast.lineno)
+
+        if self.lang is None:
+            self.lang = dtypes.Language.Python
 
         t = self.state.add_tasklet(name,
                                    set(self.inputs.keys()),
@@ -1076,6 +1076,10 @@ class TaskletTransformer(ExtNodeTransformer):
                 'Cannot provide more than one intrinsic implementation ' +
                 'for tasklet')
         self.extcode = node.s
+
+        # TODO: Should get detected by _parse_Tasklet()
+        if self.lang is None:
+            self.lang = dtypes.Language.CPP
 
         return node
 
