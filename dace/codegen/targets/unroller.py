@@ -71,7 +71,7 @@ class UnrollCodeGen(TargetCodeGenerator):
                        state_id: int, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream):
 
-        entry_node = scope.source_nodes()[0]
+        entry_node : nd.MapEntry = scope.source_nodes()[0]
         index_list = []
 
         for begin, end, stride in entry_node.map.range:
@@ -84,6 +84,7 @@ class UnrollCodeGen(TargetCodeGenerator):
         sdfgconsts = sdfg.constants_prop
         sdfg.constants_prop = copy.deepcopy(sdfg.constants_prop)
 
+        mapsymboltypes = entry_node.new_symbols(sdfg, scope, [entry_node.map.params])
         for indices in product(*index_list):
             callsite_stream.write('{')
             nsdfg_unroll_info = None
@@ -93,8 +94,8 @@ class UnrollCodeGen(TargetCodeGenerator):
                         scope, str(param), str(index))
                 else:
                     self.nsdfg_prepare_unroll(scope, str(param), str(index))
-                callsite_stream.write(
-                    f"constexpr long long {param} = {dace.codegen.targets.common.sym2cpp(index)};\n",
+                callsite_stream.write(f"constexpr {mapsymboltypes[param]} {param} = "
+                    f"{dace.codegen.targets.common.sym2cpp(index)};\n",
                     sdfg)
                 sdfg.add_constant(param, int(index))
 
