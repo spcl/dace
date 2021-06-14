@@ -12,6 +12,7 @@ def create_deeply_nested_sdfg():
     sdfg.arrays["y"].location["hbmbank"] = sbs.Range.from_string("4:8")
 
     topMapEntry, topMapExit = state.add_map("topmap", dict(k="0:2"))
+    topMapEntry.schedule = dtypes.ScheduleType.Unrolled
     
     nsdfg = dace.SDFG("nest")
     nstate = nsdfg.add_state("nested_state")
@@ -20,6 +21,7 @@ def create_deeply_nested_sdfg():
     nsdfg.arrays["xin"].location["hbmbank"] = sbs.Range.from_string("0:4")
     nsdfg.arrays["xout"].location["hbmbank"] = sbs.Range.from_string("4:8")
     mapEntry, mapExit = nstate.add_map("map1", dict(w="0:2"))
+    mapEntry.schedule = dtypes.ScheduleType.Unrolled
     imapEntry, imapExit = nstate.add_map("map2", dict(i="0:10"))
     nope = nstate.add_tasklet("nop", dict(_in=None), dict(_out=None),
                                 "_out = _in")
