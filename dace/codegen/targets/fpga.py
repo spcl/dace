@@ -623,7 +623,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
                         # TODO: Distinguish between read, write, and read+write
                         self._allocated_global_arrays.add(node.data)
-                        memory_bank_arg_type = "DDR"
+                        memory_bank_arg_type = "hlslib::ocl::StorageType::DDR"
                         memory_bank_arg_count = 1
                         if "bank" in nodedesc.location:
                             try:
@@ -633,10 +633,10 @@ class FPGACodeGen(TargetCodeGenerator):
                                     "FPGA memory bank specifier "
                                     "must be an integer: {}".format(
                                         nodedesc.location["bank"]))
-                            memory_bank_arg_type = f"hlslib::ocl::StorageType::DDR"
+                            memory_bank_arg_type = "hlslib::ocl::StorageType::DDR"
                         elif "hbmbank" in nodedesc.location:
                             hbmbank = nodedesc.location["hbmbank"]
-                            memory_bank_arg_type = f"hlslib::ocl::StorageType::HBM"
+                            memory_bank_arg_type = "hlslib::ocl::StorageType::HBM"
                             banklow, bankhigh = utils.get_multibank_ranges_from_subset(hbmbank, sdfg,
                                 False, f"array {dataname}")
                             memory_bank_arg_count = bankhigh - banklow
@@ -794,9 +794,11 @@ class FPGACodeGen(TargetCodeGenerator):
             absolute_src_strides = src_subset.absolute_strides(src_nodedesc.strides)
             absolute_dst_strides = dst_subset.absolute_strides(dst_nodedesc.strides)
             offset_src = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, 
-                                referenced_array=src_nodedesc, use_other_subset=(not src_is_subset))
+                                referenced_array=src_nodedesc, 
+                                use_other_subset=(not src_is_subset and memlet.other_subset is not None))
             offset_dst = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False,
-                                referenced_array=dst_nodedesc, use_other_subset=src_is_subset)
+                                referenced_array=dst_nodedesc, 
+                                use_other_subset=(src_is_subset and memlet.other_subset is not None))
 
             #Distinguish 1d and 2 or 3d copies
             isNDCopy = not cpp.is_1d_nostrided_copy(copy_shape, 
@@ -810,9 +812,9 @@ class FPGACodeGen(TargetCodeGenerator):
                                                 )
             if isNDCopy:
                 src_copy_offset = [cpp.sym2cpp(start) for start, _, _ in utils.modify_subset_magic(
-                    src_nodedesc, memlet.src_subset, True)]
+                    src_nodedesc, src_subset, True)]
                 dst_copy_offset = [cpp.sym2cpp(start) for start, _, _ in utils.modify_subset_magic(
-                    dst_nodedesc, memlet.dst_subset, True)]
+                    dst_nodedesc, dst_subset, True)]
                 src_blocksize = [cpp.sym2cpp(v) for v in utils.modify_subset_magic(
                     src_nodedesc, src_nodedesc.shape, True)]
                 dst_blocksize = [cpp.sym2cpp(v) for v in utils.modify_subset_magic(

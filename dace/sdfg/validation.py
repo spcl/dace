@@ -309,13 +309,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         #Tasklets may only access 1 HBM-bank at a time
         from dace.sdfg import utils #avoid import loop
         if isinstance(node, nd.Tasklet):
-            for attached in state.in_edges(node) + state.out_edges(node):
-                if utils.is_HBM_array(sdfg.arrays[attached.data.data]):
-                    low, high, _ = attached.data.subset[0]
-                    if(low != high):
-                        raise InvalidSDFGNodeError("Tasklets may only be connected"
-                            " to HBM-memlets accessing only one bank",
-                            sdfg, state_id, nid)
+            for attached in state.all_edges(node):
+                if(attached.data.data in sdfg.arrays):
+                    if utils.is_HBM_array(sdfg.arrays[attached.data.data]):
+                        low, high, _ = attached.data.subset[0]
+                        if(low != high):
+                            raise InvalidSDFGNodeError("Tasklets may only be connected"
+                                " to HBM-memlets accessing only one bank",
+                                sdfg, state_id, nid)
 
 
         # Connector tests
