@@ -1171,13 +1171,11 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                                       expr_semicolon=False),
                             ))
                         else:
-                            newnode = ast.Name(id="__%s_out[%s] = %s;" % (
-                                memlet.data,
-                                cpp_array_expr(
-                                    self.sdfg, memlet, with_brackets=False),
-                                cppunparse.cppunparse(value,
-                                                      expr_semicolon=False),
-                            ))
+                            targetarrayif = array_interface_variable(ptr(memlet.data, 
+                                desc, memlet.dst_subset ,self.sdfg), True, None)
+                            newnode = ast.Name(id=f"{targetarrayif}"
+                                f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False)}]"
+                                f" = {cppunparse.cppunparse(value, expr_semicolon=False)};")
 
                     return self._replace_assignment(newnode, node)
             except TypeError:  # cannot determine truth value of Relational
