@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
+from dace.sdfg.nodes import AccessNode
 from dace.dtypes import StorageType
 import os
 from typing import Dict, Tuple, Union
@@ -29,6 +30,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
         Raises an InvalidSDFGError with the erroneous node/edge
         on failure.
     """
+    #avoid import loop
+    from dace.sdfg import utils as sdutil
+
     try:
         # SDFG-level checks
         if not dtypes.validate_name(sdfg.name):
@@ -56,19 +60,18 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                     name, sdfg, None)
 
             #Check for valid bank assignments
-            from dace.sdfg import utils #avoid import loop
             if("bank" in desc.location):
                 if not isinstance(desc.location["bank"], int):
                     raise InvalidSDFGError(
                         "bank assignment must be an integer",
                         sdfg, None
                     )
-            elif utils.is_HBM_array(desc):
+            elif sdutil.is_HBM_array(desc):
                 if not isinstance(desc.location["hbmbank"], subsets.Range):
                     raise InvalidSDFGError("locationproperty 'hbmbank' must be of type subsets.Range"
                         f" for array {name}", sdfg, None)
                 try:
-                    low, high = utils.get_multibank_ranges_from_subset(desc.location["hbmbank"], sdfg)
+                    low, high = sdutil.get_multibank_ranges_from_subset(desc.location["hbmbank"], sdfg)
                 except:
                     raise InvalidSDFGError("All the indices in locationproperty 'hbmbank' must be"
                         f" evaluatable to constants and have stride==1 for array {name}",
@@ -165,10 +168,27 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     from dace.sdfg.scope import scope_contains_scope
     from dace import data as dt
     from dace import subsets as sbs
+    from dace.sdfg import utils as sdutil 
 
     sdfg = sdfg or state.parent
     state_id = state_id or sdfg.node_id(state)
     symbols = symbols or {}
+    scope_local_constantnames : dict[nd.MapEntry, list[str]] = dict()
+    scope = state.scope_dict()
+
+    last_visited_map_entry = []
+    for node in sdutil.dfs_topological_sort(state):
+        if isinstance(node, nd.MapEntry):
+            otherlist = []
+            if len(last_visited_map_entry) > 0:
+                otherlist = scope_local_constantnames[last_visited_map_entry[-1]]
+            if node.map.schedule == dtypes.ScheduleType.Unrolled:
+                scope_local_constantnames[node] = list(node.map.params) + otherlist
+                last_visited_map_entry.append(node)
+            else:
+                scope_local_constantnames[node] = otherlist
+        elif isinstance(node, nd.MapExit) and node.map.schedule == dtypes.ScheduleType.Unrolled:
+            last_visited_map_entry.pop()
 
     if not dtypes.validate_name(state._label):
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
@@ -186,6 +206,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     for nid, node in enumerate(state.nodes()):
         # Node validation
         try:
+            if isinstance(node, nd.NestedSDFG):
+                consts = set(sdfg.constants.keys())
+                ndscope = scope[node]
+                if ndscope is not None:
+                    consts = set.union(set(scope_local_constantnames[ndscope]), consts)
+                if(hasattr(sdfg, "parent_scope_constants_bypass_set")):
+                    consts = set.union(sdfg.parent_scope_constants_bypass_set, consts)
+                node.sdfg.parent_scope_constants_bypass_set = consts
             node.validate(sdfg, state)
         except InvalidSDFGError:
             raise
@@ -252,7 +280,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
             # Verify View references
             if isinstance(arr, dt.View):
-                from dace.sdfg import utils as sdutil  # Avoid import loops
                 if sdutil.get_view_edge(state, node) is None:
                     raise InvalidSDFGNodeError(
                         "Ambiguous or invalid edge to/from a View access node",
@@ -307,11 +334,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             )
 
         #Tasklets may only access 1 HBM-bank at a time
-        from dace.sdfg import utils #avoid import loop
         if isinstance(node, nd.Tasklet):
             for attached in state.all_edges(node):
                 if(attached.data.data in sdfg.arrays):
-                    if utils.is_HBM_array(sdfg.arrays[attached.data.data]):
+                    if sdutil.is_HBM_array(sdfg.arrays[attached.data.data]):
                         low, high, _ = attached.data.subset[0]
                         if(low != high):
                             raise InvalidSDFGNodeError("Tasklets may only be connected"
@@ -410,7 +436,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         ########################################
 
     # Memlet checks
-    scope = state.scope_dict()
     for eid, e in enumerate(state.edges()):
         # Edge validation
         try:
@@ -571,6 +596,39 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 raise InvalidSDFGEdgeError(
                     'Dimensionality mismatch between src/dst subsets', sdfg,
                     state_id, eid)
+
+        #Check that HBM Magic Indices are evaluatable
+        def validateMagicIndex(magicsubset : subsets.Subset):
+            if len(magicsubset) <= 1:
+                return False
+            low, high, stride = magicsubset[0]
+            if(stride != 1):
+                return False
+            consts = set(sdfg.constants.keys())
+            if(hasattr(sdfg, "parent_scope_constants_bypass_set")):
+                consts = set.union(sdfg.parent_scope_constants_bypass_set, consts)
+            currentscope = scope[e.src]
+            if(e.src == scope[e.dst]):
+                currentscope = e.src
+            if currentscope is not None:
+                consts = set.union(set(scope_local_constantnames[currentscope]), consts)
+            lowset = set([str(x) for x in low.free_symbols]) - consts
+            highset = set([str(x) for x in high.free_symbols]) - consts
+            return (len(lowset) == 0 and len(highset) == 0)
+
+        wrongmagicindexerror = InvalidSDFGEdgeError("The first index accessing "
+            "HBM-arrays must be constant evaluatable and have stride==1",
+            sdfg, state_id, eid)
+        if (isinstance(src_node, nd.AccessNode) and 
+            sdutil.is_HBM_array(src_node.desc(state))):
+            if not validateMagicIndex(e.data.src_subset or e.data.subset):
+                raise wrongmagicindexerror
+        if (isinstance(dst_node, nd.AccessNode) and 
+            sdutil.is_HBM_array(dst_node.desc(state))):
+            if not validateMagicIndex(e.data.dst_subset or e.data.subset):
+                raise wrongmagicindexerror
+            
+
     ########################################
 
 
