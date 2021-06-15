@@ -834,13 +834,54 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
                     node,
                 )
 
-        if node.language != dtypes.Language.CPP:
+        if node.language != dtypes.Language.CPP and node.language != dtypes.Language.MLIR:
             raise ValueError(
-                "Only Python or C++ code supported in CPU codegen, got: {}".
-                format(node.language))
-        callsite_stream.write(
-            type(node).__properties__["code"].to_string(node.code), sdfg,
-            state_id, node)
+                "Only Python, C++ or MLIR code supported in CPU codegen, got: {}"
+                .format(node.language))
+
+        if node.language == dtypes.Language.MLIR:
+            # Inline import because mlir.utils depends on pyMLIR which may not be installed
+            # Doesn't cause crashes due to missing pyMLIR if a MLIR tasklet is not present
+            from dace.codegen.targets.mlir import utils
+
+            mlir_func_uid = "_" + str(
+                sdfg.sdfg_id) + "_" + str(state_id) + "_" + str(
+                    dfg.node_id(node))
+
+            mlir_ast = utils.get_ast(node.code.code)
+            mlir_is_generic = utils.is_generic(mlir_ast)
+            mlir_entry_func = utils.get_entry_func(mlir_ast, mlir_is_generic,
+                                                   mlir_func_uid)
+
+            # Arguments of the MLIR must match the input connector names of the tasklet (the "%" excluded)
+            mlir_in_typed = ""
+            mlir_in_untyped = ""
+
+            for mlir_arg in utils.get_entry_args(mlir_entry_func,
+                                                 mlir_is_generic):
+                mlir_arg_name = mlir_arg[0]
+                mlir_arg_type = node.in_connectors[mlir_arg_name].ctype
+                mlir_in_typed = mlir_in_typed + mlir_arg_type + " " + mlir_arg_name + ", "
+                mlir_in_untyped = mlir_in_untyped + mlir_arg_name + ", "
+
+            mlir_in_typed = mlir_in_typed[:-2]
+            mlir_in_untyped = mlir_in_untyped[:-2]
+
+            mlir_out = next(iter(node.out_connectors.items()))
+            mlir_out_type = mlir_out[1].ctype
+            mlir_out_name = mlir_out[0]
+
+            # MLIR tools such as mlir-opt and mlir-translate as well as the LLVM compiler "lc" will be required to compile the MLIR tasklet
+            function_stream.write('extern "C" ' + mlir_out_type +
+                                  ' mlir_entry' + mlir_func_uid + '(' +
+                                  mlir_in_typed + ');\n\n')
+            callsite_stream.write(mlir_out_name + " = mlir_entry" +
+                                  mlir_func_uid + "(" + mlir_in_untyped + ");")
+
+        if node.language == dtypes.Language.CPP:
+            callsite_stream.write(
+                type(node).__properties__["code"].to_string(node.code), sdfg,
+                state_id, node)
 
         if hasattr(node, "_cuda_stream") and not is_devicelevel_gpu(
                 sdfg, state_dfg, node):

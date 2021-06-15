@@ -116,6 +116,7 @@ class Language(aenum.AutoNumberEnum):
     CPP = ()
     OpenCL = ()
     SystemVerilog = ()
+    MLIR = ()
 
 
 @undefined_safe_enum
