@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
 import numpy as np
@@ -9,35 +9,24 @@ def test():
 
     sdfg = dace.SDFG("parallel_sections")
 
+    sdfg.add_array("array_in", (2 * N, ), dace.dtypes.int32)
+    sdfg.add_array("array_out", (N, ), dace.dtypes.int32)
+
+    sdfg.add_stream("fifo_in_a", dace.dtypes.int32, 1, transient=True)
+    sdfg.add_stream("fifo_in_b", dace.dtypes.int32, 1, transient=True)
+    sdfg.add_stream("fifo_out", dace.dtypes.int32, 1, transient=True)
+
     state = sdfg.add_state("sections")
 
-    array_in = state.add_array("array_in", (2 * N, ), dace.dtypes.int32)
-    array_out = state.add_array("array_out", (N, ), dace.dtypes.int32)
+    array_in = state.add_access("array_in")
+    array_out = state.add_access("array_out")
 
-    fifo_in_a_0 = state.add_stream("fifo_in_a",
-                                   dace.dtypes.int32,
-                                   1,
-                                   transient=True)
-    fifo_in_b_0 = state.add_stream("fifo_in_b",
-                                   dace.dtypes.int32,
-                                   1,
-                                   transient=True)
-    fifo_in_a_1 = state.add_stream("fifo_in_a",
-                                   dace.dtypes.int32,
-                                   1,
-                                   transient=True)
-    fifo_in_b_1 = state.add_stream("fifo_in_b",
-                                   dace.dtypes.int32,
-                                   1,
-                                   transient=True)
-    fifo_out_0 = state.add_stream("fifo_out",
-                                  dace.dtypes.int32,
-                                  1,
-                                  transient=True)
-    fifo_out_1 = state.add_stream("fifo_out",
-                                  dace.dtypes.int32,
-                                  1,
-                                  transient=True)
+    fifo_in_a_0 = state.add_access("fifo_in_a")
+    fifo_in_b_0 = state.add_access("fifo_in_b")
+    fifo_in_a_1 = state.add_access("fifo_in_a")
+    fifo_in_b_1 = state.add_access("fifo_in_b")
+    fifo_out_0 = state.add_access("fifo_out")
+    fifo_out_1 = state.add_access("fifo_out")
 
     ###########################################################################
     # First processing element: reads from memory into a stream

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Optional, Set, Tuple
 
 import collections
@@ -23,6 +23,11 @@ from dace.frontend.python import wrappers
 import networkx as nx
 import numpy as np
 
+
+def _get_or_eval_sdfg_first_arg(func, sdfg):
+    if callable(func):
+        return func(sdfg)
+    return func
 
 class DaCeCodeGenerator(object):
     """ DaCe code generator class that writes the generated code for SDFG
@@ -73,6 +78,10 @@ class DaCeCodeGenerator(object):
             :param global_stream: Stream to write to (global).
             :param backend: Whose backend this header belongs to.
         """
+        # Hash file include
+        if backend == 'frame':
+            global_stream.write('#include "../../include/hash.h"\n', sdfg)
+
         #########################################################
         # Environment-based includes
         for env in self.environments:
@@ -169,15 +178,13 @@ struct {sdfg.name}_t {{
             if instr is not None:
                 instr.on_sdfg_end(sdfg, callsite_stream, global_stream)
 
-        sdfg_hash = sdfg.hash_sdfg()
-
         # Instrumentation saving
         if (config.Config.get_bool('instrumentation', 'report_each_invocation')
                 and len(self._dispatcher.instrumentation) > 1):
             callsite_stream.write(
-                '''__state->report.save("{path}/perf", "{hash}");'''
+                '''__state->report.save("{path}/perf", __HASH_{name});'''
                 .format(path=sdfg.build_folder.replace('\\', '/'),
-                        hash=sdfg_hash), sdfg)
+                        name=sdfg.name), sdfg)
 
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
@@ -219,10 +226,11 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
                     '__result |= __dace_init_%s(__state%s);' %
                     (target.target_name, initparamnames_comma), sdfg)
         for env in self.environments:
-            if env.init_code:
+            init_code = _get_or_eval_sdfg_first_arg(env.init_code, sdfg)
+            if init_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,
                                       sdfg)
-                callsite_stream.write(env.init_code)
+                callsite_stream.write(init_code)
                 callsite_stream.write("}")
 
         for sd in sdfg.all_sdfgs_recursive():
@@ -250,8 +258,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                                        'report_each_invocation')
                 and len(self._dispatcher.instrumentation) > 1):
             callsite_stream.write(
-                '__state->report.save("%s/perf");' %
-                sdfg.build_folder.replace('\\', '/'), sdfg)
+                '__state->report.save("%s/perf", __HASH_%s);' %
+                (sdfg.build_folder.replace('\\', '/'), sdfg.name), sdfg)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
 
@@ -265,10 +273,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 callsite_stream.write(
                     '__dace_exit_%s(__state);' % target.target_name, sdfg)
         for env in reversed(self.environments):
-            if env.finalize_code:
+            finalize_code = _get_or_eval_sdfg_first_arg(env.finalize_code, sdfg)
+            if finalize_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,
                                       sdfg)
-                callsite_stream.write(env.finalize_code)
+                callsite_stream.write(finalize_code)
                 callsite_stream.write("}")
 
         callsite_stream.write('delete __state;\n}\n', sdfg)
@@ -351,10 +360,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                                                callsite_stream,
                                                skip_entry_node=False)
         else:
-            if config.Config.get_bool('compiler', 'cpu', 'openmp_sections'):
+            if sdfg.openmp_sections:
                 callsite_stream.write("#pragma omp parallel sections\n{")
             for c in components:
-                if config.Config.get_bool('compiler', 'cpu', 'openmp_sections'):
+                if sdfg.openmp_sections:
                     callsite_stream.write("#pragma omp section\n{")
                 self._dispatcher.dispatch_subgraph(sdfg,
                                                    c,
@@ -362,9 +371,9 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                                                    global_stream,
                                                    callsite_stream,
                                                    skip_entry_node=False)
-                if config.Config.get_bool('compiler', 'cpu', 'openmp_sections'):
+                if sdfg.openmp_sections:
                     callsite_stream.write("} // End omp section")
-            if config.Config.get_bool('compiler', 'cpu', 'openmp_sections'):
+            if sdfg.openmp_sections:
                 callsite_stream.write("} // End omp sections")
 
         #####################

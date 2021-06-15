@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import argparse
@@ -11,6 +11,8 @@ from dace.transformation.dataflow import (DoubleBuffering, MapCollapse,
                                           MapExpansion, MapReduceFusion,
                                           StripMining, InLocalStorage,
                                           AccumulateTransient, Vectorization)
+from dace.transformation.interstate import FPGATransformSDFG
+from dace.transformation import helpers as xfutil
 
 # For library node implementations
 import dace.libraries.blas
@@ -56,43 +58,6 @@ def matmul_lib(A: dtype[M, K], B: dtype[K, N]):
 # Data-centric optimization helpers
 
 
-def tile(sdfg: dace.SDFG, map_entry: dace.nodes.MapEntry, divides_evenly: bool,
-         skew: bool, **tile_sizes: dace.symbolic.SymbolicType):
-    """ Helper function that tiles a Map scope by the given sizes. """
-    for k, v in tile_sizes.items():
-        StripMining.apply_to(sdfg,
-                             dict(dim_idx=map_entry.params.index(k),
-                                  tile_size=str(v),
-                                  divides_evenly=divides_evenly,
-                                  skew=skew),
-                             _map_entry=map_entry)
-
-
-def permute_map(map_entry: dace.nodes.MapEntry, perm: List[int]):
-    """ Permutes indices of map according to list of integers. """
-    map_entry.map.params = [map_entry.map.params[p] for p in perm]
-    map_entry.map.range = [map_entry.map.range[p] for p in perm]
-
-
-def extract_map_dim(sdfg: dace.SDFG, map_entry: dace.nodes.MapEntry, dim: int):
-    """ Helper function that extracts a map dimension into an outer map. """
-    # Make extracted dimension first
-    permute_map(map_entry, [dim] +
-                [i for i in range(len(map_entry.map.params)) if i != dim])
-    # Expand map
-    entries = MapExpansion.apply_to(sdfg, map_entry=map_entry)
-    # Collapse remaining maps
-    map_to_collapse = entries[1]
-    for idx in range(len(entries) - 2):
-        map_to_collapse, _ = MapCollapse.apply_to(
-            sdfg,
-            _outer_map_entry=map_to_collapse,
-            _inner_map_entry=entries[idx + 2],
-        )
-
-    return entries[0], map_to_collapse
-
-
 def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
     """ Finds the first map entry node by the given parameter name. """
     return next(n for n, _ in sdfg.all_nodes_recursive()
@@ -124,11 +89,11 @@ def optimize_for_cpu(sdfg: dace.SDFG, m: int, n: int, k: int):
 
     # Create a tiling strategy
     divides_evenly = (m % 32 == 0) and (n % 32 == 0) and (k % 256 == 0)
-    tile(sdfg, entry, divides_evenly, False, k=256, i=32, j=32)
-    tile(sdfg, entry, divides_evenly, divides_evenly, j=16, i=4)
+    xfutil.tile(sdfg, entry, divides_evenly, False, k=256, i=32, j=32)
+    xfutil.tile(sdfg, entry, divides_evenly, divides_evenly, j=16, i=4)
 
     # Reorder internal map to "k,i,j"
-    permute_map(entry, [2, 0, 1])
+    xfutil.permute_map(entry, [2, 0, 1])
 
     # Add local storage for B in j tile: we apply InLocalStorage with a
     # parameter "array" named B, between the two maps of j and i
@@ -144,9 +109,9 @@ def optimize_for_cpu(sdfg: dace.SDFG, m: int, n: int, k: int):
         exit_inner = find_mapexit_by_param(sdfg, 'k')
         exit_rti = find_mapexit_by_param(sdfg, 'tile1_i')
         AccumulateTransient.apply_to(sdfg,
-                                     dict(array='C'),
-                                     _map_exit=exit_inner,
-                                     _outer_map_exit=exit_rti)
+                                     dict(array='C', identity=0),
+                                     map_exit=exit_inner,
+                                     outer_map_exit=exit_rti)
 
         # Vectorize microkernel map
         postamble = n % 4 != 0
@@ -184,8 +149,8 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
 
     # Create a tiling strategy
     divides_evenly = (m % 64 == 0) and (n % 64 == 0) and (k % 8 == 0)
-    tile(sdfg, entry, divides_evenly, True, i=64, j=64, k=8)
-    tile(sdfg, entry, divides_evenly, True, i=8, j=4)
+    xfutil.tile(sdfg, entry, divides_evenly, True, i=64, j=64, k=8)
+    xfutil.tile(sdfg, entry, divides_evenly, True, i=8, j=4)
 
     # Create kernel schedule by collapsing and reordering maps
     gtile_i = find_map_by_param(sdfg, 'tile_i')
@@ -216,7 +181,7 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
 
     # Add local storage (registers) for A and B
     ttile = find_map_by_param(sdfg, 'k')
-    warptile, ttile = extract_map_dim(sdfg, ttile, 2)
+    warptile, ttile = xfutil.extract_map_dims(sdfg, ttile, [2])
     InLocalStorage.apply_to(sdfg,
                             dict(array='trans_gpu_A'),
                             node_a=warptile,
@@ -231,8 +196,8 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
     warptile_exit = state.exit_node(warptile)
     btile_exit = state.exit_node(btile)
     AccumulateTransient.apply_to(sdfg,
-                                 _map_exit=warptile_exit,
-                                 _outer_map_exit=btile_exit)
+                                 map_exit=warptile_exit,
+                                 outer_map_exit=btile_exit)
     # Set C tile to zero on allocation
     c_access = next(n for n in state.data_nodes() if n.data == 'trans_gpu_C')
     c_access.setzero = True
@@ -256,15 +221,15 @@ if __name__ == "__main__":
     parser.add_argument('--version',
                         choices=[
                             'unoptimized', 'optimize_cpu', 'optimize_gpu',
-                            'mkl', 'cublas'
+                            'mkl', 'cublas', 'fpga_naive', 'fpga_library'
                         ],
                         default='unoptimized',
-                        help='''Different available versions: 
-unoptimized: Run `matmul` without optimizations;  
+                        help='''Different available versions:
+unoptimized: Run `matmul` without optimizations;
 optimize_cpu: Transform `matmul` to a reasonably-optimized version for
-                multicore CPU;  
-optimize_gpu: Transform `matmul` to a reasonably-optimized version for GPU;  
-mkl: Use `matmul_lib` with the MKL library node implementation;  
+                multicore CPU;
+optimize_gpu: Transform `matmul` to a reasonably-optimized version for GPU;
+mkl: Use `matmul_lib` with the MKL library node implementation;
 cublas: Use `matmul_lib` with the CUBLAS library node implementation.''')
     parser.add_argument('--noverify',
                         dest='verify',
@@ -308,6 +273,13 @@ cublas: Use `matmul_lib` with the CUBLAS library node implementation.''')
         # Set default implementation to CUBLAS
         dace.libraries.blas.default_implementation = 'cuBLAS'
         # Call program
+        C = matmul_lib(A, B)
+    elif version == 'fpga_naive':
+        matmul = matmul.to_sdfg()
+        matmul.apply_transformations(FPGATransformSDFG)
+        matmul(A=A, B=B, C=C, N=n, K=k, M=m)
+    elif version == 'fpga_systolic':
+        dace.libraries.blas.default_implementation = 'FPGA1DSystolic'
         C = matmul_lib(A, B)
     else:
         raise ValueError('Invalid version %s' % version)

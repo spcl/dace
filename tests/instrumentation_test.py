@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests that generate various instrumentation reports with timers and
     performance counters. """
 
@@ -32,6 +32,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
     C = np.zeros([size, size], dtype=np.float64)
 
     sdfg: dace.SDFG = slowmm.to_sdfg()
+    sdfg.name = f"instrumentation_test_{instrumentation.name}"
     sdfg.apply_strict_transformations()
 
     # Set instrumentation both on the state and the map

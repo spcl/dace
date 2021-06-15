@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 # This module is derived from astunparse: https://github.com/simonpercivall/astunparse
 ##########################################################################
 ### astunparse LICENSES
@@ -553,7 +553,7 @@ class CPPUnparser:
         if value is True or value is False or value is None:
             self.write(_py2c_nameconst[value])
         else:
-            if isinstance(value, Number):
+            if isinstance(value, (Number, np.bool_)):
                 self._Num(t)
             elif isinstance(value, tuple):
                 self.write("(")
@@ -948,7 +948,7 @@ class CPPUnparser:
                 and isinstance(t.value.n, int)):
             self.write(" ")
         if (isinstance(t.value, ast.Name)
-                and t.value.id in ("dace::math", "dace::cmath")):
+                and t.value.id in ('dace', 'dace::math', 'dace::cmath')):
             self.write("::")
         else:
             self.write(".")
@@ -1078,22 +1078,23 @@ class CPPUnparser:
         raise NotImplementedError('Invalid C++')
 
 
-def cppunparse(node, expr_semicolon=True, locals=None):
+def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None):
     strio = StringIO()
     CPPUnparser(node,
                 0,
                 locals or CPPLocals(),
                 strio,
-                expr_semicolon=expr_semicolon)
+                expr_semicolon=expr_semicolon,
+                defined_symbols=defined_symbols)
     return strio.getvalue().strip()
 
 
 # Code can either be a string or a function
-def py2cpp(code, expr_semicolon=True):
+def py2cpp(code, expr_semicolon=True, defined_symbols=None):
     if isinstance(code, str):
-        return cppunparse(ast.parse(code), expr_semicolon)
+        return cppunparse(ast.parse(code), expr_semicolon, defined_symbols=defined_symbols)
     elif isinstance(code, ast.AST):
-        return cppunparse(code, expr_semicolon)
+        return cppunparse(code, expr_semicolon, defined_symbols=defined_symbols)
     elif isinstance(code, list):
         return '\n'.join(py2cpp(stmt) for stmt in code)
     elif code.__class__.__name__ == 'function':
@@ -1109,7 +1110,7 @@ def py2cpp(code, expr_semicolon=True):
 
         except:  # Can be different exceptions coming from Python's AST module
             raise NotImplementedError('Invalid function given')
-        return cppunparse(ast.parse(code_str), expr_semicolon)
+        return cppunparse(ast.parse(code_str), expr_semicolon, defined_symbols=defined_symbols)
 
     else:
         raise NotImplementedError('Unsupported type for py2cpp')

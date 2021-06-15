@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for dace.sdfg.properties module."""
 
 import unittest
@@ -51,8 +51,7 @@ class PropertyTests(unittest.TestCase):
 
         from_string = dace.memlet.Memlet.__properties__["data"].from_string
 
-        sdfg = dace.SDFG("test_sdfg",
-                         OrderedDict([("foo", dace.dtypes.float32)]))
+        sdfg = dace.SDFG("test_sdfg")
 
         state0 = dace.SDFGState("s0", sdfg)
         state1 = dace.SDFGState("s1", sdfg)

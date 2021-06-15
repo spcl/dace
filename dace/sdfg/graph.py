@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ File containing DaCe-serializable versions of graphs, nodes, and edges. """
 
 from collections import deque, OrderedDict
@@ -166,6 +166,9 @@ class MultiConnectorEdge(MultiEdge, Generic[T]):
     @staticmethod
     def __len__():
         return 5
+
+    def __repr__(self):
+        return f"{self.src}:{self.src_conn}  -({self.data})->  {self.dst}:{self.dst_conn}"
 
 
 @dace.serialize.serializable
@@ -433,7 +436,7 @@ class Graph(Generic[NodeT, EdgeT]):
             node_out_edges = self.out_edges(n)
             if len(node_out_edges) == 0:
                 # We traversed to the end without finding the end
-                return None
+                return set()
             for e in node_out_edges:
                 next_node = e.dst
                 if next_node != end and next_node not in seen:

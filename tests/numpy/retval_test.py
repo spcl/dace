@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -43,7 +43,7 @@ def test_return_override():
     result = np.random.rand(20)
     result2 = oneret(A, __return=result)
     assert np.allclose(result, A * 2)
-    assert not np.allclose(result2, A * 2)
+    assert np.allclose(result2, A * 2)
 
 
 if __name__ == '__main__':

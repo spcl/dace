@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Any, Callable, Dict, Tuple
 from dace.dtypes import paramdec
 
@@ -6,14 +6,18 @@ MethodType = Callable[..., Tuple[str]]
 
 
 class Replacements(object):
-    """ A management singleton for functions that replace existing function calls with either an SDFG or a node.
-        Used in the Python frontend to replace functions such as `numpy.ndarray` and operators such
-        as `Array.__add__`. """
+    """ 
+    A management singleton for functions that replace existing function calls 
+    with either an SDFG subgraph.
+    Used in the Python frontend to replace functions such as `numpy.ndarray` 
+    and operators such as `Array.__add__`.
+    """
 
     _rep: Dict[str, MethodType] = {}
     _oprep: Dict[Tuple[str, str, str], MethodType] = {}
     _ufunc_rep: Dict[str, MethodType] = {}
     _method_rep: Dict[Tuple[str, str], MethodType] = {}
+    _attr_rep: Dict[Tuple[str, str], MethodType] = {}
 
     @staticmethod
     def get(name: str):
@@ -45,6 +49,12 @@ class Replacements(object):
         if (classname, method_name) not in Replacements._method_rep:
             return None
         return Replacements._method_rep[(classname, method_name)]
+
+    @staticmethod
+    def get_attribute(classname: str, attr_name: str):
+        if (classname, attr_name) not in Replacements._attr_rep:
+            return None
+        return Replacements._attr_rep[(classname, attr_name)]
 
 
 @paramdec
@@ -106,4 +116,20 @@ def replaces_method(func: Callable[..., Tuple[str]], classname: str,
     :param method_name: Name of the invoked method.
     """
     Replacements._method_rep[(classname, method_name)] = func
+    return func
+
+
+@paramdec
+def replaces_attribute(func: Callable[..., Tuple[str]], classname: str,
+                       attr_name: str):
+    """ 
+    Registers a replacement sub-SDFG generator for object attributes.
+    :param func: A function that receives an SDFG, SDFGState, and the original
+                 function arguments, returning a tuple of array names to 
+                 connect to the outputs.
+    :param classname: Full name (pydoc-compliant, including package) of the 
+                      object class.
+    :param attr_name: Name of the attribute.
+    """
+    Replacements._attr_rep[(classname, attr_name)] = func
     return func

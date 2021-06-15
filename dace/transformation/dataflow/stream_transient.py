@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement transformations relating to streams
     and transient nodes. """
 
@@ -66,23 +66,23 @@ class StreamTransient(transformation.Transformation):
                            default=True,
                            desc="Use an intermediate buffer for accumulation")
 
-    _tasklet = nodes.Tasklet('_')
-    _map_exit = nodes.MapExit(nodes.Map("", [], []))
-    _outer_map_exit = nodes.MapExit(nodes.Map("", [], []))
+    tasklet = transformation.PatternNode(nodes.Tasklet)
+    map_exit = transformation.PatternNode(nodes.MapExit)
+    outer_map_exit = transformation.PatternNode(nodes.MapExit)
 
     @staticmethod
     def expressions():
         return [
-            sdutil.node_path_graph(StreamTransient._tasklet,
-                                   StreamTransient._map_exit,
-                                   StreamTransient._outer_map_exit)
+            sdutil.node_path_graph(StreamTransient.tasklet,
+                                   StreamTransient.map_exit,
+                                   StreamTransient.outer_map_exit)
         ]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        map_exit = graph.nodes()[candidate[StreamTransient._map_exit]]
+        map_exit = graph.nodes()[candidate[StreamTransient.map_exit]]
         outer_map_exit = graph.nodes()[candidate[
-            StreamTransient._outer_map_exit]]
+            StreamTransient.outer_map_exit]]
 
         # Check if there is a streaming output
         for _src, _, dest, _, memlet in graph.out_edges(map_exit):
@@ -94,19 +94,19 @@ class StreamTransient(transformation.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        tasklet = candidate[StreamTransient._tasklet]
-        map_exit = candidate[StreamTransient._map_exit]
-        outer_map_exit = candidate[StreamTransient._outer_map_exit]
+        tasklet = candidate[StreamTransient.tasklet]
+        map_exit = candidate[StreamTransient.map_exit]
+        outer_map_exit = candidate[StreamTransient.outer_map_exit]
 
         return ' -> '.join(
             str(node) for node in [tasklet, map_exit, outer_map_exit])
 
     def apply(self, sdfg: SDFG):
         graph = sdfg.nodes()[self.state_id]
-        tasklet = graph.nodes()[self.subgraph[StreamTransient._tasklet]]
-        map_exit = graph.nodes()[self.subgraph[StreamTransient._map_exit]]
+        tasklet = graph.nodes()[self.subgraph[StreamTransient.tasklet]]
+        map_exit = graph.nodes()[self.subgraph[StreamTransient.map_exit]]
         outer_map_exit = graph.nodes()[self.subgraph[
-            StreamTransient._outer_map_exit]]
+            StreamTransient.outer_map_exit]]
         memlet = None
         edge = None
         for e in graph.out_edges(map_exit):
@@ -129,8 +129,8 @@ class StreamTransient(transformation.Transformation):
         # Create the new node: Temporary stream and an access node
         newname, _ = sdfg.add_stream('trans_' + dataname,
                                      sdfg.arrays[memlet.data].dtype,
-                                     1,
-                                     bbox_approx[0], [1],
+                                     bbox_approx[0],
+                                     storage=sdfg.arrays[memlet.data].storage,
                                      transient=True,
                                      find_new_name=True)
         snode = graph.add_access(newname)
@@ -163,12 +163,12 @@ class StreamTransient(transformation.Transformation):
 @make_properties
 class AccumulateTransient(transformation.Transformation):
     """ Implements the AccumulateTransient transformation, which adds
-        transient stream and data nodes between nested maps that lead to a 
+        transient stream and data nodes between nested maps that lead to a
         stream. The transient data nodes then act as a local accumulator.
     """
 
-    _map_exit = nodes.MapExit(nodes.Map("", [], []))
-    _outer_map_exit = nodes.MapExit(nodes.Map("", [], []))
+    map_exit = transformation.PatternNode(nodes.MapExit)
+    outer_map_exit = transformation.PatternNode(nodes.MapExit)
 
     array = Property(
         dtype=str,
@@ -183,15 +183,15 @@ class AccumulateTransient(transformation.Transformation):
     @staticmethod
     def expressions():
         return [
-            sdutil.node_path_graph(AccumulateTransient._map_exit,
-                                   AccumulateTransient._outer_map_exit)
+            sdutil.node_path_graph(AccumulateTransient.map_exit,
+                                   AccumulateTransient.outer_map_exit)
         ]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        map_exit = graph.nodes()[candidate[AccumulateTransient._map_exit]]
+        map_exit = graph.nodes()[candidate[AccumulateTransient.map_exit]]
         outer_map_exit = graph.nodes()[candidate[
-            AccumulateTransient._outer_map_exit]]
+            AccumulateTransient.outer_map_exit]]
 
         # Check if there is an accumulation output
         for e in graph.edges_between(map_exit, outer_map_exit):
@@ -202,16 +202,16 @@ class AccumulateTransient(transformation.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        map_exit = candidate[AccumulateTransient._map_exit]
-        outer_map_exit = candidate[AccumulateTransient._outer_map_exit]
+        map_exit = candidate[AccumulateTransient.map_exit]
+        outer_map_exit = candidate[AccumulateTransient.outer_map_exit]
 
         return ' -> '.join(str(node) for node in [map_exit, outer_map_exit])
 
     def apply(self, sdfg: SDFG):
         graph = sdfg.node(self.state_id)
-        map_exit = graph.node(self.subgraph[AccumulateTransient._map_exit])
+        map_exit = graph.node(self.subgraph[AccumulateTransient.map_exit])
         outer_map_exit = graph.node(
-            self.subgraph[AccumulateTransient._outer_map_exit])
+            self.subgraph[AccumulateTransient.outer_map_exit])
 
         # Choose array
         array = self.array
@@ -264,8 +264,10 @@ class AccumulateTransient(transformation.Transformation):
             outputs={
                 'out':
                 dace.Memlet.simple(data=data_node.data,
-                                   subset_str=','.join(
-                                       ['0:%d' % i for i in temp_array.shape]))
+                                   subset_str=','.join([
+                                       '_o%d' % i
+                                       for i, _ in enumerate(temp_array.shape)
+                                   ]))
             },
             external_edges=True)
 

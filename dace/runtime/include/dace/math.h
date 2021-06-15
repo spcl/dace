@@ -1,4 +1,4 @@
-// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #ifndef __DACE_MATH_H
 #define __DACE_MATH_H
 
@@ -256,6 +256,10 @@ template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T heaviside(const T& a, const T& b) {
     return (a < 0) ? 0 : ( (a > 0) ? 1 : b); 
 }
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T heaviside(const T& a) {
+    return (a > 0) ? 1 : 0;
+}
 
 // Computes the conjugate of a number (support for non-complex numbers)
 template<typename T>
@@ -423,6 +427,13 @@ namespace dace
             return (T)std::exp(a);
         }
 
+#ifdef __CUDACC__
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI thrust::complex<T> pow(const thrust::complex<T>& a, const thrust::complex<T>& b)
+        {
+            return (thrust::complex<T>)thrust::pow(a, b);
+        }
+#endif
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const T& b)
         {

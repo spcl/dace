@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes and functions that implement the strip-mining
     transformation."""
 
@@ -6,7 +6,7 @@ import dace
 from copy import deepcopy as dcpy
 from dace import dtypes, registry, subsets, symbolic
 from dace.sdfg import SDFG, SDFGState
-from dace.properties import make_properties, Property, SymbolicProperty
+from dace.properties import EnumProperty, make_properties, Property, SymbolicProperty
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.symbolic import issymbolic, overapproximate, SymExpr
@@ -155,10 +155,9 @@ class StripMining(transformation.Transformation):
         default=False,
         desc="Continuous (false) or strided (true) elements in tile")
 
-    tiling_type = Property(
-        dtype=str,
-        default='normal',
-        choices=['normal', 'ceilrange', 'number_of_tiles'],
+    tiling_type = EnumProperty(
+        dtype=dtypes.TilingType,
+        default=dtypes.TilingType.Normal,
         allow_none=True,
         desc="normal: the outerloop increments with tile_size, "
         "ceilrange: uses ceiling(N/tile_size) in outer range, "
@@ -190,7 +189,7 @@ class StripMining(transformation.Transformation):
         map_entry = graph.nodes()[candidate[StripMining._map_entry]]
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 
-    def apply(self, sdfg):
+    def apply(self, sdfg: SDFG) -> nodes.Map:
         graph = sdfg.nodes()[self.state_id]
         # Strip-mine selected dimension.
         _, _, new_map = self._stripmine(sdfg, graph, self.subgraph)
@@ -228,7 +227,10 @@ class StripMining(transformation.Transformation):
             return target_dim
         candidate = '%s_%s' % (prefix, target_dim)
         index = 1
-        while candidate in map(str, stree[entry].defined_vars):
+        defined_vars = set(
+            str(s) for s in (state.symbols_defined_at(entry).keys()
+                             | sdfg.symbols.keys()))
+        while candidate in defined_vars:
             candidate = '%s%d_%s' % (prefix, index, target_dim)
             index += 1
         return candidate
@@ -373,11 +375,9 @@ class StripMining(transformation.Transformation):
         # Retrieve parameter and range of dimension to be strip-mined.
         target_dim = map_entry.map.params[dim_idx]
         td_from, td_to, td_step = map_entry.map.range[dim_idx]
-        tile_size = map_entry.map.range.size_exact()[dim_idx] / number_of_tiles
+        size = map_entry.map.range.size_exact()[dim_idx]
 
-        if tile_stride == 0:
-            tile_stride = tile_size
-        if tile_stride != tile_size:
+        if tile_stride != 0:
             raise NotImplementedError
 
         new_dim = self._find_new_dim(sdfg, state, map_entry, new_dim_prefix,
@@ -387,15 +387,15 @@ class StripMining(transformation.Transformation):
                             subsets.Range([new_dim_range]))
 
         dimsym = dace.symbolic.pystr_to_symbolic(new_dim)
-        td_from_new = dimsym * tile_size
+        td_from_new = (dimsym * size) // number_of_tiles
         if divides_evenly:
-            td_to_new = (dimsym + 1) * tile_size - 1
+            td_to_new = ((dimsym + 1) * size) // number_of_tiles  - 1
         else:
             if isinstance(td_to, dace.symbolic.SymExpr):
                 td_to = td_to.expr
             td_to_new = dace.symbolic.SymExpr(
-                sympy.Min((dimsym + 1) * tile_size - 1, td_to),
-                (dimsym + 1) * tile_size - 1)
+                sympy.Min(((dimsym + 1) * size) // number_of_tiles, td_to+1)-1,
+                ((dimsym + 1) * size) // number_of_tiles - 1)
         td_step_new = td_step
         return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
 
@@ -408,10 +408,10 @@ class StripMining(transformation.Transformation):
         dim_idx = self.dim_idx
         target_dim = map_entry.map.params[dim_idx]
 
-        if self.tiling_type == 'ceilrange':
+        if self.tiling_type == dtypes.TilingType.CeilRange:
             new_dim, new_map, td_rng = self._create_ceil_range(
                 sdfg, graph, map_entry)
-        elif self.tiling_type == 'number_of_tiles':
+        elif self.tiling_type == dtypes.TilingType.NumberOfTiles:
             new_dim, new_map, td_rng = self._create_from_tile_numbers(
                 sdfg, graph, map_entry)
         else:
@@ -474,7 +474,8 @@ class StripMining(transformation.Transformation):
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
-                        new_memlet.num_accesses = new_memlet.num_elements()
+                        new_memlet.num_accesses = new_memlet.num_elements(
+                        ).simplify()
                     new_in_edges[key] = new_memlet
             else:
                 if src_conn is not None and src_conn[:4] == 'OUT_':
@@ -520,7 +521,8 @@ class StripMining(transformation.Transformation):
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
-                        new_memlet.num_accesses = new_memlet.num_elements()
+                        new_memlet.num_accesses = new_memlet.num_elements(
+                        ).simplify()
                     new_out_edges[key] = new_memlet
             else:
                 if dst_conn is not None and dst_conn[:3] == 'IN_':
@@ -534,7 +536,7 @@ class StripMining(transformation.Transformation):
                     exit_in_conn[in_conn] = None
                 if out_conn:
                     exit_out_conn[out_conn] = None
-                new_in_edges[(memlet.data, in_conn, out_conn)] = dcpy(memlet)
+                new_out_edges[(memlet.data, in_conn, out_conn)] = dcpy(memlet)
         new_map_exit.in_connectors = exit_in_conn
         map_exit.out_connectors = exit_out_conn
         for (_, in_conn, out_conn), memlet in new_out_edges.items():

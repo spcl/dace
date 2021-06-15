@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -386,6 +386,24 @@ def test_nested_map_for_loop_with_tasklet_2():
     assert (np.array_equal(val, ref))
 
 
+@dace.program
+def nested_map_with_symbol():
+    A = np.zeros([10, 10], dtype=np.int64)
+    for i in dace.map[0:10]:
+        for j in dace.map[i:10]:
+            A[i, j] = i * 10 + j
+    return A
+
+
+def test_nested_map_with_symbol():
+    ref = np.zeros([10, 10], dtype=np.int64)
+    for i in range(10):
+        for j in range(i, 10):
+            ref[i, j] = i * 10 + j
+    val = nested_map_with_symbol()
+    assert (np.array_equal(val, ref))
+
+
 if __name__ == "__main__":
     test_for_loop()
     test_for_loop_with_break_continue()
@@ -404,3 +422,4 @@ if __name__ == "__main__":
     test_nested_for_map_for_loop_with_tasklet()
     test_nested_map_for_loop_2()
     test_nested_map_for_loop_with_tasklet_2()
+    test_nested_map_with_symbol()

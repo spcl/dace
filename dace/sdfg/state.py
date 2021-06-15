@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes of a single SDFG state and dataflow subgraphs. """
 
 import collections
@@ -11,7 +11,7 @@ from dace.sdfg.graph import (OrderedMultiDiConnectorGraph, MultiConnectorEdge,
                              SubgraphView)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
-from dace.properties import (Property, DictProperty, SubsetProperty,
+from dace.properties import (EnumProperty, Property, DictProperty, SubsetProperty,
                              SymbolicProperty, CodeBlock, make_properties)
 from inspect import getframeinfo, stack
 import itertools
@@ -284,10 +284,6 @@ class StateGraphView(object):
                 exit_node = next(v for v in scopenodes
                                  if isinstance(v, nd.ExitNode))
             scope = ScopeTree(node, exit_node)
-            scope.defined_vars = set(
-                symbolic.pystr_to_symbolic(s)
-                for s in (self.symbols_defined_at(node).keys()
-                          | sdfg_symbols))
             result[node] = scope
 
         # Scope parents and children
@@ -334,17 +330,17 @@ class StateGraphView(object):
 
             # Sanity checks
             if validate and len(eq) != 0:
-                cycles = self.find_cycles()
+                cycles = list(self.find_cycles())
                 if cycles:
                     raise ValueError('Found cycles in state %s: %s' %
-                                     (self.label, list(cycles)))
+                                     (self.label, cycles))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
 
             if validate and len(result) != self.number_of_nodes():
-                cycles = self.find_cycles()
+                cycles = list(self.find_cycles())
                 if cycles:
                     raise ValueError('Found cycles in state %s: %s' %
-                                     (self.label, list(cycles)))
+                                     (self.label, cycles))
                 leftover_nodes = set(self.nodes()) - result.keys()
                 raise RuntimeError(
                     "Some nodes were not processed: {}".format(leftover_nodes))
@@ -358,9 +354,9 @@ class StateGraphView(object):
         return result
 
     def scope_children(
-        self,
-        return_ids: bool = False,
-        validate: bool = True
+            self,
+            return_ids: bool = False,
+            validate: bool = True
     ) -> Dict[Optional[nd.EntryNode], List[nd.Node]]:
         """ Returns a dictionary that maps each SDFG entry node to its children,
             not including the children of children entry nodes. The key `None`
@@ -477,7 +473,7 @@ class StateGraphView(object):
         return defined_syms
 
     def _read_and_write_sets(
-        self
+            self
     ) -> Tuple[Dict[AnyStr, List[Subset]], Dict[AnyStr, List[Subset]]]:
         """
         Determines what data is read and written in this subgraph, returning
@@ -713,9 +709,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                       default=False,
                       desc="Do not synchronize at the end of the state")
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation
+    )
 
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "
@@ -1053,6 +1051,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         code: str,
         language: dtypes.Language = dtypes.Language.Python,
+        state_fields: Optional[List[str]] = None,
+        code_global: str = "",
+        code_init: str = "",
+        code_exit: str = "",
         location: dict = None,
         debuginfo=None,
     ):
@@ -1071,6 +1073,22 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             outputs,
             code,
             language,
+            state_fields=state_fields,
+            code_global=code_global,
+            code_init=code_init,
+            code_exit=code_exit,
+            location=location,
+            debuginfo=debuginfo,
+        ) if language != dtypes.Language.SystemVerilog else nd.RTLTasklet(
+            name,
+            inputs,
+            outputs,
+            code,
+            language,
+            state_fields=state_fields,
+            code_global=code_global,
+            code_init=code_init,
+            code_exit=code_exit,
             location=location,
             debuginfo=debuginfo,
         )
@@ -1160,12 +1178,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         return params, map_range
 
     def add_map(
-            self,
-            name,
-            ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
-            schedule=dtypes.ScheduleType.Default,
-            unroll=False,
-            debuginfo=None,
+        self,
+        name,
+        ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
+        schedule=dtypes.ScheduleType.Default,
+        unroll=False,
+        debuginfo=None,
     ) -> Tuple[nd.MapEntry, nd.MapExit]:
         """ Adds a map entry and map exit.
             :param name:      Map label
@@ -1389,12 +1407,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         return tasklet, map_entry, map_exit
 
     def add_reduce(
-            self,
-            wcr,
-            axes,
-            identity=None,
-            schedule=dtypes.ScheduleType.Default,
-            debuginfo=None,
+        self,
+        wcr,
+        axes,
+        identity=None,
+        schedule=dtypes.ScheduleType.Default,
+        debuginfo=None,
     ) -> 'dace.libraries.standard.Reduce':
         """ Adds a reduction node.
             :param wcr: A lambda function representing the reduction operation
@@ -1703,7 +1721,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
 
         path = self.memlet_path(edge)
 
-        is_read = isinstance(path[0], nd.AccessNode)
+        is_read = isinstance(path[0].src, nd.AccessNode)
         if is_read:
             # Traverse from connector to access node, so we can check if it's
             # safe to delete edges going out of a scope

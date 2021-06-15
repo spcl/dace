@@ -1,4 +1,4 @@
-// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #ifndef __DACE_PERF_REPORTING_H
 #define __DACE_PERF_REPORTING_H
 
@@ -18,7 +18,7 @@
 #endif
 
 #define DACE_REPORT_BUFFER_SIZE     2048
-#define DACE_REPORT_EVENT_NAME_LEN  50
+#define DACE_REPORT_EVENT_NAME_LEN  64
 #define DACE_REPORT_EVENT_CAT_LEN   10
 
 namespace dace {
@@ -83,8 +83,11 @@ namespace perf {
                 { "", counter_val }
             };
             strncpy(event.name, name, DACE_REPORT_EVENT_NAME_LEN);
+            event.name[DACE_REPORT_EVENT_NAME_LEN - 1] = '\0';
             strncpy(event.cat, cat, DACE_REPORT_EVENT_CAT_LEN);
+            event.cat[DACE_REPORT_EVENT_CAT_LEN - 1] = '\0';
             strncpy(event.counter.name, counter_name, DACE_REPORT_EVENT_NAME_LEN);
+            event.counter.name[DACE_REPORT_EVENT_NAME_LEN - 1] = '\0';
             this->_events.push_back(event);
         }
 
@@ -120,7 +123,9 @@ namespace perf {
                 { "", 0 }
             };
             strncpy(event.name, name, DACE_REPORT_EVENT_NAME_LEN);
+            event.name[DACE_REPORT_EVENT_NAME_LEN - 1] = '\0';
             strncpy(event.cat, cat, DACE_REPORT_EVENT_CAT_LEN);
+            event.cat[DACE_REPORT_EVENT_CAT_LEN - 1] = '\0';
             this->_events.push_back(event);
         }
 

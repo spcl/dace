@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from copy import deepcopy as dcpy
 import dace
@@ -109,6 +109,9 @@ def test_subgraph():
 
     graph.validate()
 
+    subgraph = SubgraphView(graph.nodes()[0], graph.nodes()[0].nodes())
+    sf = SubgraphFusion(subgraph)
+    assert sf.can_be_applied(graph, subgraph)
     fusion(graph, graph.nodes()[0], None)
     ccgraph = graph.compile()
 

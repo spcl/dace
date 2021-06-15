@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Python decorators for DaCe functions. """
 
 from __future__ import print_function
@@ -20,17 +20,24 @@ def program(f: F) -> parser.DaceProgram:
 
 
 @overload
-def program(*args, **kwargs) -> parser.DaceProgram:
+def program(*args,
+            auto_optimize=False,
+            device=dtypes.DeviceType.CPU,
+            **kwargs) -> parser.DaceProgram:
     ...
 
 
 @paramdec
-def program(f: F, *args, **kwargs) -> parser.DaceProgram:
+def program(f: F,
+            *args,
+            auto_optimize=False,
+            device=dtypes.DeviceType.CPU,
+            **kwargs) -> parser.DaceProgram:
     """ DaCe program, entry point to a data-centric program. """
 
     # Parses a python @dace.program function and returns an object that can
     # be translated
-    return parser.DaceProgram(f, args, kwargs)
+    return parser.DaceProgram(f, args, kwargs, auto_optimize, device)
 
 
 function = program

@@ -1,11 +1,11 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes and functions that implement the orthogonal
     stencil tiling transformation. """
 
 import math
 
 import dace
-from dace import registry, symbolic
+from dace import dtypes, registry, symbolic
 from dace.properties import make_properties, Property, ShapeProperty
 from dace.sdfg import nodes
 from dace.transformation import transformation
@@ -177,8 +177,9 @@ class StencilTiling(transformation.SubgraphTransformation):
     def can_be_applied(sdfg, subgraph) -> bool:
         # get highest scope maps
         graph = subgraph.graph
-        map_entries = set(
-            helpers.get_outermost_scope_maps(sdfg, graph, subgraph))
+        map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
+        map_exits = [graph.exit_node(entry) for entry in map_entries]
+
         # 1.1: There has to be more than one outermost scope map entry
         if len(map_entries) <= 1:
             return False
@@ -201,13 +202,22 @@ class StencilTiling(transformation.SubgraphTransformation):
                 return False
 
         # 1.3: check whether all map entries only differ by a const amount
+        max_amount = 0
         first_entry = next(iter(map_entries))
         for map_entry in map_entries:
             for r1, r2 in zip(map_entry.map.range, first_entry.map.range):
                 if len((r1[0] - r2[0]).free_symbols) > 0:
                     return False
+                else:
+                    max_amount = max(max_amount, abs(r1[0] - r2[0]))
                 if len((r1[1] - r2[1]).free_symbols) > 0:
                     return False
+                else:
+                    max_amount = max(max_amount, abs(r1[1] - r2[1]))
+
+        # in case there is nothing to tile
+        if max_amount == 0:
+            return False
 
         # get intermediate_nodes, out_nodes from SubgraphFusion Transformation
         node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph,
@@ -222,6 +232,14 @@ class StencilTiling(transformation.SubgraphTransformation):
         # are not supported in StencilTiling
         if len(intermediate_nodes & out_nodes) > 0:
             return False
+
+        # 1.6 check that we only deal with compressible transients
+
+        subgraph_contains_data = SubgraphFusion.determine_compressible_nodes(
+            sdfg, graph, intermediate_nodes, map_entries, map_exits)
+        if any([s == False for s in subgraph_contains_data.values()]):
+            return False
+
         # get coverages for every map entry
         coverages = {}
         memlets = {}
@@ -237,7 +255,7 @@ class StencilTiling(transformation.SubgraphTransformation):
         dag_neighbors = StencilTiling.topology(sdfg, graph, map_entries)
         (children_dict, _, sink_maps) = dag_neighbors
 
-        # 1.6: we now check coverage:
+        # 1.7: we now check coverage:
         # each outgoing coverage for a data memlet has to
         # be exactly equal to the union of incoming coverages
         # of all chidlren map memlets of this data
@@ -298,16 +316,19 @@ class StencilTiling(transformation.SubgraphTransformation):
                             # current dim has no symbol associated.
                             # ignore and continue
                             warnings.warn(
-                                f"In map {map_entry}, there is a "
+                                f"StencilTiling::In map {map_entry}, there is a "
                                 "dimension belonging to {data_name} "
                                 "that has no map parameter associated.")
                             pass
 
-            # 1.6: parameter mapping must be the same
+                        except KeyError:
+                            return False
+
+            #parameter mapping must be the same
             if param_parent_coverage != param_children_coverage:
                 return False
 
-        # 1.7: we want all sink maps to have the same range size
+        # 1.8: we want all sink maps to have the same range size
         assert len(sink_maps) > 0
         first_sink_map = next(iter(sink_maps))
         if not all([
@@ -508,7 +529,6 @@ class StencilTiling(transformation.SubgraphTransformation):
 
                 # get calculated parameters
                 tile_size = self.tile_sizes[-1]
-
                 dim_idx -= removed_maps
                 # If map or tile sizes are trivial, skip strip-mining map dimension
                 # special cases:
@@ -538,7 +558,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 stripmine = StripMining(sdfg_id, self.state_id,
                                         stripmine_subgraph, 0)
 
-                stripmine.tiling_type = 'ceilrange'
+                stripmine.tiling_type = dtypes.TilingType.CeilRange
                 stripmine.dim_idx = dim_idx
                 stripmine.new_dim_prefix = self.prefix if not trivial else ''
                 # use tile_stride for both -- we will extend
@@ -548,28 +568,25 @@ class StencilTiling(transformation.SubgraphTransformation):
                 outer_map = stripmine.apply(sdfg)
                 outer_map.schedule = original_schedule
 
-                # apply to the new map the schedule of the original one
-                map_entry.schedule = self.schedule
-
                 # if tile stride is 1, we can make a nice simplification by just
                 # taking the overapproximated inner range as inner range
                 # this eliminates the min/max in the range which
                 # enables loop unrolling
-                if tile_stride == 1:
-                    map_entry.range[dim_idx] = tuple(
-                        symbolic.SymExpr(el._approx_expr) if isinstance(
-                            el, symbolic.SymExpr) else el
-                        for el in map_entry.range[dim_idx])
+                if not trivial:
+                    if tile_stride == 1:
+                        map_entry.map.range[dim_idx] = tuple(
+                            symbolic.SymExpr(el._approx_expr) if isinstance(
+                                el, symbolic.SymExpr) else el
+                            for el in map_entry.map.range[dim_idx])
 
-                # in map_entry: enlarge tiles by upper and lower offset
-                # doing it this way and not via stripmine strides ensures
-                # that the max gets changed as well
-                old_range = map_entry.range[dim_idx]
-                map_entry.range[dim_idx] = ((old_range[0] -
-                                             self.tile_offset_lower[-1]),
-                                            (old_range[1] +
-                                             self.tile_offset_upper[-1]),
-                                            old_range[2])
+                    # in map_entry: enlarge tiles by upper and lower offset
+                    # doing it this way and not via stripmine strides ensures
+                    # that the max gets changed as well
+                    old_range = map_entry.map.range[dim_idx]
+                    map_entry.map.range[dim_idx] = (
+                        (old_range[0] - self.tile_offset_lower[-1]),
+                        (old_range[1] + self.tile_offset_upper[-1]),
+                        old_range[2])
 
                 # We have to propagate here for correct outer volume and subset sizes
                 _propagate_node(graph, map_entry)
@@ -591,6 +608,9 @@ class StencilTiling(transformation.SubgraphTransformation):
             # add last instance of map entries to _outer_entries
             if last_map_entry:
                 self._outer_entries.add(last_map_entry)
+
+            # apply to the new map the schedule of the original one
+            map_entry.map.schedule = self.schedule
 
             # Map Unroll Feature: only unroll if conditions are met:
             # Only unroll if at least one of the inner map ranges is strictly larger than 1
@@ -636,9 +656,10 @@ class StencilTiling(transformation.SubgraphTransformation):
                     }
                     transformation = LoopUnroll(0, 0, subgraph, 0)
                     transformation.apply(nsdfg)
+
             elif self.unroll_loops:
                 warnings.warn(
-                    "Did not unroll loops. Either all ranges are equal to "
+                    "StencilTiling::Did not unroll loops. Either all ranges are equal to "
                     "one or range difference is symbolic.")
 
         self._outer_entries = list(self._outer_entries)

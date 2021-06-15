@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.abspath('..'))
 # -- Project information -----------------------------------------------------
 
 project = 'DaCe'
-copyright = '2019-2020, Scalable Parallel Computing Laboratory, ETH Zurich'
+copyright = '2019-2021, Scalable Parallel Computing Laboratory, ETH Zurich'
 author = 'Scalable Parallel Computing Laboratory, ETH Zurich and the DaCe authors'
 
 # The full version, including alpha/beta/rc tags

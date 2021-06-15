@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Jupyter Notebook support for DaCe. """
 
 import os
@@ -70,7 +70,11 @@ def preamble():
     return result
 
 
-# Code that runs on "import dace"
-if isnotebook():
+def enable():
     from IPython.display import display, HTML
     display(HTML(preamble()))
+
+
+# Code that runs on "import dace"
+if isnotebook():
+    enable()

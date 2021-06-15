@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 from dace.transformation.dataflow import StripMining
@@ -30,7 +30,7 @@ def test_tiling_number_of_tiles():
     sdfg.apply_transformations(StripMining,
                                options=[{
                                    'tile_size': '16',
-                                   'tiling_type': 'number_of_tiles'
+                                   'tiling_type': dace.TilingType.NumberOfTiles
                                }])
     sdfg(A=A, X=X, Y=Y, N=size)
     assert np.allclose(Y, A*X+Z)

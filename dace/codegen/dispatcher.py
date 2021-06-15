@@ -1,5 +1,5 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-""" 
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+"""
 Contains the DaCe code generator target dispatcher, which is responsible for
 flexible code generation with multiple backends by dispatching certain
 functionality to registered code generators based on user-defined predicates.
@@ -32,7 +32,7 @@ class DefinedMemlets:
         The ones defined in the first (top) scope, refer to global variables.
     """
     def __init__(self):
-        self._scopes = [(None, {}, True)]
+        self._scopes = [(None, {}, True), (None, {}, True)]
 
     def enter_scope(self, parent, can_access_parent=True):
         self._scopes.append((parent, {}, can_access_parent))
@@ -44,9 +44,9 @@ class DefinedMemlets:
                 "Exited scope {} mismatched current scope {}".format(
                     parent.name, expected.name))
 
-    def has(self, name):
+    def has(self, name, ancestor: int = 0):
         try:
-            self.get(name)
+            self.get(name, ancestor)
             return True
         except KeyError:
             return False
@@ -368,9 +368,10 @@ class TargetDispatcher(object):
 
         # Check if the node satisfies any predicates that delegate to a
         # specific code generator
+        state = sdfg.node(state_id)
         satisfied_dispatchers = [
             dispatcher for pred, dispatcher in self._node_dispatchers
-            if pred(sdfg, node)
+            if pred(sdfg, state, node)
         ]
         num_satisfied = len(satisfied_dispatchers)
         if num_satisfied > 1:
@@ -419,10 +420,9 @@ class TargetDispatcher(object):
         else:
             declaration_stream = allocation_stream
 
-        self._array_dispatchers[storage].allocate_array(sdfg, dfg, state_id,
-                                                        node, function_stream,
-                                                        declaration_stream,
-                                                        allocation_stream)
+        dispatcher = self._array_dispatchers[storage]
+        dispatcher.allocate_array(sdfg, dfg, state_id, node, function_stream,
+                                  declaration_stream, allocation_stream)
 
         # TODO: Move to central allocator (see PR #434)
         if nodedesc.lifetime is dtypes.AllocationLifetime.Persistent:
@@ -447,9 +447,9 @@ class TargetDispatcher(object):
     # Dispatches copy code for a memlet
     def _get_copy_dispatcher(self, src_node, dst_node, edge, sdfg, dfg,
                              state_id, function_stream, output_stream):
-        """ 
+        """
         (Internal) Returns a code generator that should be dispatched for a
-        memory copy operation. 
+        memory copy operation.
         """
         src_is_data, dst_is_data = False, False
         state_dfg = sdfg.node(state_id)
@@ -548,9 +548,9 @@ class TargetDispatcher(object):
     # Dispatches definition code for a memlet that is outgoing from a tasklet
     def dispatch_output_definition(self, src_node, dst_node, edge, sdfg, dfg,
                                    state_id, function_stream, output_stream):
-        """ 
-        Dispatches a code generator for an output memlet definition in a 
-        tasklet. 
+        """
+        Dispatches a code generator for an output memlet definition in a
+        tasklet.
         """
         target = self._get_copy_dispatcher(src_node, dst_node, edge, sdfg, dfg,
                                            state_id, function_stream,

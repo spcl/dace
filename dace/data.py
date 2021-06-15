@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import re, json
 import copy as cp
@@ -9,7 +9,7 @@ from typing import Set
 import dace.dtypes as dtypes
 from dace.codegen import cppunparse
 from dace import symbolic, serialize
-from dace.properties import (Property, make_properties, DictProperty,
+from dace.properties import (EnumProperty, Property, make_properties, DictProperty,
                              ReferenceProperty, ShapeProperty, SubsetProperty,
                              SymbolicProperty, TypeClassProperty,
                              DebugInfoProperty, CodeProperty, ListProperty)
@@ -28,6 +28,7 @@ def create_datadescriptor(obj):
     except AttributeError:
         if isinstance(obj, numpy.ndarray):
             return Array(dtype=dtypes.typeclass(obj.dtype.type),
+                         strides=tuple(s // obj.itemsize for s in obj.strides),
                          shape=obj.shape)
         if symbolic.issymbolic(obj):
             return Scalar(symbolic.symtype(obj))
@@ -44,19 +45,15 @@ class Data(object):
         Examples: Arrays, Streams, custom arrays (e.g., sparse matrices).
     """
 
-    dtype = TypeClassProperty(default=dtypes.int32)
+    dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
     shape = ShapeProperty(default=[])
     transient = Property(dtype=bool, default=False)
-    storage = Property(dtype=dtypes.StorageType,
-                       desc="Storage location",
-                       choices=dtypes.StorageType,
-                       default=dtypes.StorageType.Default,
-                       from_string=lambda x: dtypes.StorageType[x])
-    lifetime = Property(dtype=dtypes.AllocationLifetime,
-                        desc='Data allocation span',
-                        choices=dtypes.AllocationLifetime,
-                        default=dtypes.AllocationLifetime.Scope,
-                        from_string=lambda x: dtypes.AllocationLifetime[x])
+    storage = EnumProperty(dtype=dtypes.StorageType,
+                           desc="Storage location",
+                           default=dtypes.StorageType.Default)
+    lifetime = EnumProperty(dtype=dtypes.AllocationLifetime,
+                            desc='Data allocation span',
+                            default=dtypes.AllocationLifetime.Scope)
     location = DictProperty(
         key_type=str,
         value_type=symbolic.pystr_to_symbolic,
@@ -188,11 +185,13 @@ class Scalar(Data):
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
-        if self.dtype != other.type:
+        if self.dtype != other.dtype:
             return False
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):
+        if self.storage is dtypes.StorageType.GPU_Global:
+            return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
         if not with_types or for_call:
             return name
         return self.dtype.as_arg(name)
@@ -619,3 +618,8 @@ class View(Array):
         if self.lifetime != dtypes.AllocationLifetime.Scope:
             raise ValueError('Only Scope allocation lifetime is supported for '
                              'Views')
+
+    def as_array(self):
+        copy = cp.deepcopy(self)
+        copy.__class__ = Array
+        return copy

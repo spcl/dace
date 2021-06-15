@@ -1,13 +1,13 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
+from dace import dtypes, data as dt
 from typing import Any, Dict, Optional
-from dace.data import Array
 from dace.symbolic import symstr
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts)
+from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_access)
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands,
                                               _get_batchmm_opts,
                                               _get_codegen_gemm_opts)
@@ -121,6 +121,7 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
          astrides), (_, bdesc, bshape,
                      bstrides), _ = _get_matmul_operands(node, state, sdfg)
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
+        check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
         dtype = cdesc.dtype.base_type
         func = to_blastype(dtype.type).lower() + 'gemm'
         if dtype == dace.float32:
@@ -163,6 +164,14 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
 
 
 @dace.library.expansion
+class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
+    environments = [environments.openblas.OpenBLAS]
+
+    @staticmethod
+    def expansion(*args, **kwargs):
+        return ExpandBatchedMatMulMKL.expansion(*args, **kwargs)
+
+@dace.library.expansion
 class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
 
     environments = [environments.cublas.cuBLAS]
@@ -177,16 +186,16 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
             if e.dst_conn == '_a':
                 anode = state.memlet_path(e)[0].src
                 if isinstance(anode, dace.sdfg.nodes.AccessNode):
-                    adesc: Array = sdfg.arrays[anode.data]
+                    adesc: dt.Array = sdfg.arrays[anode.data]
             elif e.dst_conn == '_b':
                 bnode = state.memlet_path(e)[0].src
                 if isinstance(bnode, dace.sdfg.nodes.AccessNode):
-                    bdesc: Array = sdfg.arrays[bnode.data]
+                    bdesc: dt.Array = sdfg.arrays[bnode.data]
         for e in state.out_edges(node):
             if e.src_conn == '_c':
                 cnode = state.memlet_path(e)[-1].dst
                 if isinstance(cnode, dace.sdfg.nodes.AccessNode):
-                    cdesc: Array = sdfg.arrays[cnode.data]
+                    cdesc: dt.Array = sdfg.arrays[cnode.data]
         if not adesc or not bdesc or not cdesc:
             raise ValueError('Unsupported input/output arrays')
 
@@ -222,11 +231,13 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
             CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
             {M}, {N}, {K},
             {alpha},
-            ({dtype}*){x}, {lda}, {stride_a},
-            ({dtype}*){y}, {ldb}, {stride_b},
+            ({dtype}*){array_prefix}{x}, {lda}, {stride_a},
+            ({dtype}*){array_prefix}{y}, {ldb}, {stride_b},
             {beta},
-            ({dtype}*)_c, {ldc}, {stride_c},
+            ({dtype}*){array_prefix}_c, {ldc}, {stride_c},
             {BATCH});'''
+
+        opt['array_prefix'] = ''
 
         code = (environments.cublas.cuBLAS.handle_setup_code(node) +
                 call.format_map(opt))
@@ -237,16 +248,30 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                                           language=dace.dtypes.Language.CPP)
 
         # If buffers are not on the GPU, copy them
-        # TODO: This creates variable shadowing
+        # TODO: doesn't work when storage is Default and Default=GPU_Global
         if any(desc.storage not in
                [dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned]
                for desc in [adesc, bdesc, cdesc]):
             nsdfg = dace.SDFG('nested_batched_matmul')
+            opt['array_prefix'] = '_'
+            code = (environments.cublas.cuBLAS.handle_setup_code(node) +
+                    call.format_map(opt))
+            tasklet = dace.sdfg.nodes.Tasklet(node.name, {
+                '__a': dtypes.pointer(adesc.dtype),
+                '__b': dtypes.pointer(bdesc.dtype)
+            }, {'__c': dtypes.pointer(cdesc.dtype)},
+                                              code,
+                                              language=dace.dtypes.Language.CPP)
+
             for name, desc in [('_a', adesc), ('_b', bdesc), ('_c', cdesc)]:
-                dcopy = dc(desc)
+                if isinstance(desc, dt.View):
+                    dcopy = desc.as_array()
+                else:
+                    dcopy = dc(desc)
                 dcopy.transient = False
+                dcopy.lifetime = dtypes.AllocationLifetime.Scope
+                dcopy_gpu = dc(dcopy)
                 nsdfg.add_datadesc(name, dcopy)
-                dcopy_gpu = dc(desc)
                 dcopy_gpu.transient = True
                 dcopy_gpu.storage = dace.StorageType.GPU_Global
                 nsdfg.add_datadesc(name + '_gpu', dcopy_gpu)
@@ -260,11 +285,11 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
             nstate.add_node(tasklet)
             nstate.add_nedge(a, ga, dace.Memlet.from_array('_a', adesc))
             nstate.add_nedge(b, gb, dace.Memlet.from_array('_b', bdesc))
-            nstate.add_edge(ga, None, tasklet, '_a',
+            nstate.add_edge(ga, None, tasklet, '__a',
                             dace.Memlet.from_array('_a_gpu', adesc))
-            nstate.add_edge(gb, None, tasklet, '_b',
+            nstate.add_edge(gb, None, tasklet, '__b',
                             dace.Memlet.from_array('_b_gpu', bdesc))
-            nstate.add_edge(tasklet, '_c', gc, None,
+            nstate.add_edge(tasklet, '__c', gc, None,
                             dace.Memlet.from_array('_c_gpu', cdesc))
             nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
 
@@ -281,6 +306,7 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "pure": ExpandBatchedMatMulPure,
         "MKL": ExpandBatchedMatMulMKL,
+        "OpenBLAS": ExpandBatchedMatMulOpenBLAS,
         "cuBLAS": ExpandBatchedMatMulCuBLAS
     }
     default_implementation = None

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
 
 
@@ -15,6 +15,7 @@ def assert_not_exists(name):
         pass
     if not raised:
         raise RuntimeError("Library " + name + " exists.")
+
 
 def test_include():
     assert_not_exists("FooLib")

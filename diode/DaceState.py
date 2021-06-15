@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ State of DaCe program in DIODE. """
 import os
 import re
@@ -13,7 +13,6 @@ from dace import dtypes
 from dace.transformation import optimizer
 from dace.sdfg import SDFG
 from dace.frontend.python import parser
-from dace.frontend.python.parser import DaceProgram
 
 
 class DaceState:
@@ -78,9 +77,9 @@ class DaceState:
                 self.errors.append(ex)
 
             # Find dace programs
-            self.sdfgs = [(name, parser.parse_from_function(obj))
+            self.sdfgs = [(name, obj.parse())
                           for name, obj in gen_module.items()
-                          if isinstance(obj, DaceProgram)]
+                          if isinstance(obj, parser.DaceProgram)]
             self.sdfgs += [(name, obj) for name, obj in gen_module.items()
                            if isinstance(obj, SDFG)]
             try:
