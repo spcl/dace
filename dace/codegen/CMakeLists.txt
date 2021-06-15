@@ -735,6 +735,8 @@ if(DACE_ENABLE_INTELFPGA)
 
 endif()
 
+include("targets/mlir/mlir.cmake")
+
 # Create DaCe library file
 add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
 target_link_libraries(${DACE_PROGRAM_NAME} ${DACE_LIBS})

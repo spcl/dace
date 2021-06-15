@@ -1034,6 +1034,8 @@ class CodeBlock(object):
             lang = dace.dtypes.Language.CPP
         elif lang.endswith("sv") or lang.endswith("systemverilog"):
             lang = dace.dtypes.Language.SystemVerilog
+        elif lang.endswith("MLIR"):
+            lang = dace.dtypes.Language.MLIR
 
         try:
             cdata = tmp['string_data']
@@ -1085,6 +1087,8 @@ class CodeProperty(Property):
             lang = dace.dtypes.Language.CPP
         elif lang.endswith("SystemVerilog"):
             lang = dace.dtypes.Language.SystemVerilog
+        elif lang.endswith("MLIR"):
+            lang = dace.dtypes.Language.MLIR
 
         try:
             cdata = tmp['string_data']
