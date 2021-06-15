@@ -19,6 +19,7 @@ from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, in
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.registry import make_registry
 from typing import Any, Dict, List, Optional, Set, Type, Union
+import pydoc
 
 
 class TransformationBase(object):
@@ -207,9 +208,9 @@ class Transformation(TransformationBase):
                  to pass analysis data out, or nothing.
         """
         tsdfg: SDFG = sdfg.sdfg_list[self.sdfg_id]
+        retval = self.apply(tsdfg)
         if append:
             sdfg.append_transformation(self)
-        retval = self.apply(tsdfg)
         if not self.annotates_memlets():
             propagation.propagate_memlets_sdfg(tsdfg)
         return retval
@@ -455,6 +456,7 @@ class PatternNode(object):
         return sdfg.node(state_id).node(node_id)
 
 
+@make_properties
 class ExpandTransformation(Transformation):
     """
     Base class for transformations that simply expand a node into a
@@ -534,6 +536,39 @@ class ExpandTransformation(Transformation):
         sdutil.change_edge_src(state, node, expansion)
         state.remove_node(node)
         type(self).postprocessing(sdfg, state, expansion)
+
+    def to_json(self, parent=None) -> Dict[str, Any]:
+        props = serialize.all_properties_to_json(self)
+        return {
+            'type': 'ExpandTransformation',
+            'transformation': type(self).__name__,
+            'classpath': nd.full_class_path(self),
+            **props
+        }
+
+    @staticmethod
+    def from_json(json_obj: Dict[str, Any],
+                  context: Dict[str, Any] = None) -> 'ExpandTransformation':
+        xform = pydoc.locate(json_obj['classpath'])
+
+        # Recreate subgraph
+        expr = xform.expressions()[json_obj['expr_index']]
+        subgraph = {
+            expr.node(int(k)): int(v)
+            for k, v in json_obj['_subgraph'].items()
+        }
+
+        # Reconstruct transformation
+        ret = xform(json_obj['sdfg_id'], json_obj['state_id'], subgraph,
+                    json_obj['expr_index'])
+        context = context or {}
+        context['transformation'] = ret
+        serialize.set_properties_from_json(
+            ret,
+            json_obj,
+            context=context,
+            ignore_properties={'transformation', 'type', 'classpath'})
+        return ret
 
 
 @make_registry
