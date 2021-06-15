@@ -2,11 +2,13 @@
 """
     SVE Vectorization: This module offers all functionality to vectorize an SDFG for the Arm SVE codegen.
 """
+from dace.codegen.targets.cpp import is_write_conflicted_with_reason
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg.state import SDFGState
 from dace import registry, symbolic, subsets
 from dace.properties import make_properties, Property, ShapeProperty
 from dace.sdfg import nodes, SDFG, SDFGState
+import dace.sdfg
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 import dace.dtypes
@@ -17,6 +19,8 @@ import dace.transformation.helpers
 import copy
 import dace.codegen.targets.sve as sve
 import dace.codegen.targets.sve.util
+import dace.frontend.operations
+import dace.data
 
 
 @registry.autoregister_params(singlestate=True)
@@ -62,16 +66,6 @@ class SVEVectorization(transformation.Transformation):
                 return False
 
         ########################
-        # Check memlets for unsupported strides
-        # The only unsupported strides are the ones containing the innermost
-        # loop param because they are not constant during a vector step
-        loop_param = symbolic.symbol(entry_node.params[-1])
-        for edge, _ in subgraph.all_edges_recursive():
-            if loop_param in edge.data.get_stride(sdfg,
-                                                  entry_node.map).free_symbols:
-                return False
-
-        ########################
         # Check for unsupported datatypes on the connectors (including on the Map itself)
         for node, _ in subgraph.all_nodes_recursive():
             for conn in node.in_connectors:
@@ -81,11 +75,55 @@ class SVEVectorization(transformation.Transformation):
                 if not node.out_connectors[conn].type in sve.util.TYPE_TO_SVE:
                     return False
 
-        # TODO: Check for WCR conflicts
+        ########################
+        # Check for unsupported memlets
+        param_name = entry_node.params[-1]
+        for edge, _ in subgraph.all_edges_recursive():
+            # Check for unsupported strides
+            # The only unsupported strides are the ones containing the innermost
+            # loop param because they are not constant during a vector step
+            param_sym = symbolic.symbol(entry_node.params[-1])
+            for edge, _ in subgraph.all_edges_recursive():
+                if param_sym in edge.data.get_stride(
+                        sdfg, entry_node.map).free_symbols:
+                    return False
 
-        # TODO: Check for stream pushes/pops
+            # Check for unsupported WCR
+            if edge.data.wcr is not None:
+                if is_write_conflicted_with_reason(graph, edge) is None:
+                    return False
+
+                # Unsupported reduction type
+                reduction_type = dace.frontend.operations.detect_reduction_type(
+                    edge.data.wcr)
+                if reduction_type not in sve.util.REDUCTION_TYPE_TO_SVE:
+                    return False
+
+                # Param in memlet during WCR is not supported
+                if param_name in edge.data.free_symbols:
+                    return False
+
+        for node, _ in subgraph.all_nodes_recursive():
+            if not isinstance(node, nodes.Tasklet):
+                continue
+
+            for edge in graph.in_edges(node):
+                # Check for valid copies from other tasklets and/or streams
+                if edge.data.data is not None:
+                    src_node = graph.memlet_path(edge)[0].src
+                    if not isinstance(src_node,
+                                      (nodes.Tasklet, nodes.AccessNode)):
+                        # Make sure we only have Code->Code copies and from arrays
+                        return False
+
+                    src_desc = src_node.desc(sdfg)
+                    if isinstance(src_desc, dace.data.Stream):
+                        # Stream pops are not implemented
+                        return False
 
         # TODO: Check using unparser whether Tasklets are actually generateable
+
+        # TODO: Check where else the codegen could fail (e.g. output into pointers after vectorize attempt)
 
         return True
 
