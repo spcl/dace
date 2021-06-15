@@ -207,6 +207,9 @@ class DaceProgram:
         """ Parses the DaCe function into an SDFG. """
         return self.parse(*args, strict=strict, save=save)
 
+    def __sdfg__(self) -> SDFG:
+        return self.parse(*args, strict=None, save=False)
+
     def compile(self, *args, strict=None, save=False):
         """ Convenience function that parses and compiles a DaCe program. """
         sdfg = self.parse(*args, strict=strict, save=save)

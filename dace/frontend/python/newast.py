@@ -2455,9 +2455,9 @@ class ProgramVisitor(ExtNodeVisitor):
                             raise DaceSyntaxError(
                                 self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols if not a scalar
-                        if (astr not in self.sdfg.symbols and not (
-                                astr in self.variables or
-                                astr in self.sdfg.arrays)):
+                        if (astr not in self.sdfg.symbols
+                                and not (astr in self.variables
+                                         or astr in self.sdfg.arrays)):
                             self.sdfg.add_symbol(astr, atom.dtype)
 
             # Add an initial loop state with a None last_state (so as to not
@@ -3573,19 +3573,27 @@ class ProgramVisitor(ExtNodeVisitor):
                     if state.in_degree(node) > 0:
                         return True
 
-    def visit_Call(self, node: ast.Call):
-        from dace.frontend.python.parser import DaceProgram  # Avoiding import loop
+    def _get_sdfg(self, value: Any) -> SDFG:
+        if isinstance(value, SDFG):  # Already an SDFG
+            return value
+        if hasattr(value, '__sdfg__'):  # Object that can be converted to SDFG
+            return value.__sdfg__()
+        return None
 
+    def _has_sdfg(self, value: Any) -> bool:
+        return isinstance(value, SDFG) or hasattr(value, '__sdfg__')
+
+    def visit_Call(self, node: ast.Call):
         func = None
-        # If the call directly refers to an SDFG or DaceProgram
-        if (isinstance(node.func, ast.Num)
-                and isinstance(node.func.n, (SDFG, DaceProgram))):
-            func = node.func.n
-            funcname = func.name
-        elif (isinstance(node.func, ast.Constant)
-              and isinstance(node.func.value, (SDFG, DaceProgram))):
-            func = node.func.value
-            funcname = func.name
+        # If the call directly refers to an SDFG or dace-compatible program
+        if isinstance(node.func, ast.Num):
+            if self._has_sdfg(node.func.n):
+                func = node.func.n
+                funcname = func.name
+        elif isinstance(node.func, ast.Constant):
+            if self._has_sdfg(node.func.value):
+                func = node.func.value
+                funcname = func.name
 
         if func is None:
             funcname = rname(node)
@@ -3600,7 +3608,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     func = None
 
                 # Not an SDFG, ignore (might be a recognized function, see below)
-                if not isinstance(func, (SDFG, DaceProgram)):
+                if not self._has_sdfg(func):
                     func = None
                 else:
                     # An SDFG, replace dots in name with underscores
@@ -3609,12 +3617,15 @@ class ProgramVisitor(ExtNodeVisitor):
             # If the function is a callable object
             elif funcname in self.globals and callable(self.globals[funcname]):
                 fcall = getattr(self.globals[funcname], '__call__', False)
-                if isinstance(fcall, (SDFG, DaceProgram)):
+                if self._has_sdfg(fcall):
                     func = fcall
                     funcname = fcall.name
 
         # If the function exists as a global SDFG or @dace.program, use it
         if func or funcname in self.other_sdfgs:
+            # Avoid import loops
+            from dace.frontend.python.parser import DaceProgram
+
             if func is None:
                 func = self.other_sdfgs[funcname]
             if isinstance(func, SDFG):
@@ -3642,7 +3653,15 @@ class ProgramVisitor(ExtNodeVisitor):
                     **self.sdfg.symbols
                 }[arg] if isinstance(arg, str) else arg for aname, arg in args)
                 sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
-
+            elif self._has_sdfg(func):
+                sdfg = copy.deepcopy(self._get_sdfg(func))
+                args = [(aname, self._parse_function_arg(arg))
+                        for aname, arg in zip(sdfg.arg_names, node.args)]
+                args += [(arg.arg, self._parse_function_arg(arg.value))
+                         for arg in node.keywords]
+                required_args = [
+                    a for a in sdfg.arglist().keys() if a not in sdfg.symbols
+                ]
             else:
                 raise DaceSyntaxError(
                     self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
