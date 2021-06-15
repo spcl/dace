@@ -1058,7 +1058,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
 <script>
     var sdfg_{uid} = {sdfg};
-    var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}),
+    var renderer_{uid} = new daceSDFGRenderer(daceParseSDFG(sdfg_{uid}),
         document.getElementById('contents_{uid}'));
 </script>""".format(
             # Dumping to a string so that Jupyter Javascript can parse it

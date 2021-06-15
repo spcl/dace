@@ -52,7 +52,7 @@ Running
 
 **Python scripts:** Run DaCe programs (in implicit or explicit syntax) using Python directly.
 
-**[SDFV (standalone SDFG viewer)](https://spcl.github.io/dace/sdfv.html):** To view SDFGs separately, run the `sdfv` installed script with the `.sdfg` file as an argument. Alternatively, you can use the link or open `diode/sdfv.html` directly and choose a file in the browser.
+**[SDFV (standalone SDFG viewer)](https://spcl.github.io/dace/sdfv.html):** To view SDFGs separately, run the `sdfv` installed script with the `.sdfg` file as an argument. Alternatively, you can use the link or open `diode/webclient/sdfv.html` directly and choose a file in the browser.
 
 **Visual Studio Code plugin**: Install from the [VSCode marketplace](https://marketplace.visualstudio.com/items?itemName=phschaad.sdfv) or open an `.sdfg` file for interactive SDFG viewing and transformation.
 

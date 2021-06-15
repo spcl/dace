@@ -32,9 +32,7 @@ def isnotebook():
 def preamble():
     # Emit javascript headers for SDFG renderer
     sdfv_js_deps = [
-        'renderer_dir/dagre.js', 'renderer_dir/global_vars.js',
-        'context_menu.js', 'renderer_elements.js', 'sdfg_utils.js',
-        'overlay_manager.js', 'renderer.js'
+        'renderer_dir/global_vars.js', 'dist/sdfv.js'
     ]
     sdfv_css_deps = ['sdfv.css']
 
@@ -50,16 +48,6 @@ def preamble():
         #     'external_lib/blob-stream.js',
         #     'external_lib/canvas2pdf.js',  # 'external_lib/math.min.js'
         # ]
-        result += '''
-        <script>
-        require.config({
-            paths: {
-                "math": "https://spcl.github.io/dace/webclient/external_lib/math.min"
-            },
-            waitSeconds: 40
-          });
-        require( ["math"], x => window.math = x);
-        </script>'''
         for dep in sdfv_js_deps:
             result += '<script src="https://spcl.github.io/dace/webclient/%s"></script>\n' % dep
         for dep in sdfv_css_deps:
