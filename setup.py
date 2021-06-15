@@ -80,7 +80,7 @@ setup(name='dace',
       ],
       extras_require={
           'testing':
-          ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum']
+          ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir']
       },
       entry_points={
           'console_scripts': [
