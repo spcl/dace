@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-
 import astunparse
 import functools
 import copy
@@ -479,11 +478,11 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             callsite_stream: CodeIOStream, state_parameters: list):
         '''
         Generates Kernel code, both device and host side.
-        :param sdfg: 
-        :param state: 
-        :param kernel_name: 
+        :param sdfg:
+        :param state:
+        :param kernel_name:
         :param predecessors: list containing all the name of kernels from which this one depends
-        :param subgraphs: 
+        :param subgraphs:
         :param kernel_stream: Device code stream, contains the kernel code
         :param state_host_header_stream: Device-specific code stream: contains the host code
             for the state global declarations.
@@ -1592,8 +1591,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 else:
                     code_str = "{dst}[{idx}] = {src};"
                 slice = self.visit(node.targets[0].slice)
-                if isinstance(slice, ast.Index) and isinstance(
-                        slice.value, ast.Tuple):
+                if (isinstance(slice, ast.Slice) and
+                        isinstance(slice.value, ast.Tuple)):
                     subscript = unparse(slice)[1:-1]
                 else:
                     subscript = unparse(slice)
