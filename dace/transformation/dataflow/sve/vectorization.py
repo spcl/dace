@@ -134,7 +134,7 @@ class SVEVectorization(transformation.Transformation):
 
         any_vector = False
         for edge in graph.out_edges(map_entry):
-            # Vectorize the first level memlets, if possible
+            # Vectorize the first level connector, if possible
             any_vector = any_vector or cls.try_vectorize_dst(
                 graph, edge, param_name, modify=False)
 
@@ -178,7 +178,6 @@ class SVEVectorization(transformation.Transformation):
 
         if edge.data.subset.num_elements() != 1:
             # More than one element in memlet
-            print(edge.data.subset.num_elements())
             return False
 
         if param not in edge.data.subset.free_symbols:
