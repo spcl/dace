@@ -59,9 +59,15 @@ def mkc(sdfg : dace.SDFG, statebefore, src_name, dst_name, src_storage=None, dst
     
     aNpArr, bNpArr = None, None
     if src_shape is not None:
-        aNpArr = np.zeros(src_shape, dtype=np.int32)
+        try:
+            aNpArr = np.zeros(src_shape, dtype=np.int32)
+        except:
+            pass
     if dst_shape is not None:
-        bNpArr = np.zeros(dst_shape, dtype=np.int32)
+        try:
+            bNpArr = np.zeros(dst_shape, dtype=np.int32)
+        except:
+            pass
     if returnCreatedObjects:
         (state, aNpArr, bNpArr, aAcc, bAcc, edge)
     else:
