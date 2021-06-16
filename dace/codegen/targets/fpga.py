@@ -171,9 +171,9 @@ class FPGACodeGen(TargetCodeGenerator):
                            dependencies: dict):
         '''
             Finds subgraphs of an SDFGState or ScopeSubgraphView that correspond to kernels.
-            This is done by looking at the kernel ID associated to each node ('_kernel' field).
+            This is done by looking to which kernel, each node belongs.
             :param graph, the state/subgraph to consider
-            :param dependencies: a dictionary containing for each kernel ID, the IDs of the kernels from which it
+            :param dependencies: a dictionary containing for each kernel ID, the IDs of the kernels on which it
                 depends on
             :return a list of tuples (subgraph, kernel ID) topologically ordered according kernel dependencies.
         '''
@@ -188,12 +188,11 @@ class FPGACodeGen(TargetCodeGenerator):
             list)  # {kernel_id: {nodes in subgraph}}
 
         # Go over the nodes and populate the kernels subgraphs
-        for node, node_state in graph.all_nodes_recursive():
-
+        for node in graph.nodes():
             if isinstance(node, dace.sdfg.SDFGState):
                 continue
 
-            node_repr = utils.unique_node_repr(node_state, node)
+            node_repr = utils.unique_node_repr(graph, node)
             if node_repr in self._node_to_kernel:
                 subgraphs[self._node_to_kernel[node_repr]].append(node)
 
@@ -202,9 +201,9 @@ class FPGACodeGen(TargetCodeGenerator):
                 # AccessNodes can be read from multiple kernels, so
                 # check all out edges
 
-                start_nodes = [e.dst for e in node_state.out_edges(node)]
+                start_nodes = [e.dst for e in graph.out_edges(node)]
                 for n in start_nodes:
-                    n_repr = utils.unique_node_repr(node_state, n)
+                    n_repr = utils.unique_node_repr(graph, n)
                     if n_repr in self._node_to_kernel:
                         subgraphs[self._node_to_kernel[n_repr]].append(node)
 
@@ -262,7 +261,7 @@ class FPGACodeGen(TargetCodeGenerator):
             start_kernel = 0
             for sg in subgraphs:
                 # Determine kernels in state
-                num_kernels, dependencies = self.compute_kernels(
+                num_kernels, dependencies = self.partition_kernels(
                     sg, default_kernel=start_kernel)
 
                 if num_kernels > 1:
@@ -849,7 +848,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                          callsite_stream):
         pass  # Handled by destructor
 
-    def compute_kernels(self, state: dace.SDFGState, default_kernel: int = 0):
+    def partition_kernels(self, state: dace.SDFGState, default_kernel: int = 0):
         """ Associate node to different kernels.
             This field is applied to all FPGA maps, tasklets, and library nodes
             that can be executed in parallel in separate kernels.
@@ -858,9 +857,6 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             :param default_kernel: The Kernel ID to start counting from.
             :return: a tuple containing the number of kernels and the dependencies among them
         """
-
-        # TODO:
-        #  - control  this by some dace configuration flag?
 
         concurrent_kernels = 0  # Max number of kernels
         sdfg = state.parent
@@ -871,7 +867,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             return kernel_id + 1
 
         # Dictionary containing dependencies among kernels:
-        # dependencies[K] = [list of kernel IDs from which K depends]
+        # dependencies[K] = [list of kernel IDs on which K depends]
         dependencies = dict()
 
         source_nodes = state.source_nodes()
@@ -898,40 +894,6 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 # Node has been already visited)
                 continue
 
-            def trace_back_edge(edge, state, look_for_kernel_id=False):
-                '''
-                Given ad edge, this traverses the edges backwards.
-                It can be used either for:
-                - understanding if along the backward path there is some compute node, or
-                - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
-                '''
-
-                curedge = edge
-                source_nodes = state.source_nodes()
-                while not curedge.src in source_nodes:
-
-                    if not look_for_kernel_id:
-                        if isinstance(
-                                curedge.src,
-                            (nodes.EntryNode, nodes.ExitNode, nodes.CodeNode)):
-                            # We can stop here: this is a scope which will contain some compute, or a tasklet/libnode
-                            return True
-                    else:
-                        src_repr = utils.unique_node_repr(state, curedge.src)
-                        if src_repr in self._node_to_kernel:
-                            # Found a node with a kernel id. Use that
-                            return self._node_to_kernel[src_repr]
-                    next_edge = next(e for e in state.in_edges(curedge.src))
-                    curedge = next_edge
-
-                # We didn't return before
-                if not look_for_kernel_id:
-                    return False
-                else:
-                    src_repr = utils.unique_node_repr(state, curedge.src)
-                    return self._node_to_kernel[
-                        src_repr] if src_repr in self._node_to_kernel else None
-
             e_src_repr = utils.unique_node_repr(state, e.src)
             if e_src_repr in self._node_to_kernel:
                 kernel = self._node_to_kernel[e_src_repr]
@@ -952,7 +914,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     # Loop over all predecessors (except this edge)
                     crossroad_node = False
                     for pred_edge in state.in_edges(e.dst):
-                        if pred_edge != e and trace_back_edge(pred_edge, state):
+                        if pred_edge != e and self._trace_back_edge(
+                                pred_edge, state):
                             crossroad_node = True
                             break
 
@@ -968,9 +931,9 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
                 for pred_edge in state.in_edges(e.dst):
                     if pred_edge != e:
-                        kernel = trace_back_edge(pred_edge,
-                                                 state,
-                                                 look_for_kernel_id=True)
+                        kernel = self._trace_back_edge(pred_edge,
+                                                       state,
+                                                       look_for_kernel_id=True)
                         if kernel is not None:
                             break
                 else:
@@ -1019,6 +982,40 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
         max_kernels = max_kernels if concurrent_kernels == 0 else concurrent_kernels
         return max_kernels, dependencies
+
+    def _trace_back_edge(self, edge, state, look_for_kernel_id=False):
+        '''
+        Given ad edge, this traverses the edges backwards.
+        It can be used either for:
+        - understanding if along the backward path there is some compute node, or
+        - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
+        '''
+
+        curedge = edge
+        source_nodes = state.source_nodes()
+        while not curedge.src in source_nodes:
+
+            if not look_for_kernel_id:
+                if isinstance(
+                        curedge.src,
+                    (nodes.EntryNode, nodes.ExitNode, nodes.CodeNode)):
+                    # We can stop here: this is a scope which will contain some compute, or a tasklet/libnode
+                    return True
+            else:
+                src_repr = utils.unique_node_repr(state, curedge.src)
+                if src_repr in self._node_to_kernel:
+                    # Found a node with a kernel id. Use that
+                    return self._node_to_kernel[src_repr]
+            next_edge = next(e for e in state.in_edges(curedge.src))
+            curedge = next_edge
+
+        # We didn't return before
+        if not look_for_kernel_id:
+            return False
+        else:
+            src_repr = utils.unique_node_repr(state, curedge.src)
+            return self._node_to_kernel[
+                src_repr] if src_repr in self._node_to_kernel else None
 
     def _emit_copy(self, sdfg, state_id, src_node, src_storage, dst_node,
                    dst_storage, dst_schedule, edge, dfg, function_stream,
