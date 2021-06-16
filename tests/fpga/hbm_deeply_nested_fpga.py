@@ -50,4 +50,4 @@ def exec_deeply_nested_test():
     assert np.allclose(a, c, 10e-6)
 
 if __name__ == "__main__":
-    exec_deeply_nested_copy_test()
+    exec_deeply_nested_test()
