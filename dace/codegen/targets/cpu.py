@@ -1538,7 +1538,7 @@ class CPUCodeGen(TargetCodeGenerator):
         for _, _, _, vconn, memlet in state.all_edges(node):
             if (memlet.data in sdfg.arrays and 
                 sdutils.is_HBM_array(sdfg.arrays[memlet.data])):
-                    raise NotImplementedError("Nested SDFG's for hostcode not supported")
+                    raise NotImplementedError("HBM in nested SDFG's for hostcode not supported")
 
         memlet_references = []
         for _, _, _, vconn, in_memlet in sorted(state.in_edges(node),

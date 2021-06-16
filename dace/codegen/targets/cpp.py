@@ -1453,6 +1453,7 @@ def array_interface_variable(var_name: str,
         # we are about to define it), so if the dispatcher is not passed, just
         # return the appropriate string
         result = ptr_out if is_write else ptr_in
+    #Append the interface id, if provided
     if interface_id is not None:
         if isinstance(interface_id, tuple):
             result = f"{result}_{interface_id[accessed_subset]}"

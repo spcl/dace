@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from copy import deepcopy
 from six import StringIO
 import collections
 import enum
@@ -10,11 +9,11 @@ import warnings
 import sympy as sp
 import numpy as np
 from typing import Dict, Union
+import copy
 
 import dace
 from dace.codegen.targets import cpp
-from dace import subsets, data as dt, dtypes
-from dace import memlet
+from dace import subsets, data as dt, dtypes, memlet
 from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import SDFG, nodes, utils, dynamic_map_inputs
@@ -28,7 +27,6 @@ from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.symbolic import evaluate
-import dace.symbolic
 
 _CPU_STORAGE_TYPES = {
     dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal,
@@ -1207,7 +1205,7 @@ class FPGACodeGen(TargetCodeGenerator):
             dst_is_hbm = utils.is_HBM_array(dst_array)
             if src_is_hbm or dst_is_hbm:
                 do_default_copy = False
-                modedge = deepcopy(edge)
+                modedge = copy.deepcopy(edge)
                 mem : memlet.Memlet = modedge.data
                 if mem.src_subset is None:
                     mem.src_subset = subsets.Range.from_array(src_array)
@@ -1218,7 +1216,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 if dst_is_hbm:
                     bankbeg, bankend = utils.get_multibank_ranges_from_subset(mem.dst_subset, sdfg)
                 num_accessed_banks = bankend - bankbeg
-                oldmem = deepcopy(mem)
+                oldmem = copy.deepcopy(mem)
                 for i in range(num_accessed_banks):
                     src_index = oldmem.src_subset[0][0] + i
                     dst_index = oldmem.dst_subset[0][0] + i
