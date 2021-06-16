@@ -1318,6 +1318,7 @@ class LibraryNode(CodeNode):
             raise RuntimeError("Library node "
                                "expansion applicability check failed.")
         transformation.apply(sdfg, *args, **kwargs)
+        sdfg.append_transformation(transformation)
         return implementation
 
     @classmethod
