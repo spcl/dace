@@ -207,10 +207,10 @@ class Transformation(TransformationBase):
         :return: A transformation-defined return value, which could be used
                  to pass analysis data out, or nothing.
         """
-        tsdfg: SDFG = sdfg.sdfg_list[self.sdfg_id]
-        retval = self.apply(tsdfg)
         if append:
             sdfg.append_transformation(self)
+        tsdfg: SDFG = sdfg.sdfg_list[self.sdfg_id]
+        retval = self.apply(tsdfg)
         if not self.annotates_memlets():
             propagation.propagate_memlets_sdfg(tsdfg)
         return retval
