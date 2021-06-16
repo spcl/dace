@@ -77,7 +77,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                         f" evaluatable to constants and have stride==1 for array {name}",
                         sdfg, None)
                 if(high - low < 1):
-                    raise InvalidSDFGError("locationproperty 'hbmbank' must at least define one bank to be used",
+                    raise InvalidSDFGError("locationproperty 'hbmbank' must at least define one bank to be used"
                         f" for array {name}", sdfg, None)
                 if(high - low != desc.shape[0] or len(desc.shape) < 2):
                     raise InvalidSDFGError("arrays with locationproperty 'hbmbank' must have the size of the first"
@@ -176,6 +176,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     scope_local_constantnames : dict[nd.MapEntry, list[str]] = dict()
     scope = state.scope_dict()
 
+    #Build a dict linking each mapEntry to constants defined within that scope
     last_visited_map_entry = []
     for node in sdutil.dfs_topological_sort(state):
         if isinstance(node, nd.MapEntry):
