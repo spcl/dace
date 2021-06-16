@@ -122,3 +122,35 @@ def test_first_level_vectorization():
     assert not isinstance(find_connector_by_name(sdfg, 'a_scal'), dtypes.vector)
     # j is the innermost param
     assert isinstance(find_connector_by_name(sdfg, 'a_vec'), dtypes.vector)
+
+
+def test_stream_push():
+    @dace.program(dace.float32[N], dace.float32[N])
+    def program(A, B):
+        S_out = dace.define_stream(dace.float32, N)
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> S_out(-1)
+                b = a
+        S_out >> B
+
+    sdfg = program.to_sdfg(strict=True)
+    # Stream push is possible
+    assert sdfg.apply_transformations(SVEVectorization) == 1
+
+
+def test_stream_pop():
+    @dace.program(dace.float32[N], dace.float32[N])
+    def program(A, B):
+        S_in = dace.define_stream(dace.float32, N)
+        S_in << A
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << S_in(-1)
+                b >> B[i]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    # Stream pop is not implemented yet
+    assert sdfg.apply_transformations(SVEVectorization) == 0
