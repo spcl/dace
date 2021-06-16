@@ -207,14 +207,24 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # Node validation
         try:
             if isinstance(node, nd.NestedSDFG):
-                consts = set(sdfg.constants.keys())
                 ndscope = scope[node]
+                removeconsts = []
+                addsymmaps = []
                 if ndscope is not None:
-                    consts = set.union(set(scope_local_constantnames[ndscope]), consts)
-                if(hasattr(sdfg, "parent_scope_constants_bypass_set")):
-                    consts = set.union(sdfg.parent_scope_constants_bypass_set, consts)
-                node.sdfg.parent_scope_constants_bypass_set = consts
-            node.validate(sdfg, state)
+                    for const in scope_local_constantnames[ndscope]:
+                        if const in sdfg.constants:
+                            continue
+                        sdfg.add_constant(const, 0)
+                        removeconsts.append(const)
+                        if const in node.symbol_mapping:
+                            addsymmaps.append((const, node.symbol_mapping[const]))
+                            node.symbol_mapping.pop(const)
+                node.validate(sdfg, state)
+                for rm in removeconsts:
+                    sdfg.constants_prop.pop(rm)
+                node.symbol_mapping.update(addsymmaps)
+            else:
+                node.validate(sdfg, state)
         except InvalidSDFGError:
             raise
         except Exception as ex:
@@ -605,8 +615,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if(stride != 1):
                 return False
             consts = set(sdfg.constants.keys())
-            if(hasattr(sdfg, "parent_scope_constants_bypass_set")):
-                consts = set.union(sdfg.parent_scope_constants_bypass_set, consts)
             currentscope = scope[e.src]
             if(e.src == scope[e.dst]):
                 currentscope = e.src
@@ -614,7 +622,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 consts = set.union(set(scope_local_constantnames[currentscope]), consts)
             lowset = set([str(x) for x in low.free_symbols]) - consts
             highset = set([str(x) for x in high.free_symbols]) - consts
-            return (len(lowset) == 0 and len(highset) == 0)
+            return len(lowset) == 0 and len(highset) == 0
 
         wrongmagicindexerror = InvalidSDFGEdgeError("The first index accessing "
             "HBM-arrays must be constant evaluatable and have stride==1",
