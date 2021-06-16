@@ -1535,6 +1535,11 @@ class CPUCodeGen(TargetCodeGenerator):
         # Connectors that are both input and output share the same name
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
+        for _, _, _, vconn, memlet in state.all_edges(node):
+            if (memlet.data in sdfg.arrays and 
+                sdutils.is_HBM_array(sdfg.arrays[memlet.data])):
+                    raise NotImplementedError("Nested SDFG's for hostcode not supported")
+
         memlet_references = []
         for _, _, _, vconn, in_memlet in sorted(state.in_edges(node),
                                                 key=lambda e: e.dst_conn or ''):
