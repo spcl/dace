@@ -225,7 +225,8 @@ def ptr(name: str, desc: data.Data = None, subset_info : "Union[subsets.Subset, 
         sdfg : dace.SDFG = None, is_write : bool = None, dispatcher = None, 
         ancestor : int = None, is_array_interface : bool = False, interface_id = None) -> str:
     """
-    Returns a string that points to the data based on its name and descriptor.
+    Returns a string that points to the data based on its name, and various other conditions
+    that may apply for that data field.
     :param name: Data name.
     :param desc: Data descriptor.
     :param subset_info: Any additional information about the accessed subset. 
@@ -1434,8 +1435,8 @@ def array_interface_variable(var_name: str,
     """
     Generates the variable name of an ArrayInterface variable.
     """
-    ptr_in = f"{var_name}_in"
-    ptr_out = f"{var_name}_out"
+    ptr_in = f"__{var_name}_in"
+    ptr_out = f"__{var_name}_out"
     if dispatcher is not None:
         # DaCe allows reading from an output connector, even though it
         # is not an input connector. If this occurs, panic and read
