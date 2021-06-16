@@ -188,6 +188,62 @@ def check_hbm2ddr1():
     sdfg(a=a, c=c)
     assert np.allclose(c, expect)
 
+def create_deeply_nested_copy_sdfg():
+    N = dace.symbol("N")
+    M = dace.symbol("M")
+
+    sdfg = dace.SDFG('deepnestcopytest')
+    state = sdfg.add_state('deepnestcopytest', True)
+
+    sdfg.add_array("in1", [M, N], dace.int32)
+    in1_fpga_glob = sdfg.add_array("in1_fpga", [4, M // 2, N // 2], dace.int32,
+        dtypes.StorageType.FPGA_Global, transient=True)
+    in1_fpga_glob[1].location["hbmbank"] = subsets.Range.from_string(f"0:{4}")
+    readin1_glob = state.add_read("in1")
+    outwrite_glob = state.add_write("in1_fpga")
+
+    map0_enter, map0_exit = state.add_map("scal_inner_map", dict(n=f"0:2"))
+    map0_enter.map.schedule = dtypes.ScheduleType.Unrolled
+    map1_enter, map1_exit = state.add_map("scal_inner_map", dict(m=f"0:2"))
+    map1_enter.map.schedule = dtypes.ScheduleType.Unrolled
+
+    nsdfg = dace.SDFG("CopyNested")
+    in1_n = nsdfg.add_array("in1__", [M, N], dace.int32)
+    in1_fpga_n = nsdfg.add_array("in1_fpga__", [4, M // 2, N // 2], dace.int32,
+        dtypes.StorageType.FPGA_Global)
+    in1_fpga_n[1].location["hbmbank"] = subsets.Range.from_string(f"0:{4}")
+    nstate = nsdfg.add_state('copy', True)
+
+    readin1 = nstate.add_read("in1__")
+    outwrite = nstate.add_write("in1_fpga__")
+    memTo = dace.Memlet("in1__[m*(M//2), n*(N//2)]->m*2+n, 0:(M//2), 0:(N//2)", 
+        volume="(M//2)*(N//2)", allow_oob=True)
+    nstate.add_memlet_path(readin1, outwrite, memlet=memTo)
+    
+    nsdfg_node = state.add_nested_sdfg(nsdfg, None,
+        set(["in1__"]), set(["in1_fpga__"]))
+
+    state.add_memlet_path(readin1_glob, map0_enter, map1_enter, nsdfg_node, memlet=dace.Memlet("in1[0:M, 0:N]"), dst_conn="in1__")
+    state.add_memlet_path(nsdfg_node, map1_exit, map0_exit, outwrite_glob, memlet=dace.Memlet("in1_fpga[0:4, 0:(M//2), 0:(N//2)]")
+    , src_conn="in1_fpga__")
+
+    hbm_copy_fpga.mkc(sdfg, state, "in1_fpga", "out", None, dtypes.StorageType.Default,
+        None, [4, M // 2, N // 2], "in1_fpga")
+    
+    return sdfg
+
+def exec_deeply_nested_copy_test():
+    sdfg = create_deeply_nested_copy_sdfg()
+    a = np.ones((10, 10), dtype=np.int32)
+    a[3:7, 2:8] = 15
+    expect = np.zeros((4, 5, 5), dtype=np.int32)
+    expect[0, 0:5, 0:5] = a[0:5, 0:5]
+    expect[1, 0:5, 0:5] = a[0:5, 5:10]
+    expect[2, 0:5, 0:5] = a[5:10, 0:5]
+    expect[3, 0:5, 0:5] = a[5:10, 5:10]
+    out = np.zeros((4, 5, 5), dtype=np.int32)
+    sdfg(in1=a, out=out, M=10, N=10)
+    assert np.allclose(expect, out)
 
 #check_host2copy1()
 #check_dev2host1()
