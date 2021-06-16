@@ -1,9 +1,25 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from dace.sdfg.graph import NodeNotFoundError
 import dace
 import numpy as np
 from dace.transformation.dataflow.sve.vectorization import SVEVectorization
+from dace import SDFG
+import dace.dtypes as dtypes
 
 N = dace.symbol('N')
+
+
+def find_connector_by_name(sdfg: SDFG, name: str):
+    """
+    Utility function to obtain the type of a connector by its name
+    """
+    for node, _ in sdfg.start_state.all_nodes_recursive():
+        if name in node.in_connectors:
+            return node.in_connectors[name]
+        elif name in node.out_connectors:
+            return node.out_connectors[name]
+
+    raise NodeNotFoundError(f'Could not find connector "{name}"')
 
 
 def test_basic_stride():
@@ -87,3 +103,22 @@ def test_unsupported_wcr():
     sdfg = program.to_sdfg(strict=True)
     # Vector WCR not supported in SVE
     assert sdfg.apply_transformations(SVEVectorization) == 0
+
+
+def test_first_level_vectorization():
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float32[N]):
+        for i, j in dace.map[0:N, 0:N]:
+            with dace.tasklet:
+                a_scal << A[i]
+                a_vec << A[j]
+                b >> B[j]
+                b = a_vec
+
+    sdfg = program.to_sdfg(strict=True)
+    sdfg.apply_transformations(SVEVectorization)
+
+    # i is constant in the vectorized map
+    assert not isinstance(find_connector_by_name(sdfg, 'a_scal'), dtypes.vector)
+    # j is the innermost param
+    assert isinstance(find_connector_by_name(sdfg, 'a_vec'), dtypes.vector)
