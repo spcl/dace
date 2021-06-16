@@ -64,19 +64,15 @@ def copy_expr(
         offset_cppstr = "0"
     dt = ""
 
-    expr = ptr(dataname, datadesc, usedsubset, sdfg)
-
     def_type, _ = dispatcher.defined_vars.get(dataname)
+
+    # If this is a view, it has already been renamed
+    expr = ptr(dataname, datadesc, usedsubset, sdfg, is_write, dispatcher,
+        0, def_type == DefinedType.ArrayInterface and not isinstance(datadesc, data.View))
 
     add_offset = offset_cppstr != "0"
 
     if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
-        if def_type == DefinedType.ArrayInterface:
-            # If this is a view, it has already been renamed
-            if not isinstance(datadesc, data.View):
-                if is_write is None:
-                    raise ValueError("is_write must be set for ArrayInterface.")
-                expr = array_interface_variable(expr, is_write, dispatcher)
         return "{}{}{}".format(
             dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
 
@@ -226,7 +222,8 @@ def memlet_copy_to_absolute_strides(dispatcher,
 
 
 def ptr(name: str, desc: data.Data, subset_info : "Union[subsets.Subset, int]" = None,
-        sdfg = None) -> str:
+        sdfg : dace.SDFG = None, is_write : bool = None, dispatcher = None, 
+        ancestor : int = None, is_array_interface : bool = False, interface_id = None) -> str:
     """
     Returns a string that points to the data based on its name and descriptor.
     :param name: Data name.
@@ -241,18 +238,24 @@ def ptr(name: str, desc: data.Data, subset_info : "Union[subsets.Subset, int]" =
         from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
         if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
             return f'__state->{name}'
-    if(isinstance(desc, data.Array) and desc.storage == dtypes.StorageType.FPGA_Global
+    if(desc is not None and isinstance(desc, data.Array) 
+        and desc.storage == dtypes.StorageType.FPGA_Global
         and "hbmbank" in desc.location):
         if(subset_info == None):
             raise ValueError("Cannot generate name for hbmbank without subset info")
         elif(isinstance(subset_info, int)):
-            return f"hbm{subset_info}_{name}"
+            name = f"hbm{subset_info}_{name}"
         elif(isinstance(subset_info, subsets.Subset)):
             if(sdfg == None):
                 raise ValueError("Cannot generate name for hbmbank using subset if sdfg not provided")
             low, _ = utils.get_multibank_ranges_from_subset(subset_info, sdfg, True, 
                 f"{name} with subset {str(subset_info)}")
-            return f"hbm{low}_{name}"
+            name = f"hbm{low}_{name}"
+            subset_info = low #used for arrayinterface where it must be int
+    if is_array_interface:
+        if is_write is None:
+            raise ValueError("is_write must be set for ArrayInterface.")
+        name = array_interface_variable(name, is_write, dispatcher, ancestor, interface_id, subset_info)
     return name
 
 
@@ -274,7 +277,6 @@ def emit_memlet_reference(dispatcher,
     """
     desc = sdfg.arrays[memlet.data]
     typedef = conntype.ctype
-    datadef = ptr(memlet.data, desc, bank_info)
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
@@ -284,6 +286,11 @@ def emit_memlet_reference(dispatcher,
     # accordingly.
     defined_type, defined_ctype = dispatcher.defined_vars.get(
         memlet.data, ancestor)
+
+    datadef = ptr(memlet.data, desc, bank_info, sdfg,
+        is_write, dispatcher, ancestor, 
+        defined_type == DefinedType.ArrayInterface)
+
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface
                 and isinstance(desc, data.View))):
@@ -294,13 +301,8 @@ def emit_memlet_reference(dispatcher,
             defined_type = DefinedType.Scalar
             ref = '&'
     elif defined_type == DefinedType.ArrayInterface:
-        if is_write is None:
-            raise ValueError("is_write must be defined for ArrayInterface.")
-        else:
-            base_ctype = conntype.base_type.ctype
-            typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
-            datadef = array_interface_variable(datadef, is_write, dispatcher,
-                                               ancestor)
+        base_ctype = conntype.base_type.ctype
+        typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
@@ -640,12 +642,8 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = indices
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
-    dname = ptr(memlet.data, desc, memlet.subset, sdfg)
-
-    if defined_type == DefinedType.ArrayInterface:
-        if is_write is None:
-            raise ValueError("is_write must be set for ArrayInterface.")
-        dname = array_interface_variable(dname, is_write, None)
+    dname = ptr(memlet.data, desc, memlet.subset, sdfg, 
+        is_write, None, None, defined_type == DefinedType.ArrayInterface)
 
     if defined_type == DefinedType.Scalar:
         dname = '&' + dname
@@ -1171,8 +1169,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                                       expr_semicolon=False),
                             ))
                         else:
-                            targetarrayif = array_interface_variable(ptr(memlet.data, 
-                                desc, memlet.dst_subset ,self.sdfg), True, None)
+                            targetarrayif = ptr(memlet.data, desc, memlet.dst_subset,
+                                self.sdfg, True, None, None, True)
                             newnode = ast.Name(id=f"{targetarrayif}"
                                 f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False)}]"
                                 f" = {cppunparse.cppunparse(value, expr_semicolon=False)};")
@@ -1395,8 +1393,6 @@ def array_interface_variable(var_name: str,
     """
     Generates the variable name of an ArrayInterface variable.
     """
-    #May I remove the prefixes here? (Was __ before) Makes integration of hbm easier, because when
-    #adding HBM as a prefix to the name the order of calls to ptr and array_interface_variable does not matter
     ptr_in = f"{var_name}_in"
     ptr_out = f"{var_name}_out"
     if dispatcher is not None:

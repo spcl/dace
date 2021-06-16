@@ -968,14 +968,8 @@ class CPUCodeGen(TargetCodeGenerator):
                             array_expr = cpp.cpp_array_expr(sdfg,
                                                             memlet,
                                                             with_brackets=False)
-                            ptr_str = cpp.array_interface_variable(
-                                        cpp.ptr(memlet.data, 
-                                        desc, 
-                                        memlet.subset,
-                                        sdfg),
-                                        True, 
-                                        None
-                                    )   
+                            ptr_str = cpp.ptr(memlet.data, desc, memlet.subset,
+                                sdfg, True, None, None, True)
                             write_expr = (
                                 f"*({ptr_str} + {array_expr}) "
                                 f"= {in_local_name};")
@@ -1147,13 +1141,17 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet_type = conntype.dtype.ctype
 
         desc = sdfg.arrays[memlet.data]
+
+        var_type, ctypedef = self._dispatcher.defined_vars.get(memlet.data)
+
         try:
-            ptr = cpp.ptr(memlet.data, desc, memlet.subset, sdfg)
+            ptr = cpp.ptr(memlet.data, desc, memlet.subset, sdfg,
+            output, self._dispatcher, 0, var_type == DefinedType.ArrayInterface
+            and not isinstance(desc, data.View))
         except ValueError:
             raise cgx.CodegenError("Only memlets accessing a single HBM-bank may be "
                                     f"attached to a tasklet. See {str(memlet)}")
 
-        var_type, ctypedef = self._dispatcher.defined_vars.get(memlet.data)
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
                 if var_type in [
@@ -1161,16 +1159,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     DefinedType.ArrayInterface
                 ] else ptr)
 
-        # Special case: ArrayInterface, append _in or _out
-        _ptr = ptr
-        if var_type == DefinedType.ArrayInterface:
-            # Views have already been renamed
-            if not isinstance(desc, data.View):
-                ptr = cpp.array_interface_variable(ptr, output,
-                                    self._dispatcher if "hbmbank" not in desc.location
-                                    else None)
-
-        if expr != _ptr:
+        #TODO: May be dangerous like this. oldcode expected that ptr does not contain the arrayinterfacevariable stuff (why?)
+        if expr != ptr:
             expr = '%s[%s]' % (ptr, expr)
         # If there is a type mismatch, cast pointer
         expr = codegen.make_ptr_vector_cast(expr, desc.dtype, conntype,

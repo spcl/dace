@@ -253,12 +253,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
     @staticmethod
     def make_kernel_argument(data,
                              var_name,
+                             subset_info,
+                             sdfg,
                              is_output,
                              with_vectorization,
                              interface_id=None):
         if isinstance(data, dt.Array):
-            var_name = cpp.array_interface_variable(var_name, is_output, None, 0, 
-                interface_id, 0)
+            var_name = cpp.ptr(var_name, data, subset_info, sdfg,
+                is_output, None, None, True, interface_id)
             if with_vectorization:
                 dtype = data.dtype
             else:
@@ -433,9 +435,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         Adds post loop pragma for ignoring loop carried dependencies on a given variable
         '''
         defined_type, _ = self._dispatcher.defined_vars.get(var_name)
-        if defined_type == DefinedType.ArrayInterface:
-            var_name = cpp.array_interface_variable(var_name, True,
-                                                    self._dispatcher)
+        var_name = cpp.ptr(var_name, None, None, sdfg, True,
+            self._dispatcher, 
+            is_array_interface=(defined_type == DefinedType.ArrayInterface))
         kernel_stream.write(
             "#pragma HLS DEPENDENCE variable={} false".format(var_name), sdfg,
             state_id, node)
@@ -469,23 +471,23 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 else:
                     lowest_bank_index = memorybank[1]
                 for bank in utils.iterate_multibank_arrays(dataname, data, sdfg):
-                    kernel_arg = self.make_kernel_argument(data, cpp.ptr(dataname, data, bank)
-                                            ,is_output, True, interface)
+                    kernel_arg = self.make_kernel_argument(data, dataname, bank, 
+                                            sdfg ,is_output, True, interface)
                     if kernel_arg:
                         kernel_args.append(kernel_arg)
                         array_args.append((kernel_arg, dataname))
                         argname_to_bank_assignment[kernel_arg] = (memorybank[0], lowest_bank_index + bank)
             else:
-                kernel_arg = self.make_kernel_argument(data, dataname
-                                            ,is_output, True, interface)
+                kernel_arg = self.make_kernel_argument(data, dataname, None,
+                                            None,is_output, True, interface)
                 if kernel_arg:
                     kernel_args.append(kernel_arg)
             
 
         stream_args = []
         for is_output, dataname, data, interface in external_streams:
-            kernel_arg = self.make_kernel_argument(data, dataname, is_output,
-                                                   True, interface)
+            kernel_arg = self.make_kernel_argument(data, dataname, None, None,
+                is_output, True, interface)
             if kernel_arg:
                 stream_args.append(kernel_arg)
 
@@ -573,13 +575,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         for is_output, pname, p, interface_id in parameters:
             if isinstance(p, dt.Array):
                 for bank in utils.iterate_multibank_arrays(pname, p, sdfg):
-                    arr_name = cpp.array_interface_variable(cpp.ptr(pname, p, bank),
-                                                is_output, None)
+                    arr_name = cpp.ptr(pname, p, bank, None, is_output,
+                        is_array_interface=True)
                     # Add interface ID to called module, but not to the module
                     # arguments
-                    argname = cpp.array_interface_variable(cpp.ptr(pname, p, bank),
-                                                is_output, None, interface_id=interface_id,
-                                                accessed_subset=bank)
+                    argname = cpp.ptr(pname, p, bank, None, is_output,
+                        is_array_interface=True,
+                        interface_id=interface_id)
 
                     kernel_args_call.append(argname)
                     dtype = p.dtype
@@ -721,11 +723,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         and arg.storage == dace.dtypes.StorageType.FPGA_Global)):
                     continue
                 ctype = dtypes.pointer(arg.dtype).ctype
-                ptr_name = cpp.array_interface_variable(cpp.ptr(
-                    argname, arg, bank, sdfg
-                ), 
-                is_output,
-                None,)
+                ptr_name = cpp.ptr(argname, arg, bank, sdfg, 
+                    is_output, None,
+                    is_array_interface=True)
                 if not is_output:
                     ctype = f"const {ctype}"
                 self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer,
@@ -842,7 +842,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         for is_output, name, arg, if_id in parameters:
             if isinstance(arg, dt.Array):
                 for bank in utils.iterate_multibank_arrays(name, arg, sdfg):
-                    argname = cpp.array_interface_variable(cpp.ptr(name, arg, bank), is_output, None, if_id, bank)
+                    argname = cpp.ptr(name, arg, bank, sdfg, is_output, None, None, True,
+                        if_id)
                     kernel_args.append(arg.as_arg(with_types=True, name=argname))
             else:
                 kernel_args.append(arg.as_arg(with_types=True, name=name))
@@ -888,9 +889,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                 in_memlet.data, 1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:
                 for bank in utils.iterate_multibank_arrays(in_memlet.data, sdfg.arrays[in_memlet.data], sdfg):
-                    interface_name = cpp.array_interface_variable(
-                        cpp.ptr(vconn, sdfg.arrays[in_memlet.data], bank, sdfg)
-                        , False, None)
+                    interface_name = cpp.ptr(vconn, sdfg.arrays[in_memlet.data], bank, sdfg,
+                        False, is_array_interface=True)
                     interface_ref = cpp.emit_memlet_reference(
                         self._dispatcher,
                         sdfg,
@@ -929,9 +929,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                 out_memlet.data, 1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:
                 for bank in utils.iterate_multibank_arrays(out_memlet.data, sdfg.arrays[out_memlet.data], sdfg):
-                    interface_name = cpp.array_interface_variable(
-                        cpp.ptr(uconn, sdfg.arrays[out_memlet.data], bank, sdfg)
-                        , True, None)
+                    interface_name = cpp.ptr(uconn, sdfg.arrays[out_memlet.data], bank,
+                        sdfg, True, is_array_interface=True)
                     memlet_references.append(
                         cpp.emit_memlet_reference(
                             self._dispatcher,
