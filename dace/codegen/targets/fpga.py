@@ -1044,6 +1044,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                                      cpp.sym2cpp(copy_dim), i),
                         sdfg, state_id, dst_node)
 
+                    #I don't think node is defined here... maybe dead code?
                     if ignore_dependencies:
                         self.generate_no_dependence_post(
                             callsite_stream, sdfg, state_id, dst_node,
@@ -1717,9 +1718,16 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)
                     and self._dispatcher.defined_vars.has(edge.src_conn)):
+                        accessed_subset = 0
+                        if utils.is_HBM_array(datadesc):
+                            accessed_subset, _  = utils.get_multibank_ranges_from_subset(
+                                edge.data.dst_subset or edge.data.subset,
+                                sdfg, True, f"at {str(node)} in state {state_id}")
+                            
 
-                self.generate_no_dependence_post(after_memlets_stream, sdfg,
-                                                 state_id, node, edge.src_conn)
+                        self.generate_no_dependence_post(after_memlets_stream, sdfg,
+                                                        state_id, node, edge.src_conn,
+                                                        accessed_subset)
 
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)

@@ -221,7 +221,7 @@ def memlet_copy_to_absolute_strides(dispatcher,
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
 
-def ptr(name: str, desc: data.Data, subset_info : "Union[subsets.Subset, int]" = None,
+def ptr(name: str, desc: data.Data = None, subset_info : "Union[subsets.Subset, int]" = None,
         sdfg : dace.SDFG = None, is_write : bool = None, dispatcher = None, 
         ancestor : int = None, is_array_interface : bool = False, interface_id = None) -> str:
     """
@@ -233,7 +233,7 @@ def ptr(name: str, desc: data.Data, subset_info : "Union[subsets.Subset, int]" =
     """
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
-    if (desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent
+    if (desc is not None and desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent
             and desc.storage != dtypes.StorageType.CPU_ThreadLocal):
         from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
         if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
