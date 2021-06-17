@@ -5,9 +5,13 @@ import collections
 import copy
 import os
 import networkx as nx
+
+import dace.sdfg.nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
+from dace.sdfg.nodes import Node
 from dace.sdfg.state import SDFGState
+from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from string import ascii_uppercase
@@ -326,8 +330,8 @@ def merge_maps(
     # Handle the case of dynamic map inputs in the inner map
     inner_dynamic_map_inputs = dynamic_map_inputs(graph, inner_map_entry)
     for edge in inner_dynamic_map_inputs:
-        remove_conn = (len(list(graph.out_edges_by_connector(edge.src,
-            edge.src_conn))) == 1)
+        remove_conn = (len(
+            list(graph.out_edges_by_connector(edge.src, edge.src_conn))) == 1)
         conn_to_remove = edge.src_conn[4:]
         if remove_conn:
             merged_entry.remove_in_connector('IN_' + conn_to_remove)
@@ -1015,10 +1019,30 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
 
     # Traverse children until states are not empty
     for succ in sdfg.successors(state):
-        result |= set(dfs_conditional(sdfg, sources=[succ],
-                    condition=lambda parent, _: parent.is_empty()))
+        result |= set(
+            dfs_conditional(sdfg,
+                            sources=[succ],
+                            condition=lambda parent, _: parent.is_empty()))
 
     # Filter out empty states
     result = {s for s in result if not s.is_empty()}
 
     return result
+
+
+def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
+                     node: Node) -> str:
+    """
+    Returns unique string representation of the given node,
+    considering its placement into the SDFG graph.
+    Useful for hashing, or building node-based dictionaries.
+    :param graph: the state/subgraph that contains the node
+    :param node: node to represent
+    :return: the unique representation
+    """
+
+    # Build a unique representation
+    sdfg = graph.parent
+    state = graph if isinstance(graph, SDFGState) else graph._graph
+    return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(
+        state.node_id(node))
