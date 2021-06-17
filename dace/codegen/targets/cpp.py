@@ -566,7 +566,7 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    nomagicsubset = utils.modify_subset_magic(d, subset_in, False)
+    nomagicsubset = utils.modify_subset_magic(d, subset_in, 0)
 
     # Offset according to parameters, then offset according to array
     if offset is not None:

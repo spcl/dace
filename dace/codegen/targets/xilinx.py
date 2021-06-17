@@ -882,7 +882,6 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                                declaration_stream,
                                                allocation_stream)
 
-    #HBMJAN: WHY SEVERAL CALLS WITH SAME ARGS?
     def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
         # Connectors that are both input and output share the same name, unless
         # they are pointers to global memory in device code, in which case they
@@ -911,14 +910,13 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                     memlet_references.append(interface_ref)
             if vconn in inout:
                 continue
-            for bank in utils.iterate_multibank_arrays(in_memlet.data, sdfg.arrays[in_memlet.data], sdfg):
-                ref = cpp.emit_memlet_reference(self._dispatcher,
-                                                sdfg,
-                                                in_memlet,
-                                                vconn,
-                                                conntype=node.in_connectors[vconn],
-                                                is_write=False,
-                                                bank_info=bank)
+            ref = cpp.emit_memlet_reference(self._dispatcher,
+                                            sdfg,
+                                            in_memlet,
+                                            vconn,
+                                            conntype=node.in_connectors[vconn],
+                                            is_write=False,
+                                            bank_info=0) #dummy variable, so ptr works for HBM
             if not is_memory_interface:
                 memlet_references.append(ref)
         
@@ -926,14 +924,13 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                 state.out_edges(node), key=lambda e: e.src_conn or ""):
             if out_memlet.data is None:
                 continue
-            for bank in utils.iterate_multibank_arrays(out_memlet.data, sdfg.arrays[out_memlet.data], sdfg):
-                ref = cpp.emit_memlet_reference(self._dispatcher,
-                                                sdfg,
-                                                out_memlet,
-                                                uconn,
-                                                conntype=node.out_connectors[uconn],
-                                                is_write=True,
-                                                bank_info=bank)
+            ref = cpp.emit_memlet_reference(self._dispatcher,
+                                            sdfg,
+                                            out_memlet,
+                                            uconn,
+                                            conntype=node.out_connectors[uconn],
+                                            is_write=True,
+                                            bank_info=0) #dummy variable, so ptr works for HBM
             is_memory_interface = (self._dispatcher.defined_vars.get(
                 out_memlet.data, 1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:

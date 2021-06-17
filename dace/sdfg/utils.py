@@ -1040,7 +1040,6 @@ def is_HBM_array(array : dt.Data, onlyTrueIfMultibank : bool = False, sdfg : SDF
                 return True
     return False
 
-#HBMJAN: rETURN NONE
 def iterate_multibank_arrays(arrayname : str, array : dt.Array, sdfg : SDFG):
     """
     Small helper function that iterates over the bank indices
@@ -1055,29 +1054,31 @@ def iterate_multibank_arrays(arrayname : str, array : dt.Array, sdfg : SDFG):
     else:
         yield 0
 
-#HBMJAN: USE INT CHANGE
-def modify_subset_magic(array : dt.Data, subset : Union[sbs.Subset, list, tuple], remove : bool):
+def modify_subset_magic(array : dt.Data, subset : Union[sbs.Subset, list, tuple], change : int,
+    force=False):
     """
     Applies changes to magic indices from a subset if array is a HBM-array, otherwise
     returns subset. subset is deepcopied before any modification to it is done.
-    :param remove: If True magic indices are removed. If false they are set to zero.
+    :param change: magic index is set to this value, unless it's -1 in which case
+        the magic index is completly removed
+    :param force: Modify the first index even if this is not a HBM array
     """
     if(not isinstance(array, dt.Array)):
         return subset
-    if is_HBM_array(array):
+    if is_HBM_array(array) or force:
         cps = copy.deepcopy(subset)
         if isinstance(subset, sbs.Subset):
-            if remove:
+            if change == -1:
                 cps.pop([0])
             else:
-                cps[0] = (0, 0, 1)
+                cps[0] = (change, change, 1)
         elif isinstance(subset, list) or isinstance(subset, tuple):
             if isinstance(subset, tuple):
                 cps = list(cps)
-            if remove:
+            if change == -1:
                 cps.pop(0)
             else:
-                cps[0] = 0
+                cps[0] = change
             if isinstance(subset, tuple):
                 cps = tuple(cps)
         else:

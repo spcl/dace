@@ -787,7 +787,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
             copy_shape = utils.modify_subset_magic(src_nodedesc if src_is_subset else dst_nodedesc,
-                memlet.subset.bounding_box_size(), True)
+                memlet.subset.bounding_box_size(), -1)
 
             absolute_src_strides = src_subset.absolute_strides(src_nodedesc.strides)
             absolute_dst_strides = dst_subset.absolute_strides(dst_nodedesc.strides)
@@ -810,13 +810,13 @@ class FPGACodeGen(TargetCodeGenerator):
                                                 )
             if isNDCopy:
                 src_copy_offset = [cpp.sym2cpp(start) for start, _, _ in utils.modify_subset_magic(
-                    src_nodedesc, src_subset, True)]
+                    src_nodedesc, src_subset, -1)]
                 dst_copy_offset = [cpp.sym2cpp(start) for start, _, _ in utils.modify_subset_magic(
-                    dst_nodedesc, dst_subset, True)]
+                    dst_nodedesc, dst_subset, -1)]
                 src_blocksize = [cpp.sym2cpp(v) for v in utils.modify_subset_magic(
-                    src_nodedesc, src_nodedesc.shape, True)]
+                    src_nodedesc, src_nodedesc.shape, -1)]
                 dst_blocksize = [cpp.sym2cpp(v) for v in utils.modify_subset_magic(
-                    dst_nodedesc, dst_nodedesc.shape, True)]
+                    dst_nodedesc, dst_nodedesc.shape, -1)]
                 copy_shape_cpp = [cpp.sym2cpp(v) for v in copy_shape]
                 while len(src_copy_offset) < 3:
                     src_copy_offset.append('0')
@@ -1222,9 +1222,9 @@ class FPGACodeGen(TargetCodeGenerator):
                     dst_index = oldmem.dst_subset[0][0] + i
                     #Support for ignoring the magic index if it's not required e.g on host
                     if src_is_hbm or num_accessed_banks > 1:
-                        mem.src_subset[0] = (src_index, src_index, 1)
+                        mem.src_subset = utils.modify_subset_magic(src_array, mem.src_subset, src_index, True)
                     if dst_is_hbm or num_accessed_banks > 1:
-                        mem.dst_subset[0] = (dst_index, dst_index, 1)
+                        mem.dst_subset = utils.modify_subset_magic(dst_array, mem.dst_subset, dst_index, True)
                     self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
                                     dst_storage, dst_schedule, modedge, state_dfg,
                                     function_stream, callsite_stream)
