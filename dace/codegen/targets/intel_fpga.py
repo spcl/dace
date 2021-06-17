@@ -576,7 +576,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         if needs_synch:
             # Build a vector containing all the events associated with the kernels from which this one depends
             kernel_deps_name = f"deps_{kernel_name}"
-            host_stream.write(f"std::vector<cl::Event > {kernel_deps_name};")
+            host_stream.write(f"std::vector<cl::Event> {kernel_deps_name};")
             for pred in predecessors:
                 # concatenate events from predecessor kernel
                 host_stream.write(
