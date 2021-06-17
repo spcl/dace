@@ -187,6 +187,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                            XilinxCodeGen,
                            "Xilinx",
                            target_type="device"))
+            bank_assignment_code.clear()
 
         # Emit the .ini file
         others = [

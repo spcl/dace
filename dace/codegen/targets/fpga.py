@@ -623,6 +623,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         self._allocated_global_arrays.add(node.data)
                         memory_bank_arg_type = "hlslib::ocl::StorageType::DDR"
                         memory_bank_arg_count = 1
+                        bankoffset = 0
                         if "bank" in nodedesc.location:
                             try:
                                 bank = int(nodedesc.location["bank"])
@@ -632,6 +633,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                     "must be an integer: {}".format(
                                         nodedesc.location["bank"]))
                             memory_bank_arg_type = "hlslib::ocl::StorageType::DDR"
+                            bankoffset = bank
                         elif "hbmbank" in nodedesc.location:
                             hbmbank = nodedesc.location["hbmbank"]
                             memory_bank_arg_type = "hlslib::ocl::StorageType::HBM"
@@ -640,6 +642,7 @@ class FPGACodeGen(TargetCodeGenerator):
                             memory_bank_arg_count = bankhigh - banklow
                             arrsize = dace.symbolic.pystr_to_symbolic(
                                 f"({str(arrsize)}) / {str(bankhigh - banklow)}")
+                            bankoffset = banklow
                         # Define buffer, using proper type
                         for bank_index in range(memory_bank_arg_count):
                             allocname = cpp.ptr(dataname, nodedesc, bank_index)
@@ -650,7 +653,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                 "{} = __state->fpga_context->Get()."
                                 "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                                 "({}, {}, {});\n".format(allocname, nodedesc.dtype.ctype,
-                                                        memory_bank_arg_type, bank_index,
+                                                        memory_bank_arg_type, bankoffset + bank_index,
                                                         cpp.sym2cpp(arrsize))
                             )
                             self._dispatcher.defined_vars.add(
