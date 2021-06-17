@@ -263,31 +263,37 @@ class MapPython(MapCreater):
 
     def sdfg_debuginfo(self, graph, sdfg_id=0, state_id=0):
         """ 
-        Returns an array of Json objects with sdfg nodes with their debuginfo
+        Returns an array of Json objects of sdfg nodes with their debuginfo
         as also the sdfg, state and node id
         """
+        if(sdfg_id is None):
+            sdfg_id = 0
+
         mapping = []
         for node in graph["nodes"]:
             # If the node contains debugInfo, add it to the mapping
-            if ("attributes" in node) & ("debuginfo" in node["attributes"]):
+            if ("attributes" in node) and ("debuginfo" in node["attributes"]):
                 mapping.append(self.make_mapping(node, sdfg_id, state_id))
 
             # If node has sub nodes, recursively call
             if("nodes" in node):
-                mapping += self.sdfg_debuginfo(node, state_id=node["id"])
+                mapping += self.sdfg_debuginfo(
+                    node, 
+                    sdfg_id = sdfg_id,
+                    state_id = node["id"]
+                )
 
             # If the node is a SDFG, recursively call
-            if(("attributes" in node) & ("sdfg" in node["attributes"])):
+            if(("attributes" in node) and ("sdfg" in node["attributes"])):
                 mapping += self.sdfg_debuginfo(
                     node["attributes"]["sdfg"],
-                    sdfg_id=node["id"]
+                    sdfg_id=node["attributes"]["sdfg"]["sdfg_list_id"]
                 )
 
         return mapping
 
     def create_mapping(self, ranges=None):
         mapping = {}
-        
         for node in self.map:
             for line in range(
                 node["debuginfo"]["start_line"],
@@ -297,11 +303,17 @@ class MapPython(MapCreater):
                 # it to it's corresponding node
                 # We expect that the nodes are sorted by priority
                 if not str(line) in mapping:
-                    mapping[str(line)] = {
+                    mapping[str(line)] = [{
                         "sdfg_id": node["sdfg_id"],
                         "state_id": node["state_id"],
                         "node_id": node["node_id"]
-                    }
+                    }]
+                else:
+                    mapping[str(line)].append({
+                        "sdfg_id": node["sdfg_id"],
+                        "state_id": node["state_id"],
+                        "node_id": node["node_id"]
+                    })
 
         if ranges:
             # Mapping lines that don't occur in the debugInfo of the SDFG
