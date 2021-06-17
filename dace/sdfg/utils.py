@@ -5,8 +5,6 @@ import collections
 import copy
 import os
 import networkx as nx
-from numpy import isin
-from sympy.tensor.array import Array
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
@@ -1042,6 +1040,7 @@ def is_HBM_array(array : dt.Data, onlyTrueIfMultibank : bool = False, sdfg : SDF
                 return True
     return False
 
+#HBMJAN: rETURN NONE
 def iterate_multibank_arrays(arrayname : str, array : dt.Array, sdfg : SDFG):
     """
     Small helper function that iterates over the bank indices
@@ -1049,13 +1048,14 @@ def iterate_multibank_arrays(arrayname : str, array : dt.Array, sdfg : SDFG):
     Otherwise just returns 0 once.
     """
     if is_HBM_array(array):
-        #it's ok not to pass any codegen error info here, since locationproperty validated
-        low, high = get_multibank_ranges_from_subset(array.location["hbmbank"], sdfg)
+        low, high = get_multibank_ranges_from_subset(array.location["hbmbank"], sdfg,
+            False, f" array {arrayname}")
         for i in range(high-low):
             yield i
     else:
         yield 0
 
+#HBMJAN: USE INT CHANGE
 def modify_subset_magic(array : dt.Data, subset : Union[sbs.Subset, list, tuple], remove : bool):
     """
     Applies changes to magic indices from a subset if array is a HBM-array, otherwise
@@ -1095,7 +1095,7 @@ def get_multibank_ranges_from_subset(subset : sbs.Subset, sdfg : SDFG,
     :param assumeSingle: Throw error if more then a single bank is accessed
     :param codegenlocation: An optional string describing where in the SDFG 
         codegen the evaluation takes place. If set, this function will throw 
-        codegenerrors instead of ValueErrors.
+        CodegenErrors instead of ValueErrors.
     :returns: (low, high) where low = the lowest accessed bank and high the 
         highest accessed bank + 1.
     """

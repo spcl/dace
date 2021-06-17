@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
-from dace.sdfg.nodes import AccessNode
 from dace.dtypes import StorageType
 import os
 from typing import Dict, Tuple, Union
@@ -61,7 +60,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
 
             #Check for valid bank assignments
             if("bank" in desc.location):
-                if not isinstance(desc.location["bank"], int):
+                try:
+                    tmp = int(desc.location["bank"])
+                except:
                     raise InvalidSDFGError(
                         "bank assignment must be an integer",
                         sdfg, None
@@ -347,7 +348,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         #Tasklets may only access 1 HBM-bank at a time
         if isinstance(node, nd.Tasklet):
             for attached in state.all_edges(node):
-                if(attached.data.data in sdfg.arrays):
+                if attached.data.data in sdfg.arrays:
                     if sdutil.is_HBM_array(sdfg.arrays[attached.data.data]):
                         low, high, _ = attached.data.subset[0]
                         if(low != high):

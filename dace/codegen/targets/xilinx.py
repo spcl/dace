@@ -882,6 +882,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                                declaration_stream,
                                                allocation_stream)
 
+    #HBMJAN: WHY SEVERAL CALLS WITH SAME ARGS?
     def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
         # Connectors that are both input and output share the same name, unless
         # they are pointers to global memory in device code, in which case they

@@ -1,14 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
-from copy import deepcopy
 import dace
 from dace import data, memlet, dtypes, registry, sdfg as sd, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-import copy
-
 
 
 def fpga_update(sdfg, state, depth):
@@ -197,12 +194,6 @@ class FPGATransformState(transformation.Transformation):
                 pre_fpga_node = pre_state.add_write('fpga_' + node.data)
                 mem = memlet.Memlet(data=node.data, 
                                     subset=subsets.Range.from_array(fpga_array[1]))
-                """
-                if("hbmbank" in fpga_array[1].location and full_range[0][0] != full_range[0][1]):
-                    mem.dst_subset = full_range
-                else:
-                    mem.src_subset = full_range
-                """
                 pre_state.add_edge(pre_node, None, pre_fpga_node, None, mem)
 
                 if node not in wcr_input_nodes:

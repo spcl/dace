@@ -73,11 +73,14 @@ def unsoundLocation():
     sdfg.validate()
     sdfg.arrays["b"].location["hbmbank"] = subsets.Range.from_string("0:4")
     checkInvalid(sdfg, InvalidSDFGError)
-    sdfg.arrays["b"].location["bank"] = "1"
+    sdfg.arrays["b"].location["bank"] = "abc"
     checkInvalid(sdfg, InvalidSDFGError)
+    sdfg.arrays["b"].location["bank"] = "1"
+    sdfg.validate()
     sdfg.arrays["b"].location["bank"] = 1
     sdfg.validate()
 
-deepscopeTest()
-multitaskletTest()
-unsoundLocation()
+if __name__ == "__main__":
+    deepscopeTest()
+    multitaskletTest()
+    unsoundLocation()

@@ -1,13 +1,3 @@
-"""
-Performs several tests for HBM-copies and nesting of accesses to HBM.
-Checked:
-ND-Copy between Host/Device and on Device (with openCL) 
-Nested unrolls
-Nested sdfgs
-Copy between HBM and DDR -no
-Copy between HBM and StreamArray -no
-"""
-
 from dace import subsets as sbs, dtypes, memlet as mem
 import dace
 import numpy as np

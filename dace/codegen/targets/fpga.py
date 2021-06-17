@@ -639,7 +639,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                 False, f"array {dataname}")
                             memory_bank_arg_count = bankhigh - banklow
                             arrsize = dace.symbolic.pystr_to_symbolic(
-                                f"({str(arrsize)}) / {str(hbmbank[0][1] - hbmbank[0][0] + 1)}")
+                                f"({str(arrsize)}) / {str(bankhigh - banklow)}")
                         # Define buffer, using proper type
                         for bank_index in range(memory_bank_arg_count):
                             allocname = cpp.ptr(dataname, nodedesc, bank_index)
