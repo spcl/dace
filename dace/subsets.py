@@ -669,14 +669,13 @@ class Range(Subset):
 
     def unsqueeze(self, axes):
         result = []
-        for axis in sorted(axes):
+        axis_offset = len(axes) - 1
+        for axis in reversed(sorted(axes)):
             self.ranges.insert(axis, (0, 0, 1))
             self.tile_sizes.insert(axis, 1)
 
-            if len(result) > 0 and result[-1] >= axis:
-                result.append(result[-1] + 1)
-            else:
-                result.append(axis)
+            result.append(axis + axis_offset)
+            axis_offset -= 1
         return result
 
     def pop(self, dimensions):
