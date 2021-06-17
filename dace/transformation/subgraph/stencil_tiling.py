@@ -93,6 +93,8 @@ class StencilTiling(transformation.SubgraphTransformation):
 
         # look at inner memlets at map entry
         for e in graph.out_edges(map_entry):
+            if not e.data.subset:
+                continue
             if outer_range:
                 # get subset
                 min_element = [
