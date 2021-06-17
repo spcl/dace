@@ -39,7 +39,7 @@ def copy_expr(
 ):
     datadesc = sdfg.arrays[dataname]
 
-    #Required to ensure that the right bank is generated in case 
+    #Required to ensure that the right bank is generated in case
     #of multibanks
     if is_write:
         usedsubset = memlet.dst_subset
@@ -67,8 +67,10 @@ def copy_expr(
     def_type, _ = dispatcher.defined_vars.get(dataname)
 
     # If this is a view, it has already been renamed
-    expr = ptr(dataname, datadesc, usedsubset, sdfg, is_write, dispatcher,
-        0, def_type == DefinedType.ArrayInterface and not isinstance(datadesc, data.View))
+    expr = ptr(
+        dataname, datadesc, usedsubset, sdfg, is_write, dispatcher, 0,
+        def_type == DefinedType.ArrayInterface
+        and not isinstance(datadesc, data.View))
 
     add_offset = offset_cppstr != "0"
 
@@ -221,9 +223,15 @@ def memlet_copy_to_absolute_strides(dispatcher,
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
 
-def ptr(name: str, desc: data.Data = None, subset_info : "Union[subsets.Subset, int]" = None,
-        sdfg : dace.SDFG = None, is_write : bool = None, dispatcher = None, 
-        ancestor : int = None, is_array_interface : bool = False, interface_id = None) -> str:
+def ptr(name: str,
+        desc: data.Data = None,
+        subset_info: "Union[subsets.Subset, int]" = None,
+        sdfg: dace.SDFG = None,
+        is_write: bool = None,
+        dispatcher=None,
+        ancestor: int = None,
+        is_array_interface: bool = False,
+        interface_id=None) -> str:
     """
     Returns a string that points to the data based on its name, and various other conditions
     that may apply for that data field.
@@ -234,29 +242,35 @@ def ptr(name: str, desc: data.Data = None, subset_info : "Union[subsets.Subset, 
     """
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
-    if (desc is not None and desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent
+    if (desc is not None and desc.transient
+            and desc.lifetime is dtypes.AllocationLifetime.Persistent
             and desc.storage != dtypes.StorageType.CPU_ThreadLocal):
         from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
         if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
             return f'__state->{name}'
-    if(desc is not None and isinstance(desc, data.Array) 
-        and desc.storage == dtypes.StorageType.FPGA_Global
-        and "hbmbank" in desc.location):
-        if(subset_info == None):
-            raise ValueError("Cannot generate name for hbmbank without subset info")
-        elif(isinstance(subset_info, int)):
+    if (desc is not None and isinstance(desc, data.Array)
+            and desc.storage == dtypes.StorageType.FPGA_Global
+            and "hbmbank" in desc.location):
+        if (subset_info == None):
+            raise ValueError(
+                "Cannot generate name for hbmbank without subset info")
+        elif (isinstance(subset_info, int)):
             name = f"hbm{subset_info}_{name}"
-        elif(isinstance(subset_info, subsets.Subset)):
-            if(sdfg == None):
-                raise ValueError("Cannot generate name for hbmbank using subset if sdfg not provided")
-            low, _ = utils.get_multibank_ranges_from_subset(subset_info, sdfg, True, 
+        elif (isinstance(subset_info, subsets.Subset)):
+            if (sdfg == None):
+                raise ValueError(
+                    "Cannot generate name for hbmbank using subset if sdfg not provided"
+                )
+            low, _ = utils.get_multibank_ranges_from_subset(
+                subset_info, sdfg, True,
                 f"{name} with subset {str(subset_info)}")
             name = f"hbm{low}_{name}"
-            subset_info = low #used for arrayinterface where it must be int
+            subset_info = low  #used for arrayinterface where it must be int
     if is_array_interface:
         if is_write is None:
             raise ValueError("is_write must be set for ArrayInterface.")
-        name = array_interface_variable(name, is_write, dispatcher, ancestor, interface_id, subset_info)
+        name = array_interface_variable(name, is_write, dispatcher, ancestor,
+                                        interface_id, subset_info)
     return name
 
 
@@ -268,7 +282,7 @@ def emit_memlet_reference(dispatcher,
                           ancestor: int = 1,
                           is_write=None,
                           device_code=False,
-                          bank_info = None) -> Tuple[str, str, str]:
+                          bank_info=None) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -288,9 +302,8 @@ def emit_memlet_reference(dispatcher,
     defined_type, defined_ctype = dispatcher.defined_vars.get(
         memlet.data, ancestor)
 
-    datadef = ptr(memlet.data, desc, bank_info, sdfg,
-        is_write, dispatcher, ancestor, 
-        defined_type == DefinedType.ArrayInterface)
+    datadef = ptr(memlet.data, desc, bank_info, sdfg, is_write, dispatcher,
+                  ancestor, defined_type == DefinedType.ArrayInterface)
 
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface
@@ -392,7 +405,10 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
 
     return reshaped_copy, new_strides
 
-def to_cpp_array(arr : "Iterable[str]", ctype : str, makestd : bool = False) -> str:
+
+def to_cpp_array(arr: "Iterable[str]",
+                 ctype: str,
+                 makestd: bool = False) -> str:
     """
     Converts a given list to a c++ array
     :param makestd: Return as std array
@@ -403,12 +419,13 @@ def to_cpp_array(arr : "Iterable[str]", ctype : str, makestd : bool = False) -> 
         result = "{"
     for i, value in enumerate(arr):
         result += value
-        if(i != len(arr) -1):
+        if (i != len(arr) - 1):
             result += ", "
     result += "}"
     if makestd:
         result += ")"
     return result
+
 
 def _is_c_contiguous(shape, strides):
     """ 
@@ -418,6 +435,7 @@ def _is_c_contiguous(shape, strides):
     computed_strides = tuple(
         data._prod(shape[i + 1:]) for i in range(len(shape)))
     return tuple(strides) == computed_strides
+
 
 def is_1d_nostrided_copy(
     copy_shape,
@@ -459,19 +477,21 @@ def is_1d_nostrided_copy(
     # and shapes to the copy. The second condition is there because sometimes
     # the symbolic math engine fails to produce the same expressions for both
     # arrays.
-    cornercase1 = (tuple(src_strides) == tuple(dst_strides)
-            and ((src_copylen == copy_length and dst_copylen == copy_length) or
-                 (tuple(src_shape) == tuple(copy_shape)
-                  and tuple(dst_shape) == tuple(copy_shape))))
+    cornercase1 = (tuple(src_strides) == tuple(dst_strides) and
+                   ((src_copylen == copy_length and dst_copylen == copy_length)
+                    or (tuple(src_shape) == tuple(copy_shape)
+                        and tuple(dst_shape) == tuple(copy_shape))))
 
     # Another case of non-strided 1D copy: all indices match and copy length
     # matches pointer difference, as well as match in contiguity and padding
     cornercase2 = (first_src_index == first_dst_index
-          and last_src_index == last_dst_index and copy_length == src_copylen
-          and _is_c_contiguous(src_shape, src_strides)
-          and _is_c_contiguous(dst_shape, dst_strides))
-            
+                   and last_src_index == last_dst_index
+                   and copy_length == src_copylen
+                   and _is_c_contiguous(src_shape, src_strides)
+                   and _is_c_contiguous(dst_shape, dst_strides))
+
     return cornercase1 or cornercase2
+
 
 def ndcopy_to_strided_copy(
     copy_shape,
@@ -495,14 +515,16 @@ def ndcopy_to_strided_copy(
         return None
 
     # Detect 1D copies.
-    if is_1d_nostrided_copy(copy_shape,
-                            src_shape,
-                            src_strides,
-                            dst_shape,
-                            dst_strides,
-                            subset,
-                            src_subset,
-                            dst_subset,):
+    if is_1d_nostrided_copy(
+            copy_shape,
+            src_shape,
+            src_strides,
+            dst_shape,
+            dst_strides,
+            subset,
+            src_subset,
+            dst_subset,
+    ):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
@@ -592,14 +614,14 @@ def cpp_array_expr(sdfg,
                    relative_offset=True,
                    packed_veclen=1,
                    use_other_subset=False,
-                   indices=None, 
+                   indices=None,
                    referenced_array=None):
     """ Converts an Indices/Range object to a C++ array access string. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
-    desc = (sdfg.arrays[memlet.data] if referenced_array
-            is None else referenced_array)
+    desc = (sdfg.arrays[memlet.data]
+            if referenced_array is None else referenced_array)
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     if with_brackets:
@@ -643,8 +665,8 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = indices
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
-    dname = ptr(memlet.data, desc, memlet.subset, sdfg, 
-        is_write, None, None, defined_type == DefinedType.ArrayInterface)
+    dname = ptr(memlet.data, desc, memlet.subset, sdfg, is_write, None, None,
+                defined_type == DefinedType.ArrayInterface)
 
     if defined_type == DefinedType.Scalar:
         dname = '&' + dname
@@ -1211,11 +1233,14 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                                       expr_semicolon=False),
                             ))
                         else:
-                            targetarrayif = ptr(memlet.data, desc, memlet.dst_subset,
-                                self.sdfg, True, None, None, True)
-                            newnode = ast.Name(id=f"{targetarrayif}"
+                            targetarrayif = ptr(memlet.data, desc,
+                                                memlet.dst_subset, self.sdfg,
+                                                True, None, None, True)
+                            newnode = ast.Name(
+                                id=f"{targetarrayif}"
                                 f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False)}]"
-                                f" = {cppunparse.cppunparse(value, expr_semicolon=False)};")
+                                f" = {cppunparse.cppunparse(value, expr_semicolon=False)};"
+                            )
 
                     return self._replace_assignment(newnode, node)
             except TypeError:  # cannot determine truth value of Relational
@@ -1430,8 +1455,8 @@ def array_interface_variable(var_name: str,
                              is_write: bool,
                              dispatcher: Optional["TargetDispatcher"],
                              ancestor: int = 0,
-                             interface_id = None,
-                             accessed_subset = None):
+                             interface_id=None,
+                             accessed_subset=None):
     """
     Generates the variable name of an ArrayInterface variable.
     """

@@ -6,6 +6,7 @@ import numpy as np
 
 #A test checking wcr-reduction with HBM arrays as inputs and output
 
+
 def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
     N = dace.symbol("N")
     M = dace.symbol("M")
@@ -18,8 +19,9 @@ def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
     out = sdfg.add_array("out", [banks, N], dace.float32)
     in1[1].location["hbmbank"] = subsets.Range.from_string(f"0:{banks}")
     in2[1].location["hbmbank"] = subsets.Range.from_string(f"{banks}:{2*banks}")
-    out[1].location["hbmbank"] = subsets.Range.from_string(f"{2*banks}:{3*banks}")
-    
+    out[1].location["hbmbank"] = subsets.Range.from_string(
+        f"{2*banks}:{3*banks}")
+
     readin1 = state.add_read("in1")
     readin2 = state.add_read("in2")
     outwrite = state.add_write("out")
@@ -27,18 +29,36 @@ def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
     tmpin2_memlet = dace.Memlet(f"in2[k, i, j]")
     tmpout_memlet = dace.Memlet(f"out[k, i]", wcr="lambda x,y: x+y")
 
-    outer_entry, outer_exit = state.add_map("vadd_outer_map", dict(k=f'0:{banks}'))
-    map_entry, map_exit = state.add_map("vadd_inner_map", dict(i="0:N", j="0:M"))
-    tasklet = state.add_tasklet("mul", dict(__in1=None, __in2=None), 
-        dict(__out=None), '__out = __in1 * __in2')
+    outer_entry, outer_exit = state.add_map("vadd_outer_map",
+                                            dict(k=f'0:{banks}'))
+    map_entry, map_exit = state.add_map("vadd_inner_map", dict(i="0:N",
+                                                               j="0:M"))
+    tasklet = state.add_tasklet("mul", dict(__in1=None, __in2=None),
+                                dict(__out=None), '__out = __in1 * __in2')
     outer_entry.map.schedule = dace.ScheduleType.Unrolled
 
-    state.add_memlet_path(readin1, outer_entry, map_entry, tasklet, memlet=tmpin1_memlet, dst_conn="__in1")
-    state.add_memlet_path(readin2, outer_entry, map_entry, tasklet, memlet=tmpin2_memlet, dst_conn="__in2")
-    state.add_memlet_path(tasklet, map_exit, outer_exit, outwrite, memlet=tmpout_memlet, src_conn="__out")
+    state.add_memlet_path(readin1,
+                          outer_entry,
+                          map_entry,
+                          tasklet,
+                          memlet=tmpin1_memlet,
+                          dst_conn="__in1")
+    state.add_memlet_path(readin2,
+                          outer_entry,
+                          map_entry,
+                          tasklet,
+                          memlet=tmpin2_memlet,
+                          dst_conn="__in2")
+    state.add_memlet_path(tasklet,
+                          map_exit,
+                          outer_exit,
+                          outwrite,
+                          memlet=tmpout_memlet,
+                          src_conn="__out")
 
     sdfg.apply_fpga_transformations()
     return sdfg
+
 
 def createTestSet(N, M, banks):
     in1 = np.random.rand(*[banks, N, M]).astype('f')
@@ -47,12 +67,14 @@ def createTestSet(N, M, banks):
     out = np.zeros((banks, N), dtype=np.float32)
     return (in1, in2, expected, out)
 
+
 def exec_test(N, M, banks, name):
     in1, in2, expected, target = createTestSet(N, M, banks)
     sdfg = create_hbm_reduce_sdfg(banks, name)
     sdfg(in1=in1, in2=in2, out=target, N=N, M=M)
     assert np.allclose(expected, target, rtol=1e-6)
     del sdfg
+
 
 if __name__ == '__main__':
     exec_test(2, 3, 2, "red_2x3_2b")

@@ -327,8 +327,8 @@ def merge_maps(
     # Handle the case of dynamic map inputs in the inner map
     inner_dynamic_map_inputs = dynamic_map_inputs(graph, inner_map_entry)
     for edge in inner_dynamic_map_inputs:
-        remove_conn = (len(list(graph.out_edges_by_connector(edge.src,
-            edge.src_conn))) == 1)
+        remove_conn = (len(
+            list(graph.out_edges_by_connector(edge.src, edge.src_conn))) == 1)
         conn_to_remove = edge.src_conn[4:]
         if remove_conn:
             merged_entry.remove_in_connector('IN_' + conn_to_remove)
@@ -1016,46 +1016,56 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
 
     # Traverse children until states are not empty
     for succ in sdfg.successors(state):
-        result |= set(dfs_conditional(sdfg, sources=[succ],
-                    condition=lambda parent, _: parent.is_empty()))
+        result |= set(
+            dfs_conditional(sdfg,
+                            sources=[succ],
+                            condition=lambda parent, _: parent.is_empty()))
 
     # Filter out empty states
     result = {s for s in result if not s.is_empty()}
 
     return result
 
-def is_HBM_array(array : dt.Data, onlyTrueIfMultibank : bool = False, sdfg : SDFG = None):
+
+def is_HBM_array(array: dt.Data,
+                 onlyTrueIfMultibank: bool = False,
+                 sdfg: SDFG = None):
     """
     :return: True if this array is placed on HBM
     :param onlyTrueIfMultibank: Return only True if this array is placed on more then
         one HBM-bank. If True then :param sdfg: must be set.
     """
-    if (isinstance(array, dt.Array) and 
-        array.storage == dtypes.StorageType.FPGA_Global
-        and "hbmbank" in array.location):
-            if onlyTrueIfMultibank:
-                low, high = get_multibank_ranges_from_subset(array.location, sdfg)
-                return high - low > 1
-            else:
-                return True
+    if (isinstance(array, dt.Array)
+            and array.storage == dtypes.StorageType.FPGA_Global
+            and "hbmbank" in array.location):
+        if onlyTrueIfMultibank:
+            low, high = get_multibank_ranges_from_subset(array.location, sdfg)
+            return high - low > 1
+        else:
+            return True
     return False
 
-def iterate_multibank_arrays(arrayname : str, array : dt.Array, sdfg : SDFG):
+
+def iterate_multibank_arrays(arrayname: str, array: dt.Array, sdfg: SDFG):
     """
     Small helper function that iterates over the bank indices
     if the provided array is spanned across multiple hbmbanks.
     Otherwise just returns 0 once.
     """
     if is_HBM_array(array):
-        low, high = get_multibank_ranges_from_subset(array.location["hbmbank"], sdfg,
-            False, f" array {arrayname}")
-        for i in range(high-low):
+        low, high = get_multibank_ranges_from_subset(array.location["hbmbank"],
+                                                     sdfg, False,
+                                                     f" array {arrayname}")
+        for i in range(high - low):
             yield i
     else:
         yield 0
 
-def modify_subset_magic(array : dt.Data, subset : Union[sbs.Subset, list, tuple], change : int,
-    force=False):
+
+def modify_subset_magic(array: dt.Data,
+                        subset: Union[sbs.Subset, list, tuple],
+                        change: int,
+                        force=False):
     """
     Applies changes to magic indices from a subset if array is a HBM-array, otherwise
     returns subset. subset is deepcopied before any modification to it is done.
@@ -1063,7 +1073,7 @@ def modify_subset_magic(array : dt.Data, subset : Union[sbs.Subset, list, tuple]
         the magic index is completly removed
     :param force: Modify the first index even if this is not a HBM array
     """
-    if(not isinstance(array, dt.Array)):
+    if (not isinstance(array, dt.Array)):
         return subset
     if is_HBM_array(array) or force:
         cps = copy.deepcopy(subset)
@@ -1087,9 +1097,12 @@ def modify_subset_magic(array : dt.Data, subset : Union[sbs.Subset, list, tuple]
         cps = subset
     return cps
 
-def get_multibank_ranges_from_subset(subset : sbs.Subset, sdfg : SDFG, 
-                                    assumeSingle : bool = False, 
-                                    codegenlocation : str = None) -> Tuple[int, int]:
+
+def get_multibank_ranges_from_subset(
+        subset: sbs.Subset,
+        sdfg: SDFG,
+        assumeSingle: bool = False,
+        codegenlocation: str = None) -> Tuple[int, int]:
     """
     Returns the upper and lower end of the accessed HBM-range, evaluated using the
     constants on the SDFG.
@@ -1102,22 +1115,24 @@ def get_multibank_ranges_from_subset(subset : sbs.Subset, sdfg : SDFG,
     """
     low, high, stride = subset[0]
     try:
-        if(stride != 1):
+        if (stride != 1):
             raise ValueError(f"Cannot handle strided HBM-subset")
         try:
             low = int(symbolic.resolve_symbol_to_constant(low, sdfg))
             high = int(symbolic.resolve_symbol_to_constant(high, sdfg))
         except:
-            raise ValueError(f"Only constant evaluatable indices allowed for HBM-memlets on the bank index ")
-        if(assumeSingle and low != high):
-            raise ValueError("Found HBM-Memlet accessing multiple banks in a place"
-                            " where only one bank may be accessed")
+            raise ValueError(
+                f"Only constant evaluatable indices allowed for HBM-memlets on the bank index "
+            )
+        if (assumeSingle and low != high):
+            raise ValueError(
+                "Found HBM-Memlet accessing multiple banks in a place"
+                " where only one bank may be accessed")
     except ValueError as e:
         errormsg = str(e)
-        if(codegenlocation is None):
+        if (codegenlocation is None):
             raise ValueError(errormsg)
         else:
             raise dace.codegen.exceptions.CodegenError(
-                f"{errormsg} at {codegenlocation}"
-            )
-    return (low, high+1) 
+                f"{errormsg} at {codegenlocation}")
+    return (low, high + 1)

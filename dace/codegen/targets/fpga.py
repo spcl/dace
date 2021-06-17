@@ -105,9 +105,8 @@ class FPGACodeGen(TargetCodeGenerator):
         self._dispatcher.register_map_dispatcher(
             [dtypes.ScheduleType.FPGA_Device], self)
 
-        self._dispatcher.register_state_dispatcher(
-            self,
-            predicate=is_fpga_kernel)
+        self._dispatcher.register_state_dispatcher(self,
+                                                   predicate=is_fpga_kernel)
 
         self._dispatcher.register_node_dispatcher(
             self,
@@ -288,7 +287,7 @@ class FPGACodeGen(TargetCodeGenerator):
         # Build a dictionary of arrays to arbitrary data nodes referring to
         # them, needed to trace memory bank assignments and to pass to the array
         # allocator
-        data_to_node: Dict[str: dace.nodes.Node] = {}
+        data_to_node: Dict[str:dace.nodes.Node] = {}
 
         global_data_parameters = set()
         # Count appearances of each global array to create multiple interfaces
@@ -406,9 +405,10 @@ class FPGACodeGen(TargetCodeGenerator):
                         interface_id = data_to_interface[dataname]
                     else:
                         # Get and update global memory interface ID
-                        if("hbmbank" in desc.location):
+                        if ("hbmbank" in desc.location):
                             if_ids = []
-                            for bank in utils.iterate_multibank_arrays(dataname, desc, sdfg):
+                            for bank in utils.iterate_multibank_arrays(
+                                    dataname, desc, sdfg):
                                 ptr_str = cpp.ptr(dataname, desc, bank)
                                 if_id = global_interfaces[ptr_str]
                                 global_interfaces[ptr_str] += 1
@@ -433,23 +433,25 @@ class FPGACodeGen(TargetCodeGenerator):
                         trace_desc = trace_node.desc(trace_sdfg)
                         if "bank" in trace_desc.location or "hbmbank" in trace_desc.location:
                             if "bank" in trace_desc.location and "hbmbank" in trace_desc.location:
-                                raise cgx.CodegenError("Found memory bank specifier "
-                                    f"with bank and hbmbank defined for {trace_name}")
-                            if("bank" in trace_desc.location):
+                                raise cgx.CodegenError(
+                                    "Found memory bank specifier "
+                                    f"with bank and hbmbank defined for {trace_name}"
+                                )
+                            if ("bank" in trace_desc.location):
                                 trace_bank = trace_desc.location["bank"]
                                 trace_type = "DDR"
                             else:
                                 #this only refers to one bank because of the preprocessed candidates
                                 trace_bank = trace_desc.location["hbmbank"]
                                 trace_type = "HBM"
-                            if (bank is not None and banktype is not None
-                                    and (bank != trace_bank or banktype != trace_type)):
+                            if (bank is not None and banktype is not None and
+                                (bank != trace_bank or banktype != trace_type)):
                                 raise cgx.CodegenError(
                                     "Found inconsistent memory bank "
                                     f"specifier for {trace_name}.")
                             bank = trace_bank
                             banktype = trace_type
-                        
+
                     # Make sure the array has been allocated on this bank in the
                     # outermost scope
                     if bank is not None:
@@ -457,9 +459,11 @@ class FPGACodeGen(TargetCodeGenerator):
                         outer_desc = outer_node.desc(trace[0][2])
                         okhbm, okbank = False, False
                         if banktype == "HBM":
-                            okhbm = "hbmbank" in outer_desc.location and outer_desc.location["hbmbank"] == bank
+                            okhbm = "hbmbank" in outer_desc.location and outer_desc.location[
+                                "hbmbank"] == bank
                         if banktype == "DDR":
-                            okbank = "bank" in outer_desc.location and outer_desc.location["bank"] == bank
+                            okbank = "bank" in outer_desc.location and outer_desc.location[
+                                "bank"] == bank
                         if not (okhbm or okbank):
                             raise cgx.CodegenError(
                                 "Memory bank allocation must be present on "
@@ -468,7 +472,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         bank_assignments[dataname] = (banktype, bank)
                     else:
                         #Is it ok to default set this?
-                        bank_assignments[dataname] = ("DDR", 0) 
+                        bank_assignments[dataname] = ("DDR", 0)
                 else:
                     interface_id = None
                 if (not desc.transient
@@ -637,8 +641,8 @@ class FPGACodeGen(TargetCodeGenerator):
                         elif "hbmbank" in nodedesc.location:
                             hbmbank = nodedesc.location["hbmbank"]
                             memory_bank_arg_type = "hlslib::ocl::StorageType::HBM"
-                            banklow, bankhigh = utils.get_multibank_ranges_from_subset(hbmbank, sdfg,
-                                False, f"array {dataname}")
+                            banklow, bankhigh = utils.get_multibank_ranges_from_subset(
+                                hbmbank, sdfg, False, f"array {dataname}")
                             memory_bank_arg_count = bankhigh - banklow
                             arrsize = dace.symbolic.pystr_to_symbolic(
                                 f"({str(arrsize)}) / {str(bankhigh - banklow)}")
@@ -652,10 +656,11 @@ class FPGACodeGen(TargetCodeGenerator):
                             result_alloc.write(
                                 "{} = __state->fpga_context->Get()."
                                 "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                                "({}, {}, {});\n".format(allocname, nodedesc.dtype.ctype,
-                                                        memory_bank_arg_type, bankoffset + bank_index,
-                                                        cpp.sym2cpp(arrsize))
-                            )
+                                "({}, {}, {});\n".format(
+                                    allocname, nodedesc.dtype.ctype,
+                                    memory_bank_arg_type,
+                                    bankoffset + bank_index,
+                                    cpp.sym2cpp(arrsize)))
                             self._dispatcher.defined_vars.add(
                                 allocname, DefinedType.Pointer,
                                 'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
@@ -743,7 +748,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 or (device_to_device and not self._in_device_code)):
 
             copy_shape = memlet.subset.bounding_box_size()
-            
+
             if (not sum(copy_shape) == 1
                     and (not isinstance(memlet.subset, subsets.Range)
                          or any([step != 1 for _, _, step in memlet.subset]))):
@@ -777,49 +782,71 @@ class FPGACodeGen(TargetCodeGenerator):
 
             src_nodedesc = src_node.desc(sdfg)
             dst_nodedesc = dst_node.desc(sdfg)
-            
+
             #computes strides and offsets for source and destination
-            if(memlet.src_subset != None):
+            if (memlet.src_subset != None):
                 src_subset = memlet.src_subset
             else:
                 src_subset = subsets.Range.from_array(src_nodedesc)
-            if(memlet.dst_subset != None):
+            if (memlet.dst_subset != None):
                 dst_subset = memlet.dst_subset
             else:
                 dst_subset = subsets.Range.from_array(dst_nodedesc)
 
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
-            copy_shape = utils.modify_subset_magic(src_nodedesc if src_is_subset else dst_nodedesc,
+            copy_shape = utils.modify_subset_magic(
+                src_nodedesc if src_is_subset else dst_nodedesc,
                 memlet.subset.bounding_box_size(), -1)
 
-            absolute_src_strides = src_subset.absolute_strides(src_nodedesc.strides)
-            absolute_dst_strides = dst_subset.absolute_strides(dst_nodedesc.strides)
-            offset_src = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, 
-                                referenced_array=src_nodedesc, 
-                                use_other_subset=(not src_is_subset and memlet.other_subset is not None))
-            offset_dst = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False,
-                                referenced_array=dst_nodedesc, 
-                                use_other_subset=(src_is_subset and memlet.other_subset is not None))
+            absolute_src_strides = src_subset.absolute_strides(
+                src_nodedesc.strides)
+            absolute_dst_strides = dst_subset.absolute_strides(
+                dst_nodedesc.strides)
+            offset_src = cpp.cpp_array_expr(
+                sdfg,
+                memlet,
+                with_brackets=False,
+                referenced_array=src_nodedesc,
+                use_other_subset=(not src_is_subset
+                                  and memlet.other_subset is not None))
+            offset_dst = cpp.cpp_array_expr(
+                sdfg,
+                memlet,
+                with_brackets=False,
+                referenced_array=dst_nodedesc,
+                use_other_subset=(src_is_subset
+                                  and memlet.other_subset is not None))
 
             #Distinguish 1d and 2 or 3d copies
-            isNDCopy = not cpp.is_1d_nostrided_copy(copy_shape, 
-                                                src_nodedesc.shape, 
-                                                absolute_src_strides,
-                                                dst_nodedesc.shape,
-                                                absolute_dst_strides,
-                                                memlet.subset,
-                                                src_subset,
-                                                dst_subset,
-                                                )
+            isNDCopy = not cpp.is_1d_nostrided_copy(
+                copy_shape,
+                src_nodedesc.shape,
+                absolute_src_strides,
+                dst_nodedesc.shape,
+                absolute_dst_strides,
+                memlet.subset,
+                src_subset,
+                dst_subset,
+            )
             if isNDCopy:
-                src_copy_offset = [cpp.sym2cpp(start) for start, _, _ in utils.modify_subset_magic(
-                    src_nodedesc, src_subset, -1)]
-                dst_copy_offset = [cpp.sym2cpp(start) for start, _, _ in utils.modify_subset_magic(
-                    dst_nodedesc, dst_subset, -1)]
-                src_blocksize = [cpp.sym2cpp(v) for v in utils.modify_subset_magic(
-                    src_nodedesc, src_nodedesc.shape, -1)]
-                dst_blocksize = [cpp.sym2cpp(v) for v in utils.modify_subset_magic(
-                    dst_nodedesc, dst_nodedesc.shape, -1)]
+                src_copy_offset = [
+                    cpp.sym2cpp(start)
+                    for start, _, _ in utils.modify_subset_magic(
+                        src_nodedesc, src_subset, -1)
+                ]
+                dst_copy_offset = [
+                    cpp.sym2cpp(start)
+                    for start, _, _ in utils.modify_subset_magic(
+                        dst_nodedesc, dst_subset, -1)
+                ]
+                src_blocksize = [
+                    cpp.sym2cpp(v) for v in utils.modify_subset_magic(
+                        src_nodedesc, src_nodedesc.shape, -1)
+                ]
+                dst_blocksize = [
+                    cpp.sym2cpp(v) for v in utils.modify_subset_magic(
+                        dst_nodedesc, dst_nodedesc.shape, -1)
+                ]
                 copy_shape_cpp = [cpp.sym2cpp(v) for v in copy_shape]
                 while len(src_copy_offset) < 3:
                     src_copy_offset.append('0')
@@ -842,9 +869,10 @@ class FPGACodeGen(TargetCodeGenerator):
             ])
 
             if host_to_device:
-                ptr_str = (cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg) +
-                        (" + {}".format(offset_src)
-                            if str(offset_src) != "0" else ""))
+                ptr_str = (
+                    cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg) +
+                    (" + {}".format(offset_src)
+                     if str(offset_src) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} const *>({})".format(
                         device_dtype.ctype, ptr_str)
@@ -852,27 +880,26 @@ class FPGACodeGen(TargetCodeGenerator):
                 if isNDCopy:
                     callsite_stream.write(
                         "{}.CopyBlockFromHost({}, {}, {}, {}, {}, {});".format(
-                            cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg),
+                            cpp.ptr(dst_node.data, dst_nodedesc, dst_subset,
+                                    sdfg),
                             cpp.to_cpp_array(src_copy_offset, "size_t", True),
                             cpp.to_cpp_array(dst_copy_offset, "size_t"),
                             cpp.to_cpp_array(copy_shape_cpp, "size_t"),
                             cpp.to_cpp_array(src_blocksize, "size_t"),
-                            cpp.to_cpp_array(dst_blocksize, "size_t"),
-                            ptr_str
-                        )
-                    )
+                            cpp.to_cpp_array(dst_blocksize, "size_t"), ptr_str))
                 else:
                     callsite_stream.write(
                         "{}.CopyFromHost({}, {}, {});".format(
-                            cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg),
-                            offset_dst, copysize,
-                            ptr_str), sdfg, state_id, [src_node, dst_node])
+                            cpp.ptr(dst_node.data, dst_nodedesc, dst_subset,
+                                    sdfg), offset_dst, copysize, ptr_str), sdfg,
+                        state_id, [src_node, dst_node])
 
             elif device_to_host:
-                
-                ptr_str = (cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg) +
-                        (" + {}".format(offset_dst)
-                            if str(offset_dst) != "0" else ""))
+
+                ptr_str = (
+                    cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg) +
+                    (" + {}".format(offset_dst)
+                     if str(offset_dst) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} *>({})".format(
                         device_dtype.ctype, ptr_str)
@@ -880,26 +907,27 @@ class FPGACodeGen(TargetCodeGenerator):
                 if isNDCopy:
                     callsite_stream.write(
                         "{}.CopyBlockToHost({}, {}, {}, {}, {}, {});".format(
-                            cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg),
+                            cpp.ptr(src_node.data, src_nodedesc, src_subset,
+                                    sdfg),
                             cpp.to_cpp_array(dst_copy_offset, "size_t", True),
                             cpp.to_cpp_array(src_copy_offset, "size_t"),
                             cpp.to_cpp_array(copy_shape_cpp, "size_t"),
                             cpp.to_cpp_array(dst_blocksize, "size_t"),
                             cpp.to_cpp_array(src_blocksize, "size_t"),
                             ptr_str,
-                        )
-                    )
+                        ))
                 else:
                     callsite_stream.write(
                         "{}.CopyToHost({}, {}, {});".format(
-                            cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg),
-                            offset_src, 
-                            copysize, ptr_str),
-                        sdfg, state_id, [src_node, dst_node])
+                            cpp.ptr(src_node.data, src_nodedesc, src_subset,
+                                    sdfg), offset_src, copysize, ptr_str), sdfg,
+                        state_id, [src_node, dst_node])
 
             elif device_to_device:
-                ptr_str_src = cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg)
-                ptr_str_dst = cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg)
+                ptr_str_src = cpp.ptr(src_node.data, src_nodedesc, src_subset,
+                                      sdfg)
+                ptr_str_dst = cpp.ptr(dst_node.data, dst_nodedesc, dst_subset,
+                                      sdfg)
 
                 if isNDCopy:
                     callsite_stream.write(
@@ -911,16 +939,12 @@ class FPGACodeGen(TargetCodeGenerator):
                             cpp.to_cpp_array(src_blocksize, "size_t"),
                             cpp.to_cpp_array(dst_blocksize, "size_t"),
                             ptr_str_dst,
-                        )
-                    )
+                        ))
                 else:
                     callsite_stream.write(
                         "{}.CopyToDevice({}, {}, {}, {});".format(
-                            ptr_str_src,
-                            offset_src, copysize,
-                            ptr_str_dst,
-                            offset_dst), sdfg, state_id,
-                        [src_node, dst_node])
+                            ptr_str_src, offset_src, copysize, ptr_str_dst,
+                            offset_dst), sdfg, state_id, [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data
@@ -1200,8 +1224,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
         #Check if this is a copy memlet using at least one HBM-Array
         do_default_copy = True
-        if(isinstance(src_node, dace.sdfg.nodes.AccessNode) and 
-            isinstance(dst_node, dace.sdfg.nodes.AccessNode)):
+        if (isinstance(src_node, dace.sdfg.nodes.AccessNode)
+                and isinstance(dst_node, dace.sdfg.nodes.AccessNode)):
             src_array = src_node.desc(sdfg)
             dst_array = dst_node.desc(sdfg)
             src_is_hbm = utils.is_HBM_array(src_array)
@@ -1209,15 +1233,17 @@ class FPGACodeGen(TargetCodeGenerator):
             if src_is_hbm or dst_is_hbm:
                 do_default_copy = False
                 modedge = copy.deepcopy(edge)
-                mem : memlet.Memlet = modedge.data
+                mem: memlet.Memlet = modedge.data
                 if mem.src_subset is None:
                     mem.src_subset = subsets.Range.from_array(src_array)
                 if mem.dst_subset is None:
                     mem.dst_subset = subsets.Range.from_array(dst_array)
                 if src_is_hbm:
-                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(mem.src_subset, sdfg)
+                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(
+                        mem.src_subset, sdfg)
                 if dst_is_hbm:
-                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(mem.dst_subset, sdfg)
+                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(
+                        mem.dst_subset, sdfg)
                 num_accessed_banks = bankend - bankbeg
                 oldmem = copy.deepcopy(mem)
                 for i in range(num_accessed_banks):
@@ -1225,13 +1251,16 @@ class FPGACodeGen(TargetCodeGenerator):
                     dst_index = oldmem.dst_subset[0][0] + i
                     #Support for ignoring the magic index if it's not required e.g on host
                     if src_is_hbm or num_accessed_banks > 1:
-                        mem.src_subset = utils.modify_subset_magic(src_array, mem.src_subset, src_index, True)
+                        mem.src_subset = utils.modify_subset_magic(
+                            src_array, mem.src_subset, src_index, True)
                     if dst_is_hbm or num_accessed_banks > 1:
-                        mem.dst_subset = utils.modify_subset_magic(dst_array, mem.dst_subset, dst_index, True)
-                    self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
-                                    dst_storage, dst_schedule, modedge, state_dfg,
-                                    function_stream, callsite_stream)
-            
+                        mem.dst_subset = utils.modify_subset_magic(
+                            dst_array, mem.dst_subset, dst_index, True)
+                    self._emit_copy(sdfg, state_id, src_node, src_storage,
+                                    dst_node, dst_storage, dst_schedule,
+                                    modedge, state_dfg, function_stream,
+                                    callsite_stream)
+
         # Emit actual copy
         if do_default_copy:
             self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
@@ -1655,14 +1684,17 @@ class FPGACodeGen(TargetCodeGenerator):
         for is_output, argname, arg, _ in parameters:
             # Streams and Views are not passed as arguments
             if not isinstance(arg, dt.Stream) and not isinstance(arg, dt.View):
-                if(isinstance(arg, dt.Array)):
-                    for bank in utils.iterate_multibank_arrays(argname, arg, sdfg):
+                if (isinstance(arg, dt.Array)):
+                    for bank in utils.iterate_multibank_arrays(
+                            argname, arg, sdfg):
                         currentname = cpp.ptr(argname, arg, bank)
-                        kernel_args_call_host.append(arg.as_arg(False, name=currentname))
+                        kernel_args_call_host.append(
+                            arg.as_arg(False, name=currentname))
                         kernel_args_opencl.append(
                             FPGACodeGen.make_opencl_parameter(currentname, arg))
                 else:
-                    kernel_args_call_host.append(arg.as_arg(False, name=argname))
+                    kernel_args_call_host.append(arg.as_arg(False,
+                                                            name=argname))
                     kernel_args_opencl.append(
                         FPGACodeGen.make_opencl_parameter(argname, arg))
 
@@ -1719,16 +1751,15 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)
                     and self._dispatcher.defined_vars.has(edge.src_conn)):
-                        accessed_subset = 0
-                        if utils.is_HBM_array(datadesc):
-                            accessed_subset, _  = utils.get_multibank_ranges_from_subset(
-                                edge.data.dst_subset or edge.data.subset,
-                                sdfg, True, f"at {str(node)} in state {state_id}")
-                            
+                accessed_subset = 0
+                if utils.is_HBM_array(datadesc):
+                    accessed_subset, _ = utils.get_multibank_ranges_from_subset(
+                        edge.data.dst_subset or edge.data.subset, sdfg, True,
+                        f"at {str(node)} in state {state_id}")
 
-                        self.generate_no_dependence_post(after_memlets_stream, sdfg,
-                                                        state_id, node, edge.src_conn,
-                                                        accessed_subset)
+                self.generate_no_dependence_post(after_memlets_stream, sdfg,
+                                                 state_id, node, edge.src_conn,
+                                                 accessed_subset)
 
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)
