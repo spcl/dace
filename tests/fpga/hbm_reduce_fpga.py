@@ -1,10 +1,10 @@
-"""
-A test checking wcr with HBM arrays as inputs and output
-"""
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace import subsets
 import dace
 import numpy as np
+
+#A test checking wcr-reduction with HBM arrays as inputs and output
 
 def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
     N = dace.symbol("N")

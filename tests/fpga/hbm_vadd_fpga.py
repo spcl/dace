@@ -1,10 +1,10 @@
-"""
-A test executing vector addition with multidimensional arrays using HBM.
-"""
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace import subsets
 import dace
 import numpy as np
+
+#A test executing vector addition with multidimensional arrays using HBM.
 
 def create_vadd_multibank_sdfg(bankcountPerArray = 2, ndim = 1, unroll_map_inside = False, sdfgname="vadd_hbm"):
     N = dace.symbol("N")

@@ -1,10 +1,11 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import subsets as sbs, dtypes, memlet as mem
 import dace
 import numpy as np
-
-#This does not follow the import rules, but the test gets more readable
 from dace.dtypes import StorageType
 from dace.codegen.targets.fpga import _FPGA_STORAGE_TYPES
+
+#A test checking copies involving HBM-arrays in some way
 
 def print_result(a, c, expect):
     print("A:")
@@ -15,7 +16,7 @@ def print_result(a, c, expect):
     print(expect)
 
 #helper MaKe_Copy that creates and appends states performing exactly one copy. If a provided
-#name already exists it will use the old array
+#arrayname already exists it will use the old array, and ignore all newly passed values
 def mkc(sdfg : dace.SDFG, statebefore, src_name, dst_name, src_storage=None, dst_storage=None, 
     src_shape=None, dst_shape=None, copy_expr=None, src_loc = None, dst_loc = None, returnCreatedObjects = False):
     if copy_expr is None:

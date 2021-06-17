@@ -1,7 +1,10 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import subsets as sbs, dtypes, memlet as mem
 import dace
 import numpy as np
 from dace import subsets
+
+#A test checking HBM in the context of nested maps and nested sdfgs
 
 def create_deeply_nested_sdfg():
     sdfg = dace.SDFG("deepnest_test")

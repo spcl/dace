@@ -1,9 +1,13 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+
 from dace.sdfg.validation import InvalidSDFGEdgeError, InvalidSDFGError, InvalidSDFGNodeError, validate
 from dace import subsets as sbs, dtypes, memlet as mem
 import dace
 import numpy as np
 from dace import subsets
 from dace.sdfg import nodes as nd
+
+#A test to check the changes to the validation required for the support for HBM
 
 def checkInvalid(sdfg, exceptiontype):
     ok = False

@@ -1,6 +1,10 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+
 from dace import subsets as sbs, dtypes, memlet as mem
 import dace
 import numpy as np
+
+# Checks dynamic access and dynamic loop bounds from HBM
 
 def create_dynamic_memlet_sdfg():
     sdfg = dace.SDFG("dyn_memlet")
