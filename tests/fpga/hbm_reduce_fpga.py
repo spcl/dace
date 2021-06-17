@@ -6,11 +6,11 @@ from dace import subsets
 import dace
 import numpy as np
 
-def create_hbm_reduce_sdfg(banks=2):
+def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
     N = dace.symbol("N")
     M = dace.symbol("M")
 
-    sdfg = dace.SDFG('red_hbm')
+    sdfg = dace.SDFG(name)
     state = sdfg.add_state('red_hbm', True)
 
     in1 = sdfg.add_array("in1", [banks, N, M], dace.float32)
@@ -47,16 +47,16 @@ def createTestSet(N, M, banks):
     out = np.zeros((banks, N), dtype=np.float32)
     return (in1, in2, expected, out)
 
-def exec_test(N, M, banks):
+def exec_test(N, M, banks, name):
     in1, in2, expected, target = createTestSet(N, M, banks)
-    sdfg = create_hbm_reduce_sdfg(banks)
+    sdfg = create_hbm_reduce_sdfg(banks, name)
     sdfg(in1=in1, in2=in2, out=target, N=N, M=M)
     assert np.allclose(expected, target, rtol=1e-6)
     del sdfg
 
 if __name__ == '__main__':
-    exec_test(2, 3, 2)
-    exec_test(10, 50, 4)
-    exec_test(1, 50, 1)
-    exec_test(1, 40, 10)
-    exec_test(2, 40, 6)
+    exec_test(2, 3, 2, "red_2x3_2b")
+    exec_test(10, 50, 4, "red_10x50_4b")
+    exec_test(1, 50, 1, "red_1x50_1b")
+    exec_test(1, 40, 8, "red_1x40_8b")
+    exec_test(2, 40, 6, "red_2x40_6b")

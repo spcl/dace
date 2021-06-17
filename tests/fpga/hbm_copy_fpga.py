@@ -69,8 +69,13 @@ def check_host2copy1():
             StorageType.FPGA_Global, [5, 5], [2, 3, 3],
             "a[2:5, 2:5]->0, 0:3, 0:3", None, ("hbmbank", "0:2"))
     s, _, _ = mkc(sdfg, s, "a", "b", copy_expr="a[0:3, 0:3]->1, 0:3, 0:3")
-    s, _, c = mkc(sdfg, s, "b", "c", None, StorageType.Default,
+
+    #Dummy copy on FPGA because otherwise it will not compile
+    s, _, _ = mkc(sdfg, s, "b", "z", None, StorageType.FPGA_Global,
         None, [2, 3, 3], "b")
+
+    s, _, c = mkc(sdfg, s, "z", "c", None, StorageType.Default,
+        None, [2, 3, 3], "z")
     
     a.fill(1)
     a[4, 4] = 4
@@ -88,9 +93,14 @@ def check_dev2host1():
     s, a, _ = mkc(sdfg, None, "a", "b", StorageType.Default,
         StorageType.FPGA_Global, [3, 5, 5, 5], [3, 5, 5, 5],
         "a", None, ("hbmbank", "0:3"))
+
+    #Dummy copy on FPGA because otherwise it will not compile
+    s, _, _ = mkc(sdfg, s, "b", "z", None, StorageType.FPGA_Global,
+        None, [3, 5, 5, 5], "b", None, ("hbmbank", "3:6"))
+
     s, _, c = mkc(sdfg, s, "b", "c", None, StorageType.Default,
         None, [3, 3], "b[2, 2:5, 2:5, 4]->0:3, 0:3")
-    
+        
     a.fill(1)
     a[2, 4, 2:4, 2:4] += 2
     expect = np.copy(c)
@@ -107,8 +117,13 @@ def check_dev2dev1():
     s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global, 
         None, [2, 10], "x[1, 0:5, 2, 2]->0, 0:5", None, ("hbmbank", "3:5"))
     s.location["is_FPGA_kernel"] = False
-    _, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default,
-        None, [2, 10], "y")
+
+    #Dummy copy on FPGA because otherwise it will not compile
+    s, _, _ = mkc(sdfg, s, "y", "z", None, StorageType.FPGA_Global,
+        None, [2, 10], "y", None, ("hbmbank", "5:7"))
+    
+    _, _, c = mkc(sdfg, s, "z", "c", None, StorageType.Default,
+        None, [2, 10], "z")
     
     a.fill(1)
     a[1, 2, 2, 0:5] += 2

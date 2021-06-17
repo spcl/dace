@@ -6,12 +6,12 @@ from dace import subsets
 import dace
 import numpy as np
 
-def create_vadd_multibank_sdfg(bankcountPerArray = 2, ndim = 1, unroll_map_inside = False):
+def create_vadd_multibank_sdfg(bankcountPerArray = 2, ndim = 1, unroll_map_inside = False, sdfgname="vadd_hbm"):
     N = dace.symbol("N")
     M = dace.symbol("M")
     S = dace.symbol("S")
 
-    sdfg = dace.SDFG('vadd_hbm')
+    sdfg = dace.SDFG(sdfgname)
     state = sdfg.add_state('vadd_hbm', True)
     shape = [bankcountPerArray, N]
     accstr = "i"
@@ -64,17 +64,19 @@ def createTestSet(dim, size1D, banks):
     shape = [banks]
     for i in range(dim):
         shape.append(size1D)
-    #in1 = np.random.rand(*shape)
-    #in2 = np.random.rand(*shape)
-    in1 = np.ones(shape, dtype=np.float32)
-    in2 = np.ones(shape, dtype=np.float32)
+    in1 = np.random.rand(*shape)
+    in2 = np.random.rand(*shape)
+    in1 = in1.astype(np.float32)
+    in2 = in2.astype(np.float32)
+    #in1 = np.ones(shape, dtype=np.float32)
+    #in2 = np.ones(shape, dtype=np.float32)
     expected = in1 + in2
     out = np.empty(shape, dtype=np.float32)
     return (in1, in2, expected, out)
 
-def exec_test(dim, size1D, banks, unroll_map_inside=False):
+def exec_test(dim, size1D, banks, testname, unroll_map_inside=False):
     in1, in2, expected, target = createTestSet(dim, size1D, banks)
-    sdfg = create_vadd_multibank_sdfg(banks, dim, unroll_map_inside)
+    sdfg = create_vadd_multibank_sdfg(banks, dim, unroll_map_inside, testname)
     if(dim == 1):
         sdfg(in1=in1, in2=in2, out=target, N=size1D)
     elif(dim==2):
@@ -85,7 +87,7 @@ def exec_test(dim, size1D, banks, unroll_map_inside=False):
     del sdfg
 
 if __name__ == '__main__':
-    exec_test(1, 50, 2) #2 banks, 1 dimensional
-    exec_test(2, 50, 2) #2 banks 2 dimensional
-    exec_test(3, 10, 2) #2 banks 3 dimensional
-    exec_test(1, 50, 8, True) #8 banks 1d, 1 pipeline
+    exec_test(1, 50, 2, "vadd_2b1d") #2 banks, 1 dimensional
+    exec_test(2, 50, 2, "vadd_2b2d") #2 banks 2 dimensional
+    exec_test(3, 10, 2, "vadd_2b3d") #2 banks 3 dimensional
+    exec_test(1, 50, 8, "vadd_8b1d", True) #8 banks 1d, 1 pipeline
