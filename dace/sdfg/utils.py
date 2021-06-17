@@ -5,9 +5,13 @@ import collections
 import copy
 import os
 import networkx as nx
+
+import dace.sdfg.nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
+from dace.sdfg.nodes import Node
 from dace.sdfg.state import SDFGState
+from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from string import ascii_uppercase
@@ -1136,3 +1140,19 @@ def get_multibank_ranges_from_subset(
             raise dace.codegen.exceptions.CodegenError(
                 f"{errormsg} at {codegenlocation}")
     return (low, high + 1)
+def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
+                     node: Node) -> str:
+    """
+    Returns unique string representation of the given node,
+    considering its placement into the SDFG graph.
+    Useful for hashing, or building node-based dictionaries.
+    :param graph: the state/subgraph that contains the node
+    :param node: node to represent
+    :return: the unique representation
+    """
+
+    # Build a unique representation
+    sdfg = graph.parent
+    state = graph if isinstance(graph, SDFGState) else graph._graph
+    return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(
+        state.node_id(node))
