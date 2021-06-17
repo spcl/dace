@@ -1140,6 +1140,8 @@ def get_multibank_ranges_from_subset(
             raise dace.codegen.exceptions.CodegenError(
                 f"{errormsg} at {codegenlocation}")
     return (low, high + 1)
+
+
 def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
                      node: Node) -> str:
     """
