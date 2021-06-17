@@ -221,10 +221,10 @@ for (unsigned i = 0; i < N / W + 1; ++i) {
 
 } // End loop
 
-local_count_out = std::min<unsigned>(W * _count + elements_in_output, N);"""
+count_out = std::min<unsigned>(W * _count + elements_in_output, N);"""
 
     tasklet = state.add_tasklet("filter", {"A_pipe_in", "ratio_in"},
-                                {"B_pipe_out", "valid_pipe_out", "local_count_out"},
+                                {"B_pipe_out", "valid_pipe_out", "count_out"},
                                 code,
                                 language=Language.CPP)
 
@@ -252,7 +252,7 @@ local_count_out = std::min<unsigned>(W * _count + elements_in_output, N);"""
                                                num_accesses="N"))
     state.add_memlet_path(tasklet,
                           count,
-                          src_conn="local_count_out",
+                          src_conn="count_out",
                           memlet=Memlet.simple(count, "0"))
 
 
@@ -504,12 +504,7 @@ if __name__ == "__main__":
                         default=False,
                         action="store_true",
                         help="Fix all symbols at compile time/in hardware")
-    #args = vars(parser.parse_args())
-    args = dict()
-    args["W"] = 4
-    args["N"] = 8192
-    args["ratio"] = 0.25
-    args["specialize"] = False
+    args = vars(parser.parse_args())
 
     # Specialize vector width regardless
     W.set(args["W"])
