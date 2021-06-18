@@ -29,8 +29,7 @@ def mkc(sdfg: dace.SDFG,
         dst_shape=None,
         copy_expr=None,
         src_loc=None,
-        dst_loc=None,
-        returnCreatedObjects=False):
+        dst_loc=None):
     if copy_expr is None:
         copy_expr = src_name
     if (statebefore == None):
@@ -74,10 +73,7 @@ def mkc(sdfg: dace.SDFG,
             bNpArr = np.zeros(dst_shape, dtype=np.int32)
         except:
             pass
-    if returnCreatedObjects:
-        (state, aNpArr, bNpArr, aAcc, bAcc, edge)
-    else:
-        return (state, aNpArr, bNpArr)
+    return (state, aNpArr, bNpArr)
 
 
 def check_host2copy1():

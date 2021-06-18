@@ -215,6 +215,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # Node validation
         try:
             if isinstance(node, nd.NestedSDFG):
+                #Add constant's defined by unrolled maps temporary as sdfg-level
+                #constants with a dummy value and remove the corresponding symbol-bindings
+                #on the nsdfg
                 ndscope = scope[node]
                 removeconsts = []
                 addsymmaps = []

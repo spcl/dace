@@ -587,7 +587,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         interface_id = data_to_interface[dataname]
                     else:
                         # Get and update global memory interface ID
-                        if ("hbmbank" in desc.location):
+                        if utils.is_HBM_array(desc):
                             if_ids = []
                             for bank in utils.iterate_multibank_arrays(
                                     dataname, desc, sdfg):
@@ -644,8 +644,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                             okhbm = "hbmbank" in outer_desc.location and outer_desc.location[
                                 "hbmbank"] == bank
                         if banktype == "DDR":
-                            okbank = "bank" in outer_desc.location and outer_desc.location[
-                                "bank"] == bank
+                            okbank = "bank" in outer_desc.location and str(outer_desc.location[
+                                "bank"]) == str(bank)
                         if not (okhbm or okbank):
                             raise cgx.CodegenError(
                                 "Memory bank allocation must be present on "
@@ -1420,11 +1420,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                                      cpp.sym2cpp(copy_dim), i),
                         sdfg, state_id, dst_node)
 
-                    #I don't think node is defined here... maybe dead code?
+                    #Used to pass node.data but I don't think node is defined here, thats why it's changed
                     if ignore_dependencies:
                         self.generate_no_dependence_post(
                             callsite_stream, sdfg, state_id, dst_node,
-                            node.data)
+                            dst_node.data, memlet.dst_subset)
 
                     if register_to_register:
                         # Language-specific
