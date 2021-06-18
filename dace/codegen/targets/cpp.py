@@ -57,7 +57,9 @@ def copy_expr(
 
     expr = ptr(dataname, datadesc)
 
-    def_type, _ = dispatcher.defined_vars.get(dataname)
+    is_global = datadesc.lifetime in (dtypes.AllocationLifetime.Global,
+                                      dtypes.AllocationLifetime.Persistent)
+    def_type, _ = dispatcher.defined_vars.get(dataname, is_global=is_global)
 
     add_offset = offset_cppstr != "0"
 
