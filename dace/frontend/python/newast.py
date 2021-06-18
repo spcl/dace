@@ -3429,8 +3429,9 @@ class ProgramVisitor(ExtNodeVisitor):
     def _parse_function_arg(self, arg: ast.AST):
         # Obtain a string representation
         result = self.visit(arg)
-        if isinstance(result, (list, tuple)) and len(result) == 1:
-            return result[0]
+        if isinstance(result, (list, tuple)):
+            if len(result) == 1 and isinstance(result[0], str):
+                return result[0]
         return result
 
     def _is_inputnode(self, sdfg: SDFG, name: str):
