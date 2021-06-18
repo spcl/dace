@@ -1458,7 +1458,8 @@ def array_interface_variable(var_name: str,
                              interface_id: "Union[int, list[int]]"=None,
                              accessed_subset: int=None):
     """
-    Generates the variable name of an ArrayInterface variable.
+    Generates the variable name of an ArrayInterface variable. Used by ptr
+    only at the moment.
     """
     ptr_in = f"__{var_name}_in"
     ptr_out = f"__{var_name}_out"

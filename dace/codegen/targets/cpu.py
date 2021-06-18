@@ -316,12 +316,11 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.defined_vars.add(name, DefinedType.Stream,
                                               ctypedef)
 
-        elif (
-                nodedesc.storage == dtypes.StorageType.CPU_Heap or
-            (nodedesc.storage == dtypes.StorageType.Register and
-             ((symbolic.issymbolic(arrsize, sdfg.constants)) or
-              ((arrsize_bytes > Config.get("compiler", "max_stack_array_size"))
-               == True)))):
+        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
+            or (nodedesc.storage == dtypes.StorageType.Register and
+                ((symbolic.issymbolic(arrsize, sdfg.constants)) or
+                ((arrsize_bytes > Config.get(
+                    "compiler", "max_stack_array_size")) == True)))):
 
             if nodedesc.storage == dtypes.StorageType.Register:
 
@@ -583,7 +582,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         return  # Do nothing (handled by ArrayStreamView)
 
                     array_subset = (memlet.subset
-                                    if memlet.data == dst_node.data else 
+                                    if memlet.data == dst_node.data else
                                     memlet.other_subset)
                     if array_subset is None:  # Need to use entire array
                         array_subset = subsets.Range.from_array(dst_nodedesc)

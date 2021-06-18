@@ -1069,7 +1069,7 @@ def iterate_multibank_arrays(arrayname: str, array: dt.Array, sdfg: SDFG):
 def modify_subset_magic(array: dt.Data,
                         subset: Union[sbs.Subset, list, tuple],
                         change: int,
-                        force=False):
+                        force: bool =False):
     """
     Applies changes to magic indices from a subset if array is a HBM-array, otherwise
     returns subset. subset is deepcopied before any modification to it is done.
