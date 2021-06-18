@@ -9,10 +9,11 @@ from typing import Set
 import dace.dtypes as dtypes
 from dace.codegen import cppunparse
 from dace import symbolic, serialize
-from dace.properties import (EnumProperty, Property, make_properties, DictProperty,
-                             ReferenceProperty, ShapeProperty, SubsetProperty,
-                             SymbolicProperty, TypeClassProperty,
-                             DebugInfoProperty, CodeProperty, ListProperty)
+from dace.properties import (EnumProperty, Property, make_properties,
+                             DictProperty, ReferenceProperty, ShapeProperty,
+                             SubsetProperty, SymbolicProperty,
+                             TypeClassProperty, DebugInfoProperty, CodeProperty,
+                             ListProperty)
 
 
 def create_datadescriptor(obj):

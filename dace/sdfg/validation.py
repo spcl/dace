@@ -67,7 +67,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                                            sdfg, None)
             elif sdutil.is_HBM_array(desc):
                 try:
-                    tmp = subsets.Range.from_string(str(desc.location["hbmbank"]))
+                    tmp = subsets.Range.from_string(
+                        str(desc.location["hbmbank"]))
                 except:
                     raise InvalidSDFGError(
                         "locationproperty 'hbmbank' must be of type subsets.Range"
