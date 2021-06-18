@@ -347,8 +347,15 @@ class FPGACodeGen(TargetCodeGenerator):
 
             for is_output, argname, arg, _ in state_parameters:
                 # Streams and Views are not passed as arguments
-                if not isinstance(arg, dt.Stream) and not isinstance(
-                        arg, dt.View):
+                if (isinstance(arg, dt.Array)):
+                    for bank in utils.iterate_multibank_arrays(
+                            argname, arg, sdfg):
+                        currentname = cpp.ptr(argname, arg, bank)
+                        kernel_args_call_host.append(
+                            arg.as_arg(False, name=currentname))
+                        kernel_args_opencl.append(
+                            FPGACodeGen.make_opencl_parameter(currentname, arg))
+                else:
                     kernel_args_call_host.append(arg.as_arg(False,
                                                             name=argname))
                     kernel_args_opencl.append(
@@ -2046,62 +2053,13 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         return self._cpu_codegen.generate_nsdfg_arguments(
             sdfg, state, dfg, node)
 
-    #has the master version of this been deleted? Maybe this can vanish to?
-    def generate_host_function_boilerplate(self, sdfg, state, kernel_name,
-                                           parameters, nested_global_transients,
-                                           host_code_stream, header_stream,
-                                           callsite_stream):
-        # Generates:
-        # - Definition of wrapper function in caller code
-        # - Definition of kernel function in host code file
-        # - Signature and opening brace of host code function in host code file
 
-        # We exclude nested transients from the CPU code function call, as they
-        # have not yet been allocated at this point
-        nested_transient_set = {n.data for n in nested_global_transients}
-
-        seen = set(nested_transient_set)
-        kernel_args_call_host = []
-        kernel_args_opencl = []
-
-        # Include state in args
-        kernel_args_opencl.append(f'{self._global_sdfg.name}_t *__state')
-        kernel_args_call_host.append(f'__state')
-
-        for is_output, argname, arg, _ in parameters:
-            # Streams and Views are not passed as arguments
-            if not isinstance(arg, dt.Stream) and not isinstance(arg, dt.View):
-                if (isinstance(arg, dt.Array)):
-                    for bank in utils.iterate_multibank_arrays(
-                            argname, arg, sdfg):
-                        currentname = cpp.ptr(argname, arg, bank)
-                        kernel_args_call_host.append(
-                            arg.as_arg(False, name=currentname))
-                        kernel_args_opencl.append(
-                            FPGACodeGen.make_opencl_parameter(currentname, arg))
-                else:
-                    kernel_args_call_host.append(arg.as_arg(False,
-                                                            name=argname))
-                    kernel_args_opencl.append(
-                        FPGACodeGen.make_opencl_parameter(argname, arg))
-
-        kernel_args_call_host = dtypes.deduplicate(kernel_args_call_host)
-        kernel_args_opencl = dtypes.deduplicate(kernel_args_opencl)
-
-        host_function_name = "__dace_runkernel_{}".format(kernel_name)
-        # Write OpenCL host function
-        host_code_stream.write(
-            """\
-DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
-  hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();"""
-            .format(host_function_name=host_function_name,
-                    kernel_args_opencl=", ".join(kernel_args_opencl)))
-
-        header_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(
-            host_function_name, ", ".join(kernel_args_opencl)))
-
-        callsite_stream.write("{}({});".format(
-            host_function_name, ", ".join(kernel_args_call_host)))
+    def generate_host_function_boilerplate(self, sdfg, state,
+                                           nested_global_transients,
+                                           host_code_stream):
+        '''
+        Generates global transients that must be passed to the state (required by a kernel)
+        '''
 
         # Any extra transients stored in global memory on the FPGA must now be
         # allocated and passed to the kernel
