@@ -231,13 +231,15 @@ def ptr(name: str,
         dispatcher=None,
         ancestor: int = None,
         is_array_interface: bool = False,
-        interface_id=None) -> str:
+        interface_id: "Union[int, list[int]]" =None) -> str:
     """
     Returns a string that points to the data based on its name, and various other conditions
     that may apply for that data field.
     :param name: Data name.
     :param desc: Data descriptor.
     :param subset_info: Any additional information about the accessed subset. 
+    :param is_array_interface: Data is pointing to an interface in FPGA-Kernel compilation
+    :param interface_id: An optional interface id that will be added to the name (only for array interfaces)
     :return: C-compatible name that can be used to access the data.
     """
     # Special case: If memory is persistent and defined in this SDFG, add state
@@ -248,9 +250,7 @@ def ptr(name: str,
         from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
         if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
             return f'__state->{name}'
-    if (desc is not None and isinstance(desc, data.Array)
-            and desc.storage == dtypes.StorageType.FPGA_Global
-            and "hbmbank" in desc.location):
+    if (desc is not None and utils.is_HBM_array(desc)):
         if (subset_info == None):
             raise ValueError(
                 "Cannot generate name for hbmbank without subset info")
@@ -1455,8 +1455,8 @@ def array_interface_variable(var_name: str,
                              is_write: bool,
                              dispatcher: Optional["TargetDispatcher"],
                              ancestor: int = 0,
-                             interface_id=None,
-                             accessed_subset=None):
+                             interface_id: "Union[int, list[int]]"=None,
+                             accessed_subset: int=None):
     """
     Generates the variable name of an ArrayInterface variable.
     """
