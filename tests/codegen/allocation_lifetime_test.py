@@ -115,6 +115,77 @@ def test_determine_alloc_global():
     assert _check_alloc(1, 'tmp2', codegen, sdfg)
 
 
+@pytest.mark.gpu
+def test_persistent_gpu_copy_regression():
+
+    sdfg = dace.SDFG('copynd')
+    state = sdfg.add_state()
+
+    nsdfg = dace.SDFG('copynd_nsdfg')
+    nstate = nsdfg.add_state()
+
+    sdfg.add_array("input", [2, 2], dace.float64)
+    sdfg.add_array("input_gpu", [2, 2],
+                   dace.float64,
+                   transient=True,
+                   storage=dace.StorageType.GPU_Global,
+                   lifetime=dace.AllocationLifetime.Persistent)
+    sdfg.add_array("__return", [2, 2], dace.float64)
+
+    nsdfg.add_array("ninput", [2, 2],
+                    dace.float64,
+                    storage=dace.StorageType.GPU_Global,
+                    lifetime=dace.AllocationLifetime.Persistent)
+    nsdfg.add_array("transient_heap", [2, 2],
+                    dace.float64,
+                    transient=True,
+                    storage=dace.StorageType.CPU_Heap,
+                    lifetime=dace.AllocationLifetime.Persistent)
+    nsdfg.add_array("noutput", [2, 2],
+                    dace.float64,
+                    storage=dace.dtypes.StorageType.CPU_Heap,
+                    lifetime=dace.AllocationLifetime.Persistent)
+
+    a_trans = nstate.add_access("transient_heap")
+    nstate.add_edge(nstate.add_read("ninput"), None, a_trans, None,
+                    nsdfg.make_array_memlet("transient_heap"))
+    nstate.add_edge(a_trans, None, nstate.add_write("noutput"), None,
+                    nsdfg.make_array_memlet("transient_heap"))
+
+    a_gpu = state.add_read("input_gpu")
+    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {"ninput"}, {"noutput"})
+    wR = state.add_write("__return")
+
+    state.add_edge(state.add_read("input"), None, a_gpu, None,
+                   sdfg.make_array_memlet("input"))
+    state.add_edge(a_gpu, None, nsdfg_node, "ninput",
+                   sdfg.make_array_memlet("input_gpu"))
+    state.add_edge(nsdfg_node, "noutput", wR, None,
+                   sdfg.make_array_memlet("__return"))
+    result = sdfg(input=np.ones((2, 2), dtype=np.float64))
+    assert np.all(result == np.ones((2, 2)))
+
+
+@pytest.mark.gpu
+def test_persistent_gpu_transpose_regression():
+    @dace.program
+    def test_persistent_transpose(A: dace.float64[5, 3]):
+        return np.transpose(A)
+
+    sdfg = test_persistent_transpose.to_sdfg()
+
+    sdfg.expand_library_nodes()
+    sdfg.apply_strict_transformations()
+    sdfg.apply_gpu_transformations()
+
+    for _, _, arr in sdfg.arrays_recursive():
+        if arr.transient and arr.storage == dace.StorageType.GPU_Global:
+            arr.lifetime = dace.AllocationLifetime.Persistent
+    A = np.random.rand(5, 3)
+    result = sdfg(A=A)
+    assert np.allclose(np.transpose(A), result)
+
+
 def test_alloc_persistent_register():
     """ Tries to allocate persistent register array. Should fail. """
     @dace.program
@@ -199,6 +270,8 @@ if __name__ == '__main__':
     test_determine_alloc_state()
     test_determine_alloc_sdfg()
     test_determine_alloc_global()
+    test_persistent_gpu_copy_regression()
+    test_persistent_gpu_transpose_regression()
     test_alloc_persistent_register()
     test_alloc_persistent()
     test_alloc_persistent_threadlocal()
