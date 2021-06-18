@@ -75,6 +75,12 @@ TESTS = [
     ("tests/fpga/auto_opt_fpga.py", ["global_to_local_1", "rr_interleave_1"], True, False, []),
     # Over approx Shapes
     ("tests/fpga/overapprox_transient_shapes.py", ["overapprox_1"], True, False, []),
+    # Kernel_detection
+    ("tests/fpga/kernels_detection.py", [
+        "kernels_inside_component_0_1", "kernels_inside_component_1_1",
+        "kernels_inside_component_2_1", "kernels_inside_components_0_1",
+        "kernels_lns_inside_component_1", "multiple_kernels_multiple_states"
+    ], True, False, []),
 ]
 
 

@@ -701,6 +701,38 @@ class DictProperty(Property):
 ###############################################################################
 
 
+class EnumProperty(Property):
+
+    def __init__(self, dtype, *args, **kwargs):
+        kwargs['dtype'] = dtype
+        super().__init__(*args, **kwargs)
+
+        def f(s, *args, **kwargs):
+            if s is None:
+                return None
+            try:
+                self._undefined_val = None
+                return dtype[s]
+            except KeyError:
+                self._undefined_val = s
+                return dtype['Undefined']
+
+        self._choices = dtype
+        self._from_json = f
+        self._from_string = f
+
+        self._undefined_val = None
+
+        def g(obj):
+            if self._undefined_val is None:
+                return dace.serialize.to_json(obj)
+            else:
+                return self._undefined_val
+
+        self._to_json = g
+        self._to_string = g
+
+
 class SDFGReferenceProperty(Property):
     def to_json(self, obj):
         if obj is None:
@@ -1002,6 +1034,8 @@ class CodeBlock(object):
             lang = dace.dtypes.Language.CPP
         elif lang.endswith("sv") or lang.endswith("systemverilog"):
             lang = dace.dtypes.Language.SystemVerilog
+        elif lang.endswith("MLIR"):
+            lang = dace.dtypes.Language.MLIR
 
         try:
             cdata = tmp['string_data']
@@ -1053,6 +1087,8 @@ class CodeProperty(Property):
             lang = dace.dtypes.Language.CPP
         elif lang.endswith("SystemVerilog"):
             lang = dace.dtypes.Language.SystemVerilog
+        elif lang.endswith("MLIR"):
+            lang = dace.dtypes.Language.MLIR
 
         try:
             cdata = tmp['string_data']

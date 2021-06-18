@@ -695,7 +695,7 @@ class TaskletTransformer(ExtNodeTransformer):
                  sdfg: SDFG,
                  state: SDFGState,
                  filename: str,
-                 lang=dtypes.Language.Python,
+                 lang=None,
                  location: dict = {},
                  nested: bool = False,
                  scope_arrays: Dict[str, data.Data] = dict(),
@@ -766,6 +766,9 @@ class TaskletTransformer(ExtNodeTransformer):
         else:
             name = getattr(tasklet_ast, 'name',
                            'tasklet_%d' % tasklet_ast.lineno)
+
+        if self.lang is None:
+            self.lang = dtypes.Language.Python
 
         t = self.state.add_tasklet(name,
                                    set(self.inputs.keys()),
@@ -1073,8 +1076,10 @@ class TaskletTransformer(ExtNodeTransformer):
                 'Cannot provide more than one intrinsic implementation ' +
                 'for tasklet')
         self.extcode = node.s
-        # TODO(later): Syntax for other languages?
-        self.lang = dtypes.Language.CPP
+
+        # TODO: Should get detected by _parse_Tasklet()
+        if self.lang is None:
+            self.lang = dtypes.Language.CPP
 
         return node
 
@@ -2310,8 +2315,9 @@ class ProgramVisitor(ExtNodeVisitor):
                             raise DaceSyntaxError(
                                 self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols if not a scalar
-                        if (astr not in self.sdfg.symbols
-                                and astr not in self.variables):
+                        if (astr not in self.sdfg.symbols and not (
+                                astr in self.variables or
+                                astr in self.sdfg.arrays)):
                             self.sdfg.add_symbol(astr, atom.dtype)
 
             # Add an initial loop state with a None last_state (so as to not
@@ -2505,10 +2511,26 @@ class ProgramVisitor(ExtNodeVisitor):
                                dace.InterstateEdge(cond_else))
 
     def _parse_tasklet(self, state: SDFGState, node: TaskletType, name=None):
+
+        # Looking for the first argument in a tasklet annotation: @dace.tasklet(STRING HERE)
+        langInf = None
+        if isinstance(node, ast.FunctionDef) and \
+            hasattr(node, 'decorator_list') and \
+            isinstance(node.decorator_list, list) and \
+            len(node.decorator_list) > 0 and \
+            hasattr(node.decorator_list[0], 'args') and \
+            isinstance(node.decorator_list[0].args, list) and \
+            len(node.decorator_list[0].args) > 0 and \
+            hasattr(node.decorator_list[0].args[0], 'value'):
+
+            langArg = node.decorator_list[0].args[0].value
+            langInf = dtypes.Language[langArg]
+
         ttrans = TaskletTransformer(self.defined,
                                     self.sdfg,
                                     state,
                                     self.filename,
+                                    lang=langInf,
                                     nested=self.nested,
                                     scope_arrays=self.scope_arrays,
                                     scope_vars=self.scope_vars,
