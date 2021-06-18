@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
+from dace.sdfg.sdfg import SDFG
 import itertools
 import os
 import pdb
@@ -18,6 +19,7 @@ from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import make_absolute
 from dace.codegen.targets import cpp, fpga
+from typing import Union
 
 REDUCTION_TYPE_TO_HLSLIB = {
     dace.dtypes.ReductionType.Min: "hlslib::op::Min",
@@ -255,13 +257,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         return "{}{}".format("const " if is_const else "", dtype.ctype)
 
     @staticmethod
-    def make_kernel_argument(data,
-                             var_name,
-                             subset_info,
-                             sdfg,
-                             is_output,
-                             with_vectorization,
-                             interface_id=None):
+    def make_kernel_argument(data: dt.Data,
+                             var_name: str,
+                             subset_info: Union[int, subsets.Subset],
+                             sdfg: SDFG,
+                             is_output: bool ,
+                             with_vectorization: bool,
+                             interface_id: "Union[int, list[int]]"=None):
         if isinstance(data, dt.Array):
             var_name = cpp.ptr(var_name, data, subset_info, sdfg, is_output,
                                None, None, True, interface_id)
@@ -435,11 +437,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
     def generate_no_dependence_post(self,
                                     kernel_stream,
-                                    sdfg,
-                                    state_id,
-                                    node,
-                                    var_name,
-                                    accessed_subset=None):
+                                    sdfg: SDFG,
+                                    state_id: int,
+                                    node: nodes.Node,
+                                    var_name: str,
+                                    accessed_subset: Union[int, subsets.Subset]=None):
         '''
         Adds post loop pragma for ignoring loop carried dependencies on a given variable
         '''
