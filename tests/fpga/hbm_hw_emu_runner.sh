@@ -7,7 +7,7 @@ echo 'from hbm_vadd_fpga import exec_test \nexec_test(1, 50, 2, "vadd_2b1d")' > 
 python3 tmp_hw_emu_run_helper.py
 
 echo 'from hbm_vadd_fpga import exec_test \nexec_test(2, 50, 2, "vadd_2b2d")' > tmp_hw_emu_run_helper.py
-#python3 tmp_hw_emu_run_helper.py   #HW-BUILD
+python3 tmp_hw_emu_run_helper.py
 
 echo 'from hbm_vadd_fpga import exec_test \nexec_test(3, 10, 2, "vadd_2b3d")' > tmp_hw_emu_run_helper.py
 python3 tmp_hw_emu_run_helper.py
