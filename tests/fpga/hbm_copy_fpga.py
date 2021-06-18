@@ -131,7 +131,7 @@ def check_dev2dev1():
                   None, ("hbmbank", "0:3"))
     s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global, None,
                   [2, 10], "x[1, 0:5, 2, 2]->0, 0:5", None, ("hbmbank", "3:5"))
-    s.location["is_FPGA_kernel"] = False
+    s.location["is_FPGA_kernel"] = 0
 
     #Dummy copy on FPGA because otherwise it will not compile
     s, _, _ = mkc(sdfg, s, "y", "z", None, StorageType.FPGA_Global, None,
