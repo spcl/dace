@@ -474,8 +474,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 definition = desc.as_arg(name=f'{name}') + ';'
                 self.statestruct.append(definition)
 
+                # self.to_allocate[top_sdfg].append(
+                #     (sdfg.sdfg_id, sdfg.node_id(state), node))
                 self.to_allocate[top_sdfg].append(
-                    (sdfg.sdfg_id, sdfg.node_id(state), node))
+                    (sdfg, sdfg.node_id(state), node))
                 continue
             elif desc.lifetime is dtypes.AllocationLifetime.Global:
                 # Global memory is allocated in the beginning of the program
@@ -489,8 +491,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
                 self.statestruct.append(definition)
 
+                # self.to_allocate[top_sdfg].append(
+                #     (sdfg.sdfg_id, sdfg.node_id(state), node))
                 self.to_allocate[top_sdfg].append(
-                    (sdfg.sdfg_id, sdfg.node_id(state), node))
+                    (sdfg, sdfg.node_id(state), node))
                 continue
 
             # The rest of the cases change the starting scope we attempt to
@@ -603,16 +607,19 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             if curscope is None:
                 curscope = top_sdfg
 
+            # self.to_allocate[curscope].append(
+            #     (sdfg.sdfg_id, first_state_instance, first_node_instance))
             self.to_allocate[curscope].append(
-                (sdfg.sdfg_id, first_state_instance, first_node_instance))
+                (sdfg, first_state_instance, first_node_instance))
 
     def allocate_arrays_in_scope(self, sdfg: SDFG,
                                  scope: Union[nodes.EntryNode, SDFGState, SDFG],
                                  function_stream: CodeIOStream,
                                  callsite_stream: CodeIOStream):
         """ Dispatches allocation of all arrays in the given scope. """
-        for sdfg_id, state_id, node in self.to_allocate[scope]:
-            tsdfg = sdfg.sdfg_list[sdfg_id]
+        # for sdfg_id, state_id, node in self.to_allocate[scope]:
+        #     tsdfg = sdfg.sdfg_list[sdfg_id]
+        for tsdfg, state_id, node in self.to_allocate[scope]:
             if state_id is not None:
                 state = tsdfg.node(state_id)
             else:
@@ -633,8 +640,9 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                                    function_stream: CodeIOStream,
                                    callsite_stream: CodeIOStream):
         """ Dispatches deallocation of all arrays in the given scope. """
-        for sdfg_id, state_id, node in self.to_allocate[scope]:
-            tsdfg = sdfg.sdfg_list[sdfg_id]
+        # for sdfg_id, state_id, node in self.to_allocate[scope]:
+        #     tsdfg = sdfg.sdfg_list[sdfg_id]
+        for tsdfg, state_id, node in self.to_allocate[scope]:
             if state_id is not None:
                 state = tsdfg.node(state_id)
             else:

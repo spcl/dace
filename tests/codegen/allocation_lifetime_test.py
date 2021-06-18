@@ -67,8 +67,11 @@ def _test_determine_alloc(lifetime: dace.AllocationLifetime,
 
 
 def _check_alloc(id, name, codegen, scope):
-    for sdfg_id, _, node in codegen.to_allocate[scope]:
-        if id == sdfg_id and name == node.data:
+    # for sdfg_id, _, node in codegen.to_allocate[scope]:
+    #     if id == sdfg_id and name == node.data:
+    #         return True
+    for sdfg, _, node in codegen.to_allocate[scope]:
+        if sdfg.sdfg_id == id and name == node.data:
             return True
     return False
 
