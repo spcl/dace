@@ -5,7 +5,7 @@ import re
 import sympy as sp
 from functools import reduce
 import sympy.core.sympify
-from typing import List, Optional, Set, Union
+from typing import List, Optional, Sequence, Set, Union
 import warnings
 from dace.config import Config
 
@@ -667,16 +667,24 @@ class Range(Subset):
         self.offset(self, True, indices=offset_indices)
         return non_ones
 
-    def unsqueeze(self, axes):
-        # result = []
-        # axis_offset = len(axes) - 1
-        # for axis in reversed(sorted(axes)):
-        #     self.ranges.insert(axis, (0, 0, 1))
-        #     self.tile_sizes.insert(axis, 1)
+    def unsqueeze(self, axes: Sequence[int]) -> List[int]:
+        """ Adds 0:1 ranges to the subset, in the indices contained in axes.
+        
+        The method is mostly used to restore subsets that had their length-1
+        ranges removed (i.e., squeezed subsets). Hence, the method is
+        called 'unsqueeze'.
 
-        #     result.append(axis + axis_offset)
-        #     axis_offset -= 1
-        # return result
+        Examples (initial subset, axes -> result subset, output):
+        - [i:i+10], [0] -> [0:1, i], [0]
+        - [i:i+10], [0, 1] -> [0:1, 0:1, i:i+10], [0, 1]
+        - [i:i+10], [0, 2] -> [0:1, i:i+10, 0:1], [0, 2]
+        - [i:i+10], [0, 1, 2, 3] -> [0:1, 0:1, 0:1, 0:1, i:i+10], [0, 1, 2, 3]
+        - [i:i+10], [0, 2, 3, 4] -> [0:1, i:i+10, 0:1, 0:1, 0:1], [0, 2, 3, 4]
+        - [i:i+10], [0, 1, 1] -> [0:1, 0:1, 0:1, i:i+10], [0:1, 1, 2]
+
+        :param axes: The axes where the 0:1 ranges should be added.
+        :return: A list of the actual axes where the 0:1 ranges were added.
+        """
         result = []
         for axis in sorted(axes):
             self.ranges.insert(axis, (0, 0, 1))
@@ -944,10 +952,27 @@ class Indices(Subset):
         self.indices = squeezed_indices
         return non_ones
     
-    def unsqueeze(self, axes):
+    def unsqueeze(self, axes: Sequence[int]) -> List[int]:
+        """ Adds zeroes to the subset, in the indices contained in axes.
+        
+        The method is mostly used to restore subsets that had their
+        zero-indices removed (i.e., squeezed subsets). Hence, the method is
+        called 'unsqueeze'.
+
+        Examples (initial subset, axes -> result subset, output):
+        - [i], [0] -> [0, i], [0]
+        - [i], [0, 1] -> [0, 0, i], [0, 1]
+        - [i], [0, 2] -> [0, i, 0], [0, 2]
+        - [i], [0, 1, 2, 3] -> [0, 0, 0, 0, i], [0, 1, 2, 3]
+        - [i], [0, 2, 3, 4] -> [0, i, 0, 0, 0], [0, 2, 3, 4]
+        - [i], [0, 1, 1] -> [0, 0, 0, i], [0, 1, 2]
+
+        :param axes: The axes where the zero-indices should be added.
+        :return: A list of the actual axes where the zero-indices were added.
+        """
         result = []
         for axis in sorted(axes):
-            self.ranges.insert(axis, 0)
+            self.indices.insert(axis, 0)
 
             if len(result) > 0 and result[-1] >= axis:
                 result.append(result[-1] + 1)
