@@ -1138,11 +1138,13 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             if (memlet.src_subset != None):
                 src_subset = memlet.src_subset
             else:
-                src_subset = subsets.Range.from_array(src_nodedesc)
+                #src_subset = subsets.Range.from_array(src_nodedesc)
+                src_subset = memlet.subset
             if (memlet.dst_subset != None):
                 dst_subset = memlet.dst_subset
             else:
-                dst_subset = subsets.Range.from_array(dst_nodedesc)
+                #dst_subset = subsets.Range.from_array(dst_nodedesc)
+                dst_subset = memlet.subset
 
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
             copy_shape = utils.modify_subset_magic(
