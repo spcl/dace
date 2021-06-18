@@ -1,4 +1,5 @@
 #small utility to run hw_emu tests without killing xrt
+#not sure if this should be on master, but it's definitely usefull to run all HBM-tests so I will leave it for the moment
 
 #vadd
 touch tmp_hw_emu_run_helper.py
