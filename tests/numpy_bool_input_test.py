@@ -24,5 +24,9 @@ def test_numpy_bool_input():
     assert result[0]
 
     # test numpy.bool (which is just bool)
-    result = sdfg(in_bool=np.bool(True))
+    result = sdfg(in_bool=bool(True))
     assert result[0]
+
+
+if __name__ == "__main__":
+    test_numpy_bool_input()

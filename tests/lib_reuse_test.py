@@ -1,28 +1,29 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import dace
+from dace.frontend.python.parser import DaceProgram
 from dace.codegen.exceptions import CompilationError
 import numpy as np
 
 
 # Dynamically creates DaCe programs with the same name
-def program_generator(size, factor):
+def program_generator(size: int, factor: float) -> DaceProgram:
     @dace.program(dace.float64[size],
                   dace.float64[size],
                   size=size,
                   factor=factor)
-    def program(input, output):
+    def lib_reuse(input, output):
         @dace.map(_[0:size])
         def tasklet(i):
             a << input[i]
             b >> output[i]
             b = a * factor
 
-    return program
+    return lib_reuse
 
 
-if __name__ == "__main__":
+def test_reload():
     print('Reloadable DaCe program test')
 
     array_one = np.random.rand(10).astype(np.float64)
@@ -42,7 +43,7 @@ if __name__ == "__main__":
         # On some systems (e.g., Windows), the file will be locked, so
         # compilation will fail
         print('Compilation failed due to locked file. Skipping test.')
-        exit(0)
+        return
 
     func1(input=array_one, output=output_one)
     func2(input=array_two, output=output_two)
@@ -50,4 +51,7 @@ if __name__ == "__main__":
     diff1 = np.linalg.norm(2.0 * array_one - output_one) / 10.0
     diff2 = np.linalg.norm(4.0 * array_two - output_two) / 20.0
     print("Differences:", diff1, diff2)
-    exit(0 if (diff1 < 1e-5 and diff2 < 1e-5) else 1)
+    assert (diff1 < 1e-5 and diff2 < 1e-5)
+
+if __name__ == '__main__':
+    test_reload()

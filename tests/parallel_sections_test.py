@@ -1,42 +1,32 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
+import numpy as np
 
-if __name__ == "__main__":
 
+def test():
     N = dace.symbol("N")
 
     sdfg = dace.SDFG("parallel_sections")
 
+    sdfg.add_array("array_in", (2 * N, ), dace.dtypes.int32)
+    sdfg.add_array("array_out", (N, ), dace.dtypes.int32)
+
+    sdfg.add_stream("fifo_in_a", dace.dtypes.int32, 1, transient=True)
+    sdfg.add_stream("fifo_in_b", dace.dtypes.int32, 1, transient=True)
+    sdfg.add_stream("fifo_out", dace.dtypes.int32, 1, transient=True)
+
     state = sdfg.add_state("sections")
 
-    array_in = state.add_array("array_in", (2 * N, ), dace.dtypes.int32)
-    array_out = state.add_array("array_out", (N, ), dace.dtypes.int32)
+    array_in = state.add_access("array_in")
+    array_out = state.add_access("array_out")
 
-    fifo_in_a_0 = state.add_stream("fifo_in_a",
-                                   dace.dtypes.int32,
-                                   1,
-                                   transient=True)
-    fifo_in_b_0 = state.add_stream("fifo_in_b",
-                                   dace.dtypes.int32,
-                                   1,
-                                   transient=True)
-    fifo_in_a_1 = state.add_stream("fifo_in_a",
-                                   dace.dtypes.int32,
-                                   1,
-                                   transient=True)
-    fifo_in_b_1 = state.add_stream("fifo_in_b",
-                                   dace.dtypes.int32,
-                                   1,
-                                   transient=True)
-    fifo_out_0 = state.add_stream("fifo_out",
-                                  dace.dtypes.int32,
-                                  1,
-                                  transient=True)
-    fifo_out_1 = state.add_stream("fifo_out",
-                                  dace.dtypes.int32,
-                                  1,
-                                  transient=True)
+    fifo_in_a_0 = state.add_access("fifo_in_a")
+    fifo_in_b_0 = state.add_access("fifo_in_b")
+    fifo_in_a_1 = state.add_access("fifo_in_a")
+    fifo_in_b_1 = state.add_access("fifo_in_b")
+    fifo_out_0 = state.add_access("fifo_out")
+    fifo_out_1 = state.add_access("fifo_out")
 
     ###########################################################################
     # First processing element: reads from memory into a stream
@@ -44,8 +34,7 @@ if __name__ == "__main__":
     read_a_entry, read_a_exit = state.add_map(
         "read_map_a", {"i": "0:N"},
         schedule=dace.dtypes.ScheduleType.Sequential)
-    read_a_tasklet = state.add_tasklet("read_a", {"from_memory"},
-                                       {"to_stream"},
+    read_a_tasklet = state.add_tasklet("read_a", {"from_memory"}, {"to_stream"},
                                        "to_stream = from_memory")
 
     # Inner edges
@@ -66,8 +55,7 @@ if __name__ == "__main__":
     read_b_entry, read_b_exit = state.add_map(
         "read_map_b", {"i": "N:2*N"},
         schedule=dace.dtypes.ScheduleType.Sequential)
-    read_b_tasklet = state.add_tasklet("read_b", {"from_memory"},
-                                       {"to_stream"},
+    read_b_tasklet = state.add_tasklet("read_b", {"from_memory"}, {"to_stream"},
                                        "to_stream = from_memory")
 
     # Inner edges
@@ -112,8 +100,7 @@ if __name__ == "__main__":
     # Fourth processing element: reads from stream into an array
 
     write_entry, write_exit = state.add_map(
-        "write_map", {"i": "0:N"},
-        schedule=dace.dtypes.ScheduleType.Sequential)
+        "write_map", {"i": "0:N"}, schedule=dace.dtypes.ScheduleType.Sequential)
     write_tasklet = state.add_tasklet("write", {"from_stream"}, {"to_memory"},
                                       "to_memory = from_stream")
 
@@ -130,15 +117,18 @@ if __name__ == "__main__":
                    dace.memlet.Memlet.simple(array_out, "0:N"))
 
     ###########################################################################
-
-    N.set(1024)
-    array_in = dace.ndarray([2 * N], dace.dtypes.int32)
-    array_in[:N.get()] = range(0, N.get())
-    array_in[N.get():] = range(0, N.get())
-    array_out = dace.ndarray([N], dace.dtypes.int32)
+    N = 1024
+    array_in = np.ndarray([2 * N], np.int32)
+    array_in[:N] = range(0, N)
+    array_in[N:] = range(0, N)
+    array_out = np.ndarray([N], np.int32)
     sdfg(array_in=array_in, array_out=array_out, N=N)
 
     for i, val in enumerate(array_out):
         if val != 2 * i:
             print(i, val)
             raise ValueError
+
+
+if __name__ == '__main__':
+    test()

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes and functions that implement the strip-mining
     transformation."""
 
@@ -6,11 +6,11 @@ import dace
 from copy import deepcopy as dcpy
 from dace import dtypes, registry, subsets, symbolic
 from dace.sdfg import SDFG, SDFGState
-from dace.properties import make_properties, Property
+from dace.properties import EnumProperty, make_properties, Property, SymbolicProperty
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.symbolic import issymbolic, overapproximate, SymExpr
-from dace.transformation import transformation
+from dace.transformation import transformation, helpers as xfh
 import sympy
 
 
@@ -137,13 +137,16 @@ class StripMining(transformation.Transformation):
     new_dim_prefix = Property(dtype=str,
                               default="tile",
                               desc="Prefix for new dimension name")
-    tile_size = Property(dtype=str,
-                         default="64",
-                         desc="Tile size of strip-mined dimension")
-    tile_stride = Property(dtype=str,
-                           default="",
-                           desc="Stride between two tiles of the "
-                           "strip-mined dimension")
+    tile_size = SymbolicProperty(
+        default=64,
+        desc="Tile size of strip-mined dimension, "
+        "or number of tiles if tiling_type=number_of_tiles")
+    tile_stride = SymbolicProperty(default=0,
+                                   desc="Stride between two tiles of the "
+                                   "strip-mined dimension. If zero, it is set "
+                                   "equal to the tile size.")
+    tile_offset = SymbolicProperty(default=0,
+                                   desc="Tile stride offset (negative)")
     divides_evenly = Property(dtype=bool,
                               default=False,
                               desc="Tile size divides dimension range evenly?")
@@ -151,6 +154,20 @@ class StripMining(transformation.Transformation):
         dtype=bool,
         default=False,
         desc="Continuous (false) or strided (true) elements in tile")
+
+    tiling_type = EnumProperty(
+        dtype=dtypes.TilingType,
+        default=dtypes.TilingType.Normal,
+        allow_none=True,
+        desc="normal: the outerloop increments with tile_size, "
+        "ceilrange: uses ceiling(N/tile_size) in outer range, "
+        "number_of_tiles: tiles the map into the number of provided tiles, "
+        "provide the number of tiles over tile_size")
+
+    skew = Property(
+        dtype=bool,
+        default=False,
+        desc="If True, offsets inner tile back such that it starts with zero")
 
     @staticmethod
     def annotates_memlets():
@@ -172,7 +189,7 @@ class StripMining(transformation.Transformation):
         map_entry = graph.nodes()[candidate[StripMining._map_entry]]
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 
-    def apply(self, sdfg):
+    def apply(self, sdfg: SDFG) -> nodes.Map:
         graph = sdfg.nodes()[self.state_id]
         # Strip-mine selected dimension.
         _, _, new_map = self._stripmine(sdfg, graph, self.subgraph)
@@ -210,15 +227,52 @@ class StripMining(transformation.Transformation):
             return target_dim
         candidate = '%s_%s' % (prefix, target_dim)
         index = 1
-        while candidate in map(str, stree[entry].defined_vars):
+        defined_vars = set(
+            str(s) for s in (state.symbols_defined_at(entry).keys()
+                             | sdfg.symbols.keys()))
+        while candidate in defined_vars:
             candidate = '%s%d_%s' % (prefix, index, target_dim)
             index += 1
         return candidate
 
-    def _stripmine(self, sdfg, graph, candidate):
+    def _create_strided_range(self, sdfg: SDFG, state: SDFGState,
+                              map_entry: nodes.MapEntry):
+        map_exit = state.exit_node(map_entry)
+        dim_idx = self.dim_idx
+        new_dim_prefix = self.new_dim_prefix
+        tile_size = self.tile_size
+        divides_evenly = self.divides_evenly
+        tile_stride = self.tile_stride
+        if tile_stride == 0:
+            tile_stride = tile_size
+        if tile_stride != tile_size:
+            raise NotImplementedError
 
-        # Retrieve map entry and exit nodes.
-        map_entry = graph.nodes()[candidate[StripMining._map_entry]]
+        # Retrieve parameter and range of dimension to be strip-mined.
+        target_dim = map_entry.map.params[dim_idx]
+        td_from, td_to, td_step = map_entry.map.range[dim_idx]
+        new_dim = self._find_new_dim(sdfg, state, map_entry, new_dim_prefix,
+                                     target_dim)
+        new_dim_range = (td_from, td_to, tile_size)
+        new_map = nodes.Map(map_entry.map.label, [new_dim],
+                            subsets.Range([new_dim_range]))
+
+        dimsym = dace.symbolic.pystr_to_symbolic(new_dim)
+        td_from_new = dimsym
+        if divides_evenly:
+            td_to_new = dimsym + tile_size - 1
+        else:
+            if isinstance(td_to, dace.symbolic.SymExpr):
+                td_to = td_to.expr
+            td_to_new = dace.symbolic.SymExpr(
+                sympy.Min(dimsym + tile_size - 1, td_to),
+                dimsym + tile_size - 1)
+        td_step_new = td_step
+
+        return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
+
+    def _create_ceil_range(self, sdfg: SDFG, graph: SDFGState,
+                           map_entry: nodes.MapEntry):
         map_exit = graph.exit_node(map_entry)
 
         # Retrieve transformation properties.
@@ -227,56 +281,152 @@ class StripMining(transformation.Transformation):
         tile_size = self.tile_size
         divides_evenly = self.divides_evenly
         strided = self.strided
+        offset = self.tile_offset
 
         tile_stride = self.tile_stride
-        if tile_stride is None or len(tile_stride) == 0:
+        if tile_stride == 0:
             tile_stride = tile_size
 
         # Retrieve parameter and range of dimension to be strip-mined.
         target_dim = map_entry.map.params[dim_idx]
         td_from, td_to, td_step = map_entry.map.range[dim_idx]
-
         # Create new map. Replace by cloning map object?
         new_dim = self._find_new_dim(sdfg, graph, map_entry, new_dim_prefix,
                                      target_dim)
         nd_from = 0
-        if symbolic.pystr_to_symbolic(tile_stride) == 1:
-            nd_to = td_to
+        if tile_stride == 1:
+            nd_to = td_to - td_from
         else:
             nd_to = symbolic.pystr_to_symbolic(
                 'int_ceil(%s + 1 - %s, %s) - 1' %
-                (symbolic.symstr(td_to), symbolic.symstr(td_from), tile_stride))
+                (symbolic.symstr(td_to), symbolic.symstr(td_from),
+                 symbolic.symstr(tile_stride)))
         nd_step = 1
         new_dim_range = (nd_from, nd_to, nd_step)
         new_map = nodes.Map(new_dim + '_' + map_entry.map.label, [new_dim],
                             subsets.Range([new_dim_range]))
-        new_map_entry = nodes.MapEntry(new_map)
-        new_map_exit = nodes.MapExit(new_map)
 
         # Change the range of the selected dimension to iterate over a single
         # tile
         if strided:
             td_from_new = symbolic.pystr_to_symbolic(new_dim)
             td_to_new_approx = td_to
-            td_step = symbolic.pystr_to_symbolic(tile_size)
-        else:
+            td_step = tile_size
+
+        elif offset == 0:
             td_from_new = symbolic.pystr_to_symbolic(
                 '%s + %s * %s' %
-                (symbolic.symstr(td_from), str(new_dim), tile_stride))
+                (symbolic.symstr(td_from), symbolic.symstr(new_dim),
+                 symbolic.symstr(tile_stride)))
             td_to_new_exact = symbolic.pystr_to_symbolic(
                 'min(%s + 1, %s + %s * %s + %s) - 1' %
-                (symbolic.symstr(td_to), symbolic.symstr(td_from), tile_stride,
-                 str(new_dim), tile_size))
+                (symbolic.symstr(td_to), symbolic.symstr(td_from),
+                 symbolic.symstr(tile_stride), symbolic.symstr(new_dim),
+                 symbolic.symstr(tile_size)))
             td_to_new_approx = symbolic.pystr_to_symbolic(
                 '%s + %s * %s + %s - 1' %
-                (symbolic.symstr(td_from), tile_stride, str(new_dim),
-                 tile_size))
+                (symbolic.symstr(td_from), symbolic.symstr(tile_stride),
+                 symbolic.symstr(new_dim), symbolic.symstr(tile_size)))
+
+        else:
+            # include offset
+            td_from_new_exact = symbolic.pystr_to_symbolic(
+                'max(%s,%s + %s * %s - %s)' %
+                (symbolic.symstr(td_from), symbolic.symstr(td_from),
+                 symbolic.symstrtr(tile_stride), symbolic.symstr(new_dim),
+                 symbolic.symstr(offset)))
+            td_from_new_approx = symbolic.pystr_to_symbolic(
+                '%s + %s * %s - %s ' %
+                (symbolic.symstr(td_from), symbolic.symstr(tile_stride),
+                 symbolic.symstr(new_dim), symbolic.symstr(offset)))
+            td_from_new = dace.symbolic.SymExpr(td_from_new_exact,
+                                                td_from_new_approx)
+
+            td_to_new_exact = symbolic.pystr_to_symbolic(
+                'min(%s + 1, %s + %s * %s + %s - %s) -1' %
+                (symbolic.symstr(td_to), symbolic.symstr(td_from),
+                 symbolic.symstr(tile_stride), symbolic.symstr(new_dim),
+                 symbolic.symstr(tile_size), symbolic.symstr(offset)))
+            td_to_new_approx = symbolic.pystr_to_symbolic(
+                '%s + %s * %s + %s - %s - 1' %
+                (symbolic.symstr(td_from), symbolic.symstr(tile_stride),
+                 symbolic.symstr(new_dim), symbolic.symstr(tile_size),
+                 symbolic.symstr(offset)))
+
         if divides_evenly or strided:
             td_to_new = td_to_new_approx
         else:
             td_to_new = dace.symbolic.SymExpr(td_to_new_exact, td_to_new_approx)
+        return new_dim, new_map, (td_from_new, td_to_new, td_step)
+
+    def _create_from_tile_numbers(self, sdfg: SDFG, state: SDFGState,
+                                  map_entry: nodes.MapEntry):
+        map_exit = state.exit_node(map_entry)
+
+        # Retrieve transformation properties.
+        dim_idx = self.dim_idx
+        new_dim_prefix = self.new_dim_prefix
+        divides_evenly = self.divides_evenly
+        number_of_tiles = self.tile_size
+        tile_stride = self.tile_stride
+
+        number_of_tiles = dace.symbolic.pystr_to_symbolic(number_of_tiles)
+
+        # Retrieve parameter and range of dimension to be strip-mined.
+        target_dim = map_entry.map.params[dim_idx]
+        td_from, td_to, td_step = map_entry.map.range[dim_idx]
+        size = map_entry.map.range.size_exact()[dim_idx]
+
+        if tile_stride != 0:
+            raise NotImplementedError
+
+        new_dim = self._find_new_dim(sdfg, state, map_entry, new_dim_prefix,
+                                     target_dim)
+        new_dim_range = (td_from, number_of_tiles - 1, 1)
+        new_map = nodes.Map(map_entry.map.label, [new_dim],
+                            subsets.Range([new_dim_range]))
+
+        dimsym = dace.symbolic.pystr_to_symbolic(new_dim)
+        td_from_new = (dimsym * size) // number_of_tiles
+        if divides_evenly:
+            td_to_new = ((dimsym + 1) * size) // number_of_tiles  - 1
+        else:
+            if isinstance(td_to, dace.symbolic.SymExpr):
+                td_to = td_to.expr
+            td_to_new = dace.symbolic.SymExpr(
+                sympy.Min(((dimsym + 1) * size) // number_of_tiles, td_to+1)-1,
+                ((dimsym + 1) * size) // number_of_tiles - 1)
+        td_step_new = td_step
+        return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
+
+    def _stripmine(self, sdfg, graph, candidate):
+        # Retrieve map entry and exit nodes.
+        map_entry = graph.nodes()[candidate[StripMining._map_entry]]
+        map_exit = graph.exit_node(map_entry)
+
+        # Retrieve transformation properties.
+        dim_idx = self.dim_idx
+        target_dim = map_entry.map.params[dim_idx]
+
+        if self.tiling_type == dtypes.TilingType.CeilRange:
+            new_dim, new_map, td_rng = self._create_ceil_range(
+                sdfg, graph, map_entry)
+        elif self.tiling_type == dtypes.TilingType.NumberOfTiles:
+            new_dim, new_map, td_rng = self._create_from_tile_numbers(
+                sdfg, graph, map_entry)
+        else:
+            new_dim, new_map, td_rng = self._create_strided_range(
+                sdfg, graph, map_entry)
+
+        new_map_entry = nodes.MapEntry(new_map)
+        new_map_exit = nodes.MapExit(new_map)
+
+        td_to_new_approx = td_rng[1]
+        if isinstance(td_to_new_approx, dace.symbolic.SymExpr):
+            td_to_new_approx = td_to_new_approx.approx
+
         # Special case: If range is 1 and no prefix was specified, skip range
-        if td_from_new == td_to_new_approx and target_dim == new_dim:
+        if td_rng[0] == td_to_new_approx and target_dim == new_dim:
             map_entry.map.range = subsets.Range(
                 [r for i, r in enumerate(map_entry.map.range) if i != dim_idx])
             map_entry.map.params = [
@@ -286,7 +436,7 @@ class StripMining(transformation.Transformation):
                 raise ValueError('Strip-mining all dimensions of the map with '
                                  'empty tiles is disallowed')
         else:
-            map_entry.map.range[dim_idx] = (td_from_new, td_to_new, td_step)
+            map_entry.map.range[dim_idx] = td_rng
 
         # Make internal map's schedule to "not parallel"
         new_map.schedule = map_entry.map.schedule
@@ -324,7 +474,8 @@ class StripMining(transformation.Transformation):
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
-                        new_memlet.num_accesses = new_memlet.num_elements()
+                        new_memlet.num_accesses = new_memlet.num_elements(
+                        ).simplify()
                     new_in_edges[key] = new_memlet
             else:
                 if src_conn is not None and src_conn[:4] == 'OUT_':
@@ -370,7 +521,8 @@ class StripMining(transformation.Transformation):
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
-                        new_memlet.num_accesses = new_memlet.num_elements()
+                        new_memlet.num_accesses = new_memlet.num_elements(
+                        ).simplify()
                     new_out_edges[key] = new_memlet
             else:
                 if dst_conn is not None and dst_conn[:3] == 'IN_':
@@ -378,17 +530,21 @@ class StripMining(transformation.Transformation):
                     in_conn = 'IN_' + conn
                     out_conn = 'OUT_' + conn
                 else:
-                    in_conn = src_conn
-                    out_conn = src_conn
+                    in_conn = dst_conn
+                    out_conn = dst_conn
                 if in_conn:
                     exit_in_conn[in_conn] = None
                 if out_conn:
                     exit_out_conn[out_conn] = None
-                new_in_edges[(memlet.data, in_conn, out_conn)] = dcpy(memlet)
+                new_out_edges[(memlet.data, in_conn, out_conn)] = dcpy(memlet)
         new_map_exit.in_connectors = exit_in_conn
         map_exit.out_connectors = exit_out_conn
         for (_, in_conn, out_conn), memlet in new_out_edges.items():
             graph.add_edge(map_exit, out_conn, new_map_exit, in_conn, memlet)
+
+        # Skew if necessary
+        if self.skew:
+            xfh.offset_map(sdfg, graph, map_entry, dim_idx, td_rng[0])
 
         # Return strip-mined dimension.
         return target_dim, new_dim, new_map

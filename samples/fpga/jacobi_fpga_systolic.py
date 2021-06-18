@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import argparse
@@ -294,12 +294,12 @@ def make_read_sdfg():
         y_entry, y_end,
         dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "y >= H", language=dace.dtypes.Language.Python)))
+                "y >= H - 1", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry, x_end,
         dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "x >= W", language=dace.dtypes.Language.Python)))
+                "x >= W - 1", language=dace.dtypes.Language.Python)))
 
     mem_read = loop_body.add_array("mem_read", (2, H, W),
                                    dtype,
@@ -374,12 +374,12 @@ def make_write_sdfg():
         y_entry, y_end,
         dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "y >= H", language=dace.dtypes.Language.Python)))
+                "y >= H - 1", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry, x_end,
         dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
-                "x >= W", language=dace.dtypes.Language.Python)))
+                "x >= W - 1", language=dace.dtypes.Language.Python)))
 
     pipe = loop_body.add_stream("pipe",
                                 dtype,

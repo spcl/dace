@@ -1,8 +1,9 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation import optimizer
 from dace.transformation.dataflow import GPUTransformMap
 import numpy as np
+import pytest
 
 
 @dace.program
@@ -24,7 +25,8 @@ def prog2(A: dace.float32[32], B: dace.float32[32]):
 
 
 ######################################
-if __name__ == '__main__':
+@pytest.mark.gpu
+def test_multiprogram():
     print('Multi-program CUDA test')
 
     A = np.random.rand(32).astype(np.float32)
@@ -46,4 +48,8 @@ if __name__ == '__main__':
     diff = np.linalg.norm(A - C)
 
     print('Difference:', diff)
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == '__main__':
+    test()

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 from common import compare_numpy_output
@@ -39,18 +39,18 @@ def test_modl(A: dace.int64[5, 5], B: dace.int64[1]):
 
 
 # numpy throws an error for negative B, dace doesn't
-@compare_numpy_output(positive=True)
+@compare_numpy_output(positive=True, casting=np.float64)
 def test_powl(A: dace.int64[5, 5], B: dace.int64[1]):
     return A**B
 
 
 # dace has weird behavior here too
-@compare_numpy_output(positive=True)
+@compare_numpy_output(positive=True, max_value=10)
 def test_lshiftl(A: dace.int64[5, 5], B: dace.int64[1]):
     return A << B
 
 
-@compare_numpy_output(positive=True)
+@compare_numpy_output(positive=True, max_value=10)
 def test_rshiftl(A: dace.int64[5, 5], B: dace.int64[1]):
     return A >> B
 
@@ -133,17 +133,17 @@ def test_modr(A: dace.int64[1], B: dace.int64[5, 5]):
     return A % B
 
 
-@compare_numpy_output(positive=True)
+@compare_numpy_output(positive=True, casting=np.float64)
 def test_powr(A: dace.int64[1], B: dace.int64[5, 5]):
     return A**B
 
 
-@compare_numpy_output(positive=True)
+@compare_numpy_output(positive=True, max_value=10)
 def test_lshiftr(A: dace.int64[1], B: dace.int64[5, 5]):
     return A << B
 
 
-@compare_numpy_output(positive=True)
+@compare_numpy_output(positive=True, max_value=10)
 def test_rshiftr(A: dace.int64[1], B: dace.int64[5, 5]):
     return A >> B
 

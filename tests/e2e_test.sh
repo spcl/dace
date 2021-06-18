@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 set -a
 
@@ -44,7 +44,7 @@ runall() {
     runtest ddot.py $1
     runtest fibonacci.py $1
     runtest filter.py $1
-    runtest gemm.py $1
+    runtest matmul.py $1
     runtest histogram.py $1
     runtest histogram_declarative.py $1
     runtest jacobi.py $1

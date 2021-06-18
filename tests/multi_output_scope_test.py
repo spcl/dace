@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -6,7 +6,7 @@ W = dace.symbol('W')
 
 
 @dace.program
-def prog(A, stats):
+def multi_output_scope(A, stats):
     @dace.map(_[0:W])
     def compute(i):
         inp << A[i]
@@ -17,7 +17,7 @@ def prog(A, stats):
         ssq = inp * inp
 
 
-if __name__ == '__main__':
+def test():
     W.set(120)
 
     A = dace.ndarray([W])
@@ -26,7 +26,7 @@ if __name__ == '__main__':
     A[:] = np.random.normal(3.0, 5.0, W.get())
     stats[:] = 0.0
 
-    prog(A, stats, W=W)
+    multi_output_scope(A, stats, W=W)
 
     mean = stats[0] / W.get()
     variance = stats[1] / W.get() - mean * mean
@@ -36,5 +36,8 @@ if __name__ == '__main__':
     print("Difference (mean):", diff_mean)
     diff_var = abs(variance - np.var(A))
     print("Difference (variance):", diff_var)
-    print("==== Program end ====")
-    exit(0 if diff_mean <= 1e-5 and diff_var <= 1e-4 else 1)
+    assert diff_mean <= 1e-5 and diff_var <= 1e-4
+
+
+if __name__ == "__main__":
+    test()

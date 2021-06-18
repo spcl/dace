@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
 from dace.memlet import Memlet
@@ -24,7 +24,8 @@ n = state.add_nested_sdfg(nsdfg, None, set(), {'nout'})
 state.add_edge(n, 'nout', SB, None, Memlet.simple('SB', '0'))
 state.add_nedge(SB, B, Memlet.simple('B', '0'))
 
-if __name__ == '__main__':
+
+def test():
     print('Nested stream test')
 
     Bdata = np.zeros([2], np.int32)
@@ -34,5 +35,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(B_regression - Bdata)
     print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff == 0 else 1)
+    assert diff == 0
+
+
+if __name__ == "__main__":
+    test()

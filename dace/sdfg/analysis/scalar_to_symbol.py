@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Scalar to symbol promotion functionality. """
 
 import ast
@@ -12,7 +12,20 @@ from dace.sdfg import graph as gr
 from dace.frontend.python import astutils
 from dace.transformation import helpers as xfh
 import re
-from typing import Any, DefaultDict, Dict, List, Set, Tuple
+from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
+
+
+class AttributedCallDetector(ast.NodeVisitor):
+    """ Detects attributed calls in Tasklets.
+    """
+    def __init__(self):
+        self.detected = False
+
+    def visit_Call(self, node: ast.Call) -> Any:
+        if isinstance(node.func, ast.Attribute):
+            self.detected = True
+            return
+        return self.generic_visit(node)
 
 
 def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
@@ -25,6 +38,8 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
           and may have zero or more **array** inputs and not be in a scope.
         * Scalar must not be accessed with a write-conflict resolution.
         * Scalar must not be written to more than once in a state.
+        * If scalar is not integral (i.e., int type), it must also appear in
+          an inter-state condition to be promotable.
 
     These conditions must apply on all occurences of the scalar in order for
     it to be promotable.
@@ -40,6 +55,8 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
         if not desc.transient or isinstance(desc, dt.Stream):
             continue
         if desc.total_size != 1:
+            continue
+        if desc.lifetime is dtypes.AllocationLifetime.Persistent:
             continue
         candidates.add(aname)
 
@@ -137,6 +154,15 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
                                 cb.code[0].targets[0]) != edge.src_conn):
                             candidates.remove(candidate)
                             continue
+                        # Ensure that the candidate is not assigned through
+                        # an "attribute" call, e.g., "dace.int64". These calls
+                        # are not supported currently by the SymPy-based
+                        # symbolic module.
+                        detector = AttributedCallDetector()
+                        detector.visit(cb.code[0].value)
+                        if detector.detected:
+                            candidates.remove(candidate)
+                            continue
                     elif cb.language is dtypes.Language.CPP:
                         # Try to match a single C assignment
                         cstr = cb.as_string.strip()
@@ -152,6 +178,14 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
             else:  # If input is not an acceptable node type, skip
                 candidates.remove(candidate)
         candidates_seen |= candidates_in_state
+
+    # Filter out non-integral symbols that do not appear in inter-state edges
+    interstate_symbols = set()
+    for edge in sdfg.edges():
+        interstate_symbols |= edge.data.free_symbols
+    for candidate in (candidates - interstate_symbols):
+        if sdfg.arrays[candidate].dtype not in dtypes.INTEGER_TYPES:
+            candidates.remove(candidate)
 
     # Only keep candidates that were found in SDFG
     candidates &= candidates_seen
@@ -285,8 +319,8 @@ def _handle_connectors(state: sd.SDFGState, node: nodes.Tasklet,
 
 
 def _cpp_indirection_promoter(
-    code: str, in_connectors: Set[str], out_connectors: Set[str], sdfg: sd.SDFG,
-    defined_syms: Set[str]
+    code: str, in_edges: Dict[str, mm.Memlet], out_edges: Dict[str, mm.Memlet],
+    sdfg: sd.SDFG, defined_syms: Set[str]
 ) -> Tuple[str, Dict[str, Tuple[str, subsets.Range]], Dict[str, Tuple[
         str, subsets.Range]], Set[str]]:
     """
@@ -301,10 +335,10 @@ def _cpp_indirection_promoter(
     repl: Dict[Tuple[int, int], str] = {}
 
     # Find all occurrences of "aname[subexpr]"
-    for m in re.finditer(r'([a-zA-Z_][a-zA-Z_0-9]*)\[(.*?)\]', code):
+    for m in re.finditer(r'([a-zA-Z_][a-zA-Z_0-9]*?)\[(.*?)\]', code):
         node_name = m.group(1)
         subexpr = m.group(2)
-        if node_name in (in_connectors | out_connectors):
+        if node_name in (set(in_edges.keys()) | set(out_edges.keys())):
             try:
                 # NOTE: This is not necessarily a Python string. If fails,
                 #       we skip this indirection.
@@ -313,14 +347,31 @@ def _cpp_indirection_promoter(
                 do_not_remove.add(node_name)
                 continue
 
-            # subexpr is always a one-dimensional index
             latest[node_name] += 1
             new_name = f'{node_name}_{latest[node_name]}'
-            subset = subsets.Range([(subexpr, subexpr, 1)])
+
+            # subexpr is always a one-dimensional index
+            # Find non-scalar dimension to replace in memlet
+            if node_name in in_edges:
+                orig_subset = in_edges[node_name].subset
+            else:
+                orig_subset = out_edges[node_name].subset
+
+            try:
+                first_nonscalar_dim = next(
+                    i for i, s in enumerate(orig_subset.size()) if s != 1)
+            except StopIteration:
+                first_nonscalar_dim = 0
+
+            # Make subset out of range and new sub-expression
+            subset = subsets.Range(orig_subset.ndrange()[:first_nonscalar_dim] +
+                                   [(subexpr, subexpr, 1)] +
+                                   orig_subset.ndrange()[first_nonscalar_dim +
+                                                         1:])
 
             # Check if range can be collapsed
             if _range_is_promotable(subset, defined_syms):
-                if node_name in in_connectors:
+                if node_name in in_edges:
                     in_mapping[new_name] = (node_name, subset)
                 else:
                     out_mapping[new_name] = (node_name, subset)
@@ -367,8 +418,11 @@ def remove_symbol_indirection(sdfg: sd.SDFG):
                 elif node.code.language is dtypes.Language.CPP:
                     (node.code.code, in_mapping, out_mapping,
                      do_not_remove) = _cpp_indirection_promoter(
-                         node.code.as_string, set(node.in_connectors.keys()),
-                         set(node.out_connectors.keys()), sdfg, defined_syms)
+                         node.code.as_string,
+                         {e.dst_conn: e.data
+                          for e in state.in_edges(node)},
+                         {e.src_conn: e.data
+                          for e in state.out_edges(node)}, sdfg, defined_syms)
 
                 # Nothing more to do
                 if len(in_mapping) + len(out_mapping) == 0:
@@ -436,12 +490,22 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
 
                         # Descend recursively to remove scalar
                         remove_scalar_reads(dst.sdfg, {e.dst_conn: tmp_symname})
+                        for ise in dst.sdfg.edges():
+                            ise.data.replace(e.dst_conn, tmp_symname)
+                            # Remove subscript occurrences as well
+                            for aname, aval in ise.data.assignments.items():
+                                vast = ast.parse(aval)
+                                vast = astutils.RemoveSubscripts({tmp_symname
+                                                                  }).visit(vast)
+                                ise.data.assignments[aname] = astutils.unparse(
+                                    vast)
+                            ise.data.replace(tmp_symname + '[0]', tmp_symname)
 
                         # Set symbol mapping
                         dst.sdfg.remove_data(e.dst_conn, validate=False)
                         dst.remove_in_connector(e.dst_conn)
                         dst.sdfg.symbols[tmp_symname] = sdfg.arrays[
-                            symname].dtype
+                            node.data].dtype
                         dst.symbol_mapping[tmp_symname] = symname
                     elif isinstance(dst, (nodes.EntryNode, nodes.ExitNode)):
                         # Skip
@@ -461,7 +525,8 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
             [n for n in scalar_nodes if len(state.all_edges(n)) == 0])
 
 
-def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
+def promote_scalars_to_symbols(sdfg: sd.SDFG,
+                               ignore: Optional[Set[str]] = None) -> Set[str]:
     """
     Promotes all matching transient scalars to SDFG symbols, changing all
     tasklets to inter-state assignments. This enables the transformed symbols
@@ -470,6 +535,7 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
     optimization.
 
     :param sdfg: The SDFG to run the pass on.
+    :param ignore: An optional set of strings of scalars to ignore.
     :return: Set of promoted scalars.
     :note: Operates in-place.
     """
@@ -486,8 +552,9 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
     # 5. Remove data descriptors and add symbols to SDFG
     # 6. Replace subscripts in all interstate conditions and assignments
     # 7. Make indirections with symbols a single memlet
-
     to_promote = find_promotable_scalars(sdfg)
+    if ignore:
+        to_promote -= ignore
     if len(to_promote) == 0:
         return to_promote
 
@@ -506,7 +573,8 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
             tasklet_inputs = [e.src for e in state.in_edges(input)]
             # Step 2.1
             new_state = xfh.state_fission(
-                sdfg, gr.SubgraphView(state, [input, node] + tasklet_inputs))
+                sdfg, gr.SubgraphView(state,
+                                      set([input, node] + tasklet_inputs)))
             new_isedge: sd.InterstateEdge = sdfg.out_edges(new_state)[0]
             # Step 2.2
             node: nodes.AccessNode = new_state.sink_nodes()[0]
@@ -517,7 +585,7 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
                 if input.language is dtypes.Language.Python:
                     newcode = astutils.unparse(input.code.code[0].value)
                 elif input.language is dtypes.Language.CPP:
-                    newcode = re.findall(r'.*=\s*(.*);',
+                    newcode = re.findall(r'.*?=\s*(.*);',
                                          input.code.as_string.strip())[0]
                 # Replace tasklet inputs with incoming edges
                 for e in new_state.in_edges(input):

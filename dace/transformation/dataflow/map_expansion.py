@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the map-expansion transformation. """
 
 from dace.sdfg.utils import consolidate_edges
@@ -124,3 +124,5 @@ class MapExpansion(pm.Transformation):
             raise ValueError('Cannot find scope in state')
 
         consolidate_edges(sdfg, scope)
+
+        return [map_entry] + entries

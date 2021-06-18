@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 
 import dace as dp
@@ -46,7 +46,8 @@ state.add_memlet_path(nsdfg,
                       src_conn='output',
                       memlet=Memlet.simple(B, 'i,j'))
 
-if __name__ == '__main__':
+
+def test():
     print('Nested SDFG test')
     # Externals (parameters, symbols)
 
@@ -61,5 +62,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(output - np.power(input, 5)) / (N.get() * N.get())
     print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test()

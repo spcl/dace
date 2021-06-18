@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import re, json
 import copy as cp
@@ -9,7 +9,7 @@ from typing import Set
 import dace.dtypes as dtypes
 from dace.codegen import cppunparse
 from dace import symbolic, serialize
-from dace.properties import (Property, make_properties, DictProperty,
+from dace.properties import (EnumProperty, Property, make_properties, DictProperty,
                              ReferenceProperty, ShapeProperty, SubsetProperty,
                              SymbolicProperty, TypeClassProperty,
                              DebugInfoProperty, CodeProperty, ListProperty)
@@ -28,6 +28,7 @@ def create_datadescriptor(obj):
     except AttributeError:
         if isinstance(obj, numpy.ndarray):
             return Array(dtype=dtypes.typeclass(obj.dtype.type),
+                         strides=tuple(s // obj.itemsize for s in obj.strides),
                          shape=obj.shape)
         if symbolic.issymbolic(obj):
             return Scalar(symbolic.symtype(obj))
@@ -44,19 +45,15 @@ class Data(object):
         Examples: Arrays, Streams, custom arrays (e.g., sparse matrices).
     """
 
-    dtype = TypeClassProperty(default=dtypes.int32)
+    dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
     shape = ShapeProperty(default=[])
     transient = Property(dtype=bool, default=False)
-    storage = Property(dtype=dtypes.StorageType,
-                       desc="Storage location",
-                       choices=dtypes.StorageType,
-                       default=dtypes.StorageType.Default,
-                       from_string=lambda x: dtypes.StorageType[x])
-    lifetime = Property(dtype=dtypes.AllocationLifetime,
-                        desc='Data allocation span',
-                        choices=dtypes.AllocationLifetime,
-                        default=dtypes.AllocationLifetime.Scope,
-                        from_string=lambda x: dtypes.AllocationLifetime[x])
+    storage = EnumProperty(dtype=dtypes.StorageType,
+                           desc="Storage location",
+                           default=dtypes.StorageType.Default)
+    lifetime = EnumProperty(dtype=dtypes.AllocationLifetime,
+                            desc='Data allocation span',
+                            default=dtypes.AllocationLifetime.Scope)
     location = DictProperty(
         key_type=str,
         value_type=symbolic.pystr_to_symbolic,
@@ -128,7 +125,6 @@ class Data(object):
     def veclen(self):
         return self.dtype.veclen if hasattr(self.dtype, "veclen") else 1
 
-    
     @property
     def ctype(self):
         return self.dtype.ctype
@@ -189,11 +185,13 @@ class Scalar(Data):
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
-        if self.dtype != other.type:
+        if self.dtype != other.dtype:
             return False
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):
+        if self.storage is dtypes.StorageType.GPU_Global:
+            return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
         if not with_types or for_call:
             return name
         return self.dtype.as_arg(name)
@@ -298,13 +296,15 @@ class Array(Data):
         self.validate()
 
     def __repr__(self):
-        return 'Array (dtype=%s, shape=%s)' % (self.dtype, self.shape)
+        return '%s (dtype=%s, shape=%s)' % (type(self).__name__, self.dtype,
+                                            self.shape)
 
     def clone(self):
-        return Array(self.dtype, self.shape, self.transient,
-                     self.allow_conflicts, self.storage, self.location,
-                     self.strides, self.offset, self.may_alias, self.lifetime,
-                     self.alignment, self.debuginfo, self.total_size)
+        return type(self)(self.dtype, self.shape, self.transient,
+                          self.allow_conflicts, self.storage, self.location,
+                          self.strides, self.offset, self.may_alias,
+                          self.lifetime, self.alignment, self.debuginfo,
+                          self.total_size)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -316,13 +316,10 @@ class Array(Data):
 
         return retdict
 
-    @staticmethod
-    def from_json(json_obj, context=None):
-        if json_obj['type'] != "Array":
-            raise TypeError("Invalid data type")
-
+    @classmethod
+    def from_json(cls, json_obj, context=None):
         # Create dummy object
-        ret = Array(dtypes.int8, ())
+        ret = cls(dtypes.int8, ())
         serialize.set_properties_from_json(ret, json_obj, context=context)
         # TODO: This needs to be reworked (i.e. integrated into the list property)
         ret.strides = list(map(symbolic.pystr_to_symbolic, ret.strides))
@@ -382,7 +379,7 @@ class Array(Data):
 
     # Checks for equivalent shape and type
     def is_equivalent(self, other):
-        if not isinstance(other, Array):
+        if not isinstance(other, type(self)):
             return False
 
         # Test type
@@ -471,13 +468,10 @@ class Stream(Data):
 
         return retdict
 
-    @staticmethod
-    def from_json(json_obj, context=None):
-        if json_obj['type'] != "Stream":
-            raise TypeError("Invalid data type")
-
+    @classmethod
+    def from_json(cls, json_obj, context=None):
         # Create dummy object
-        ret = Stream(dtypes.int8, 1)
+        ret = cls(dtypes.int8, 1)
         serialize.set_properties_from_json(ret, json_obj, context=context)
 
         # Check validity now
@@ -485,7 +479,8 @@ class Stream(Data):
         return ret
 
     def __repr__(self):
-        return 'Stream (dtype=%s, shape=%s)' % (self.dtype, self.shape)
+        return '%s (dtype=%s, shape=%s)' % (type(self).__name__, self.dtype,
+                                            self.shape)
 
     @property
     def total_size(self):
@@ -496,13 +491,13 @@ class Stream(Data):
         return [_prod(self.shape[i + 1:]) for i in range(len(self.shape))]
 
     def clone(self):
-        return Stream(self.dtype, self.buffer_size, self.shape, self.transient,
-                      self.storage, self.location, self.offset, self.lifetime,
-                      self.debuginfo)
+        return type(self)(self.dtype, self.buffer_size, self.shape,
+                          self.transient, self.storage, self.location,
+                          self.offset, self.lifetime, self.debuginfo)
 
     # Checks for equivalent shape and type
     def is_equivalent(self, other):
-        if not isinstance(other, Stream):
+        if not isinstance(other, type(self)):
             return False
 
         # Test type
@@ -589,3 +584,42 @@ class Stream(Data):
                 result |= set(o.free_symbols)
 
         return result
+
+
+@make_properties
+class View(Array):
+    """ 
+    Data descriptor that acts as a reference (or view) of another array. Can
+    be used to reshape or reinterpret existing data without copying it.
+
+    To use a View, it needs to be referenced in an access node that is directly
+    connected to another access node. The rules for deciding which access node
+    is viewed are:
+      * If there is one edge (in/out) that leads (via memlet path) to an access
+        node, and the other side (out/in) has a different number of edges.
+      * If there is one incoming and one outgoing edge, and one leads to a code
+        node, the one that leads to an access node is the viewed data.
+      * If both sides lead to access nodes, if one memlet's data points to the 
+        view it cannot point to the viewed node.
+      * If both memlets' data are the respective access nodes, the access 
+        node at the highest scope is the one that is viewed.
+      * If both access nodes reside in the same scope, the input data is viewed.
+
+    Other cases are ambiguous and will fail SDFG validation.
+
+    In the Python frontend, ``numpy.reshape`` and ``numpy.ndarray.view`` both
+    generate Views.
+    """
+    def validate(self):
+        super().validate()
+
+        # We ensure that allocation lifetime is always set to Scope, since the
+        # view is generated upon "allocation"
+        if self.lifetime != dtypes.AllocationLifetime.Scope:
+            raise ValueError('Only Scope allocation lifetime is supported for '
+                             'Views')
+
+    def as_array(self):
+        copy = cp.deepcopy(self)
+        copy.__class__ = Array
+        return copy

@@ -1,4 +1,4 @@
-// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #ifndef __DACE_TYPES_H
 #define __DACE_TYPES_H
 
@@ -63,6 +63,7 @@
 
 namespace dace
 {
+    typedef bool bool_;
     typedef int8_t  int8;
     typedef int16_t int16;
     typedef int32_t int32;

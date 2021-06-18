@@ -1,12 +1,12 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 
 import dace as dp
 from dace.sdfg import SDFG
 from dace.memlet import Memlet
 
-# Constructs an SDFG with two consecutive tasklets
-if __name__ == '__main__':
+
+def test():
     print('Multidimensional offset and stride test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
@@ -43,5 +43,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(output[0:3, 0:2] - input[3:6, 4:6]) / N.get()
     print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test()

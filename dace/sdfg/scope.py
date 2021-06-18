@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import collections
 from typing import Any, Dict, List, Tuple
@@ -15,12 +15,11 @@ ScopeDictType = Dict[NodeType, List[NodeType]]
 
 
 class ScopeTree(object):
-    """ A class defining a scope, its parent and children scopes, variables, and
+    """ A class defining a scope, its parent and children scopes, and
         scope entry/exit nodes. """
     def __init__(self, entrynode: EntryNodeType, exitnode: ExitNodeType):
         self.parent: 'ScopeTree' = None
         self.children: List['ScopeTree'] = []
-        self.defined_vars: List[str] = []
         self.entry: EntryNodeType = entrynode
         self.exit: ExitNodeType = exitnode
 
@@ -215,14 +214,18 @@ def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
             parent = sdfg.parent_sdfg
             state = sdfg.parent
             node = sdfg.parent_nsdfg_node
+            if node.schedule in schedules:
+                return True
         else:
             parent = sdfg.parent
         sdfg = parent
     return False
 
 
-def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
-                       node: NodeType) -> bool:
+def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG',
+                       state: 'dace.sdfg.SDFGState',
+                       node: NodeType,
+                       with_gpu_default: bool = False) -> bool:
     """ Tests whether a node in an SDFG is contained within GPU device-level
         code.
         :param sdfg: The SDFG in which the node resides.
@@ -230,7 +233,16 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         :param node: The node in question
         :return: True if node is in device-level code, False otherwise.
     """
-    return is_in_scope(sdfg, state, node, dtypes.GPU_SCHEDULES)
+    if with_gpu_default:
+        schedules = dtypes.GPU_SCHEDULES + [dtypes.ScheduleType.GPU_Default]
+    else:
+        schedules = dtypes.GPU_SCHEDULES
+    return is_in_scope(
+        sdfg,
+        state,
+        node,
+        schedules,
+    )
 
 
 def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 import sys
@@ -26,7 +26,7 @@ def extmodtest(A: dace.float32[W, H], result: dace.float32[1]):
         b = a
 
 
-if __name__ == '__main__':
+def test():
     W.set(12)
     H.set(12)
     A = np.random.rand(W.get(), H.get()).astype(np.float32)
@@ -35,4 +35,7 @@ if __name__ == '__main__':
     extmodtest(A, res)
 
     assert res[0] == A[2, 1]
-    print('TEST PASSED')
+
+
+if __name__ == "__main__":
+    test()

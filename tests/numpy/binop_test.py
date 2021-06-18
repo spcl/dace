@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 from copy import deepcopy as dc
@@ -38,23 +38,28 @@ def test_mod(A: dace.int64[5, 5], B: dace.int64[5, 5]):
 
 
 # numpy throws an error for negative B, dace doesn't
-@compare_numpy_output(positive=True)
+@compare_numpy_output(positive=True, casting=np.float64)
 def test_pow(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     return A**B
 
 
 @compare_numpy_output()
-def test_matmult(A: dace.int64[5, 5], B: dace.int64[5, 5]):
+def test_matmult(A: dace.float64[5, 5], B: dace.float64[5, 5]):
     return A @ B
 
 
-# dace has weird behavior here too
-@compare_numpy_output(positive=True)
+# Python/NumPy define left/right shift as multiplying/dividing a by 2**b.
+# Therefore, they may return a different result than C languages.
+# For example, something like 24 << 82 will result in Python in 24 * 2**82.
+# This is well outside the range of numbers that can be represented by int64.
+# NumPy will set such results to 0. C languages just wrap around. Their result
+# is 6291456.
+@compare_numpy_output(positive=True, max_value=10)
 def test_lshift(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     return A << B
 
 
-@compare_numpy_output(positive=True)
+@compare_numpy_output(positive=True, max_value=10)
 def test_rshift(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     return A >> B
 

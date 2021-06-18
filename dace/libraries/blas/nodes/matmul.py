@@ -1,7 +1,8 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
+import warnings
 
 
 def _get_matmul_operands(node,
@@ -93,12 +94,19 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
     from dace.codegen.targets.common import sym2cpp
     from dace.libraries.blas.blas_helpers import get_gemm_opts
 
-    (_, _, ashape,
-     astride), (_, _, bshape,
-                bstride), _ = _get_matmul_operands(node, state, sdfg)
-    opt = get_gemm_opts(astride, bstride, cdesc.strides)
-    bopt = _get_batchmm_opts(ashape, astride, bshape, bstride, cdesc.shape,
-                             cdesc.strides)
+    (_, _, ashape, astride), (_, _, bshape, bstride), (
+        _, _, cshape, cstride) = _get_matmul_operands(node, state, sdfg)
+
+    if getattr(node, 'transA', False):
+        ashape = list(reversed(ashape))
+        astride = list(reversed(astride))
+    if getattr(node, 'transB', False):
+        bshape = list(reversed(bshape))
+        bstride = list(reversed(bstride))
+
+    opt = get_gemm_opts(astride, bstride, cstride)
+    bopt = _get_batchmm_opts(ashape, astride, bshape, bstride, cshape, cstride)
+
     opt['x'] = '_a'
     opt['y'] = '_b'
     opt['M'] = sym2cpp(ashape[-2])
@@ -144,27 +152,48 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
         if len(size_a) == 2 and len(size_b) == 2:
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
-            gemm = Gemm(node.name,
-                        dtype=node.dtype,
+            beta = 0.0
+            cin = True
+            if c[0].data.wcr:
+                from dace.frontend import operations
+                redtype = operations.detect_reduction_type(c[0].data.wcr)
+                if redtype == dace.dtypes.ReductionType.Sum:
+                    beta = 1.0
+                    cin = False
+                else:
+                    warnings.warn("Unsupported WCR in output of MatMul "
+                                  "library node: {}".format(c[0].data.wcr))
+            gemm = Gemm(node.name + 'gemm',
                         location=node.location,
                         alpha=1.0,
-                        beta=0.0)
+                        beta=beta,
+                        cin=cin)
             return gemm
         elif len(size_b) == 3 and (len(size_a) in [2, 3]):
             # Batched matrix and matrix -> batched matrix multiplication
             from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
-            batched = BatchedMatMul(node.name,
-                                    dtype=node.dtype,
+            batched = BatchedMatMul(node.name + 'bmm',
                                     location=node.location)
             return batched
         elif len(size_a) == 2 and len(size_b) == 1:
             # Matrix and vector -> GEMV
             from dace.libraries.blas.nodes.gemv import Gemv
             # Rename inputs to match dot naming
-            a[0].dst_conn = "_a"
+            a[0].dst_conn = "_A"
             b[0].dst_conn = "_x"
             c[0].src_conn = "_y"
-            gemv = Gemv(node.name, dtype=node.dtype, location=node.location)
+            gemv = Gemv(node.name + 'gemv', location=node.location)
+            return gemv
+        elif len(size_a) == 1 and len(size_b) == 2:
+            # Vector and matrix -> GEMV with transposed matrix
+            from dace.libraries.blas.nodes.gemv import Gemv
+            # Rename inputs to match dot naming
+            a[0].dst_conn = "_x"
+            b[0].dst_conn = "_A"
+            c[0].src_conn = "_y"
+            gemv = Gemv(node.name + 'gemvt',
+                        location=node.location,
+                        transA=True)
             return gemv
         elif len(size_a) == 1 and len(size_b) == 1:
             # Vector and vector -> dot product
@@ -173,7 +202,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             a[0].dst_conn = "_x"
             b[0].dst_conn = "_y"
             c[0].src_conn = "_result"
-            dot = Dot(node.name, dtype=node.dtype, location=node.location)
+            dot = Dot(node.name + 'dot', location=node.location)
             return dot
         else:
             raise NotImplementedError("Matrix multiplication not implemented "
@@ -194,12 +223,8 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "specialize"
 
-    # Object fields
-    dtype = dace.properties.TypeClassProperty(allow_none=True)
-
-    def __init__(self, name, dtype=None, location=None):
+    def __init__(self, name, location=None):
         super().__init__(name,
                          location=location,
                          inputs={"_a", "_b"},
                          outputs={"_c"})
-        self.dtype = dtype

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import math
 import numpy as np
 
@@ -6,8 +6,7 @@ import dace as dp
 from dace.sdfg import SDFG
 from dace.memlet import Memlet
 
-# Constructs an SDFG manually and runs it
-if __name__ == '__main__':
+def test():
     print('Dynamic SDFG test with vectorization and min')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
@@ -20,10 +19,13 @@ if __name__ == '__main__':
 
     # Construct SDFG
     mysdfg = SDFG('myvmin')
+    mysdfg.add_array('A', [N], dp.float32)
+    mysdfg.add_array('B', [N], dp.float32)
+    mysdfg.add_array('C', [N], dp.float32)
     state = mysdfg.add_state()
-    A = state.add_array('A', [N], dp.float32)
-    B = state.add_array('B', [N], dp.float32)
-    C = state.add_array('C', [N], dp.float32)
+    A = state.add_access('A')
+    B = state.add_access('B')
+    C = state.add_access('C')
 
     tasklet, map_entry, map_exit = state.add_mapped_tasklet(
         'mytasklet', dict(i='0:N:2'),
@@ -45,4 +47,7 @@ if __name__ == '__main__':
     diff = np.linalg.norm(np.minimum(input, input2) - output) / N.get()
     print("Difference:", diff)
     print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+if __name__ == "__main__":
+    test()

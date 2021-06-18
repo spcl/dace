@@ -1,16 +1,16 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
 
 @dace
-def testprogram(A: dace.float64[20]):
+def short_decorator(A: dace.float64[20]):
     return A + A
 
 
 def test_short_decorator():
     A = np.random.rand(20)
-    assert np.allclose(testprogram(A), A + A)
+    assert np.allclose(short_decorator(A), A + A)
 
 
 if __name__ == '__main__':

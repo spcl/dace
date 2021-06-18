@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
 import numpy as np
 import sympy as sp
@@ -97,8 +97,14 @@ class TestTypeInference(unittest.TestCase):
         symbols = type_inference.infer_types(code_str, symbols)
         self.assertEqual(symbols["res3"], dtypes.typeclass(int))
 
+    def testArrayAccess(self):
+        code_str = "tmp = array[i]"
+        symbols = type_inference.infer_types(code_str,
+                                             {"array": dtypes.typeclass(float)})
+        self.assertEqual(symbols["tmp"], dtypes.typeclass(float))
+
     def testAssignmentIf(self):
-        code_str = "res = 5 if(x>10) else 3.1"
+        code_str = "res = 5 if x > 10 else 3.1"
         inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["res"], dtypes.typeclass(float))
 
@@ -169,7 +175,7 @@ res = var1 + var3 * var2
 
         defined_symbols = {'n': dtypes.typeclass(np.int8)}
         inf_symbol = type_inference.infer_expr_type(n * 5.0, defined_symbols)
-        self.assertEqual(inf_symbol, dtypes.typeclass(int))
+        self.assertEqual(inf_symbol, dtypes.typeclass(float))
 
         defined_symbols = {'n': dtypes.typeclass(np.int8)}
         inf_symbol = type_inference.infer_expr_type(n * 5.01, defined_symbols)
@@ -198,7 +204,6 @@ for i in range(5):
         inf_symbols = type_inference.infer_types(for_loop_code)
         self.assertEqual(inf_symbols["x"], dtypes.typeclass(int))
         self.assertEqual(inf_symbols["i"], dtypes.typeclass(int))
-
 
     def testVarious(self):
         # code snippets that contains constructs not directly involved in type inference
@@ -260,6 +265,21 @@ value3=5000000000"""
 
         # in any case, value3 needs uint64
         self.assertEqual(inf_symbols["value3"], dtypes.typeclass(np.uint64))
+
+    def testCCode(self):
+        # tests for situations that could arise from C/C++ tasklet codes
+
+        ###############################################################################################
+        # Pointer: this is a situation that could happen in FPGA backend due to OpenCL Keyword Remover:
+        # if in a tasklet, there is an assignment in which the right hand side is a connector and the
+        # corresponding memlet is dynamic, the OpenCL Keyword Remover, will update the code to be "target = *rhs"
+        # In a similar situation the type inference should not consider the leading *
+        stmt = ast.parse("value = float_var")
+        stmt.body[0].value.id="*float_var" # effect of OpenCL Keyword Remover
+        prev_symbols = {"float_var": dtypes.typeclass(float)}
+        inf_symbols = type_inference.infer_types(stmt, prev_symbols)
+        self.assertEqual(inf_symbols["value"], dtypes.typeclass(float))
+
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
 #include <cuda_runtime.h>
@@ -13,14 +13,14 @@ namespace dace {
 
 namespace blas {
 
-void CheckCublasError(cublasStatus_t const& status) {
+static void CheckCublasError(cublasStatus_t const& status) {
   if (status != CUBLAS_STATUS_SUCCESS) {
     throw std::runtime_error("cuBLAS failed with error code: " +
                              std::to_string(status));
   }
 }
 
-cublasHandle_t CreateCublasHandle(int device) {
+static cublasHandle_t CreateCublasHandle(int device) {
   if (cudaSetDevice(device) != cudaSuccess) {
     throw std::runtime_error("Failed to set CUDA device.");
   }
@@ -29,53 +29,40 @@ cublasHandle_t CreateCublasHandle(int device) {
   return handle;
 }
 
-class CublasHandle {
- public:
-  /// Returns the singleton instance associated with the current thread.
-  static cublasHandle_t& Get(int device) {
-    static thread_local CublasHandle singleton;
-    return singleton._Get(device);
-  }
-
- private:
-  CublasHandle() = default;
-  CublasHandle(CublasHandle const&) = delete;
-
-  cublasHandle_t& _Get(int device) {
-    auto f = handles_.find(device);
-    if (f == handles_.end()) {
-      // Lazily construct new cuBLAS handle if the specified key does not yet
-      // exist
-      auto handle = CreateCublasHandle(device);
-      cublasSetPointerMode(handle, CUBLAS_POINTER_MODE_DEVICE);
-      f = handles_.emplace(device, handle).first;
-    }
-    return f->second;
-  }
-
-  ~CublasHandle() {
-    for (auto& h : handles_) {
-      CheckCublasError(cublasDestroy(h.second));
-    }
-  }
-
-  CublasHandle& operator=(CublasHandle const&) = delete;
-
-  std::unordered_map<int, cublasHandle_t> handles_;
-};
-
+/**
+ * Class for CUBLAS constants. Contains preallocated values for zero, one,
+ * custom alpha and custom beta values.
+ **/
 class _CublasConstants {
  public:
   __half const* HalfZero() const { return (__half*)zero_; }
   float const* FloatZero() const { return (float*)zero_; }
   double const* DoubleZero() const { return (double*)zero_; }
   cuComplex const* Complex64Zero() const { return (cuComplex*)zero_; }
-  cuDoubleComplex const* Complex128Zero() const { return (cuDoubleComplex*)zero_; }
+  cuDoubleComplex const* Complex128Zero() const {
+    return (cuDoubleComplex*)zero_;
+  }
   __half const* HalfPone() const { return half_pone_; }
   float const* FloatPone() const { return float_pone_; }
   double const* DoublePone() const { return double_pone_; }
   cuComplex const* Complex64Pone() const { return complex64_pone_; }
   cuDoubleComplex const* Complex128Pone() const { return complex128_pone_; }
+
+  __half* HalfAlpha() const { return (__half*)custom_alpha_; }
+  float* FloatAlpha() const { return (float*)custom_alpha_; }
+  double* DoubleAlpha() const { return (double*)custom_alpha_; }
+  cuComplex* Complex64Alpha() const { return (cuComplex*)custom_alpha_; }
+  cuDoubleComplex* Complex128Alpha() const {
+    return (cuDoubleComplex*)custom_alpha_;
+  }
+
+  __half* HalfBeta() const { return (__half*)custom_beta_; }
+  float* FloatBeta() const { return (float*)custom_beta_; }
+  double* DoubleBeta() const { return (double*)custom_beta_; }
+  cuComplex* Complex64Beta() const { return (cuComplex*)custom_beta_; }
+  cuDoubleComplex* Complex128Beta() const {
+    return (cuDoubleComplex*)custom_beta_;
+  }
 
   _CublasConstants(int device) {
     if (cudaSetDevice(device) != cudaSuccess) {
@@ -84,7 +71,7 @@ class _CublasConstants {
     // Allocate constant zero with the largest used size
     cudaMalloc(&zero_, sizeof(cuDoubleComplex) * 1);
     cudaMemset(zero_, 0, sizeof(cuDoubleComplex) * 1);
-    
+
     // Allocate constant one
     cudaMalloc(&half_pone_, sizeof(__half) * 1);
     __half half_pone = __float2half(1.0f);
@@ -106,6 +93,12 @@ class _CublasConstants {
     cuDoubleComplex complex128_pone = make_cuDoubleComplex(1.0, 0.0);
     cudaMemcpy(complex128_pone_, &complex128_pone, sizeof(cuDoubleComplex) * 1,
                cudaMemcpyHostToDevice);
+
+    // Allocate custom factors and default to zero
+    cudaMalloc(&custom_alpha_, sizeof(cuDoubleComplex) * 1);
+    cudaMemset(custom_alpha_, 0, sizeof(cuDoubleComplex) * 1);
+    cudaMalloc(&custom_beta_, sizeof(cuDoubleComplex) * 1);
+    cudaMemset(custom_beta_, 0, sizeof(cuDoubleComplex) * 1);
   }
 
   _CublasConstants(_CublasConstants const&) = delete;
@@ -117,6 +110,8 @@ class _CublasConstants {
     cudaFree(double_pone_);
     cudaFree(complex64_pone_);
     cudaFree(complex128_pone_);
+    cudaFree(custom_alpha_);
+    cudaFree(custom_beta_);
   }
 
   _CublasConstants& operator=(_CublasConstants const&) = delete;
@@ -134,18 +129,35 @@ class _CublasConstants {
   double* double_pone_;
   cuComplex* complex64_pone_;
   cuDoubleComplex* complex128_pone_;
+  void* custom_alpha_;
+  void* custom_beta_;
 };
 
-class CublasConstants {
+/**
+ * CUBLAS wrapper class for DaCe. Once constructed, the class can be used to
+ * get or create a CUBLAS library handle (cublasHandle_t) for a given GPU ID,
+ * or get pre-allocated constants (see ``_CublasConstants`` class) for CUBLAS
+ * calls.
+ * The class is constructed when the CUBLAS DaCe library is used.
+ **/
+class CublasHandle {
  public:
-  /// Returns the constants instance associated with the specified device
-  static _CublasConstants& Get(int device) {
-    static CublasConstants singleton;
-    return singleton._Get(device);
+  CublasHandle() = default;
+  CublasHandle(CublasHandle const&) = delete;
+
+  cublasHandle_t& Get(int device) {
+    auto f = handles_.find(device);
+    if (f == handles_.end()) {
+      // Lazily construct new cuBLAS handle if the specified key does not yet
+      // exist
+      auto handle = CreateCublasHandle(device);
+      cublasSetPointerMode(handle, CUBLAS_POINTER_MODE_DEVICE);
+      f = handles_.emplace(device, handle).first;
+    }
+    return f->second;
   }
 
- private:
-  _CublasConstants& _Get(int device) {
+  _CublasConstants& Constants(int device) {
     auto f = constants_.find(device);
     if (f == constants_.end()) {
       // Lazily construct new cuBLAS constants
@@ -154,9 +166,18 @@ class CublasConstants {
     return f->second;
   }
 
+  ~CublasHandle() {
+    for (auto& h : handles_) {
+      CheckCublasError(cublasDestroy(h.second));
+    }
+  }
+
+  CublasHandle& operator=(CublasHandle const&) = delete;
+
+  std::unordered_map<int, cublasHandle_t> handles_;
   std::unordered_map<int, _CublasConstants> constants_;
 };
 
 }  // namespace blas
 
-}  // namespace dace 
+}  // namespace dace

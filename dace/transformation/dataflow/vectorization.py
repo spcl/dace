@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the vectorization transformation. """
 from dace import data, dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes, SDFG, propagation
@@ -53,15 +53,14 @@ class Vectorization(transformation.Transformation):
                                    Vectorization._map_exit)
         ]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(self, graph, candidate, expr_index, sdfg, strict=False):
         map_entry = graph.nodes()[candidate[Vectorization._map_entry]]
         tasklet = graph.nodes()[candidate[Vectorization._tasklet]]
         param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
         found = False
 
         # Strided maps cannot be vectorized
-        if map_entry.map.range[-1][2] != 1:
+        if map_entry.map.range[-1][2] != 1 and self.strided_map:
             return False
 
         # Check if all edges, adjacent to the tasklet,
@@ -75,8 +74,8 @@ class Vectorization(transformation.Transformation):
                 continue
 
             # Vectorization can not be applied in WCR
-            if e.data.wcr is not None:
-                return False
+            # if e.data.wcr is not None:
+            #     return False
 
             subset = e.data.subset
             array = sdfg.arrays[e.data.data]
@@ -126,7 +125,7 @@ class Vectorization(transformation.Transformation):
 
         # Create new vector size.
         vector_size = self.vector_len
-        dim_from, dim_to, _ = map_entry.map.range[-1]
+        dim_from, dim_to, dim_skip = map_entry.map.range[-1]
 
         # Determine whether to create preamble or postamble maps
         if self.preamble is not None:
@@ -148,7 +147,8 @@ class Vectorization(transformation.Transformation):
             new_range = [dim_from, dim_to - vector_size + 1, vector_size]
         else:
             new_range = [
-                dim_from // vector_size, ((dim_to + 1) // vector_size) - 1, 1
+                dim_from // vector_size, ((dim_to + 1) // vector_size) - 1,
+                dim_skip
             ]
 
         # Create preamble non-vectorized map (replacing the original map)
@@ -157,7 +157,7 @@ class Vectorization(transformation.Transformation):
             new_scope: ScopeSubgraphView = replicate_scope(
                 sdfg, graph, old_scope)
             new_begin = dim_from + (vector_size - (dim_from % vector_size))
-            map_entry.map.range[-1] = (dim_from, new_begin - 1, 1)
+            map_entry.map.range[-1] = (dim_from, new_begin - 1, dim_skip)
             # Replace map_entry with the replicated scope (so that the preamble
             # will usually come first in topological sort)
             map_entry = new_scope.entry
@@ -171,7 +171,7 @@ class Vectorization(transformation.Transformation):
             dim_to_ex = dim_to + 1
             new_scope.entry.map.range[-1] = (dim_to_ex -
                                              (dim_to_ex % vector_size), dim_to,
-                                             1)
+                                             dim_skip)
 
         # Change the step of the inner-most dimension.
         map_entry.map.range[-1] = tuple(new_range)
@@ -200,13 +200,20 @@ class Vectorization(transformation.Transformation):
                 newlist = [(rb, rb, 1) for rb in edge.data.subset]
                 symbols = symbolic.pystr_to_symbolic(lastindex).free_symbols
 
+            oldtype = connectors[conn]
+            if oldtype is None or oldtype.type is None:
+                oldtype = desc.dtype
+
+            # Vector to scalar WCR edge: change connector and continue
+            if (edge.data.subset.num_elements() == 1
+                    and edge.data.wcr is not None):
+                connectors[conn] = dtypes.vector(oldtype, vector_size)
+                continue
+
             if str(param) not in map(str, symbols):
                 continue
 
             # Vectorize connector, if not already vectorized
-            oldtype = connectors[conn]
-            if oldtype is None or oldtype.type is None:
-                oldtype = desc.dtype
             if isinstance(oldtype, dtypes.vector):
                 continue
 

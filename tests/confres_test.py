@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import argparse
@@ -32,14 +32,9 @@ def confres_test(A, B, red1, red2):
     red1[0:1] = dace.reduce(lambda a, b: a - b, B[2:H - 2, 5, :])
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("W", type=int, nargs="?", default=20)
-    parser.add_argument("H", type=int, nargs="?", default=20)
-    args = vars(parser.parse_args())
-
-    W.set(args["W"])
-    H.set(args["H"])
+def test():
+    W.set(20)
+    H.set(20)
 
     print('Conflict Resolution Test %dx%d' % (W.get(), H.get()))
 
@@ -55,4 +50,7 @@ if __name__ == "__main__":
 
     confres_test.compile(A, B, red1, red2)
 
-    print("==== Program end ====")
+
+if __name__ == "__main__":
+    test()
+

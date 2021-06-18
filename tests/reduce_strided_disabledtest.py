@@ -1,8 +1,9 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
 import dace.sdfg.nodes
 import numpy as np
+import pytest
 
 # Python version of the SDFG below
 # @dace.program
@@ -22,6 +23,7 @@ state.add_nedge(node_a, red, dace.Memlet.simple('A', '0:50:2, 0:50:2'))
 state.add_nedge(red, node_b, dace.Memlet.simple('B', '0:25'))
 
 
+@pytest.mark.skip
 def test_strided_reduce():
     A = np.random.rand(50, 50)
     B = np.random.rand(25)

@@ -1,4 +1,4 @@
-// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
 #include "hlslib/xilinx/Stream.h"
@@ -14,13 +14,11 @@ namespace dace {
 template <typename T, unsigned vector_length, unsigned capacity>
 class FIFO {
  public:
-  FIFO() : stream_(capacity) {
+  FIFO() : stream_() {
     #pragma HLS INLINE
-    #pragma HLS STREAM variable=stream_ depth=capacity
   }
-  FIFO(char const *const name) : stream_(name, capacity) {
+  FIFO(char const *const name) : stream_(name) {
     #pragma HLS INLINE
-    #pragma HLS STREAM variable=stream_ depth=capacity
   }
   FIFO(FIFO const&) = delete;
   FIFO(FIFO&&) = delete;

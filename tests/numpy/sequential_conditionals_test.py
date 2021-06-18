@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -25,5 +25,9 @@ def seq_cond(HD: dace.complex128[N, BS, BS], HE: dace.complex128[N, BS, BS],
         HD[n] = HD[n] - sigmaRSD[n]
 
 
-if __name__ == '__main__':
+def test():
     seq_cond.compile()
+
+
+if __name__ == '__main__':
+    test()

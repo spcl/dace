@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -15,7 +15,11 @@ def caller(A: dace.float32[4]):
     sdfg(inp=A[1:3])
 
 
-if __name__ == '__main__':
+def test():
     A = np.random.rand(4).astype(np.float32)
     caller(A)
     print('Should print', A[2])
+
+
+if __name__ == '__main__':
+    test()

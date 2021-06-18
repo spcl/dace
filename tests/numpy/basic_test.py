@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
 from dace.subsets import Range
@@ -62,7 +62,7 @@ def test_gemm():
     realC = 1.0 * (A @ B) + 1.0 * origC
     diff = np.linalg.norm(C - realC) / (M * N)
     print('Difference:', diff)
-    exit(1 if diff >= 1e-5 else 0)
+    assert diff < 1e-5
 
 
 if __name__ == '__main__':

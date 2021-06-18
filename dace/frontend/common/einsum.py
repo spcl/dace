@@ -1,16 +1,16 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Classes to handle Einstein-notation sums (einsum) as a library node. """
 from functools import reduce
 from itertools import chain
 from string import ascii_letters
 from typing import Dict, Optional
 
+import dace
 from dace import dtypes, symbolic
 from dace.sdfg.nodes import AccessNode
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.memlet import Memlet
 from dace.frontend.common import op_repository as oprepo
-
 
 def _is_sequential(index_list):
     if not index_list:
@@ -144,7 +144,7 @@ def create_batch_gemm_sdfg(dtype, strides):
 
     import dace.libraries.blas as blas  # Avoid import loop
 
-    libnode = blas.MatMul('einsum_gemm', zarr.dtype)
+    libnode = blas.MatMul('einsum_gemm')
     state.add_node(libnode)
     state.add_edge(gX, None, libnode, '_a', Memlet.from_array(gX.data, xarr))
     state.add_edge(gY, None, libnode, '_b', Memlet.from_array(gY.data, yarr))
@@ -158,7 +158,8 @@ def prod(iterable):
 
 
 @oprepo.replaces('numpy.einsum')
-def create_einsum_sdfg(sdfg: SDFG,
+def create_einsum_sdfg(pv: 'dace.frontend.python.newast.ProgramVisitor',
+                       sdfg: SDFG,
                        state: SDFGState,
                        einsum_string: str,
                        *arrays: str,

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 from copy import deepcopy as dc
@@ -93,7 +93,8 @@ def test_return_both():
 
     sdfg.add_array("IN", [10, 5, 3], dace.float64)
 
-    _, (outval, outidx) = _argminmax(sdfg,
+    _, (outval, outidx) = _argminmax(None,
+                                     sdfg,
                                      state,
                                      "IN",
                                      1,
@@ -129,6 +130,60 @@ def test_argmin_result_type():
     assert res.dtype == np.int32
 
 
+@compare_numpy_output()
+def test_sum_negative_axis(A: dace.float64[10, 5, 3]):
+    return np.sum(A, axis=-1)
+
+
+@compare_numpy_output()
+def test_sum_multiple_axes(A: dace.float64[10, 5, 3]):
+    return np.mean(A, axis=(-1, 0))
+
+
+@compare_numpy_output()
+def test_mean(A: dace.float64[10, 5, 3]):
+    return np.mean(A, axis=2)
+
+
+@compare_numpy_output()
+def test_mean_negative(A: dace.float64[10, 5, 3]):
+    return np.mean(A, axis=-2)
+
+
+@compare_numpy_output()
+def test_mean_multiple_axes(A: dace.float64[10, 5, 3]):
+    return np.mean(A, axis=(-2, 0))
+
+
+def test_mean_reduce_symbolic_shape():
+    N = dace.symbol('N')
+
+    @dace.program
+    def mean_reduce_symbolic_shape(A: dace.float64[10, N, 3]):
+        return np.mean(A, axis=(-2, 0))
+
+    X = np.random.normal(scale=10, size=(10, 12, 3)).astype(np.float64)
+
+    dace_result = mean_reduce_symbolic_shape(A=X)
+    numpy_result = np.mean(X, axis=(-2, 0))
+
+    assert np.allclose(dace_result, numpy_result)
+
+
+@compare_numpy_output()
+def test_reduce_all_axes(A: dace.float64[10, 5, 3]):
+    return np.mean(A, axis=(0, -2, 2))
+
+
+# test accessing a global variable
+my_none = None
+
+
+@compare_numpy_output()
+def test_reduce_global_None(A: dace.float64[10, 5, 3]):
+    return np.mean(A, axis=my_none)
+
+
 if __name__ == '__main__':
 
     # generated with cat tests/numpy/reductions_test.py | grep -oP '(?<=^def ).*(?=\()' | awk '{print $0 "()"}'
@@ -160,3 +215,12 @@ if __name__ == '__main__':
     test_max_1()
     test_min()
     test_min_1()
+
+    test_sum_negative_axis()
+    test_sum_multiple_axes()
+
+    test_mean()
+    test_mean_negative()
+    test_mean_multiple_axes()
+
+    test_mean_reduce_symbolic_shape()

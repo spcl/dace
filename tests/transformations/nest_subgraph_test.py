@@ -1,6 +1,7 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation.helpers import nest_state_subgraph
+from dace.sdfg.state import StateSubgraphView
 import numpy as np
 
 
@@ -34,5 +35,26 @@ def test_nest_oneelementmap():
     assert np.allclose(A, B)
 
 
+def test_internal_outarray():
+    sdfg = dace.SDFG('internal_outarr')
+    sdfg.add_array('A', [20], dace.float64)
+    state = sdfg.add_state()
+
+    me, mx = state.add_map('_', dict(i='0:1'))
+    t = state.add_tasklet('doit', {}, {'a'}, 'a = 0')
+    w = state.add_write('A')
+    state.add_nedge(me, t, dace.Memlet())
+    state.add_edge(t, 'a', w, None, dace.Memlet('A[1]'))
+    state.add_nedge(w, mx, dace.Memlet())
+
+    subgraph = StateSubgraphView(state, [t, w])
+    nest_state_subgraph(sdfg, state, subgraph)
+
+    a = np.random.rand(20)
+    sdfg(A=a)
+    assert a[1] == 0
+
+
 if __name__ == '__main__':
     test_nest_oneelementmap()
+    test_internal_outarray()

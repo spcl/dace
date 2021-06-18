@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the scalar to symbol promotion functionality. """
 import dace
 from dace.sdfg.analysis import scalar_to_symbol
@@ -7,13 +7,15 @@ from dace.transformation.interstate import loop_detection as ld
 from dace import registry
 from dace.transformation import helpers as xfh
 
+import collections
 import numpy as np
+import pytest
 
 
 def test_find_promotable():
     """ Find promotable and non-promotable symbols. """
     @dace.program
-    def testprog(A: dace.float32[20, 20], scal: dace.float32):
+    def testprog1(A: dace.float32[20, 20], scal: dace.float32):
         tmp = dace.ndarray([20, 20], dtype=dace.float32)
         m = dace.define_local_scalar(dace.float32)
         j = dace.ndarray([1], dtype=dace.int64)
@@ -30,19 +32,20 @@ def test_find_promotable():
             j += 1
             i += j
 
-    sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog1.to_sdfg(strict=False)
     scalars = scalar_to_symbol.find_promotable_scalars(sdfg)
-    assert scalars == {'i', 'j'}
+    assert 'i' in scalars
+    assert 'j' in scalars
 
 
 def test_promote_simple():
     """ Simple promotion with Python tasklets. """
     @dace.program
-    def testprog(A: dace.float64[20, 20]):
+    def testprog2(A: dace.float64[20, 20]):
         j = 5
         A[:] += j
 
-    sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog2.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
@@ -66,7 +69,7 @@ def test_promote_simple():
 def test_promote_simple_c():
     """ Simple promotion with C++ tasklets. """
     @dace.program
-    def testprog(A: dace.float32[20, 20]):
+    def testprog3(A: dace.float32[20, 20]):
         i = 0
         j = 0
         k = dace.ndarray([1], dtype=dace.int32)
@@ -89,7 +92,7 @@ def test_promote_simple_c():
             """
             kout >> k
 
-    sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog3.to_sdfg(strict=False)
     scalars = scalar_to_symbol.find_promotable_scalars(sdfg)
     assert scalars == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
@@ -109,11 +112,11 @@ def test_promote_simple_c():
 def test_promote_disconnect():
     """ Promotion that disconnects tasklet from map. """
     @dace.program
-    def testprog(A: dace.float64[20, 20]):
+    def testprog4(A: dace.float64[20, 20]):
         j = 5
         A[:] = j
 
-    sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog4.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
@@ -135,7 +138,7 @@ def test_promote_disconnect():
 def test_promote_copy():
     """ Promotion that has a connection to an array and to another symbol. """
     # Create SDFG
-    sdfg = dace.SDFG('testprog')
+    sdfg = dace.SDFG('testprog5')
     sdfg.add_array('A', [20, 20], dace.float64)
     sdfg.add_transient('i', [1], dace.int32)
     sdfg.add_transient('j', [1], dace.int32)
@@ -177,20 +180,23 @@ def test_promote_copy():
 def test_promote_array_assignment():
     """ Simple promotion with array assignment. """
     @dace.program
-    def testprog(A: dace.float64[20, 20]):
+    def testprog6(A: dace.float64[20, 20]):
         j = A[1, 1]
-        A[:] += j
+        if j >= 0.0:
+            A[:] += j
 
-    sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog6.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
 
-    # There should be two states:
-    # [empty] --j=A[1, 1]--> [A->MapEntry->Tasklet->MapExit->A]
-    assert sdfg.number_of_nodes() == 2
-    assert sdfg.source_nodes()[0].number_of_nodes() == 0
-    assert sdfg.sink_nodes()[0].number_of_nodes() == 5
+    # There should be 4 states:
+    # [empty] --j=A[1, 1]--> [A->MapEntry->Tasklet->MapExit->A] --> [empty]
+    #                   \--------------------------------------------/
+    assert sdfg.number_of_nodes() == 4
+    ctr = collections.Counter(s.number_of_nodes() for s in sdfg)
+    assert ctr[0] == 3
+    assert ctr[5] == 1
 
     # Program should produce correct result
     A = np.random.rand(20, 20)
@@ -202,15 +208,15 @@ def test_promote_array_assignment():
 def test_promote_array_assignment_tasklet():
     """ Simple promotion with array assignment. """
     @dace.program
-    def testprog(A: dace.float64[20, 20]):
-        j = dace.define_local_scalar(dace.float64)
+    def testprog7(A: dace.float64[20, 20]):
+        j = dace.define_local_scalar(dace.int64)
         with dace.tasklet:
             inp << A[1, 1]
             out >> j
             out = inp
         A[:] += j
 
-    sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog7.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
@@ -223,7 +229,7 @@ def test_promote_array_assignment_tasklet():
 
     # Program should produce correct result
     A = np.random.rand(20, 20)
-    expected = A + A[1, 1]
+    expected = A + int(A[1, 1])
     sdfg(A=A)
     assert np.allclose(A, expected)
 
@@ -253,18 +259,19 @@ def test_promote_loop():
     N = dace.symbol('N')
 
     @dace.program
-    def testprog(A: dace.float32[20, 20]):
+    def testprog8(A: dace.float32[20, 20]):
         i = dace.ndarray([1], dtype=dace.int32)
         i = 0
         while i[0] < N:
             A += i
             i += 2
 
-    sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
-    assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
+    sdfg: dace.SDFG = testprog8.to_sdfg(strict=False)
+    assert 'i' in scalar_to_symbol.find_promotable_scalars(sdfg)
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_strict_transformations()
-    assert sdfg.apply_transformations_repeated(LoopTester) == 1
+    # TODO: LoopDetection does not apply to loops with a multi-state guard
+    # assert sdfg.apply_transformations_repeated(LoopTester) == 1
 
 
 def test_promote_loops():
@@ -272,7 +279,7 @@ def test_promote_loops():
     N = dace.symbol('N')
 
     @dace.program
-    def testprog(A: dace.float32[20, 20]):
+    def testprog9(A: dace.float32[20, 20]):
         i = 0
         while i < N:
             A += i
@@ -283,18 +290,21 @@ def test_promote_loops():
                     k += 1
             i += 2
 
-    sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
-    assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i', 'k'}
+    sdfg: dace.SDFG = testprog9.to_sdfg(strict=False)
+    scalars = scalar_to_symbol.find_promotable_scalars(sdfg)
+    assert 'i' in scalars
+    assert 'k' in scalars
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_strict_transformations()
-    xfh.split_interstate_edges(sdfg)
-    assert sdfg.apply_transformations_repeated(LoopTester) == 3
+    # TODO: LoopDetection does not apply to loops with a multi-state guard
+    # xfh.split_interstate_edges(sdfg)
+    # assert sdfg.apply_transformations_repeated(LoopTester) == 3
 
 
 def test_promote_indirection():
     """ Indirect access in promotion. """
     @dace.program
-    def testprog(A: dace.float64[2, 3, 4, 5], B: dace.float64[4]):
+    def testprog10(A: dace.float64[2, 3, 4, 5], B: dace.float64[4]):
         i = 2
         j = 1
         k = 0
@@ -318,12 +328,17 @@ def test_promote_indirection():
                 b1 >> B[m]
                 b2 >> B[m + 2]
 
-    sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog10.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i', 'j', 'k'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    for cursdfg in sdfg.all_sdfgs_recursive():
+        scalar_to_symbol.remove_symbol_indirection(cursdfg)
     sdfg.apply_strict_transformations()
 
-    assert sdfg.number_of_nodes() == 2
+    assert sdfg.number_of_nodes() == 1
+    assert all(e.data.subset.num_elements() == 1 for e in sdfg.node(0).edges()
+               if isinstance(e.src, dace.nodes.Tasklet)
+               or isinstance(e.dst, dace.nodes.Tasklet))
 
     # Check result
     A = np.random.rand(2, 3, 4, 5)
@@ -340,7 +355,7 @@ def test_promote_indirection():
 def test_promote_output_indirection():
     """ Indirect output access in promotion. """
     @dace.program
-    def testprog(A: dace.float64[10]):
+    def testprog11(A: dace.float64[10]):
         i = 2
         with dace.tasklet:
             ii << i
@@ -348,12 +363,12 @@ def test_promote_output_indirection():
             a[ii] = ii
             a[ii + 1] = ii + 1
 
-    sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog11.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_strict_transformations()
 
-    assert sdfg.number_of_nodes() == 2
+    assert sdfg.number_of_nodes() == 1
 
     # Check result
     A = np.random.rand(10)
@@ -368,7 +383,7 @@ def test_promote_output_indirection():
 def test_promote_indirection_c():
     """ Indirect access in promotion with C++ tasklets. """
     @dace.program
-    def testprog(A: dace.float64[10]):
+    def testprog12(A: dace.float64[10]):
         i = 2
         with dace.tasklet(dace.Language.CPP):
             ii << i
@@ -379,13 +394,13 @@ def test_promote_indirection_c():
             aout[ii + 1] = ii + 1;
             '''
 
-    sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog12.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
-    sdfg.apply_strict_transformations()
-
-    assert sdfg.number_of_nodes() == 2
     assert all('i' in e.data.free_symbols for e in sdfg.sink_nodes()[0].edges())
+
+    sdfg.apply_strict_transformations()
+    assert sdfg.number_of_nodes() == 1
 
     # Check result
     A = np.random.rand(10)
@@ -400,7 +415,7 @@ def test_promote_indirection_c():
 def test_promote_indirection_impossible():
     """ Indirect access that cannot be promoted. """
     @dace.program
-    def testprog(A: dace.float64[20, 20], scal: dace.int32):
+    def testprog13(A: dace.float64[20, 20], scal: dace.int32):
         i = 2
         with dace.tasklet:
             s << scal
@@ -408,13 +423,13 @@ def test_promote_indirection_impossible():
             out >> A(1)[:, :]
             out[i, s] = a[s, i]
 
-    sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog13.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_strict_transformations()
 
     # [A,scal->Tasklet->A]
-    assert sdfg.number_of_nodes() == 2
+    assert sdfg.number_of_nodes() == 1
     assert sdfg.sink_nodes()[0].number_of_nodes() == 4
 
     A = np.random.rand(20, 20)
@@ -423,6 +438,64 @@ def test_promote_indirection_impossible():
     sdfg(A=A, scal=1)
 
     assert np.allclose(A, expected)
+
+
+@pytest.mark.parametrize('with_subscript', [False, True])
+def test_nested_promotion_connector(with_subscript):
+    # Construct SDFG
+    postfix = 'a'
+    if with_subscript:
+        postfix = 'b'
+    sdfg = dace.SDFG('testprog14{}'.format(postfix))
+    sdfg.add_array('A', [20, 20], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+    sdfg.add_transient('scal', [1], dace.int32)
+    initstate = sdfg.add_state()
+    initstate.add_edge(initstate.add_tasklet('do', {}, {'out'}, 'out = 5'),
+                       'out', initstate.add_write('scal'), None,
+                       dace.Memlet('scal'))
+    state = sdfg.add_state_after(initstate)
+
+    nsdfg = dace.SDFG('nested')
+    nsdfg.add_array('a', [20, 20], dace.float64)
+    nsdfg.add_array('b', [1], dace.float64)
+    nsdfg.add_array('s', [1], dace.int32)
+    nsdfg.add_symbol('s2', dace.int32)
+    nstate1 = nsdfg.add_state()
+    nstate2 = nsdfg.add_state()
+    nsdfg.add_edge(
+        nstate1, nstate2,
+        dace.InterstateEdge(assignments=dict(
+            s2='s[0]' if with_subscript else 's')))
+    a = nstate2.add_read('a')
+    t = nstate2.add_tasklet('do', {'inp'}, {'out'}, 'out = inp')
+    b = nstate2.add_write('b')
+    nstate2.add_edge(a, None, t, 'inp', dace.Memlet('a[s2, s2 + 1]'))
+    nstate2.add_edge(t, 'out', b, None, dace.Memlet('b[0]'))
+
+    nnode = state.add_nested_sdfg(nsdfg, None, {'a', 's'}, {'b'})
+    aouter = state.add_read('A')
+    souter = state.add_read('scal')
+    bouter = state.add_write('B')
+    state.add_edge(aouter, None, nnode, 'a', dace.Memlet('A'))
+    state.add_edge(souter, None, nnode, 's', dace.Memlet('scal'))
+    state.add_edge(nnode, 'b', bouter, None, dace.Memlet('B'))
+    #######################################################
+
+    # Promotion
+    assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'scal'}
+    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    sdfg.apply_strict_transformations()
+
+    assert sdfg.number_of_nodes() == 1
+    assert sdfg.node(0).number_of_nodes() == 3
+    assert not any(isinstance(n, dace.nodes.NestedSDFG) for n in sdfg.node(0))
+
+    # Correctness
+    A = np.random.rand(20, 20)
+    B = np.random.rand(1)
+    sdfg(A=A, B=B)
+    assert B[0] == A[5, 6]
 
 
 if __name__ == '__main__':
@@ -439,3 +512,5 @@ if __name__ == '__main__':
     test_promote_indirection_c()
     test_promote_output_indirection()
     test_promote_indirection_impossible()
+    test_nested_promotion_connector(False)
+    test_nested_promotion_connector(True)

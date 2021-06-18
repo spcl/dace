@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 # TODO: This code should undergo major refactoring
 
@@ -9,6 +9,7 @@ import pickle
 import re
 import math
 from typing import Any, List
+import warnings
 
 import dace
 from dace.memlet import Memlet
@@ -130,6 +131,11 @@ class TFSession:
             :param name: (optional) The name of the resulting SDFG.
             :param seed: (optional) Fix random seed.
         """
+        warnings.warn(
+            'The TensorFlow DaCe frontend has been deprecated and will be '
+            'removed in a future version, please use daceml instead:\n'
+            'https://github.com/spcl/daceml', DeprecationWarning)
+
         self._internal_session = tf.Session(config=config)
 
         # Set for bookkeeping of already visited nodes
@@ -461,7 +467,6 @@ class TFSession:
             if name not in node_types and not isinstance(desc, Scalar):
                 del self.graph.arrays[name]
 
-        self.graph._arg_types.update(self.callbackTypeDict)
         self.graph.fill_scope_connectors()
         ############################
         # Set up arguments
@@ -734,8 +739,9 @@ class TFSession:
                               *callback_input_types))
 
         # Register callback in SDFG
-        node_name, _ = self.graph.add_scalar(
-            node_name, dace_data_scalar.dtype, find_new_name=True)
+        node_name, _ = self.graph.add_scalar(node_name,
+                                             dace_data_scalar.dtype,
+                                             find_new_name=True)
         self.callbackTypeDict[node_name] = dace_data_scalar
         self.callbackFunctionDict[node_name] = tensorflow_callback
 

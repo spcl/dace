@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
 import dace
@@ -43,21 +43,14 @@ class FPGATransformState(transformation.Transformation):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         state = graph.nodes()[candidate[FPGATransformState._state]]
 
-        # TODO: Support most of these cases
-        for edge, graph in state.all_edges_recursive():
-            # Code->Code memlets are disallowed (for now)
-            if (isinstance(edge.src, nodes.CodeNode)
-                    and isinstance(edge.dst, nodes.CodeNode)):
-                return False
-
         for node, graph in state.all_nodes_recursive():
             # Consume scopes are currently unsupported
             if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
                 return False
 
             # Streams have strict conditions due to code generator limitations
-            if (isinstance(node, nodes.AccessNode)
-                    and isinstance(sdfg.arrays[node.data], data.Stream)):
+            if (isinstance(node, nodes.AccessNode) and isinstance(
+                    graph.parent.arrays[node.data], data.Stream)):
                 nodedesc = graph.parent.arrays[node.data]
                 sdict = graph.scope_dict()
                 if nodedesc.storage in [
@@ -93,14 +86,15 @@ class FPGATransformState(transformation.Transformation):
             candidate_map = map_entry.map
 
             # No more than 3 dimensions
-            if candidate_map.range.dims() > 3: return False
+            if candidate_map.range.dims() > 3:
+                return False
 
             # Map schedules that are disallowed to transform to FPGAs
             if (candidate_map.schedule == dtypes.ScheduleType.MPI
                     or candidate_map.schedule == dtypes.ScheduleType.GPU_Device
                     or candidate_map.schedule == dtypes.ScheduleType.FPGA_Device
-                    or candidate_map.schedule ==
-                    dtypes.ScheduleType.GPU_ThreadBlock):
+                    or candidate_map.schedule
+                    == dtypes.ScheduleType.GPU_ThreadBlock):
                 return False
 
             # Recursively check parent for FPGA schedules
@@ -108,10 +102,10 @@ class FPGATransformState(transformation.Transformation):
             current_node = map_entry
             while current_node is not None:
                 if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
-                        or current_node.map.schedule ==
-                        dtypes.ScheduleType.FPGA_Device
-                        or current_node.map.schedule ==
-                        dtypes.ScheduleType.GPU_ThreadBlock):
+                        or current_node.map.schedule
+                        == dtypes.ScheduleType.FPGA_Device
+                        or current_node.map.schedule
+                        == dtypes.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
@@ -126,9 +120,17 @@ class FPGATransformState(transformation.Transformation):
     def apply(self, sdfg):
         state = sdfg.nodes()[self.subgraph[FPGATransformState._state]]
 
-        # Find source/sink (data) nodes
-        input_nodes = sdutil.find_source_nodes(state)
-        output_nodes = sdutil.find_sink_nodes(state)
+        # Find source/sink (data) nodes that are relevant outside this FPGA
+        # kernel
+        shared_transients = set(sdfg.shared_transients())
+        input_nodes = [
+            n for n in sdutil.find_source_nodes(state)
+            if isinstance(n, nodes.AccessNode) and (not sdfg.arrays[n.data].transient or n.data in shared_transients)
+        ]
+        output_nodes = [
+            n for n in sdutil.find_sink_nodes(state)
+            if isinstance(n, nodes.AccessNode) and (not sdfg.arrays[n.data].transient or n.data in shared_transients)
+        ]
 
         fpga_data = {}
 
@@ -142,22 +144,22 @@ class FPGATransformState(transformation.Transformation):
             if isinstance(graph, dace.SDFG):
                 parent_sdfg[node] = graph
             if isinstance(node, dace.sdfg.nodes.AccessNode):
-                for e in graph.all_edges(node):
+                for e in graph.in_edges(node):
                     if e.data.wcr is not None:
                         trace = dace.sdfg.trace_nested_access(
                             node, graph, parent_sdfg[graph])
-                        for node_trace, state_trace, sdfg_trace in trace:
+                        for node_trace, memlet_trace, state_trace, sdfg_trace in trace:
                             # Find the name of the accessed node in our scope
                             if state_trace == state and sdfg_trace == sdfg:
-                                outer_node = node_trace
-                                break
-                            else:
-                                # This does not trace back to the current state, so
-                                # we don't care
-                                continue
+                                _, outer_node = node_trace
+                                if outer_node is not None:
+                                    break
+                        else:
+                            # This does not trace back to the current state, so
+                            # we don't care
+                            continue
                         input_nodes.append(outer_node)
                         wcr_input_nodes.add(outer_node)
-
         if input_nodes:
             # create pre_state
             pre_state = sd.SDFGState('pre_' + state.label, sdfg)
@@ -246,5 +248,4 @@ class FPGATransformState(transformation.Transformation):
         for src, src_conn, dst, dst_conn, mem in state.edges():
             if mem.data is not None and mem.data in fpga_data:
                 mem.data = 'fpga_' + mem.data
-
         fpga_update(sdfg, state, 0)

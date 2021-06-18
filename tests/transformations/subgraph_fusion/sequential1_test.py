@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import dace.transformation.subgraph.helpers as helpers
 from dace.transformation.subgraph import SubgraphFusion
@@ -12,7 +12,8 @@ N = dace.symbol('N')
 
 
 @dace.program
-def test_program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
+def subgraph_fusion_sequential(A: dace.float64[N], B: dace.float64[N],
+                               C: dace.float64[N]):
 
     for i in dace.map[0:N]:
         with dace.tasklet:
@@ -30,7 +31,7 @@ def test_program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
 def test_sequential():
     N.set(1000)
 
-    sdfg = test_program.to_sdfg()
+    sdfg = subgraph_fusion_sequential.to_sdfg()
     state = sdfg.nodes()[0]
 
     A = np.random.rand(N.get()).astype(np.float64)
@@ -40,6 +41,7 @@ def test_sequential():
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C1, N=N)
+    del csdfg
 
     fusion(sdfg, state)
     csdfg = sdfg.compile()

@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/spcl/dace.svg?branch=master)](https://travis-ci.org/spcl/dace)
+![Build and Test](https://github.com/spcl/dace/workflows/Build%20and%20Test/badge.svg)
 [![Documentation Status](https://readthedocs.org/projects/spcldace/badge/?version=latest)](https://spcldace.readthedocs.io/en/latest/?badge=latest)
 [![PyPI version](https://badge.fury.io/py/dace.svg)](https://badge.fury.io/py/dace)
 [![codecov](https://codecov.io/gh/spcl/dace/branch/master/graph/badge.svg)](https://codecov.io/gh/spcl/dace)
@@ -9,8 +9,10 @@
 
 _Decoupling domain science from performance optimization._
 
-DaCe compiles code in various programming languages and paradigms (Python/Numpy, MATLAB, TensorFlow) and maps it efficiently to **CPUs, GPUs, and FPGAs** with high utilization, on par with the state-of-the-art. The key feature driving DaCe is its Stateful DataFlow multiGraph (SDFG) *data-centric intermediate representation*: A transformable, interactive representation of code based on data movement.
-With data-centric parallel programming, we enable **direct knowledge transfer** of performance optimization, regardless of the scientific application or the target processor.
+DaCe is a parallel programming framework that takes code in Python/NumPy and other programming languages, and maps it to high-performance **CPU, GPU, and FPGA** programs, which can be optimized to achieve state-of-the-art. Internally, DaCe uses the Stateful DataFlow multiGraph (SDFG) *data-centric intermediate representation*: A transformable, interactive representation of code based on data movement.
+Since the input code and the SDFG are separate, it is posible to optimize a program without
+changing its source, so that it stays readable. On the other hand, transformations are customizable and user-extensible, so they can be written once and reused in many applications.
+With data-centric parallel programming, we enable **direct knowledge transfer** of performance optimization, regardless of the application or the target processor.
 
 DaCe generates high-performance programs for:
  * Multi-core CPUs (tested on Intel and IBM POWER9)
@@ -48,7 +50,7 @@ Runtime dependencies:
 Running
 -------
 
-**Python scripts:** Run DaCe programs (in implicit, explicit, or TensorFlow syntax) using Python directly.
+**Python scripts:** Run DaCe programs (in implicit or explicit syntax) using Python directly.
 
 **[SDFV (standalone SDFG viewer)](https://spcl.github.io/dace/sdfv.html):** To view SDFGs separately, run the `sdfv` installed script with the `.sdfg` file as an argument. Alternatively, you can use the link or open `diode/sdfv.html` directly and choose a file in the browser.
 
@@ -115,7 +117,7 @@ Profiling:
 
 Contributing
 ------------
-DaCe is an open-source project. We are happy to accept Pull Requests with your contributions!
+DaCe is an open-source project. We are happy to accept Pull Requests with your contributions! Please follow the [contribution guidelines](CONTRIBUTING.md) before submitting a pull request.
 
 License
 -------

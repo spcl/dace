@@ -1,11 +1,16 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import inspect
 import sys
 import types
+from typing import Set, List
+import contextlib
+import networkx as nx
+import types
+
 import dace.properties
-from dace.sdfg.nodes import LibraryNode
+from dace.sdfg.nodes import LibraryNode, full_class_path
 from dace.transformation.transformation import (Transformation,
-                                                  ExpandTransformation)
+                                                ExpandTransformation)
 
 
 def register_implementation(implementation_name, expansion_cls, node_cls):
@@ -19,27 +24,27 @@ def register_implementation(implementation_name, expansion_cls, node_cls):
     if not issubclass(node_cls, LibraryNode):
         raise TypeError("Expected LibraryNode class, got: {}".format(
             type(node_cls).__name__))
-    if not hasattr(node_cls, "_dace_library_name"):
-        raise ValueError("Library node class {} must be associated with a"
-                         " library.".format(node_cls.__name__))
     if (hasattr(expansion_cls, "_dace_library_node")
             and expansion_cls._dace_library_node != node_cls):
         raise ValueError("Transformation {} is already registered with a "
                          "different library node: {}".format(
-                             transformation_type.__name__,
+                             expansion_cls.__name__,
                              expansion_cls._dace_library_node))
     expansion_cls._dace_library_node = node_cls
-    expansion_cls._dace_library_name = node_cls._dace_library_name
     if implementation_name in node_cls.implementations:
         if node_cls.implementations[implementation_name] != expansion_cls:
             raise ValueError(
-                "Implementation {} registered with multiple expansions.".
-                format(implementation_name))
+                "Implementation {} registered with multiple expansions.".format(
+                    implementation_name))
     else:
         node_cls.implementations[implementation_name] = expansion_cls
-    library = _DACE_REGISTERED_LIBRARIES[node_cls._dace_library_name]
-    if expansion_cls not in library._dace_library_expansions:
-        library._dace_library_expansions.append(expansion_cls)
+
+    # Update library as necessary
+    if hasattr(node_cls, "_dace_library_name"):
+        expansion_cls._dace_library_name = node_cls._dace_library_name
+        library = _DACE_REGISTERED_LIBRARIES[node_cls._dace_library_name]
+        if expansion_cls not in library._dace_library_expansions:
+            library._dace_library_expansions.append(expansion_cls)
 
 
 def register_node(node_cls, library):
@@ -127,9 +132,8 @@ def node(n):
         raise ValueError("Library node class \"" + n.__name__ +
                          "\" must define implementations.")
     if not hasattr(n, "default_implementation"):
-        raise ValueError(
-            "Library node class \"" + n.__name__ +
-            "\" must define default_implementation (can be None).")
+        raise ValueError("Library node class \"" + n.__name__ +
+                         "\" must define default_implementation (can be None).")
     # Remove and re-register each implementation
     implementations = n.implementations
     n.implementations = type(n.implementations)()
@@ -143,7 +147,7 @@ def node(n):
 def expansion(exp):
     exp = dace.properties.make_properties(exp)
     if not issubclass(exp, ExpandTransformation):
-        raise TypeError("Library node expansion \"" + type(n).__name__ +
+        raise TypeError("Library node expansion \"" + type(exp).__name__ +
                         "\"must derive from ExpandTransformation")
     if not hasattr(exp, "environments"):
         raise ValueError("Library node expansion must define environments "
@@ -155,21 +159,24 @@ def expansion(exp):
     return exp
 
 
+def register_expansion(library_node: LibraryNode, expansion_name: str):
+    """ Defines and registers an expansion. """
+    def expander(exp: ExpandTransformation):
+        result = expansion(exp)
+        library_node.register_implementation(expansion_name, exp)
+        return result
+
+    return expander
+
+
 # Use to decorate DaCe library environments
 def environment(env):
     env = dace.properties.make_properties(env)
     for field in [
-            "cmake_minimum_version",
-            "cmake_packages",
-            "cmake_variables",
-            "cmake_includes",
-            "cmake_libraries",
-            "cmake_compile_flags",
-            "cmake_link_flags",
-            "cmake_files",
-            "headers",
-            "init_code",
-            "finalize_code",
+            "cmake_minimum_version", "cmake_packages", "cmake_variables",
+            "cmake_includes", "cmake_libraries", "cmake_compile_flags",
+            "cmake_link_flags", "cmake_files", "headers", "state_fields",
+            "init_code", "finalize_code", "dependencies"
     ]:
         if not hasattr(env, field):
             raise ValueError(
@@ -177,10 +184,45 @@ def environment(env):
                 field + "\".")
     env._dace_library_environment = True
     # Retrieve which file this was called from
-    caller_file = inspect.stack()[1].filename
+    caller_file = inspect.getmodule(env).__file__
     env._dace_file_path = caller_file
-    _DACE_REGISTERED_ENVIRONMENTS[env.__name__] = env
+    env.full_class_path = types.MethodType(full_class_path, env)
+    _DACE_REGISTERED_ENVIRONMENTS[env.full_class_path()] = env
     return env
+
+
+def get_environments_and_dependencies(names: Set[str]) -> List:
+    """ Get the environment objects from names. Also resolve the dependencies.
+
+        :names: set of environment names.
+        :return: a list of environment objects, ordered such that environments with dependencies appear after their
+                 dependencies.
+    """
+
+    # get all environments: add dependencies until no new dependencies are found
+    environments = {get_environment(name) for name in names}
+    while True:
+        added = {
+            dep
+            for env in environments for dep in env.dependencies
+            if dep not in environments
+        }
+        if len(added) == 0:
+            break
+        environments = environments.union(added)
+
+    # construct dependency graph
+    dep_graph = nx.DiGraph()
+    dep_graph.add_nodes_from(environments)
+
+    for env in environments:
+        for dep in env.dependencies:
+            dep_graph.add_edge(dep, env)
+
+    try:
+        return list(nx.topological_sort(dep_graph))
+    except nx.NetworkXUnfeasible:
+        raise ValueError("Detected cycle in dependency graph.")
 
 
 # Mapping from string to DaCe environment
@@ -203,3 +245,11 @@ def get_library(lib_name):
 
 _DACE_REGISTERED_LIBRARIES = {}
 _DACE_REGISTERED_ENVIRONMENTS = {}
+
+
+@contextlib.contextmanager
+def change_default(library, implementation):
+    old_default = library.default_implementation
+    library.default_implementation = implementation
+    yield
+    library.default_implementation = old_default

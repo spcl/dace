@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -170,6 +170,8 @@ def rgf_dense(
 if __name__ == '__main__':
 
     print("=== Generating SDFG ===")
-    sdfg = rgf_dense.to_sdfg()
+    sdfg = rgf_dense.to_sdfg(strict=False)
+    print("=== Applying strict transformations ===")
+    sdfg.apply_strict_transformations()
     print("=== Compiling ===")
     sdfg.compile()

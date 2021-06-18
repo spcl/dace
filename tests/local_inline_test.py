@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -6,7 +6,7 @@ W = dace.symbol('W')
 
 
 @dace.program
-def bla(AA, BB):
+def local_inline_inner(AA, BB):
     tmp = dace.define_local([W], AA.dtype)
 
     @dace.map(_[0:W])
@@ -23,12 +23,12 @@ def bla(AA, BB):
 
 
 @dace.program
-def prog(A: dace.float64[W], B: dace.float64[W], C: dace.float64[W]):
-    bla(A, B)
-    bla(B, C)
+def local_inline(A: dace.float64[W], B: dace.float64[W], C: dace.float64[W]):
+    local_inline_inner(A, B)
+    local_inline_inner(B, C)
 
 
-if __name__ == '__main__':
+def test():
     W.set(3)
 
     A = dace.ndarray([W])
@@ -39,9 +39,13 @@ if __name__ == '__main__':
     B[:] = 0.0
     C[:] = 0.0
 
-    prog(A, B, C)
+    local_inline(A, B, C)
 
     diff = np.linalg.norm((-(-A + 1) + 1) - C) / W.get()
     print("Difference:", diff)
     print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test()

@@ -1,8 +1,10 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.properties import Property, make_properties
-from dace.serialize import all_properties_to_json, set_properties_from_json
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import json
+import numpy as np
+
+import dace
+from dace.properties import Property, make_properties, ListProperty
+from dace.serialize import all_properties_to_json, set_properties_from_json
 
 
 @make_properties
@@ -23,6 +25,24 @@ class MyObject(object):
         return ret
 
 
+@make_properties
+class MyListObject(object):
+    list_prop = ListProperty(element_type=int)
+
+    def __init__(self, p):
+        super().__init__()
+        self.list_prop = p
+
+    def to_json(self):
+        return all_properties_to_json(self)
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        ret = MyListObject([])
+        set_properties_from_json(ret, json_obj, context=context)
+        return ret
+
+
 def test_serialize_int_float():
     obj = MyObject(1.0)
     assert obj.float_prop == 1.0
@@ -33,5 +53,16 @@ def test_serialize_int_float():
     assert obj.float_prop == 1.0
 
 
+def test_serialize_list_int64():
+    obj = MyListObject([])
+    obj.list_prop.append(np.int64(2))
+    assert obj.list_prop == [2]
+    json_obj = obj.to_json()
+
+    obj = MyListObject.from_json(json.loads(json.dumps(json_obj)))
+    assert obj.list_prop == [2]
+
+
 if __name__ == '__main__':
     test_serialize_int_float()
+    test_serialize_list_int64()

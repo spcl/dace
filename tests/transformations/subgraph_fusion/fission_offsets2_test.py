@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
 from dace.sdfg import nodes
@@ -129,8 +129,12 @@ def test_offsets():
     expected[10:] += 3
     csdfg = sdfg.compile()
     csdfg(A=A_cpy)
+    del csdfg
     assert (np.allclose(A_cpy, expected))
 
+    subgraph = SubgraphView(sdfg.nodes()[0], sdfg.nodes()[0].nodes())
+    sf = SubgraphFusion(subgraph)
+    assert sf.can_be_applied(sdfg, subgraph)
     fusion(sdfg, sdfg.nodes()[0], None)
 
     csdfg = sdfg.compile()

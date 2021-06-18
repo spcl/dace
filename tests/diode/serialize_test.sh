@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 DIODEBASEPATH="$SCRIPTPATH/../../diode/"
@@ -13,7 +13,7 @@ python3 $DIODEBASEPATH/diode_server.py --localhost --port=$PORT &
 SERVPID=$!
 RETVAL=0
 
-TESTFILES=("simple/gemm.py" "sdfg_api/nested_states.py" "sdfg_api/state_fusion.py" "sdfg_api/control_flow.py")
+TESTFILES=("simple/matmul.py" "sdfg_api/nested_states.py" "sdfg_api/state_fusion.py" "sdfg_api/control_flow.py")
 FAILEDFILES=()
 
 echo "server pid is: $SERVPID"

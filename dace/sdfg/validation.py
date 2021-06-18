@@ -1,12 +1,13 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
 from dace.dtypes import StorageType
 import os
-from typing import Dict, Union
+from typing import Dict, Tuple, Union
 import warnings
 
 from dace import dtypes
+from dace import symbolic
 
 ###########################################
 # Validation
@@ -221,9 +222,17 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     state_id,
                     nid,
                 )
+            arr = sdfg.arrays[node.data]
+
+            # Verify View references
+            if isinstance(arr, dt.View):
+                from dace.sdfg import utils as sdutil  # Avoid import loops
+                if sdutil.get_view_edge(state, node) is None:
+                    raise InvalidSDFGNodeError(
+                        "Ambiguous or invalid edge to/from a View access node",
+                        sdfg, state_id, nid)
 
             # Find uninitialized transients
-            arr = sdfg.arrays[node.data]
             if (arr.transient and state.in_degree(node) == 0
                     and state.out_degree(node) > 0
                     # Streams do not need to be initialized
@@ -246,7 +255,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         % (node.data, state.label))
 
             # Find writes to input-only arrays
-            if not arr.transient and state.in_degree(node) > 0:
+            only_empty_inputs = all(e.data.is_empty()
+                                    for e in state.in_edges(node))
+            if (not arr.transient) and (not only_empty_inputs):
                 nsdfg_node = sdfg.parent_nsdfg_node
                 if nsdfg_node is not None:
                     if node.data not in nsdfg_node.out_connectors:
@@ -273,7 +284,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         ########################################
         # Check for duplicate connector names (unless it's a nested SDFG)
         if (len(node.in_connectors.keys() & node.out_connectors.keys()) > 0
-                and not isinstance(node, nd.NestedSDFG)):
+                and not isinstance(node, (nd.NestedSDFG, nd.LibraryNode))):
             dups = node.in_connectors.keys() & node.out_connectors.keys()
             raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups),
                                        sdfg, state_id, nid)
@@ -464,7 +475,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         sdfg, state_id, eid)
                 if e.data.other_subset is not None:
                     undefs = (e.data.other_subset.free_symbols -
-                              defined_symbols)
+                              set(defined_symbols.keys()))
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
                             'Undefined symbols %s found in memlet '
@@ -475,29 +486,20 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # If scope(src) == scope(dst): OK
         if scope[src_node] == scope[dst_node] or src_node == scope[dst_node]:
             pass
-        # If scope(src) contains scope(dst), then src must be a data node
+        # If scope(src) contains scope(dst), then src must be a data node,
+        # unless the memlet is empty in order to connect to a scope
         elif scope_contains_scope(scope, src_node, dst_node):
-            if not isinstance(src_node, nd.AccessNode):
-                pass
-                # raise InvalidSDFGEdgeError(
-                #     "Memlet creates an "
-                #     "invalid path (source node %s should "
-                #     "be a data node)" % str(src_node),
-                #     sdfg,
-                #     state_id,
-                #     eid,
-                # )
-        # If scope(dst) contains scope(src), then dst must be a data node
+            pass
+        # If scope(dst) contains scope(src), then dst must be a data node,
+        # unless the memlet is empty in order to connect to a scope
         elif scope_contains_scope(scope, dst_node, src_node):
             if not isinstance(dst_node, nd.AccessNode):
-                raise InvalidSDFGEdgeError(
-                    "Memlet creates an "
-                    "invalid path (sink node %s should "
-                    "be a data node)" % str(dst_node),
-                    sdfg,
-                    state_id,
-                    eid,
-                )
+                if e.data.is_empty() and isinstance(dst_node, nd.ExitNode):
+                    pass
+                else:
+                    raise InvalidSDFGEdgeError(
+                        f"Memlet creates an invalid path (sink node {dst_node}"
+                        " should be a data node)", sdfg, state_id, eid)
         # If scope(dst) is disjoint from scope(src), it's an illegal memlet
         else:
             raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes",
@@ -517,15 +519,16 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Verify that source and destination subsets contain the same
         # number of elements
-        if e.data.other_subset is not None and not (
+        if not e.data.allow_oob and e.data.other_subset is not None and not (
             (isinstance(src_node, nd.AccessNode)
              and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
             (isinstance(dst_node, nd.AccessNode)
              and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
-            if (e.data.src_subset.num_elements() *
-                    sdfg.arrays[src_node.data].veclen !=
-                    e.data.dst_subset.num_elements() *
-                    sdfg.arrays[dst_node.data].veclen):
+            src_expr = (e.data.src_subset.num_elements() *
+                        sdfg.arrays[src_node.data].veclen)
+            dst_expr = (e.data.dst_subset.num_elements() *
+                        sdfg.arrays[dst_node.data].veclen)
+            if symbolic.inequal_symbols(src_expr, dst_expr):
                 raise InvalidSDFGEdgeError(
                     'Dimensionality mismatch between src/dst subsets', sdfg,
                     state_id, eid)

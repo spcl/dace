@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import dace.transformation.subgraph.helpers as helpers
 import dace.sdfg.nodes as nodes
@@ -25,8 +25,9 @@ out3 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
 
 
 @dace.program
-def test_program(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O], \
-         out1: dace.float64[N,M], out2: dace.float64[1], out3: dace.float64[N,M,O]):
+def subgraph_fusion_complex(A: dace.float64[N], B: dace.float64[M],
+                            C: dace.float64[O], out1: dace.float64[N, M],
+                            out2: dace.float64[1], out3: dace.float64[N, M, O]):
 
     tmp1 = np.ndarray([N, M, O], dtype=dace.float64)
     tmp2 = np.ndarray([N, M, O], dtype=dace.float64)
@@ -96,15 +97,7 @@ def test_program(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O], \
         out = in1 * 42
 
 
-def test_qualitatively(sdfg, graph):
-    expand_reduce(sdfg, graph)
-    expand_maps(sdfg, graph)
-    fusion(sdfg, graph)
-    sdfg.validate()
-    print("PASS")
-
-
-def test_quantitatively(sdfg, graph):
+def _test_quantitatively(sdfg, graph):
 
     A = np.random.rand(N.get()).astype(np.float64)
     B = np.random.rand(M.get()).astype(np.float64)
@@ -125,15 +118,18 @@ def test_quantitatively(sdfg, graph):
           N=N,
           M=M,
           O=O)
+    del csdfg
 
     expand_reduce(sdfg, graph)
     expand_maps(sdfg, graph)
     subgraph = SubgraphView(graph, [node for node in graph.nodes()])
-    assert SubgraphFusion.can_be_applied(sdfg, subgraph) == True
+    sf = SubgraphFusion(subgraph)
+    assert sf.can_be_applied(sdfg, subgraph) == True
     fusion(sdfg, graph)
     sdfg.validate()
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C, out1=out1, out2=out2, out3=out3, N=N, M=M, O=O)
+    del csdfg
 
     assert np.allclose(out1, out1_base)
     assert np.allclose(out2, out2_base)
@@ -142,9 +138,9 @@ def test_quantitatively(sdfg, graph):
 
 
 def test_complex():
-    sdfg = test_program.to_sdfg()
+    sdfg = subgraph_fusion_complex.to_sdfg()
     sdfg.apply_strict_transformations()
-    test_quantitatively(sdfg, sdfg.nodes()[0])
+    _test_quantitatively(sdfg, sdfg.nodes()[0])
 
 
 if __name__ == "__main__":

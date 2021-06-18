@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation.subgraph import MultiExpansion
 from dace.transformation.subgraph import SubgraphFusion
@@ -44,7 +44,7 @@ def expand_reduce(sdfg: dace.SDFG,
             trafo_reduce.expand(sdfg, graph, reduce_node)
             if isinstance(sg, SubgraphView):
                 sg.nodes().remove(reduce_node)
-                sg.nodes().append(trafo_reduce._new_reduce)
+                sg.nodes().append(trafo_reduce._reduce)
                 sg.nodes().append(trafo_reduce._outer_entry)
 
 
@@ -62,7 +62,7 @@ def expand_maps(sdfg: dace.SDFG,
         setattr(trafo_expansion, property, val)
 
     for sg in subgraph:
-        map_entries = helpers.get_highest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_outermost_scope_maps(sdfg, graph, sg)
         trafo_expansion.expand(sdfg, graph, map_entries)
 
 
@@ -80,7 +80,7 @@ def fusion(sdfg: dace.SDFG,
         setattr(map_fusion, property, val)
 
     for sg in subgraph:
-        map_entries = helpers.get_highest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_outermost_scope_maps(sdfg, graph, sg)
         # remove map_entries and their corresponding exits from the subgraph
         # already before applying transformation
         if isinstance(sg, SubgraphView):
@@ -88,7 +88,6 @@ def fusion(sdfg: dace.SDFG,
                 sg.nodes().remove(map_entry)
                 if graph.exit_node(map_entry) in sg.nodes():
                     sg.nodes().remove(graph.exit_node(map_entry))
-        print(f"Subgraph Fusion on map entries {map_entries}")
         map_fusion.fuse(sdfg, graph, map_entries)
         if isinstance(sg, SubgraphView):
             sg.nodes().append(map_fusion._global_map_entry)

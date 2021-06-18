@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -16,7 +16,7 @@ def slicetest(A: dace.float64[N, N - 1], B: dace.float64[N - 1, N],
             c = t
 
 
-if __name__ == '__main__':
+def test():
     A = np.random.rand(5, 4)
     B = np.random.rand(4, 5)
     C = np.random.rand(4, 4)
@@ -25,5 +25,8 @@ if __name__ == '__main__':
     slicetest(A, B, C)
     diff = np.linalg.norm(C - (A[1:N.get()] * B[:, 0:N.get() - 1]))
     print('Difference:', diff)
-    if diff > 1e-5:
-        exit(1)
+    assert diff <= 1e-5
+
+
+if __name__ == '__main__':
+    test()

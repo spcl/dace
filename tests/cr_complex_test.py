@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import dace
@@ -8,7 +8,7 @@ N = 12
 
 
 @dace.program
-def program(input, output):
+def cr_complex(input, output):
     @dace.map(_[0:N])
     def tasklet(i):
         a << input[i]
@@ -16,7 +16,7 @@ def program(input, output):
         b = a
 
 
-if __name__ == "__main__":
+def test_cr_complex():
     print('CR non-atomic (complex value) test')
 
     A = np.random.rand(N).astype(np.complex128)
@@ -24,8 +24,12 @@ if __name__ == "__main__":
     B = np.ndarray([1], dtype=A.dtype)
     B[0] = 0
 
-    program(A, B)
+    cr_complex(A, B)
 
     diff = abs(np.sum(A) - B[0])
     print("Difference:", diff)
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == '__main__':
+    test_cr_complex()

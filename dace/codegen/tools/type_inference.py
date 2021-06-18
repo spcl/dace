@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
     Type inference: traverses code and returns types for all undefined symbols according to C semantics
     infer() has a lenient implementation: if something it not inferred (for example an unsupported construct) it will not
@@ -10,11 +10,13 @@
 import numpy as np
 import ast
 from dace import dtypes
+from dace import symbolic
 from dace.codegen import cppunparse
-from dace.symbolic import SymExpr
-from dace.symbolic import symstr
+from dace.symbolic import symbol, SymExpr, symstr
 import sympy
 import sys
+import dace.frontend.python.astutils
+import inspect
 
 
 def infer_types(code, symbols=None):
@@ -54,8 +56,12 @@ def infer_expr_type(code, symbols=None):
     inferred_symbols = {}
     if isinstance(code, (str, float, int, complex)):
         parsed_ast = ast.parse(str(code))
-    elif isinstance(code, sympy.Basic) or isinstance(code, SymExpr):
-        parsed_ast = ast.parse(symstr(code))
+    elif isinstance(code, sympy.Basic):
+        parsed_ast = ast.parse(sympy.printing.pycode(code))
+    elif isinstance(code, SymExpr):
+        parsed_ast = ast.parse(sympy.printing.pycode(code.expr))
+    else:
+        raise TypeError(f"Cannot convert type {type(code)} to a Python AST.")
 
     # The parsed AST must only contain one expression
     if hasattr(parsed_ast, "body") and isinstance(parsed_ast.body[0], ast.Expr):
@@ -222,8 +228,7 @@ def _If(t, symbols, inferred_symbols):
     _dispatch(t.test, symbols, inferred_symbols)
     _dispatch(t.body, symbols, inferred_symbols)
 
-    while (t.orelse and len(t.orelse) == 1
-           and isinstance(t.orelse[0], ast.If)):
+    while (t.orelse and len(t.orelse) == 1 and isinstance(t.orelse[0], ast.If)):
         t = t.orelse[0]
         _dispatch(t.test, symbols, inferred_symbols)
         _dispatch(t.body, symbols, inferred_symbols)
@@ -265,15 +270,20 @@ def _Name(t, symbols, inferred_symbols):
         # check if this name is a python type, it is in defined_symbols or in local symbols.
         # If yes, take the type
         inferred_type = None
-        if t.id.strip("()") in cppunparse._py2c_typeconversion:
-            inferred_type = cppunparse._py2c_typeconversion[t.id.strip("()")]
-        elif t.id in symbols:
+
+        # if this is a statement generated from a tasklet with a dynamic memlet, it could have a leading * (pointer)
+        t_id = t.id[1:] if t.id.startswith('*') else t.id
+        if t_id.strip("()") in cppunparse._py2c_typeconversion:
+            inferred_type = cppunparse._py2c_typeconversion[t_id.strip("()")]
+        elif t_id in symbols:
             # defined symbols could have dtypes, in case convert it to typeclass
-            inferred_type = symbols[t.id]
+            inferred_type = symbols[t_id]
             if isinstance(inferred_type, np.dtype):
                 inferred_type = dtypes.typeclass(inferred_type.type)
-        elif t.id in inferred_symbols:
-            inferred_type = inferred_symbols[t.id]
+            elif isinstance(inferred_type, symbolic.symbol):
+                inferred_type = inferred_type.dtype
+        elif t_id in inferred_symbols:
+            inferred_type = inferred_symbols[t_id]
         return inferred_type
 
 
@@ -297,9 +307,8 @@ def _Constant(t, symbols, inferred_symbols):
 def _Num(t, symbols, inferred_symbols):
     # get the minimum between the minimum type needed to represent this number and the corresponding default data types
     # e.g., if num=1, then it will be represented by using the default integer type (int32 if C data types are used)
-    return dtypes.result_type_of(
-        dtypes.typeclass(type(t.n)),
-        dtypes.typeclass(np.min_scalar_type(t.n).name))
+    return dtypes.result_type_of(dtypes.typeclass(type(t.n)),
+                                 dtypes.typeclass(np.min_scalar_type(t.n).name))
 
 
 def _IfExp(t, symbols, inferred_symbols):
@@ -331,14 +340,13 @@ def _BinOp(t, symbols, inferred_symbols):
         return dtypes.result_type_of(type_left, type_right)
     # Special case for integer power
     elif t.op.__class__.__name__ == 'Pow':
-        if (isinstance(t.right, (ast.Num, ast.Constant)) and int(t.right.n) == t.right.n
-                and t.right.n >= 0):
+        if (isinstance(t.right, (ast.Num, ast.Constant))
+                and int(t.right.n) == t.right.n and t.right.n >= 0):
             if t.right.n != 0:
                 type_left = _dispatch(t.left, symbols, inferred_symbols)
                 for i in range(int(t.right.n) - 1):
                     _dispatch(t.left, symbols, inferred_symbols)
-            return dtypes.result_type_of(type_left,
-                                         dtypes.typeclass(np.uint32))
+            return dtypes.result_type_of(type_left, dtypes.typeclass(np.uint32))
         else:
             type_left = _dispatch(t.left, symbols, inferred_symbols)
             type_right = _dispatch(t.right, symbols, inferred_symbols)
@@ -352,17 +360,34 @@ def _BinOp(t, symbols, inferred_symbols):
 
 
 def _Compare(t, symbols, inferred_symbols):
-    _dispatch(t.left, symbols, inferred_symbols)
+    # If any vector occurs in the comparision, the inferred type is a bool vector
+    inf_type = _dispatch(t.left, symbols, inferred_symbols)
+    vec_len = None
+    if isinstance(inf_type, dtypes.vector):
+        vec_len = inf_type.veclen
     for o, e in zip(t.ops, t.comparators):
         if o.__class__.__name__ not in cppunparse.CPPUnparser.cmpops:
             continue
-        _dispatch(e, symbols, inferred_symbols)
+        inf_type = _dispatch(e, symbols, inferred_symbols)
+        if isinstance(inf_type, dtypes.vector):
+            # Make sure all occuring vectors are of same size
+            if vec_len is not None and vec_len != inf_type.veclen:
+                raise SyntaxError('Inconsistent vector lengths in Compare')
+            vec_len = inf_type.veclen
+    return dtypes.vector(dace.bool, vec_len) if vec_len is not None else dtypes.bool
 
 
 def _BoolOp(t, symbols, inferred_symbols):
+    # If any vector occurs in the bool op, the inferred type is also a bool vector
+    vec_len = None
     for v in t.values:
-        _dispatch(v, symbols, inferred_symbols)
-    return dtypes.typeclass(np.bool)
+        inf_type = _dispatch(v, symbols, inferred_symbols)
+        if isinstance(inf_type, dtypes.vector):
+            # Make sure all occuring vectors are of same size
+            if vec_len is not None and vec_len != inf_type.veclen:
+                raise SyntaxError('Inconsistent vector lengths in BoolOp')
+            vec_len = inf_type.veclen
+    return dtypes.vector(dace.bool, vec_len) if vec_len is not None else dtypes.bool
 
 
 def _Attribute(t, symbols, inferred_symbols):
@@ -372,21 +397,54 @@ def _Attribute(t, symbols, inferred_symbols):
 
 def _Call(t, symbols, inferred_symbols):
     inf_type = _dispatch(t.func, symbols, inferred_symbols)
-    for e in t.args:
-        _dispatch(e, symbols, inferred_symbols)
+
+    # Dispatch the arguments and determine their types
+    arg_types = [_dispatch(e, symbols, inferred_symbols) for e in t.args]
+
     for e in t.keywords:
         _dispatch(e, symbols, inferred_symbols)
-    return inf_type
+
+    # If the function symbol is known, always return the defined type
+    if inf_type:
+        return inf_type
+
+    # In case of a typeless math function, determine the return type based on the arguments
+    name = dace.frontend.python.astutils.rname(t)
+    module = name[:name.rfind('.')]
+    if module == 'math':
+        return dtypes.result_type_of(arg_types[0], *arg_types)
+
+    # In any other case simply return None
+    return None
 
 
 def _Subscript(t, symbols, inferred_symbols):
-    inferred_type = _dispatch(t.value, symbols, inferred_symbols)
-    _dispatch(t.slice, symbols, inferred_symbols)
-    return inferred_type
+    value_type = _dispatch(t.value, symbols, inferred_symbols)
+    slice_type = _dispatch(t.slice, symbols, inferred_symbols)
+
+    if isinstance(slice_type, dtypes.pointer):
+        raise SyntaxError('Invalid syntax (pointer given as slice)')
+
+    # A slice as subscript (e.g. [0:N]) returns a pointer
+    if isinstance(t.slice, ast.Slice):
+        return value_type
+
+    # A vector as subscript of a pointer returns a vector of the base type
+    if isinstance(value_type, dtypes.pointer) and isinstance(
+            slice_type, dtypes.vector):
+        if not np.issubdtype(slice_type.type, np.integer):
+            raise SyntaxError('Subscript must be some integer type')
+        return dtypes.vector(value_type.base_type, slice_type.veclen)
+
+    # Otherwise (some index as subscript) we return the base type
+    if isinstance(value_type, dtypes.typeclass):
+        return value_type.base_type
+
+    return value_type
 
 
 def _Index(t, symbols, inferred_symbols):
-    _dispatch(t.value, symbols, inferred_symbols)
+    return _dispatch(t.value, symbols, inferred_symbols)
 
 
 def _Slice(t, symbols, inferred_symbols):

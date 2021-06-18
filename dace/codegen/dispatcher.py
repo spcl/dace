@@ -1,11 +1,12 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-""" 
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+"""
 Contains the DaCe code generator target dispatcher, which is responsible for
 flexible code generation with multiple backends by dispatching certain
 functionality to registered code generators based on user-defined predicates.
 """
+from dace.codegen.prettycode import CodeIOStream
 import aenum
-from dace import data as dt, config, dtypes, nodes, registry
+from dace import config, data as dt, dtypes, nodes, registry
 from dace.codegen import exceptions as cgx, prettycode
 from dace.codegen.targets import target
 from dace.sdfg import utils as sdutil, SDFG, ScopeSubgraphView
@@ -27,9 +28,11 @@ class DefinedType(aenum.AutoNumberEnum):
 
 class DefinedMemlets:
     """ Keeps track of the type of defined memlets to ensure that they are
-        referenced correctly in nested scopes and SDFGs. """
+        referenced correctly in nested scopes and SDFGs.
+        The ones defined in the first (top) scope, refer to global variables.
+    """
     def __init__(self):
-        self._scopes = [(None, {}, True)]
+        self._scopes = [(None, {}, True), (None, {}, True)]
 
     def enter_scope(self, parent, can_access_parent=True):
         self._scopes.append((parent, {}, can_access_parent))
@@ -41,15 +44,17 @@ class DefinedMemlets:
                 "Exited scope {} mismatched current scope {}".format(
                     parent.name, expected.name))
 
-    def has(self, name):
+    def has(self, name, ancestor: int = 0):
         try:
-            self.get(name)
+            self.get(name, ancestor)
             return True
         except KeyError:
             return False
 
     def get(self, name: str, ancestor: int = 0) -> Tuple[DefinedType, str]:
+        last_visited_scope = None
         for _, scope, can_access_parent in reversed(self._scopes):
+            last_visited_scope = scope
             if ancestor > 0:
                 ancestor -= 1
                 continue
@@ -57,6 +62,12 @@ class DefinedMemlets:
                 return scope[name]
             if not can_access_parent:
                 break
+
+        # Search among globally defined variables (top scope), if not already visited
+        if last_visited_scope != self._scopes[0]:
+            if name in self._scopes[0][1]:
+                return self._scopes[0][1][name]
+
         raise KeyError("Variable {} has not been defined".format(name))
 
     def add(self,
@@ -83,6 +94,14 @@ class DefinedMemlets:
                 break
         self._scopes[-1 - ancestor][1][name] = (dtype, ctype)
 
+    def add_global(self, name: str, dtype: DefinedType, ctype: str):
+        ''' Adds a global variable (top scope) '''
+        if not isinstance(name, str):
+            raise TypeError('Variable name type cannot be %s' %
+                            type(name).__name__)
+
+        self._scopes[0][1][name] = (dtype, ctype)
+
 
 #############################################################################
 
@@ -90,7 +109,11 @@ class DefinedMemlets:
 class TargetDispatcher(object):
     """ Dispatches sub-SDFG generation (according to scope),
         storage<->storage copies, and storage<->tasklet copies to targets. """
-    def __init__(self):
+    def __init__(self, framecode):
+        # Avoid import loop
+        from dace.codegen.targets import framecode as fc
+
+        self.frame: fc.DaCeCodeGenerator = framecode
         self._used_targets = set()
         self._used_environments = set()
 
@@ -299,7 +322,8 @@ class TargetDispatcher(object):
                           state_id,
                           function_stream,
                           callsite_stream,
-                          skip_entry_node=False):
+                          skip_entry_node=False,
+                          skip_exit_node=False):
         """ Dispatches a code generator for a scope subgraph of an
             `SDFGState`. """
 
@@ -312,6 +336,10 @@ class TargetDispatcher(object):
         if skip_entry_node:
             assert len(start_nodes) == 1
             nodes_to_skip.add(start_nodes[0])
+
+        if skip_exit_node:
+            exit_node = dfg.exit_node(start_nodes[0])
+            nodes_to_skip.add(exit_node)
 
         for v in sdutil.dfs_topological_sort(dfg, start_nodes):
             if v in nodes_to_skip:
@@ -340,9 +368,10 @@ class TargetDispatcher(object):
 
         # Check if the node satisfies any predicates that delegate to a
         # specific code generator
+        state = sdfg.node(state_id)
         satisfied_dispatchers = [
             dispatcher for pred, dispatcher in self._node_dispatchers
-            if pred(sdfg, node)
+            if pred(sdfg, state, node)
         ]
         num_satisfied = len(satisfied_dispatchers)
         if num_satisfied > 1:
@@ -402,28 +431,42 @@ class TargetDispatcher(object):
     # Dispatches copy code for a memlet
     def _get_copy_dispatcher(self, src_node, dst_node, edge, sdfg, dfg,
                              state_id, function_stream, output_stream):
-        """ 
-        (Internal) Returns a code generator that should be dispatched for a
-        memory copy operation. 
         """
+        (Internal) Returns a code generator that should be dispatched for a
+        memory copy operation.
+        """
+        src_is_data, dst_is_data = False, False
+        state_dfg = sdfg.node(state_id)
 
         if isinstance(src_node, nodes.CodeNode):
             src_storage = dtypes.StorageType.Register
         else:
             src_storage = src_node.desc(sdfg).storage
+            src_is_data = True
 
         if isinstance(dst_node, nodes.CodeNode):
             dst_storage = dtypes.StorageType.Register
         else:
             dst_storage = dst_node.desc(sdfg).storage
+            dst_is_data = True
+
+        # Skip copies to/from views where edge matches
+        if src_is_data and isinstance(src_node.desc(sdfg), dt.View):
+            e = sdutil.get_view_edge(state_dfg, src_node)
+            if e is edge:
+                return None
+        if dst_is_data and isinstance(dst_node.desc(sdfg), dt.View):
+            e = sdutil.get_view_edge(state_dfg, dst_node)
+            if e is edge:
+                return None
 
         if (isinstance(src_node, nodes.Tasklet)
                 and not isinstance(dst_node, nodes.Tasklet)):
             # Special case: Copying from a tasklet to an array, schedule of
             # the copy is in the copying tasklet
-            dst_schedule_node = dfg.entry_node(src_node)
+            dst_schedule_node = state_dfg.entry_node(src_node)
         else:
-            dst_schedule_node = dfg.entry_node(dst_node)
+            dst_schedule_node = state_dfg.entry_node(dst_node)
 
         if dst_schedule_node is not None:
             dst_schedule = dst_schedule_node.map.schedule
@@ -478,6 +521,8 @@ class TargetDispatcher(object):
         target = self._get_copy_dispatcher(src_node, dst_node, edge, sdfg, dfg,
                                            state_id, function_stream,
                                            output_stream)
+        if target is None:
+            return
 
         # Dispatch copy
         self._used_targets.add(target)
@@ -487,9 +532,9 @@ class TargetDispatcher(object):
     # Dispatches definition code for a memlet that is outgoing from a tasklet
     def dispatch_output_definition(self, src_node, dst_node, edge, sdfg, dfg,
                                    state_id, function_stream, output_stream):
-        """ 
-        Dispatches a code generator for an output memlet definition in a 
-        tasklet. 
+        """
+        Dispatches a code generator for an output memlet definition in a
+        tasklet.
         """
         target = self._get_copy_dispatcher(src_node, dst_node, edge, sdfg, dfg,
                                            state_id, function_stream,

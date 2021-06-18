@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 import dace.sdfg.nodes as nodes
@@ -11,11 +11,13 @@ N, M, O, P, Q, R = [dace.symbol(s) for s in ['N', 'M', 'O', 'P', 'Q', 'R']]
 
 
 @dace.program
-def test_program(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O],
-                 D: dace.float64[M], E: dace.float64[N], F: dace.float64[P],
-                 G: dace.float64[M], H: dace.float64[P], I: dace.float64[N],
-                 J: dace.float64[R], X: dace.float64[N], Y: dace.float64[M],
-                 Z: dace.float64[P]):
+def subgraph_fusion_parallel(A: dace.float64[N], B: dace.float64[M],
+                             C: dace.float64[O], D: dace.float64[M],
+                             E: dace.float64[N], F: dace.float64[P],
+                             G: dace.float64[M], H: dace.float64[P],
+                             I: dace.float64[N], J: dace.float64[R],
+                             X: dace.float64[N], Y: dace.float64[M],
+                             Z: dace.float64[P]):
 
     tmp1 = np.ndarray([N, M, O], dtype=dace.float64)
     for i, j, k in dace.map[0:N, 0:M, 0:O]:
@@ -67,7 +69,7 @@ def test_p1():
     Q.set(42)
     R.set(25)
 
-    sdfg = test_program.to_sdfg()
+    sdfg = subgraph_fusion_parallel.to_sdfg()
     sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
 
@@ -88,16 +90,19 @@ def test_p1():
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C, D=D, E=E, F=F, G=G, H=H, I=I, J=J, X=X, Y=Y, Z=Z,\
           N=N, M=M, O=O, P=P, R=R,Q=Q)
+    del csdfg
 
     subgraph = SubgraphView(state, [node for node in state.nodes()])
     expansion = MultiExpansion(subgraph)
     fusion = SubgraphFusion(subgraph)
 
-    assert MultiExpansion.can_be_applied(sdfg, subgraph)
-    expansion.apply(sdfg)
+    me = MultiExpansion(subgraph)
+    assert me.can_be_applied(sdfg, subgraph)
+    me.apply(sdfg)
 
-    assert SubgraphFusion.can_be_applied(sdfg, subgraph)
-    fusion.apply(sdfg)
+    sf = SubgraphFusion(subgraph)
+    assert sf.can_be_applied(sdfg, subgraph)
+    sf.apply(sdfg)
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C, D=D, E=E, F=F, G=G, H=H, I=I, J=J, X=X, Y=Y, Z=Z,\

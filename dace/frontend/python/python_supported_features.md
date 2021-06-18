@@ -104,7 +104,6 @@ Supported
 
 ### 6.7 Binary arithmetic operations
 Supported. Notable differences compared to the expected Python result:
-- Division between integers returns an integer (like in C/C++)
 - Modulo operator always returns a natural number (like in C/C++)
 
 ### 6.8 Shifting operations

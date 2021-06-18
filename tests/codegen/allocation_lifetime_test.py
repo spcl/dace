@@ -1,5 +1,7 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests different allocation lifetimes. """
+import pytest
+
 import dace
 from dace.codegen.targets import framecode
 from dace.sdfg import infer_types
@@ -131,9 +133,72 @@ def test_alloc_persistent_register():
         print('Exception caught, test passed')
 
 
+def test_alloc_persistent():
+    @dace.program
+    def persistentmem(output: dace.int32[1]):
+        tmp = dace.ndarray([1],
+                           output.dtype,
+                           lifetime=dace.AllocationLifetime.Persistent)
+        if output[0] == 1.0:
+            tmp[0] = 0
+        else:
+            tmp[0] += 3
+            output[0] = tmp[0]
+
+    # Repeatedly invoke program. Since memory is persistent, output is expected
+    # to increase with each call
+    csdfg = persistentmem.compile()
+    value = np.ones([1], dtype=np.int32)
+    csdfg(output=value)
+    assert value[0] == 1
+    value[0] = 2
+    csdfg(output=value)
+    assert value[0] == 3
+    csdfg(output=value)
+    assert value[0] == 6
+
+    del csdfg
+
+
+def test_alloc_persistent_threadlocal():
+    @dace.program
+    def persistentmem(output: dace.int32[2]):
+        tmp = dace.ndarray([2],
+                           output.dtype,
+                           storage=dace.StorageType.CPU_ThreadLocal,
+                           lifetime=dace.AllocationLifetime.Persistent)
+        if output[0] == 1.0:
+            for i in dace.map[0:2]:
+                tmp[i] = i
+        else:
+            for i in dace.map[0:2]:
+                tmp[i] += 3
+                output[i] = tmp[i]
+
+    # Repeatedly invoke program. Since memory is persistent, output is expected
+    # to increase with each call
+    csdfg = persistentmem.compile()
+    value = np.ones([2], dtype=np.int32)
+    csdfg(output=value)
+    assert value[0] == 1
+    assert value[1] == 1
+    value[0] = 4
+    value[1] = 2
+    csdfg(output=value)
+    assert value[0] == 3
+    assert value[1] == 4
+    csdfg(output=value)
+    assert value[0] == 6
+    assert value[1] == 7
+
+    del csdfg
+
+
 if __name__ == '__main__':
     test_determine_alloc_scope()
     test_determine_alloc_state()
     test_determine_alloc_sdfg()
     test_determine_alloc_global()
     test_alloc_persistent_register()
+    test_alloc_persistent()
+    test_alloc_persistent_threadlocal()

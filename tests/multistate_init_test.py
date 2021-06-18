@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -6,7 +6,7 @@ W = dace.symbol('W')
 
 
 @dace.program
-def prog(A):
+def multistate_init(A):
     number = dace.define_local([1], dace.float32)
 
     @dace.map(_[0:W])
@@ -26,7 +26,7 @@ def prog(A):
         out = 2 * inp
 
 
-if __name__ == '__main__':
+def test():
     W.set(3)
 
     A = dace.ndarray([W])
@@ -35,9 +35,13 @@ if __name__ == '__main__':
     A[:] = np.mgrid[0:W.get()]
     regression[:] = A[:]
 
-    prog(A, W=W)
+    multistate_init(A, W=W)
 
     diff = np.linalg.norm(4 * regression - A) / W.get()
     print("Difference:", diff)
     print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test()

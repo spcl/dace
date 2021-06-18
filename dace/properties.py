@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import OrderedDict
 import copy
@@ -66,22 +66,22 @@ class Property:
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
     def __init__(
-        self,
-        getter=None,
-        setter=None,
-        dtype=None,
-        default=None,
-        from_string=None,
-        to_string=None,
-        from_json=None,
-        to_json=None,
-        meta_to_json=None,
-        choices=None,  # Values must be present in this enum
-        unmapped=False,  # Don't enforce 1:1 mapping with a member variable
-        allow_none=False,
-        indirected=False,  # This property belongs to a different class
-        category='General',
-        desc=""):
+            self,
+            getter=None,
+            setter=None,
+            dtype=None,
+            default=None,
+            from_string=None,
+            to_string=None,
+            from_json=None,
+            to_json=None,
+            meta_to_json=None,
+            choices=None,  # Values must be present in this enum
+            unmapped=False,  # Don't enforce 1:1 mapping with a member variable
+            allow_none=False,
+            indirected=False,  # This property belongs to a different class
+            category='General',
+            desc=""):
 
         self._getter = getter
         self._setter = setter
@@ -536,7 +536,7 @@ class ListProperty(Property):
             return [elem.to_json() for elem in l]
         # If elements are one of the JSON basic types, use directly
         if self.element_type in (int, float, list, tuple, dict):
-            return l
+            return list(map(self.element_type, l))
         # Otherwise, convert to strings
         return list(map(str, l))
 
@@ -577,7 +577,7 @@ class TransformationHistProperty(Property):
     def to_json(self, hist):
         if hist is None:
             return None
-        return [elem.to_json() for elem in hist]
+        return [elem.to_json() if elem is not None else None for elem in hist]
 
     def from_json(self, data, sdfg=None):
         if data is None:
@@ -701,6 +701,38 @@ class DictProperty(Property):
 ###############################################################################
 
 
+class EnumProperty(Property):
+
+    def __init__(self, dtype, *args, **kwargs):
+        kwargs['dtype'] = dtype
+        super().__init__(*args, **kwargs)
+
+        def f(s, *args, **kwargs):
+            if s is None:
+                return None
+            try:
+                self._undefined_val = None
+                return dtype[s]
+            except KeyError:
+                self._undefined_val = s
+                return dtype['Undefined']
+
+        self._choices = dtype
+        self._from_json = f
+        self._from_string = f
+
+        self._undefined_val = None
+
+        def g(obj):
+            if self._undefined_val is None:
+                return dace.serialize.to_json(obj)
+            else:
+                return self._undefined_val
+
+        self._to_json = g
+        self._to_string = g
+
+
 class SDFGReferenceProperty(Property):
     def to_json(self, obj):
         if obj is None:
@@ -779,25 +811,25 @@ class DebugInfoProperty(Property):
         info_available = False
         di = None
 
-        m = re.search("file: (\w+)", s)
+        m = re.search(r"file: (\w+)", s)
         if m is not None:
             info_available = True
             f = sl = m.group(1)
-        m = re.search("from line: (\d+)", s)
+        m = re.search(r"from line: (\d+)", s)
         if m is not None:
             sl = m.group(1)
             el = sl
             info_available = True
-        m = re.search("to line: (\d+)", s)
+        m = re.search(r"to line: (\d+)", s)
         if m is not None:
             el = m.group(1)
             info_available = True
-        m = re.search("from col: (\d+)", s)
+        m = re.search(r"from col: (\d+)", s)
         if m is not None:
             sc = m.group(1)
             ec = sc
             info_available = True
-        m = re.search("to col: (\d+)", s)
+        m = re.search(r"to col: (\d+)", s)
         if m is not None:
             ec = m.group(1)
             info_available = True
@@ -809,19 +841,19 @@ class DebugInfoProperty(Property):
 class SetProperty(Property):
     """Property for a set of elements of one type, e.g., connectors. """
     def __init__(
-        self,
-        element_type,
-        getter=None,
-        setter=None,
-        default=None,
-        from_string=None,
-        to_string=None,
-        from_json=None,
-        to_json=None,
-        unmapped=False,  # Don't enforce 1:1 mapping with a member variable
-        allow_none=False,
-        desc="",
-        **kwargs):
+            self,
+            element_type,
+            getter=None,
+            setter=None,
+            default=None,
+            from_string=None,
+            to_string=None,
+            from_json=None,
+            to_json=None,
+            unmapped=False,  # Don't enforce 1:1 mapping with a member variable
+            allow_none=False,
+            desc="",
+            **kwargs):
         if to_json is None:
             to_json = self.to_json
         super(SetProperty, self).__init__(getter=getter,
@@ -849,7 +881,7 @@ class SetProperty(Property):
 
     @staticmethod
     def from_string(s):
-        return [eval(i) for i in re.sub("[\{\}\(\)\[\]]", "", s).split(",")]
+        return [eval(i) for i in re.sub(r"[\{\}\(\)\[\]]", "", s).split(",")]
 
     def to_json(self, l):
         return list(sorted(l))
@@ -1000,6 +1032,10 @@ class CodeBlock(object):
             lang = dace.dtypes.Language.Python
         elif lang.endswith("CPP"):
             lang = dace.dtypes.Language.CPP
+        elif lang.endswith("sv") or lang.endswith("systemverilog"):
+            lang = dace.dtypes.Language.SystemVerilog
+        elif lang.endswith("MLIR"):
+            lang = dace.dtypes.Language.MLIR
 
         try:
             cdata = tmp['string_data']
@@ -1049,6 +1085,10 @@ class CodeProperty(Property):
             lang = dace.dtypes.Language.Python
         elif lang.endswith("CPP"):
             lang = dace.dtypes.Language.CPP
+        elif lang.endswith("SystemVerilog"):
+            lang = dace.dtypes.Language.SystemVerilog
+        elif lang.endswith("MLIR"):
+            lang = dace.dtypes.Language.MLIR
 
         try:
             cdata = tmp['string_data']
@@ -1132,11 +1172,10 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        if (not isinstance(val, sp.expr.Expr) and not isinstance(val, Integral)
-                and not isinstance(val, str)):
-            raise TypeError(
-                "Property {} must an int or symbolic expression".format(
-                    self.attr_name))
+        if (val is not None
+                and not isinstance(val, (sp.Expr, Number, np.bool_, str))):
+            raise TypeError(f"Property {self.attr_name} must be a literal "
+                            f"or symbolic expression, got: {type(val)}")
         if isinstance(val, (Number, str)):
             val = SymbolicProperty.from_string(str(val))
 
@@ -1335,3 +1374,26 @@ class LibraryImplementationProperty(Property):
     """
     def typestring(self):
         return "LibraryImplementationProperty"
+
+
+class DataclassProperty(Property):
+    """
+    Property that stores pydantic models or dataclasses.
+    """
+    @staticmethod
+    def to_string(obj):
+        return str(obj)
+
+    @staticmethod
+    def from_string(s):
+        raise TypeError('Dataclasses cannot be loaded from a string, only JSON')
+
+    def to_json(self, obj):
+        if obj is None:
+            return None
+        return obj.dict()
+
+    def from_json(self, d, sdfg=None):
+        if d is None:
+            return None
+        return self.dtype.parse_obj(d)

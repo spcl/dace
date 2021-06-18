@@ -1,8 +1,8 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+from dace.transformation.dataflow import GPUTransformMap, InLocalStorage
+import pytest
 
 H = dace.symbol('H')
 W = dace.symbol('W')
@@ -19,7 +19,7 @@ def cudahello(V, Vout):
             out = in_V * 2.0
 
 
-if __name__ == "__main__":
+def _test(sdfg):
     W.set(128)
     H.set(64)
 
@@ -30,9 +30,36 @@ if __name__ == "__main__":
     V[:] = np.random.rand(H.get(), W.get()).astype(dace.float64.type)
     Vout[:] = dace.float64(0)
 
-    cudahello(V, Vout)
+    sdfg(V=V, Vout=Vout, H=H, W=W)
 
     diff = np.linalg.norm(2 * V - Vout) / (H.get() * W.get())
     print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+def test_cpu():
+    sdfg = cudahello.to_sdfg()
+    sdfg.name = "cuda_smem2d_cpu"
+    _test(sdfg)
+
+
+@pytest.mark.gpu
+def test_gpu():
+    sdfg = cudahello.to_sdfg()
+    sdfg.name = "cuda_smem2d_gpu"
+    _test(sdfg)
+
+
+@pytest.mark.gpu
+def test_gpu_localstorage():
+    sdfg = cudahello.to_sdfg()
+    sdfg.name = "cuda_smem2d_gpu_localstorage"
+    assert sdfg.apply_transformations([GPUTransformMap, InLocalStorage],
+                                      options=[{}, {
+                                          'array': 'gpu_V'
+                                      }]) == 2
+    _test(sdfg)
+
+
+if __name__ == "__main__":
+    test_cpu()

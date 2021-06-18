@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace as dp
 
 W = dp.symbol('W')
@@ -20,9 +20,13 @@ def bla(input, output):
 
 
 @dp.program
-def myprogram(A, B):
+def multi_inline(A, B):
     bla(A, B)
 
 
-if __name__ == '__main__':
-    myprogram.compile(dp.float32[W, H], dp.float32[H, W])
+def test():
+    multi_inline.compile(dp.float32[W, H], dp.float32[H, W])
+
+
+if __name__ == "__main__":
+    test()

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
 import dace
 from dace.sdfg import nodes
@@ -144,15 +144,20 @@ def test_inputs_outputs():
     C_cpy = deepcopy(C)
     D_cpy = deepcopy(D)
     csdfg(in1=A, in2=B, out1=C_cpy, out2=D_cpy)
+    del csdfg
     assert np.allclose(C_cpy, expected_C)
     assert np.allclose(D_cpy, expected_D)
 
+    subgraph = SubgraphView(sdfg.nodes()[0], sdfg.nodes()[0].nodes())
+    sf = SubgraphFusion(subgraph)
+    assert sf.can_be_applied(sdfg, subgraph)
     fusion(sdfg, sdfg.nodes()[0], None)
 
     C_cpy = deepcopy(C)
     D_cpy = deepcopy(D)
     csdfg = sdfg.compile()
     csdfg(in1=A, in2=B, out1=C_cpy, out2=D_cpy)
+    del csdfg
     assert np.allclose(C_cpy, expected_C)
     assert np.allclose(D_cpy, expected_D)
 
