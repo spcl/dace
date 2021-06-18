@@ -668,14 +668,24 @@ class Range(Subset):
         return non_ones
 
     def unsqueeze(self, axes):
+        # result = []
+        # axis_offset = len(axes) - 1
+        # for axis in reversed(sorted(axes)):
+        #     self.ranges.insert(axis, (0, 0, 1))
+        #     self.tile_sizes.insert(axis, 1)
+
+        #     result.append(axis + axis_offset)
+        #     axis_offset -= 1
+        # return result
         result = []
-        axis_offset = len(axes) - 1
-        for axis in reversed(sorted(axes)):
+        for axis in sorted(axes):
             self.ranges.insert(axis, (0, 0, 1))
             self.tile_sizes.insert(axis, 1)
 
-            result.append(axis + axis_offset)
-            axis_offset -= 1
+            if len(result) > 0 and result[-1] >= axis:
+                result.append(result[-1] + 1)
+            else:
+                result.append(axis)
         return result
 
     def pop(self, dimensions):
@@ -936,12 +946,13 @@ class Indices(Subset):
     
     def unsqueeze(self, axes):
         result = []
-        axis_offset = len(axes) - 1
-        for axis in reversed(sorted(axes)):
-            self.indices.insert(axis, 0)
+        for axis in sorted(axes):
+            self.ranges.insert(axis, 0)
 
-            result.append(axis + axis_offset)
-            axis_offset -= 1
+            if len(result) > 0 and result[-1] >= axis:
+                result.append(result[-1] + 1)
+            else:
+                result.append(axis)
         return result
 
     def replace(self, repl_dict):
