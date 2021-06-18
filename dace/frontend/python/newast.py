@@ -29,7 +29,8 @@ from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
-from dace.sourcemap import temporaryInfo
+
+from dace import sourcemap
 
 import numpy
 import sympy
@@ -153,7 +154,7 @@ def parse_dace_program(f,
         @rtype: SDFG
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
-    
+
     # Save in tmp file for improved source mapping
     other_functions = [func for func in other_sdfgs if not func == name]
     data = {
@@ -162,7 +163,7 @@ def parse_dace_program(f,
         "src_file": path.abspath(src_file),
         "other_sdfgs": other_functions
     }
-    temporaryInfo(name, data)
+    sourcemap.temporaryInfo(name, data)
 
     # Resolve data structures
     src_ast = StructTransformer(global_vars).visit(src_ast)
@@ -2327,9 +2328,9 @@ class ProgramVisitor(ExtNodeVisitor):
                             raise DaceSyntaxError(
                                 self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols if not a scalar
-                        if (astr not in self.sdfg.symbols and not (
-                                astr in self.variables or
-                                astr in self.sdfg.arrays)):
+                        if (astr not in self.sdfg.symbols
+                                and not (astr in self.variables
+                                         or astr in self.sdfg.arrays)):
                             self.sdfg.add_symbol(astr, atom.dtype)
 
             # Add an initial loop state with a None last_state (so as to not

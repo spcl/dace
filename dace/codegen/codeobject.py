@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import re
-from dace.sourcemap import MapCpp
+from dace import sourcemap
 from dace.properties import (Property, DictProperty, SetProperty,
                              make_properties)
 
@@ -54,8 +54,8 @@ class CodeObject(object):
         self.linkable = linkable
         self.environments = environments or set()
 
-        if (language == "cpp") & (title == "Frame"):
-            MapCpp(code, name, self.target.target_name)
+        if language == 'cpp' and title == 'Frame':
+            sourcemap.MapCpp(code, name, self.target.target_name)
 
     @property
     def clean_code(self):
