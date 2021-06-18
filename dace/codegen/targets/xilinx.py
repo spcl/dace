@@ -261,9 +261,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                              var_name: str,
                              subset_info: Union[int, subsets.Subset],
                              sdfg: SDFG,
-                             is_output: bool ,
+                             is_output: bool,
                              with_vectorization: bool,
-                             interface_id: "Union[int, list[int]]"=None):
+                             interface_id: "Union[int, list[int]]" = None):
         if isinstance(data, dt.Array):
             var_name = cpp.ptr(var_name, data, subset_info, sdfg, is_output,
                                None, None, True, interface_id)
@@ -435,13 +435,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                    var_name=None):
         pass
 
-    def generate_no_dependence_post(self,
-                                    kernel_stream,
-                                    sdfg: SDFG,
-                                    state_id: int,
-                                    node: nodes.Node,
-                                    var_name: str,
-                                    accessed_subset: Union[int, subsets.Subset]=None):
+    def generate_no_dependence_post(
+            self,
+            kernel_stream,
+            sdfg: SDFG,
+            state_id: int,
+            node: nodes.Node,
+            var_name: str,
+            accessed_subset: Union[int, subsets.Subset] = None):
         '''
         Adds post loop pragma for ignoring loop carried dependencies on a given variable
         '''

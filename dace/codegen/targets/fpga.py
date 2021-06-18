@@ -644,8 +644,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                             okhbm = "hbmbank" in outer_desc.location and outer_desc.location[
                                 "hbmbank"] == bank
                         if banktype == "DDR":
-                            okbank = "bank" in outer_desc.location and str(outer_desc.location[
-                                "bank"]) == str(bank)
+                            okbank = "bank" in outer_desc.location and str(
+                                outer_desc.location["bank"]) == str(bank)
                         if not (okhbm or okbank):
                             raise cgx.CodegenError(
                                 "Memory bank allocation must be present on "

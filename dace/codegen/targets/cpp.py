@@ -231,7 +231,7 @@ def ptr(name: str,
         dispatcher=None,
         ancestor: int = None,
         is_array_interface: bool = False,
-        interface_id: "Union[int, list[int]]" =None) -> str:
+        interface_id: "Union[int, list[int]]" = None) -> str:
     """
     Returns a string that points to the data based on its name, and various other conditions
     that may apply for that data field.
@@ -274,15 +274,16 @@ def ptr(name: str,
     return name
 
 
-def emit_memlet_reference(dispatcher,
-                          sdfg: SDFG,
-                          memlet: mmlt.Memlet,
-                          pointer_name: str,
-                          conntype: dtypes.typeclass,
-                          ancestor: int = 1,
-                          is_write: bool=None,
-                          device_code: bool=False,
-                          bank_info: Union[int, subsets.Subset]=None) -> Tuple[str, str, str]:
+def emit_memlet_reference(
+        dispatcher,
+        sdfg: SDFG,
+        memlet: mmlt.Memlet,
+        pointer_name: str,
+        conntype: dtypes.typeclass,
+        ancestor: int = 1,
+        is_write: bool = None,
+        device_code: bool = False,
+        bank_info: Union[int, subsets.Subset] = None) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -1455,8 +1456,8 @@ def array_interface_variable(var_name: str,
                              is_write: bool,
                              dispatcher: Optional["TargetDispatcher"],
                              ancestor: int = 0,
-                             interface_id: "Union[int, list[int]]"=None,
-                             accessed_subset: int=None):
+                             interface_id: "Union[int, list[int]]" = None,
+                             accessed_subset: int = None):
     """
     Generates the variable name of an ArrayInterface variable. Used by ptr
     only at the moment.
