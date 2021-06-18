@@ -412,9 +412,15 @@ class TargetDispatcher(object):
         """ Dispatches a code generator for data allocation. """
         self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
+        if datadesc.lifetime is dtypes.AllocationLifetime.Persistent:
+            declaration_stream = CodeIOStream()
+            callsite_stream = self.frame._initcode
+        else:
+            declaration_stream = callsite_stream
+
         self._array_dispatchers[datadesc.storage].allocate_array(
             sdfg, dfg, state_id, node, datadesc, function_stream,
-            callsite_stream)
+            declaration_stream, callsite_stream)
 
     def dispatch_deallocate(self, sdfg: SDFG, dfg: ScopeSubgraphView,
                             state_id: int, node: nodes.AccessNode,
@@ -423,6 +429,9 @@ class TargetDispatcher(object):
                             callsite_stream: prettycode.CodeIOStream):
         """ Dispatches a code generator for a data deallocation. """
         self._used_targets.add(self._array_dispatchers[datadesc.storage])
+
+        if datadesc.lifetime is dtypes.AllocationLifetime.Persistent:
+            callsite_stream = self.frame._exitcode
 
         self._array_dispatchers[datadesc.storage].deallocate_array(
             sdfg, dfg, state_id, node, datadesc, function_stream,
