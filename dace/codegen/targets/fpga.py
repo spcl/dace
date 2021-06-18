@@ -2055,7 +2055,6 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         return self._cpu_codegen.generate_nsdfg_arguments(
             sdfg, state, dfg, node)
 
-
     def generate_host_function_boilerplate(self, sdfg, state,
                                            nested_global_transients,
                                            host_code_stream):
