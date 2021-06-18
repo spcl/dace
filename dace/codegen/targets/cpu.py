@@ -317,7 +317,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                               ctypedef)
 
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-            or (nodedesc.storage == dtypes.StorageType.Register and
+              or (nodedesc.storage == dtypes.StorageType.Register and
                   ((symbolic.issymbolic(arrsize, sdfg.constants)) or
                    ((arrsize_bytes > Config.get(
                        "compiler", "max_stack_array_size")) == True)))):
