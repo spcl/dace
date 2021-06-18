@@ -438,14 +438,14 @@ def _is_c_contiguous(shape, strides):
 
 
 def is_1d_nostrided_copy(
-    copy_shape,
-    src_shape,
-    src_strides,
-    dst_shape,
-    dst_strides,
-    subset,
-    src_subset,
-    dst_subset,
+    copy_shape: Iterable,
+    src_shape: Iterable,
+    src_strides: Iterable,
+    dst_shape: Iterable,
+    dst_strides: Iterable,
+    subset: subsets.Subset,
+    src_subset: subsets.Subset,
+    dst_subset: subsets.Subset,
 ):
     """ 
         :return: True if this is a 1d copy without strides, False otherwise
@@ -494,14 +494,14 @@ def is_1d_nostrided_copy(
 
 
 def ndcopy_to_strided_copy(
-    copy_shape,
-    src_shape,
-    src_strides,
-    dst_shape,
-    dst_strides,
-    subset,
-    src_subset,
-    dst_subset,
+    copy_shape: Iterable,
+    src_shape: Iterable,
+    src_strides: Iterable,
+    dst_shape: Iterable,
+    dst_strides: Iterable,
+    subset: subsets.Subset,
+    src_subset: subsets.Subset,
+    dst_subset: subsets.Subset,
 ):
     """ Detects situations where an N-dimensional copy can be degenerated into
         a (faster) 1D copy or 2D strided copy. Returns new copy
