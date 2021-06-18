@@ -9,7 +9,7 @@ import aenum
 from dace import config, data as dt, dtypes, nodes, registry
 from dace.codegen import exceptions as cgx, prettycode
 from dace.codegen.targets import target
-from dace.sdfg import utils as sdutil, SDFG, ScopeSubgraphView
+from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
 from typing import Tuple
 
 
@@ -51,9 +51,12 @@ class DefinedMemlets:
         except KeyError:
             return False
 
-    def get(self, name: str, ancestor: int = 0) -> Tuple[DefinedType, str]:
+    def get(self, name: str,
+            ancestor: int = 0,
+            is_global: bool = False) -> Tuple[DefinedType, str]:
         last_visited_scope = None
-        for _, scope, can_access_parent in reversed(self._scopes):
+        for parent, scope, can_access_parent in reversed(self._scopes):
+            last_parent = parent
             last_visited_scope = scope
             if ancestor > 0:
                 ancestor -= 1
@@ -64,14 +67,23 @@ class DefinedMemlets:
                 break
 
         # Search among globally defined variables (top scope), if not already visited
-        # TODO: The following change is made under the assumption that top-level
-        # scopes are those that have 'None' parent.
+        # TODO: The following change makes it so we look in all top scopes, not
+        # just the very top-level one. However, it we are in a nested SDFG,
+        # then we must limist the search to that SDFG and only. There is one
+        # exception, when the data has Global or Persistent allocation lifetime.
+        # Then, we expect it to be only in the very top-level scope.
         # if last_visited_scope != self._scopes[0]:
-            # if name in self._scopes[0][1]:
-                # return self._scopes[0][1][name]
+        #     if name in self._scopes[0][1]:
+        #         return self._scopes[0][1][name]
+        if is_global:
+            last_parent = None
+        if last_parent:
+            if isinstance(last_parent, SDFGState):
+                last_parent = last_parent.parent
         for parent, scope, _ in self._scopes:
-            if not parent and name in scope:
-                return scope[name]
+            if not last_parent or parent == last_parent:
+                if name in scope:
+                    return scope[name]
 
         raise KeyError("Variable {} has not been defined".format(name))
 
