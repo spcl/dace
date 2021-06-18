@@ -933,16 +933,15 @@ class Indices(Subset):
             squeezed_indices = [0]
         self.indices = squeezed_indices
         return non_ones
-
+    
     def unsqueeze(self, axes):
         result = []
-        for axis in sorted(axes):
+        axis_offset = len(axes) - 1
+        for axis in reversed(sorted(axes)):
             self.indices.insert(axis, 0)
 
-            if len(result) > 0 and result[-1] >= axis:
-                result.append(result[-1] + 1)
-            else:
-                result.append(axis)
+            result.append(axis + axis_offset)
+            axis_offset -= 1
         return result
 
     def replace(self, repl_dict):
