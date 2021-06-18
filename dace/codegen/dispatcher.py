@@ -64,9 +64,14 @@ class DefinedMemlets:
                 break
 
         # Search among globally defined variables (top scope), if not already visited
-        if last_visited_scope != self._scopes[0]:
-            if name in self._scopes[0][1]:
-                return self._scopes[0][1][name]
+        # TODO: The following change is made under the assumption that top-level
+        # scopes are those that have 'None' parent.
+        # if last_visited_scope != self._scopes[0]:
+            # if name in self._scopes[0][1]:
+                # return self._scopes[0][1][name]
+        for parent, scope, _ in self._scopes:
+            if not parent and name in scope:
+                return scope[name]
 
         raise KeyError("Variable {} has not been defined".format(name))
 
