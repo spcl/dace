@@ -1103,7 +1103,7 @@ def modify_subset_magic(array: dt.Data,
 
 
 def get_multibank_ranges_from_subset(
-        subset: sbs.Subset,
+        subset: Union[sbs.Subset, str],
         sdfg: SDFG,
         assume_single: bool = False,
         codegenlocation: str = None) -> Tuple[int, int]:
@@ -1117,9 +1117,11 @@ def get_multibank_ranges_from_subset(
     :returns: (low, high) where low = the lowest accessed bank and high the 
         highest accessed bank + 1.
     """
+    if isinstance(subset, str):
+        subset = sbs.Range.from_string(subset)
     low, high, stride = subset[0]
     try:
-        if (stride != 1):
+        if stride != 1:
             raise ValueError(f"Cannot handle strided HBM-subset")
         try:
             low = int(symbolic.resolve_symbol_to_constant(low, sdfg))

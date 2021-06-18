@@ -492,11 +492,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         for is_output, dataname, data, interface in parameters:
             if isinstance(data, dt.Array):
                 memorybank = bank_assignments[dataname]
-                if (isinstance(memorybank[1], subsets.Range)):
+                if memorybank[0] == "HBM":
                     lowest_bank_index, _ = utils.get_multibank_ranges_from_subset(
                         memorybank[1], sdfg, False, dataname)
                 else:
-                    lowest_bank_index = memorybank[1]
+                    lowest_bank_index = int(memorybank[1])
                 for bank in utils.iterate_multibank_arrays(
                         dataname, data, sdfg):
                     kernel_arg = self.make_kernel_argument(

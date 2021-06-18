@@ -66,7 +66,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                     raise InvalidSDFGError("bank assignment must be an integer",
                                            sdfg, None)
             elif sdutil.is_HBM_array(desc):
-                if not isinstance(desc.location["hbmbank"], subsets.Range):
+                try:
+                    tmp = subsets.Range.from_string(str(desc.location["hbmbank"]))
+                except:
                     raise InvalidSDFGError(
                         "locationproperty 'hbmbank' must be of type subsets.Range"
                         f" for array {name}", sdfg, None)
