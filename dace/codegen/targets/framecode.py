@@ -468,7 +468,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 if first_node_instance is None:
                     continue
 
-                definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
+                # TODO: The change below was done so that test_alloc_persistent
+                # passes (tests/codegen/allocation_lifetime_test.py)
+                # definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
+                definition = desc.as_arg(name=f'{name}') + ';'
                 self.statestruct.append(definition)
 
                 self.to_allocate[top_sdfg].append(
