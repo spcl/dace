@@ -951,7 +951,6 @@ def isconstant(var):
     return type(var) in _CONSTANT_TYPES
 
 
-bool = typeclass(numpy.bool_)
 bool_ = typeclass(numpy.bool_)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
@@ -989,6 +988,7 @@ class Typeclasses(aenum.AutoNumberEnum):
 
 
 DTYPE_TO_TYPECLASS = {
+    bool: typeclass(bool),
     int: typeclass(int),
     float: typeclass(float),
     complex: typeclass(complex),
@@ -1276,3 +1276,9 @@ def is_array(obj: Any) -> bool:
     if hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__'):
         return hasattr(obj, 'shape') and len(obj.shape) > 0
     return False
+
+
+
+# Since this overrides the builtin bool, this should be at the end of the file
+bool = typeclass(numpy.bool_)
+
