@@ -454,14 +454,14 @@ def is_1d_nostrided_copy(
 
 
 def ndcopy_to_strided_copy(
-    copy_shape,
-    src_shape,
-    src_strides,
-    dst_shape,
-    dst_strides,
-    subset,
-    src_subset,
-    dst_subset,
+    copy_shape: Iterable,
+    src_shape: Iterable,
+    src_strides: Iterable,
+    dst_shape: Iterable,
+    dst_strides: Iterable,
+    subset: subsets.Subset,
+    src_subset: subsets.Subset,
+    dst_subset: subsets.Subset,
 ):
     """ Detects situations where an N-dimensional copy can be degenerated into
         a (faster) 1D copy or 2D strided copy. Returns new copy
@@ -474,14 +474,8 @@ def ndcopy_to_strided_copy(
     if any(ts != 1 for ts in subset.tile_sizes):
         return None
 
-    if is_1d_nostrided_copy(copy_shape,
-        src_shape,
-        src_strides,
-        dst_shape,
-        dst_strides,
-        subset,
-        src_subset,
-        dst_subset):
+    if is_1d_nostrided_copy(copy_shape, src_shape, src_strides, dst_shape,
+                            dst_strides, subset, src_subset, dst_subset):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
