@@ -106,6 +106,10 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                          unset_str.format("XCL_EMULATION_MODE"))
         set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
                          is not None else unset_str.format("XILINX_SDX"))
+        set_env_vars += set_str.format(
+            "EMCONFIG_PATH", "DACE_BINARY_DIR"
+        ) if execution_mode == 'hardware_emulation' else unset_str.format(
+            "EMCONFIG_PATH")
 
         host_code = CodeIOStream()
         host_code.write("""\
