@@ -78,8 +78,6 @@ def check_host2dev1():
     s, a, _ = mkc(sdfg, None, "a", "b", StorageType.Default,
                   StorageType.FPGA_Global, [5, 5], [3, 3],
                   "a[2:4, 2:4]->1:3, 0:2")
-
-    #Dummy copy on FPGA because otherwise it will not compile
     s, _, _ = mkc(sdfg, s, "b", "z", None, StorageType.FPGA_Global, None,
                   [3, 3], "b")
 
@@ -93,8 +91,6 @@ def check_dev2host1():
     sdfg = dace.SDFG("d2h1")
     s, a, _ = mkc(sdfg, None, "a", "b", StorageType.Default,
                   StorageType.FPGA_Global, [5, 5, 5], [5, 5, 5], "a")
-
-    #Dummy copy on FPGA because otherwise it will not compile
     s, _, _ = mkc(sdfg, s, "b", "z", None, StorageType.FPGA_Global, None,
                   [5, 5, 5], "b")
 
@@ -111,8 +107,6 @@ def check_dev2dev1():
     s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global, None,
                   [10], "x[1:5, 2, 2]->2:6")
     s.location["is_FPGA_kernel"] = 0
-
-    #Dummy copy on FPGA because otherwise it will not compile
     s, _, _ = mkc(sdfg, s, "y", "z", None, StorageType.FPGA_Global, None,
                   [10], "y", None)
 
@@ -122,7 +116,37 @@ def check_dev2dev1():
     sdfg(a=a, c=c)
     assert np.allclose(c[2:6], a[1:5, 2, 2])
 
+def checkhost2dev2():
+    sdfg = dace.SDFG("h2d2")
+    s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
+        StorageType.FPGA_Global, [7, 4, 5], [7, 4, 5], "a")
+    s, _, _ = mkc(sdfg, s, "x", "z", None, StorageType.FPGA_Global, None,
+        [7, 4, 5], "x", None)
+    s, _, c = mkc(sdfg, s, "z", "c", None, StorageType.Default, None, [6, 3, 4],
+                  "z[1:5, 1:4, 1:4]->1:5, 0:3, 1:4")
+
+    sdfg(a=a, c=c)
+    assert np.allclose(a[1:5, 1:4, 1:4], c[1:5, 0:4, 1:4])
+
+def checkdev2host2():
+    sdfg = dace.SDFG("d2h2")
+    s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
+        StorageType.FPGA_Global, [40], [5, 5], "a[5:30]")
+    s, _, _ = mkc(sdfg, s, "x", "z", None, StorageType.FPGA_Global, None,
+        [5, 5], "x", None)
+    s, _, c = mkc(sdfg, s, "z", "c", None, StorageType.Default, None,
+        [9, 6], "z[0:5, 0:5]->2:7, 1:6")
+    s, _, c = mkc(sdfg, s, "z", "c", None, StorageType.Default, None,
+        [9, 6], "z[3:5, 0:5]->0:2, 0:5")
+
+    sdfg(a=a, c=c)
+    expect = np.reshape(a[5:30], (5, 5), order='C')
+    assert np.allclose(expect, c[2:7, 1:6])
+    assert np.allclose(expect[3:5, 0:5], c[0:2, 0:5])
+
 if __name__ == "__main__":
     check_host2dev1()
     check_dev2host1()
     check_dev2dev1()
+    checkhost2dev2()
+    checkdev2host2()
