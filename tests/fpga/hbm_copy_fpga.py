@@ -75,7 +75,7 @@ def mkc(sdfg: dace.SDFG,
             pass
     return (state, aNpArr, bNpArr)
 
-
+"""
 def check_host2copy1():
     sdfg = dace.SDFG("ch2c1")
     s, a, _ = mkc(sdfg, None, "a", "b", StorageType.Default,
@@ -146,7 +146,7 @@ def check_dev2dev1():
     expect[0, 0:5] = 3
     sdfg(a=a, c=c)
     assert np.allclose(c[0, 0:5], expect[0, 0:5])
-
+"""
 
 def check_hbm2hbm1():
     sdfg = dace.SDFG("hbm2hbm1")
@@ -174,7 +174,6 @@ def check_hbm2hbm1():
     sdfg(a=a, c=c)
     assert np.allclose(c[0, 1:4, 1:4, 1], expect[0, 1:4, 1:4, 1])
 
-
 def check_hbm2ddr1():
     sdfg = dace.SDFG("hbm2ddr1")
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
@@ -198,8 +197,5 @@ def check_hbm2ddr1():
 
 
 if __name__ == "__main__":
-    check_host2copy1()
-    check_dev2host1()
-    check_dev2dev1()
     check_hbm2hbm1()
     check_hbm2ddr1()
