@@ -453,7 +453,6 @@ def is_1d_nostrided_copy(
     return cornercase1 or cornercase2
 
 
-#TODO: Rewrite this function to use is_1d_nostrided_copy
 def ndcopy_to_strided_copy(
     copy_shape,
     src_shape,
@@ -475,41 +474,14 @@ def ndcopy_to_strided_copy(
     if any(ts != 1 for ts in subset.tile_sizes):
         return None
 
-    # If the copy is contiguous, the difference between the first and last
-    # pointers should be the shape of the copy
-    first_src_index = src_subset.at([0] * src_subset.dims(), src_strides)
-    first_dst_index = dst_subset.at([0] * dst_subset.dims(), dst_strides)
-    last_src_index = src_subset.at([d - 1 for d in src_subset.size()],
-                                   src_strides)
-    last_dst_index = dst_subset.at([d - 1 for d in dst_subset.size()],
-                                   dst_strides)
-    copy_length = functools.reduce(lambda x, y: x * y, copy_shape)
-    src_copylen = last_src_index - first_src_index + 1
-    dst_copylen = last_dst_index - first_dst_index + 1
-
-    # Make expressions symbolic and simplify
-    copy_length = symbolic.pystr_to_symbolic(copy_length).simplify()
-    src_copylen = symbolic.pystr_to_symbolic(src_copylen).simplify()
-    dst_copylen = symbolic.pystr_to_symbolic(dst_copylen).simplify()
-
-    # Detect 1D copies. The first condition is the general one, whereas the
-    # second one applies when the arrays are completely equivalent in strides
-    # and shapes to the copy. The second condition is there because sometimes
-    # the symbolic math engine fails to produce the same expressions for both
-    # arrays.
-    if (tuple(src_strides) == tuple(dst_strides)
-            and ((src_copylen == copy_length and dst_copylen == copy_length) or
-                 (tuple(src_shape) == tuple(copy_shape)
-                  and tuple(dst_shape) == tuple(copy_shape)))):
-        # Emit 1D copy of the whole array
-        copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
-        return copy_shape, [1], [1]
-    # Another case of non-strided 1D copy: all indices match and copy length
-    # matches pointer difference, as well as match in contiguity and padding
-    elif (first_src_index == first_dst_index
-          and last_src_index == last_dst_index and copy_length == src_copylen
-          and _is_c_contiguous(src_shape, src_strides)
-          and _is_c_contiguous(dst_shape, dst_strides)):
+    if is_1d_nostrided_copy(copy_shape,
+        src_shape,
+        src_strides,
+        dst_shape,
+        dst_strides,
+        subset,
+        src_subset,
+        dst_subset):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
