@@ -26,7 +26,7 @@ from dace.sdfg import nodes, graph as gr, utils
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 
-
+"""
 def copy_expr(
     dispatcher,
     sdfg,
@@ -97,7 +97,69 @@ def copy_expr(
     else:
         raise NotImplementedError("copy_expr not implemented "
                                   "for connector type: {}".format(def_type))
+"""
+def copy_expr(
+    dispatcher,
+    sdfg,
+    dataname,
+    memlet,
+    is_write=None,  # Otherwise it's a read
+    offset=None,
+    relative_offset=True,
+    packed_types=False,
+    hbmbank = None
+):
+    datadesc = sdfg.arrays[dataname]
+    if relative_offset:
+        s = memlet.subset
+        o = offset
+    else:
+        if offset is None:
+            s = None
+        elif not isinstance(offset, subsets.Subset):
+            s = subsets.Indices(offset)
+        else:
+            s = offset
+        o = None
+    if s is not None:
+        offset_cppstr = cpp_offset_expr(datadesc, s, o)
+    else:
+        offset_cppstr = "0"
+    dt = ""
 
+    def_type, _ = dispatcher.defined_vars.get(dataname)
+
+    # If this is a view, it has already been renamed
+    expr = ptr(
+        dataname, datadesc, hbmbank, sdfg, is_write, dispatcher, 0,
+        def_type == DefinedType.ArrayInterface
+        and not isinstance(datadesc, data.View))
+
+    add_offset = offset_cppstr != "0"
+
+    if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
+        return "{}{}{}".format(
+            dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
+
+    elif def_type == DefinedType.StreamArray:
+        return "{}[{}]".format(expr, offset_cppstr)
+
+    elif def_type == DefinedType.FPGA_ShiftRegister:
+        return expr
+
+    elif def_type in [DefinedType.Scalar, DefinedType.Stream]:
+
+        if add_offset:
+            raise TypeError("Tried to offset address of scalar {}: {}".format(
+                dataname, offset_cppstr))
+
+        if def_type == DefinedType.Scalar:
+            return "{}&{}".format(dt, expr)
+        else:
+            return dataname
+    else:
+        raise NotImplementedError("copy_expr not implemented "
+                                  "for connector type: {}".format(def_type))
 
 def memlet_copy_to_absolute_strides(dispatcher,
                                     sdfg,
@@ -117,15 +179,8 @@ def memlet_copy_to_absolute_strides(dispatcher,
                              src_node.data,
                              memlet,
                              is_write=False,
-                             packed_types=packed_types)
-        dst_expr = copy_expr(dispatcher,
-                             sdfg,
-                             dst_node.data,
-                             memlet,
-                             is_write=True,
-                             offset=None,
-                             relative_offset=False,
-                             packed_types=packed_types)
+                             packed_types=packed_types,
+                             hbmbank=memlet.subset)
         if memlet.other_subset is not None:
             dst_expr = copy_expr(
                 dispatcher,
@@ -136,27 +191,30 @@ def memlet_copy_to_absolute_strides(dispatcher,
                 offset=memlet.other_subset,
                 relative_offset=False,
                 packed_types=packed_types,
+                hbmbank=memlet.other_subset
             )
             dst_subset = memlet.other_subset
         else:
+            dst_expr = copy_expr(dispatcher,
+                             sdfg,
+                             dst_node.data,
+                             memlet,
+                             is_write=True,
+                             offset=None,
+                             relative_offset=False,
+                             packed_types=packed_types,
+                             hbmbank=memlet.subset)
             dst_subset = subsets.Range.from_array(dst_nodedesc)
         src_subset = memlet.subset
 
     else:
-        src_expr = copy_expr(dispatcher,
-                             sdfg,
-                             src_node.data,
-                             memlet,
-                             is_write=False,
-                             offset=None,
-                             relative_offset=False,
-                             packed_types=packed_types)
         dst_expr = copy_expr(dispatcher,
                              sdfg,
                              dst_node.data,
                              memlet,
                              is_write=True,
-                             packed_types=packed_types)
+                             packed_types=packed_types,
+                             hbmbank=memlet.subset)
         if memlet.other_subset is not None:
             src_expr = copy_expr(
                 dispatcher,
@@ -167,9 +225,19 @@ def memlet_copy_to_absolute_strides(dispatcher,
                 offset=memlet.other_subset,
                 relative_offset=False,
                 packed_types=packed_types,
+                hbmbank=memlet.other_subset
             )
             src_subset = memlet.other_subset
         else:
+            src_expr = copy_expr(dispatcher,
+                                sdfg,
+                                src_node.data,
+                                memlet,
+                                is_write=False,
+                                offset=None,
+                                relative_offset=False,
+                                packed_types=packed_types,
+                                hbmbank=memlet.subset)
             src_subset = subsets.Range.from_array(src_nodedesc)
         dst_subset = memlet.subset
 
