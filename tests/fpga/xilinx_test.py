@@ -81,6 +81,17 @@ TESTS = [
         "kernels_inside_component_2_1", "kernels_inside_components_0_1",
         "kernels_lns_inside_component_1", "multiple_kernels_multiple_states"
     ], True, False, []),
+    ("tests/fpga/hbm_validation.py", False, False, []),
+    ("tests/fpga/hbm_vadd_fpga.py", ["vadd_2b1d", "vadd_2b2d",
+     "vadd_2b3d", "vadd_8b1d"], True, False, [])
+     ("tests/fpga/hbm_vadd_fpga.py", ["vadd_2b1d", "vadd_2b2d",
+     "vadd_2b3d", "vadd_8b1d"], True, False, []),
+     #For hbm_reduction not all sdfg's are added, since relatively redundant
+     ("tests/fpga/hbm_reduce_fpga.py", ["red_2x3_2b", "red_1x40_8b", 
+     "red_1x50_1b"], True, False, []),
+    ("tests/fpga/hbm_dynamic_memlets.py", ["dyn_memlet"], True, False, [])
+    ("tests/fpga/hbm_deeply_nested_fpga.py", ["deepnest_test"], True, False, [])
+    ("tests/fpga/hbm_copy_fpga.py", ["hbm2hbm1", "hbm2ddr1"], True, False, [])
 ]
 
 
