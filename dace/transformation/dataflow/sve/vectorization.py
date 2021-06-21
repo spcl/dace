@@ -24,6 +24,8 @@ import dace.codegen.targets.sve.util
 import dace.frontend.operations
 import dace.data
 import dace.dtypes as dtypes
+import dace.transformation.dataflow.sve.infer_types as infer_types
+from collections import defaultdict
 
 
 @registry.autoregister_params(singlestate=True)
@@ -42,25 +44,21 @@ class SVEVectorization(transformation.Transformation):
 
     @classmethod
     def can_be_applied(cls,
-                       graph: SDFGState,
+                       state: SDFGState,
                        candidate,
                        expr_index,
                        sdfg: SDFG,
                        strict=False) -> bool:
-        # Infer all connector types for later checks
-        # FIXME: Currently the SDFG is copied, modify `infer_connector_types` to work on subgraphs too
-        state_id = sdfg.node_id(graph)
-        sdfg = copy.deepcopy(sdfg)
-        dace.sdfg.infer_types.infer_connector_types(sdfg)
-        graph = sdfg.nodes()[state_id]
-
-        map_entry = graph.node(candidate[cls.map_entry])
-        map_exit = graph.exit_node(map_entry)
+        map_entry = state.node(candidate[cls.map_entry])
+        map_exit = state.exit_node(map_entry)
         current_map = map_entry.map
-        subgraph = graph.scope_subgraph(map_entry)
-        subgraph_contents = graph.scope_subgraph(map_entry,
+        subgraph = state.scope_subgraph(map_entry)
+        subgraph_contents = state.scope_subgraph(map_entry,
                                                  include_entry=False,
                                                  include_exit=False)
+
+        # Infer all connector types for later checks (without modifying the graph)
+        inferred = infer_types.infer_connector_types(sdfg, state, subgraph)
 
         ########################
         # Ensure only Tasklets are within the map
@@ -73,38 +71,40 @@ class SVEVectorization(transformation.Transformation):
         # Check for unsupported datatypes on the connectors (including on the Map itself)
         for node, _ in subgraph.all_nodes_recursive():
             for conn in node.in_connectors:
-                if not node.in_connectors[conn].type in sve.util.TYPE_TO_SVE:
+                if not inferred[(node, conn,
+                                 True)].type in sve.util.TYPE_TO_SVE:
                     return False
             for conn in node.out_connectors:
-                if not node.out_connectors[conn].type in sve.util.TYPE_TO_SVE:
+                if not inferred[(node, conn,
+                                 False)].type in sve.util.TYPE_TO_SVE:
                     return False
 
         ########################
         # Check for unsupported memlets
         param_name = current_map.params[-1]
-        for edge, _ in subgraph.all_edges_recursive():
+        for e, _ in subgraph.all_edges_recursive():
             # Check for unsupported strides
             # The only unsupported strides are the ones containing the innermost
             # loop param because they are not constant during a vector step
             param_sym = symbolic.symbol(current_map.params[-1])
-            for edge, _ in subgraph.all_edges_recursive():
-                if param_sym in edge.data.get_stride(
-                        sdfg, map_entry.map).free_symbols:
+            for e, _ in subgraph.all_edges_recursive():
+                if param_sym in e.data.get_stride(sdfg,
+                                                  map_entry.map).free_symbols:
                     return False
 
             # Check for unsupported WCR
-            if edge.data.wcr is not None:
-                if is_write_conflicted_with_reason(graph, edge) is None:
+            if e.data.wcr is not None:
+                if is_write_conflicted_with_reason(state, e) is None:
                     return False
 
                 # Unsupported reduction type
                 reduction_type = dace.frontend.operations.detect_reduction_type(
-                    edge.data.wcr)
+                    e.data.wcr)
                 if reduction_type not in sve.util.REDUCTION_TYPE_TO_SVE:
                     return False
 
                 # Param in memlet during WCR is not supported
-                if param_name in edge.data.free_symbols:
+                if param_name in e.data.free_symbols:
                     return False
 
         ########################
@@ -113,10 +113,10 @@ class SVEVectorization(transformation.Transformation):
             if not isinstance(node, nodes.Tasklet):
                 continue
 
-            for edge in graph.in_edges(node):
+            for e in state.in_edges(node):
                 # Check for valid copies from other tasklets and/or streams
-                if edge.data.data is not None:
-                    src_node = graph.memlet_path(edge)[0].src
+                if e.data.data is not None:
+                    src_node = state.memlet_path(e)[0].src
                     if not isinstance(src_node,
                                       (nodes.Tasklet, nodes.AccessNode)):
                         # Make sure we only have Code->Code copies and from arrays
@@ -129,18 +129,23 @@ class SVEVectorization(transformation.Transformation):
                             return False
 
         ########################
-        # Check if at least one first level connector can be vectorized.
+        # Check if at least one connector can be vectorized, that is either from the entry or to the exit.
         # Otherwise there is no way for any vector information to pass through (no vectorization required).
 
         any_vector = False
-        for edge in graph.out_edges(map_entry):
-            # Vectorize the first level connector, if possible
-            any_vector = any_vector or cls.try_vectorize_dst(
-                graph, edge, param_name, modify=False)
+        for e in state.out_edges(map_entry):
+            any_vector = any_vector or cls.try_vectorize(
+                state, e, param_name, True, inferred)
+
+        for e in state.in_edges(map_exit):
+            any_vector = any_vector or cls.try_vectorize(
+                state, e, param_name, False, inferred)
 
         if not any_vector:
-            # No first level vector connector
+            # No connector can be vectorized, therefore no vector information can propagate
             return False
+
+        # TODO: Propagate vector information
 
         # TODO: Check using unparser whether Tasklets are actually generateable
 
@@ -148,29 +153,61 @@ class SVEVectorization(transformation.Transformation):
 
         return True
 
-    def try_vectorize_dst(graph: SDFGState,
-                          edge: MultiConnectorEdge[Memlet],
-                          param: str,
-                          modify: bool = True) -> bool:
+    def apply(self, sdfg: SDFG):
+        state = sdfg.node(self.state_id)
+        map_entry = self.map_entry(sdfg)
+        map_exit = state.exit_node(map_entry)
+        current_map = map_entry.map
+
+        # Expand the innermost map if multidimensional
+        if len(current_map.params) > 1:
+            ext, rem = dace.transformation.helpers.extract_map_dims(
+                sdfg, map_entry, list(range(len(current_map.params) - 1)))
+            map_entry = rem
+            map_exit = state.exit_node(map_entry)
+            current_map = map_entry.map
+
+        subgraph = state.scope_subgraph(map_entry)
+        subgraph_contents = state.scope_subgraph(map_entry,
+                                                 include_entry=False,
+                                                 include_exit=False)
+
+        # Set the schedule
+        current_map.schedule = dace.dtypes.ScheduleType.SVE_Map
+
+        # Infer all connector types
+        inferred = infer_types.infer_connector_types(sdfg, state, subgraph)
+        infer_types.apply_connector_types(inferred)
+
+        # Vectorize the first and last level connectors, if possible
+        param_name = current_map.params[0]
+        for edge in state.out_edges(map_entry):
+            SVEVectorization.try_vectorize(state, edge, param_name, dst=True)
+
+        for edge in state.in_edges(map_exit):
+            SVEVectorization.try_vectorize(state, edge, param_name, dst=False)
+
+        # TODO: Propagate vector information
+
+    def try_vectorize(graph: SDFGState,
+                      edge: MultiConnectorEdge[Memlet],
+                      param: str,
+                      dst: bool = True,
+                      inferred: defaultdict = None) -> bool:
         """
-            Tries to vectorize the destination connector of the edge.
+            Tries to vectorize the connector of the edge.
             
             Returns True, if the vectorization was successful.
 
             :param graph: The graph where the memlet resides.
             :param edge: The edge where the memlet resides.
             :param param: The param of the vectorized map.
-            :param modify: True, if the connector should be vectorized.
-                           False, if only check for possible vectorization
-                           (no effect on the connectors).
+            :param dst: Whether the destination (True) or the source (False) should be vectorized.
+            :param inferred: The dictionary of inferred connector types. If None, the connector in the SDFG is queried and modified.
         """
 
         ####################
         # Check for possible vectorization
-
-        conn = edge.dst_conn
-        dst_node = edge.dst
-        in_conn = dst_node.in_connectors[conn]
 
         if edge.data.data is None:
             # Empty memlets
@@ -184,50 +221,49 @@ class SVEVectorization(transformation.Transformation):
             # Loop param does not occur in memlet
             return False
 
-        if isinstance(in_conn.type, (dtypes.vector, dtypes.pointer)):
-            # TODO: How to treat pointers on single element?
-            return False
+        # Determine the current type of the connector
+        conn = None
+        node = None
+        if dst:
+            conn = edge.dst_conn
+            node = edge.dst
+        else:
+            conn = edge.src_conn
+            node = edge.src
 
-        if not modify:
-            # All checks were successful
+        conn_type = None
+        if inferred is not None:
+            conn_type = inferred[(node, conn, dst)]
+        else:
+            if dst:
+                conn_type = node.in_connectors[conn]
+            else:
+                conn_type = node.out_connectors[conn]
+
+        if isinstance(conn_type, dtypes.vector):
+            # No need to vectorize anymore
             return True
+        elif isinstance(conn_type, dtypes.pointer):
+            # Can't be vectorized
+            return False
 
         ####################
         # Vectorize the connector
 
-        dst_node.in_connectors[conn] = dtypes.vector(
-            sve.util.get_base_type(in_conn), sve.util.SVE_LEN)
+        new_type = dtypes.vector(sve.util.get_base_type(conn_type),
+                                 sve.util.SVE_LEN)
+        if dst:
+            if inferred is not None:
+                inferred[(node, conn, True)] = new_type
+            else:
+                node.in_connectors[conn] = new_type
+        else:
+            if inferred is not None:
+                inferred[(node, conn, False)] = new_type
+            else:
+                node.out_connectors[conn] = new_type
 
-        # TODO: Modify subset
+        # TODO: Modify the subset
         #edge.data.subset
 
         return True
-
-    def apply(self, sdfg: SDFG):
-        graph = sdfg.node(self.state_id)
-        map_entry = self.map_entry(sdfg)
-        map_exit = graph.exit_node(map_entry)
-        current_map = map_entry.map
-
-        # Expand the innermost map if multidimensional
-        if len(current_map.params) > 1:
-            ext, rem = dace.transformation.helpers.extract_map_dims(
-                sdfg, map_entry, list(range(len(current_map.params) - 1)))
-            map_entry = rem
-            map_exit = graph.exit_node(map_entry)
-            current_map = map_entry.map
-
-        # Set the schedule
-        current_map.schedule = dace.dtypes.ScheduleType.SVE_Map
-
-        # Infer all connector types
-        # TODO: Infer only on subgraph, same issue in can_be_applied
-        dace.sdfg.infer_types.infer_connector_types(sdfg)
-
-        # Vectorize the first level connectors, if possible
-        param_name = current_map.params[0]
-        for edge in graph.out_edges(map_entry):
-            # Vectorize the first level connectors
-            SVEVectorization.try_vectorize_dst(graph, edge, param_name)
-
-        # TODO: Propagate vector information
