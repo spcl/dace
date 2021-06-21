@@ -605,7 +605,7 @@ def cpp_array_expr(sdfg,
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     if with_brackets:
-        ptrname = ptr(memlet.data, desc, subset, sdfg)
+        ptrname = ptr(memlet.data, desc)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
