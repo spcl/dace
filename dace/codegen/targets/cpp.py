@@ -375,6 +375,7 @@ def _is_c_contiguous(shape, strides):
         data._prod(shape[i + 1:]) for i in range(len(shape)))
     return tuple(strides) == computed_strides
 
+
 def to_cpp_array(arr: "Iterable[str]",
                  ctype: str,
                  makestd: bool = False) -> str:
@@ -394,6 +395,7 @@ def to_cpp_array(arr: "Iterable[str]",
     if makestd:
         result += ")"
     return result
+
 
 def is_1d_nostrided_copy(
     copy_shape: Iterable,
@@ -449,6 +451,7 @@ def is_1d_nostrided_copy(
                    and _is_c_contiguous(dst_shape, dst_strides))
 
     return cornercase1 or cornercase2
+
 
 #TODO: Rewrite this function to use is_1d_nostrided_copy
 def ndcopy_to_strided_copy(

@@ -1102,19 +1102,13 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
             if isNDCopy:
                 src_copy_offset = [
-                    cpp.sym2cpp(start)
-                    for start, _, _ in memlet.src_subset
+                    cpp.sym2cpp(start) for start, _, _ in memlet.src_subset
                 ]
                 dst_copy_offset = [
-                    cpp.sym2cpp(start)
-                    for start, _, _ in memlet.dst_subset
+                    cpp.sym2cpp(start) for start, _, _ in memlet.dst_subset
                 ]
-                src_blocksize = [
-                    cpp.sym2cpp(v) for v in src_nodedesc.shape
-                ]
-                dst_blocksize = [
-                    cpp.sym2cpp(v) for v in dst_nodedesc.shape
-                ]
+                src_blocksize = [cpp.sym2cpp(v) for v in src_nodedesc.shape]
+                dst_blocksize = [cpp.sym2cpp(v) for v in dst_nodedesc.shape]
                 copy_shape_cpp = [cpp.sym2cpp(v) for v in copy_shape]
                 while len(src_copy_offset) < 3:
                     src_copy_offset.append('0')
@@ -1141,7 +1135,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         with_brackets=False,
                         referenced_array=src_nodedesc,
                         use_other_subset=(not src_is_subset
-                                        and memlet.other_subset is not None))
+                                          and memlet.other_subset is not None))
                 if memlet.dst_subset is not None:
                     offset_dst = cpp.cpp_array_expr(
                         sdfg,
@@ -1149,7 +1143,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         with_brackets=False,
                         referenced_array=dst_nodedesc,
                         use_other_subset=(src_is_subset
-                                        and memlet.other_subset is not None))
+                                          and memlet.other_subset is not None))
                 copysize = " * ".join([
                     cppunparse.pyexpr2cpp(dace.symbolic.symstr(s))
                     for s in copy_shape
@@ -1160,12 +1154,13 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     return "reinterpret_cast<{} const *>({})".format(
                         device_dtype.ctype, ptrstr)
                 return ptrstr
+
             dst_subset = memlet.dst_subset or memlet.subset
             src_subset = memlet.src_subset or memlet.subset
 
             if host_to_device:
                 ptr_str = cpp.ptr(src_node.data, src_nodedesc)
-                
+
                 if isNDCopy:
                     callsite_stream.write(
                         f"{cpp.ptr(dst_node.data, dst_nodedesc)}.CopyBlockFromHost("
@@ -1174,14 +1169,14 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         f"{cpp.to_cpp_array(copy_shape_cpp, 'size_t')}, "
                         f"{cpp.to_cpp_array(src_blocksize, 'size_t')}, "
                         f"{cpp.to_cpp_array(dst_blocksize, 'size_t')}, "
-                        f"{apply_cast(ptr_str)});",
-                        sdfg, state_id, [src_node, dst_node])
+                        f"{apply_cast(ptr_str)});", sdfg, state_id,
+                        [src_node, dst_node])
                 else:
                     if offset_src != "0":
                         ptr_str = f"{ptr_str} + {offset_src}"
                     callsite_stream.write(
                         f"{cpp.ptr(dst_node.data, dst_nodedesc)}.CopyFromHost("
-                        f"{offset_dst}, {copysize}, {apply_cast(ptr_str)});", 
+                        f"{offset_dst}, {copysize}, {apply_cast(ptr_str)});",
                         sdfg, state_id, [src_node, dst_node])
 
             elif device_to_host:
@@ -1195,8 +1190,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         f"{cpp.to_cpp_array(copy_shape_cpp, 'size_t')}, "
                         f"{cpp.to_cpp_array(dst_blocksize, 'size_t')}, "
                         f"{cpp.to_cpp_array(src_blocksize, 'size_t')}, "
-                        f"{apply_cast(ptr_str)});",
-                        sdfg, state_id, [src_node, dst_node])
+                        f"{apply_cast(ptr_str)});", sdfg, state_id,
+                        [src_node, dst_node])
                 else:
                     if offset_dst != "0":
                         ptr_str = f"{ptr_str} + {offset_dst}"
@@ -1221,8 +1216,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 else:
                     callsite_stream.write(
                         f"{ptr_str_src}.CopyToDevice({offset_src}, {copysize}, "
-                        f"{ptr_str_dst}, {offset_dst});",
-                        sdfg, state_id, [src_node, dst_node])
+                        f"{ptr_str_dst}, {offset_dst});", sdfg, state_id,
+                        [src_node, dst_node])
 
         elif data_to_data:
 
