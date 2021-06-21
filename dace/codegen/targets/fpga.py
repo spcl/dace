@@ -1261,7 +1261,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         f"{apply_cast(ptr_str)});",
                         sdfg, state_id, [src_node, dst_node])
                 else:
-                    if offset_src != "0":
+                    if offset_dst != "0":
                         ptr_str = f"{ptr_str} + {offset_dst}"
                     callsite_stream.write(
                         f"{cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg)}.CopyToHost("
