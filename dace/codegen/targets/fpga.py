@@ -1125,11 +1125,23 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             copy_shape = utils.modify_subset_magic(
                     src_nodedesc if src_is_subset else dst_nodedesc,
                     memlet.subset.bounding_box_size(), -1)
-            offset = cpp.cpp_array_expr(
+            offset_src, offset_dst = "0", "0"
+            if memlet.src_subset is not None:
+                offset_src = cpp.cpp_array_expr(
                     sdfg,
                     memlet,
                     with_brackets=False,
-                    referenced_array=src_nodedesc if src_is_subset else dst_nodedesc)
+                    referenced_array=src_nodedesc,
+                    use_other_subset=(not src_is_subset
+                                    and memlet.other_subset is not None))
+            if memlet.dst_subset is not None:
+                offset_dst = cpp.cpp_array_expr(
+                    sdfg,
+                    memlet,
+                    with_brackets=False,
+                    referenced_array=dst_nodedesc,
+                    use_other_subset=(src_is_subset
+                                    and memlet.other_subset is not None))
 
             if (not sum(copy_shape) == 1
                     and (not isinstance(memlet.subset, subsets.Range)
@@ -1172,8 +1184,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             if host_to_device:
 
                 ptr_str = (cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg) +
-                           (" + {}".format(offset)
-                            if outgoing_memlet and str(offset) != "0" else ""))
+                           (" + {}".format(offset_src)
+                            if outgoing_memlet and str(offset_src) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} const *>({})".format(
                         device_dtype.ctype, ptr_str)
@@ -1181,14 +1193,14 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 callsite_stream.write(
                     "{}.CopyFromHost({}, {}, {});".format(
                         cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg),
-                        (offset if not outgoing_memlet else 0), copysize,
+                        (offset_dst if not outgoing_memlet else 0), copysize,
                         ptr_str), sdfg, state_id, [src_node, dst_node])
 
             elif device_to_host:
 
                 ptr_str = (cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg) +
-                           (" + {}".format(offset)
-                            if outgoing_memlet and str(offset) != "0" else ""))
+                           (" + {}".format(offset_dst)
+                            if outgoing_memlet and str(offset_dst) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} *>({})".format(
                         device_dtype.ctype, ptr_str)
@@ -1196,7 +1208,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 callsite_stream.write(
                     "{}.CopyToHost({}, {}, {});".format(
                         cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg),
-                        (offset if outgoing_memlet else 0), copysize, ptr_str),
+                        (offset_src if outgoing_memlet else 0), copysize, ptr_str),
                     sdfg, state_id, [src_node, dst_node])
 
             elif device_to_device:
@@ -1204,9 +1216,9 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 callsite_stream.write(
                     "{}.CopyToDevice({}, {}, {}, {});".format(
                         cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg),
-                        (offset if outgoing_memlet else 0), copysize,
+                        (offset_src if outgoing_memlet else 0), copysize,
                         cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg),
-                        (offset if not outgoing_memlet else 0)), sdfg, state_id,
+                        (offset_dst if not outgoing_memlet else 0)), sdfg, state_id,
                     [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA
