@@ -1126,6 +1126,12 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     dst_blocksize.append('1')
                 while len(copy_shape_cpp) < 3:
                     copy_shape_cpp.append('1')
+                #Numpy has different order than hlslib, so indices need to be turned to match up
+                src_copy_offset.reverse()
+                dst_copy_offset.reverse()
+                src_blocksize.reverse()
+                dst_blocksize.reverse()
+                copy_shape_cpp.reverse()
             else:
                 offset_src, offset_dst = "0", "0"
                 if memlet.src_subset is not None:
@@ -1162,7 +1168,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 
                 if isNDCopy:
                     callsite_stream.write(
-                        f"{cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg)}.CopyBlockFromHost("
+                        f"{cpp.ptr(dst_node.data, dst_nodedesc)}.CopyBlockFromHost("
                         f"{cpp.to_cpp_array(src_copy_offset, 'size_t', True)}, "
                         f"{cpp.to_cpp_array(dst_copy_offset, 'size_t')}, "
                         f"{cpp.to_cpp_array(copy_shape_cpp, 'size_t')}, "

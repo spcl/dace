@@ -63,18 +63,18 @@ def mkc(sdfg: dace.SDFG,
     aNpArr, bNpArr = None, None
     if src_shape is not None:
         try:
-            aNpArr = np.zeros(src_shape, dtype=np.int32)
+            aNpArr = np.random.randint(1, 9, src_shape, dtype=np.int32)
         except:
             pass
     if dst_shape is not None:
         try:
-            bNpArr = np.zeros(dst_shape, dtype=np.int32)
+            bNpArr = np.random.randint(1, 9, dst_shape, dtype=np.int32)
         except:
             pass
     return (state, aNpArr, bNpArr)
 
-def check_host2dev():
-    sdfg = dace.SDFG("h2d")
+def check_host2dev1():
+    sdfg = dace.SDFG("h2d1")
     s, a, _ = mkc(sdfg, None, "a", "b", StorageType.Default,
                   StorageType.FPGA_Global, [5, 5], [3, 3],
                   "a[2:4, 2:4]->1:3, 0:2")
@@ -86,16 +86,8 @@ def check_host2dev():
     s, _, c = mkc(sdfg, s, "z", "c", None, StorageType.Default, None, [3, 3],
                   "z")
 
-    a.fill(1)
-    a[2, 3] = 4
-    a[3, 4] = 5
-    expect = np.copy(c)
-    expect.fill(1)
-    expect[1, 1] = 4
-    expect[2, 2] = 5
-
     sdfg(a=a, c=c)
-    assert np.allclose(c, expect)
+    assert np.allclose(c[1:3, 0:2], a[2:4, 2:4])
 
 def check_dev2host1():
     sdfg = dace.SDFG("d2h1")
@@ -109,15 +101,8 @@ def check_dev2host1():
     s, _, c = mkc(sdfg, s, "b", "c", None, StorageType.Default, None, [3, 3],
                   "b[2:5, 2:4, 4]->0:3, 0:2")
 
-    a.fill(1)
-    a[2, 4, 4] = 3
-    a[5, 2, 4] = 7
-    expect = np.copy(c)
-    expect.fill(1)
-    expect[0, 2] = 3
-    expect[3, 0] = 7
     sdfg(a=a, c=c)
-    assert np.allclose(c, expect)
+    assert np.allclose(a[2:5, 2:4, 4], c[0:3, 0:2])
 
 def check_dev2dev1():
     sdfg = dace.SDFG("d2d1")
@@ -134,10 +119,10 @@ def check_dev2dev1():
     _, _, c = mkc(sdfg, s, "z", "c", None, StorageType.Default, None, [10],
                   "z")
 
-    a.fill(1)
-    a[3:4, 2, 2] = 3
-    expect = np.copy(c)
-    expect.fill(1)
-    expect[0, 4:5] = 3
     sdfg(a=a, c=c)
-    assert np.allclose(c[1:6], expect[1:6])
+    assert np.allclose(c[2:6], a[1:5, 2, 2])
+
+if __name__ == "__main__":
+    check_host2dev1()
+    check_dev2host1()
+    check_dev2dev1()
