@@ -2,6 +2,7 @@
 """ A single generator that creates an N-dimensional for loop in Python. """
 import itertools
 import numpy as np
+from typing import List, Tuple, Union
 
 # Python 3 compatibility for xrange
 try:
@@ -49,16 +50,15 @@ def NDLoop(ndslice, internal_function, *args, **kwargs):
         internal_function(*(indices + args), **kwargs)
 
 
-def ndrange(slice_list):
+def ndrange(slice_list: Union[Tuple[slice], slice]):
     """ Generator that creates an N-dimensional for loop in Python. 
         :param slice_list: Slice or list of slices (as tuples or `slice`s)
                           to loop over.
         :return: N-dimensional loop index generator.
     """
-    if not isinstance(slice_list, list):
-        ndxrange = (tupletoxrange(slice_list), )
+    if not isinstance(slice_list, (tuple, list)):
+        yield from slicetoxrange(slice_list)
     else:
-        ndxrange = tuple(tupletoxrange(d) for d in slice_list)
-
-    for indices in itertools.product(*ndxrange):
-        yield indices
+        ndxrange = tuple(slicetoxrange(d) for d in slice_list)
+        for indices in itertools.product(*ndxrange):
+            yield indices
