@@ -38,15 +38,6 @@ python3 hbm_deeply_nested_fpga.py
 
 #copy test
 
-echo 'import hbm_copy_fpga \nhbm_copy_fpga.check_host2copy1()' > tmp_hw_emu_run_helper.py
-python3 tmp_hw_emu_run_helper.py
-
-echo 'import hbm_copy_fpga \nhbm_copy_fpga.check_dev2host1()' > tmp_hw_emu_run_helper.py
-python3 tmp_hw_emu_run_helper.py
-
-echo 'import hbm_copy_fpga \nhbm_copy_fpga.check_dev2dev1()' > tmp_hw_emu_run_helper.py
-python3 tmp_hw_emu_run_helper.py
-
 echo 'import hbm_copy_fpga \nhbm_copy_fpga.check_hbm2hbm1()' > tmp_hw_emu_run_helper.py
 python3 tmp_hw_emu_run_helper.py
 
