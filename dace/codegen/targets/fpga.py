@@ -821,7 +821,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                             memory_bank_arg_type = "DDR"
                             bankoffset = bank
                         elif "hbmbank" in nodedesc.location:
-                            hbmbank = nodedesc.location["hbmbank"]                           
+                            hbmbank = nodedesc.location["hbmbank"]
                             memory_bank_arg_type = "HBM"
                             banklow, bankhigh = utils.get_multibank_ranges_from_subset(
                                 hbmbank, sdfg, False, f"array {dataname}")
@@ -839,17 +839,17 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                 result_alloc.write(
                                     "{} = __state->fpga_context->Get()."
                                     "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                                    "(hlslib::ocl::StorageType::HBM, {}, {});\n".format(
-                                        allocname, nodedesc.dtype.ctype,
-                                        bankoffset + bank_index,
-                                        cpp.sym2cpp(arrsize)))
+                                    "(hlslib::ocl::StorageType::HBM, {}, {});\n"
+                                    .format(allocname, nodedesc.dtype.ctype,
+                                            bankoffset + bank_index,
+                                            cpp.sym2cpp(arrsize)))
                             elif memory_bank_arg_type == "DDR":
                                 result_alloc.write(
-                                "{} = __state->fpga_context->Get()."
-                                "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                                "(hlslib::ocl::MemoryBank::bank{}, {});".format(
-                                    allocname, nodedesc.dtype.ctype,
-                                    bankoffset, cpp.sym2cpp(arrsize)))
+                                    "{} = __state->fpga_context->Get()."
+                                    "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
+                                    "(hlslib::ocl::MemoryBank::bank{}, {});".
+                                    format(allocname, nodedesc.dtype.ctype,
+                                           bankoffset, cpp.sym2cpp(arrsize)))
                             self._dispatcher.defined_vars.add(
                                 allocname, DefinedType.Pointer,
                                 'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
@@ -1123,8 +1123,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
 
             copy_shape = utils.modify_subset_magic(
-                    src_nodedesc if src_is_subset else dst_nodedesc,
-                    memlet.subset.bounding_box_size(), -1)
+                src_nodedesc if src_is_subset else dst_nodedesc,
+                memlet.subset.bounding_box_size(), -1)
             offset_src, offset_dst = "0", "0"
             if memlet.src_subset is not None:
                 offset_src = cpp.cpp_array_expr(
@@ -1133,7 +1133,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     with_brackets=False,
                     referenced_array=src_nodedesc,
                     use_other_subset=(not src_is_subset
-                                    and memlet.other_subset is not None))
+                                      and memlet.other_subset is not None))
             if memlet.dst_subset is not None:
                 offset_dst = cpp.cpp_array_expr(
                     sdfg,
@@ -1141,7 +1141,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     with_brackets=False,
                     referenced_array=dst_nodedesc,
                     use_other_subset=(src_is_subset
-                                    and memlet.other_subset is not None))
+                                      and memlet.other_subset is not None))
 
             if (not sum(copy_shape) == 1
                     and (not isinstance(memlet.subset, subsets.Range)
@@ -1183,9 +1183,10 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             dst_subset = memlet.dst_subset or memlet.subset
             if host_to_device:
 
-                ptr_str = (cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg) +
-                           (" + {}".format(offset_src)
-                            if outgoing_memlet and str(offset_src) != "0" else ""))
+                ptr_str = (
+                    cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg) +
+                    (" + {}".format(offset_src)
+                     if outgoing_memlet and str(offset_src) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} const *>({})".format(
                         device_dtype.ctype, ptr_str)
@@ -1198,9 +1199,10 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
             elif device_to_host:
 
-                ptr_str = (cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg) +
-                           (" + {}".format(offset_dst)
-                            if outgoing_memlet and str(offset_dst) != "0" else ""))
+                ptr_str = (
+                    cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg) +
+                    (" + {}".format(offset_dst)
+                     if outgoing_memlet and str(offset_dst) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} *>({})".format(
                         device_dtype.ctype, ptr_str)
@@ -1208,8 +1210,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 callsite_stream.write(
                     "{}.CopyToHost({}, {}, {});".format(
                         cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg),
-                        (offset_src if outgoing_memlet else 0), copysize, ptr_str),
-                    sdfg, state_id, [src_node, dst_node])
+                        (offset_src if outgoing_memlet else 0), copysize,
+                        ptr_str), sdfg, state_id, [src_node, dst_node])
 
             elif device_to_device:
 
@@ -1218,8 +1220,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         cpp.ptr(src_node.data, src_nodedesc, src_subset, sdfg),
                         (offset_src if outgoing_memlet else 0), copysize,
                         cpp.ptr(dst_node.data, dst_nodedesc, dst_subset, sdfg),
-                        (offset_dst if not outgoing_memlet else 0)), sdfg, state_id,
-                    [src_node, dst_node])
+                        (offset_dst if not outgoing_memlet else 0)), sdfg,
+                    state_id, [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data

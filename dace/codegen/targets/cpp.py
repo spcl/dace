@@ -406,6 +406,7 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
 
     return reshaped_copy, new_strides
 
+
 def _is_c_contiguous(shape, strides):
     """ 
     Returns True if the strides represent a non-padded, C-contiguous (last 
@@ -414,6 +415,7 @@ def _is_c_contiguous(shape, strides):
     computed_strides = tuple(
         data._prod(shape[i + 1:]) for i in range(len(shape)))
     return tuple(strides) == computed_strides
+
 
 def ndcopy_to_strided_copy(
     copy_shape,

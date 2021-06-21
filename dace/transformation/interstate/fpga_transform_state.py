@@ -125,11 +125,13 @@ class FPGATransformState(transformation.Transformation):
         shared_transients = set(sdfg.shared_transients())
         input_nodes = [
             n for n in sdutil.find_source_nodes(state)
-            if isinstance(n, nodes.AccessNode) and (not sdfg.arrays[n.data].transient or n.data in shared_transients)
+            if isinstance(n, nodes.AccessNode) and
+            (not sdfg.arrays[n.data].transient or n.data in shared_transients)
         ]
         output_nodes = [
             n for n in sdutil.find_sink_nodes(state)
-            if isinstance(n, nodes.AccessNode) and (not sdfg.arrays[n.data].transient or n.data in shared_transients)
+            if isinstance(n, nodes.AccessNode) and
+            (not sdfg.arrays[n.data].transient or n.data in shared_transients)
         ]
 
         fpga_data = {}
@@ -185,15 +187,17 @@ class FPGATransformState(transformation.Transformation):
                         allow_conflicts=desc.allow_conflicts,
                         strides=desc.strides,
                         offset=desc.offset)
-                    if("hbmbank" in desc.location):
-                        fpga_array[1].location["hbmbank"] = desc.location["hbmbank"]
+                    if ("hbmbank" in desc.location):
+                        fpga_array[1].location["hbmbank"] = desc.location[
+                            "hbmbank"]
                         desc.location.pop("hbmbank")
                     fpga_data[node.data] = fpga_array
 
                 pre_node = pre_state.add_read(node.data)
                 pre_fpga_node = pre_state.add_write('fpga_' + node.data)
-                mem = memlet.Memlet(data=node.data, 
-                                    subset=subsets.Range.from_array(fpga_array[1]))
+                mem = memlet.Memlet(data=node.data,
+                                    subset=subsets.Range.from_array(
+                                        fpga_array[1]))
                 pre_state.add_edge(pre_node, None, pre_fpga_node, None, mem)
 
                 if node not in wcr_input_nodes:
@@ -230,8 +234,9 @@ class FPGATransformState(transformation.Transformation):
                         allow_conflicts=desc.allow_conflicts,
                         strides=desc.strides,
                         offset=desc.offset)
-                    if("hbmbank" in desc.location):
-                        fpga_array[1].location["hbmbank"] = desc.location["hbmbank"]
+                    if ("hbmbank" in desc.location):
+                        fpga_array[1].location["hbmbank"] = desc.location[
+                            "hbmbank"]
                         desc.location.pop("hbmbank")
                     fpga_data[node.data] = fpga_array
                 # fpga_node = type(node)(fpga_array)
