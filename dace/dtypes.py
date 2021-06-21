@@ -51,7 +51,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     MPI = ()  #: MPI processes
     CPU_Multicore = ()  #: OpenMP
     Unrolled = ()  #: Unrolled code
-    SVE_Map = () #: Arm SVE
+    SVE_Map = ()  #: Arm SVE
 
     #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
     GPU_Default = ()
@@ -1011,6 +1011,10 @@ DTYPE_TO_TYPECLASS = {
     numpy.ulonglong: uint64
 }
 
+# Since this overrides the builtin bool, this should be after the
+# DTYPE_TO_TYPECLASS dictionary
+bool = typeclass(numpy.bool_)
+
 TYPECLASS_TO_STRING = {
     bool: "dace::bool",
     bool_: "dace::bool_",
@@ -1276,9 +1280,3 @@ def is_array(obj: Any) -> bool:
     if hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__'):
         return hasattr(obj, 'shape') and len(obj.shape) > 0
     return False
-
-
-
-# Since this overrides the builtin bool, this should be at the end of the file
-bool = typeclass(numpy.bool_)
-
