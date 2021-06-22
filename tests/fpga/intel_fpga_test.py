@@ -95,7 +95,6 @@ TESTS = [
         "kernels_inside_component_2_1", "kernels_inside_components_0_1",
         "kernels_lns_inside_component_1", "multiple_kernels_multiple_states"
     ], []),
-    ("tests/fpga/ndcopy.py", ["h2d1", "d2h1", "d2d1", "h2d2", "d2h2"], []),
 ]
 
 

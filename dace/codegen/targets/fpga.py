@@ -1101,6 +1101,10 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 isNDCopy = False
 
             if isNDCopy:
+                #Not supported because the Intel version of openCL raised errors
+                if Config.get('compiler', 'fpga_vendor').lower() == "intel_fpga":
+                    raise NotImplementedError("n-dimensional copies are not supported for Intel FPGA's")
+
                 #Compute all required sizes
                 src_copy_offset = [
                     cpp.sym2cpp(start) for start, _, _ in memlet.src_subset
