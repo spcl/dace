@@ -2,6 +2,7 @@
 import aenum
 import json
 import numpy as np
+import warnings
 import dace.dtypes
 
 JSON_STORE_METADATA = True
@@ -140,13 +141,14 @@ def from_json(obj, context=None, known_type=None):
 
     if t:
         try:
-            deserialized = _DACE_SERIALIZE_TYPES[t].from_json(
-                obj, context=context
-            )
-        except Exception:
-            deserialized = SerializableObject.from_json(
-                obj, context=context, typename=t
-            )
+            deserialized = _DACE_SERIALIZE_TYPES[t].from_json(obj,
+                                                              context=context)
+        except Exception as ex:
+            warnings.warn(
+                f'Failed to deserialize element, {type(ex).__name__}: {ex}')
+            deserialized = SerializableObject.from_json(obj,
+                                                        context=context,
+                                                        typename=t)
         return deserialized
 
     # No type was found, so treat this as a regular dictionary
