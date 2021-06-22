@@ -5,7 +5,6 @@ import numpy as np
 from dace.dtypes import StorageType
 from dace.codegen.targets.fpga import _FPGA_STORAGE_TYPES
 
-
 def print_result(a, c, expect):
     print("A:")
     print(a)
@@ -14,9 +13,7 @@ def print_result(a, c, expect):
     print("E")
     print(expect)
 
-
 #Tests copy of 2 and 3d blocks between host and device
-
 
 #helper MaKe_Copy that creates and appends states performing exactly one copy. If a provided
 #arrayname already exists it will use the old array, and ignore all newly passed values
@@ -100,10 +97,10 @@ def check_dev2host1():
                   [5, 5, 5], "b")
 
     s, _, c = mkc(sdfg, s, "b", "c", None, StorageType.Default, None, [3, 3],
-                  "b[2:5, 2:4, 4]->0:3, 0:2")
+                  "b[2:5, 2:4, 3]->0:3, 0:2")
 
     sdfg(a=a, c=c)
-    assert np.allclose(a[2:5, 2:4, 4], c[0:3, 0:2])
+    assert np.allclose(a[2:5, 2:4, 3], c[0:3, 0:2])
 
 
 def check_dev2dev1():
@@ -111,7 +108,7 @@ def check_dev2dev1():
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
                   StorageType.FPGA_Global, [5, 5, 5], [5, 5, 5], "a")
     s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global, None, [10],
-                  "x[1:5, 2, 2]->2:6")
+                  "x[2, 2, 1:5]->2:6")
     s.location["is_FPGA_kernel"] = 0
     s, _, _ = mkc(sdfg, s, "y", "z", None, StorageType.FPGA_Global, None, [10],
                   "y", None)
@@ -119,20 +116,20 @@ def check_dev2dev1():
     _, _, c = mkc(sdfg, s, "z", "c", None, StorageType.Default, None, [10], "z")
 
     sdfg(a=a, c=c)
-    assert np.allclose(c[2:6], a[1:5, 2, 2])
+    assert np.allclose(c[2:6], a[2, 2, 1:5])
 
 
 def checkhost2dev2():
     sdfg = dace.SDFG("h2d2")
-    s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
-                  StorageType.FPGA_Global, [7, 4, 5], [7, 4, 5], "a")
-    s, _, _ = mkc(sdfg, s, "x", "z", None, StorageType.FPGA_Global, None,
-                  [7, 4, 5], "x", None)
-    s, _, c = mkc(sdfg, s, "z", "c", None, StorageType.Default, None, [6, 3, 4],
-                  "z[1:5, 1:4, 1:4]->1:5, 0:3, 1:4")
+    s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default, StorageType.FPGA_Global,
+         [7, 4, 5], [6, 3, 4], "a[1:5, 1:4, 1:4]->1:5, 0:3, 1:4")
+    s, _, _ = mkc(sdfg, s, "x", "z", StorageType.FPGA_Global,
+                  StorageType.FPGA_Global, [6, 3, 4], [6, 3, 4], "x")
+    s, _, c = mkc(sdfg, s, "z", "c", None, StorageType.Default, None,
+                  [6, 3, 4], "z")
 
     sdfg(a=a, c=c)
-    assert np.allclose(a[1:5, 1:4, 1:4], c[1:5, 0:4, 1:4])
+    assert np.allclose(a[1:5, 1:4, 1:4], c[1:5, 0:3, 1:4])
 
 
 def checkdev2host2():
@@ -150,7 +147,6 @@ def checkdev2host2():
     expect = np.reshape(a[5:30], (5, 5), order='C')
     assert np.allclose(expect, c[2:7, 1:6])
     assert np.allclose(expect[3:5, 0:5], c[0:2, 0:5])
-
 
 if __name__ == "__main__":
     check_host2dev1()
