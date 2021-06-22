@@ -1101,6 +1101,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 isNDCopy = False
 
             if isNDCopy:
+                #Compute all required sizes
                 src_copy_offset = [
                     cpp.sym2cpp(start) for start, _, _ in memlet.src_subset
                 ]
@@ -1110,6 +1111,25 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 src_blocksize = [cpp.sym2cpp(v) for v in src_nodedesc.shape]
                 dst_blocksize = [cpp.sym2cpp(v) for v in dst_nodedesc.shape]
                 copy_shape_cpp = [cpp.sym2cpp(v) for v in copy_shape]
+
+                #Numpy has different order than hlslib, so indices need to be turned to match
+                def reverseAll():
+                    src_copy_offset.reverse()
+                    dst_copy_offset.reverse()
+                    src_blocksize.reverse()
+                    dst_blocksize.reverse()
+                    copy_shape_cpp.reverse()
+                
+                is_reversed = False
+                if (len(src_copy_offset) == len(dst_copy_offset) and 
+                    len(dst_copy_offset) == len(src_blocksize) and 
+                    len(src_blocksize) == len(dst_blocksize) and
+                    len(dst_blocksize) == len(copy_shape)):
+                    #If all dimensions match we can turn before extending with ones,
+                    #which may result in fewer strided steps
+                    reverseAll()
+                    is_reversed = True
+                #Expand so all arrays have size 3
                 while len(src_copy_offset) < 3:
                     src_copy_offset.append('0')
                 while len(dst_copy_offset) < 3:
@@ -1120,12 +1140,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     dst_blocksize.append('1')
                 while len(copy_shape_cpp) < 3:
                     copy_shape_cpp.append('1')
-                #Numpy has different order than hlslib, so indices need to be turned to match up
-                src_copy_offset.reverse()
-                dst_copy_offset.reverse()
-                src_blocksize.reverse()
-                dst_blocksize.reverse()
-                copy_shape_cpp.reverse()
+                if not is_reversed:
+                    reverseAll()
             else:
                 offset_src, offset_dst = "0", "0"
                 if memlet.src_subset is not None:
