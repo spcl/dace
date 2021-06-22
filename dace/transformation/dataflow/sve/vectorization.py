@@ -2,6 +2,8 @@
 """
     SVE Vectorization: This module offers all functionality to vectorize an SDFG for the Arm SVE codegen.
 """
+import dace.codegen.tools.type_inference as type_inference
+from sympy.codegen.ast import Scope
 from dace.memlet import Memlet
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.codegen.targets.cpp import is_write_conflicted_with_reason
@@ -26,6 +28,7 @@ import dace.data
 import dace.dtypes as dtypes
 import dace.transformation.dataflow.sve.infer_types as infer_types
 from collections import defaultdict
+from dace.sdfg.utils import dfs_topological_sort
 
 
 @registry.autoregister_params(singlestate=True)
@@ -64,7 +67,7 @@ class SVEVectorization(transformation.Transformation):
         # Ensure only Tasklets are within the map
         # TODO: Add AccessNode support
         for node, _ in subgraph_contents.all_nodes_recursive():
-            if not isinstance(node, nodes.Tasklet):
+            if not isinstance(node, (nodes.Tasklet, nodes.AccessNode)):
                 return False
 
         ########################
@@ -145,7 +148,7 @@ class SVEVectorization(transformation.Transformation):
             # No connector can be vectorized, therefore no vector information can propagate
             return False
 
-        # TODO: Propagate vector information
+        cls.propagate_vector_information(sdfg, state, subgraph, inferred)
 
         # TODO: Check using unparser whether Tasklets are actually generateable
 
@@ -177,17 +180,24 @@ class SVEVectorization(transformation.Transformation):
 
         # Infer all connector types
         inferred = infer_types.infer_connector_types(sdfg, state, subgraph)
-        infer_types.apply_connector_types(inferred)
+
+        inf_without_vecs = copy.copy(inferred)
 
         # Vectorize the first and last level connectors, if possible
         param_name = current_map.params[0]
         for edge in state.out_edges(map_entry):
-            SVEVectorization.try_vectorize(state, edge, param_name, dst=True)
+            SVEVectorization.try_vectorize(state, edge, param_name, True,
+                                           inferred)
 
         for edge in state.in_edges(map_exit):
-            SVEVectorization.try_vectorize(state, edge, param_name, dst=False)
+            SVEVectorization.try_vectorize(state, edge, param_name, False,
+                                           inferred)
 
-        # TODO: Propagate vector information
+        SVEVectorization.propagate_vector_information(sdfg, state, subgraph, inferred)
+        infer_types.apply_connector_types(inferred)
+
+        # TODO: Use this difference to find out which memlets to vectorize (subset)
+        difference = set(inferred.items()) - set(inf_without_vecs.items())
 
     def try_vectorize(graph: SDFGState,
                       edge: MultiConnectorEdge[Memlet],
@@ -263,7 +273,17 @@ class SVEVectorization(transformation.Transformation):
             else:
                 node.out_connectors[conn] = new_type
 
-        # TODO: Modify the subset
-        #edge.data.subset
-
         return True
+
+    def vectorize_memlet_subset(edge: MultiConnectorEdge[Memlet], param: str):
+        """
+            Vectorized the subset of a memlet given the vector param.
+            It is assumed, that at least one of the connectors was successfully vectorized
+            (using `try_vectorize`).
+        """
+        pass
+
+    def propagate_vector_information(sdfg: SDFG, state: SDFGState,
+                                     scope: ScopeSubgraphView,
+                                     inferred: defaultdict):
+        pass
