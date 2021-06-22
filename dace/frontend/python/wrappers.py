@@ -68,4 +68,4 @@ def define_stream(dtype=dtypes.float32, buffer_size=1):
 
 def define_streamarray(dimensions, dtype=dtypes.float32, buffer_size=1):
     """ Defines a local stream array in a DaCe program. """
-    return stream(dtype, dimensions)
+    return stream_array(dtype, dimensions)
