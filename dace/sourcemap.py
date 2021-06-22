@@ -80,7 +80,7 @@ def remove_tmp(name: str, remove_cache: bool = False):
     if not os.path.exists(path):
         return
 
-    os.remove(path + "/map/tmp.json")
+    os.remove(os.path.join(path, 'map', 'tmp.json'))
 
     if (remove_cache and len(os.listdir(path)) == 1
             and len(os.listdir(path + "/map")) == 0):
