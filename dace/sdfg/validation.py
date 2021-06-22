@@ -186,12 +186,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     #Build a dict linking each mapEntry to constants defined within that scope
     last_visited_map_entry = []
     for node in sdutil.dfs_topological_sort(state):
-        if isinstance(node, nd.MapEntry):
+        if isinstance(node, nd.EntryNode):
             otherlist = []
             if len(last_visited_map_entry) > 0:
                 otherlist = scope_local_constantnames[
                     last_visited_map_entry[-1]]
-            if node.map.schedule == dtypes.ScheduleType.Unrolled:
+            if (isinstance(node, nd.MapEntry) and 
+                node.map.schedule == dtypes.ScheduleType.Unrolled):
                 scope_local_constantnames[node] = list(
                     node.map.params) + otherlist
                 last_visited_map_entry.append(node)
