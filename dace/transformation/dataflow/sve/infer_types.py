@@ -23,7 +23,8 @@ def infer_tasklet_connectors(sdfg: SDFG, state: SDFGState, node: Tasklet,
     """ Infers the connectors in a Tasklet using its code and type inference. """
 
     if node.code.language != dtypes.Language.Python:
-        return
+        raise NotImplementedError(
+            'Tasklet inference for other languages than Python not supported')
 
     if any(inferred[(node, conn, True)].type is None
            for conn in node.in_connectors):
@@ -33,10 +34,22 @@ def infer_tasklet_connectors(sdfg: SDFG, state: SDFGState, node: Tasklet,
     # Avoid import loop
     from dace.codegen.tools.type_inference import infer_types
 
-    # Get symbols defined at beginning of node, and infer all types in tasklet
+    # Get symbols defined at beginning of node
     syms = state.symbols_defined_at(node)
-    syms.update(node.in_connectors)
+
+    in_syms = {}
+    for conn in node.in_connectors:
+        if inferred[(node, conn, True)].type is not None:
+            # Let the inferred dictionary win if it has some type information
+            in_syms[conn] = inferred[(node, conn, True)]
+        else:
+            in_syms[conn] = node.in_connectors[conn]
+
+    syms.update(in_syms)
+
+    # Infer all types in tasklet
     new_syms = infer_types(node.code.code, syms)
+
     for cname in node.out_connectors:
         if inferred[(node, cname, False)].type is None:
             if cname not in new_syms:
@@ -121,6 +134,8 @@ def infer_node_connectors(sdfg: SDFG, state: SDFGState, node: nodes.Node,
     # Let the node infer other output types on its own
     if isinstance(node, nodes.Tasklet):
         infer_tasklet_connectors(sdfg, state, node, inferred)
+    elif isinstance(node, nodes.NestedSDFG):
+        infer_connector_types(node.sdfg, inferred=inferred)
 
     # If there are any remaining uninferable connectors, fail
     for e in state.out_edges(node):
@@ -132,7 +147,8 @@ def infer_node_connectors(sdfg: SDFG, state: SDFGState, node: nodes.Node,
 
 def infer_connector_types(sdfg: SDFG,
                           state: SDFGState = None,
-                          graph: SubgraphView = None):
+                          graph: SubgraphView = None,
+                          inferred: defaultdict = None):
     """
         Infers the connector types of an SDFG, state or subgraph and returns them in a dictionary
         consisting of tuples with node, name and a bool whether it is an input connector
@@ -149,8 +165,10 @@ def infer_connector_types(sdfg: SDFG,
         :param sdfg: The SDFG to infer.
         :param state: The state to infer.
         :param graph: The graph to infer.
+        :param inferred: The dictionary of already inferred types.
     """
-    inferred = defaultdict(lambda: dtypes.typeclass(None))
+    if inferred is None:
+        inferred = defaultdict(lambda: dtypes.typeclass(None))
 
     if sdfg is None:
         raise ValueError('No SDFG was provided')
@@ -167,7 +185,7 @@ def infer_connector_types(sdfg: SDFG,
         for node in dfs_topological_sort(graph):
             infer_node_connectors(sdfg, state, node, inferred)
     else:
-        raise ValueError('Missing arguments')
+        raise ValueError('Missing some arguments')
 
     return inferred
 
