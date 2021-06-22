@@ -117,7 +117,7 @@ def save(language: str, name: str, map: dict) -> str:
         :return: absolute path to the cache folder of the SDFG
     """
     folder = create_cache(name)
-    path = os.path.abspath(folder + "/map/map_" + language + ".json")
+    path = os.path.abspath(os.path.join(folder, 'map', 'map_' + language + '.json'))
 
     with open(path, "w") as json_file:
         json.dump(map, json_file, indent=4)
