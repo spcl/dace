@@ -85,7 +85,7 @@ def remove_tmp(name: str, remove_cache: bool = False):
     if (remove_cache and len(os.listdir(path)) == 1
             and len(os.listdir(path + "/map")) == 0):
         if os.path.exists(path):
-            os.rmdir(path + "/map")
+            os.rmdir(os.path.join(path, 'map'))
             os.rmdir(path)
 
 
