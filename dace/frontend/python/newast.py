@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Set, Tuple, Union, Callable, Optional
 
 import dace
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
+from dace import sourcemap
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
@@ -29,8 +30,6 @@ from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
-
-from dace import sourcemap
 
 import numpy
 import sympy

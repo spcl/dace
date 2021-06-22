@@ -55,7 +55,7 @@ class CodeObject(object):
         self.environments = environments or set()
 
         if language == 'cpp' and title == 'Frame':
-            sourcemap.MapCpp(code, name, self.target.target_name)
+            sourcemap.create_cpp_map(code, name, self.target.target_name)
 
     @property
     def clean_code(self):
