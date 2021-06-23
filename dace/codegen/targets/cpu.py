@@ -1143,15 +1143,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
         var_type, ctypedef = self._dispatcher.defined_vars.get(memlet.data)
 
-        try:
-            ptr = cpp.ptr(
-                memlet.data, desc, memlet.subset, sdfg, output,
-                self._dispatcher, 0, var_type == DefinedType.ArrayInterface
-                and not isinstance(desc, data.View))
-        except ValueError:
-            raise cgx.CodegenError(
-                "Only memlets accessing a single HBM-bank may be "
-                f"attached to a tasklet. See {str(memlet)}")
+        ptr = cpp.ptr(
+            memlet.data, desc, memlet.subset, sdfg, output,
+            self._dispatcher, 0, var_type == DefinedType.ArrayInterface
+            and not isinstance(desc, data.View))
 
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
@@ -1160,7 +1155,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     DefinedType.ArrayInterface
                 ] else ptr)
 
-        #TODO: May be dangerous like this. oldcode expected that ptr does not contain the arrayinterfacevariable stuff (why?)
         if expr != ptr:
             expr = '%s[%s]' % (ptr, expr)
         # If there is a type mismatch, cast pointer
@@ -1538,9 +1532,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         for _, _, _, vconn, memlet in state.all_edges(node):
             if (memlet.data in sdfg.arrays
-                    and sdutils.is_HBM_array(sdfg.arrays[memlet.data])):
+                    and sdutils.is_hbm_array(sdfg.arrays[memlet.data])):
                 raise NotImplementedError(
-                    "HBM in nested SDFG's for hostcode not supported")
+                    "HBM in nested SDFG's not supported in non-FPGA code.")
 
         memlet_references = []
         for _, _, _, vconn, in_memlet in sorted(state.in_edges(node),

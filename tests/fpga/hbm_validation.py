@@ -7,10 +7,10 @@ import numpy as np
 from dace import subsets
 from dace.sdfg import nodes as nd
 
-#A test to check the changes to the validation required for the support for HBM
+# A test to check the changes to the validation required for the support for HBM
+# The three functions will be automatically called by pytest
 
-
-def checkInvalid(sdfg, exceptiontype):
+def assert_validation_failure(sdfg, exceptiontype):
     ok = False
     try:
         sdfg.validate()
@@ -18,8 +18,7 @@ def checkInvalid(sdfg, exceptiontype):
         ok = True
     assert ok
 
-
-def deepscopeTest():
+def deepscope_test():
     @dace.program
     def deepscope(input: dace.int32[12, 10], output: dace.int32[12, 10]):
         for k in dace.map[0:10]:
@@ -35,14 +34,14 @@ def deepscopeTest():
         for node in state.nodes():
             if isinstance(node, nd.MapEntry):
                 node.map.schedule = dtypes.ScheduleType.Unrolled
-    sdfg.arrays["input"].location["hbmbank"] = subsets.Range.from_string("0:12")
-    sdfg.arrays["output"].location["hbmbank"] = subsets.Range.from_string(
+    sdfg.arrays["input"].location["hbm_bank"] = subsets.Range.from_string("0:12")
+    sdfg.arrays["output"].location["hbm_bank"] = subsets.Range.from_string(
         "12:24")
     sdfg.apply_fpga_transformations(validate=False)
     sdfg.validate()
 
 
-def multitaskletTest():
+def multitasklet_test():
     @dace.program
     def multitasklet(input: dace.int32[12, 10], output: dace.int32[12, 10]):
         with dace.tasklet:
@@ -52,45 +51,41 @@ def multitaskletTest():
 
     sdfg = multitasklet.to_sdfg()
     sdfg.validate()
-    sdfg.arrays["input"].location["hbmbank"] = subsets.Range.from_string("0:12")
-    sdfg.arrays["output"].location["hbmbank"] = subsets.Range.from_string(
+    sdfg.arrays["input"].location["hbm_bank"] = subsets.Range.from_string("0:12")
+    sdfg.arrays["output"].location["hbm_bank"] = subsets.Range.from_string(
         "12:24")
     sdfg.apply_fpga_transformations(validate=False)
-    checkInvalid(sdfg, InvalidSDFGNodeError)
+    assert_validation_failure(sdfg, InvalidSDFGNodeError)
 
 
-def unsoundLocation():
+def unsound_location_test():
     sdfg = dace.SDFG("jdj")
     sdfg.add_array("a", [4, 3], dtypes.int32, dtypes.StorageType.FPGA_Global)
     sdfg.add_array("b", [4], dtypes.int32, dtypes.StorageType.FPGA_Global)
     state = sdfg.add_state("dummy")
     sdfg.validate()
-    sdfg.arrays["a"].location["hbmbank"] = "2:5"
-    checkInvalid(sdfg, InvalidSDFGError)
-    sdfg.arrays["a"].location["hbmbank"] = subsets.Range.from_string("2:5")
-    checkInvalid(sdfg, InvalidSDFGError)
-    sdfg.arrays["a"].location["hbmbank"] = subsets.Range.from_string("2:5")
-    checkInvalid(sdfg, InvalidSDFGError)
+    sdfg.arrays["a"].location["hbm_bank"] = ":"
+    assert_validation_failure(sdfg, InvalidSDFGError)
+    sdfg.arrays["a"].location["hbm_bank"] = "2:5"
+    assert_validation_failure(sdfg, InvalidSDFGError)
+    sdfg.arrays["a"].location["hbm_bank"] = subsets.Range.from_string("2:5")
+    assert_validation_failure(sdfg, InvalidSDFGError)
+    sdfg.arrays["a"].location["hbm_bank"] = subsets.Range.from_string("2:5")
+    assert_validation_failure(sdfg, InvalidSDFGError)
     sdfg.add_constant("k", 6)
-    sdfg.arrays["a"].location["hbmbank"] = subsets.Range.from_string("2:k")
+    sdfg.arrays["a"].location["hbm_bank"] = subsets.Range.from_string("2:k")
     sdfg.validate()
     sdfg.constants_prop.clear()
-    checkInvalid(sdfg, InvalidSDFGError)
-    sdfg.arrays["a"].location["hbmbank"] = subsets.Range.from_string("2:2")
-    checkInvalid(sdfg, InvalidSDFGError)
-    sdfg.arrays["a"].location["hbmbank"] = subsets.Range.from_string("0:4")
+    assert_validation_failure(sdfg, InvalidSDFGError)
+    sdfg.arrays["a"].location["hbm_bank"] = subsets.Range.from_string("2:2")
+    assert_validation_failure(sdfg, InvalidSDFGError)
+    sdfg.arrays["a"].location["hbm_bank"] = subsets.Range.from_string("0:4")
     sdfg.validate()
-    sdfg.arrays["b"].location["hbmbank"] = subsets.Range.from_string("0:4")
-    checkInvalid(sdfg, InvalidSDFGError)
+    sdfg.arrays["b"].location["hbm_bank"] = subsets.Range.from_string("0:4")
+    assert_validation_failure(sdfg, InvalidSDFGError)
     sdfg.arrays["b"].location["bank"] = "abc"
-    checkInvalid(sdfg, InvalidSDFGError)
+    assert_validation_failure(sdfg, InvalidSDFGError)
     sdfg.arrays["b"].location["bank"] = "1"
     sdfg.validate()
     sdfg.arrays["b"].location["bank"] = 1
     sdfg.validate()
-
-
-if __name__ == "__main__":
-    deepscopeTest()
-    multitaskletTest()
-    unsoundLocation()

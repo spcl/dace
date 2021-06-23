@@ -5,16 +5,7 @@ import numpy as np
 from dace.dtypes import StorageType
 from dace.codegen.targets.fpga import _FPGA_STORAGE_TYPES
 
-#A test checking copies involving HBM-arrays in some way
-
-
-def print_result(a, c, expect):
-    print("A:")
-    print(a)
-    print("C")
-    print(c)
-    print("E")
-    print(expect)
+# A test checking copies involving HBM-arrays in some way
 
 
 #helper MaKe_Copy that creates and appends states performing exactly one copy. If a provided
@@ -48,7 +39,7 @@ def mkc(sdfg: dace.SDFG,
                              dace.int32,
                              storage,
                              transient=isTransient)
-        if loc is not None and loc[0] == "hbmbank":
+        if loc is not None and loc[0] == "hbm_bank":
             arr[1].location[loc[0]] = sbs.Range.from_string(loc[1])
         elif loc is not None:
             arr[1].location[loc[0]] = loc[1]
@@ -79,15 +70,15 @@ def check_hbm2hbm1():
     sdfg = dace.SDFG("hbm2hbm1")
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
                   StorageType.FPGA_Global, [3, 4, 4], [3, 4, 4], "a", None,
-                  ("hbmbank", "0:3"))
+                  ("hbm_bank", "0:3"))
     s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global, None,
                   [2, 4, 4, 4], "x[1, 1:4, 1:4]->1, 1:4, 1:4, 1", None,
-                  ("hbmbank", "3:5"))
+                  ("hbm_bank", "3:5"))
     s, _, _ = mkc(sdfg, s, "y", "z", None, StorageType.FPGA_Global, None,
                   [1, 4, 4, 4], "y[1, 0:4, 0:4, 0:4]->0, 0:4, 0:4, 0:4", None,
-                  ("hbmbank", "5:6"))
+                  ("hbm_bank", "5:6"))
     s, _, _ = mkc(sdfg, s, "z", "w", None, StorageType.FPGA_Global, None,
-                  [1, 4, 4, 4], "z", None, ("hbmbank", "6:7"))
+                  [1, 4, 4, 4], "z", None, ("hbm_bank", "6:7"))
     s, _, c = mkc(sdfg, s, "w", "c", None, StorageType.Default, None,
                   [1, 4, 4, 4], "w")
 
@@ -106,12 +97,12 @@ def check_hbm2ddr1():
     sdfg = dace.SDFG("hbm2ddr1")
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
                   StorageType.FPGA_Global, [3, 5, 5], [3, 5, 5], "a", None,
-                  ("hbmbank", "0:3"))
+                  ("hbm_bank", "0:3"))
     s, _, _ = mkc(sdfg, s, "x", "d1", None, StorageType.FPGA_Global, None,
                   [3, 5, 5], "x[2, 0:5, 0:5]->1, 0:5, 0:5", None, ("bank", 1))
     s, _, _ = mkc(sdfg, s, "d1", "y", None, StorageType.FPGA_Global, None,
                   [1, 7, 7], "d1[1, 0:5,0:5]->0, 2:7, 2:7", None,
-                  ("hbmbank", "3:4"))
+                  ("hbm_bank", "3:4"))
     s, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default, None, [1, 7, 7],
                   "y")
 

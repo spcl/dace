@@ -11,13 +11,13 @@ def create_dynamic_memlet_sdfg():
     sdfg = dace.SDFG("dyn_memlet")
     state: dace.SDFGState = sdfg.add_state("dyn_memlet")
     xarr = state.add_array("x", [4, 10], dace.int32)
-    sdfg.arrays["x"].location["hbmbank"] = sbs.Range.from_string("0:4")
+    sdfg.arrays["x"].location["hbm_bank"] = sbs.Range.from_string("0:4")
     yarr = state.add_array("y", [4, 10], dace.int32)
-    sdfg.arrays["y"].location["hbmbank"] = sbs.Range.from_string("4:8")
+    sdfg.arrays["y"].location["hbm_bank"] = sbs.Range.from_string("4:8")
 
-    hbmmapenter, hbmmapexit = state.add_map("hbmmap", dict(k="0:4"),
+    hbm_map_enter, hbm_map_exit = state.add_map("hbmmap", dict(k="0:4"),
                                             dtypes.ScheduleType.Unrolled)
-    arrmapenter, arrmapexit = state.add_map("map", dict(i="0:_dynbound"))
+    arr_map_enter, arr_map_exit = state.add_map("map", dict(i="0:_dynbound"))
     tasklet = state.add_tasklet("dyn", set(["_in"]), set(["_out"]),
                                 ("if(i == 2):\n"
                                  "   _out = 2\n"
@@ -25,20 +25,20 @@ def create_dynamic_memlet_sdfg():
                                  "   _out = _in\n"))
 
     state.add_memlet_path(xarr,
-                          hbmmapenter,
-                          arrmapenter,
+                          hbm_map_enter,
+                          arr_map_enter,
                           tasklet,
                           memlet=mem.Memlet("x[k, i]", dynamic=True),
                           dst_conn="_in")
     state.add_memlet_path(tasklet,
-                          arrmapexit,
-                          hbmmapexit,
+                          arr_map_exit,
+                          hbm_map_exit,
                           yarr,
                           memlet=mem.Memlet("y[k, i]", dynamic=True),
                           src_conn="_out")
     state.add_memlet_path(xarr,
-                          hbmmapenter,
-                          arrmapenter,
+                          hbm_map_enter,
+                          arr_map_enter,
                           memlet=mem.Memlet("x[1, 0]"),
                           dst_conn="_dynbound")
     sdfg.apply_fpga_transformations()

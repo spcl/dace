@@ -1031,7 +1031,7 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
     return result
 
 
-def is_HBM_array(array: dt.Data,
+def is_hbm_array(array: dt.Data,
                  onlyTrueIfMultibank: bool = False,
                  sdfg: SDFG = None):
     """
@@ -1041,7 +1041,7 @@ def is_HBM_array(array: dt.Data,
     """
     if (isinstance(array, dt.Array)
             and array.storage == dtypes.StorageType.FPGA_Global
-            and "hbmbank" in array.location):
+            and "hbm_bank" in array.location):
         if onlyTrueIfMultibank:
             low, high = get_multibank_ranges_from_subset(array.location, sdfg)
             return high - low > 1
@@ -1050,14 +1050,14 @@ def is_HBM_array(array: dt.Data,
     return False
 
 
-def iterate_multibank_arrays(arrayname: str, array: dt.Array, sdfg: SDFG):
+def iterate_hbm_multibank_arrays(arrayname: str, array: dt.Array, sdfg: SDFG):
     """
     Small helper function that iterates over the bank indices
-    if the provided array is spanned across multiple hbmbanks.
+    if the provided array is spanned across multiple hbm_banks.
     Otherwise just returns 0 once.
     """
-    if is_HBM_array(array):
-        low, high = get_multibank_ranges_from_subset(array.location["hbmbank"],
+    if is_hbm_array(array):
+        low, high = get_multibank_ranges_from_subset(array.location["hbm_bank"],
                                                      sdfg, False,
                                                      f" array {arrayname}")
         for i in range(high - low):
@@ -1066,7 +1066,7 @@ def iterate_multibank_arrays(arrayname: str, array: dt.Array, sdfg: SDFG):
         yield 0
 
 
-def modify_subset_magic(array: dt.Data,
+def modify_distributed_subset(array: dt.Data,
                         subset: Union[sbs.Subset, list, tuple],
                         change: int,
                         force: bool = False):
@@ -1079,7 +1079,7 @@ def modify_subset_magic(array: dt.Data,
     """
     if (not isinstance(array, dt.Array)):
         return subset
-    if is_HBM_array(array) or force:
+    if is_hbm_array(array) or force:
         cps = copy.deepcopy(subset)
         if isinstance(subset, sbs.Subset):
             if change == -1:
@@ -1096,7 +1096,7 @@ def modify_subset_magic(array: dt.Data,
             if isinstance(subset, tuple):
                 cps = tuple(cps)
         else:
-            raise ValueError("unsupported type passed to modify_subset_magic")
+            raise ValueError("unsupported type passed to modify_distributed_subset")
     else:
         cps = subset
     return cps
@@ -1122,7 +1122,7 @@ def get_multibank_ranges_from_subset(
     low, high, stride = subset[0]
     try:
         if stride != 1:
-            raise ValueError(f"Cannot handle strided HBM-subset")
+            raise NotImplementedError(f"Strided HBM subsets not supported.")
         try:
             low = int(symbolic.resolve_symbol_to_constant(low, sdfg))
             high = int(symbolic.resolve_symbol_to_constant(high, sdfg))

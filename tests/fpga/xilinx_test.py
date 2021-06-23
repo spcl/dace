@@ -81,7 +81,6 @@ TESTS = [
         "kernels_inside_component_2_1", "kernels_inside_components_0_1",
         "kernels_lns_inside_component_1", "multiple_kernels_multiple_states"
     ], True, False, []),
-    ("tests/fpga/hbm_validation.py", [], False, False, []),
     ("tests/fpga/hbm_vadd_fpga.py", ["vadd_2b1d_1", "vadd_2b2d_1",
      "vadd_2b3d_1", "vadd_8b1d_1"], True, False, []),
       #For hbm_reduction not all sdfg's are added, since relatively redundant

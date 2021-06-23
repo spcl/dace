@@ -4,7 +4,7 @@ from dace import subsets
 import dace
 import numpy as np
 
-#A test checking wcr-reduction with HBM arrays as inputs and output
+# A test checking wcr-reduction with HBM arrays as inputs and output
 
 
 def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
@@ -17,14 +17,14 @@ def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
     in1 = sdfg.add_array("in1", [banks, N, M], dace.float32)
     in2 = sdfg.add_array("in2", [banks, N, M], dace.float32)
     out = sdfg.add_array("out", [banks, N], dace.float32)
-    in1[1].location["hbmbank"] = subsets.Range.from_string(f"0:{banks}")
-    in2[1].location["hbmbank"] = subsets.Range.from_string(f"{banks}:{2*banks}")
-    out[1].location["hbmbank"] = subsets.Range.from_string(
+    in1[1].location["hbm_bank"] = subsets.Range.from_string(f"0:{banks}")
+    in2[1].location["hbm_bank"] = subsets.Range.from_string(f"{banks}:{2*banks}")
+    out[1].location["hbm_bank"] = subsets.Range.from_string(
         f"{2*banks}:{3*banks}")
 
     readin1 = state.add_read("in1")
     readin2 = state.add_read("in2")
-    outwrite = state.add_write("out")
+    out_write = state.add_write("out")
     tmpin1_memlet = dace.Memlet(f"in1[k, i, j]")
     tmpin2_memlet = dace.Memlet(f"in2[k, i, j]")
     tmpout_memlet = dace.Memlet(f"out[k, i]", wcr="lambda x,y: x+y")
@@ -52,7 +52,7 @@ def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
     state.add_memlet_path(tasklet,
                           map_exit,
                           outer_exit,
-                          outwrite,
+                          out_write,
                           memlet=tmpout_memlet,
                           src_conn="__out")
 

@@ -19,7 +19,7 @@ from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import make_absolute
 from dace.codegen.targets import cpp, fpga
-from typing import Union
+from typing import List, Union
 
 REDUCTION_TYPE_TO_HLSLIB = {
     dace.dtypes.ReductionType.Min: "hlslib::op::Min",
@@ -267,7 +267,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                              sdfg: SDFG,
                              is_output: bool,
                              with_vectorization: bool,
-                             interface_id: "Union[int, list[int]]" = None):
+                             interface_id: Union[int, List[int]] = None):
         if isinstance(data, dt.Array):
             var_name = cpp.ptr(var_name, data, subset_info, sdfg, is_output,
                                None, None, True, interface_id)
@@ -455,7 +455,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         if var_name in sdfg.arrays:
             array = sdfg.arrays[var_name]
-            if utils.is_HBM_array(array):
+            if utils.is_hbm_array(array):
                 newname = cpp.ptr(var_name,
                                   array,
                                   accessed_subset,
@@ -495,13 +495,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         array_args = []
         for is_output, dataname, data, interface in parameters:
             if isinstance(data, dt.Array):
-                memorybank = bank_assignments[dataname]
-                if memorybank[0] == "HBM":
+                memory_bank = bank_assignments[dataname]
+                if memory_bank[0] == "HBM":
                     lowest_bank_index, _ = utils.get_multibank_ranges_from_subset(
-                        memorybank[1], sdfg, False, dataname)
+                        memory_bank[1], sdfg, False, dataname)
                 else:
-                    lowest_bank_index = int(memorybank[1])
-                for bank in utils.iterate_multibank_arrays(
+                    lowest_bank_index = int(memory_bank[1])
+                for bank in utils.iterate_hbm_multibank_arrays(
                         dataname, data, sdfg):
                     kernel_arg = self.make_kernel_argument(
                         data, dataname, bank, sdfg, is_output, True, interface)
@@ -509,7 +509,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         kernel_args.append(kernel_arg)
                         array_args.append((kernel_arg, dataname))
                         argname_to_bank_assignment[kernel_arg] = (
-                            memorybank[0], lowest_bank_index + bank)
+                            memory_bank[0], lowest_bank_index + bank)
             else:
                 kernel_arg = self.make_kernel_argument(data, dataname, None,
                                                        None, is_output, True,
@@ -538,12 +538,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 interface_name = "gmem{}".format(num_mapped_args)
                 kernel_stream.write(
                     "#pragma HLS INTERFACE m_axi port={} "
-                    "offset=slave bundle={}".format(var_name, interface_name), )
+                    "offset=slave bundle={}".format(var_name, interface_name), 
+                    sdfg, state_id)
                 # Map this interface to the corresponding location
                 # specification to be passed to the Xilinx compiler
-                memorybank = argname_to_bank_assignment[arg]
+                memory_bank = argname_to_bank_assignment[arg]
                 self._bank_assignments[(kernel_name,
-                                        interface_name)] = memorybank
+                                        interface_name)] = memory_bank
                 num_mapped_args += 1
 
         for arg in kernel_args + ["return"]:
@@ -582,7 +583,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args = []
         for _, name, p, _ in parameters:
             if isinstance(p, dt.Array):
-                for bank in utils.iterate_multibank_arrays(name, p, sdfg):
+                for bank in utils.iterate_hbm_multibank_arrays(name, p, sdfg):
                     kernel_args.append(
                         p.as_arg(False, name=cpp.ptr(name, p, bank)))
             else:
@@ -627,7 +628,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args_module = []
         for is_output, pname, p, interface_id in parameters:
             if isinstance(p, dt.Array):
-                for bank in utils.iterate_multibank_arrays(pname, p, sdfg):
+                for bank in utils.iterate_hbm_multibank_arrays(pname, p, sdfg):
                     arr_name = cpp.ptr(pname,
                                        p,
                                        bank,
@@ -780,7 +781,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # FPGA kernel
         interfaces_added = set()
         for is_output, argname, arg, _ in parameters:
-            for bank in utils.iterate_multibank_arrays(argname, arg, sdfg):
+            for bank in utils.iterate_hbm_multibank_arrays(argname, arg, sdfg):
                 if (not (isinstance(arg, dt.Array) and arg.storage
                          == dace.dtypes.StorageType.FPGA_Global)):
                     continue
@@ -921,11 +922,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                              host_code_stream):
 
         kernel_args = []
-        for is_output, name, arg, if_id in parameters:
+        for is_output, name, arg, interface_id in parameters:
             if isinstance(arg, dt.Array):
-                for bank in utils.iterate_multibank_arrays(name, arg, sdfg):
+                for bank in utils.iterate_hbm_multibank_arrays(name, arg, sdfg):
                     argname = cpp.ptr(name, arg, bank, sdfg, is_output, None,
-                                      None, True, if_id)
+                                      None, True, interface_id)
                     kernel_args.append(arg.as_arg(with_types=True,
                                                   name=argname))
             else:
@@ -970,7 +971,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
             is_memory_interface = (self._dispatcher.defined_vars.get(
                 in_memlet.data, 1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:
-                for bank in utils.iterate_multibank_arrays(
+                for bank in utils.iterate_hbm_multibank_arrays(
                         in_memlet.data, sdfg.arrays[in_memlet.data], sdfg):
                     interface_name = cpp.ptr(vconn,
                                              sdfg.arrays[in_memlet.data],
@@ -1015,7 +1016,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
             is_memory_interface = (self._dispatcher.defined_vars.get(
                 out_memlet.data, 1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:
-                for bank in utils.iterate_multibank_arrays(
+                for bank in utils.iterate_hbm_multibank_arrays(
                         out_memlet.data, sdfg.arrays[out_memlet.data], sdfg):
                     interface_name = cpp.ptr(uconn,
                                              sdfg.arrays[out_memlet.data],
