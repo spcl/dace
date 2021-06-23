@@ -315,22 +315,33 @@ class SVEVectorization(transformation.Transformation):
         """
             Vectorized the subset of a memlet given the vector param.
         """
-        if len(edge.data.subset) > 1:
-            # TODO: Multidimensional vectorization
-            return
-
         if edge.data.num_elements() != 1:
             # Subsets can't be vectorized
             return
 
-        sub = edge.data.subset[0]
+        sve_dim = None
+        if len(edge.data.subset) > 1:
+            for dim, sub in enumerate(edge.data.subset):
+                for expr in sub:
+                    if map.params[-1] in symbolic.pystr_to_symbolic(
+                            expr).free_symbols:
+                        if sve_dim is not None:
+                            # TODO: Param occurs in multiple dimensions
+                            return
+                        sve_dim = dim
+
+        if sve_dim is None:
+            sve_dim = -1
+
+        sub = edge.data.subset[sve_dim]
 
         stride = edge.data.get_stride(sdfg, map)
         if stride == 0:
             # Scalar
             stride = 1
 
-        edge.data.subset[0] = (sub[0], sub[1] + stride * util.SVE_LEN, stride)
+        edge.data.subset[sve_dim] = (sub[0], sub[1] + stride * util.SVE_LEN,
+                                     stride)
 
     def propagate_vector_information(sdfg: SDFG, state: SDFGState,
                                      scope: ScopeSubgraphView,
@@ -398,11 +409,6 @@ class SVEVectorization(transformation.Transformation):
             # Check if anything fails and detect newly vectorized out connectors
             # We don't care about its base type, only whether it got vectorized (or even got scalar'd again)
             for conn in node.out_connectors:
-                if inf[(node, conn, False)].type is None:
-                    # Oh oh... inference failed on the output type
-                    raise NotImplementedError(
-                        f'Failed to infer connector {conn}')
-
                 # Restore correct base type in case inferece changed it
                 # (for example assigning 0.0 to a float32 output makes it float64)
                 inf[(node, conn, False)].type = inferred[(node, conn,
@@ -418,9 +424,9 @@ class SVEVectorization(transformation.Transformation):
                               dtypes.vector) and not isinstance(
                                   inf[(node, conn, False)], dtypes.vector):
                     # Connector went from vector back to scalar
-                    # TODO: What does that imply?
-                    #vec_edges.extend(state.out_edges_by_connector(node, conn))
-                    pass
+                    # Force it to become a vector (codegen takes care of scalar->vector)
+                    inf[(node, conn, False)] = dtypes.vector(inf[(node, conn, False)], util.SVE_LEN)
+                    # TODO: What else does this imply?
 
             ###################
             # Propagate information onto AccessNode, if any output connector is vector
