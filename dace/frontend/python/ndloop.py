@@ -2,6 +2,7 @@
 """ A single generator that creates an N-dimensional for loop in Python. """
 import itertools
 import numpy as np
+from typing import List, Tuple, Union
 
 # Python 3 compatibility for xrange
 try:
@@ -17,19 +18,7 @@ def slicetoxrange(s):
 
     ifnone = lambda a, b: b if a is None else a
 
-    return xxrange(ifnone(s.start, 0), s.stop + 1, ifnone(s.step, 1))
-
-
-def tupletoxrange(s):
-    """ Helper function that turns a tuple into a range (for iteration). """
-    if isinstance(s, int):
-        return xxrange(s, s + 1)
-
-    ifnone = lambda a, b: b if a is None else a
-    ifscalar = lambda a: a[0] if isinstance(a, np.ndarray) else a
-    allconds = lambda a, b: ifnone(ifscalar(a), b)
-
-    return xxrange(allconds(s[0], 0), ifscalar(s[1]) + 1, allconds(s[2], 1))
+    return xxrange(ifnone(s.start, 0), s.stop, ifnone(s.step, 1))
 
 
 def NDLoop(ndslice, internal_function, *args, **kwargs):
@@ -49,16 +38,15 @@ def NDLoop(ndslice, internal_function, *args, **kwargs):
         internal_function(*(indices + args), **kwargs)
 
 
-def ndrange(slice_list):
+def ndrange(slice_list: Union[Tuple[slice], slice]):
     """ Generator that creates an N-dimensional for loop in Python. 
         :param slice_list: Slice or list of slices (as tuples or `slice`s)
                           to loop over.
         :return: N-dimensional loop index generator.
     """
-    if not isinstance(slice_list, list):
-        ndxrange = (tupletoxrange(slice_list), )
+    if not isinstance(slice_list, (tuple, list)):
+        yield from slicetoxrange(slice_list)
     else:
-        ndxrange = tuple(tupletoxrange(d) for d in slice_list)
-
-    for indices in itertools.product(*ndxrange):
-        yield indices
+        ndxrange = tuple(slicetoxrange(d) for d in slice_list)
+        for indices in itertools.product(*ndxrange):
+            yield indices

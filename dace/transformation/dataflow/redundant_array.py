@@ -325,7 +325,7 @@ class RedundantArray(pm.Transformation):
         else:
             # Two views connected to each other
             if isinstance(in_desc, data.View):
-                return False
+                return True
 
         # Find occurrences in this and other states
         occurrences = []
@@ -425,6 +425,19 @@ class RedundantArray(pm.Transformation):
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
         a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
+
+        # View connected to a view: simple case
+        if (isinstance(in_desc, data.View) and isinstance(out_desc, data.View)):
+            for e in graph.in_edges(in_array):
+                new_memlet = copy.deepcopy(e.data)
+                e.dst_subset = b_subset
+                graph.add_edge(e.src, e.src_conn, out_array, 
+                               e.dst_conn, new_memlet)
+            graph.remove_node(in_array)
+            if in_array.data in sdfg.arrays:
+                del sdfg.arrays[in_array.data]
+            return
+
 
         # Find extraneous A or B subset dimensions
         a_dims_to_pop = []
