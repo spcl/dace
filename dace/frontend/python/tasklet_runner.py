@@ -72,26 +72,30 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
         # Used for outgoing memlets
         self.post_statements: List[ast.AST] = []
         # Used for dynamic memlets, which should be replaced within the tasklet
-        self.name_replacements: List[Tuple[str, ast.AST]] = []
-        self.assign_replacements: List[Tuple[str, ast.AST]] = []
+        self.name_replacements: Dict[str, ast.AST] = {}
+        self.assign_replacements: Dict[str, ast.AST] = {}
+        self.wcr_replacements: Dict[str, Tuple[ast.AST, ast.Lambda]] = {}
         self.replace: bool = False
 
     def clear_statements(self):
         self.pre_statements = []
         self.post_statements = []
-        self.name_replacements = []
-        self.assign_replacements = []
+        self.name_replacements = {}
+        self.assign_replacements = {}
+        self.wcr_replacements = {}
         self.replace = False
 
     def rewrite_tasklet(self, node: ast.With) -> ast.Module:
         self.clear_statements()
 
         # Visit a first time to collect and clean memlets
-        newnode = self.visit(node)
+        newnode: ast.With = self.visit(node)
 
         # Visit a second time to replace dynamic memlets
-        self.replace = True
-        newnode: ast.With = self.visit(newnode)
+        if (len(self.name_replacements) + len(self.assign_replacements) +
+                len(self.wcr_replacements)) > 0:
+            self.replace = True
+            newnode: ast.With = self.visit(newnode)
 
         # Replace "with" statement with "if True:" and add memlet statements
         iftrue = ast.parse('if True: pass')
@@ -142,6 +146,11 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
             dynamic, wcr = self._analyze_call(node.value)
             result: ast.Subscript = node
             result.value = node.value.func
+        
+        # If memlet is just an array name, add "[:]"
+        if isinstance(result, ast.Name):
+            result = ast.parse(f'{result.id}[:]').body[0].value
+
         return result, dynamic, wcr
 
     # Visit and transform memlet expressions
@@ -161,8 +170,8 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
                                        value=cleaned_right), node))
                 else:
                     # In-place replacement
-                    self.name_replacements.append(
-                        (rname(node.value.left), cleaned_right))
+                    self.name_replacements[rname(
+                        node.value.left)] = cleaned_right
                 return None  # Remove from final tasklet code
             elif isinstance(node.value.op, ast.RShift):
                 # Obtain memlet metadata and clean AST node from memlet syntax
@@ -183,20 +192,20 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
                     lhs = copy.deepcopy(cleaned_right)
                     lhs.ctx = ast.Store()
                     self.post_statements.append(
-                        _copy_location(
-                            ast.Assign(targets=[lhs], value=rhs),
-                            node))
+                        _copy_location(ast.Assign(targets=[lhs], value=rhs),
+                                       node))
                 else:
                     if wcr is not None:
-                        # TODO: Replace Assignments with lambda every time
-                        raise NotImplementedError(
-                            'Dynamic memlet outputs with WCR not yet supported')
-
-                    # In-place replacement
-                    self.assign_replacements.append(
-                        (rname(node.value.left), cleaned_right))
+                        # Replace Assignments with lambda every time
+                        self.wcr_replacements[rname(
+                            node.value.left)] = (cleaned_right, wcr)
+                    else:
+                        # In-place replacement
+                        self.assign_replacements[rname(
+                            node.value.left)] = cleaned_right
 
                 return None  # Remove from final tasklet code
+
         return self.generic_visit(node)
 
     def visit_Name(self, node: ast.Name):
@@ -212,17 +221,34 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
             return self.generic_visit(node)
         # Replace dynamic writes
         result = []
+        rhs = self.visit(node.value)
         for target in node.targets:
             if (isinstance(target, ast.Name)
                     and target.id in self.assign_replacements):
-                raise NotImplementedError
+                # Replace assignment
+                newtarget = copy.deepcopy(self.assign_replacements[target.id])
+                newtarget.ctx = ast.Store()
                 result.append(
-                    _copy_location(
-                        copy.deepcopy(self.assign_replacements[node.id]), node))
+                    _copy_location(ast.Assign(targets=[newtarget], value=rhs),
+                                   node))
+            elif (isinstance(target, ast.Name)
+                  and target.id in self.wcr_replacements):
+                # Replace WCR assignment
+                newtarget, wcr = copy.deepcopy(self.wcr_replacements[target.id])
+                new_old_rhs = copy.deepcopy(newtarget)
+                newtarget.ctx = ast.Store()
+                rhs = _copy_location(
+                    ast.Call(func=wcr, args=[new_old_rhs, rhs], keywords=[]),
+                    rhs)
+                result.append(
+                    _copy_location(ast.Assign(targets=[newtarget], value=rhs),
+                                   node))
             else:
+                # Keep assignment as-is
+                target = self.visit(target)
                 result.append(
-                    _copy_location(
-                        ast.Assign(targets=[target], value=node.value), node))
+                    _copy_location(ast.Assign(targets=[target], value=rhs),
+                                   node))
         return result
 
 
