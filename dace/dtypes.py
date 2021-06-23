@@ -1245,11 +1245,18 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     if storage in [
             StorageType.CPU_Heap, StorageType.CPU_Pinned,
             StorageType.CPU_ThreadLocal, StorageType.FPGA_Global,
-            StorageType.GPU_Global
+            # StorageType.GPU_Global
     ]:
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
             ScheduleType.MPI
+        ]
+    
+    # GPU-global memory
+    if storage is StorageType.GPU_Global:
+        return schedule in [
+            ScheduleType.CPU_Multicore, ScheduleType.Sequential,
+            ScheduleType.MPI, ScheduleType.GPU_Default
         ]
 
     # FPGA-local memory
