@@ -451,8 +451,9 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
                 # (important) Ensure GPU array is allocated before the stream
                 datanode = dfg.out_edges(node)[0].dst
+                sinkdesc = sdfg.arrays[datanode.data]
                 self._dispatcher.dispatch_allocate(sdfg, dfg, state_id,
-                                                   datanode, nodedesc,
+                                                   datanode, sinkdesc,
                                                    function_stream,
                                                    allocation_stream)
 
