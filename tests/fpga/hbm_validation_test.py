@@ -89,3 +89,8 @@ def unsound_location_test():
     sdfg.validate()
     sdfg.arrays["b"].location["bank"] = 1
     sdfg.validate()
+
+if __name__ == "__main__":
+    deepscope_test()
+    multitasklet_test()
+    unsound_location_test()
