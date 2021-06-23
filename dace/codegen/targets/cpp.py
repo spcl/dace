@@ -257,9 +257,10 @@ def ptr(name: str,
                 raise ValueError(
                     "Cannot generate name for hbm_bank using subset if sdfg not provided"
                 )
-            low, _ = utils.get_multibank_ranges_from_subset(
-                subset_info, sdfg, True,
-                f"{name} with subset {str(subset_info)}")
+            low, high = utils.get_multibank_ranges_from_subset(
+                subset_info, sdfg)
+            if(low + 1 != high):
+                raise ValueError("ptr cannot generate HBM names for subsets accessing more than one HBM bank")
             name = f"hbm{low}_{name}"
             subset_info = low  #used for arrayinterface name where it must be int
     if is_array_interface:

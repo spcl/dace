@@ -498,7 +498,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 memory_bank = bank_assignments[dataname]
                 if memory_bank[0] == "HBM":
                     lowest_bank_index, _ = utils.get_multibank_ranges_from_subset(
-                        memory_bank[1], sdfg, False, dataname)
+                        memory_bank[1], sdfg)
                 else:
                     lowest_bank_index = int(memory_bank[1])
                 for bank in utils.iterate_hbm_multibank_arrays(

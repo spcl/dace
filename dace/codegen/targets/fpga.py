@@ -823,7 +823,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         elif "hbm_bank" in nodedesc.location:
                             hbm_bank = nodedesc.location["hbm_bank"]
                             banklow, bankhigh = utils.get_multibank_ranges_from_subset(
-                                hbm_bank, sdfg, False, f"array {dataname}")
+                                hbm_bank, sdfg)
                             memory_bank_arg_count = bankhigh - banklow
                             arrsize = dace.symbolic.pystr_to_symbolic(
                                 f"({str(arrsize)}) / {str(bankhigh - banklow)}")
@@ -2022,9 +2022,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     and self._dispatcher.defined_vars.has(edge.src_conn)):
                 accessed_subset = 0
                 if utils.is_hbm_array(datadesc):
-                    accessed_subset, _ = utils.get_multibank_ranges_from_subset(
-                        edge.data.dst_subset or edge.data.subset, sdfg, True,
-                        f"at {str(node)} in state {state_id}")
+                    accessed_subset, high_check = utils.get_multibank_ranges_from_subset(
+                        edge.data.dst_subset or edge.data.subset, sdfg)
+                    if accessed_subset + 1 != high_check:
+                        raise cgx.CodegenError(
+                            "generate_tasklet_postamble was called on HBM memlet accessing multiple banks")
 
                 self.generate_no_dependence_post(after_memlets_stream, sdfg,
                                                  state_id, node, edge.src_conn,
