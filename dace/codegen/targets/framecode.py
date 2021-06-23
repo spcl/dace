@@ -547,7 +547,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                             continue
 
                         # If already found in another state, set scope to SDFG
-                        if curstate is not None:
+                        if curstate is not None and curstate != state:
                             multistate = True
                             break
                         curstate = state
