@@ -807,9 +807,9 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
                         # TODO: Distinguish between read, write, and read+write
                         self._allocated_global_arrays.add(node.data)
-                        memory_bank_arg_type = "DDR"
                         memory_bank_arg_count = 1
                         bankoffset = 0
+                        is_hbm = False
                         if "bank" in nodedesc.location:
                             try:
                                 bank = int(nodedesc.location["bank"])
@@ -818,16 +818,16 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                     "FPGA memory bank specifier "
                                     "must be an integer: {}".format(
                                         nodedesc.location["bank"]))
-                            memory_bank_arg_type = "DDR"
+                            is_hbm = False
                             bankoffset = bank
                         elif "hbm_bank" in nodedesc.location:
                             hbm_bank = nodedesc.location["hbm_bank"]
-                            memory_bank_arg_type = "HBM"
                             banklow, bankhigh = utils.get_multibank_ranges_from_subset(
                                 hbm_bank, sdfg, False, f"array {dataname}")
                             memory_bank_arg_count = bankhigh - banklow
                             arrsize = dace.symbolic.pystr_to_symbolic(
                                 f"({str(arrsize)}) / {str(bankhigh - banklow)}")
+                            is_hbm = True
                             bankoffset = banklow
                         # Define buffer, using proper type
                         for bank_index in range(memory_bank_arg_count):
@@ -835,7 +835,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                             result_decl.write(
                                 "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n"
                                 .format(nodedesc.dtype.ctype, allocname))
-                            if memory_bank_arg_type == "HBM":
+                            if is_hbm:
                                 result_alloc.write(
                                     "{} = __state->fpga_context->Get()."
                                     "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
@@ -843,7 +843,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                     .format(allocname, nodedesc.dtype.ctype,
                                             bankoffset + bank_index,
                                             cpp.sym2cpp(arrsize)))
-                            elif memory_bank_arg_type == "DDR":
+                            else:
                                 result_alloc.write(
                                     "{} = __state->fpga_context->Get()."
                                     "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"

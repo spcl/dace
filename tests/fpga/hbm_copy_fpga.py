@@ -7,7 +7,6 @@ from dace.codegen.targets.fpga import _FPGA_STORAGE_TYPES
 
 # A test checking copies involving HBM-arrays in some way
 
-
 #helper MaKe_Copy that creates and appends states performing exactly one copy. If a provided
 #arrayname already exists it will use the old array, and ignore all newly passed values
 def mkc(sdfg: dace.SDFG,

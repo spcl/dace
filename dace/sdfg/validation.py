@@ -641,18 +641,18 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     'Dimensionality mismatch between src/dst subsets', sdfg,
                     state_id, eid)
 
-        wrongmagicindexerror = InvalidSDFGEdgeError(
+        wrong_magic_index_error = InvalidSDFGEdgeError(
             "The first index accessing "
             "HBM-arrays must be constant evaluatable and have stride==1", sdfg,
             state_id, eid)
         if (isinstance(src_node, nd.AccessNode)
                 and sdutil.is_hbm_array(src_node.desc(state))):
             if not validate_hbm_subset(e.data.src_subset or e.data.subset):
-                raise wrongmagicindexerror
+                raise wrong_magic_index_error
         if (isinstance(dst_node, nd.AccessNode)
                 and sdutil.is_hbm_array(dst_node.desc(state))):
             if not validate_hbm_subset(e.data.dst_subset or e.data.subset):
-                raise wrongmagicindexerror
+                raise wrong_magic_index_error
 
     ########################################
 
