@@ -997,7 +997,20 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     return name
 
 
-def _broadcast_together(arr1_shape, arr2_shape):
+def _broadcast_to(target_shape, operand_shape):
+    # the difference to normal broadcasting is that the broadcasted shape is the same as the target
+    # I was unable to find documentation for this in numpy, so we follow the description from ONNX
+    results = _broadcast_together(target_shape,
+                                  operand_shape,
+                                  unidirectional=True)
+
+    # the output_shape should be equal to the target_shape
+    assert all(i == o for i, o in zip(target_shape, results[0]))
+
+    return results
+
+
+def _broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
 
     all_idx_dict, all_idx, a1_idx, a2_idx = {}, [], [], []
 
@@ -1016,7 +1029,9 @@ def _broadcast_together(arr1_shape, arr2_shape):
 
             all_idx_dict[get_idx(i)] = dim1
 
-        elif dim1 == 1 and dim2 is not None:
+        # if unidirectional, dim2 must also be 1
+        elif dim1 == 1 and dim2 is not None and not unidirectional:
+
             a1_idx.append("0")
             # dim2 != 1 must hold here
             a2_idx.append(get_idx(i))
@@ -1030,7 +1045,8 @@ def _broadcast_together(arr1_shape, arr2_shape):
 
             all_idx_dict[get_idx(i)] = dim1
 
-        elif dim1 == None:
+        # if unidirectional, this is not allowed
+        elif dim1 == None and not unidirectional:
             # dim2 != None must hold here
             a2_idx.append(get_idx(i))
 
@@ -1042,9 +1058,14 @@ def _broadcast_together(arr1_shape, arr2_shape):
 
             all_idx_dict[get_idx(i)] = dim1
         else:
-            raise SyntaxError(
-                "operands could not be broadcast together with shapes {}, {}".
-                format(arr1_shape, arr2_shape))
+            if unidirectional:
+                raise SyntaxError(
+                    f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}"
+                )
+            else:
+                raise SyntaxError(
+                    "operands could not be broadcast together with shapes {}, {}"
+                    .format(arr1_shape, arr2_shape))
 
     def to_string(idx):
         return ", ".join(reversed(idx))

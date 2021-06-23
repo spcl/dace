@@ -641,7 +641,7 @@ class Range(Subset):
         else:
             raise NotImplementedError
 
-    def squeeze(self, ignore_indices=None):
+    def squeeze(self, ignore_indices=None, offset=True):
         ignore_indices = ignore_indices or []
         shape = self.size()
         non_ones = []
@@ -664,7 +664,8 @@ class Range(Subset):
             squeezed_tsizes = [1]
         self.ranges = squeezed_ranges
         self.tile_sizes = squeezed_tsizes
-        self.offset(self, True, indices=offset_indices)
+        if offset:
+            self.offset(self, True, indices=offset_indices)
         return non_ones
 
     def unsqueeze(self, axes: Sequence[int]) -> List[int]:
