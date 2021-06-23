@@ -1030,25 +1030,13 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
 
     return result
 
-
-def is_hbm_array(array: dt.Data,
-                 onlyTrueIfMultibank: bool = False,
-                 sdfg: SDFG = None):
+def is_hbm_array(array: dt.Data):
     """
     :return: True if this array is placed on HBM
-    :param onlyTrueIfMultibank: Return only True if this array is placed on more then
-        one HBM-bank. If True then :param sdfg: must be set.
     """
-    if (isinstance(array, dt.Array)
+    return (isinstance(array, dt.Array)
             and array.storage == dtypes.StorageType.FPGA_Global
-            and "hbm_bank" in array.location):
-        if onlyTrueIfMultibank:
-            low, high = get_multibank_ranges_from_subset(array.location, sdfg)
-            return high - low > 1
-        else:
-            return True
-    return False
-
+            and "hbm_bank" in array.location)
 
 def iterate_hbm_multibank_arrays(arrayname: str, array: dt.Array, sdfg: SDFG):
     """
