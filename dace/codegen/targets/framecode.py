@@ -411,8 +411,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
     def _can_allocate(self, sdfg: SDFG, state: SDFGState, desc: data.Data,
                       scope: Union[nodes.EntryNode, SDFGState, SDFG]) -> bool:
         schedule = self._get_schedule(scope)
-        if not dtypes.can_allocate(desc.storage, schedule):
-            return False
+        # if not dtypes.can_allocate(desc.storage, schedule):
+        #     return False
+        if dtypes.can_allocate(desc.storage, schedule):
+            return True
 
         # Check for device-level memory recursively
         node = scope if isinstance(scope, nodes.EntryNode) else None
@@ -426,7 +428,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         elif desc.storage in dtypes.GPU_STORAGES:
             return sdscope.is_devicelevel_gpu(csdfg, cstate, node)
 
-        return True
+        # return True
+        return False
 
     def determine_allocation_lifetime(self, top_sdfg: SDFG):
         """ 
