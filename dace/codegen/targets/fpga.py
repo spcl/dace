@@ -654,7 +654,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                 "to be allocated correctly.")
                         bank_assignments[dataname] = (banktype, bank)
                     else:
-                        bank_assignments[dataname] = ("DDR", 0)
+                        bank_assignments[dataname] = None
                 else:
                     interface_id = None
                 if (not desc.transient

@@ -494,7 +494,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args = []
         array_args = []
         for is_output, dataname, data, interface in parameters:
-            if isinstance(data, dt.Array):
+            is_assigned = dataname in bank_assignments and bank_assignments[dataname] is not None
+            if is_assigned and isinstance(data, dt.Array):
                 memory_bank = bank_assignments[dataname]
                 if memory_bank[0] == "HBM":
                     lowest_bank_index, _ = utils.get_multibank_ranges_from_subset(
@@ -516,6 +517,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                        interface)
                 if kernel_arg:
                     kernel_args.append(kernel_arg)
+                    if isinstance(data, dt.Array):
+                        array_args.append((kernel_arg, dataname))
+                        argname_to_bank_assignment[kernel_arg] = None
 
         stream_args = []
         for is_output, dataname, data, interface in external_streams:
