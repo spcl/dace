@@ -194,6 +194,8 @@ def apply_connector_types(inferred: defaultdict):
     """ Applies the inferred connector types on the SDFG. """
 
     for (node, conn, is_in), dtype in inferred.items():
+        if dtype.type is None:
+            continue
         if is_in:
             node.in_connectors[conn] = dtype
         else:
