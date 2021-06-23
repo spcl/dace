@@ -451,27 +451,19 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         Adds post loop pragma for ignoring loop carried dependencies on a given variable
         '''
         defined_type, _ = self._dispatcher.defined_vars.get(var_name)
-        newname = None
 
         if var_name in sdfg.arrays:
             array = sdfg.arrays[var_name]
-            if utils.is_hbm_array(array):
-                newname = cpp.ptr(var_name,
-                                  array,
-                                  accessed_subset,
-                                  sdfg,
-                                  True,
-                                  self._dispatcher,
-                                  is_array_interface=True)
-        if newname is not None:
-            newname = cpp.ptr(
-                var_name,
-                None,
-                None,
-                sdfg,
-                True,
-                self._dispatcher,
-                is_array_interface=(defined_type == DefinedType.ArrayInterface))
+        else:
+            array = None
+
+        var_name = cpp.ptr(var_name,
+                            array,
+                            accessed_subset,
+                            sdfg,
+                            True,
+                            self._dispatcher,
+                            is_array_interface=(defined_type == DefinedType.ArrayInterface))
         kernel_stream.write(
             "#pragma HLS DEPENDENCE variable={} false".format(var_name), sdfg,
             state_id, node)
