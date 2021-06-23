@@ -808,7 +808,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
 
     def add_node(self, node):
         if not isinstance(node, nd.Node):
-            raise TypeError("Expected Node, got " + str(type(node)) + " (" +
+            raise TypeError("Expected Node, got " + type(node).__name__ + " (" +
                             str(node) + ")")
         self._clear_scopedict_cache()
         return super(SDFGState, self).add_node(node)

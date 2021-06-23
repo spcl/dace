@@ -178,6 +178,15 @@ class HoistState(transformation.Transformation):
         if graph.entry_node(nsdfg) is not None:
             return False
 
+        # If strict, must have two states with an empty source state.
+        # Otherwise structured control flow (loop init states, for example)
+        # may be broken.
+        if strict:
+            if nsdfg.sdfg.number_of_nodes() != 2:
+                return False
+            if nsdfg.sdfg.start_state.number_of_nodes() != 0:
+                return False
+
         # Must have at least two states with a hoistable source state
         if nsdfg.sdfg.number_of_nodes() < 2:
             return False
