@@ -1,10 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Python interface for DaCe functions. """
 
-from networkx.algorithms.components.strongly_connected import condensation
+import inspect
 from dace import dtypes
 from dace.dtypes import paramdec
-from dace.frontend.python import parser, ndloop, wrappers
+from dace.frontend.python import parser, ndloop, tasklet_runner
 from typing import (Any, Callable, Deque, Generator, Optional, Tuple, TypeVar,
                     overload, Union)
 
@@ -103,22 +103,34 @@ class consume:
 
 class TaskletMetaclass(type):
     """ Metaclass for tasklet, to enable ``with dace.tasklet:`` syntax. """
-    @classmethod
-    def __enter__(cls):
-        # TODO: parse and run tasklet
-        # TODO: reinstate tasklet simulator
-        pass
+    def __enter__(self):
+        # Parse and run tasklet
+        frame = inspect.stack()[1][0]
+        filename = inspect.getframeinfo(frame).filename
+        tasklet_ast = tasklet_runner.get_tasklet_ast(frame=frame)
+        tasklet_runner.run_tasklet(tasklet_ast, filename, frame.f_globals,
+                                   frame.f_locals)
 
-    @classmethod
-    def __exit__(cls, exc_type, exc_val, exc_tb):
-        pass
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Tasklets always raise exceptions (NameError due to the memlet
+        # syntax and undefined connector names, or TypeError due to bad shifts).
+        # Thus, their contents are skipped.
+        return True
 
 
 class tasklet(metaclass=TaskletMetaclass):
     """ 
     A general procedure that cannot access any memory apart from incoming
-    and outgoing memlets. The DaCe framework cannot analyze these tasklets
-    for optimization. 
+    and outgoing memlets. Memlets use the shift operator, an example of
+    a tasklet is::
+
+        with dace.tasklet:
+            a << A[i, j]  # Memlet going from A to a
+            b = a + 5
+            b >> B[i, j]  # Memlet going out of the tasklet to B
+
+
+    The DaCe framework cannot analyze these tasklets for optimization. 
     """
     def __init__(self,
                  language: Union[str,
@@ -130,9 +142,15 @@ class tasklet(metaclass=TaskletMetaclass):
             raise NotImplementedError('Cannot run non-Python tasklet in Python')
 
     def __enter__(self):
-        # TODO: parse and run tasklet
-        # TODO: reinstate tasklet simulator
-        pass
+        # Parse and run tasklet
+        frame = inspect.stack()[1][0]
+        filename = inspect.getframeinfo(frame).filename
+        tasklet_ast = tasklet_runner.get_tasklet_ast(frame=frame)
+        tasklet_runner.run_tasklet(tasklet_ast, filename, frame.f_globals,
+                                   frame.f_locals)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        pass
+        # Tasklets always raise exceptions (NameError due to the memlet
+        # syntax and undefined connector names, or TypeError due to bad shifts).
+        # Thus, their contents are skipped.
+        return True
