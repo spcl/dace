@@ -368,7 +368,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                                               ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('%sMalloc(&%s, %s);\n' %
+            result_alloc.write('%sMalloc((void**)&%s, %s);\n' %
                                (self.backend, allocname, arrsize_malloc))
             if node.setzero:
                 result_alloc.write('%sMemset(%s, 0, %s);\n' %
