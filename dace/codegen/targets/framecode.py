@@ -562,6 +562,9 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                             curscope = scope
                             continue
                         # Lower/Higher/Disjoint scopes: find common denominator
+                        if isinstance(curscope, SDFGState):
+                            if scope in curscope.nodes():
+                                continue
                         curscope = sdscope.common_parent_scope(
                             sdict, scope, curscope)
 
