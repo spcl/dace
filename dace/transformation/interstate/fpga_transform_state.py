@@ -187,10 +187,8 @@ class FPGATransformState(transformation.Transformation):
                         allow_conflicts=desc.allow_conflicts,
                         strides=desc.strides,
                         offset=desc.offset)
-                    if ("hbm_bank" in desc.location):
-                        fpga_array[1].location["hbm_bank"] = desc.location[
-                            "hbm_bank"]
-                        desc.location.pop("hbm_bank")
+                    fpga_array[1].location = desc.location
+                    desc.location.clear()
                     fpga_data[node.data] = fpga_array
 
                 pre_node = pre_state.add_read(node.data)
@@ -234,10 +232,8 @@ class FPGATransformState(transformation.Transformation):
                         allow_conflicts=desc.allow_conflicts,
                         strides=desc.strides,
                         offset=desc.offset)
-                    if ("hbm_bank" in desc.location):
-                        fpga_array[1].location["hbm_bank"] = desc.location[
-                            "hbm_bank"]
-                        desc.location.pop("hbm_bank")
+                    fpga_array[1].location = desc.location
+                    desc.location.clear()
                     fpga_data[node.data] = fpga_array
                 # fpga_node = type(node)(fpga_array)
 
