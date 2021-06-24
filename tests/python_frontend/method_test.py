@@ -44,6 +44,35 @@ class MyTestClass:
         return A + cls.classvalue
 
 
+class MyTestCallAttributesClass:
+    class SDFGMethodTestClass:
+        def __sdfg__(self, *args, **kwargs):
+            @dace.program
+            def call(A):
+                A[:] = 7.0
+
+            return call.__sdfg__(*args)
+
+    def __init__(self, n=5) -> None:
+        self.n = n
+        self.call_me = MyTestCallAttributesClass.SDFGMethodTestClass()
+
+    @dace.method
+    def method_jit(self, A):
+        self.call_me(A)
+        return A + self.n
+
+    @dace.method
+    def __call__(self, A):
+        self.call_me(A)
+        return A * self.n
+
+    @dace.method
+    def method(self, A: dace.float64[20]):
+        self.call_me(A)
+        return A + self.n
+
+
 def test_method_jit():
     A = np.random.rand(20)
     cls = MyTestClass(10)
@@ -136,6 +165,24 @@ def test_decorator():
     assert np.allclose(sdfg(A), A + 3)
 
 
+def test_sdfgattr_method_jit():
+    A = np.random.rand(20)
+    cls = MyTestCallAttributesClass(10)
+    assert np.allclose(cls.method_jit(A), 17)
+
+
+def test_sdfgattr_callable_jit():
+    A = np.random.rand(20)
+    cls = MyTestCallAttributesClass(12)
+    assert np.allclose(cls(A), 84)
+
+
+def test_sdfgattr_method_annotated_jit():
+    A = np.random.rand(20)
+    cls = MyTestCallAttributesClass(14)
+    assert np.allclose(cls.method(A), 21)
+
+
 if __name__ == '__main__':
     test_method_jit()
     test_method()
@@ -146,3 +193,6 @@ if __name__ == '__main__':
     test_classmethod()
     test_nested_methods()
     test_decorator()
+    test_sdfgattr_method_jit()
+    test_sdfgattr_callable_jit()
+    test_sdfgattr_method_annotated_jit()

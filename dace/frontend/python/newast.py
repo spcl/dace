@@ -707,8 +707,6 @@ class GlobalResolver(ast.NodeTransformer):
             return super().generic_visit(node)
 
     def global_value_to_node(self, value, parent_node, recurse=False):
-        from dace.frontend.python.parser import DaceProgram  # Avoid import loops
-
         # if recurse is false, we don't allow recursion into lists
         # this should not happen anyway; the globals dict should only contain
         # single "level" lists
@@ -727,10 +725,11 @@ class GlobalResolver(ast.NodeTransformer):
                 return None
             newnode = ast.Tuple(elts=elts, ctx=parent_node.ctx)
         elif isinstance(value, symbolic.symbol):
-            # symbols resolve to the symbol name
+            # Symbols resolve to the symbol name
             newnode = ast.Name(id=value.name, ctx=ast.Load())
-        elif dtypes.isconstant(value) or isinstance(value, (SDFG, DaceProgram)):
-            # otherwise we must have a non list or tuple constant; emit a constant node
+        elif (dtypes.isconstant(value) or isinstance(value, SDFG)
+              or hasattr(value, '__sdfg__')):
+            # Could be a constant, an SDFG, or SDFG-convertible object
 
             # Compatibility check since Python changed their AST nodes
             if sys.version_info >= (3, 8):
@@ -3623,15 +3622,27 @@ class ProgramVisitor(ExtNodeVisitor):
                     if state.in_degree(node) > 0:
                         return True
 
-    def _get_sdfg(self, value: Any) -> SDFG:
+    def _get_sdfg(self, value: Any, args: Tuple[Any],
+                  kwargs: Dict[str, Any]) -> SDFG:
         if isinstance(value, SDFG):  # Already an SDFG
             return value
         if hasattr(value, '__sdfg__'):  # Object that can be converted to SDFG
-            return value.__sdfg__()
+            return value.__sdfg__(*args, **kwargs)
         return None
 
     def _has_sdfg(self, value: Any) -> bool:
         return isinstance(value, SDFG) or hasattr(value, '__sdfg__')
+
+    def _eval_arg(self, arg: Union[str, Any]) -> Any:
+        if not isinstance(arg, str):
+            return arg
+        if arg in self.defined:
+            return self.defined[arg]
+        if arg in self.sdfg.arrays:
+            return self.sdfg.arrays[arg]
+        if arg in self.sdfg.symbols:
+            return self.sdfg.symbols[arg]
+        return arg
 
     def visit_Call(self, node: ast.Call):
         func = None
@@ -3639,11 +3650,9 @@ class ProgramVisitor(ExtNodeVisitor):
         if isinstance(node.func, ast.Num):
             if self._has_sdfg(node.func.n):
                 func = node.func.n
-                funcname = func.name
         elif isinstance(node.func, ast.Constant):
             if self._has_sdfg(node.func.value):
                 func = node.func.value
-                funcname = func.name
 
         if func is None:
             funcname = rname(node)
@@ -3680,6 +3689,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 func = self.other_sdfgs[funcname]
             if isinstance(func, SDFG):
                 sdfg = copy.deepcopy(func)
+                funcname = sdfg.name
                 args = [(aname, self._parse_function_arg(arg))
                         for aname, arg in zip(sdfg.arg_names, node.args)]
                 args += [(arg.arg, self._parse_function_arg(arg.value))
@@ -3695,16 +3705,21 @@ class ProgramVisitor(ExtNodeVisitor):
                 required_args = func.argnames
 
                 fcopy = copy.copy(func)
+                funcname = func.name
                 fcopy._cache = (None, None, None)
                 fcopy.global_vars = {**func.global_vars, **self.globals}
-                fargs = ({
-                    **self.defined,
-                    **self.sdfg.arrays,
-                    **self.sdfg.symbols
-                }[arg] if isinstance(arg, str) else arg for aname, arg in args)
+                fargs = (self._eval_arg(arg) for _, arg in args)
                 sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
             elif self._has_sdfg(func):
-                sdfg = copy.deepcopy(self._get_sdfg(func))
+                fargs = tuple(
+                    self._eval_arg(self._parse_function_arg(arg))
+                    for arg in node.args)
+                fkwargs = {
+                    arg.arg: self._eval_arg(self._parse_function_arg(arg.value))
+                    for arg in node.keywords
+                }
+                sdfg = copy.deepcopy(self._get_sdfg(func, fargs, fkwargs))
+                funcname = sdfg.name
                 args = [(aname, self._parse_function_arg(arg))
                         for aname, arg in zip(sdfg.arg_names, node.args)]
                 args += [(arg.arg, self._parse_function_arg(arg.value))
