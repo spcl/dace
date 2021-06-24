@@ -10,6 +10,7 @@ from dace.sdfg import nodes as nd
 # A test to check the changes to the validation required for the support for HBM
 # The three functions will be automatically called by pytest
 
+
 def assert_validation_failure(sdfg, exceptiontype):
     ok = False
     try:
@@ -17,6 +18,7 @@ def assert_validation_failure(sdfg, exceptiontype):
     except exceptiontype as msg:
         ok = True
     assert ok
+
 
 def deepscope_test():
     @dace.program
@@ -89,6 +91,7 @@ def unsound_location_test():
     assert_validation_failure(sdfg, InvalidSDFGError)
     sdfg.arrays["b"].location["bank"] = "ddr8"
     assert_validation_failure(sdfg, InvalidSDFGError)
+
 
 if __name__ == "__main__":
     deepscope_test()

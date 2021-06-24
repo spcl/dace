@@ -16,7 +16,7 @@ def create_dynamic_memlet_sdfg():
     sdfg.arrays["y"].location["bank"] = "hbm.4:8"
 
     hbm_map_enter, hbm_map_exit = state.add_map("hbmmap", dict(k="0:4"),
-                                            dtypes.ScheduleType.Unrolled)
+                                                dtypes.ScheduleType.Unrolled)
     arr_map_enter, arr_map_exit = state.add_map("map", dict(i="0:_dynbound"))
     tasklet = state.add_tasklet("dyn", set(["_in"]), set(["_out"]),
                                 ("if(i == 2):\n"

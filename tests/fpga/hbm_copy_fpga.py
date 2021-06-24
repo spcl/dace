@@ -7,6 +7,7 @@ from dace.codegen.targets.fpga import _FPGA_STORAGE_TYPES
 
 # A test checking copies involving HBM-arrays in some way
 
+
 #helper MaKe_Copy that creates and appends states performing exactly one copy. If a provided
 #arrayname already exists it will use the old array, and ignore all newly passed values
 def mkc(sdfg: dace.SDFG,
@@ -63,6 +64,7 @@ def mkc(sdfg: dace.SDFG,
             pass
     return (state, aNpArr, bNpArr)
 
+
 def check_hbm2hbm1():
     sdfg = dace.SDFG("hbm2hbm1")
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
@@ -94,12 +96,11 @@ def check_hbm2ddr1():
     sdfg = dace.SDFG("hbm2ddr1")
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
                   StorageType.FPGA_Global, [3, 5, 5], [3, 5, 5], "a", None,
-                    "hbm.0:3")
+                  "hbm.0:3")
     s, _, _ = mkc(sdfg, s, "x", "d1", None, StorageType.FPGA_Global, None,
                   [3, 5, 5], "x[2, 0:5, 0:5]->1, 0:5, 0:5", None, "DDR.1")
     s, _, _ = mkc(sdfg, s, "d1", "y", None, StorageType.FPGA_Global, None,
-                  [1, 7, 7], "d1[1, 0:5,0:5]->0, 2:7, 2:7", None,
-                  "hbm.3:4")
+                  [1, 7, 7], "d1[1, 0:5,0:5]->0, 2:7, 2:7", None, "hbm.3:4")
     s, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default, None, [1, 7, 7],
                   "y")
 

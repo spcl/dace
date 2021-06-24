@@ -26,17 +26,17 @@ from dace.sdfg import nodes, graph as gr, utils
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 
+
 def copy_expr(
-    dispatcher,
-    sdfg,
-    dataname,
-    memlet,
-    is_write=None,  # Otherwise it's a read
-    offset=None,
-    relative_offset=True,
-    packed_types=False,
-    hbm_bank = None
-):
+        dispatcher,
+        sdfg,
+        dataname,
+        memlet,
+        is_write=None,  # Otherwise it's a read
+        offset=None,
+        relative_offset=True,
+        packed_types=False,
+        hbm_bank=None):
     datadesc = sdfg.arrays[dataname]
     if relative_offset:
         s = memlet.subset
@@ -89,6 +89,7 @@ def copy_expr(
         raise NotImplementedError("copy_expr not implemented "
                                   "for connector type: {}".format(def_type))
 
+
 def memlet_copy_to_absolute_strides(dispatcher,
                                     sdfg,
                                     memlet,
@@ -110,28 +111,26 @@ def memlet_copy_to_absolute_strides(dispatcher,
                              packed_types=packed_types,
                              hbm_bank=memlet.subset)
         if memlet.other_subset is not None:
-            dst_expr = copy_expr(
-                dispatcher,
-                sdfg,
-                dst_node.data,
-                memlet,
-                is_write=True,
-                offset=memlet.other_subset,
-                relative_offset=False,
-                packed_types=packed_types,
-                hbm_bank=memlet.other_subset
-            )
+            dst_expr = copy_expr(dispatcher,
+                                 sdfg,
+                                 dst_node.data,
+                                 memlet,
+                                 is_write=True,
+                                 offset=memlet.other_subset,
+                                 relative_offset=False,
+                                 packed_types=packed_types,
+                                 hbm_bank=memlet.other_subset)
             dst_subset = memlet.other_subset
         else:
             dst_expr = copy_expr(dispatcher,
-                             sdfg,
-                             dst_node.data,
-                             memlet,
-                             is_write=True,
-                             offset=None,
-                             relative_offset=False,
-                             packed_types=packed_types,
-                             hbm_bank=memlet.subset)
+                                 sdfg,
+                                 dst_node.data,
+                                 memlet,
+                                 is_write=True,
+                                 offset=None,
+                                 relative_offset=False,
+                                 packed_types=packed_types,
+                                 hbm_bank=memlet.subset)
             dst_subset = subsets.Range.from_array(dst_nodedesc)
         src_subset = memlet.subset
 
@@ -144,28 +143,26 @@ def memlet_copy_to_absolute_strides(dispatcher,
                              packed_types=packed_types,
                              hbm_bank=memlet.subset)
         if memlet.other_subset is not None:
-            src_expr = copy_expr(
-                dispatcher,
-                sdfg,
-                src_node.data,
-                memlet,
-                is_write=False,
-                offset=memlet.other_subset,
-                relative_offset=False,
-                packed_types=packed_types,
-                hbm_bank=memlet.other_subset
-            )
+            src_expr = copy_expr(dispatcher,
+                                 sdfg,
+                                 src_node.data,
+                                 memlet,
+                                 is_write=False,
+                                 offset=memlet.other_subset,
+                                 relative_offset=False,
+                                 packed_types=packed_types,
+                                 hbm_bank=memlet.other_subset)
             src_subset = memlet.other_subset
         else:
             src_expr = copy_expr(dispatcher,
-                                sdfg,
-                                src_node.data,
-                                memlet,
-                                is_write=False,
-                                offset=None,
-                                relative_offset=False,
-                                packed_types=packed_types,
-                                hbm_bank=memlet.subset)
+                                 sdfg,
+                                 src_node.data,
+                                 memlet,
+                                 is_write=False,
+                                 offset=None,
+                                 relative_offset=False,
+                                 packed_types=packed_types,
+                                 hbm_bank=memlet.subset)
             src_subset = subsets.Range.from_array(src_nodedesc)
         dst_subset = memlet.subset
 
@@ -259,8 +256,10 @@ def ptr(name: str,
                 )
             low, high = utils.get_multibank_ranges_from_subset(
                 subset_info, sdfg)
-            if(low + 1 != high):
-                raise ValueError("ptr cannot generate HBM names for subsets accessing more than one HBM bank")
+            if (low + 1 != high):
+                raise ValueError(
+                    "ptr cannot generate HBM names for subsets accessing more than one HBM bank"
+                )
             name = f"hbm{low}_{name}"
             subset_info = low  #used for arrayinterface name where it must be int
     if is_array_interface:
@@ -1201,8 +1200,9 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                             ))
                         else:
                             array_interface_name = ptr(memlet.data, desc,
-                                                memlet.dst_subset, self.sdfg,
-                                                True, None, None, True)
+                                                       memlet.dst_subset,
+                                                       self.sdfg, True, None,
+                                                       None, True)
                             newnode = ast.Name(
                                 id=f"{array_interface_name}"
                                 f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False)}]"

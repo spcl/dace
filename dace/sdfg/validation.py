@@ -62,14 +62,16 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             try:
                 bankassignment = sdutil.parse_location_bank(desc)
             except ValueError as e:
-                raise InvalidSDFGError(f"Failed to parse location['bank'] for "
+                raise InvalidSDFGError(
+                    f"Failed to parse location['bank'] for "
                     f" array {name}: {str(e)}", sdfg, None)
             if bankassignment is not None:
                 if bankassignment[0] == "DDR":
                     try:
                         tmp = int(bankassignment[1])
                     except ValueError:
-                        raise InvalidSDFGError("bank assignment must be convertible to int"
+                        raise InvalidSDFGError(
+                            "bank assignment must be convertible to int"
                             f" for array {name}", sdfg, None)
                 elif bankassignment[0] == "HBM":
                     try:
@@ -85,8 +87,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                         raise InvalidSDFGError(
                             "All the indices in locationproperty 'bank' must be"
                             f" evaluatable to constants and have stride==1"
-                            f" for array {name} since it uses HBM",
-                            sdfg, None)
+                            f" for array {name} since it uses HBM", sdfg, None)
                     if (high - low < 1):
                         raise InvalidSDFGError(
                             "locationproperty 'bank' must at least define one bank to be used"
@@ -195,12 +196,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if isinstance(node, nd.EntryNode):
             otherlist = []
             if len(last_visited_map_entry) > 0:
-                otherlist = scope_local_constants[
-                    last_visited_map_entry[-1]]
-            if (isinstance(node, nd.MapEntry) and 
-                node.map.schedule == dtypes.ScheduleType.Unrolled):
-                scope_local_constants[node] = list(
-                    node.map.params) + otherlist
+                otherlist = scope_local_constants[last_visited_map_entry[-1]]
+            if (isinstance(node, nd.MapEntry)
+                    and node.map.schedule == dtypes.ScheduleType.Unrolled):
+                scope_local_constants[node] = list(node.map.params) + otherlist
                 last_visited_map_entry.append(node)
             else:
                 scope_local_constants[node] = otherlist
@@ -468,6 +467,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         ########################################
 
     #Check that HBM Magic Indices are evaluatable
+
         def validate_hbm_subset(magic_subset: subsets.Subset):
             if len(magic_subset) <= 1:
                 return False

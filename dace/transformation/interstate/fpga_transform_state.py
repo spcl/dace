@@ -194,8 +194,7 @@ class FPGATransformState(transformation.Transformation):
                 pre_node = pre_state.add_read(node.data)
                 pre_fpga_node = pre_state.add_write('fpga_' + node.data)
                 mem = memlet.Memlet(data=node.data,
-                                    subset=subsets.Range.from_array(
-                                        desc))
+                                    subset=subsets.Range.from_array(desc))
                 pre_state.add_edge(pre_node, None, pre_fpga_node, None, mem)
 
                 if node not in wcr_input_nodes:
@@ -239,7 +238,8 @@ class FPGATransformState(transformation.Transformation):
 
                 post_node = post_state.add_write(node.data)
                 post_fpga_node = post_state.add_read('fpga_' + node.data)
-                mem = memlet.Memlet(f"fpga_{node.data}", None, subsets.Range.from_array(desc))
+                mem = memlet.Memlet(f"fpga_{node.data}", None,
+                                    subsets.Range.from_array(desc))
                 post_state.add_edge(post_fpga_node, None, post_node, None, mem)
 
                 fpga_node = state.add_write('fpga_' + node.data)

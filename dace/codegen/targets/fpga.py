@@ -355,8 +355,8 @@ class FPGACodeGen(TargetCodeGenerator):
                             arg.as_arg(False, name=currentname))
                         kernel_args_opencl.append(
                             FPGACodeGen.make_opencl_parameter(currentname, arg))
-                elif(not isinstance(arg, dt.Stream) and 
-                    not isinstance(arg, dt.View)):
+                elif (not isinstance(arg, dt.Stream)
+                      and not isinstance(arg, dt.View)):
                     kernel_args_call_host.append(arg.as_arg(False,
                                                             name=argname))
                     kernel_args_opencl.append(
@@ -615,9 +615,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         trace_name = trace_node.data
                         trace_desc = trace_node.desc(trace_sdfg)
                         if "bank" in trace_desc.location:
-                            trace_type, trace_bank = utils.parse_location_bank(trace_desc)
-                            if (bank is not None and bank_type is not None and
-                                (bank != trace_bank or bank_type != trace_type)):
+                            trace_type, trace_bank = utils.parse_location_bank(
+                                trace_desc)
+                            if (bank is not None and bank_type is not None
+                                    and (bank != trace_bank
+                                         or bank_type != trace_type)):
                                 raise cgx.CodegenError(
                                     "Found inconsistent memory bank "
                                     f"specifier for {trace_name}.")
@@ -631,8 +633,10 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         outer_desc = outer_node.desc(trace[0][2])
                         okbank = False
                         if ("bank" in outer_desc.location):
-                            trace_type, trace_bank = utils.parse_location_bank(outer_desc)
-                            okbank = (trace_type == bank_type and trace_bank == bank)
+                            trace_type, trace_bank = utils.parse_location_bank(
+                                outer_desc)
+                            okbank = (trace_type == bank_type
+                                      and trace_bank == bank)
                         if not okbank:
                             raise cgx.CodegenError(
                                 "Memory bank allocation must be present on "
@@ -805,7 +809,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                     bank, sdfg)
                                 memory_bank_arg_count = bankhigh - banklow
                                 arrsize = dace.symbolic.pystr_to_symbolic(
-                                    f"({str(arrsize)}) / {str(bankhigh - banklow)}")
+                                    f"({str(arrsize)}) / {str(bankhigh - banklow)}"
+                                )
                                 bank_offset = banklow
                             else:
                                 bank_offset = int(bank)
@@ -2006,7 +2011,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         edge.data.dst_subset or edge.data.subset, sdfg)
                     if accessed_subset + 1 != high_check:
                         raise cgx.CodegenError(
-                            "generate_tasklet_postamble was called on HBM memlet accessing multiple banks")
+                            "generate_tasklet_postamble was called on HBM memlet accessing multiple banks"
+                        )
 
                 self.generate_no_dependence_post(after_memlets_stream, sdfg,
                                                  state_id, node, edge.src_conn,

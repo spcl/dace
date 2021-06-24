@@ -1144,8 +1144,8 @@ class CPUCodeGen(TargetCodeGenerator):
         var_type, ctypedef = self._dispatcher.defined_vars.get(memlet.data)
 
         ptr = cpp.ptr(
-            memlet.data, desc, memlet.subset, sdfg, output,
-            self._dispatcher, 0, var_type == DefinedType.ArrayInterface
+            memlet.data, desc, memlet.subset, sdfg, output, self._dispatcher, 0,
+            var_type == DefinedType.ArrayInterface
             and not isinstance(desc, data.View))
 
         result = ''

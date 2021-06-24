@@ -1030,12 +1030,13 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
 
     return result
 
+
 def is_hbm_array(array: dt.Data):
     """
     :return: True if this array is placed on HBM
     """
     if (isinstance(array, dt.Array)
-        and array.storage == dtypes.StorageType.FPGA_Global):
+            and array.storage == dtypes.StorageType.FPGA_Global):
         res = parse_location_bank(array)
         return res is not None and res[0] == "HBM"
     else:
@@ -1051,7 +1052,7 @@ def iterate_hbm_multibank_arrays(arrayname: str, array: dt.Array, sdfg: SDFG):
     res = parse_location_bank(array)
     if res is not None:
         banktype, bankplace = res
-        if(banktype == "HBM"):
+        if (banktype == "HBM"):
             low, high = get_multibank_ranges_from_subset(bankplace, sdfg)
             for i in range(high - low):
                 yield i
@@ -1062,9 +1063,9 @@ def iterate_hbm_multibank_arrays(arrayname: str, array: dt.Array, sdfg: SDFG):
 
 
 def modify_distributed_subset(array: dt.Data,
-                        subset: Union[sbs.Subset, list, tuple],
-                        change: int,
-                        force: bool = False):
+                              subset: Union[sbs.Subset, list, tuple],
+                              change: int,
+                              force: bool = False):
     """
     Applies changes to magic indices from a subset if array is a HBM-array, otherwise
     returns subset. subset is deepcopied before any modification to it is done.
@@ -1091,15 +1092,15 @@ def modify_distributed_subset(array: dt.Data,
             if isinstance(subset, tuple):
                 cps = tuple(cps)
         else:
-            raise ValueError("unsupported type passed to modify_distributed_subset")
+            raise ValueError(
+                "unsupported type passed to modify_distributed_subset")
     else:
         cps = subset
     return cps
 
 
-def get_multibank_ranges_from_subset(
-        subset: Union[sbs.Subset, str],
-        sdfg: SDFG) -> Tuple[int, int]:
+def get_multibank_ranges_from_subset(subset: Union[sbs.Subset, str],
+                                     sdfg: SDFG) -> Tuple[int, int]:
     """
     Returns the upper and lower end of the accessed HBM-range, evaluated using the
     constants on the SDFG.
@@ -1124,21 +1125,22 @@ def get_multibank_ranges_from_subset(
         )
     return (low, high + 1)
 
-def parse_location_bank(array : dt.Array) -> Tuple[str, str]:
+
+def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
     if "bank" in array.location:
-        val : str = array.location["bank"]
+        val: str = array.location["bank"]
         split = val.split(".")
-        if(len(split) != 2):
+        if (len(split) != 2):
             raise ValueError(
-                f"Failed to parse {val} as value for location['bank']"
-            )
+                f"Failed to parse {val} as value for location['bank']")
         split[0] = split[0].upper()
 
-        if(split[0] == "DDR" or split[0] == "HBM"):
+        if (split[0] == "DDR" or split[0] == "HBM"):
             return (split[0], split[1])
         else:
             raise ValueError(
-                f"{split[0]} is an invalid bank type for location['bank']. Supported are HBM and DDR.")
+                f"{split[0]} is an invalid bank type for location['bank']. Supported are HBM and DDR."
+            )
     else:
         return None
 

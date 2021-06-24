@@ -457,13 +457,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         else:
             array = None
 
-        var_name = cpp.ptr(var_name,
-                            array,
-                            accessed_subset,
-                            sdfg,
-                            True,
-                            self._dispatcher,
-                            is_array_interface=(defined_type == DefinedType.ArrayInterface))
+        var_name = cpp.ptr(
+            var_name,
+            array,
+            accessed_subset,
+            sdfg,
+            True,
+            self._dispatcher,
+            is_array_interface=(defined_type == DefinedType.ArrayInterface))
         kernel_stream.write(
             "#pragma HLS DEPENDENCE variable={} false".format(var_name), sdfg,
             state_id, node)
@@ -486,7 +487,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args = []
         array_args = []
         for is_output, dataname, data, interface in parameters:
-            is_assigned = dataname in bank_assignments and bank_assignments[dataname] is not None
+            is_assigned = dataname in bank_assignments and bank_assignments[
+                dataname] is not None
             if is_assigned and isinstance(data, dt.Array):
                 memory_bank = bank_assignments[dataname]
                 if memory_bank[0] == "HBM":
@@ -534,7 +536,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 interface_name = "gmem{}".format(num_mapped_args)
                 kernel_stream.write(
                     "#pragma HLS INTERFACE m_axi port={} "
-                    "offset=slave bundle={}".format(var_name, interface_name), 
+                    "offset=slave bundle={}".format(var_name, interface_name),
                     sdfg, state_id)
                 # Map this interface to the corresponding location
                 # specification to be passed to the Xilinx compiler
