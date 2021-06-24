@@ -126,8 +126,12 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
                 continue
             symbolic_values = list(desc.shape) + list(
                 getattr(desc, 'strides', []))
-            given_values = list(arg_val.shape) + list(
-                getattr(arg_val, 'strides', []))
+            given_values = list(arg_val.shape)
+            given_strides = []
+            if hasattr(arg_val, 'strides'):
+                # NumPy arrays use bytes in strides
+                factor = getattr(arg_val, 'itemsize', 1)
+                given_strides = [s / factor for s in arg_val.strides]
 
             for sym_dim, real_dim in zip(symbolic_values, given_values):
                 repldict = {}

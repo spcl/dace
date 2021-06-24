@@ -9,10 +9,11 @@ from typing import Set
 import dace.dtypes as dtypes
 from dace.codegen import cppunparse
 from dace import symbolic, serialize
-from dace.properties import (EnumProperty, Property, make_properties, DictProperty,
-                             ReferenceProperty, ShapeProperty, SubsetProperty,
-                             SymbolicProperty, TypeClassProperty,
-                             DebugInfoProperty, CodeProperty, ListProperty)
+from dace.properties import (EnumProperty, Property, make_properties,
+                             DictProperty, ReferenceProperty, ShapeProperty,
+                             SubsetProperty, SymbolicProperty,
+                             TypeClassProperty, DebugInfoProperty, CodeProperty,
+                             ListProperty)
 
 
 def create_datadescriptor(obj):
@@ -26,10 +27,21 @@ def create_datadescriptor(obj):
         return obj.__descriptor__()
     elif hasattr(obj, 'descriptor'):
         return obj.descriptor
-    elif isinstance(obj, numpy.ndarray):
-        return Array(dtype=dtypes.typeclass(obj.dtype.type),
-                        strides=tuple(s // obj.itemsize for s in obj.strides),
-                        shape=obj.shape)
+    elif isinstance(obj, (list, tuple, numpy.ndarray)):
+        if isinstance(obj, (list, tuple)):  # Lists and tuples are cast to numpy
+            obj = numpy.array(obj)
+
+        if obj.dtype.fields is not None:  # Struct
+            dtype = dtypes.struct(
+                'unnamed', **{
+                    k: dtypes.typeclass(v[0].type)
+                    for k, v in obj.dtype.fields.items()
+                })
+        else:
+            dtype = dtypes.typeclass(obj.dtype.type)
+        return Array(dtype=dtype,
+                     strides=tuple(s // obj.itemsize for s in obj.strides),
+                     shape=obj.shape)
     elif symbolic.issymbolic(obj):
         return Scalar(symbolic.symtype(obj))
     elif isinstance(obj, dtypes.typeclass):
