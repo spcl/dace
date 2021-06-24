@@ -20,7 +20,7 @@ def assert_validation_failure(sdfg, exceptiontype):
     assert ok
 
 
-def deepscope_test():
+def test_deepscope():
     @dace.program
     def deepscope(input: dace.int32[12, 10], output: dace.int32[12, 10]):
         for k in dace.map[0:10]:
@@ -42,7 +42,7 @@ def deepscope_test():
     sdfg.validate()
 
 
-def multitasklet_test():
+def test_multitasklet():
     @dace.program
     def multitasklet(input: dace.int32[12, 10], output: dace.int32[12, 10]):
         with dace.tasklet:
@@ -58,7 +58,7 @@ def multitasklet_test():
     assert_validation_failure(sdfg, InvalidSDFGNodeError)
 
 
-def unsound_location_test():
+def test_unsound_location():
     sdfg = dace.SDFG("jdj")
     sdfg.add_array("a", [4, 3], dtypes.int32, dtypes.StorageType.FPGA_Global)
     sdfg.add_array("b", [4], dtypes.int32, dtypes.StorageType.FPGA_Global)
@@ -94,6 +94,6 @@ def unsound_location_test():
 
 
 if __name__ == "__main__":
-    deepscope_test()
-    multitasklet_test()
-    unsound_location_test()
+    test_deepscope()
+    test_multitasklet()
+    test_unsound_location()
