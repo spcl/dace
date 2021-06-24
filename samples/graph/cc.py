@@ -14,51 +14,49 @@ V = dace.symbol('V')
 def shiloach_vishkin(EL, comp):
     flag_hook = dace.define_local_scalar(dace.int32)
 
-    @dace.tasklet
-    def initflag():
+    with dace.tasklet:
         out >> flag_hook
         out = 1
 
-    @dace.map(_[0:V])
-    def init(v):
-        out >> comp[v]
-        out = v
+    for v in dace.map[0:V]:
+        with dace.tasklet:
+            out >> comp[v]
+            out = v
 
     while flag_hook:
 
-        @dace.tasklet
-        def resetflag():
+        with dace.tasklet:
             out >> flag_hook
             out = 0
 
-        @dace.map(_[0:2 * E])
-        def hook(e):
-            u << EL[e, 0]
-            v << EL[e, 1]
-            parents << comp(3)[:]
-            out >> comp(1)[:]
-            f >> flag_hook(-1)
+        for e in dace.map[0:2 * E]:
+            with dace.tasklet:
+                u << EL[e, 0]
+                v << EL[e, 1]
+                parents << comp(3)[:]
+                out >> comp(1)[:]
+                f >> flag_hook(-1)
 
-            pu = parents[u]
-            pv = parents[v]
-            ppv = parents[pv]
+                pu = parents[u]
+                pv = parents[v]
+                ppv = parents[pv]
 
-            if pu < pv and pv == ppv:
-                out[ppv] = pu
-                f = 1
+                if pu < pv and pv == ppv:
+                    out[ppv] = pu
+                    f = 1
 
         # Multi-jump version
-        @dace.map(_[0:V])
-        def shortcut(v):
-            inp << comp(-1)[0:v + 1]
-            out >> comp(-1)[v]
+        for v in dace.map[0:V]:
+            with dace.tasklet:
+                inp << comp(-1)[0:v + 1]
+                out >> comp(-1)[v]
 
-            p = inp[v]
-            pp = inp[p]
-            while p != pp:
-                out = pp
-                p = pp
+                p = inp[v]
                 pp = inp[p]
+                while p != pp:
+                    out = pp
+                    p = pp
+                    pp = inp[p]
 
 
 if __name__ == "__main__":

@@ -26,5 +26,15 @@ def test_copy3d():
     assert diff < 1e-5
 
 
+def test_map_python():
+    A = np.random.rand(20, 20)
+    B = np.random.rand(20, 20)
+    for i, j in dace.map[0:20, 1:20]:
+        B[i, j] = A[i, j]
+
+    assert np.allclose(A[:, 1:], B[:, 1:])
+
+
 if __name__ == '__main__':
     test_copy3d()
+    test_map_python()

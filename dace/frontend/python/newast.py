@@ -34,7 +34,7 @@ import sympy
 
 # register replacements in oprepo
 import dace.frontend.python.replacements
-from dace.frontend.python.replacements import _sym_type
+from dace.frontend.python.replacements import _sym_type, _broadcast_to
 
 # Type hints
 Size = Union[int, dace.symbolic.symbol]
@@ -2607,14 +2607,42 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if target_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
-                if target_subset.size() == op_subset.size() and op:
-                    inp_subset = copy.deepcopy(op_subset)
-                    inp_subset.offset(target_subset, True)
+                squeezed = copy.deepcopy(target_subset)
+                squeezed.squeeze(offset=False)
+                squeezed_op = copy.deepcopy(op_subset)
+                squeezed_op.squeeze(offset=False)
+                if squeezed.size() != squeezed_op.size() or op:
+
+                    _, all_idx_tuples, _, _, inp_idx = _broadcast_to(
+                        squeezed.size(), op_subset.size())
+
+                    idx = iter(i for i, _ in all_idx_tuples)
+                    target_index = ','.join(
+                        next(idx) if size != 1 else str(target_subset.
+                                                        ranges[i][0])
+                        for i, size in enumerate(target_subset.size()))
+
+                    inp_idx = inp_idx.split(',')
+                    # create a fake subset that would be the input subset broadcasted to the correct size
+                    missing_dimensions = squeezed.ranges[:len(all_idx_tuples) -
+                                                         len(inp_idx)]
+                    op_dimensions = op_subset.ranges
+
+                    fake_subset = dace.subsets.Range(missing_dimensions +
+                                                     op_dimensions)
+
+                    # use this fake subset to calculate the offset
+                    fake_subset.offset(squeezed, True)
+
+                    # we access the inp subset using the computed offset
+                    # since the inp_subset may be missing leading dimensions, we reverse-zip-reverse
+                    idx_and_subset = reversed(
+                        list(zip(reversed(inp_idx), reversed(fake_subset))))
+
                     inp_memlet = Memlet("{a}[{s}]".format(
                         a=op_name,
                         s=','.join([
-                            '__i%d + %d' % (i, s)
-                            for i, (s, _, _) in enumerate(inp_subset)
+                            f'{idx} + {s}' for idx, (s, _, _) in idx_and_subset
                         ])))
                     out_memlet = Memlet("{a}[{s}]".format(a=target_name,
                                                           s=target_index))
@@ -2629,7 +2657,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     tasklet_code += '__out = __inp'
                     state.add_mapped_tasklet(state.label, {
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
-                        for i, (start, end, step) in enumerate(target_subset)
+                        for i, (start, end, step) in enumerate(squeezed)
                     }, {
                         '__inp': inp_memlet,
                         **input_memlets
@@ -2638,6 +2666,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                              {'__out': out_memlet},
                                              external_edges=True,
                                              debuginfo=self.current_lineinfo)
+
                 else:
                     if boolarr is not None:
                         raise NotImplementedError
