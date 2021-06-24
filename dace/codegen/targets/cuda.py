@@ -359,7 +359,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         ctypedef = '%s *' % nodedesc.dtype.ctype
 
         dataname = node.data
-        allocname = cpp.ptr(dataname, nodedesc)
+        allocname = cpp.ptr(dataname, nodedesc, sdfg)
 
         # Different types of GPU arrays
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
@@ -420,7 +420,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
     def allocate_stream(self, sdfg, dfg, state_id, node, nodedesc,
                         function_stream, declaration_stream, allocation_stream):
         dataname = node.data
-        allocname = cpp.ptr(dataname, nodedesc)
+        allocname = cpp.ptr(dataname, nodedesc, sdfg)
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             fmtargs = {
                 'name': dataname,
@@ -493,7 +493,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
     def deallocate_stream(self, sdfg, dfg, state_id, node, nodedesc,
                           function_stream, callsite_stream):
-        dataname = cpp.ptr(node.data, nodedesc)
+        dataname = cpp.ptr(node.data, nodedesc, sdfg)
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if is_array_stream_view(sdfg, dfg, node):
                 callsite_stream.write(
@@ -505,7 +505,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
     def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc,
                          function_stream, callsite_stream):
-        dataname = cpp.ptr(node.data, nodedesc)
+        dataname = cpp.ptr(node.data, nodedesc, sdfg)
 
         if isinstance(nodedesc, dace.data.Stream):
             return self.deallocate_stream(sdfg, dfg, state_id, node, nodedesc,
@@ -1454,7 +1454,8 @@ void  *{kname}_args[] = {{ {kargs} }};
         callsite_stream.write(
             '__dace_runkernel_%s(%s);\n' % (kernel_name, ', '.join(
                 ['__state'] +
-                [cpp.ptr(aname, arg) for aname, arg in kernel_args.items()])),
+                [cpp.ptr(aname, arg, sdfg)
+                 for aname, arg in kernel_args.items()])),
             sdfg, state_id, scope_entry)
 
         synchronize_streams(sdfg, state, state_id, scope_entry, scope_exit,
