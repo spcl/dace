@@ -1034,20 +1034,29 @@ def is_hbm_array(array: dt.Data):
     """
     :return: True if this array is placed on HBM
     """
-    return (isinstance(array, dt.Array)
-            and array.storage == dtypes.StorageType.FPGA_Global
-            and "hbm_bank" in array.location)
+    if (isinstance(array, dt.Array)
+        and array.storage == dtypes.StorageType.FPGA_Global):
+        res = parse_location_bank(array)
+        return res is not None and res[0] == "HBM"
+    else:
+        return False
+
 
 def iterate_hbm_multibank_arrays(arrayname: str, array: dt.Array, sdfg: SDFG):
     """
     Small helper function that iterates over the bank indices
-    if the provided array is spanned across multiple hbm_banks.
+    if the provided array is spanned across multiple HBM banks.
     Otherwise just returns 0 once.
     """
-    if is_hbm_array(array):
-        low, high = get_multibank_ranges_from_subset(array.location["hbm_bank"], sdfg)
-        for i in range(high - low):
-            yield i
+    res = parse_location_bank(array)
+    if res is not None:
+        banktype, bankplace = res
+        if(banktype == "HBM"):
+            low, high = get_multibank_ranges_from_subset(bankplace, sdfg)
+            for i in range(high - low):
+                yield i
+        else:
+            yield 0
     else:
         yield 0
 
@@ -1114,6 +1123,24 @@ def get_multibank_ranges_from_subset(
             f"Only constant evaluatable indices allowed for HBM-memlets on the bank index."
         )
     return (low, high + 1)
+
+def parse_location_bank(array : dt.Array) -> Tuple[str, str]:
+    if "bank" in array.location:
+        val : str = array.location["bank"]
+        split = val.split(".")
+        if(len(split) != 2):
+            raise ValueError(
+                f"Failed to parse {val} as value for location['bank']"
+            )
+        split[0] = split[0].upper()
+
+        if(split[0] == "DDR" or split[0] == "HBM"):
+            return (split[0], split[1])
+        else:
+            raise ValueError(
+                f"{split[0]} is an invalid bank type for location['bank']. Supported are HBM and DDR.")
+    else:
+        return None
 
 
 def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],

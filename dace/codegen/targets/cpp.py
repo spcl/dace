@@ -249,13 +249,13 @@ def ptr(name: str,
     if (desc is not None and utils.is_hbm_array(desc)):
         if (subset_info == None):
             raise ValueError(
-                "Cannot generate name for hbm_bank without subset info")
+                "Cannot generate name for HBM bank without subset info")
         elif (isinstance(subset_info, int)):
             name = f"hbm{subset_info}_{name}"
         elif (isinstance(subset_info, subsets.Subset)):
             if (sdfg == None):
                 raise ValueError(
-                    "Cannot generate name for hbm_bank using subset if sdfg not provided"
+                    "Cannot generate name for HBM bank using subset if sdfg not provided"
                 )
             low, high = utils.get_multibank_ranges_from_subset(
                 subset_info, sdfg)

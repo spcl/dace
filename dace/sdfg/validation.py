@@ -59,37 +59,43 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                     name, sdfg, None)
 
             #Check for valid bank assignments
-            if "bank" in desc.location:
-                try:
-                    tmp = int(desc.location["bank"])
-                except ValueError:
-                    raise InvalidSDFGError("bank assignment must be an integer",
-                                           sdfg, None)
-            elif sdutil.is_hbm_array(desc):
-                try:
-                    tmp = subsets.Range.from_string(
-                        str(desc.location["hbm_bank"]))
-                except SyntaxError:
-                    raise InvalidSDFGError(
-                        "locationproperty 'hbm_bank' must be convertible to subsets.Range"
-                        f" for array {name}", sdfg, None)
-                try:
-                    low, high = sdutil.get_multibank_ranges_from_subset(
-                        desc.location["hbm_bank"], sdfg)
-                except:
-                    raise InvalidSDFGError(
-                        "All the indices in locationproperty 'hbm_bank' must be"
-                        f" evaluatable to constants and have stride==1 for array {name}",
-                        sdfg, None)
-                if (high - low < 1):
-                    raise InvalidSDFGError(
-                        "locationproperty 'hbm_bank' must at least define one bank to be used"
-                        f" for array {name}", sdfg, None)
-                if (high - low != desc.shape[0] or len(desc.shape) < 2):
-                    raise InvalidSDFGError(
-                        "arrays with locationproperty 'hbm_bank' must have the size of the first"
-                        f" dimension equal the number of banks and have at least 2 dimensions for array {name}",
-                        sdfg, None)
+            try:
+                bankassignment = sdutil.parse_location_bank(desc)
+            except ValueError as e:
+                raise InvalidSDFGError(f"Failed to parse location['bank'] for "
+                    f" array {name}: {str(e)}", sdfg, None)
+            if bankassignment is not None:
+                if bankassignment[0] == "DDR":
+                    try:
+                        tmp = int(bankassignment[1])
+                    except ValueError:
+                        raise InvalidSDFGError("bank assignment must be convertible to int"
+                            f" for array {name}", sdfg, None)
+                elif bankassignment[0] == "HBM":
+                    try:
+                        tmp = subsets.Range.from_string(bankassignment[1])
+                    except SyntaxError:
+                        raise InvalidSDFGError(
+                            "locationproperty 'bank' must be convertible to subsets.Range"
+                            f" for array {name} since it uses HBM", sdfg, None)
+                    try:
+                        low, high = sdutil.get_multibank_ranges_from_subset(
+                            bankassignment[1], sdfg)
+                    except:
+                        raise InvalidSDFGError(
+                            "All the indices in locationproperty 'bank' must be"
+                            f" evaluatable to constants and have stride==1"
+                            f" for array {name} since it uses HBM",
+                            sdfg, None)
+                    if (high - low < 1):
+                        raise InvalidSDFGError(
+                            "locationproperty 'bank' must at least define one bank to be used"
+                            f" for array {name}", sdfg, None)
+                    if (high - low != desc.shape[0] or len(desc.shape) < 2):
+                        raise InvalidSDFGError(
+                            "arrays that use HBM must have the size of the first dimension equal"
+                            f" the number of banks and have at least 2 dimensions for array {name}",
+                            sdfg, None)
 
         # Check every state separately
         start_state = sdfg.start_state

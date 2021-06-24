@@ -609,50 +609,36 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     trace = utils.trace_nested_access(inner_node, subgraph,
                                                       sdfg)
                     bank = None
-                    banktype = None
+                    bank_type = None
                     for (trace_in, trace_out), _, _, trace_sdfg in trace:
                         trace_node = trace_in or trace_out
                         trace_name = trace_node.data
                         trace_desc = trace_node.desc(trace_sdfg)
-                        if "bank" in trace_desc.location or "hbm_bank" in trace_desc.location:
-                            if "bank" in trace_desc.location and "hbm_bank" in trace_desc.location:
-                                raise cgx.CodegenError(
-                                    "Found memory bank specifier "
-                                    f"with bank and hbm_bank defined for {trace_name}"
-                                )
-                            if ("bank" in trace_desc.location):
-                                trace_bank = trace_desc.location["bank"]
-                                trace_type = "DDR"
-                            else:
-                                # This only refers to one bank because of the preprocessed candidates
-                                trace_bank = trace_desc.location["hbm_bank"]
-                                trace_type = "HBM"
-                            if (bank is not None and banktype is not None and
-                                (bank != trace_bank or banktype != trace_type)):
+                        if "bank" in trace_desc.location:
+                            trace_type, trace_bank = utils.parse_location_bank(trace_desc)
+                            if (bank is not None and bank_type is not None and
+                                (bank != trace_bank or bank_type != trace_type)):
                                 raise cgx.CodegenError(
                                     "Found inconsistent memory bank "
                                     f"specifier for {trace_name}.")
                             bank = trace_bank
-                            banktype = trace_type
+                            bank_type = trace_type
 
                     # Make sure the array has been allocated on this bank in the
                     # outermost scope
-                    if bank is not None:
+                    if bank_type is not None:
                         outer_node = trace[0][0][0] or trace[0][0][1]
                         outer_desc = outer_node.desc(trace[0][2])
-                        okhbm, okbank = False, False
-                        if banktype == "HBM":
-                            okhbm = "hbm_bank" in outer_desc.location and outer_desc.location[
-                                "hbm_bank"] == bank
-                        if banktype == "DDR":
-                            okbank = "bank" in outer_desc.location and str(
-                                outer_desc.location["bank"]) == str(bank)
-                        if not (okhbm or okbank):
+                        okbank = False
+                        if ("bank" in outer_desc.location):
+                            trace_type, trace_bank = utils.parse_location_bank(outer_desc)
+                            okbank = (trace_type == bank_type and trace_bank == bank)
+                        if not okbank:
                             raise cgx.CodegenError(
                                 "Memory bank allocation must be present on "
                                 f"outermost data descriptor {outer_node.data} "
                                 "to be allocated correctly.")
-                        bank_assignments[dataname] = (banktype, bank)
+                        bank_assignments[dataname] = (bank_type, bank)
                     else:
                         bank_assignments[dataname] = None
                 else:
@@ -808,27 +794,21 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         # TODO: Distinguish between read, write, and read+write
                         self._allocated_global_arrays.add(node.data)
                         memory_bank_arg_count = 1
-                        bankoffset = 0
+                        bank_offset = 0
                         is_hbm = False
-                        if "bank" in nodedesc.location:
-                            try:
-                                bank = int(nodedesc.location["bank"])
-                            except ValueError:
-                                raise ValueError(
-                                    "FPGA memory bank specifier "
-                                    "must be an integer: {}".format(
-                                        nodedesc.location["bank"]))
-                            is_hbm = False
-                            bankoffset = bank
-                        elif "hbm_bank" in nodedesc.location:
-                            hbm_bank = nodedesc.location["hbm_bank"]
-                            banklow, bankhigh = utils.get_multibank_ranges_from_subset(
-                                hbm_bank, sdfg)
-                            memory_bank_arg_count = bankhigh - banklow
-                            arrsize = dace.symbolic.pystr_to_symbolic(
-                                f"({str(arrsize)}) / {str(bankhigh - banklow)}")
-                            is_hbm = True
-                            bankoffset = banklow
+                        bank_info = utils.parse_location_bank(nodedesc)
+                        if bank_info is not None:
+                            bank_type, bank = bank_info
+                            is_hbm = bank_type == "HBM"
+                            if is_hbm:
+                                banklow, bankhigh = utils.get_multibank_ranges_from_subset(
+                                    bank, sdfg)
+                                memory_bank_arg_count = bankhigh - banklow
+                                arrsize = dace.symbolic.pystr_to_symbolic(
+                                    f"({str(arrsize)}) / {str(bankhigh - banklow)}")
+                                bank_offset = banklow
+                            else:
+                                bank_offset = int(bank)
                         # Define buffer, using proper type
                         for bank_index in range(memory_bank_arg_count):
                             allocname = cpp.ptr(dataname, nodedesc, bank_index)
@@ -841,7 +821,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                     "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                                     "(hlslib::ocl::StorageType::HBM, {}, {});\n"
                                     .format(allocname, nodedesc.dtype.ctype,
-                                            bankoffset + bank_index,
+                                            bank_offset + bank_index,
                                             cpp.sym2cpp(arrsize)))
                             else:
                                 result_alloc.write(
@@ -849,7 +829,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                     "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                                     "(hlslib::ocl::MemoryBank::bank{}, {});".
                                     format(allocname, nodedesc.dtype.ctype,
-                                           bankoffset, cpp.sym2cpp(arrsize)))
+                                           bank_offset, cpp.sym2cpp(arrsize)))
                             self._dispatcher.defined_vars.add(
                                 allocname, DefinedType.Pointer,
                                 'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'

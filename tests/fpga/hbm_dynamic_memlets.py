@@ -11,9 +11,9 @@ def create_dynamic_memlet_sdfg():
     sdfg = dace.SDFG("dyn_memlet")
     state: dace.SDFGState = sdfg.add_state("dyn_memlet")
     xarr = state.add_array("x", [4, 10], dace.int32)
-    sdfg.arrays["x"].location["hbm_bank"] = sbs.Range.from_string("0:4")
+    sdfg.arrays["x"].location["bank"] = "hbm.0:4"
     yarr = state.add_array("y", [4, 10], dace.int32)
-    sdfg.arrays["y"].location["hbm_bank"] = sbs.Range.from_string("4:8")
+    sdfg.arrays["y"].location["bank"] = "hbm.4:8"
 
     hbm_map_enter, hbm_map_exit = state.add_map("hbmmap", dict(k="0:4"),
                                             dtypes.ScheduleType.Unrolled)
