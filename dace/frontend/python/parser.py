@@ -23,10 +23,6 @@ def get_type_annotations(f,
                          method: bool = False) -> ArgTypes:
     """ Obtains types from decorator or from type annotations in a function. 
     """
-    # Skip ``self`` argument
-    if method:
-        decorator_args = decorator_args[1:]
-
     type_annotations = {}
     if hasattr(f, '__annotations__'):
         type_annotations.update(f.__annotations__)

@@ -72,6 +72,11 @@ class MyTestCallAttributesClass:
         self.call_me(A)
         return A + self.n
 
+    @dace.method
+    def method_jit_with_scalar_arg(self, A, b):
+        self.call_me(A)
+        return A + b
+
 
 def test_method_jit():
     A = np.random.rand(20)
@@ -183,6 +188,12 @@ def test_sdfgattr_method_annotated_jit():
     assert np.allclose(cls.method(A), 21)
 
 
+def test_sdfgattr_method_jit_with_scalar():
+    A = np.random.rand(20)
+    cls = MyTestCallAttributesClass(10)
+    assert np.allclose(cls.method_jit_with_scalar_arg(A, 2.0), 9.0)
+
+
 if __name__ == '__main__':
     test_method_jit()
     test_method()
@@ -196,3 +207,4 @@ if __name__ == '__main__':
     test_sdfgattr_method_jit()
     test_sdfgattr_callable_jit()
     test_sdfgattr_method_annotated_jit()
+    test_sdfgattr_method_jit_with_scalar()
