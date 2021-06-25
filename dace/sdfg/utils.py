@@ -1062,10 +1062,8 @@ def iterate_hbm_multibank_arrays(arrayname: str, array: dt.Array, sdfg: SDFG):
         yield 0
 
 
-def modify_distributed_subset(array: dt.Data,
-                              subset: Union[sbs.Subset, list, tuple],
-                              change: int,
-                              force: bool = False):
+def modify_distributed_subset(subset: Union[sbs.Subset, list, tuple],
+                              change: int):
     """
     Applies changes to magic indices from a subset if array is a HBM-array, otherwise
     returns subset. subset is deepcopied before any modification to it is done.
@@ -1073,29 +1071,25 @@ def modify_distributed_subset(array: dt.Data,
         the magic index is completly removed
     :param force: Modify the first index even if this is not a HBM array
     """
-    if (not isinstance(array, dt.Array)):
-        return subset
-    if is_hbm_array(array) or force:
-        cps = copy.deepcopy(subset)
-        if isinstance(subset, sbs.Subset):
-            if change == -1:
-                cps.pop([0])
-            else:
-                cps[0] = (change, change, 1)
-        elif isinstance(subset, list) or isinstance(subset, tuple):
-            if isinstance(subset, tuple):
-                cps = list(cps)
-            if change == -1:
-                cps.pop(0)
-            else:
-                cps[0] = change
-            if isinstance(subset, tuple):
-                cps = tuple(cps)
+    cps = copy.deepcopy(subset)
+    if isinstance(subset, sbs.Subset):
+        if change == -1:
+            cps.pop([0])
         else:
-            raise ValueError(
-                "unsupported type passed to modify_distributed_subset")
+            cps[0] = (change, change, 1)
+    elif isinstance(subset, list) or isinstance(subset, tuple):
+        if isinstance(subset, tuple):
+            cps = list(cps)
+        if change == -1:
+            cps.pop(0)
+        else:
+            cps[0] = change
+        if isinstance(subset, tuple):
+            cps = tuple(cps)
     else:
-        cps = subset
+        raise ValueError(
+            "unsupported type passed to modify_distributed_subset")
+    
     return cps
 
 

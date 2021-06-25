@@ -554,7 +554,8 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    subset_in = utils.modify_distributed_subset(d, subset_in, 0)
+    if utils.is_hbm_array(d):
+        subset_in = utils.modify_distributed_subset(subset_in, 0)
 
     # Offset according to parameters, then offset according to array
     if offset is not None:

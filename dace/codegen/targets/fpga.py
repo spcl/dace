@@ -1107,9 +1107,12 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             dst_nodedesc = dst_node.desc(sdfg)
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
 
-            copy_shape = utils.modify_distributed_subset(
-                src_nodedesc if src_is_subset else dst_nodedesc,
-                memlet.subset.bounding_box_size(), -1)
+            copy_shape = memlet.subset.bounding_box_size()
+            if (src_is_subset and utils.is_hbm_array(src_nodedesc) or not src_is_subset and 
+                utils.is_hbm_array(dst_nodedesc)):
+                copy_shape = utils.modify_distributed_subset(
+                    copy_shape, -1)
+
             offset_src, offset_dst = "0", "0"
             if memlet.src_subset is not None:
                 offset_src = cpp.cpp_array_expr(
@@ -1512,10 +1515,10 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     #Support for ignoring the distributed index if it's not required, e.g. on the host
                     if src_is_hbm or num_accessed_banks > 1:
                         mem.src_subset = utils.modify_distributed_subset(
-                            src_array, mem.src_subset, src_index, True)
+                            mem.src_subset, src_index)
                     if dst_is_hbm or num_accessed_banks > 1:
                         mem.dst_subset = utils.modify_distributed_subset(
-                            dst_array, mem.dst_subset, dst_index, True)
+                            mem.dst_subset, dst_index)
                     self._emit_copy(sdfg, state_id, src_node, src_storage,
                                     dst_node, dst_storage, dst_schedule,
                                     modedge, state_dfg, function_stream,
