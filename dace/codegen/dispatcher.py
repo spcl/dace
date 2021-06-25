@@ -154,7 +154,13 @@ class TargetDispatcher(object):
         self._state_dispatchers = []  # [(predicate, dispatcher)]
         self._generic_state_dispatcher = None  # Type: TargetCodeGenerator
 
+        self._declared_vars = DefinedMemlets()
         self._defined_vars = DefinedMemlets()
+
+    @property
+    def declared_vars(self) -> DefinedMemlets:
+        """ Returns a list of declared variables. """
+        return self._declared_vars
 
     @property
     def defined_vars(self) -> DefinedMemlets:
@@ -425,7 +431,8 @@ class TargetDispatcher(object):
                           state_id: int, node: nodes.AccessNode,
                           datadesc: dt.Data,
                           function_stream: prettycode.CodeIOStream,
-                          callsite_stream: prettycode.CodeIOStream):
+                          callsite_stream: prettycode.CodeIOStream,
+                          declare: bool = True, allocate: bool = True):
         """ Dispatches a code generator for data allocation. """
         self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
@@ -435,9 +442,14 @@ class TargetDispatcher(object):
         else:
             declaration_stream = callsite_stream
 
-        self._array_dispatchers[datadesc.storage].allocate_array(
-            sdfg, dfg, state_id, node, datadesc, function_stream,
-            declaration_stream, callsite_stream)
+        if declare and not allocate:
+            self._array_dispatchers[datadesc.storage].declare_array(
+                sdfg, dfg, state_id, node, datadesc, function_stream,
+                declaration_stream, callsite_stream)
+        elif allocate:
+            self._array_dispatchers[datadesc.storage].allocate_array(
+                sdfg, dfg, state_id, node, datadesc, function_stream,
+                declaration_stream, callsite_stream)
 
     def dispatch_deallocate(self, sdfg: SDFG, dfg: ScopeSubgraphView,
                             state_id: int, node: nodes.AccessNode,
