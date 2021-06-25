@@ -12,14 +12,14 @@ J = dace.symbol("J")
 def forward_loop(data: dace.float64[I, J]):
     for i in range(4,I):
         for j in dace.map[0:J]:
-            data[i, j] = data[i, j] + data[i-1, j]
+            data[i, j] = data[i-1, j]
            
 # backward loop with loop carried dependency
 @dace.program
 def backward_loop(data: dace.float64[I, J]):
     for i in range(I-2,3,-1):
         for j in dace.map[0:J]:
-            data[i, j] = data[i, j] + data[i+1, j]
+            data[i, j] = data[i+1, j]
 
 
 class MoveLoopIntoMapTest(unittest.TestCase):

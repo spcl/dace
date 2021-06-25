@@ -48,6 +48,15 @@ class MoveLoopIntoMap(DetectLoop):
         if is_map.count(True) != 1:
             return False
 
+        #TODO: Add test that map is independant of itervar!
+
+        for node in body.nodes():
+            if isinstance(node, nodes.AccessNode):
+                if body.in_edges(node).count(True) > 1:
+                    return False
+                if body.out_edges(node).count(True) > 1:
+                    return False
+
         return True
    
         
