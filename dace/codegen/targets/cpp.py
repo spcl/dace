@@ -263,8 +263,16 @@ def emit_memlet_reference(dispatcher,
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
-    defined_type, defined_ctype = dispatcher.defined_vars.get(
-        memlet.data, ancestor)
+    defined_types = None
+    try:
+        if (any(str(s) not in sdfg.free_symbols
+                for s in desc.free_symbols) and isinstance(desc, data.Array)):
+            defined_types = dispatcher.declared_vars.get(memlet.data, ancestor)
+    except KeyError:
+        pass
+    if not defined_types:
+        defined_types = dispatcher.defined_vars.get(memlet.data, ancestor)
+    defined_type, defined_ctype = defined_types
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface
                 and isinstance(desc, data.View))):
