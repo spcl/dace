@@ -6,7 +6,7 @@ import dace.libraries.blas as blas
 import numpy as np
 import scipy
 
-vec_width = 4
+vec_width = 2
 vtype = dace.vector(dace.float32, vec_width)
 
 n = dace.symbol("n")
