@@ -487,7 +487,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # self.to_allocate[top_sdfg].append(
                 #     (sdfg.sdfg_id, sdfg.node_id(state), node))
                 self.to_allocate[top_sdfg].append(
-                    (sdfg, sdfg.node_id(state), node, True, True, True))
+                    (sdfg, first_state_instance, first_node_instance,
+                     True, True, True))
                 continue
             elif desc.lifetime is dtypes.AllocationLifetime.Global:
                 # Global memory is allocated in the beginning of the program
@@ -504,7 +505,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # self.to_allocate[top_sdfg].append(
                 #     (sdfg.sdfg_id, sdfg.node_id(state), node))
                 self.to_allocate[top_sdfg].append(
-                    (sdfg, sdfg.node_id(state), node, True, True, True))
+                    (sdfg, first_state_instance, first_node_instance,
+                     True, True, True))
                 continue
 
             # The rest of the cases change the starting scope we attempt to
