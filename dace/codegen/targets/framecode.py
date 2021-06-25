@@ -452,12 +452,19 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # arrays_recursive() loop
             first_state_instance: int = None
             first_node_instance: nodes.AccessNode = None
+            last_state_instance: int = None
+            last_node_instance: nodes.AccessNode = None
+            first = True
             for id, state in enumerate(sdfg.nodes()):
                 for node in state.data_nodes():
                     if node.data == name:
-                        first_state_instance = id
-                        first_node_instance = node
-                        break
+                        if first:
+                            first_state_instance = id
+                            first_node_instance = node
+                            first = False
+                        last_state_instance = id
+                        last_node_instance = node
+                        # break
                 else:
                     continue
                 break
@@ -480,7 +487,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # self.to_allocate[top_sdfg].append(
                 #     (sdfg.sdfg_id, sdfg.node_id(state), node))
                 self.to_allocate[top_sdfg].append(
-                    (sdfg, sdfg.node_id(state), node))
+                    (sdfg, sdfg.node_id(state), node, True, True, True))
                 continue
             elif desc.lifetime is dtypes.AllocationLifetime.Global:
                 # Global memory is allocated in the beginning of the program
@@ -497,7 +504,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # self.to_allocate[top_sdfg].append(
                 #     (sdfg.sdfg_id, sdfg.node_id(state), node))
                 self.to_allocate[top_sdfg].append(
-                    (sdfg, sdfg.node_id(state), node))
+                    (sdfg, sdfg.node_id(state), node, True, True, True))
                 continue
 
             # The rest of the cases change the starting scope we attempt to
@@ -612,11 +619,41 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
             if curscope is None:
                 curscope = top_sdfg
+            
+            # Check if array shape is dependent on non-free SDFG symbols
+            # NOTE: Only arrays supported now
+            # NOTE: We may also need to support views
+            # NOTE: Tuple is (SDFG, State, Node, declare, allocate deallocate)
+            if (any(str(s) not in sdfg.free_symbols
+                    for s in desc.free_symbols) and
+                    isinstance(desc, data.Array)):
+                # Declare in current (SDFG) scope
+                self.to_allocate[curscope].append(
+                    (sdfg, first_state_instance, first_node_instance,
+                     True, False, False))
+                # Allocate in first State
+                # Deallocate in last State
+                if first_state_instance != last_state_instance:
+                    curscope = sdfg.nodes()[first_state_instance]
+                    self.to_allocate[curscope].append(
+                        (sdfg, first_state_instance, first_node_instance,
+                         False, True, False))
+                    curscope = sdfg.nodes()[last_state_instance]
+                    self.to_allocate[curscope].append(
+                        (sdfg, last_state_instance, last_node_instance,
+                         False, False, True))
+                else:
+                    curscope = sdfg.nodes()[first_state_instance]
+                    self.to_allocate[curscope].append(
+                        (sdfg, first_state_instance, first_node_instance,
+                         False, True, True))
+            else:
+                self.to_allocate[curscope].append(
+                    (sdfg, first_state_instance, first_node_instance,
+                     True, True, True))
 
             # self.to_allocate[curscope].append(
             #     (sdfg.sdfg_id, first_state_instance, first_node_instance))
-            self.to_allocate[curscope].append(
-                (sdfg, first_state_instance, first_node_instance))
 
     def allocate_arrays_in_scope(self, sdfg: SDFG,
                                  scope: Union[nodes.EntryNode, SDFGState, SDFG],
@@ -625,7 +662,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         """ Dispatches allocation of all arrays in the given scope. """
         # for sdfg_id, state_id, node in self.to_allocate[scope]:
         #     tsdfg = sdfg.sdfg_list[sdfg_id]
-        for tsdfg, state_id, node in self.to_allocate[scope]:
+        # for tsdfg, state_id, node in self.to_allocate[scope]:
+        for tsdfg, state_id, node, declare, allocate, _ in self.to_allocate[scope]:
             if state_id is not None:
                 state = tsdfg.node(state_id)
             else:
@@ -638,7 +676,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
             self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node,
                                                desc, function_stream,
-                                               callsite_stream)
+                                               callsite_stream, declare,
+                                               allocate)
 
     def deallocate_arrays_in_scope(self, sdfg: SDFG,
                                    scope: Union[nodes.EntryNode, SDFGState,
@@ -648,7 +687,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         """ Dispatches deallocation of all arrays in the given scope. """
         # for sdfg_id, state_id, node in self.to_allocate[scope]:
         #     tsdfg = sdfg.sdfg_list[sdfg_id]
-        for tsdfg, state_id, node in self.to_allocate[scope]:
+        # for tsdfg, state_id, node in self.to_allocate[scope]:
+        for tsdfg, state_id, node, _, _, deallocate in self.to_allocate[scope]:
+            if not deallocate:
+                continue
             if state_id is not None:
                 state = tsdfg.node(state_id)
             else:
