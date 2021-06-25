@@ -8,6 +8,20 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes, propagation
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 
+
+def fold(memlet_subset_ranges, itervar, lower, upper):
+    return [
+        (r[0].replace(symbol(itervar), lower), r[1].replace(symbol(itervar), upper), r[2])
+        for r in memlet_subset_ranges
+    ]
+
+def offset(memlet_subset_ranges, value):
+    return (
+        memlet_subset_ranges[0] + value,
+        memlet_subset_ranges[1] + value,
+        memlet_subset_ranges[2]
+        )
+
 @registry.autoregister
 class MoveLoopIntoMap(DetectLoop):
     """
@@ -61,26 +75,13 @@ class MoveLoopIntoMap(DetectLoop):
                 map_exit = node
 
         # save old in and out memlets { name : ranges }
-        old_in_memlets = { memlet.data.data : memlet.data.subset.ranges for memlet in body.out_edges(map_entry) }
-        old_out_memlets = { memlet.data.data : memlet.data.subset.ranges for memlet in body.in_edges(map_exit) }
+        old_in_memlets = { edge.data.data : edge.data.subset.ranges for edge in body.out_edges(map_entry) }
+        old_out_memlets = { edge.data.data : edge.data.subset.ranges for edge in body.in_edges(map_exit) }
 
         # nest map's content in sdfg
         map_subgraph = body.scope_subgraph(map_entry, include_entry=False, include_exit=False)
         nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph)
         nstate = nsdfg.sdfg.nodes()[0]
-
-        def fold(memlet_subset_ranges, itervar, lower, upper):
-            return [
-                (r[0].replace(symbol(itervar), lower), r[1].replace(symbol(itervar), upper), 1)
-                for r in memlet_subset_ranges
-            ]
-
-        def offset(memlet_subset_ranges, itervar, value):
-            return (
-                memlet_subset_ranges[0] + symbol(itervar) - value,
-                memlet_subset_ranges[1] + symbol(itervar) - value,
-                memlet_subset_ranges[2]
-                )
 
         # correct the memlets going into the nsdfg
         for edge in body.out_edges(map_entry):
@@ -99,7 +100,7 @@ class MoveLoopIntoMap(DetectLoop):
                     if internal_edge.data.data in old_in_memlets:
                         for old_r, new_r in zip(old_in_memlets[internal_edge.data.data], internal_edge.data.subset.ranges):
                             if any(symbolic.issymbolic(x) and symbol(itervar) in x.free_symbols for x in old_r):
-                                new_range.append(offset(new_r, itervar, lower_loop_bound))
+                                new_range.append(offset(new_r, symbol(itervar) - lower_loop_bound))
                             else:
                                 new_range.append(new_r)
                         internal_edge.data.subset.ranges = new_range
@@ -109,7 +110,7 @@ class MoveLoopIntoMap(DetectLoop):
                     if internal_edge.data.data in old_out_memlets:
                         for old_r, new_r in zip(old_out_memlets[internal_edge.data.data], internal_edge.data.subset.ranges):
                             if any(symbolic.issymbolic(x) and symbol(itervar) in x.free_symbols for x in old_r):
-                                new_range.append(offset(new_r, itervar, lower_loop_bound))
+                                new_range.append(offset(new_r, symbol(itervar) - lower_loop_bound))
                             else:
                                 new_range.append(new_r)
                         internal_edge.data.subset.ranges = new_range
