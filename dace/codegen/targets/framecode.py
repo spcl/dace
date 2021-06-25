@@ -626,9 +626,9 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # NOTE: Only arrays supported now
             # NOTE: We may also need to support views
             # NOTE: Tuple is (SDFG, State, Node, declare, allocate deallocate)
-            if (any(str(s) not in sdfg.free_symbols
-                    for s in desc.free_symbols) and
-                    isinstance(desc, data.Array)):
+            if (isinstance(desc, data.Array) and any(
+                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                    for s in desc.free_symbols)):
                 # Declare in current (SDFG) scope
                 self.to_allocate[curscope].append(
                     (sdfg, first_state_instance, first_node_instance,

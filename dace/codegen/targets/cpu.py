@@ -1254,9 +1254,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         types = None
         try:
-            if (any(str(s) not in sdfg.free_symbols
-                    for s in desc.free_symbols) and
-                    isinstance(desc, data.Array)):
+            if (isinstance(desc, data.Array) and any(
+                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                    for s in desc.free_symbols)):
                 types = self._dispatcher.declared_vars.get(memlet.data)
         except KeyError:
             pass
