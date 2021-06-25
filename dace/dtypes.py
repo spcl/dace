@@ -123,6 +123,22 @@ class ReductionType(aenum.AutoNumberEnum):
     Sub = ()  #: Subtraction (only supported in OpenMP)
     Div = ()  #: Division (only supported in OpenMP)
 
+class NcclReductionType(aenum.AutoNumberEnum):
+    """ Reduction types supported by NCCL. """
+    ncclSum = ()  #: Sum
+    ncclProd = ()  #: Product
+    ncclMin = ()  #: Minimum value
+    ncclMax = ()  #: Maximum value
+
+
+NCCL_SUPPORTED_REDUCTIONS = {
+    None: NcclReductionType.ncclSum,
+    ReductionType.Sum: NcclReductionType.ncclSum,
+    ReductionType.Product: NcclReductionType.ncclProd,
+    ReductionType.Min: NcclReductionType.ncclMin,
+    ReductionType.Max: NcclReductionType.ncclMax
+}
+
 
 @undefined_safe_enum
 @extensible_enum
@@ -179,6 +195,13 @@ class TilingType(aenum.AutoNumberEnum):
     Normal = ()
     CeilRange = ()
     NumberOfTiles = ()
+
+@extensible_enum
+class ReductionLibType(aenum.AutoNumberEnum):
+    """ Available Reduction Library types in a `GPUMultiTransformMap` transformation. """
+
+    Normal = ()
+    NCCL = ()
 
 
 # Maps from ScheduleType to default StorageType
