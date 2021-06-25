@@ -719,7 +719,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     if e.data.data in sdfg.arrays:
                         if sdfg.arrays[e.data.data].storage in dtypes.GPU_STORAGES:
                             node.location['gpu'] = default_gpu
-                    
 
         return gpus, gpu_vals, default_gpu
 
