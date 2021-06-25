@@ -223,6 +223,106 @@ class CPUCodeGen(TargetCodeGenerator):
             # Casting is already done in emit_memlet_reference
             aname = cpp.ptr(aname, nodedesc, sdfg)
             allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
+    
+    def declare_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream,
+                      declaration_stream, allocation_stream):
+        name = node.data
+
+        if nodedesc.transient is False:
+            return
+
+        # Check if array is already declared
+        try:
+            self._dispatcher.declared_vars.get(name)
+            return  # Array was already declared in this or upper scopes
+        except KeyError:  # Array not declared yet
+            pass
+
+        # Compute array size
+        arrsize = nodedesc.total_size
+        if not isinstance(nodedesc.dtype, dtypes.opaque):
+            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+
+        alloc_name = cpp.ptr(name, nodedesc, sdfg)
+
+        # NOTE: We currently only support Arrays
+        assert(isinstance(nodedesc, data.Array))
+
+        # if isinstance(nodedesc, data.View):
+        #     return self.allocate_view(sdfg, dfg, state_id, node,
+        #                               function_stream, declaration_stream,
+        #                               allocation_stream)
+
+        if (nodedesc.storage == dtypes.StorageType.CPU_Heap
+              or (nodedesc.storage == dtypes.StorageType.Register and
+                  ((symbolic.issymbolic(arrsize, sdfg.constants)) or
+                   ((arrsize_bytes > Config.get(
+                       "compiler", "max_stack_array_size")) == True)))):
+
+            if nodedesc.storage == dtypes.StorageType.Register:
+
+                if symbolic.issymbolic(arrsize, sdfg.constants):
+                    warnings.warn(
+                        'Variable-length array %s with size %s '
+                        'detected and was allocated on heap instead of '
+                        '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
+                elif (arrsize_bytes > Config.get(
+                        "compiler", "max_stack_array_size")) == True:
+                    warnings.warn(
+                        "Array {} with size {} detected and was allocated on heap instead of "
+                        "{} since it's size is greater than max_stack_array_size ({})"
+                        .format(name, cpp.sym2cpp(arrsize_bytes),
+                                nodedesc.storage,
+                                Config.get("compiler", "max_stack_array_size")))
+
+            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+
+            declaration_stream.write(
+                f'{nodedesc.dtype.ctype} *{name} = nullptr;\n',
+                sdfg, state_id, node)
+            self._dispatcher.declared_vars.add(name, DefinedType.Pointer,
+                                               ctypedef)
+            return
+        elif (nodedesc.storage == dtypes.StorageType.Register):
+            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            if node.setzero:
+                declaration_stream.write(
+                    "%s %s[%s]  DACE_ALIGN(64) = {0};\n" %
+                    (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                    sdfg,
+                    state_id,
+                    node,
+                )
+                self._dispatcher.defined_vars.add(name, DefinedType.Pointer,
+                                                  ctypedef)
+                return
+            declaration_stream.write(
+                "%s %s[%s]  DACE_ALIGN(64);\n" %
+                (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                sdfg,
+                state_id,
+                node,
+            )
+            self._dispatcher.declared_vars.add(name, DefinedType.Pointer,
+                                               ctypedef)
+            return
+        elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
+            # Define pointer once
+            # NOTE: OpenMP threadprivate storage MUST be declared globally.
+            if not self._dispatcher.defined_vars.has(name):
+                function_stream.write(
+                    "{ctype} *{name} = nullptr;\n"
+                    "#pragma omp threadprivate({name})".
+                    format(ctype=nodedesc.dtype.ctype, name=name),
+                    sdfg,
+                    state_id,
+                    node,
+                )
+                self._dispatcher.declared_vars.add_global(
+                    name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
+        else:
+            raise NotImplementedError("Unimplemented storage type " +
+                                      str(nodedesc.storage))
 
     def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream,
                        declaration_stream, allocation_stream):
@@ -236,6 +336,14 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.defined_vars.get(name)
             return  # Array was already allocated in this or upper scopes
         except KeyError:  # Array not allocated yet
+            pass
+
+        # Check if array is already declared
+        declared = False
+        try:
+            self._dispatcher.declared_vars.get(name)
+            declared = True  # Array was already declared in this or upper scopes
+        except KeyError:  # Array not declared yet
             pass
 
         # Compute array size
@@ -342,8 +450,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
-            declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', sdfg,
-                                     state_id, node)
+            if not declared:
+                declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n',
+                                         sdfg, state_id, node)
             allocation_stream.write(
                 "%s = new %s DACE_ALIGN(64)[%s];\n" %
                 (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), sdfg,
@@ -1143,7 +1252,17 @@ class CPUCodeGen(TargetCodeGenerator):
         desc = sdfg.arrays[memlet.data]
         ptr = cpp.ptr(memlet.data, desc, sdfg)
 
-        var_type, ctypedef = self._dispatcher.defined_vars.get(memlet.data)
+        types = None
+        try:
+            if (any(str(s) not in sdfg.free_symbols
+                    for s in desc.free_symbols) and
+                    isinstance(desc, data.Array)):
+                types = self._dispatcher.declared_vars.get(memlet.data)
+        except KeyError:
+            pass
+        if not types:
+            types = self._dispatcher.defined_vars.get(memlet.data)
+        var_type, ctypedef = types
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
                 if var_type in [
