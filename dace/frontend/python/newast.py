@@ -282,6 +282,7 @@ class ConditionalCodeResolver(ast.NodeTransformer):
         self.globals = globals
 
     def visit_If(self, node: ast.If) -> Any:
+        node = self.generic_visit(node)
         try:
             test = RewriteSympyEquality(self.globals).visit(node.test)
             result = astutils.evalnode(test, self.globals)
@@ -299,7 +300,7 @@ class ConditionalCodeResolver(ast.NodeTransformer):
             # Cannot evaluate if condition at compile time
             pass
 
-        return self.generic_visit(node)
+        return node
 
     def visit_IfExp(self, node: ast.IfExp) -> Any:
         return self.visit_If(node)
