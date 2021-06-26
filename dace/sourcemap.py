@@ -419,7 +419,8 @@ class MapPython:
                 dbinfo = node.debuginfo.to_json()
                 mapping.append(self.make_info(dbinfo, id, state_id, sdfg_id))
 
-            elif isinstance(node, (nodes.MapEntry, nodes.MapExit)):
+            elif isinstance(node, (nodes.MapEntry, 
+                                   nodes.MapExit)) and node.map.debuginfo is not None:
                 dbinfo = node.map.debuginfo.to_json()
                 mapping.append(self.make_info(dbinfo, id, state_id, sdfg_id))
 
