@@ -166,8 +166,8 @@ class SingleState(ControlFlow):
                 for variable, value in edge.data.assignments.items()
             ] + [''])
 
-        if (successor is None
-                or edge.dst is not successor and not assignments_only):
+        if ((successor is None or edge.dst is not successor)
+                and not assignments_only):
             expr += 'goto __state_{}_{};\n'.format(sdfg.sdfg_id, edge.dst.label)
 
         if not edge.data.is_unconditional() and not assignments_only:
