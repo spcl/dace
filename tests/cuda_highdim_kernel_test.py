@@ -32,7 +32,7 @@ def highdim(A: dace.uint64[N, M, K, L, X, Y, Z, W, U], B: dace.uint64[N, M, K,
 def makendrange(*args):
     result = []
     for i in range(0, len(args), 2):
-        result.append((args[i], args[i + 1] - 1, 1))
+        result.append(slice(args[i], args[i + 1] - 1, 1))
     return result
 
 
