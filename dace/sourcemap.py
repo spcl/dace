@@ -3,6 +3,7 @@ import re
 import json
 import os
 import socket
+from dace import Config
 from dace.sdfg import state
 from dace.sdfg import nodes
 
@@ -27,27 +28,41 @@ def create_folder(path_str: str):
         os.mkdir(path)
 
 
-def create_cache(name: str) -> str:
+def create_cache(name: str, folder: str) -> str:
     """ Creates the map folder in .dacecache if it
         does not yet exist
         :param name: name of the SDFG
+        :param folder: the build folder
         :return: relative path to the created folder starting from '.dacecache'
     """
     create_folder(".dacecache")
-    create_folder(".dacecache/" + name)
-    create_folder(".dacecache/" + name + "/map")
-    return ".dacecache/" + name
+    if (folder is not None):
+        create_folder(folder)
+        create_folder(os.path.join(folder, "map"))
+        return folder
+    else:
+        cache_folder = os.path.join(".dacecache", name)
+        create_folder(cache_folder)
+        create_folder(os.path.join(cache_folder, "map"))
+        return cache_folder
 
 
-def temporaryInfo(filename: str, data):
+def tmp_location(name: str) -> str:
+    """ Returns the absolute path to the temporary folder
+        :param name: name of the SDFG
+        :return: path to the tmp folder
+    """
+    return os.path.abspath(os.path.join(".dacecache", name, "map", "tmp.json"))
+
+
+def temporaryInfo(name: str, data):
     """ Creates a temporary file that stores the json object
-        in the map folder (.dacecache/functionName/map) 
-        of the corresponding function
-        :param filename: name of the function
+        in the map folder (.dacecache/{SdfgName}/map)
+        :param name: name of the SDFG
         :param data: data to save
     """
-    folder = create_cache(filename)
-    path = os.path.abspath(folder + "/map/tmp.json")
+    create_cache(name, None)
+    path = tmp_location(name)
 
     with open(path, "w") as writer:
         json.dump(data, writer)
@@ -60,7 +75,7 @@ def get_tmp(name: str):
         :return: the parsed data in the tmp file of the SDFG. 
         If the tmp file doesn't exist returns None
     """
-    path = ".dacecache/" + name + "/map/tmp.json"
+    path = tmp_location(name)
     if os.path.exists(path):
         with open(path, "r") as tmp_json:
             data = json.load(tmp_json)
@@ -71,7 +86,7 @@ def get_tmp(name: str):
 
 def remove_tmp(name: str, remove_cache: bool = False):
     """ Remove the tmp created by "temporaryInfo"
-        :param name: name of the function whiches tmp will be removed
+        :param name: name of the sdfg for which the tmp will be removed
         :param remove_cache: If true, checks if the directory only contains 
         the tmp file, if this is the case, remove the SDFG cache directory.
     """
@@ -107,17 +122,18 @@ def send(data: json):
         s.sendall(data_bytes)
 
 
-# TODO sdfg.build_folder()
-def save(language: str, name: str, map: dict) -> str:
+def save(language: str, name: str, map: dict, build_folder: str) -> str:
     """ Saves the mapping in the map folder of
         the corresponding SDFG
         :param language: used for the file name to save to: py -> map_py.json
         :param name: name of the SDFG
         :param map: the map object to be saved
+        :param build_folder: build folder
         :return: absolute path to the cache folder of the SDFG
     """
-    folder = create_cache(name)
-    path = os.path.abspath(os.path.join(folder, 'map', 'map_' + language + '.json'))
+    folder = create_cache(name, build_folder)
+    path = os.path.abspath(
+        os.path.join(folder, 'map', 'map_' + language + '.json'))
 
     with open(path, "w") as json_file:
         json.dump(map, json_file, indent=4)
@@ -125,39 +141,97 @@ def save(language: str, name: str, map: dict) -> str:
     return os.path.abspath(folder)
 
 
+def get_src_files(graph, fileSet):
+    """ Recursively search for debuginfo to find the filename
+        :param graph: An SDFG or SDFGState to check for the sourcefilename
+        :return: list of unique source filenames
+    """
+
+    for node in graph.nodes():
+        if isinstance(
+                node,
+            (nodes.AccessNode, nodes.Tasklet, nodes.LibraryNode, nodes.Map,
+             nodes.NestedSDFG)) and node.debuginfo is not None:
+
+            fileSet.add(node.debuginfo.filename)
+
+        elif isinstance(node, (nodes.MapEntry, nodes.MapExit)):
+            fileSet.add(node.map.debuginfo.filename)
+
+        elif isinstance(node, state.SDFGState):
+            fileSet = get_src_files(node, fileSet)
+
+        elif isinstance(node, nodes.NestedSDFG):
+            fileSet = get_src_files(node.sdfg, fileSet)
+
+    return fileSet
+
+
 def create_py_map(sdfg):
     """ Creates the mapping from the python source lines to the SDFG nodes.
         The mapping gets saved at: .dacecache/{sdfg.name}/map/map_py.json
         :param sdfg: The SDFG for which the mapping will be created
     """
-    py_mapper = MapPython(sdfg.name)
-    py_mapper.mapper(sdfg)
-    save("py", sdfg.name, py_mapper.map)
+    # If the cache setting is set to 'hash' then we don't create a
+    # mapping as we don't know where to save it to due to
+    # the hash value changing every time the state of the SDFG changes.
+    if Config.get('cache') != 'hash':
+        tmp = get_tmp(sdfg.name)
+        py_mapper = MapPython(sdfg.name)
+        py_mapper.mapper(sdfg, tmp)
+        folder = sdfg.build_folder
+        save("py", sdfg.name, py_mapper.map, folder)
+        # If the SDFG was made with the API we need to create tmp info
+        # as it doesn't have any
+        sourceFiles = [src for src in get_src_files(sdfg, set())]
+        # If tmp is None, then the SDFG was created with the API
+        if tmp is None:
+            temporaryInfo(
+                sdfg.name, {
+                    'build_folder': folder,
+                    'src_files': sourceFiles,
+                    'made_with_api': True,
+                })
+        else:
+            tmp['src_files'] = sourceFiles
+            temporaryInfo(sdfg.name, tmp)
 
 
-def create_cpp_map(code: str, sdfg_name: str, target_name: str):
+def create_cpp_map(code: str, name: str, target_name: str):
     """ Creates the mapping from the SDFG nodes to the C++ code lines.
         The mapping gets saved at: .dacecache/{sdfg_name}/map/map_cpp.json
         :param code: C++ code containing the identifiers '////__DACE:0:0:0'
         :param name: The name of the SDFG
         :param target_name: The target type, example: 'cpu'
     """
-    cpp_mapper = MapCpp(code, sdfg_name, target_name)
-    cpp_mapper.mapper()
-    folder = save("cpp", sdfg_name, cpp_mapper.map)
+    tmp = get_tmp(name)
+    if tmp is None:
+        return
+    remove_tmp(name, True)
 
-    tmp = get_tmp(sdfg_name)
-    remove_tmp(sdfg_name)
+    # If the cache setting is set to 'hash' then we don't create a
+    # mapping as we don't know where to save it to due to
+    # the hash value changing every time the state of the SDFG changes.
+    # We send a message to the IDE in that case to notify the user of
+    # restricted features.
+    if Config.get('cache') != 'hash':
+        cpp_mapper = MapCpp(code, name, target_name)
+        cpp_mapper.mapper()
 
-    # Send information about the SDFG to VSCode
-    if tmp is not None:
+        folder = save("cpp", name, cpp_mapper.map, tmp.get("build_folder"))
+        api = tmp.get('made_with_api')
+
+        # Send information about the SDFG to VSCode
         send({
             "type": "registerFunction",
-            "name": sdfg_name,
+            "name": name,
             "path_cache": folder,
-            "path_file": tmp.get("src_file"),
-            "target_name": target_name
+            "path_file": tmp.get("src_files"),
+            "target_name": target_name,
+            "made_with_api": api if api else False,
         })
+    else:
+        send({'type': 'restrictedFeatures', 'reason': 'config.cache.hash'})
 
 
 class MapCpp:
@@ -223,9 +297,11 @@ class MapCpp:
             :return: list of identifers
         """
         line_identifier = re.findall(
-            r'(\/\/\/\/__DACE:[0-9]:[0-9]:[0-9](,[0-9])*)', line)
-        # remove tuples
-        return [x or y for (x, y) in line_identifier]
+            r'(\/\/\/\/__DACE:[0-9]:[0-9]:[0-9]*(,[0-9])*)', line)
+        # The regex expression returns 2 groups (a tuple) due to us also
+        # considering edges. We are only interested in the first element.
+        # Example tuple in the case of an edge ('////__DACE:0:0:2,6', ',6')
+        return [x for (x, y) in line_identifier]
 
 
 class MapPython:
@@ -237,25 +313,29 @@ class MapPython:
         self.map = {}
         self.debuginfo = {}
 
-    def mapper(self, sdfg) -> dict:
+    def mapper(self, sdfg, line_info) -> dict:
         """ Creates the source to SDFG node mapping
             :param sdfg: SDFG to create the mapping for
+            :line_info: source information from the tmp file
         """
         self.debuginfo = self.sdfg_debuginfo(sdfg)
+        self.debuginfo = self.divide()
         self.sorter()
-        line_info = get_tmp(self.name)
 
         # If we haven't saved line and/or src info
         # return after creating the map
         # Happens when only using the SDFG API
         if (line_info is None or "start_line" not in line_info
-                or "end_line" not in line_info):
+                or "end_line" not in line_info or "src_file" not in line_info):
             self.create_mapping()
             return
 
         # Store the start and end line as a tuple
         # for each function/sub-function in the SDFG
-        ranges = [(line_info["start_line"], line_info["end_line"])]
+        range_dict = {
+            line_info["src_file"]:
+            [(line_info["start_line"], line_info["end_line"])]
+        }
 
         if "other_sdfgs" in line_info:
             for other_sdfg_name in line_info["other_sdfgs"]:
@@ -263,18 +343,44 @@ class MapPython:
                 # SDFGs created with the API don't have tmp files
                 if other_tmp is not None:
                     remove_tmp(other_sdfg_name, True)
+                    ranges = range_dict.get(other_tmp["src_file"])
+                    if ranges is None:
+                        ranges = []
                     ranges.append(
                         (other_tmp["start_line"], other_tmp["end_line"]))
+                    range_dict[other_tmp["src_file"]] = ranges
 
-        self.create_mapping(ranges)
+        self.create_mapping(range_dict)
+
+    def divide(self):
+        """ Divide debuginfo into an array where each entry
+            corresponds to the debuginfo of a diffrent sourcefile.
+        """
+        divided = []
+        for dbinfo in self.debuginfo:
+            source = dbinfo['debuginfo']['filename']
+            exists = False
+            for src_infos in divided:
+                if len(src_infos) > 0 and src_infos[0]['debuginfo'][
+                        'filename'] == source:
+                    src_infos.append(dbinfo)
+                    exists = True
+                    break
+            if not exists:
+                divided.append([dbinfo])
+
+        return divided
 
     def sorter(self):
         """ Prioritizes smaller ranges over larger ones """
-        self.debuginfo = sorted(
-            self.debuginfo,
-            key=lambda n:
-            (n['debuginfo']['start_line'], n['debuginfo']['start_column'], n[
-                'debuginfo']['end_line'], n['debuginfo']['end_column']))
+        db_sorted = []
+        for dbinfo_source in self.debuginfo:
+            db_sorted.append(
+                sorted(dbinfo_source,
+                       key=lambda n: (n['debuginfo']['start_line'], n[
+                           'debuginfo']['start_column'], n['debuginfo'][
+                               'end_line'], n['debuginfo']['end_column'])))
+        return db_sorted
 
     def make_info(self, debuginfo, node_id: int, state_id: int,
                   sdfg_id: int) -> dict:
@@ -329,40 +435,54 @@ class MapPython:
 
         return mapping
 
-    def create_mapping(self, ranges=None):
+    def create_mapping(self, range_dict=None):
         """ Creates the actual mapping by using the debuginfo list
-            :param ranges: list of tuples containing a start and 
+            :param range_dict: for ech file a list of tuples containing a start and 
             end line of a DaCe program
         """
-        for node in self.debuginfo:
-            for line in range(node["debuginfo"]["start_line"],
-                              node["debuginfo"]["end_line"] + 1):
-                # Maps a python line to a list of nodes
-                # The nodes have been sorted by priority
-                if not str(line) in self.map:
-                    self.map[str(line)] = []
+        for file_dbinfo in self.debuginfo:
+            for node in file_dbinfo:
+                src_file = node["debuginfo"]["filename"]
+                if not src_file in self.map:
+                    self.map[src_file] = {}
+                for line in range(node["debuginfo"]["start_line"],
+                                  node["debuginfo"]["end_line"] + 1):
+                    # Maps a python line to a list of nodes
+                    # The nodes have been sorted by priority
+                    if not str(line) in self.map[src_file]:
+                        self.map[src_file][str(line)] = []
 
-                self.map[str(line)].append({
-                    "sdfg_id": node["sdfg_id"],
-                    "state_id": node["state_id"],
-                    "node_id": node["node_id"]
-                })
+                    self.map[src_file][str(line)].append({
+                        "sdfg_id":
+                        node["sdfg_id"],
+                        "state_id":
+                        node["state_id"],
+                        "node_id":
+                        node["node_id"]
+                    })
 
-        if ranges:
+        if range_dict:
             # Mapping lines that don't occur in the debugInfo of the SDFG
             # These might be lines that don't have any code on them or
             # no debugInfo correspond directly to them
-            for start, end in ranges:
-                for line in range(start, end + 1):
-                    if not str(line) in self.map:
-                        # Set to the same node as the previous line
-                        # If the previous line doesn't exist
-                        # (line - 1 < f_start_line) then search the next lines
-                        # until a mapping can be found
-                        if str(line - 1) in self.map:
-                            self.map[str(line)] = self.map[str(line - 1)]
-                        else:
-                            for line_after in range(line + 1, end + 1):
-                                if str(line_after) in self.map:
-                                    self.map[str(line)] = self.map[str(
-                                        line_after)]
+            for src_file, ranges in range_dict.items():
+
+                src_map = self.map.get(src_file)
+                if src_map is None:
+                    src_map = {}
+
+                for start, end in ranges:
+                    for line in range(start, end + 1):
+                        if not str(line) in src_map:
+                            # Set to the same node as the previous line
+                            # If the previous line doesn't exist
+                            # (line - 1 < f_start_line) then search the next lines
+                            # until a mapping can be found
+                            if str(line - 1) in src_map:
+                                src_map[str(line)] = src_map[str(line - 1)]
+                            else:
+                                for line_after in range(line + 1, end + 1):
+                                    if str(line_after) in src_map:
+                                        src_map[str(line)] = src_map[str(
+                                            line_after)]
+                self.map[src_file] = src_map
