@@ -188,6 +188,12 @@ class DaceProgram:
         self._methodobj: Any = None  #: Object whose method this program is
 
         self.global_vars = _get_locals_and_globals(f)
+        self.signature = inspect.signature(f)
+        self.default_args = {
+            pname: pval.default
+            for pname, pval in self.signature.parameters.items()
+            if pval.default is not inspect._empty
+        }
 
         if self.argnames is None:
             self.argnames = []
@@ -204,16 +210,16 @@ class DaceProgram:
         from dace.transformation.auto import auto_optimize as autoopt
         return autoopt.auto_optimize(sdfg, self.device, symbols=symbols)
 
-    def to_sdfg(self, *args, strict=None, save=False) -> SDFG:
+    def to_sdfg(self, *args, strict=None, save=False, **kwargs) -> SDFG:
         """ Parses the DaCe function into an SDFG. """
-        return self.parse(*args, strict=strict, save=save)
+        return self.parse(args, kwargs, strict=strict, save=save)
 
-    def __sdfg__(self, *args) -> SDFG:
-        return self.parse(*args, strict=None, save=False)
+    def __sdfg__(self, *args, **kwargs) -> SDFG:
+        return self.parse(args, kwargs, strict=None, save=False)
 
-    def compile(self, *args, strict=None, save=False):
+    def compile(self, *args, strict=None, save=False, **kwargs):
         """ Convenience function that parses and compiles a DaCe program. """
-        sdfg = self.parse(*args, strict=strict, save=save)
+        sdfg = self.parse(args, kwargs, strict=strict, save=save)
 
         # Invoke auto-optimization as necessary
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
@@ -243,6 +249,21 @@ class DaceProgram:
         del self._cache
         self._cache = (None, None, None)
 
+    def _create_sdfg_args(self, sdfg: SDFG, args: Tuple[Any],
+                          kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        # Start with default arguments, then add other arguments
+        result = {**self.default_args}
+        # Reconstruct keyword arguments
+        result.update({aname: arg for aname, arg in zip(self.argnames, args)})
+        result.update(kwargs)
+
+        # Update arguments with symbols in data shapes
+        result.update(
+            infer_symbols_from_datadescriptor(
+                sdfg, {k: create_datadescriptor(v)
+                       for k, v in kwargs.items()}))
+        return result
+
     def __call__(self, *args, **kwargs):
         """ Convenience function that parses, compiles, and runs a DaCe 
             program. """
@@ -254,13 +275,8 @@ class DaceProgram:
                                         self.methodobj is not None)
         if self.is_cached(argtypes):
             self._cache[2].clear_return_values()
-            # Reconstruct keyword arguments
-            kwargs.update(
-                {aname: arg
-                 for aname, arg in zip(self.argnames, args)})
-            kwargs.update(
-                infer_symbols_from_datadescriptor(self._cache[1], kwargs))
-            return self._cache[2](**kwargs)
+            return self._cache[2](
+                **self._create_sdfg_args(self._cache[1], args, kwargs))
 
         # Clear cache to enforce deletion and closure of compiled program
         del self._cache
@@ -274,16 +290,10 @@ class DaceProgram:
         })
 
         # Parse SDFG
-        sdfg = self.parse(*args)
+        sdfg = self.parse(args, kwargs)
 
         # Add named arguments to the call
-        kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
-
-        # Update arguments with symbols in data shapes
-        kwargs.update(
-            infer_symbols_from_datadescriptor(
-                sdfg, {k: create_datadescriptor(v)
-                       for k, v in kwargs.items()}))
+        sdfg_args = self._create_sdfg_args(sdfg, args, kwargs)
 
         # Allow CLI to prompt for optimizations
         if Config.get_bool('optimizer', 'transform_on_call'):
@@ -291,7 +301,7 @@ class DaceProgram:
 
         # Invoke auto-optimization as necessary
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
-            sdfg = self._auto_optimize(sdfg, symbols=kwargs)
+            sdfg = self._auto_optimize(sdfg, symbols=sdfg_args)
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
@@ -300,17 +310,18 @@ class DaceProgram:
         self._cache = (argtypes, sdfg, binaryobj)
 
         # Call SDFG
-        result = binaryobj(**kwargs)
+        result = binaryobj(**sdfg_args)
 
         return result
 
-    def parse(self, *compilation_args, strict=None, save=False) -> SDFG:
+    def parse(self, args, kwargs, strict=None, save=False) -> SDFG:
         """ 
         Try to parse a DaceProgram object and return the `dace.SDFG` object
         that corresponds to it.
         :param function: DaceProgram object (obtained from the ``@dace.program``
                         decorator).
-        :param compilation_args: Various compilation arguments e.g. dtypes.
+        :param args: The given arguments to the function.
+        :param kwargs: The given keyword arguments to the function.
         :param strict: Whether to apply strict transformations or not (None
                        uses configuration-defined value). 
         :param save: If True, saves the generated SDFG to 
@@ -322,7 +333,7 @@ class DaceProgram:
         from dace.transformation import helpers as xfh
 
         # Obtain DaCe program as SDFG
-        sdfg = self.generate_pdp(*compilation_args, strict=strict)
+        sdfg = self.generate_pdp(args, kwargs, strict=strict)
 
         # Set argument names
         sdfg.arg_names = self.argnames
@@ -353,9 +364,10 @@ class DaceProgram:
 
         return sdfg
 
-    def generate_pdp(self, *compilation_args, strict=None):
+    def generate_pdp(self, args, kwargs, strict=None):
         """ Generates the parsed AST representation of a DaCe program.
-            :param compilation_args: Various compilation arguments e.g., dtypes.
+            :param args: The given arguments to the program.
+            :param kwargs: The given keyword arguments to the program.
             :param strict: Whether to apply strict transforms when parsing 
                            nested dace programs.
             :return: A 2-tuple of (program, modules), where `program` is a
@@ -365,29 +377,29 @@ class DaceProgram:
                      import aliases).
         """
         dace_func = self.f
-        args = self.dec_args
+        dargs = self.dec_args
 
         # If exist, obtain type annotations (for compilation)
-        argtypes = get_type_annotations(dace_func, self.argnames, args,
+        argtypes = get_type_annotations(dace_func, self.argnames, dargs,
                                         self.methodobj is not None)
 
         # Parse argument types from call
         if len(inspect.getfullargspec(dace_func).args) > 0:
             if not argtypes:
-                if not compilation_args:
+                if not args:
                     raise SyntaxError(
                         'Compiling DaCe programs requires static types. '
                         'Please provide type annotations on the function, '
                         'or add sample arguments to the compilation call.')
 
                 # Parse compilation arguments
-                if len(compilation_args) != len(self.argnames):
+                if len(args) != len(self.argnames):
                     raise SyntaxError(
                         'Number of keyword arguments must match parameters '
                         '(expecting %d)' % len(self.argnames))
                 argtypes = {
                     k: create_datadescriptor(v)
-                    for k, v in zip(self.argnames, compilation_args)
+                    for k, v in zip(self.argnames, args)
                 }
         for k, v in argtypes.items():
             if v.transient:  # Arguments to (nested) SDFGs cannot be transient
@@ -409,7 +421,7 @@ class DaceProgram:
         # Add symbols as globals with their actual names (sym_0 etc.)
         global_vars.update({
             v.name: v
-            for k, v in global_vars.items() if isinstance(v, symbolic.symbol)
+            for _, v in global_vars.items() if isinstance(v, symbolic.symbol)
         })
         for argtype in argtypes.values():
             global_vars.update({v.name: v for v in argtype.free_symbols})
