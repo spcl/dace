@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ DaCe Python parsing functionality and entry point to Python frontend. """
 from __future__ import print_function
-import collections
 import inspect
+import itertools
 import copy
 import os
 import sympy
@@ -20,7 +20,9 @@ ArgTypes = Dict[str, Data]
 def get_type_annotations(f,
                          f_argnames,
                          decorator_args,
-                         method: bool = False) -> ArgTypes:
+                         kwargs,
+                         method: bool = False,
+                         default_args=None) -> ArgTypes:
     """ Obtains types from decorator or from type annotations in a function. 
     """
     type_annotations = {}
@@ -47,16 +49,18 @@ def get_type_annotations(f,
 
     # Alert if there are any discrepancies between annotations and arguments
     if has_args:
-        # Make sure all arguments are annotated
-        if len(decorator_args) != len(f_argnames):
-            raise SyntaxError('Decorator arguments must match number of DaCe ' +
-                              'program parameters (expecting ' +
-                              str(len(f_argnames)) + ')')
         # Return arguments and their matched decorator annotation
-        return {
+        result = {
             k: create_datadescriptor(v)
-            for k, v in zip(f_argnames, decorator_args)
+            for k, v in itertools.chain(default_args.items(
+            ), zip(f_argnames, decorator_args), kwargs.items())
         }
+        # Make sure all arguments are annotated
+        if len(result) != len(f_argnames):
+            raise SyntaxError('Decorator arguments must match number of DaCe '
+                              f'program parameters (expecting {f_argnames}, '
+                              f'got {list(result.keys())})')
+        return result
     elif has_annotations:
         # Make sure all arguments are annotated
         filtered = {
@@ -271,8 +275,9 @@ class DaceProgram:
         if self.methodobj is not None:
             self.global_vars[self.objname] = self.methodobj
 
-        argtypes = get_type_annotations(self.f, self.argnames, args,
-                                        self.methodobj is not None)
+        argtypes = get_type_annotations(self.f, self.argnames, args, kwargs,
+                                        self.methodobj is not None,
+                                        self.default_args)
         if self.is_cached(argtypes):
             self._cache[2].clear_return_values()
             return self._cache[2](
@@ -378,34 +383,40 @@ class DaceProgram:
         """
         dace_func = self.f
         dargs = self.dec_args
+        dkwargs = self.dec_kwargs
 
         # If exist, obtain type annotations (for compilation)
         argtypes = get_type_annotations(dace_func, self.argnames, dargs,
-                                        self.methodobj is not None)
+                                        dkwargs, self.methodobj is not None,
+                                        self.default_args)
 
         # Parse argument types from call
-        if len(inspect.getfullargspec(dace_func).args) > 0:
+        if len(self.argnames) > 0:
             if not argtypes:
-                if not args:
+                if not args and not kwargs:
                     raise SyntaxError(
                         'Compiling DaCe programs requires static types. '
                         'Please provide type annotations on the function, '
                         'or add sample arguments to the compilation call.')
 
                 # Parse compilation arguments
-                if len(args) != len(self.argnames):
-                    raise SyntaxError(
-                        'Number of keyword arguments must match parameters '
-                        '(expecting %d)' % len(self.argnames))
                 argtypes = {
                     k: create_datadescriptor(v)
-                    for k, v in zip(self.argnames, args)
+                    for k, v in itertools.chain(self.default_args.items(
+                    ), zip(self.argnames, args), kwargs.items())
                 }
+                if len(argtypes) != len(self.argnames):
+                    raise SyntaxError(
+                        'Number of arguments must match parameters '
+                        f'(expecting {self.argnames}, got {list(argtypes.keys())})'
+                    )
+
         for k, v in argtypes.items():
             if v.transient:  # Arguments to (nested) SDFGs cannot be transient
                 v_cpy = copy.deepcopy(v)
                 v_cpy.transient = False
                 argtypes[k] = v_cpy
+
         #############################################
 
         # Parse allowed global variables

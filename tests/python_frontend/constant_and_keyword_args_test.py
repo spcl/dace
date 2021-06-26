@@ -17,6 +17,17 @@ def test_kwargs():
     assert np.allclose(A, kw + 1)
 
 
+def test_kwargs_jit():
+    @dace.program
+    def kwarg(A, kw):
+        A[:] = kw + 1
+
+    A = np.random.rand(20)
+    kw = np.random.rand(20)
+    kwarg(A, kw=kw)
+    assert np.allclose(A, kw + 1)
+
+
 def test_kwargs_with_default():
     @dace.program
     def kwarg(A: dace.float64[20], kw: dace.float64[20] = np.ones([20])):
@@ -35,4 +46,5 @@ def test_kwargs_with_default():
 
 if __name__ == '__main__':
     test_kwargs()
+    test_kwargs_jit()
     test_kwargs_with_default()
