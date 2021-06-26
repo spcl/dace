@@ -6,7 +6,7 @@ import os
 from typing import Dict, Tuple, Union
 import warnings
 
-from dace import dtypes
+from dace import dtypes, data as dt
 from dace import symbolic
 
 ###########################################
@@ -59,7 +59,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
         start_state = sdfg.start_state
         symbols = copy.deepcopy(sdfg.symbols)
         symbols.update(sdfg.arrays)
-        symbols.update(sdfg.constants)
+        symbols.update(
+            {k: dt.create_datadescriptor(v)
+             for k, v in sdfg.constants.items()})
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
