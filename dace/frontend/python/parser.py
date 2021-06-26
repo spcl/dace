@@ -423,6 +423,16 @@ class DaceProgram:
         # (for inferring types and values in the DaCe program)
         global_vars = copy.copy(self.global_vars)
 
+        # Remove constant and None arguments, make globals that can be folded
+        for k, v in argtypes.items():
+            if v.dtype.type is None:
+                global_vars[k] = None
+        argtypes = {
+            k: v
+            for k, v in argtypes.items() if v.dtype.type is not None
+        }
+
+        # Set module aliases to point to their actual names
         modules = {
             k: v.__name__
             for k, v in global_vars.items() if dtypes.ismodule(v)
