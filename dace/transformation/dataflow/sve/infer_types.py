@@ -2,6 +2,7 @@
 """
     SVE Infer Types: This module is responsible for inferring connector types in the SDFG.
 """
+from typing import DefaultDict, Tuple
 from dace.sdfg.graph import MultiConnectorEdge, Graph, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg import nodes, SDFG, SDFGState
@@ -18,8 +19,13 @@ from collections import defaultdict
 from dace.sdfg.utils import dfs_topological_sort
 
 
+class TypeInferenceDict(defaultdict):
+    def __init__(self):
+        super().__init__(lambda: dtypes.typeclass(None))
+
+
 def infer_tasklet_connectors(sdfg: SDFG, state: SDFGState, node: Tasklet,
-                             inferred: defaultdict):
+                             inferred: TypeInferenceDict):
     """ Infers the connectors in a Tasklet using its code and type inference. """
 
     if node.code.language != dtypes.Language.Python:
@@ -60,7 +66,7 @@ def infer_tasklet_connectors(sdfg: SDFG, state: SDFGState, node: Tasklet,
 
 
 def infer_node_connectors(sdfg: SDFG, state: SDFGState, node: nodes.Node,
-                          inferred: defaultdict):
+                          inferred: TypeInferenceDict):
     """ Infers the connectors of a node and updates `inferred` accordingly. """
 
     # Try to infer input connector type from node type or previous edges
@@ -148,7 +154,7 @@ def infer_node_connectors(sdfg: SDFG, state: SDFGState, node: nodes.Node,
 def infer_connector_types(sdfg: SDFG,
                           state: SDFGState = None,
                           graph: SubgraphView = None,
-                          inferred: defaultdict = None):
+                          inferred: TypeInferenceDict = None):
     """
         Infers the connector types of an SDFG, state or subgraph and returns them in a dictionary
         consisting of tuples with node, name and a bool whether it is an input connector
@@ -167,8 +173,9 @@ def infer_connector_types(sdfg: SDFG,
         :param graph: The graph to infer.
         :param inferred: The dictionary of already inferred types.
     """
+
     if inferred is None:
-        inferred = defaultdict(lambda: dtypes.typeclass(None))
+        inferred = TypeInferenceDict()
 
     if sdfg is None:
         raise ValueError('No SDFG was provided')
@@ -190,7 +197,7 @@ def infer_connector_types(sdfg: SDFG,
     return inferred
 
 
-def apply_connector_types(inferred: defaultdict):
+def apply_connector_types(inferred: TypeInferenceDict):
     """ Applies the inferred connector types on the SDFG. """
 
     for (node, conn, is_in), dtype in inferred.items():
