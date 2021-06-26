@@ -4563,7 +4563,7 @@ def dot(pv: 'ProgramVisitor',
     arr_a = sdfg.arrays[op_a]
     arr_b = sdfg.arrays[op_b]
 
-    if len(arr_a.shape) == 2 and len(arr_b.shape == 2):
+    if len(arr_a.shape) == 2 and len(arr_b.shape) == 2:
         # Matrix multiplication
         # TODO: `If op_out`, then this is not correct. We need np.matmult,
         # but it is not implemented yet
