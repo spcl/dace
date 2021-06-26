@@ -506,6 +506,9 @@ class Memlet(object):
             :param map: The map in which the memlet resides.
             :param dim: The dimension that is incremented. By default it is the innermost.
         """
+        if self.data is None:
+            return symbolic.pystr_to_symbolic('0')
+
         param = symbolic.symbol(map.params[dim])
         array = sdfg.arrays[self.data]
 
