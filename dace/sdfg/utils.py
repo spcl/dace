@@ -844,7 +844,8 @@ def separate_maps(state, dfg, schedule):
 def _transients_in_scope(sdfg, scope, scope_dict):
     return set(
         node.data for node in scope_dict[scope.entry if scope else scope]
-        if isinstance(node, nd.AccessNode) and sdfg.arrays[node.data].transient)
+        if isinstance(node, nd.AccessNode) and sdfg.arrays[node.data].transient
+            and not isinstance(sdfg.arrays[node.data], dt.Stream)) # streams should always be state global
 
 
 def local_transients(sdfg, dfg, entry_node):
