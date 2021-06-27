@@ -380,7 +380,7 @@ class DaceProgram:
                     if ann is dtypes.constant:
                         curtype = None
                     else:
-                        curtype = ann
+                        curtype = create_datadescriptor(ann)
 
                 # If no annotation is provided, use given arguments
                 if curtype is None and sig_arg.kind is sig_arg.POSITIONAL_ONLY:
@@ -428,9 +428,9 @@ class DaceProgram:
         if not _is_empty(rettype):
             if isinstance(rettype, tuple):
                 for i, subrettype in enumerate(rettype):
-                    types[f'__return_{i}'] = subrettype
+                    types[f'__return_{i}'] = create_datadescriptor(subrettype)
             else:
-                types['__return'] = rettype
+                types['__return'] = create_datadescriptor(rettype)
 
         return types
 
