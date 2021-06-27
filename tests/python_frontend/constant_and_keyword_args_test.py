@@ -43,6 +43,17 @@ def test_kwargs_with_default():
     assert np.allclose(A, kw + 1)
 
 
+def test_var_args_jit():
+    @dace.program
+    def arg_jit(*args):
+        return args[0] + args[1]
+
+    A = np.random.rand(20)
+    B = np.random.rand(20)
+    C = arg_jit(A, B)
+    assert np.allclose(C, A + B)
+
+
 def test_var_args_aot():
     # This test is supposed to be unsupported
     with pytest.raises(SyntaxError):
@@ -63,6 +74,17 @@ def test_var_args_empty():
             return np.zeros([20])
 
         arg_aot.compile()
+
+
+def test_var_kwargs_jit():
+    @dace.program
+    def kwarg_jit(**kwargs):
+        return kwargs['A'] + kwargs['B']
+
+    A = np.random.rand(20)
+    B = np.random.rand(20)
+    C = kwarg_jit(A=A, B=B)
+    assert np.allclose(C, A + B)
 
 
 def test_var_kwargs_aot():
@@ -178,15 +200,34 @@ def test_optional_argument():
     assert np.allclose(linear.f(x, w, b), linear(x, w, b))
 
 
+def test_constant_argument_simple():
+    @dace.program
+    def const_prog(cst: dace.constant, B: dace.float64[20]):
+        B[:] = cst
+
+    # Test program
+    A = np.random.rand(20)
+    cst = 4.0
+    const_prog(cst, A)
+    assert np.allclose(A, cst)
+
+    # Test code for folding
+    code = const_prog.to_sdfg(cst).generate_code()[0].clean_code
+    assert 'cst' not in code
+
+
 if __name__ == '__main__':
     test_kwargs()
     test_kwargs_jit()
     test_kwargs_with_default()
+    test_var_args_jit()
     test_var_args_aot()
     test_var_args_empty()
+    test_var_kwargs_jit()
     test_var_kwargs_aot()
     test_none_arrays()
     test_none_arrays_jit()
     test_optional_argument_jit()
     test_optional_argument_jit_kwarg()
     test_optional_argument()
+    test_constant_argument_simple()
