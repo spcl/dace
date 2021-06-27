@@ -6,7 +6,7 @@ import itertools
 import copy
 import os
 import sympy
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import symbolic, dtypes
 from dace.config import Config
@@ -17,69 +17,17 @@ from dace.data import create_datadescriptor, Data
 ArgTypes = Dict[str, Data]
 
 
-def get_type_annotations(f,
-                         f_argnames,
-                         decorator_args,
-                         kwargs,
-                         method: bool = False,
-                         default_args=None) -> ArgTypes:
-    """ Obtains types from decorator or from type annotations in a function. 
-    """
-    type_annotations = {}
-    if hasattr(f, '__annotations__'):
-        type_annotations.update(f.__annotations__)
-
-    # Type annotation conditions
-    has_args = len(decorator_args) > 0
-    has_annotations = len(type_annotations) > 0
-
-    # Set __return* arrays from return type annotations
-    if 'return' in type_annotations:
-        rettype = type_annotations['return']
-        if isinstance(rettype, tuple):
-            for i, subrettype in enumerate(rettype):
-                type_annotations[f'__return_{i}'] = subrettype
-        else:
-            type_annotations['__return'] = rettype
-        del type_annotations['return']
-
-    # If both arguments and annotations are given, annotations take precedence
-    if has_args and has_annotations:
-        has_args = False
-
-    # Alert if there are any discrepancies between annotations and arguments
-    if has_args:
-        # Return arguments and their matched decorator annotation
-        result = {
-            k: create_datadescriptor(v)
-            for k, v in itertools.chain(default_args.items(
-            ), zip(f_argnames, decorator_args), kwargs.items())
-        }
-        # Make sure all arguments are annotated
-        if len(result) != len(f_argnames):
-            raise SyntaxError('Decorator arguments must match number of DaCe '
-                              f'program parameters (expecting {f_argnames}, '
-                              f'got {list(result.keys())})')
-        return result
-    elif has_annotations:
-        # Make sure all arguments are annotated
-        filtered = {
-            a
-            for a in type_annotations.keys() if not a.startswith('__return')
-        }
-        if len(filtered) != len(f_argnames):
-            raise SyntaxError(
-                'Either none or all DaCe program parameters must ' +
-                'have type annotations')
-    return {k: create_datadescriptor(v) for k, v in type_annotations.items()}
-
-
-def _get_argnames(f):
+def _get_argnames(f) -> List[str]:
     """ Returns a Python function's argument names. """
     try:
-        return inspect.getfullargspec(f).args
+        return list(inspect.signature(f).parameters.keys())
     except AttributeError:
         return inspect.getargspec(f).args
+
+
+def _is_empty(val: Any) -> bool:
+    """ Helper function to deal with inspect._empty. """
+    return val is inspect._empty
 
 
 def _get_locals_and_globals(f):
@@ -196,8 +144,10 @@ class DaceProgram:
         self.default_args = {
             pname: pval.default
             for pname, pval in self.signature.parameters.items()
-            if pval.default is not inspect._empty
+            if not _is_empty(pval.default)
         }
+        self.symbols = set(k for k, v in self.global_vars.items()
+                           if isinstance(v, symbolic.symbol))
 
         if self.argnames is None:
             self.argnames = []
@@ -275,9 +225,7 @@ class DaceProgram:
         if self.methodobj is not None:
             self.global_vars[self.objname] = self.methodobj
 
-        argtypes = get_type_annotations(self.f, self.argnames, args, kwargs,
-                                        self.methodobj is not None,
-                                        self.default_args)
+        argtypes = self.get_type_annotations(args, kwargs)
         if self.is_cached(argtypes):
             self._cache[2].clear_return_values()
             return self._cache[2](
@@ -369,6 +317,123 @@ class DaceProgram:
 
         return sdfg
 
+    def get_type_annotations(self, given_args: Tuple[Any],
+                             given_kwargs: Dict[str, Any]) -> ArgTypes:
+        """ 
+        Obtains types from decorator and/or from type annotations in a function.
+        """
+
+        types = {}
+
+        # Filter symbols out of given keyword arguments
+        given_kwargs = {
+            k: v
+            for k, v in given_kwargs.items() if k not in self.symbols
+        }
+
+        # Make argument mapping to either type annotation, given argument,
+        # default argument, or ignore (symbols and constants).
+        nargs = len(given_args)
+        arg_ind = 0
+        for i, (aname, sig_arg) in enumerate(self.signature.parameters.items()):
+            ann = sig_arg.annotation
+
+            # Variable-length arguments: obtain from the remainder of given_*
+            if sig_arg.kind is sig_arg.VAR_POSITIONAL:
+                vargs = given_args[arg_ind:]
+
+                # If an annotation is given but the argument list is empty, fail
+                if not _is_empty(ann) and len(vargs) == 0:
+                    raise SyntaxError(
+                        'Cannot compile DaCe program with type-annotated '
+                        'variable-length (starred) arguments and no given '
+                        'parameters. Please compile the program with arguments, '
+                        'call it without annotations, or remove the starred '
+                        f'arguments (invalid argument name: "{aname}").')
+
+                types.update({
+                    f'__arg{j}': create_datadescriptor(varg)
+                    for j, varg in enumerate(vargs)
+                })
+                # Shift arg_ind to the end
+                arg_ind = len(given_args)
+            elif sig_arg.kind is sig_arg.VAR_KEYWORD:
+                vargs = {
+                    k: create_datadescriptor(v)
+                    for k, v in given_kwargs.items() if k not in types
+                }
+                # If an annotation is given but the argument list is empty, fail
+                if not _is_empty(ann) and len(vargs) == 0:
+                    raise SyntaxError(
+                        'Cannot compile DaCe program with type-annotated '
+                        'variable-length (starred) keyword arguments and no given '
+                        'parameters. Please compile the program with arguments, '
+                        'call it without annotations, or remove the starred '
+                        f'arguments (invalid argument name: "{aname}").')
+                types.update(vargs)
+            # END OF VARIABLE-LENGTH ARGUMENTS
+            else:
+                # Regular arguments (annotations take precedence)
+                curtype = None
+                if not _is_empty(ann):
+                    # If constant, use given argument
+                    if ann is dtypes.constant:
+                        curtype = None
+                    else:
+                        curtype = ann
+
+                # If no annotation is provided, use given arguments
+                if curtype is None and sig_arg.kind is sig_arg.POSITIONAL_ONLY:
+                    if arg_ind >= nargs:
+                        if not _is_empty(sig_arg.default):
+                            curtype = create_datadescriptor(sig_arg.default)
+                        else:
+                            raise SyntaxError(
+                                'Not enough arguments given to program (missing '
+                                f'argument: "{aname}").')
+                    else:
+                        curtype = create_datadescriptor(given_args[arg_ind])
+                        arg_ind += 1
+                elif (curtype is None
+                      and sig_arg.kind is sig_arg.POSITIONAL_OR_KEYWORD):
+                    if arg_ind >= nargs:
+                        if aname not in given_kwargs:
+                            if not _is_empty(sig_arg.default):
+                                curtype = create_datadescriptor(sig_arg.default)
+                            else:
+                                raise SyntaxError(
+                                    'Not enough arguments given to program (missing '
+                                    f'argument: "{aname}").')
+                        else:
+                            curtype = create_datadescriptor(given_kwargs[aname])
+                    else:
+                        curtype = create_datadescriptor(given_args[arg_ind])
+                        arg_ind += 1
+                elif curtype is None and sig_arg.kind is sig_arg.KEYWORD_ONLY:
+                    if aname not in given_kwargs:
+                        if not _is_empty(sig_arg.default):
+                            curtype = create_datadescriptor(sig_arg.default)
+                        else:
+                            raise SyntaxError(
+                                'Not enough arguments given to program (missing '
+                                f'argument: "{aname}").')
+                    else:
+                        curtype = create_datadescriptor(given_kwargs[aname])
+
+                # Set type
+                types[aname] = curtype
+
+        # Set __return* arrays from return type annotations
+        rettype = self.signature.return_annotation
+        if not _is_empty(rettype):
+            if isinstance(rettype, tuple):
+                for i, subrettype in enumerate(rettype):
+                    types[f'__return_{i}'] = subrettype
+            else:
+                types['__return'] = rettype
+
+        return types
+
     def generate_pdp(self, args, kwargs, strict=None):
         """ Generates the parsed AST representation of a DaCe program.
             :param args: The given arguments to the program.
@@ -382,13 +447,9 @@ class DaceProgram:
                      import aliases).
         """
         dace_func = self.f
-        dargs = self.dec_args
-        dkwargs = self.dec_kwargs
 
         # If exist, obtain type annotations (for compilation)
-        argtypes = get_type_annotations(dace_func, self.argnames, dargs,
-                                        dkwargs, self.methodobj is not None,
-                                        self.default_args)
+        argtypes = self.get_type_annotations(args, kwargs)
 
         # Parse argument types from call
         if len(self.argnames) > 0:

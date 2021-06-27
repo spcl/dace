@@ -3,7 +3,6 @@
 import dace
 import numpy as np
 import pytest
-from dace.frontend.python.common import DaceSyntaxError
 
 
 def test_kwargs():
@@ -44,6 +43,37 @@ def test_kwargs_with_default():
     assert np.allclose(A, kw + 1)
 
 
+def test_var_args_aot():
+    # This test is supposed to be unsupported
+    with pytest.raises(SyntaxError):
+
+        @dace.program
+        def arg_aot(*args: dace.float64[20]):
+            return args[0] + args[1]
+
+        arg_aot.compile()
+
+
+def test_var_args_empty():
+    # This test is supposed to be unsupported
+    with pytest.raises(SyntaxError):
+
+        @dace.program
+        def arg_aot(*args):
+            return np.zeros([20])
+
+        arg_aot.compile()
+
+
+def test_var_kwargs_aot():
+    # This test is supposed to be unsupported
+    with pytest.raises(SyntaxError):
+
+        @dace.program
+        def kwarg_aot(**kwargs: dace.float64[20]):
+            return kwargs['A'] + kwargs['B']
+
+        kwarg_aot.compile()
 
 
 def test_none_arrays():
@@ -152,6 +182,9 @@ if __name__ == '__main__':
     test_kwargs()
     test_kwargs_jit()
     test_kwargs_with_default()
+    test_var_args_aot()
+    test_var_args_empty()
+    test_var_kwargs_aot()
     test_none_arrays()
     test_none_arrays_jit()
     test_optional_argument_jit()
