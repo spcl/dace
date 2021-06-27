@@ -6,12 +6,14 @@ import copy
 import itertools
 import re
 import sys
+from os import path
 import warnings
 from numbers import Number
 from typing import Any, Dict, List, Set, Tuple, Union, Callable, Optional
 
 import dace
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
+from dace import sourcemap
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
@@ -194,6 +196,19 @@ def parse_dace_program(f,
 
     sdfg, _, _, _ = pv.parse_program(src_ast.body[0])
     sdfg.set_sourcecode(src, 'python')
+
+    # We save information in a tmp file for improved source mapping.
+    # In the case of the cache config set to 'hash' we don't create a mapping.
+    if Config.get('cache') != 'hash':
+        other_functions = [func for func in other_sdfgs if not func == name]
+        data = {
+            "start_line": src_line + 1,
+            "end_line": src_line + len(src.split("\n")) - 1,
+            "src_file": path.abspath(src_file),
+            "other_sdfgs": other_functions,
+            "build_folder": sdfg.build_folder,
+        }
+        sourcemap.temporaryInfo(name, data)
 
     return sdfg
 
