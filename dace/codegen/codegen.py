@@ -6,6 +6,7 @@ from typing import List
 import dace
 from dace import dtypes
 from dace import data
+from dace import sourcemap
 from dace.sdfg import SDFG
 from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
@@ -97,6 +98,8 @@ def generate_code(sdfg) -> List[CodeObject]:
     """
     # Before compiling, validate SDFG correctness
     sdfg.validate()
+
+    sourcemap.create_py_map(sdfg)
 
     if Config.get_bool('testing', 'serialization'):
         from dace.sdfg import SDFG
@@ -199,7 +202,8 @@ def generate_code(sdfg) -> List[CodeObject]:
                        linkable=False)
     target_objects.append(dummy)
 
-    for env in dace.library.get_environments_and_dependencies(used_environments):
+    for env in dace.library.get_environments_and_dependencies(
+            used_environments):
         if hasattr(env, "codeobjects"):
             target_objects.extend(env.codeobjects)
 

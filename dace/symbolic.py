@@ -833,7 +833,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         exponent = self._print(expr.args[1])
         try:
             int_exp = int(exponent)
-            assert(int_exp > 0)
+            assert (int_exp > 0)
             res = "({})".format(base)
             for _ in range(1, int_exp):
                 res += "*{}".format(base)
