@@ -225,7 +225,7 @@ class DaceProgram:
         result.update(
             infer_symbols_from_datadescriptor(
                 sdfg, {k: create_datadescriptor(v)
-                       for k, v in kwargs.items()}))
+                       for k, v in result.items()}))
         return result
 
     def __call__(self, *args, **kwargs):
