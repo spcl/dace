@@ -7,6 +7,7 @@ import copy
 import os
 import sympy
 from typing import Any, Dict, List, Optional, Set, Tuple
+import warnings
 
 from dace import symbolic, dtypes
 from dace.config import Config
@@ -148,6 +149,15 @@ class DaceProgram:
         }
         self.symbols = set(k for k, v in self.global_vars.items()
                            if isinstance(v, symbolic.symbol))
+
+        # Add type annotations from decorator arguments (DEPRECATED)
+        if self.dec_args:
+            warnings.warn(
+                'Using decorator arguments for types is deprecated. '
+                'Please use type hints on function arguments instead.')
+            for arg, pval in zip(self.dec_args,
+                                 self.signature.parameters.values()):
+                pval._annotation = arg
 
         if self.argnames is None:
             self.argnames = []
