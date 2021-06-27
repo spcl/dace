@@ -141,13 +141,12 @@ def save(language: str, name: str, map: dict, build_folder: str) -> str:
     return os.path.abspath(folder)
 
 
-def get_src_files(graph, fileSet):
-    """ Recursively search for debuginfo to find the filename
+def get_src_files(sdfg, fileSet):
+    """ Search all nodes for debuginfo to find the spurce filenames
         :param graph: An SDFG or SDFGState to check for the sourcefilename
         :return: list of unique source filenames
     """
-
-    for node in graph.nodes():
+    for node, _ in sdfg.all_nodes_recursive():
         if isinstance(
                 node,
             (nodes.AccessNode, nodes.Tasklet, nodes.LibraryNode, nodes.Map,
@@ -155,14 +154,10 @@ def get_src_files(graph, fileSet):
 
             fileSet.add(node.debuginfo.filename)
 
-        elif isinstance(node, (nodes.MapEntry, nodes.MapExit)):
+        elif isinstance(
+                node,
+            (nodes.MapEntry, nodes.MapExit)) and node.map.debuginfo is not None:
             fileSet.add(node.map.debuginfo.filename)
-
-        elif isinstance(node, state.SDFGState):
-            fileSet = get_src_files(node, fileSet)
-
-        elif isinstance(node, nodes.NestedSDFG):
-            fileSet = get_src_files(node.sdfg, fileSet)
 
     return fileSet
 
@@ -419,8 +414,9 @@ class MapPython:
                 dbinfo = node.debuginfo.to_json()
                 mapping.append(self.make_info(dbinfo, id, state_id, sdfg_id))
 
-            elif isinstance(node, (nodes.MapEntry, 
-                                   nodes.MapExit)) and node.map.debuginfo is not None:
+            elif isinstance(node,
+                            (nodes.MapEntry,
+                             nodes.MapExit)) and node.map.debuginfo is not None:
                 dbinfo = node.map.debuginfo.to_json()
                 mapping.append(self.make_info(dbinfo, id, state_id, sdfg_id))
 
