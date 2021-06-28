@@ -35,7 +35,6 @@ def create_cache(name: str, folder: str) -> str:
         :param folder: the build folder
         :return: relative path to the created folder starting from '.dacecache'
     """
-    create_folder(".dacecache")
     if (folder is not None):
         create_folder(os.path.join(folder, "map"))
         return folder
