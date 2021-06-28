@@ -510,9 +510,15 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 "#pragma HLS INTERFACE s_axilite port={} bundle=control".format(
                     var_name))
 
-        for _, var_name, _, _ in external_streams:
-            kernel_stream.write(
-                "#pragma HLS INTERFACE axis port={}".format(var_name))
+        for _, var_name, node, _ in external_streams:
+            arr_len = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
+            if arr_len == 1:
+                kernel_stream.write(
+                    "#pragma HLS INTERFACE axis port={}".format(var_name))
+            else:
+                kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} dim=1 complete".format(var_name))
+                for i in range(arr_len):
+                    kernel_stream.write("#pragma HLS INTERFACE axis port={}_{}".format(var_name, i))
 
         # TODO: add special case if there's only one module for niceness
         kernel_stream.write("\n#pragma HLS DATAFLOW")
