@@ -2,7 +2,6 @@
 """
     SVE Vectorization: This module offers all functionality to vectorize an SDFG for the Arm SVE codegen.
 """
-from tests.buffer_tiling_test import I
 import dace.codegen.tools.type_inference as type_inference
 from sympy.codegen.ast import Scope
 from dace.memlet import Memlet
@@ -102,9 +101,6 @@ class SVEVectorization(transformation.Transformation):
 
             # Check for unsupported WCR
             if e.data.wcr is not None:
-                if is_write_conflicted_with_reason(state, e) is None:
-                    return False
-
                 # Unsupported reduction type
                 reduction_type = dace.frontend.operations.detect_reduction_type(
                     e.data.wcr)
