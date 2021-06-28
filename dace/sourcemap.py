@@ -25,7 +25,7 @@ def create_folder(path_str: str):
     """
     if not os.path.exists(path_str):
         path = os.path.abspath(path_str)
-        os.mkdir(path)
+        os.makedirs(path, exist_ok=True)
 
 
 def create_cache(name: str, folder: str) -> str:
@@ -35,14 +35,11 @@ def create_cache(name: str, folder: str) -> str:
         :param folder: the build folder
         :return: relative path to the created folder starting from '.dacecache'
     """
-    create_folder(".dacecache")
     if (folder is not None):
-        create_folder(folder)
         create_folder(os.path.join(folder, "map"))
         return folder
     else:
         cache_folder = os.path.join(".dacecache", name)
-        create_folder(cache_folder)
         create_folder(os.path.join(cache_folder, "map"))
         return cache_folder
 
@@ -336,7 +333,9 @@ class MapPython:
             for other_sdfg_name in line_info["other_sdfgs"]:
                 other_tmp = get_tmp(other_sdfg_name)
                 # SDFGs created with the API don't have tmp files
-                if other_tmp is not None:
+                if (other_tmp is not None and "src_file" in other_tmp
+                        and "start_line" in other_tmp
+                        and "end_line" in other_tmp):
                     remove_tmp(other_sdfg_name, True)
                     ranges = range_dict.get(other_tmp["src_file"])
                     if ranges is None:
