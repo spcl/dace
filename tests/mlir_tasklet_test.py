@@ -236,10 +236,10 @@ def test_mlir_tasklet_inference():
 
     tasklet.infer_connector_types(sdfg, state)
     assert isinstance(tasklet.in_connectors['a'], dace.dtypes.typeclass)
-    assert tasklet.in_connectors['a'].ctype == "signed int"
+    assert tasklet.in_connectors['a'].ctype == "int"
 
     assert isinstance(tasklet.out_connectors['c'], dace.dtypes.typeclass)
-    assert tasklet.out_connectors['c'].ctype == "signed int"
+    assert tasklet.out_connectors['c'].ctype == "int"
 
     # Test unsigned int
     tasklet = state.add_tasklet(name='mlir_tasklet',
