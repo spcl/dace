@@ -216,6 +216,29 @@ def test_constant_argument_simple():
     assert 'cst' not in code
 
 
+def test_constant_argument_default():
+    @dace.program
+    def const_prog(B: dace.float64[20], cst: dace.constant = 7):
+        B[:] = cst
+
+    # Test program
+    A = np.random.rand(20)
+    const_prog(A)
+    assert np.allclose(A, 7)
+
+    # Forcefully clear cache to recompile
+    const_prog.clear_cache()
+
+    # Test program
+    A = np.random.rand(20)
+    const_prog(A, cst=4)
+    assert np.allclose(A, 4)
+
+    # Test code for folding
+    code = const_prog.to_sdfg().generate_code()[0].clean_code
+    assert 'cst' not in code
+
+
 if __name__ == '__main__':
     test_kwargs()
     test_kwargs_jit()
@@ -231,3 +254,4 @@ if __name__ == '__main__':
     test_optional_argument_jit_kwarg()
     test_optional_argument()
     test_constant_argument_simple()
+    test_constant_argument_default()

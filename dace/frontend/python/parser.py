@@ -202,6 +202,11 @@ class DaceProgram:
                 return False
         return True
 
+    def clear_cache(self):
+        """ Force-clear compiled SDFG cache of this program. """
+        del self._cache
+        self._cache = (None, None, None)
+
     @property
     def methodobj(self) -> Any:
         return self._methodobj
@@ -244,7 +249,7 @@ class DaceProgram:
                 **self._create_sdfg_args(self._cache[1], args, kwargs))
 
         # Clear cache to enforce deletion and closure of compiled program
-        del self._cache
+        self.clear_cache()
 
         # Add classes (that are not defined yet when the method is) to closure
         local_vars = _get_locals_and_globals(self.f)
@@ -300,9 +305,6 @@ class DaceProgram:
 
         # Obtain DaCe program as SDFG
         sdfg = self._generate_pdp(args, kwargs, strict=strict)
-
-        # Set argument names
-        sdfg.arg_names = self.argnames
 
         # Apply strict transformations automatically
         if (strict == True or (strict is None and Config.get_bool(
@@ -417,41 +419,43 @@ class DaceProgram:
                         curarg = ann
 
                 # If no annotation is provided, use given arguments
-                if curarg is None and sig_arg.kind is sig_arg.POSITIONAL_ONLY:
+                if sig_arg.kind is sig_arg.POSITIONAL_ONLY:
                     if arg_ind >= nargs:
-                        if not _is_empty(sig_arg.default):
+                        if curarg is None and not _is_empty(sig_arg.default):
                             curarg = sig_arg.default
-                        else:
+                        elif curarg is None:
                             raise SyntaxError(
                                 'Not enough arguments given to program (missing '
                                 f'argument: "{aname}").')
                     else:
-                        curarg = given_args[arg_ind]
+                        if curarg is None:
+                            curarg = given_args[arg_ind]
                         arg_ind += 1
-                elif (curarg is None
-                      and sig_arg.kind is sig_arg.POSITIONAL_OR_KEYWORD):
+                elif sig_arg.kind is sig_arg.POSITIONAL_OR_KEYWORD:
                     if arg_ind >= nargs:
                         if aname not in given_kwargs:
-                            if not _is_empty(sig_arg.default):
+                            if curarg is None and not _is_empty(
+                                    sig_arg.default):
                                 curarg = sig_arg.default
-                            else:
+                            elif curarg is None:
                                 raise SyntaxError(
                                     'Not enough arguments given to program (missing '
                                     f'argument: "{aname}").')
-                        else:
+                        elif curarg is None:
                             curarg = given_kwargs[aname]
                     else:
-                        curarg = given_args[arg_ind]
+                        if curarg is None:
+                            curarg = given_args[arg_ind]
                         arg_ind += 1
-                elif curarg is None and sig_arg.kind is sig_arg.KEYWORD_ONLY:
+                elif sig_arg.kind is sig_arg.KEYWORD_ONLY:
                     if aname not in given_kwargs:
-                        if not _is_empty(sig_arg.default):
+                        if curarg is None and not _is_empty(sig_arg.default):
                             curarg = sig_arg.default
-                        else:
+                        elif curarg is None:
                             raise SyntaxError(
                                 'Not enough arguments given to program (missing '
                                 f'argument: "{aname}").')
-                    else:
+                    elif curarg is None:
                         curarg = given_kwargs[aname]
 
                 if is_constant:
@@ -558,7 +562,7 @@ class DaceProgram:
         }
 
         # Parse AST to create the SDFG
-        return newast.parse_dace_program(dace_func,
+        sdfg = newast.parse_dace_program(dace_func,
                                          self.name,
                                          argtypes,
                                          global_vars,
@@ -566,3 +570,8 @@ class DaceProgram:
                                          other_sdfgs,
                                          self.dec_kwargs,
                                          strict=strict)
+
+        # Set SDFG argument names, filtering out constants
+        sdfg.arg_names = [a for a in self.argnames if a in argtypes]
+
+        return sdfg
