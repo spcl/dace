@@ -695,24 +695,25 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if hasattr(self, '_build_folder'):
             return self._build_folder
         cache_config = Config.get('cache')
+        base_folder = Config.get('default_build_folder')
         if cache_config == 'single':
             # Always use the same directory, overwriting any other program,
             # preventing parallelism and caching of multiple programs, but
             # saving space and potentially build time
-            return os.path.join('.dacecache', 'single_cache')
+            return os.path.join(base_folder, 'single_cache')
         elif cache_config == 'hash':
             # Any change to the SDFG will result in a new cache folder
             md5_hash = md5(str(self.to_json()).encode('utf-8')).hexdigest()
-            return os.path.join('.dacecache', f'{self.name}_{md5_hash}')
+            return os.path.join(base_folder, f'{self.name}_{md5_hash}')
         elif cache_config == 'unique':
             # Base name on location in memory, so no caching is possible between
-            # processes or subsequent invokations
+            # processes or subsequent invocations
             md5_hash = md5(str(os.getpid()).encode('utf-8')).hexdigest()
-            return os.path.join('.dacecache', f'{self.name}_{md5_hash}')
+            return os.path.join(base_folder, f'{self.name}_{md5_hash}')
         elif cache_config == 'name':
             # Overwrites previous invocations, and can clash with other programs
             # if executed in parallel in the same working directory
-            return os.path.join('.dacecache', self.name)
+            return os.path.join(base_folder, self.name)
         else:
             raise ValueError(f'Unknown cache configuration: {cache_config}')
 

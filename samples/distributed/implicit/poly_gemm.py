@@ -1,7 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Implicitly distributed (transformed shared-memory SDFG) Gemm sample."""
-import numpy as np
 import dace as dc
+import numpy as np
+import os
+from dace.sdfg.utils import load_precompiled_sdfg
 from mpi4py import MPI
 
 from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
@@ -21,7 +23,7 @@ def relerr(ref, val):
 def gemm(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
          A: dc.float64[NI, NK], B: dc.float64[NK, NJ]):
 
-    C[:] = alpha * A @ B + beta * C 
+    C[:] = alpha * A @ B + beta * C
 
 
 def init_data(NI, NJ, NK, datatype):
@@ -60,11 +62,10 @@ if __name__ == "__main__":
 
     comm.Barrier()
     if rank > 0:
-        mpi_sdfg = dc.SDFG.from_file(".dacecache/{n}/program.sdfg".format(n=gemm.name))
-        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
-            ".dacecache/{n}/build/lib{n}.so".format(n=gemm.name), gemm.name))
+        build_folder = dc.Config.get('default_build_folder')
+        mpi_func = load_precompiled_sdfg(os.path.join(build_folder, gemm.name))
     comm.Barrier()
-  
+
     Px = Py = int(np.sqrt(size))
     mpi_func(A=A, B=B, C=C, alpha=alpha, beta=beta,
              NI=NI, NJ=NJ, NK=NK, commsize=size, Px=Px, Py=Py)
