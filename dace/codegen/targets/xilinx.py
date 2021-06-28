@@ -276,7 +276,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             ctype = "dace::FIFO<{}, {}, {}>".format(data.dtype.base_type.ctype,
                                                     data.dtype.veclen,
                                                     data.buffer_size)
-            return "{} &{}".format(ctype, var_name)
+            if data.shape[0] == 1:
+                return "{} &{}".format(ctype, var_name)
+            else:
+                return "{} {}[{}]".format(ctype, var_name, data.shape[0])
         else:
             return data.as_arg(with_types=True, name=var_name)
 
