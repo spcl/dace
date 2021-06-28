@@ -802,6 +802,9 @@ class GlobalResolver(ast.NodeTransformer):
                 return newnode
         return self.generic_visit(node)
 
+    def visit_Subscript(self, node: ast.Subscript) -> Any:
+        return self.visit_Attribute(node)
+
     def visit_Call(self, node: ast.Call) -> Any:
         try:
             global_func = astutils.evalnode(node.func, self.globals)
