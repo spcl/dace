@@ -336,7 +336,9 @@ class MapPython:
             for other_sdfg_name in line_info["other_sdfgs"]:
                 other_tmp = get_tmp(other_sdfg_name)
                 # SDFGs created with the API don't have tmp files
-                if other_tmp is not None:
+                if (other_tmp is not None and "src_file" in other_tmp
+                        and "start_line" in other_tmp
+                        and "end_line" in other_tmp):
                     remove_tmp(other_sdfg_name, True)
                     ranges = range_dict.get(other_tmp["src_file"])
                     if ranges is None:
