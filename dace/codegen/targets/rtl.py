@@ -116,6 +116,14 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 line: str = "{}* {} = &{}[0];".format(
                     dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                     edge.src.data)
+        elif isinstance(edge.src, nodes.MapEntry) and isinstance(edge.dst, nodes.Tasklet) and edge.src.map.unroll:
+            # TODO it would be best to do it here
+            #if self.hardware_target:
+            #    rtl_name = "{}_{}_{}_{}".format(edge.dst.name, sdfg.sdfg_id,
+            #                                    state_id,
+            #                                    dfg.node_id(edge.dst))
+            #    self._multiple_kernels[rtl_name] = symbolic.evaluate(edge.src.map.range[0][1]+1, sdfg.constants)
+            line: str = '// AOEU'
         else:
             raise RuntimeError(
                 "Not handling copy_memory case of type {} -> {}.".format(
@@ -147,6 +155,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 line: str = "{}* {} = &{}[0];".format(
                     src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
                     edge.dst.data)
+        elif isinstance(edge.src, nodes.Tasklet) and isinstance(edge.dst, nodes.MapExit) and edge.dst.map.unroll:
+            line: str = '// AOEU'
         else:
             raise RuntimeError(
                 "Not handling define_out_memlet case of type {} -> {}.".format(
@@ -500,7 +510,7 @@ for(int i = 0; i < {veclen}; i++){{
         buses = {}
         scalars = {}
         for edge in state.in_edges(tasklet):
-            arr = sdfg.arrays[edge.src.data]
+            arr = sdfg.arrays[edge.data.data]
             # catch symbolic (compile time variables)
             check_issymbolic([
                 tasklet.in_connectors[edge.dst_conn].veclen,
@@ -526,7 +536,7 @@ for(int i = 0; i < {veclen}; i++){{
                 scalars[edge.dst_conn] = (False, total_size * 8)
 
         for edge in state.out_edges(tasklet):
-            arr = sdfg.arrays[edge.dst.data]
+            arr = sdfg.arrays[edge.data.data]
             # catch symbolic (compile time variables)
             check_issymbolic([
                 tasklet.out_connectors[edge.src_conn].veclen,
