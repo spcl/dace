@@ -355,6 +355,10 @@ class DaceProgram:
         nargs = len(given_args)
         arg_ind = 0
         for i, (aname, sig_arg) in enumerate(self.signature.parameters.items()):
+            if self.objname is not None and aname == self.objname:
+                # Skip "self" argument
+                continue
+
             ann = sig_arg.annotation
 
             # Variable-length arguments: obtain from the remainder of given_*
