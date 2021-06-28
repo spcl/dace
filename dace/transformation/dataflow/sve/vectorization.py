@@ -34,6 +34,7 @@ import dace.transformation.dataflow.sve.vector_inference as vector_inference
 
 
 @registry.autoregister_params(singlestate=True)
+@make_properties
 class SVEVectorization(transformation.Transformation):
     """ Implements the Arm SVE vectorization transform.
 
@@ -42,6 +43,10 @@ class SVEVectorization(transformation.Transformation):
 """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
+
+    #vec_len = Property(dtype=symbolic.symbol,
+    #                   desc="Vector length",
+    #                   default=util.SVE_LEN)
 
     @classmethod
     def expressions(cls):
@@ -135,8 +140,7 @@ class SVEVectorization(transformation.Transformation):
         try:
             inf_graph = vector_inference.infer_vectors(sdfg,
                                                        state,
-                                                       subgraph_contents,
-                                                       current_map.params[-1],
+                                                       map_entry,
                                                        util.SVE_LEN,
                                                        apply=False)
         except vector_inference.VectorInferenceException:
@@ -166,47 +170,13 @@ class SVEVectorization(transformation.Transformation):
         # Set the schedule
         current_map.schedule = dace.dtypes.ScheduleType.SVE_Map
 
-        # Infer all connector types
+        # Infer all connector types and apply them
         inferred = infer_types.infer_connector_types(sdfg)
         infer_types.apply_connector_types(inferred)
 
-        # Infer vector connectors and AccessNodes
+        # Infer vector connectors and AccessNodes and apply them
         vector_inference.infer_vectors(sdfg,
                                        state,
-                                       subgraph_contents,
-                                       current_map.params[-1],
+                                       map_entry,
                                        util.SVE_LEN,
                                        apply=True)
-
-    def vectorize_memlet_subset(sdfg: SDFG, edge: MultiConnectorEdge[Memlet],
-                                map: nodes.Map):
-        """
-            Vectorized the subset of a memlet given the vector param.
-        """
-        if edge.data.subset.num_elements() != 1:
-            # Subsets can't be vectorized
-            return
-
-        sve_dim = None
-        if len(edge.data.subset) > 1:
-            for dim, sub in enumerate(edge.data.subset):
-                for expr in sub:
-                    if map.params[-1] in symbolic.pystr_to_symbolic(
-                            expr).free_symbols:
-                        if sve_dim is not None:
-                            # TODO: Param occurs in multiple dimensions
-                            return
-                        sve_dim = dim
-
-        if sve_dim is None:
-            sve_dim = -1
-
-        sub = edge.data.subset[sve_dim]
-
-        stride = edge.data.get_stride(sdfg, map)
-        if stride == 0:
-            # A scalar has stride 1
-            stride = 1
-
-        edge.data.subset[sve_dim] = (sub[0], sub[1] + stride * util.SVE_LEN,
-                                     stride)
