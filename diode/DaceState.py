@@ -167,7 +167,7 @@ class DaceState:
 
             with open(gencodefile, "w") as fh:
                 # Clear location indicators from code
-                clean_code = re.sub(r'\s*////__DACE:.*', '', codeobj.code)
+                clean_code = codeobj.clean_code
                 fh.write(clean_code)
 
             self.generated_code_files.append(gencodefile)
