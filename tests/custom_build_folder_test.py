@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import numpy as np
 import os
+import tempfile
 
 
 @dace.program
@@ -10,16 +10,19 @@ def customprog(A: dace.float64[20]):
 
 
 def test_custom_build_folder():
-    with dace.config.set_temporary('default_build_folder', value='.mycache'):
-        A = np.random.rand(20)
-        assert np.allclose(customprog(A), A + 1)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with dace.config.set_temporary('default_build_folder', value=tmpdir):
+            # Ensure build folder matches
+            sdfg = customprog.to_sdfg()
+            assert tmpdir in sdfg.build_folder
+            csdfg = sdfg.compile()
 
-        # Ensure the folder was created
-        assert os.path.isdir('.mycache')
+            # Ensure files were generated in the right folder
+            assert os.path.isfile(
+                os.path.join(sdfg.build_folder, 'program.sdfg'))
 
-        # Ensure build folder matches
-        sdfg = customprog.to_sdfg()
-        assert '.mycache' in sdfg.build_folder
+            # Ensure file is closed so it can be deleted
+            del csdfg
 
 
 if __name__ == '__main__':
