@@ -38,7 +38,8 @@ class InferenceNode():
         if self.is_inferred() and self.inferred != inf_type:
             # Node has already been inferred, and it is again inferred to a different type
             raise VectorInferenceException(
-                f'Inference failed: re-assigning {self.inferred} -> {inf_type}')
+                f'Violating constraint at {self.belongs_to} (old: {self.inferred}, new: {inf_type})'
+            )
 
         self.inferred = inf_type
 
@@ -157,6 +158,19 @@ class VectorInferenceGraph(DiGraph):
             # Only set the pointer out connectors
             for conn in node.out_connectors:
                 if isinstance(self.inf[(node, conn, False)], dtypes.pointer):
+                    in_dict[(node, conn, False)] = self.inf[(node, conn, False)]
+
+            # Special treatment for WCR
+            for conn in node.out_connectors:
+                if any([
+                        e.data.wcr is not None
+                        for e in self.state.out_edges_by_connector(node, conn)
+                ]):
+                    print('WARNING: Vector inference on WCR is experimental')
+                    if isinstance(self.inf[(node, conn, False)], dtypes.vector):
+                        # Violates the propagation rules
+                        raise VectorInferenceException(
+                            'vreduce is not supported')
                     in_dict[(node, conn, False)] = self.inf[(node, conn, False)]
 
             # Toggle the "unit" vector input
@@ -331,9 +345,10 @@ class VectorInferenceGraph(DiGraph):
                     elif self._carries_scalar_data(edge):
                         # Reading a scalar (with no loop param) from an Array
                         # AccessNode is always a scalar
-                        if isinstance(edge.src,
+                        src_node = self.state.memlet_path(edge)[0].src
+                        if isinstance(src_node,
                                       nodes.AccessNode) and isinstance(
-                                          edge.src.desc(self.sdfg), data.Array):
+                                          src_node.desc(self.sdfg), data.Array):
                             self.conn_to_node[(node, edge.dst_conn,
                                                True)].infer_as(
                                                    InferenceNode.Scalar)
@@ -347,9 +362,10 @@ class VectorInferenceGraph(DiGraph):
                     elif self._carries_scalar_data(edge):
                         # Writing a scalar (with no loop param) from an Array
                         # AccessNode is always a scalar
-                        if isinstance(edge.dst,
+                        dst_node = self.state.memlet_path(edge)[-1].dst
+                        if isinstance(dst_node,
                                       nodes.AccessNode) and isinstance(
-                                          edge.dst.desc(self.sdfg), data.Array):
+                                          dst_node.desc(self.sdfg), data.Array):
                             self.conn_to_node[(node, edge.src_conn,
                                                False)].infer_as(
                                                    InferenceNode.Scalar)
@@ -364,7 +380,7 @@ class VectorInferenceGraph(DiGraph):
 
         # Possibly multidimensional subset, find the dimension where the param occurs
         vec_dim = None
-        loop_sym = symbolic.symbol(self.param)
+        loop_sym = symbolic.pystr_to_symbolic(self.param)
         for dim, sub in enumerate(edge.data.subset):
             if loop_sym in symbolic.pystr_to_symbolic(sub[0]).free_symbols:
                 if vec_dim is None:
