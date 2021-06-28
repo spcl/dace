@@ -1,24 +1,17 @@
-from samples.fpga.jacobi_fpga_systolic import T
-from tests import dynamic_sdfg_functions_test
 from networkx import DiGraph
 from dace.memlet import Memlet
-import itertools
 from collections import defaultdict
-from copy import copy
-from math import isfinite
-from dace.sdfg.utils import dfs_topological_sort, find_input_arraynode
+from dace.sdfg.utils import dfs_topological_sort
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 import dace
 from dace import SDFG, SDFGState
 import dace.sdfg.nodes as nodes
 from collections import defaultdict
-import itertools
 import dace.transformation.dataflow.sve.infer_types as infer_types
-import copy
 import dace.dtypes as dtypes
-from dace.sdfg.scope import ScopeSubgraphView
 import dace.data as data
 from typing import *
+import dace.symbolic as symbolic
 
 
 class VectorInferenceException(Exception):
@@ -50,27 +43,34 @@ class InferenceNode():
         self.inferred = inf_type
 
 
-# TODO: Implement modifying the subset.
 class VectorInferenceGraph(DiGraph):
-    def __init__(self, sdfg: SDFG, state: SDFGState, subgraph: SubgraphView,
-                 param: str, vec_len):
+    def __init__(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry,
+                 vec_len):
         """
             Builds a vector inference graph for a Map to infer vectorizable Tasklet connectors
             and AccessNodes in polynomial time.
 
             :param sdfg: The SDFG where the Map resides.
             :param state: The state where the Map resides.
-            :param subgraph: The subgraph of the Map without the entry and exit node.
-            :param param: The loop param of the vectorized dimension.
-            :param vec_len: The vector length that should be used when creating a `dtypes.vector`.     
+            :param map_entry: The entry node of the Map.
+            :param vec_len: The vector length that should be used when creating a `dtypes.vector`. 
         """
         super().__init__()
         self.sdfg = sdfg
         self.state = state
-        self.subgraph = subgraph
+
+        self.subgraph = state.scope_subgraph(map_entry,
+                                             include_entry=False,
+                                             include_exit=False)
+
+        self.map = map_entry.map
+
         self.inf: infer_types.TypeInferenceDict = infer_types.infer_connector_types(
-            sdfg, state, subgraph)
-        self.param = param
+            sdfg, state, self.subgraph)
+
+        # Use the innermost loop param
+        self.param = self.map.params[-1]
+
         self.vec_len = vec_len
         self.conn_to_node: DefaultDict[Union[Tuple[nodes.Tasklet, str, bool],
                                              nodes.AccessNode]] = defaultdict(
@@ -299,6 +299,8 @@ class VectorInferenceGraph(DiGraph):
             return False
         if not self.param in edge.data.subset.free_symbols:
             return False
+        if edge.data.get_stride(self.sdfg, self.map) == 0:
+            return False
         return True
 
     def _carries_scalar_data(self, edge: MultiConnectorEdge[Memlet]) -> bool:
@@ -307,6 +309,8 @@ class VectorInferenceGraph(DiGraph):
         if edge.data.subset.num_elements() != 1:
             return False
         if self.param in edge.data.subset.free_symbols:
+            return False
+        if edge.data.get_stride(self.sdfg, self.map) != 0:
             return False
         return True
 
@@ -350,6 +354,33 @@ class VectorInferenceGraph(DiGraph):
                                                False)].infer_as(
                                                    InferenceNode.Scalar)
 
+    def _vectorize_subset(self, edge: MultiConnectorEdge[Memlet]):
+        """
+            Vectorize the subset of the memlet on an edge (if possible).
+        """
+        # Check that the edge stores vector data
+        if not self._carries_vector_data(edge):
+            return
+
+        # Possibly multidimensional subset, find the dimension where the param occurs
+        vec_dim = None
+        loop_sym = symbolic.symbol(self.param)
+        for dim, sub in enumerate(edge.data.subset):
+            if loop_sym in symbolic.pystr_to_symbolic(sub[0]).free_symbols:
+                if vec_dim is None:
+                    vec_dim = dim
+                else:
+                    # Param occurs in multiple dimensions
+                    # TODO: Requires flattening!
+                    return
+
+        stride = edge.data.get_stride(self.sdfg, self.map)
+
+        # Update the subset using the stride and the vector length on the correct dimension
+        sub = edge.data.subset[vec_dim]
+        edge.data.subset[vec_dim] = (sub[0], sub[1] + stride * self.vec_len,
+                                     stride)
+
     def apply(self):
         """
             Applies the inference on the graph by making the suitable connectors vectors.
@@ -364,15 +395,26 @@ class VectorInferenceGraph(DiGraph):
                 if i:
                     n.in_connectors[c] = self._as_type(
                         self.inf[node.belongs_to], node.inferred)
+
+                    if node.inferred == InferenceNode.Vector:
+                        # Update the subset for all incoming edges
+                        # (if they carry vector information)
+                        for e in self.state.in_edges_by_connector(n, c):
+                            self._vectorize_subset(e)
                 else:
                     n.out_connectors[c] = self._as_type(
                         self.inf[node.belongs_to], node.inferred)
 
+                    # Update the subset for all outgoing edges
+                    # (if they carry vector information)
+                    if node.inferred == InferenceNode.Vector:
+                        for e in self.state.out_edges_by_connector(n, c):
+                            self._vectorize_subset(e)
+
 
 def infer_vectors(sdfg: SDFG,
                   state: SDFGState,
-                  subgraph: SubgraphView,
-                  param: str,
+                  map_entry: nodes.MapEntry,
                   vec_len,
                   apply: bool = True) -> VectorInferenceGraph:
     """
@@ -382,12 +424,11 @@ def infer_vectors(sdfg: SDFG,
         :raises VectorInferenceException: If some constraints are violated and inference was not successful.
         :param sdfg: The SDFG where the Map resides.
         :param state: The state where the Map resides.
-        :param subgraph: The subgraph of the Map without the entry and exit node.
-        :param param: The loop param of the vectorized dimension.
+        :param map_entry: The entry node of the Map.
         :param vec_len: The vector length that should be used when creating a `dtypes.vector`.
         :returns: The inference graph for analysis.
     """
-    graph = VectorInferenceGraph(sdfg, state, subgraph, param, vec_len)
+    graph = VectorInferenceGraph(sdfg, state, map_entry, vec_len)
     graph.infer()
     if apply:
         graph.apply()
