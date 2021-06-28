@@ -56,7 +56,7 @@ def tmp_location(name: str) -> str:
 
 def temporaryInfo(name: str, data):
     """ Creates a temporary file that stores the json object
-        in the map folder ({build_folder}/{sdfg_name}/map)
+        in the map folder (<build folder>/<SDFG name>/map)
         :param name: name of the SDFG
         :param data: data to save
     """
@@ -164,7 +164,7 @@ def get_src_files(sdfg, fileSet):
 
 def create_py_map(sdfg):
     """ Creates the mapping from the python source lines to the SDFG nodes.
-        The mapping gets saved at: {build_folder}/map/map_py.json
+        The mapping gets saved at: <SDFG build folder>/map/map_py.json
         :param sdfg: The SDFG for which the mapping will be created
     """
     # If the cache setting is set to 'hash' then we don't create a
@@ -194,7 +194,7 @@ def create_py_map(sdfg):
 
 def create_cpp_map(code: str, name: str, target_name: str):
     """ Creates the mapping from the SDFG nodes to the C++ code lines.
-        The mapping gets saved at: {build_folder}/map/map_cpp.json
+        The mapping gets saved at: <SDFG build folder>/map/map_cpp.json
         :param code: C++ code containing the identifiers '////__DACE:0:0:0'
         :param name: The name of the SDFG
         :param target_name: The target type, example: 'cpu'
