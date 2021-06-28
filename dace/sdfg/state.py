@@ -11,7 +11,7 @@ from dace.sdfg.graph import (OrderedMultiDiConnectorGraph, MultiConnectorEdge,
                              SubgraphView)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
-from dace.properties import (Property, DictProperty, SubsetProperty,
+from dace.properties import (EnumProperty, Property, DictProperty, SubsetProperty,
                              SymbolicProperty, CodeBlock, make_properties)
 from inspect import getframeinfo, stack
 import itertools
@@ -709,9 +709,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                       default=False,
                       desc="Do not synchronize at the end of the state")
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation
+    )
 
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "
@@ -806,7 +808,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
 
     def add_node(self, node):
         if not isinstance(node, nd.Node):
-            raise TypeError("Expected Node, got " + str(type(node)) + " (" +
+            raise TypeError("Expected Node, got " + type(node).__name__ + " (" +
                             str(node) + ")")
         self._clear_scopedict_cache()
         return super(SDFGState, self).add_node(node)
@@ -858,7 +860,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                 for k, v in sorted(
                     self.scope_children(return_ids=True).items())
             }
-        except RuntimeError:
+        except (RuntimeError, ValueError):
             scope_dict = {}
 
         # Try to initialize edges before serialization

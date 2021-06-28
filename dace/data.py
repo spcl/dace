@@ -9,10 +9,11 @@ from typing import Set
 import dace.dtypes as dtypes
 from dace.codegen import cppunparse
 from dace import symbolic, serialize
-from dace.properties import (Property, make_properties, DictProperty,
-                             ReferenceProperty, ShapeProperty, SubsetProperty,
-                             SymbolicProperty, TypeClassProperty,
-                             DebugInfoProperty, CodeProperty, ListProperty)
+from dace.properties import (EnumProperty, Property, make_properties,
+                             DictProperty, ReferenceProperty, ShapeProperty,
+                             SubsetProperty, SymbolicProperty,
+                             TypeClassProperty, DebugInfoProperty, CodeProperty,
+                             ListProperty)
 
 
 def create_datadescriptor(obj):
@@ -22,21 +23,35 @@ def create_datadescriptor(obj):
     from dace import dtypes  # Avoiding import loops
     if isinstance(obj, Data):
         return obj
-
-    try:
+    elif hasattr(obj, '__descriptor__'):
+        return obj.__descriptor__()
+    elif hasattr(obj, 'descriptor'):
         return obj.descriptor
-    except AttributeError:
-        if isinstance(obj, numpy.ndarray):
-            return Array(dtype=dtypes.typeclass(obj.dtype.type),
-                         strides=tuple(s // obj.itemsize for s in obj.strides),
-                         shape=obj.shape)
-        if symbolic.issymbolic(obj):
-            return Scalar(symbolic.symtype(obj))
-        if isinstance(obj, dtypes.typeclass):
-            return Scalar(obj)
-        if obj in {int, float, complex, bool}:
-            return Scalar(dtypes.typeclass(obj))
-        return Scalar(dtypes.typeclass(type(obj)))
+    elif isinstance(obj, (list, tuple, numpy.ndarray)):
+        if isinstance(obj, (list, tuple)):  # Lists and tuples are cast to numpy
+            obj = numpy.array(obj)
+
+        if obj.dtype.fields is not None:  # Struct
+            dtype = dtypes.struct(
+                'unnamed', **{
+                    k: dtypes.typeclass(v[0].type)
+                    for k, v in obj.dtype.fields.items()
+                })
+        else:
+            dtype = dtypes.typeclass(obj.dtype.type)
+        return Array(dtype=dtype,
+                     strides=tuple(s // obj.itemsize for s in obj.strides),
+                     shape=obj.shape)
+    elif symbolic.issymbolic(obj):
+        return Scalar(symbolic.symtype(obj))
+    elif isinstance(obj, dtypes.typeclass):
+        return Scalar(obj)
+    elif obj in {int, float, complex, bool}:
+        return Scalar(dtypes.typeclass(obj))
+    elif callable(obj):
+        # Cannot determine return value/argument types from function object
+        return Scalar(dtypes.callback(None))
+    return Scalar(dtypes.typeclass(type(obj)))
 
 
 @make_properties
@@ -48,16 +63,12 @@ class Data(object):
     dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
     shape = ShapeProperty(default=[])
     transient = Property(dtype=bool, default=False)
-    storage = Property(dtype=dtypes.StorageType,
-                       desc="Storage location",
-                       choices=dtypes.StorageType,
-                       default=dtypes.StorageType.Default,
-                       from_string=lambda x: dtypes.StorageType[x])
-    lifetime = Property(dtype=dtypes.AllocationLifetime,
-                        desc='Data allocation span',
-                        choices=dtypes.AllocationLifetime,
-                        default=dtypes.AllocationLifetime.Scope,
-                        from_string=lambda x: dtypes.AllocationLifetime[x])
+    storage = EnumProperty(dtype=dtypes.StorageType,
+                           desc="Storage location",
+                           default=dtypes.StorageType.Default)
+    lifetime = EnumProperty(dtype=dtypes.AllocationLifetime,
+                            desc='Data allocation span',
+                            default=dtypes.AllocationLifetime.Scope)
     location = DictProperty(
         key_type=str,
         value_type=symbolic.pystr_to_symbolic,

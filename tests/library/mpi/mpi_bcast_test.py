@@ -3,7 +3,6 @@ import dace
 from dace.memlet import Memlet
 import dace.libraries.mpi as mpi
 import numpy as np
-from mpi4py import MPI as MPI4PY
 import pytest
 
 ###############################################################################
@@ -43,6 +42,7 @@ def make_sdfg(dtype):
 
 
 def _test_mpi(info, sdfg, dtype):
+    from mpi4py import MPI as MPI4PY
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()
@@ -81,6 +81,7 @@ def dace_bcast(A: dace.float32[N]):
 
 @pytest.mark.mpi
 def test_dace_bcast():
+    from mpi4py import MPI as MPI4PY
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()
