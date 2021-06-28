@@ -12,11 +12,24 @@ def test():
             S[0, j].append(i + j)
             S[1, j].append(i + j * 10)
 
+    results = []
     while len(s[0]):
-        print(s[0].popleft())
+        results.append(s[0].popleft())
     while len(S[1, 1]):
-        print(S[1, 1].popleft())
+        results.append(S[1, 1].popleft())
+
+    assert results == [0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 14, 15]
+
+def test_consume_python():
+    inputs = [1,2,3,5,1]
+    S = dace.stream(inputs)
+    result = []
+    for s in dace.consume(S):
+        result.append(s)
+
+    assert inputs == list(reversed(result))
 
 
 if __name__ == "__main__":
     test()
+    test_consume_python()

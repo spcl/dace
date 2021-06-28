@@ -860,7 +860,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                 for k, v in sorted(
                     self.scope_children(return_ids=True).items())
             }
-        except RuntimeError:
+        except (RuntimeError, ValueError):
             scope_dict = {}
 
         # Try to initialize edges before serialization

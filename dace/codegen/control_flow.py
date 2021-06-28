@@ -138,7 +138,8 @@ class SingleState(ControlFlow):
     def generate_transition(self,
                             sdfg: SDFG,
                             edge: Edge[InterstateEdge],
-                            successor: SDFGState = None) -> str:
+                            successor: SDFGState = None,
+                            assignments_only: bool = False) -> str:
         """ 
         Helper function that generates a state transition (conditional goto) 
         from a state and an SDFG edge.
@@ -147,13 +148,15 @@ class SingleState(ControlFlow):
         :param successor: If not None, the state that will be generated right
                           after the current state (used to avoid extraneous 
                           gotos).
+        :param assignments_only: If True, generates only the assignments
+                                 of the inter-state edge.
         :return: A c++ string representing the state transition code.
         """
         expr = ''
         condition_string = cpp.unparse_interstate_edge(
             edge.data.condition.code[0], sdfg)
 
-        if not edge.data.is_unconditional():
+        if not edge.data.is_unconditional() and not assignments_only:
             expr += f'if ({condition_string}) {{\n'
 
         if len(edge.data.assignments) > 0:
@@ -163,10 +166,11 @@ class SingleState(ControlFlow):
                 for variable, value in edge.data.assignments.items()
             ] + [''])
 
-        if successor is None or edge.dst is not successor:
+        if ((successor is None or edge.dst is not successor)
+                and not assignments_only):
             expr += 'goto __state_{}_{};\n'.format(sdfg.sdfg_id, edge.dst.label)
 
-        if not edge.data.is_unconditional():
+        if not edge.data.is_unconditional() and not assignments_only:
             expr += '}\n'
         return expr
 
@@ -185,9 +189,12 @@ class GeneralBlock(ControlFlow):
     elements: List[ControlFlow]
 
     # List or set of edges to not generate conditional gotos for. This is used
-    # to avoid generating extra assignments or gotos before entering a for loop,
-    # for example.
-    edges_to_ignore: Sequence[Edge[InterstateEdge]]
+    # to avoid generating extra assignments or gotos before entering a for
+    # loop, for example.
+    gotos_to_ignore: Sequence[Edge[InterstateEdge]]
+
+    # List or set of edges to not generate inter-state assignments for.
+    assignments_to_ignore: Sequence[Edge[InterstateEdge]]
 
     def as_cpp(self, defined_vars, symbols) -> str:
         expr = ''
@@ -199,7 +206,7 @@ class GeneralBlock(ControlFlow):
                 sdfg = elem.state.parent
                 out_edges = sdfg.out_edges(elem.state)
                 for j, e in enumerate(out_edges):
-                    if e not in self.edges_to_ignore:
+                    if e not in self.gotos_to_ignore:
                         # If this is the last generated edge and it leads
                         # to the next state, skip emitting goto
                         successor = None
@@ -208,13 +215,17 @@ class GeneralBlock(ControlFlow):
                             successor = self.elements[i + 1].first_state
 
                         expr += elem.generate_transition(sdfg, e, successor)
+                    elif e not in self.assignments_to_ignore:
+                        # Need to generate assignments but not gotos
+                        expr += elem.generate_transition(sdfg,
+                                                         e,
+                                                         assignments_only=True)
                 # Add exit goto as necessary
                 if elem.last_state:
                     continue
                 # Two negating conditions
-                if (len(out_edges) == 2
-                        and out_edges[0].data.condition_sympy() == sp.Not(
-                            out_edges[1].data.condition_sympy())):
+                if (len(out_edges) == 2 and out_edges[0].data.condition_sympy()
+                        == sp.Not(out_edges[1].data.condition_sympy())):
                     continue
                 # One unconditional edge
                 if (len(out_edges) == 1
@@ -443,16 +454,17 @@ class SwitchCaseScope(ControlFlow):
 
 
 def _loop_from_structure(
-    sdfg: SDFG, guard: SDFGState, enter_edge: Edge[InterstateEdge],
-    leave_edge: Edge[InterstateEdge], back_edges: List[Edge[InterstateEdge]],
-    dispatch_state: Callable[[SDFGState], str]
-) -> Union[ForScope, WhileScope]:
+        sdfg: SDFG, guard: SDFGState, enter_edge: Edge[InterstateEdge],
+        leave_edge: Edge[InterstateEdge],
+        back_edges: List[Edge[InterstateEdge]],
+        dispatch_state: Callable[[SDFGState],
+                                 str]) -> Union[ForScope, WhileScope]:
     """ 
     Helper method that constructs the correct structured loop construct from a
     set of states. Can construct for or while loops.
     """
 
-    body = GeneralBlock(dispatch_state, [], [])
+    body = GeneralBlock(dispatch_state, [], [], [])
 
     guard_inedges = sdfg.in_edges(guard)
     increment_edges = [e for e in guard_inedges if e in back_edges]
@@ -464,8 +476,8 @@ def _loop_from_structure(
         return None
     increment_edge = increment_edges[0]
 
-    # Mark increment edge to be ignored in body
-    body.edges_to_ignore.append(increment_edge)
+    # Increment edge goto to be ignored in body
+    body.gotos_to_ignore.append(increment_edge)
 
     # Outgoing edges must be a negation of each other
     if enter_edge.data.condition_sympy() != (sp.Not(
@@ -500,6 +512,10 @@ def _loop_from_structure(
         if (all(e.data.assignments[itvar] == init for e in init_edges)
                 and len(increment_edge.data.assignments) == 1):
             update = increment_edge.data.assignments[itvar]
+
+            # Also ignore assignments in increment edge (handled in for stmt)
+            body.assignments_to_ignore.append(increment_edge)
+
             return ForScope(dispatch_state, itvar, guard, init, condition,
                             update, body, init_edges)
 
@@ -557,7 +573,8 @@ def _ignore_recursive(edges: List[Edge[InterstateEdge]], block: ControlFlow):
     Ignore a list of edges recursively in a control flow block and its children.
     """
     if isinstance(block, GeneralBlock):
-        block.edges_to_ignore.extend(edges)
+        block.gotos_to_ignore.extend(edges)
+        block.assignments_to_ignore.extend(edges)
     for subblock in block.children:
         _ignore_recursive(edges, subblock)
 
@@ -631,13 +648,14 @@ def _structured_control_flow_traversal(
 
             # Add branching node and ignore outgoing edges
             parent_block.elements.append(stateblock)
-            parent_block.edges_to_ignore.extend(oe)
+            parent_block.gotos_to_ignore.extend(oe)
+            parent_block.assignments_to_ignore.extend(oe)
             stateblock.last_state = True
 
             # Parse all outgoing edges recursively first
             cblocks: Dict[Edge[InterstateEdge], GeneralBlock] = {}
             for branch in oe:
-                cblocks[branch] = GeneralBlock(dispatch_state, [], [])
+                cblocks[branch] = GeneralBlock(dispatch_state, [], [], [])
                 visited |= _structured_control_flow_traversal(
                     sdfg,
                     branch.dst,
@@ -717,7 +735,8 @@ def _structured_control_flow_traversal(
 
                 # Add branching node and ignore outgoing edges
                 parent_block.elements.append(stateblock)
-                parent_block.edges_to_ignore.extend(oe)
+                parent_block.gotos_to_ignore.extend(oe)
+                parent_block.assignments_to_ignore.extend(oe)
 
                 parent_block.elements.append(scope)
 
@@ -784,7 +803,7 @@ def structured_control_flow_tree(
         if len(common_frontier) == 1:
             branch_merges[state] = next(iter(common_frontier))
 
-    root_block = GeneralBlock(dispatch_state, [], [])
+    root_block = GeneralBlock(dispatch_state, [], [], [])
     _structured_control_flow_traversal(sdfg, sdfg.start_state, ptree,
                                        branch_merges, back_edges,
                                        dispatch_state, root_block)

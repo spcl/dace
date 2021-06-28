@@ -51,7 +51,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     MPI = ()  #: MPI processes
     CPU_Multicore = ()  #: OpenMP
     Unrolled = ()  #: Unrolled code
-    SVE_Map = () #: Arm SVE
+    SVE_Map = ()  #: Arm SVE
 
     #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
     GPU_Default = ()
@@ -951,7 +951,6 @@ def isconstant(var):
     return type(var) in _CONSTANT_TYPES
 
 
-bool = typeclass(numpy.bool_)
 bool_ = typeclass(numpy.bool_)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
@@ -989,6 +988,7 @@ class Typeclasses(aenum.AutoNumberEnum):
 
 
 DTYPE_TO_TYPECLASS = {
+    bool: typeclass(bool),
     int: typeclass(int),
     float: typeclass(float),
     complex: typeclass(complex),
@@ -1010,6 +1010,10 @@ DTYPE_TO_TYPECLASS = {
     numpy.longlong: int64,
     numpy.ulonglong: uint64
 }
+
+# Since this overrides the builtin bool, this should be after the
+# DTYPE_TO_TYPECLASS dictionary
+bool = typeclass(numpy.bool_)
 
 TYPECLASS_TO_STRING = {
     bool: "dace::bool",

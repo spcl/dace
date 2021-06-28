@@ -1018,6 +1018,9 @@ class CodeBlock(object):
     def from_json(tmp, sdfg=None):
         if tmp is None:
             return None
+        if isinstance(tmp, CodeBlock):
+            return tmp
+
         try:
             lang = tmp['language']
         except:
@@ -1070,6 +1073,8 @@ class CodeProperty(Property):
 
         if tmp is None:
             return None
+        if isinstance(tmp, CodeBlock):
+            return tmp
 
         try:
             lang = tmp['language']
@@ -1085,7 +1090,7 @@ class CodeProperty(Property):
             lang = dace.dtypes.Language.Python
         elif lang.endswith("CPP"):
             lang = dace.dtypes.Language.CPP
-        elif lang.endswith("SystemVerilog"):
+        elif lang.endswith("sv") or lang.endswith("SystemVerilog"):
             lang = dace.dtypes.Language.SystemVerilog
         elif lang.endswith("MLIR"):
             lang = dace.dtypes.Language.MLIR
