@@ -25,7 +25,7 @@ def create_folder(path_str: str):
     """
     if not os.path.exists(path_str):
         path = os.path.abspath(path_str)
-        os.mkdir(path)
+        os.makedirs(path, exist_ok=True)
 
 
 def create_cache(name: str, folder: str) -> str:
