@@ -3729,6 +3729,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 fcopy.global_vars = {**func.global_vars, **self.globals}
                 fargs = (self._eval_arg(arg) for _, arg in args)
                 sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
+                args = [(k, v) for k, v in args if k in sdfg.arg_names]
+                required_args = [k for k, _ in args]
             elif self._has_sdfg(func):
                 fargs = tuple(
                     self._eval_arg(self._parse_function_arg(arg))

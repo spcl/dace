@@ -239,6 +239,40 @@ def test_constant_argument_default():
     assert 'cst' not in code
 
 
+def test_constant_argument_object():
+    """
+    Tests nested functions with constant parameters passed in as arguments.
+    """
+    class MyConfiguration:
+        def __init__(self, parameter):
+            self.p = parameter * 2
+            self.q = parameter * 4
+
+        @staticmethod
+        def get_random_number():
+            return 4
+
+    @dace.program
+    def nested_func(cfg: dace.constant, A: dace.float64[20]):
+        return A[cfg.p]
+
+    @dace.program
+    def constant_parameter(cfg: dace.constant, cfg2: dace.constant,
+                           A: dace.float64[20]):
+        A[cfg.q] = nested_func(cfg, A)
+        A[MyConfiguration.get_random_number()] = nested_func(cfg2, A)
+
+    cfg1 = MyConfiguration(3)
+    cfg2 = MyConfiguration(4)
+    A = np.random.rand(20)
+    reg_A = np.copy(A)
+    reg_A[12] = reg_A[6]
+    reg_A[4] = reg_A[8]
+
+    constant_parameter(cfg1, cfg2, A)
+    assert np.allclose(A, reg_A)
+
+
 if __name__ == '__main__':
     test_kwargs()
     test_kwargs_jit()
@@ -255,3 +289,4 @@ if __name__ == '__main__':
     test_optional_argument()
     test_constant_argument_simple()
     test_constant_argument_default()
+    test_constant_argument_object()

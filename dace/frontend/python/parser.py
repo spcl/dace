@@ -159,6 +159,11 @@ class DaceProgram:
                                  self.signature.parameters.values()):
                 pval._annotation = arg
 
+        # Keep a set of constant arguments to ignore
+        self.constant_args = set(
+            pname for pname, pval in self.signature.parameters.items()
+            if pval.annotation is dtypes.constant)
+
         if self.argnames is None:
             self.argnames = []
 
@@ -229,8 +234,10 @@ class DaceProgram:
         # Update arguments with symbols in data shapes
         result.update(
             infer_symbols_from_datadescriptor(
-                sdfg, {k: create_datadescriptor(v)
-                       for k, v in result.items()}))
+                sdfg, {
+                    k: create_datadescriptor(v)
+                    for k, v in result.items() if k not in self.constant_args
+                }))
         return result
 
     def __call__(self, *args, **kwargs):
