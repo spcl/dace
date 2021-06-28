@@ -133,10 +133,12 @@ class SVEVectorization(transformation.Transformation):
 
         # Run the vector inference algorithm to check if vectorization is feasible
         try:
-            inf_graph = vector_inference.VectorInferenceGraph(
-                sdfg, state, subgraph_contents, current_map.params[-1],
-                util.SVE_LEN)
-            inf_graph.infer()
+            inf_graph = vector_inference.infer_vectors(sdfg,
+                                                       state,
+                                                       subgraph_contents,
+                                                       current_map.params[-1],
+                                                       util.SVE_LEN,
+                                                       apply=False)
         except vector_inference.VectorInferenceException:
             return False
 
@@ -168,13 +170,13 @@ class SVEVectorization(transformation.Transformation):
         inferred = infer_types.infer_connector_types(sdfg)
         infer_types.apply_connector_types(inferred)
 
-        inf_graph = vector_inference.VectorInferenceGraph(
-            sdfg, state, subgraph_contents, current_map.params[-1],
-            util.SVE_LEN)
-        inf_graph.infer()
-
-        # Apply the vectorization
-        inf_graph.apply()
+        # Infer vector connectors and AccessNodes
+        vector_inference.infer_vectors(sdfg,
+                                       state,
+                                       subgraph_contents,
+                                       current_map.params[-1],
+                                       util.SVE_LEN,
+                                       apply=True)
 
     def vectorize_memlet_subset(sdfg: SDFG, edge: MultiConnectorEdge[Memlet],
                                 map: nodes.Map):
