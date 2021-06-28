@@ -1199,6 +1199,8 @@ class CPUCodeGen(TargetCodeGenerator):
         elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if not output:
+                    index = cpp.cpp_offset_expr(desc, memlet.subset)
+                    expr = f"{memlet.data}[{index}]" if desc.is_stream_array() else expr
                     result += f'{memlet_type} {local_name} = ({expr}).pop();'
                     defined = DefinedType.Scalar
             else:
