@@ -600,30 +600,44 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             module_stream.write(
                 f'// [RTL] void {name}({", ".join(kernel_args_module)});\n\n')
 
-            # _1 in names are due to vitis
+            rtl_name = "{}_{}_{}_{}".format(rtl_tasklet, sdfg.sdfg_id, sdfg.node_id(state), state.node_id(rtl_tasklet))
+
+            for n in subgraph.nodes():
+                if isinstance(n, dace.nodes.MapEntry) and n.map.unroll:
+                    self._multiple_kernels[f'{rtl_name}_top'] = dace.symbolic.evaluate(n.map.range[0][1]+1, sdfg.constants)
+
+            # _i in names are due to vitis
             for node in subgraph.source_nodes():
                 if isinstance(sdfg.arrays[node.data], dt.Stream):
-                    if node.data not in self._stream_connections:
-                        self._stream_connections[node.data] = [None, None]
-                    for edge in state.out_edges(node):
-                        rtl_name = "{}_{}_{}_{}".format(edge.dst, sdfg.sdfg_id,
-                                                        sdfg.node_id(state),
-                                                        state.node_id(edge.dst))
-                        self._stream_connections[
-                            node.data][1] = '{}_top_1.s_axis_{}'.format(
-                                rtl_name, edge.dst_conn)
+                    dsts = [e.dst for e in subgraph.out_edges(node)]
+                    if len(dsts) > 1: # TODO Are there any problems with actually doing it?
+                        raise Exception("Currently, only one memlet per access node direction is allowed")
+                    if isinstance(dsts[0], dace.nodes.MapEntry) and dsts[0].map.unroll:
+                        elements_to_add = [f'{node.data}_{i}' for i in range(dace.symbolic.evaluate(dsts[0].map.range[0][1]+1, sdfg.constants)) ]
+                    else:
+                        elements_to_add = [node.data]
+                    for i in range(len(elements_to_add)):
+                        elem = elements_to_add[i]
+                        if elem not in self._stream_connections:
+                            self._stream_connections[elem] = [None, None]
+                        for edge in subgraph.out_edges(node):
+                            self._stream_connections[elem][1] = '{}_top_{}.s_axis_{}'.format(rtl_name, i+1, state.memlet_path(edge)[-1].dst_conn)
 
             for node in subgraph.sink_nodes():
                 if isinstance(sdfg.arrays[node.data], dt.Stream):
-                    if node.data not in self._stream_connections:
-                        self._stream_connections[node.data] = [None, None]
-                    for edge in state.in_edges(node):
-                        rtl_name = "{}_{}_{}_{}".format(edge.src, sdfg.sdfg_id,
-                                                        sdfg.node_id(state),
-                                                        state.node_id(edge.src))
-                        self._stream_connections[
-                            node.data][0] = '{}_top_1.m_axis_{}'.format(
-                                rtl_name, edge.src_conn)
+                    srcs = [e.src for e in subgraph.in_edges(node)]
+                    if len(srcs) > 1: # TODO Are there any problems with actually doing it?
+                        raise Exception("Currently, only one memlet per access node direction is allowed")
+                    if isinstance(srcs[0], dace.nodes.MapExit) and srcs[0].map.unroll:
+                        elements_to_add = [f'{node.data}_{i}' for i in range(dace.symbolic.evaluate(srcs[0].map.range[0][1]+1, sdfg.constants)) ]
+                    else:
+                        elements_to_add = [node.data]
+                    for i in range(len(elements_to_add)):
+                        elem = elements_to_add[i]
+                        if elem not in self._stream_connections:
+                            self._stream_connections[elem] = [None, None]
+                        for edge in state.in_edges(node):
+                            self._stream_connections[elem][0] = '{}_top_{}.m_axis_{}'.format(rtl_name, i+1, subgraph.memlet_path(edge)[0].src_conn)
 
             # Make the dispatcher trigger generation of the RTL module, but
             # ignore the generated code, as the RTL codegen will generate the
@@ -790,10 +804,19 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         for is_output, name, node, _ in external_streams:
             self._dispatcher.defined_vars.add_global(name, DefinedType.Stream,
                                                      node.ctype)
-            if name not in self._stream_connections:
-                self._stream_connections[name] = [None, None]
-            self._stream_connections[name][
-                0 if is_output else 1] = '{}_1.{}'.format(kernel_name, name)
+            num_kernels = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
+            if num_kernels > 1:
+                for i in range(num_kernels):
+                    unrolled_name = f'{name}_{i}'
+                    if unrolled_name not in self._stream_connections:
+                        self._stream_connections[unrolled_name] = [None, None]
+                    self._stream_connections[unrolled_name][
+                        0 if is_output else 1] = '{}_1.{}'.format(kernel_name, unrolled_name)
+            else:
+                if name not in self._stream_connections:
+                    self._stream_connections[name] = [None, None]
+                self._stream_connections[name][
+                    0 if is_output else 1] = '{}_1.{}'.format(kernel_name, name)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, module_stream, entry_stream,

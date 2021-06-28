@@ -98,6 +98,7 @@ class FPGACodeGen(TargetCodeGenerator):
         # any other kind of generated file if any (name, code object)
         self._other_codes = {}
         self._bank_assignments = {}  # {(data name, sdfg): (type, id)}
+        self._multiple_kernels = {}  # { name: number }
         self._stream_connections = {}  # { name: [src, dst] }
 
         # Register additional FPGA dispatchers
@@ -211,12 +212,18 @@ class FPGACodeGen(TargetCodeGenerator):
             self.generate_kernel(sdfg, state, kernel_name, subgraphs,
                                  function_stream, callsite_stream)
             # Emit the connections ini file
-            if len(self._stream_connections) > 0:
+            if len(self._multiple_kernels) > 0 or len(self._stream_connections) > 0:
                 ini_stream = CodeIOStream()
                 ini_stream.write('[connectivity]')
+                self._other_codes['link.ini'] = ini_stream
+
+            if len(self._multiple_kernels) > 0:
+                for name, num in self._multiple_kernels.items():
+                    ini_stream.write('nk={}:{}'.format(name, num))
+
+            if len(self._stream_connections) > 0:
                 for _, (src, dst) in self._stream_connections.items():
                     ini_stream.write('stream_connect={}:{}'.format(src, dst))
-                self._other_codes['link.ini'] = ini_stream
 
         else:  # self._in_device_code == True
 
