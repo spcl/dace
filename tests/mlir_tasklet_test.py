@@ -221,6 +221,46 @@ def test_mlir_tasklet_inference():
     assert isinstance(tasklet.out_connectors['c'], dace.dtypes.typeclass)
     assert tasklet.out_connectors['c'].ctype == "int"
 
+    # Test signed int
+    tasklet = state.add_tasklet(name='mlir_tasklet',
+                                inputs={'a'},
+                                outputs={'c'},
+                                code='''
+                                module  {
+                                    func @mlir_entry(%a: si32) -> si32 {
+                                        return %0 : si32
+                                    }
+                                }
+                                ''',
+                                language=dace.Language.MLIR)
+
+    tasklet.infer_connector_types(sdfg, state)
+    assert isinstance(tasklet.in_connectors['a'], dace.dtypes.typeclass)
+    assert tasklet.in_connectors['a'].ctype == "signed int"
+
+    assert isinstance(tasklet.out_connectors['c'], dace.dtypes.typeclass)
+    assert tasklet.out_connectors['c'].ctype == "signed int"
+
+    # Test unsigned int
+    tasklet = state.add_tasklet(name='mlir_tasklet',
+                                inputs={'a'},
+                                outputs={'c'},
+                                code='''
+                                module  {
+                                    func @mlir_entry(%a: ui32) -> ui32 {
+                                        return %0 : ui32
+                                    }
+                                }
+                                ''',
+                                language=dace.Language.MLIR)
+
+    tasklet.infer_connector_types(sdfg, state)
+    assert isinstance(tasklet.in_connectors['a'], dace.dtypes.typeclass)
+    assert tasklet.in_connectors['a'].ctype == "unsigned int"
+
+    assert isinstance(tasklet.out_connectors['c'], dace.dtypes.typeclass)
+    assert tasklet.out_connectors['c'].ctype == "unsigned int"
+
 
 @dace.program
 def mlir_tasklet_swapped(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
