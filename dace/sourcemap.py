@@ -29,17 +29,18 @@ def create_folder(path_str: str):
 
 
 def create_cache(name: str, folder: str) -> str:
-    """ Creates the map folder in .dacecache if it
+    """ Creates the map folder in the build path if it
         does not yet exist
         :param name: name of the SDFG
         :param folder: the build folder
-        :return: relative path to the created folder starting from '.dacecache'
+        :return: relative path to the created folder
     """
     if (folder is not None):
         create_folder(os.path.join(folder, "map"))
         return folder
     else:
-        cache_folder = os.path.join(".dacecache", name)
+        build_folder = Config.get('default_build_folder')
+        cache_folder = os.path.join(build_folder, name)
         create_folder(os.path.join(cache_folder, "map"))
         return cache_folder
 
@@ -49,12 +50,13 @@ def tmp_location(name: str) -> str:
         :param name: name of the SDFG
         :return: path to the tmp folder
     """
-    return os.path.abspath(os.path.join(".dacecache", name, "map", "tmp.json"))
+    build_folder = Config.get('default_build_folder')
+    return os.path.abspath(os.path.join(build_folder, name, "map", "tmp.json"))
 
 
 def temporaryInfo(name: str, data):
     """ Creates a temporary file that stores the json object
-        in the map folder (.dacecache/{SdfgName}/map)
+        in the map folder ({build_folder}/{sdfg_name}/map)
         :param name: name of the SDFG
         :param data: data to save
     """
@@ -87,7 +89,8 @@ def remove_tmp(name: str, remove_cache: bool = False):
         :param remove_cache: If true, checks if the directory only contains 
         the tmp file, if this is the case, remove the SDFG cache directory.
     """
-    path = ".dacecache/" + name
+    build_folder = Config.get('default_build_folder')
+    path = os.path.join(build_folder, name)
 
     if not os.path.exists(path):
         return
@@ -95,7 +98,7 @@ def remove_tmp(name: str, remove_cache: bool = False):
     os.remove(os.path.join(path, 'map', 'tmp.json'))
 
     if (remove_cache and len(os.listdir(path)) == 1
-            and len(os.listdir(path + "/map")) == 0):
+            and len(os.listdir(os.path.join(path, 'map'))) == 0):
         if os.path.exists(path):
             os.rmdir(os.path.join(path, 'map'))
             os.rmdir(path)
@@ -161,7 +164,7 @@ def get_src_files(sdfg, fileSet):
 
 def create_py_map(sdfg):
     """ Creates the mapping from the python source lines to the SDFG nodes.
-        The mapping gets saved at: .dacecache/{sdfg.name}/map/map_py.json
+        The mapping gets saved at: {build_folder}/map/map_py.json
         :param sdfg: The SDFG for which the mapping will be created
     """
     # If the cache setting is set to 'hash' then we don't create a
@@ -191,7 +194,7 @@ def create_py_map(sdfg):
 
 def create_cpp_map(code: str, name: str, target_name: str):
     """ Creates the mapping from the SDFG nodes to the C++ code lines.
-        The mapping gets saved at: .dacecache/{sdfg_name}/map/map_cpp.json
+        The mapping gets saved at: {build_folder}/map/map_cpp.json
         :param code: C++ code containing the identifiers '////__DACE:0:0:0'
         :param name: The name of the SDFG
         :param target_name: The target type, example: 'cpu'
