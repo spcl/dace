@@ -15,6 +15,10 @@ from typing import Union
 
 # Only these types and the vector version of them are supported
 TYPE_DICT = {
+    "ui8": dace.uint8,
+    "ui16": dace.uint16,
+    "ui32": dace.uint32,
+    "ui64": dace.uint64,
     "i8": dace.int8,
     "i16": dace.int16,
     "i32": dace.int32,
