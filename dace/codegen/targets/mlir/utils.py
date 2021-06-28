@@ -119,12 +119,22 @@ def get_entry_result_type(entry_func: Union[mlir.astnodes.Function,
     return dialect_result
 
 
-def get_dace_type(node: Union[mlir.astnodes.IntegerType,
+def get_dace_type(node: Union[mlir.astnodes.SignlessIntegerType,
+                              mlir.astnodes.SignedIntegerType,
+                              mlir.astnodes.UnsignedIntegerType,
                               mlir.astnodes.FloatType,
                               mlir.astnodes.VectorType]):
-    if isinstance(node, mlir.astnodes.IntegerType):
+    if isinstance(node, mlir.astnodes.SignlessIntegerType):
         result_width = node.width.value
         return TYPE_DICT["i" + result_width]
+
+    if isinstance(node, mlir.astnodes.SignedIntegerType):
+        result_width = node.width.value
+        return TYPE_DICT["i" + result_width]
+
+    if isinstance(node, mlir.astnodes.UnsignedIntegerType):
+        result_width = node.width.value
+        return TYPE_DICT["ui" + result_width]
 
     if isinstance(node, mlir.astnodes.FloatType):
         return TYPE_DICT[node.type.name]
