@@ -757,6 +757,14 @@ required:
             potentially build time, but disallows executing SDFGs in parallel
             and caching of more than one simultaneous SDFG.
 
+    default_build_folder:
+        type: str
+        default: .dacecache
+        title: Default SDFG build folder
+        description: >
+            Default folder in which compiled DaCe programs and SDFGs are stored.
+            Can either be a relative path (by default) or absolute.
+
     profiling:
         type: bool
         default: false
