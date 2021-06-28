@@ -192,7 +192,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
     # Build a dict linking each MapEntry to constants defined within that scope
     last_visited_map_entry = []
-    for node in sdutil.dfs_topological_sort(state):
+    for node in sdutil.dfs_topological_sort(state, state.source_nodes()):
         if isinstance(node, nd.EntryNode):
             otherlist = []
             if len(last_visited_map_entry) > 0:
