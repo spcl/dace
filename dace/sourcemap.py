@@ -37,12 +37,10 @@ def create_cache(name: str, folder: str) -> str:
     """
     create_folder(".dacecache")
     if (folder is not None):
-        create_folder(folder)
         create_folder(os.path.join(folder, "map"))
         return folder
     else:
         cache_folder = os.path.join(".dacecache", name)
-        create_folder(cache_folder)
         create_folder(os.path.join(cache_folder, "map"))
         return cache_folder
 
