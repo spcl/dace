@@ -17,7 +17,10 @@ from dace.data import create_datadescriptor, Data
 ArgTypes = Dict[str, Data]
 
 
-def get_type_annotations(f, f_argnames, decorator_args) -> ArgTypes:
+def get_type_annotations(f,
+                         f_argnames,
+                         decorator_args,
+                         method: bool = False) -> ArgTypes:
     """ Obtains types from decorator or from type annotations in a function. 
     """
     type_annotations = {}
@@ -93,12 +96,12 @@ def _get_locals_and_globals(f):
     return result
 
 
-def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
-                              exclude: Optional[Set[str]] = None) -> \
+def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
+                                      exclude: Optional[Set[str]] = None) -> \
         Dict[str, Any]:
     """
     Infers the values of SDFG symbols (not given as arguments) from the shapes
-    of input arguments (e.g., arrays).
+    and strides of input arguments (e.g., arrays).
     :param sdfg: The SDFG that is being called.
     :param args: A dictionary mapping from current argument names to their
                  values. This may also include symbols.
@@ -117,10 +120,17 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
             desc = sdfg.arrays[arg_name]
             if not hasattr(desc, 'shape') or not hasattr(arg_val, 'shape'):
                 continue
-            symbolic_shape = desc.shape
-            given_shape = arg_val.shape
+            symbolic_values = list(desc.shape) + list(
+                getattr(desc, 'strides', []))
+            given_values = list(arg_val.shape)
+            given_strides = []
+            if hasattr(arg_val, 'strides'):
+                # NumPy arrays use bytes in strides
+                factor = getattr(arg_val, 'itemsize', 1)
+                given_strides = [s // factor for s in arg_val.strides]
+            given_values += given_strides
 
-            for sym_dim, real_dim in zip(symbolic_shape, given_shape):
+            for sym_dim, real_dim in zip(symbolic_values, given_values):
                 repldict = {}
                 for sym in symbolic.symlist(sym_dim).values():
                     newsym = symbolic.symbol('__SOLVE_' + str(sym))
@@ -160,7 +170,7 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
 class DaceProgram:
     """ A data-centric program object, obtained by decorating a function with
         ``@dace.program``. """
-    def __init__(self, f, args, kwargs, auto_optimize, device):
+    def __init__(self, f, args, kwargs, auto_optimize, device, method=False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
@@ -168,16 +178,17 @@ class DaceProgram:
         self.dec_kwargs = kwargs
         self.name = f.__name__
         self.argnames = _get_argnames(f)
+        if method:
+            self.objname = self.argnames[0]
+            self.argnames = self.argnames[1:]
+        else:
+            self.objname = None
         self.auto_optimize = auto_optimize
         self.device = device
+        self._methodobj: Any = None  #: Object whose method this program is
 
-        global_vars = _get_locals_and_globals(f)
+        self.global_vars = _get_locals_and_globals(f)
 
-        self.global_vars = {
-            k: v
-            for k, v in global_vars.items()
-            if dtypes.isallowed(v, allow_recursive=True)
-        }
         if self.argnames is None:
             self.argnames = []
 
@@ -185,15 +196,20 @@ class DaceProgram:
         self._cache: Tuple[ArgTypes, SDFG,
                            compiled_sdfg.CompiledSDFG] = (None, None, None)
 
-    def _auto_optimize(self, sdfg: SDFG, symbols: Dict[str, int] = None) -> SDFG:
+    def _auto_optimize(self,
+                       sdfg: SDFG,
+                       symbols: Dict[str, int] = None) -> SDFG:
         """ Invoke automatic optimization heuristics on internal program. """
         # Avoid import loop
         from dace.transformation.auto import auto_optimize as autoopt
-        return autoopt.auto_optimize(sdfg, self.device, symbols = symbols)
+        return autoopt.auto_optimize(sdfg, self.device, symbols=symbols)
 
     def to_sdfg(self, *args, strict=None, save=False) -> SDFG:
         """ Parses the DaCe function into an SDFG. """
         return self.parse(*args, strict=strict, save=save)
+
+    def __sdfg__(self, *args) -> SDFG:
+        return self.parse(*args, strict=None, save=False)
 
     def compile(self, *args, strict=None, save=False):
         """ Convenience function that parses and compiles a DaCe program. """
@@ -216,22 +232,46 @@ class DaceProgram:
                 return False
         return True
 
+    @property
+    def methodobj(self) -> Any:
+        return self._methodobj
+
+    @methodobj.setter
+    def methodobj(self, new_obj: Any):
+        self._methodobj = new_obj
+        # Clear cache upon changing parent object
+        del self._cache
+        self._cache = (None, None, None)
+
     def __call__(self, *args, **kwargs):
         """ Convenience function that parses, compiles, and runs a DaCe 
             program. """
         # Check if SDFG with these argument types and shapes is cached
-        argtypes = get_type_annotations(self.f, self.argnames, args)
+        if self.methodobj is not None:
+            self.global_vars[self.objname] = self.methodobj
+
+        argtypes = get_type_annotations(self.f, self.argnames, args,
+                                        self.methodobj is not None)
         if self.is_cached(argtypes):
             self._cache[2].clear_return_values()
             # Reconstruct keyword arguments
             kwargs.update(
                 {aname: arg
                  for aname, arg in zip(self.argnames, args)})
-            kwargs.update(infer_symbols_from_shapes(self._cache[1], kwargs))
+            kwargs.update(
+                infer_symbols_from_datadescriptor(self._cache[1], kwargs))
             return self._cache[2](**kwargs)
 
         # Clear cache to enforce deletion and closure of compiled program
         del self._cache
+
+        # Add classes (that are not defined yet when the method is) to closure
+        local_vars = _get_locals_and_globals(self.f)
+        self.global_vars.update({
+            k: v
+            for k, v in local_vars.items()
+            if k not in self.global_vars and isinstance(v, type)
+        })
 
         # Parse SDFG
         sdfg = self.parse(*args)
@@ -240,7 +280,10 @@ class DaceProgram:
         kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
 
         # Update arguments with symbols in data shapes
-        kwargs.update(infer_symbols_from_shapes(sdfg, kwargs))
+        kwargs.update(
+            infer_symbols_from_datadescriptor(
+                sdfg, {k: create_datadescriptor(v)
+                       for k, v in kwargs.items()}))
 
         # Allow CLI to prompt for optimizations
         if Config.get_bool('optimizer', 'transform_on_call'):
@@ -248,7 +291,7 @@ class DaceProgram:
 
         # Invoke auto-optimization as necessary
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
-            sdfg = self._auto_optimize(sdfg, symbols = kwargs)
+            sdfg = self._auto_optimize(sdfg, symbols=kwargs)
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
@@ -325,7 +368,8 @@ class DaceProgram:
         args = self.dec_args
 
         # If exist, obtain type annotations (for compilation)
-        argtypes = get_type_annotations(dace_func, self.argnames, args)
+        argtypes = get_type_annotations(dace_func, self.argnames, args,
+                                        self.methodobj is not None)
 
         # Parse argument types from call
         if len(inspect.getfullargspec(dace_func).args) > 0:

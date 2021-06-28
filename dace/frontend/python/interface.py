@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Python interface for DaCe functions. """
 
+from functools import wraps
 import inspect
 from dace import dtypes
 from dace.dtypes import paramdec
@@ -43,6 +44,45 @@ def program(f: F,
 
 
 function = program
+
+
+@overload
+def method(f: F) -> parser.DaceProgram:
+    ...
+
+
+@overload
+def method(*args,
+           auto_optimize=False,
+           device=dtypes.DeviceType.CPU,
+           **kwargs) -> parser.DaceProgram:
+    ...
+
+
+@paramdec
+def method(f: F,
+           *args,
+           auto_optimize=False,
+           device=dtypes.DeviceType.CPU,
+           **kwargs) -> parser.DaceProgram:
+    """ Entry point to a data-centric program that is a method or 
+        a ``classmethod``. """
+
+    # Create a wrapper class that can bind to the object instance
+    class MethodWrapper:
+        def __init__(self, prog):
+            self.prog = prog
+
+        def __get__(self, obj, objtype=None):
+            # Modify wrapped instance as necessary, only clearing
+            # compiled program cache if needed.
+            if self.prog.methodobj is not obj:
+                self.prog.methodobj = obj
+            return self.prog
+
+    return MethodWrapper(
+        parser.DaceProgram(f, args, kwargs, auto_optimize, device, method=True))
+
 
 # DaCe functions
 
