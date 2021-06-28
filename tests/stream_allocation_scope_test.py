@@ -19,8 +19,8 @@ def test_stream_allocation_scope():
     state = sdfg.add_state()
     a = state.add_read("A")
     b = state.add_write("B")
-    read_AtoB = state.add_read("AtoB")
-    write_AtoB = state.add_write("AtoB")
+    read_A_to_B = state.add_read("AtoB")
+    write_A_to_B = state.add_write("AtoB")
 
     read_entry, read_exit = state.add_map(
         "read_A", {"n": "0:N/P"},
@@ -56,21 +56,21 @@ out_data = in_data""")
     state.add_memlet_path(
         copy_tasklet1,
         read_exit,
-        write_AtoB,
+        write_A_to_B,
         src_conn="out_data",
         memlet=dace.Memlet("AtoB[p]")
     )
 
-    state.add_memlet_path(write_AtoB, unroll_read_exit, memlet=dace.memlet.Memlet())
+    state.add_memlet_path(write_A_to_B, unroll_read_exit, memlet=dace.memlet.Memlet())
 
     copy_tasklet2 = state.add_tasklet(
         "copy2", {"in_data"}, {"out_data"}, """\
 out_data = in_data""")
 
-    state.add_memlet_path(unroll_write_entry, read_AtoB, memlet=dace.memlet.Memlet())
+    state.add_memlet_path(unroll_write_entry, read_A_to_B, memlet=dace.memlet.Memlet())
 
     state.add_memlet_path(
-        read_AtoB,
+        read_A_to_B,
         write_entry,
         copy_tasklet2,
         dst_conn="in_data",
