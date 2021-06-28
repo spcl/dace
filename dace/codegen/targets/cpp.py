@@ -222,7 +222,7 @@ def ptr(name: str,
         sdfg: dace.SDFG = None,
         is_write: bool = None,
         dispatcher=None,
-        ancestor: int = None,
+        ancestor: int = 0,
         is_array_interface: bool = False,
         interface_id: Union[int, List[int]] = None) -> str:
     """
