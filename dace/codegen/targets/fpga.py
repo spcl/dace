@@ -326,21 +326,14 @@ class FPGACodeGen(TargetCodeGenerator):
                 for node in subgraph.nodes()
                 if isinstance(node, dace.sdfg.nodes.AccessNode)
             })
+            rtl_subgraph = any([isinstance(node, nodes.RTLTasklet) for node in subgraph.nodes()])
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
             for n in subgraph.source_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                dsts = [e.dst for e in state.out_edges(n)]
-                srcs = [e.src for e in state.in_edges(n)]
-                tasks = [
-                    t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)
-                ]
-                external = any([
-                    t.language == dtypes.Language.SystemVerilog for t in tasks
-                ])
-                if external:
+                if rtl_subgraph:
                     external_streams |= {
                         (True, e.data.data, subsdfg.arrays[e.data.data], None)
                         for e in state.out_edges(n)
@@ -353,15 +346,7 @@ class FPGACodeGen(TargetCodeGenerator):
             for n in subgraph.sink_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                dsts = [e.dst for e in state.out_edges(n)]
-                srcs = [e.src for e in state.in_edges(n)]
-                tasks = [
-                    t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)
-                ]
-                external = any([
-                    t.language == dtypes.Language.SystemVerilog for t in tasks
-                ])
-                if external:
+                if rtl_subgraph:
                     external_streams |= {
                         (False, e.data.data, subsdfg.arrays[e.data.data], None)
                         for e in state.in_edges(n)
