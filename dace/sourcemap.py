@@ -210,11 +210,16 @@ def create_cpp_map(code: str, name: str, target_name: str):
     # We send a message to the IDE in that case to notify the user of
     # restricted features.
     if Config.get('cache') != 'hash':
+        codegen_debug = Config.get_bool('compiler', 'codegen_lineinfo')
         cpp_mapper = MapCpp(code, name, target_name)
-        cpp_mapper.mapper()
+        cpp_mapper.mapper(codegen_debug)
 
         folder = save("cpp", name, cpp_mapper.map, tmp.get("build_folder"))
         api = tmp.get('made_with_api')
+
+        if codegen_debug:
+            save("codegen", name, cpp_mapper.codegen_map,
+                 tmp.get("build_folder"))
 
         # Send information about the SDFG to VSCode
         send({
@@ -224,6 +229,7 @@ def create_cpp_map(code: str, name: str, target_name: str):
             "path_file": tmp.get("src_files"),
             "target_name": target_name,
             "made_with_api": api if api else False,
+            "codegen_map": codegen_debug
         })
     else:
         send({'type': 'restrictedFeatures', 'reason': 'config.cache.hash'})
@@ -237,15 +243,23 @@ class MapCpp:
         self.name = name
         self.code = code
         self.map = {'target': target_name}
+        self.codegen_map = {}
+        self.cpp_pattern = re.compile(
+            r'(\/\/\/\/__DACE:[0-9]+:[0-9]+:[0-9]+(,[0-9])*)')
+        self.codegen_pattern = re.compile(
+            r'(\/\/\/\/__CODEGEN;([A-z]:)?(\/|\\)([A-z0-9-_+]+(\/|\\))*([A-z0-9]+\.[A-z0-9]+);[0-9]+)'
+        )
 
-    def mapper(self):
-        """ For each line of code retrieve the corresponding nodes
-            and map the nodes to this line
+    def mapper(self, codegen_debug: bool = False):
+        """ For each line of code retrieve the corresponding identifiers
+            and create the mapping
         """
         for line_num, line in enumerate(self.code.split("\n"), 1):
             nodes = self.get_nodes(line)
             for node in nodes:
                 self.create_mapping(node, line_num)
+            if codegen_debug:
+                self.codegen_mapping(line, line_num)
 
     def create_mapping(self, node: SdfgLocation, line_num: int):
         """ Adds a C++ line number to the mapping
@@ -286,17 +300,36 @@ class MapCpp:
                     ids_split[3].split(",")))
         return nodes
 
-    def get_identifiers(self, line: str):
+    def codegen_mapping(self, line: str, line_num: int):
+        """ Searches the code line for the first ////__CODEGEN identifier
+            and adds the information to the codegen_map
+            :param line: code line to search for identifiers
+            :param line_num: corresponding line number
+        """
+        codegen_identifier = self.get_identifiers(line, findall=False)
+        if codegen_identifier:
+            codegen_debuginfo = codegen_identifier.split(';')
+            self.codegen_map[line_num] = {
+                'file': codegen_debuginfo[1],
+                'line': codegen_debuginfo[2]
+            }
+
+    def get_identifiers(self, line: str, findall: bool = True):
         """ Retruns a list of identifiers found in the code line
             :param line: line of C++ code with identifiers
-            :return: list of identifers
+            :param findall: if it should return all finds or just the first one
+            :return: if findall is true return list of identifers 
+            otherwise a single identifier
         """
-        line_identifier = re.findall(
-            r'(\/\/\/\/__DACE:[0-9]:[0-9]:[0-9]*(,[0-9])*)', line)
-        # The regex expression returns 2 groups (a tuple) due to us also
-        # considering edges. We are only interested in the first element.
-        # Example tuple in the case of an edge ('////__DACE:0:0:2,6', ',6')
-        return [x for (x, y) in line_identifier]
+        if findall:
+            line_identifiers = re.findall(self.cpp_pattern, line)
+            # The regex expression returns multiple groups (a tuple).
+            # We are only interested in the first element of the tuple (the entire match).
+            # Example tuple in the case of an edge ('////__DACE:0:0:2,6', ',6')
+            return [groups[0] for groups in line_identifiers]
+        else:
+            line_identifier = re.search(self.codegen_pattern, line)
+            return line_identifier.group(0) if line_identifier else None
 
 
 class MapPython:
