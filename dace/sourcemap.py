@@ -242,8 +242,10 @@ class MapCpp:
         """ For each line of code retrieve the corresponding nodes
             and map the nodes to this line
         """
+        cpp_pattern = re.compile(r'(\/\/\/\/__DACE:[0-9]:[0-9]:[0-9]*(,[0-9])*)')
+
         for line_num, line in enumerate(self.code.split("\n"), 1):
-            nodes = self.get_nodes(line)
+            nodes = self.get_nodes(line, cpp_pattern)
             for node in nodes:
                 self.create_mapping(node, line_num)
 
@@ -267,14 +269,15 @@ class MapCpp:
                 # (before "line_num"), then extend the range this node maps to
                 state[node_id]['to'] += 1
 
-    def get_nodes(self, line_code: str):
+    def get_nodes(self, line_code: str, cpp_pattern: re.Pattern):
         """ Retrive all identifiers set at the end of the line of code.
             Example: x = y ////__DACE:0:0:0 ////__DACE:0:0:1
                 Returns [SDFGL(0,0,0), SDFGL(0,0,1)]
             :param line_code: a single line of code
+            :param cpp_pattern: compiled RE pattern to match the DACE identifiers
             :return: list of SDFGLocation
         """
-        line_identifiers = self.get_identifiers(line_code)
+        line_identifiers = self.get_identifiers(line_code, cpp_pattern)
         nodes = []
         for identifier in line_identifiers:
             ids_split = identifier.split(":")
@@ -286,13 +289,13 @@ class MapCpp:
                     ids_split[3].split(",")))
         return nodes
 
-    def get_identifiers(self, line: str):
+    def get_identifiers(self, line: str, pattern: re.Pattern):
         """ Retruns a list of identifiers found in the code line
             :param line: line of C++ code with identifiers
+            :param pattern: compiled RE pattern for finding the identifiers
             :return: list of identifers
         """
-        line_identifier = re.findall(
-            r'(\/\/\/\/__DACE:[0-9]:[0-9]:[0-9]*(,[0-9])*)', line)
+        line_identifier = re.findall(pattern, line)
         # The regex expression returns 2 groups (a tuple) due to us also
         # considering edges. We are only interested in the first element.
         # Example tuple in the case of an edge ('////__DACE:0:0:2,6', ',6')
