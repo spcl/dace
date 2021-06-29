@@ -76,6 +76,20 @@ def test_newaxis():
     assert np.allclose(A[:, np.newaxis, None, :], res)
 
 
+def test_multiple_newaxis():
+    @dace.program
+    def indexing_test(A: dace.float64[10, 20, 30]):
+        return A[np.newaxis, :, np.newaxis, np.newaxis, :, np.newaxis, :,
+                 np.newaxis]
+
+    A = np.random.rand(10, 20, 30)
+    res = indexing_test(A)
+    assert res.shape == (1, 10, 1, 1, 20, 1, 30, 1)
+    assert np.allclose(
+        A[np.newaxis, :, np.newaxis, np.newaxis, :, np.newaxis, :, np.newaxis],
+        res)
+
+
 def test_index_intarr_1d():
     @dace.program
     def indexing_test(A: dace.float64[N], indices: dace.int32[M]):
@@ -208,6 +222,7 @@ if __name__ == '__main__':
     test_aug_implicit()
     test_ellipsis_aug()
     test_newaxis()
+    test_multiple_newaxis()
     test_index_intarr_1d()
     test_index_intarr_1d_literal()
     test_index_intarr_1d_constant()

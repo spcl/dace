@@ -36,7 +36,8 @@ def cuda_helper():
                                               targets.cuda.CUDACodeGen,
                                               "CudaDummy")
 
-    BUILD_PATH = os.path.join('.dacecache', "cuda_helper")
+    build_folder = dace.Config.get('default_build_folder')
+    BUILD_PATH = os.path.join(build_folder, "cuda_helper")
     compiler.generate_program_folder(None, [program, dummy_cuda_target],
                                      BUILD_PATH)
     compiler.configure_and_compile(BUILD_PATH)
