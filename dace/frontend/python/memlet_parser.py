@@ -128,7 +128,6 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
                 new_idx += 1
         elif (dim is None or (isinstance(dim, (ast.Constant, ast.NameConstant))
                               and dim.value is None)):
-            # new_axes.append(idx)
             new_axes.append(new_idx)
             new_idx += 1
             # NOTE: Do not increment idx here
