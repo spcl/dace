@@ -322,7 +322,7 @@ class MapCpp:
             otherwise a single identifier
         """
         if findall:
-            line_identifiers = re.findall(self.codegen_pattern, line)
+            line_identifiers = re.findall(self.cpp_pattern, line)
             # The regex expression returns multiple groups (a tuple).
             # We are only interested in the first element of the tuple (the entire match).
             # Example tuple in the case of an edge ('////__DACE:0:0:2,6', ',6')
