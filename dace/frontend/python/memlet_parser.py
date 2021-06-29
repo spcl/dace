@@ -89,6 +89,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     new_axes = []
     arrdims: Dict[int, str] = {}
     idx = 0
+    new_idx = 0
     has_ellipsis = False
     for dim in ast_ndslice:
         if isinstance(dim, (str, list)):
@@ -112,6 +113,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             ndslice[idx] = (rb, re, rs)
             offsets.append(idx)
             idx += 1
+            new_idx += 1
         elif (isinstance(dim, ast.Ellipsis) or dim is Ellipsis
               or (isinstance(dim, ast.Constant) and dim.value is Ellipsis)
               or (isinstance(dim, ast.Name) and dim.id is Ellipsis)):
@@ -123,15 +125,18 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             for j in range(idx, len(ndslice) - remaining_dims):
                 ndslice[j] = (0, array.shape[j] - 1, 1)
                 idx += 1
+                new_idx += 1
         elif (dim is None or (isinstance(dim, (ast.Constant, ast.NameConstant))
                               and dim.value is None)):
-            new_axes.append(idx)
+            new_axes.append(new_idx)
+            new_idx += 1
             # NOTE: Do not increment idx here
         elif isinstance(dim, ast.Name) and isinstance(dim.id, (list, tuple)):
             # List/tuple literal
             ndslice[idx] = (0, array.shape[idx] - 1, 1)
             arrdims[indices[idx]] = dim.id
             idx += 1
+            new_idx += 1
         elif (isinstance(dim, ast.Name) and dim.id in das
               and isinstance(das[dim.id], data.Array)):
             # Accessing an array with another
@@ -163,16 +168,19 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
                 arrdims[indices[idx]] = dim.id
 
             idx += 1
+            new_idx += 1
         elif (isinstance(dim, ast.Name) and dim.id in das
               and isinstance(das[dim.id], data.Scalar)):
             ndslice[idx] = (dim.id, dim.id, 1)
             idx += 1
+            new_idx += 1
         else:
             r = pyexpr_to_symbolic(das, dim)
             if (r < 0) == True:
                 r += array.shape[indices[idx]]
             ndslice[idx] = r
             idx += 1
+            new_idx += 1
 
     # Extend slices to unspecified dimensions
     for i in range(idx, len(array.shape)):
