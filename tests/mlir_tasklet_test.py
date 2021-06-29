@@ -500,31 +500,29 @@ def mlir_tasklet_recursion(A: dace.int32[2], B: dace.int32[1]):
         a << A[0]
         b >> B[0]
         """
-        module  {
-            func @mlir_entry(%a: i32) -> i32 {
-                %0 = constant 0 : i32
-                %1 = constant 1 : i32
-
-                %isZero = cmpi "eq", %a, %0 : i32
-                %isOne = cmpi "eq", %a, %1 : i32
-
-                cond_br %isZero, ^zero, ^secondCheck
-                ^secondCheck: cond_br %isOne, ^one, ^else
-
-                ^zero: return %0 : i32
-                ^one: return %1 : i32
-
-                ^else: 
-                %oneLess = subi %a, %1  : i32
-                %twoLess = subi %oneLess, %1  : i32
-
-                %oneLessRet = call @mlir_entry(%oneLess) : (i32) -> i32
-                %twoLessRet = call @mlir_entry(%twoLess) : (i32) -> i32
-
-                %ret = addi %oneLessRet, %twoLessRet  : i32
-                return %ret : i32
-            }
-        }
+        "module"() ( {
+        "func"() ( {
+        ^bb0(%arg0: i32):  // no predecessors
+            %c0_i32 = "std.constant"() {value = 0 : i32} : () -> i32
+            %c1_i32 = "std.constant"() {value = 1 : i32} : () -> i32
+            %0 = "std.cmpi"(%arg0, %c0_i32) {predicate = 0 : i64} : (i32, i32) -> i1
+            %1 = "std.cmpi"(%arg0, %c1_i32) {predicate = 0 : i64} : (i32, i32) -> i1
+            "std.cond_br"(%0)[^bb2, ^bb1] {operand_segment_sizes = dense<[1, 0, 0]> : vector<3xi32>} : (i1) -> ()
+        ^bb1:  // pred: ^bb0
+            "std.cond_br"(%1)[^bb3, ^bb4] {operand_segment_sizes = dense<[1, 0, 0]> : vector<3xi32>} : (i1) -> ()
+        ^bb2:  // pred: ^bb0
+            "std.return"(%c0_i32) : (i32) -> ()
+        ^bb3:  // pred: ^bb1
+            "std.return"(%c1_i32) : (i32) -> ()
+        ^bb4:  // pred: ^bb1
+            %2 = "std.subi"(%arg0, %c1_i32) : (i32, i32) -> i32
+            %3 = "std.subi"(%2, %c1_i32) : (i32, i32) -> i32
+            %4 = "std.call"(%2) {callee = @mlir_entry} : (i32) -> i32
+            %5 = "std.call"(%3) {callee = @mlir_entry} : (i32) -> i32
+            %6 = "std.addi"(%4, %5) : (i32, i32) -> i32
+            "std.return"(%6) : (i32) -> ()
+        }) {sym_name = "mlir_entry", type = (i32) -> i32} : () -> ()
+        }) : () -> ()
         """
 
 
