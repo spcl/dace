@@ -303,7 +303,7 @@ class MapCpp:
                     ids_split[3].split(",")))
         return nodes
 
-    def codegen_mapping(self, line: str, line_num: int, pattern: re.Pattern()):
+    def codegen_mapping(self, line: str, line_num: int, pattern: re.Pattern):
         """ Searches the code line for the first ////__CODEGEN identifier
             and adds the information to the codegen_map
             :param line: code line to search for identifiers
