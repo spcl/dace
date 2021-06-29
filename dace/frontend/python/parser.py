@@ -196,14 +196,16 @@ class DaceProgram:
 
         return sdfg.compile()
 
-    def is_cached(self, argtypes: ArgTypes) -> bool:
+    def is_cached(self, argtypes: ArgTypes, gvars: Dict[str, Any]) -> bool:
         """
         Returns True if the given arguments exist in the compiled SDFG cache.
         """
         if self._cache[0] is None or self._cache[0].keys() != argtypes.keys():
             return False
         for k, v in self._cache[0].items():
-            if not v.is_equivalent(argtypes[k]):
+            if k in argtypes and not v.is_equivalent(argtypes[k]):
+                return False
+            if k in gvars and v != gvars[k]:
                 return False
         return True
 
@@ -247,9 +249,9 @@ class DaceProgram:
         if self.methodobj is not None:
             self.global_vars[self.objname] = self.methodobj
 
-        argtypes, arg_mapping, _ = self._get_type_annotations(args, kwargs)
+        argtypes, arg_mapping, gvars = self._get_type_annotations(args, kwargs)
 
-        if self.is_cached(argtypes):
+        if self.is_cached(argtypes, gvars):
             kwargs.update(arg_mapping)
             self._cache[2].clear_return_values()
             return self._cache[2](
@@ -285,7 +287,7 @@ class DaceProgram:
         # altering transformations such as Vectorization)
         binaryobj = sdfg.compile()
 
-        self._cache = (argtypes, sdfg, binaryobj)
+        self._cache = ({**argtypes, **gvars}, sdfg, binaryobj)
 
         # Call SDFG
         result = binaryobj(**sdfg_args)
