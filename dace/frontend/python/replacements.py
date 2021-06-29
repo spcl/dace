@@ -703,7 +703,7 @@ def _minmax2(pv: 'ProgramVisitor',
 
     func = 'min' if ismin else 'max'
     tasklet = nodes.Tasklet(f'__{func}2', in_conn, out_conn,
-                            "__out = min({a}, {b})".format(a=arg_a, b=arg_b))
+                            f'__out = {func}({arg_a}, {arg_b})')
 
     c = _define_local_scalar(pv, sdfg, state, dtype_c)
     desc_c = sdfg.arrays[c]
