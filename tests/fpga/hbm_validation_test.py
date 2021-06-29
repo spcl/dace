@@ -48,7 +48,7 @@ def test_multitasklet():
         with dace.tasklet:
             m << input[0:2, 4]
             n >> output[0:4, 5]
-            m = n
+            n = m
 
     sdfg = multitasklet.to_sdfg()
     sdfg.validate()
@@ -57,6 +57,17 @@ def test_multitasklet():
     sdfg.apply_fpga_transformations(validate=False)
     assert_validation_failure(sdfg, InvalidSDFGNodeError)
 
+    @dace.program
+    def singletasklet(input: dace.int32[2, 10], output: dace.int32[2, 10]):
+        with dace.tasklet:
+            m << input[0, 0:10]
+            n >> output[1, 0:10]
+            n = m
+    sdfg = singletasklet.to_sdfg()
+    sdfg.arrays["input"].location["bank"] = "hbm.0:2"
+    sdfg.arrays["output"].location["bank"] = "hbm.2:4"
+    sdfg.apply_fpga_transformations()
+    sdfg.validate()
 
 def test_unsound_location():
     sdfg = dace.SDFG("jdj")
@@ -94,6 +105,6 @@ def test_unsound_location():
 
 
 if __name__ == "__main__":
-    test_deepscope()
+    #test_deepscope()
     test_multitasklet()
-    test_unsound_location()
+    #test_unsound_location()
