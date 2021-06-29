@@ -226,9 +226,6 @@ def test_constant_argument_default():
     const_prog(A)
     assert np.allclose(A, 7)
 
-    # Forcefully clear cache to recompile
-    const_prog.clear_cache()
-
     # Test program
     A = np.random.rand(20)
     const_prog(A, cst=4)
