@@ -831,7 +831,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
     def _print_Symbol(self, expr):
         if expr.name == 'NoneSymbol':
-            return 'None'
+            return 'nullptr'
         return super()._print_Symbol(expr)
 
     def _print_Pow(self, expr):
