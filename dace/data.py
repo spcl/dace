@@ -46,7 +46,7 @@ def create_datadescriptor(obj):
         return Scalar(symbolic.symtype(obj))
     elif isinstance(obj, dtypes.typeclass):
         return Scalar(obj)
-    elif obj in {int, float, complex, bool}:
+    elif obj in {int, float, complex, bool, None}:
         return Scalar(dtypes.typeclass(obj))
     elif callable(obj):
         # Cannot determine return value/argument types from function object

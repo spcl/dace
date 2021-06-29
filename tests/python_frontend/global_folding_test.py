@@ -158,34 +158,6 @@ def test_dead_code_elimination_unreachable():
     assert '3' in parsed_code and '2' in parsed_code  # Reachable code
 
 
-# TODO: dace.constant should signal that argument evaluation is deferred to
-#       (nested) call time
-# dace.constant = lambda x: None
-# def test_constant_parameter():
-#     """
-#     Tests nested functions with constant parameters passed in as arguments.
-#     """
-#     @dace.program
-#     def nested_func(cfg: dace.constant(MyConfiguration), A: dace.float64[20]):
-#         return A[cfg.p]
-
-#     @dace.program
-#     def constant_parameter(
-#             cfg: dace.constant(MyConfiguration),
-#             cfg2: dace.constant(MyConfiguration), A: dace.float64[20]):
-#         A[cfg.q] = nested_func(cfg, A)
-#         A[MyConfiguration.get_random_number()] = nested_func(cfg2, A)
-
-#     cfg1 = MyConfiguration(3)
-#     cfg2 = MyConfiguration(4)
-#     A = np.random.rand(20)
-#     reg_A = np.copy(A)
-#     reg_A[12] = reg_A[6]
-#     reg_A[4] = reg_A[8]
-
-#     constant_parameter(cfg1, cfg2, A)
-#     assert np.allclose(A, reg_A)
-
 if __name__ == '__main__':
     test_instantiated_global()
     test_nested_globals()
@@ -193,4 +165,3 @@ if __name__ == '__main__':
     test_dead_code_elimination_ifexp()
     test_dead_code_elimination_noelse()
     test_dead_code_elimination_unreachable()
-    # test_constant_parameter()
