@@ -59,4 +59,4 @@ class CodeObject(object):
 
     @property
     def clean_code(self):
-        return re.sub(r'[ \t]*////__DACE:[^\n]*', '', self.code)
+        return re.sub(r'[ \t]*////__(DACE:|CODEGEN;)[^\n]*', '', self.code)

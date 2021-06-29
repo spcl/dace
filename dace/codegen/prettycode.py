@@ -2,6 +2,7 @@
 """ Code I/O stream that automates indentation and mapping of code to SDFG 
     nodes. """
 
+import inspect
 from six import StringIO
 from dace.config import Config
 
@@ -13,6 +14,7 @@ class CodeIOStream(StringIO):
         super(CodeIOStream, self).__init__()
         self._indent = 0
         self._spaces = int(Config.get('compiler', 'indentation_spaces'))
+        self._lineinfo = Config.get_bool('compiler', 'codegen_lineinfo')
 
     def write(self, contents, sdfg=None, state_id=None, node_id=None):
         # Delete single trailing newline, as this will be implicitly inserted
@@ -40,6 +42,11 @@ class CodeIOStream(StringIO):
                         [str(nid) for nid in node_id])
         else:
             location_identifier = ''
+
+        # Annotate code generator line
+        if self._lineinfo:
+            caller = inspect.getframeinfo(inspect.stack()[1][0])
+            location_identifier += f'  ////__CODEGEN;{caller.filename};{caller.lineno}'
 
         # Write each line separately
         for line in lines:

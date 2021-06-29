@@ -166,18 +166,27 @@ required:
                     RelWithDebInfo, or MinSizeRel).
 
             allow_shadowing:
-                type: str
+                type: bool
                 default: true
                 title: Allow variable shadowing
                 description: >
                    Allowing shadowing of variables in the code (reduces
                    exceptions to warnings when shadowing is encountered).
 
+            codegen_lineinfo:
+                type: bool
+                default: false
+                title: Annotate code generator lines
+                description: >
+                    Keep a source mapping between generated code and the file/line
+                    of the code generator that generated it. Used for debugging
+                    code generation.
+
             default_data_types:
                 type : str
                 default: Python
                 title : Default data types
-                descrition: >
+                description: >
                     Specify the default data types to use in generating code.
                     If "Python", Python's semantics will be followed (i.e., `float`  and `int`
                     are represented using 64 bits). If the property is set to "C", C's semantcs will be
