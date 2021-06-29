@@ -1,11 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Explicitly distributed Jacobi-2D sample."""
-import numpy as np
 import dace as dc
+import numpy as np
+import os
 import timeit
-from mpi4py import MPI
+from dace.sdfg.utils import load_precompiled_sdfg
 
-from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
 from dace.transformation.dataflow import MapFusion
 
 
@@ -34,7 +34,7 @@ MPI_Request = dc.opaque("MPI_Request")
 
 @dc.program
 def jacobi_2d_shared(TSTEPS: dc.int64, A: dc.float64[Nx, Ny], B: dc.float64[Nx, Ny]):
-    
+
     for t in range(1, TSTEPS):
         B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] +
                                  A[1:-1, 2:] + A[2:, 1:-1] + A[:-2, 1:-1])
@@ -60,7 +60,7 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[Nx, Ny], B: dc.float64[Nx, Ny
     lA[1:-1, 1:-1] = tAB
     dc.comm.Scatter(B2, tAB)
     lB[1:-1, 1:-1] = tAB
-    
+
     for t in range(1, TSTEPS):
 
         dc.comm.Isend(lA[1, 1:-1], nn, 0, req[0])
@@ -98,7 +98,7 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[Nx, Ny], B: dc.float64[Nx, Ny
             lB[1+noff:-1-soff, 2+woff:-eoff] +
             lB[2+noff:-soff, 1+woff:-1-eoff] +
             lB[noff:-2-soff, 1+woff:-1-eoff])
- 
+
     tAB[:] = lA[1:-1, 1:-1]
     dc.comm.Gather(tAB, A2)
     tAB[:] = lB[1:-1, 1:-1]
@@ -166,7 +166,7 @@ if __name__ == "__main__":
             return (
                 np.empty((N, N), dtype=np.float64),
                 np.empty((N, N), dtype=np.float64))
-    
+
     A, B = setup_func(rank)
 
     mpi_sdfg = None
@@ -178,14 +178,14 @@ if __name__ == "__main__":
         mpi_func = mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:
-        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
-            ".dacecache/{n}/build/lib{n}.so".format(n=jacobi_2d_dist.name),
-            jacobi_2d_dist.name))
+        build_folder = dc.Config.get('default_build_folder')
+        mpi_func = load_precompiled_sdfg(
+            os.path.join(build_folder, jacobi_2d_dist.name))
 
     ldict = locals()
-    
+
     comm.Barrier()
-  
+
     mpi_func(A=A, B=B, TSTEPS=TSTEPS, lNx=lNx, lNy=lNy, rank=rank, size=size,
              Px=Px, Py=Py, pi=pi, pj=pj,
              noff=noff, soff=soff, woff=woff, eoff=eoff,
