@@ -2987,14 +2987,14 @@ class ProgramVisitor(ExtNodeVisitor):
                     in1_subset.offset(wtarget_subset, True)
                     in1_memlet = Memlet.simple(
                         rtarget_name, ','.join([
-                            '__i%d + %d' % (i, s)
+                            '__i%d + %s' % (i, s)
                             for i, (s, _, _) in enumerate(in1_subset)
                         ]))
                     in2_subset = copy.deepcopy(op_subset)
                     in2_subset.offset(wtarget_subset, True)
                     in2_memlet = Memlet.simple(
                         op_name, ','.join([
-                            '__i%d + %d' % (i, s)
+                            '__i%d + %s' % (i, s)
                             for i, (s, _, _) in enumerate(in2_subset)
                         ]))
                     out_memlet = Memlet.simple(
@@ -3616,7 +3616,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_function_arg(self, arg: ast.AST):
         # Obtain a string representation
-        return self.visit(arg)
+        result = self.visit(arg)
+        if isinstance(result, (list, tuple)):
+            if len(result) == 1 and isinstance(result[0], str):
+                return result[0]
+        return result
 
     def _is_inputnode(self, sdfg: SDFG, name: str):
         visited_data = set()
