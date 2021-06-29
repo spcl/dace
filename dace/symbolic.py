@@ -831,7 +831,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
     def _print_Symbol(self, expr):
         if expr.name == 'NoneSymbol':
-            return 'None'
+            return 'nullptr'
         return super()._print_Symbol(expr)
 
     def _print_Pow(self, expr):
@@ -842,7 +842,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             assert (int_exp > 0)
             res = "({})".format(base)
             for _ in range(1, int_exp):
-                res += "*{}".format(base)
+                res += "*({})".format(base)
             return res
         except ValueError:
             return "dace::math::pow({f}, {s})".format(
