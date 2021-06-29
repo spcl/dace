@@ -217,6 +217,16 @@ required:
                     decide what NestedSDFG code can be replicated and what not.
                     "none": a separate function is code generated for each NestedSDFG
 
+            allow_view_arguments:
+                type: bool
+                default: false
+                title: Allow numpy views as arguments
+                description: >
+                    If true, allows users to call DaCe programs with NumPy views
+                    (for example, "A[:, 1]" or "w.T"). As this can create pointer
+                    aliasing issues with two arrays pointing to the same memory,
+                    or analyzability issue with strides and alignment, this option
+                    is disabled by default.
 
             inline_sdfgs:
                 type: bool

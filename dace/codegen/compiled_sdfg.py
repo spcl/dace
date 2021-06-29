@@ -383,6 +383,16 @@ class CompiledSDFG(object):
                     print(
                         'WARNING: Passing %s array argument "%s" to a %s array'
                         % (arg.dtype, a, atype.dtype.type.__name__))
+            elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray)
+                  and arg.base is not None
+                  and not Config.get_bool('compiler', 'allow_view_arguments')):
+                raise TypeError(
+                    'Passing a numpy view (e.g., sub-array or "A.T") to DaCe '
+                    'programs is not allowed in order to retain analyzability. '
+                    'Please make a copy with "numpy.copy(...)". If you know what '
+                    'you are doing, you can override this error in the '
+                    'configuration by setting compiler.allow_view_arguments '
+                    'to True.')
 
         # Explicit casting
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
