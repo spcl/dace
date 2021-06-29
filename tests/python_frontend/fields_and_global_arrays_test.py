@@ -160,6 +160,54 @@ def test_nested_objects():
     assert np.allclose(expected, result)
 
 
+def test_nested_constants():
+    class ObjA:
+        def __init__(self, q) -> None:
+            self.q = q
+
+        @dace.method
+        def nested(self, A):
+            return A + self.q
+
+    class ObjB:
+        def __init__(self, q) -> None:
+            self.q = q
+            self.obja = ObjA(q * 2)
+
+        @dace.method
+        def outer(self, A):
+            return A + self.q + self.obja.nested(A)
+
+    A = np.random.rand(20)
+    obj = ObjB(5)
+    expected = A + obj.q + A + (obj.q * 2)
+
+    result = obj.outer(A)
+    assert np.allclose(expected, result)
+
+
+def test_nested_object_access():
+    class ObjA:
+        def __init__(self, q) -> None:
+            self.q = q
+
+    class ObjB:
+        def __init__(self, q) -> None:
+            self.q = q
+            self.obja = ObjA(q * 2)
+
+        @dace.method
+        def outer(self, A):
+            return A + self.q + self.obja.q
+
+    A = np.random.rand(20)
+    obj = ObjB(5)
+    expected = A + obj.q + (obj.q * 2)
+
+    result = obj.outer(A)
+    assert np.allclose(expected, result)
+
+
 def test_same_field_different_classes():
     """ 
     Testing for correctness in the existence of the same object in multiple
@@ -196,4 +244,6 @@ if __name__ == '__main__':
     test_object_constant()
     test_external_cache()
     test_nested_objects()
+    test_nested_constants()
+    test_nested_object_access()
     test_same_field_different_classes()
