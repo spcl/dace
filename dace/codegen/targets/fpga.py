@@ -1108,11 +1108,10 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
 
             copy_shape = memlet.subset.bounding_box_size()
-            if (src_is_subset and utils.is_hbm_array(src_nodedesc)
-                or not src_is_subset and 
-                utils.is_hbm_array(dst_nodedesc)):
-                copy_shape = utils.modify_distributed_subset(
-                    copy_shape, -1,)
+            is_src_using_hbm = src_is_subset and utils.is_hbm_array(src_nodedesc)
+            is_dst_using_hbm = not src_is_subset and utils.is_hbm_array(dst_nodedesc)
+            if is_src_using_hbm or is_dst_using_hbm:
+                copy_shape = utils.modify_distributed_subset(copy_shape, -1)
 
             offset_src, offset_dst = "0", "0"
             if memlet.src_subset is not None:
@@ -1486,7 +1485,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         dst_schedule = None if dst_parent is None else dst_parent.map.schedule
         state_dfg = sdfg.nodes()[state_id]
 
-        #Check if this is a copy memlet using at least one HBM array
+        # Check if this is a copy memlet using at least one HBM array
         do_default_copy = True
         if (isinstance(src_node, dace.sdfg.nodes.AccessNode)
                 and isinstance(dst_node, dace.sdfg.nodes.AccessNode)):
@@ -1513,7 +1512,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 for i in range(num_accessed_banks):
                     src_index = oldmem.src_subset[0][0] + i
                     dst_index = oldmem.dst_subset[0][0] + i
-                    #Support for ignoring the distributed index if it's not required, e.g. on the host
+                    # Support for ignoring the distributed index if it's not required, e.g. on the host
                     if src_is_hbm or num_accessed_banks > 1:
                         mem.src_subset = utils.modify_distributed_subset(
                             mem.src_subset, src_index)
@@ -2009,14 +2008,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)
                     and self._dispatcher.defined_vars.has(edge.src_conn)):
-                accessed_subset = 0
                 if utils.is_hbm_array(datadesc):
-                    accessed_subset, high_check = utils.get_multibank_ranges_from_subset(
+                    accessed_subset, _ = utils.get_multibank_ranges_from_subset(
                         edge.data.dst_subset or edge.data.subset, sdfg)
-                    if accessed_subset + 1 != high_check:
-                        raise cgx.CodegenError(
-                            "generate_tasklet_postamble was called on HBM memlet accessing multiple banks"
-                        )
+                else:
+                    accessed_subset = 0
 
                 self.generate_no_dependence_post(after_memlets_stream, sdfg,
                                                  state_id, node, edge.src_conn,

@@ -57,10 +57,10 @@ def copy_expr(
 
     def_type, _ = dispatcher.defined_vars.get(data_name)
 
-    # If this is a view, it has already been renamed
     expr = ptr(
         data_name, data_desc, hbm_bank, sdfg, is_write, dispatcher, 0,
         def_type == DefinedType.ArrayInterface
+        # If this is a view, it has already been renamed
         and not isinstance(data_desc, data.View))
 
     add_offset = offset_cppstr != "0"

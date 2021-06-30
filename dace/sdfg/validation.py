@@ -58,7 +58,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                     "storage type. Please use a different storage location." %
                     name, sdfg, None)
 
-            #Check for valid bank assignments
+            # Check for valid bank assignments
             try:
                 bank_assignment = sdutil.parse_location_bank(desc)
             except ValueError as e:
@@ -463,9 +463,11 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 )
         ########################################
 
-        #Check if distributed subset indices are evaluatable
         def validate_hbm_subset(distributed_subset: subsets.Subset,
             sdfg, state_id, eid):
+            """
+            Check if first index is evaluatable to constant
+            """
             if len(distributed_subset) <= 1:
                 return False
             low, high, stride = distributed_subset[0]
@@ -648,6 +650,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     'Dimensionality mismatch between src/dst subsets', sdfg,
                     state_id, eid)
 
+        # Check if first index is evaluatable for HBM arrays
         if isinstance(src_node, nd.AccessNode) and sdutil.is_hbm_array(src_node.desc(state)):
             validate_hbm_subset(e.data.src_subset or e.data.subset,
                 sdfg, state_id, eid)

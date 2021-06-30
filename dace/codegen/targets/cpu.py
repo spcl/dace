@@ -316,12 +316,11 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.defined_vars.add(name, DefinedType.Stream,
                                               ctypedef)
 
-        elif (
-                nodedesc.storage == dtypes.StorageType.CPU_Heap or
+        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap or
             (nodedesc.storage == dtypes.StorageType.Register and
              ((symbolic.issymbolic(arrsize, sdfg.constants)) or
-              ((arrsize_bytes > Config.get("compiler", "max_stack_array_size"))
-               == True)))):
+              ((arrsize_bytes > Config.get(
+                    "compiler", "max_stack_array_size")) == True)))):
 
             if nodedesc.storage == dtypes.StorageType.Register:
 
@@ -1534,7 +1533,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if (memlet.data in sdfg.arrays
                     and sdutils.is_hbm_array(sdfg.arrays[memlet.data])):
                 raise NotImplementedError(
-                    "HBM in nested SDFG's not supported in non-FPGA code.")
+                    "HBM in nested SDFGs not supported in non-FPGA code.")
 
         memlet_references = []
         for _, _, _, vconn, in_memlet in sorted(state.in_edges(node),
