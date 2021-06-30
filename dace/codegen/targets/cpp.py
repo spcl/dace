@@ -233,7 +233,6 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None) -> str:
         if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
             if not sdfg:
                 raise ValueError("Missing SDFG value")
-            # return f'__state->{name}'
             return f'__state->__{sdfg.sdfg_id}_{name}'
 
     return name
@@ -268,7 +267,7 @@ def emit_memlet_reference(dispatcher,
         if (isinstance(desc, data.Array) and any(
                 str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
                 for s in desc.free_symbols)):
-            defined_types = dispatcher.declared_vars.get(memlet.data, ancestor)
+            defined_types = dispatcher.declared_arrays.get(memlet.data, ancestor)
     except KeyError:
         pass
     if not defined_types:

@@ -137,7 +137,7 @@ class TargetDispatcher(object):
         # type: Dict[dace.dtypes.InstrumentationType, InstrumentationProvider]
         self.instrumentation = {}
 
-        self._array_dispatchers = {
+        self._array_dispatchers : dict[dtypes.StorageType, target.TargetCodeGenerator] = {
         }  # Type: dtypes.StorageType -> TargetCodeGenerator
         self._map_dispatchers = {
         }  # Type: dtypes.ScheduleType -> TargetCodeGenerator
@@ -154,13 +154,13 @@ class TargetDispatcher(object):
         self._state_dispatchers = []  # [(predicate, dispatcher)]
         self._generic_state_dispatcher = None  # Type: TargetCodeGenerator
 
-        self._declared_vars = DefinedMemlets()
+        self._declared_arrays = DefinedMemlets()
         self._defined_vars = DefinedMemlets()
 
     @property
-    def declared_vars(self) -> DefinedMemlets:
+    def declared_arrays(self) -> DefinedMemlets:
         """ Returns a list of declared variables. """
-        return self._declared_vars
+        return self._declared_arrays
 
     @property
     def defined_vars(self) -> DefinedMemlets:
@@ -445,7 +445,7 @@ class TargetDispatcher(object):
         if declare and not allocate:
             self._array_dispatchers[datadesc.storage].declare_array(
                 sdfg, dfg, state_id, node, datadesc, function_stream,
-                declaration_stream, callsite_stream)
+                declaration_stream)
         elif allocate:
             self._array_dispatchers[datadesc.storage].allocate_array(
                 sdfg, dfg, state_id, node, datadesc, function_stream,
