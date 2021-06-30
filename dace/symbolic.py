@@ -148,13 +148,17 @@ class SymExpr(object):
 
     def __new__(cls, *args, **kwargs):
         if len(args) == 1:
+            if isinstance(args[0], str):
+                return pystr_to_symbolic(args[0])
             return args[0]
         if len(args) == 2:
             main_expr, approx_expr = args
             # If values are equivalent, create a normal symbolic expression
             if approx_expr is None or main_expr == approx_expr:
+                if isinstance(main_expr, str):
+                    return pystr_to_symbolic(main_expr)
                 return main_expr
-        return super(SymExpr, cls).__new__(cls)
+        return super(SymExpr, cls).__new__(cls, *args)
 
     @property
     def expr(self):
@@ -248,6 +252,20 @@ class SymExpr(object):
         if isinstance(other, SymExpr):
             return self.expr == other.expr and self.approx == other.approx
         return self == pystr_to_symbolic(other)
+    
+    def __lt__(self, other):
+        if isinstance(other, sympy.Expr):
+            return self.expr < other
+        if isinstance(other, SymExpr):
+            return self.expr < other.expr
+        return self < pystr_to_symbolic(other)
+    
+    def __gt__(self, other):
+        if isinstance(other, sympy.Expr):
+            return self.expr > other
+        if isinstance(other, SymExpr):
+            return self.expr > other.expr
+        return self > pystr_to_symbolic(other)
 
 
 # Type hint for symbolic expressions
