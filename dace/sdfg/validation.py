@@ -70,8 +70,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                         tmp = int(bank_assignment[1])
                     except ValueError:
                         raise InvalidSDFGError(
-                            "Memory bank specifier must be convertible to int"
-                            f" for array {name}", sdfg, None)
+                            "Memory bank specifier must be convertible to int, "
+                            f"got {bank_assignment[1]} on array {name}", sdfg, None)
                 elif bank_assignment[0] == "HBM":
                     try:
                         tmp = subsets.Range.from_string(bank_assignment[1])

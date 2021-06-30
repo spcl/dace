@@ -218,7 +218,7 @@ def memlet_copy_to_absolute_strides(dispatcher,
 
 def ptr(name: str,
         desc: data.Data = None,
-        subset_info: Union[subsets.Subset, int] = None,
+        subset_info_hbm: Union[subsets.Subset, int] = None,
         sdfg: dace.SDFG = None,
         is_write: bool = None,
         dispatcher=None,
@@ -230,7 +230,7 @@ def ptr(name: str,
     that may apply for that data field.
     :param name: Data name.
     :param desc: Data descriptor.
-    :param subset_info: Any additional information about the accessed subset. 
+    :param subset_info_hbm: Any additional information about the accessed subset. 
     :param is_array_interface: Data is pointing to an interface in FPGA-Kernel compilation
     :param interface_id: An optional interface id that will be added to the name (only for array interfaces)
     :return: C-compatible name that can be used to access the data.
@@ -244,24 +244,24 @@ def ptr(name: str,
         if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
             return f'__state->{name}'
     if (desc is not None and utils.is_hbm_array(desc)):
-        if (subset_info == None):
+        if (subset_info_hbm == None):
             raise ValueError(
                 "Cannot generate name for HBM bank without subset info")
-        elif (isinstance(subset_info, int)):
-            name = f"hbm{subset_info}_{name}"
-        elif (isinstance(subset_info, subsets.Subset)):
+        elif (isinstance(subset_info_hbm, int)):
+            name = f"hbm{subset_info_hbm}_{name}"
+        elif (isinstance(subset_info_hbm, subsets.Subset)):
             if (sdfg == None):
                 raise ValueError(
                     "Cannot generate name for HBM bank using subset if sdfg not provided"
                 )
             low, high = utils.get_multibank_ranges_from_subset(
-                subset_info, sdfg)
+                subset_info_hbm, sdfg)
             if (low + 1 != high):
                 raise ValueError(
                     "ptr cannot generate HBM names for subsets accessing more than one HBM bank"
                 )
             name = f"hbm{low}_{name}"
-            subset_info = low  #used for arrayinterface name where it must be int
+            subset_info_hbm = low  #used for arrayinterface name where it must be int
     if is_array_interface:
         if is_write is None:
             raise ValueError("is_write must be set for ArrayInterface.")
@@ -286,7 +286,7 @@ def ptr(name: str,
         # Append the interface id, if provided
         if interface_id is not None:
             if isinstance(interface_id, tuple):
-                name = f"{name}_{interface_id[subset_info]}"
+                name = f"{name}_{interface_id[subset_info_hbm]}"
             else:
                 name = f"{name}_{interface_id}"
     return name
