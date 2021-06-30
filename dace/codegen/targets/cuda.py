@@ -332,6 +332,43 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
         return options
 
+    def declare_array(self, sdfg, dfg, state_id, node, nodedesc,
+                      function_stream, declaration_stream):
+
+        # NOTE: We currently only support Arrays (not Views)
+        # that are dependent on non-free SDFG symbols.
+        assert (isinstance(nodedesc, dt.Array)
+                and not isinstance(nodedesc, dt.View) and any(
+                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                    for s in nodedesc.free_symbols))
+
+        # Check if array is already declared
+        try:
+            self._dispatcher.declared_arrays.get(node.data)
+            return  # Array was already declared in this or upper scopes
+        except KeyError:  # Array not declared yet
+            pass
+
+        result_decl = StringIO()
+        ctypedef = '%s *' % nodedesc.dtype.ctype
+        dataname = node.data
+
+        # Different types of GPU arrays
+        if (nodedesc.storage == dtypes.StorageType.GPU_Global
+                or nodedesc.storage == dtypes.StorageType.CPU_Pinned):
+            result_decl.write('%s %s;\n' % (ctypedef, dataname))
+            self._dispatcher.declared_arrays.add(dataname, DefinedType.Pointer,
+                                                 ctypedef)
+        elif nodedesc.storage == dtypes.StorageType.GPU_Shared:
+            raise NotImplementedError('Dynamic shared memory unsupported')
+        elif nodedesc.storage == dtypes.StorageType.Register:
+            raise ValueError('Dynamic allocation of registers not allowed')
+        else:
+            raise NotImplementedError("CUDA: Unimplemented storage type " +
+                                      str(nodedesc.storage))
+
+        declaration_stream.write(result_decl.getvalue(), sdfg, state_id, node)
+
     def allocate_array(self, sdfg, dfg, state_id, node, nodedesc,
                        function_stream, declaration_stream, allocation_stream):
         try:
@@ -339,6 +376,14 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             return
         except KeyError:
             pass  # The variable was not defined, we can continue
+
+        # Check if array is already declared
+        declared = False
+        try:
+            self._dispatcher.declared_arrays.get(node.data)
+            declared = True  # Array was already declared in this or upper scopes
+        except KeyError:  # Array not declared yet
+            pass
 
         if isinstance(nodedesc, dace.data.Stream):
             return self.allocate_stream(sdfg, dfg, state_id, node, nodedesc,
@@ -363,7 +408,8 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
         # Different types of GPU arrays
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            result_decl.write('%s %s;\n' % (ctypedef, dataname))
+            if not declared:
+                result_decl.write('%s %s;\n' % (ctypedef, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer,
                                               ctypedef)
 
@@ -375,7 +421,8 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                                    (self.backend, allocname, arrsize_malloc))
 
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
-            result_decl.write('%s %s;\n' % (ctypedef, dataname))
+            if not declared:
+                result_decl.write('%s %s;\n' % (ctypedef, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer,
                                               ctypedef)
 
