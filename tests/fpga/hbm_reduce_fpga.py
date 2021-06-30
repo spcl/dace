@@ -21,12 +21,12 @@ def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
     in2[1].location["bank"] = f"hbm.{banks}:{2*banks}"
     out[1].location["bank"] = f"hbm.{2*banks}:{3*banks}"
 
-    readin1 = state.add_read("in1")
-    readin2 = state.add_read("in2")
+    read_in1 = state.add_read("in1")
+    read_in2 = state.add_read("in2")
     out_write = state.add_write("out")
-    tmpin1_memlet = dace.Memlet(f"in1[k, i, j]")
-    tmpin2_memlet = dace.Memlet(f"in2[k, i, j]")
-    tmpout_memlet = dace.Memlet(f"out[k, i]", wcr="lambda x,y: x+y")
+    tmp_in1_memlet = dace.Memlet(f"in1[k, i, j]")
+    tmp_in2_memlet = dace.Memlet(f"in2[k, i, j]")
+    tmp_out_memlet = dace.Memlet(f"out[k, i]", wcr="lambda x,y: x+y")
 
     outer_entry, outer_exit = state.add_map("vadd_outer_map",
                                             dict(k=f'0:{banks}'))
@@ -36,23 +36,23 @@ def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
                                 dict(__out=None), '__out = __in1 * __in2')
     outer_entry.map.schedule = dace.ScheduleType.Unrolled
 
-    state.add_memlet_path(readin1,
+    state.add_memlet_path(read_in1,
                           outer_entry,
                           map_entry,
                           tasklet,
-                          memlet=tmpin1_memlet,
+                          memlet=tmp_in1_memlet,
                           dst_conn="__in1")
-    state.add_memlet_path(readin2,
+    state.add_memlet_path(read_in2,
                           outer_entry,
                           map_entry,
                           tasklet,
-                          memlet=tmpin2_memlet,
+                          memlet=tmp_in2_memlet,
                           dst_conn="__in2")
     state.add_memlet_path(tasklet,
                           map_exit,
                           outer_exit,
                           out_write,
-                          memlet=tmpout_memlet,
+                          memlet=tmp_out_memlet,
                           src_conn="__out")
 
     sdfg.apply_fpga_transformations()

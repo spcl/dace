@@ -10,7 +10,6 @@ from dace.sdfg import nodes as nd
 # A test to check the changes to the validation required for the support for HBM
 # The three functions will be automatically called by pytest
 
-
 def assert_validation_failure(sdfg, exceptiontype):
     ok = False
     try:
@@ -20,9 +19,9 @@ def assert_validation_failure(sdfg, exceptiontype):
     assert ok
 
 
-def test_deepscope():
+def test_deep_scope():
     @dace.program
-    def deepscope(input: dace.int32[12, 10], output: dace.int32[12, 10]):
+    def deep_scope(input: dace.int32[12, 10], output: dace.int32[12, 10]):
         for k in dace.map[0:10]:
             for j in dace.map[0:2]:
                 for z in dace.map[0:2]:
@@ -31,7 +30,7 @@ def test_deepscope():
                         _write >> output[k + j * z, 0]
                         _write = _read + 1
 
-    sdfg = deepscope.to_sdfg()
+    sdfg = deep_scope.to_sdfg()
     for state in sdfg.nodes():
         for node in state.nodes():
             if isinstance(node, nd.MapEntry):
@@ -42,15 +41,15 @@ def test_deepscope():
     sdfg.validate()
 
 
-def test_multitasklet():
+def test_multi_tasklet():
     @dace.program
-    def multitasklet(input: dace.int32[12, 10], output: dace.int32[12, 10]):
+    def multi_tasklet(input: dace.int32[12, 10], output: dace.int32[12, 10]):
         with dace.tasklet:
             m << input[0:2, 4]
             n >> output[0:4, 5]
             m = n
 
-    sdfg = multitasklet.to_sdfg()
+    sdfg = multi_tasklet.to_sdfg()
     sdfg.validate()
     sdfg.arrays["input"].location["bank"] = "hbm.0:12"
     sdfg.arrays["output"].location["bank"] = "hbm.12:24"
@@ -94,6 +93,6 @@ def test_unsound_location():
 
 
 if __name__ == "__main__":
-    test_deepscope()
-    test_multitasklet()
+    test_deep_scope()
+    test_multi_tasklet()
     test_unsound_location()

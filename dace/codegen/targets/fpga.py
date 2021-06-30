@@ -345,22 +345,22 @@ class FPGACodeGen(TargetCodeGenerator):
             kernel_args_opencl.append(f"{self._global_sdfg.name}_t *__state")
             kernel_args_call_host.append(f"__state")
 
-            for is_output, argname, arg, _ in state_parameters:
+            for is_output, arg_name, arg, _ in state_parameters:
                 # Streams and Views are not passed as arguments
                 if (isinstance(arg, dt.Array)):
                     for bank in utils.iterate_hbm_multibank_arrays(
-                            argname, arg, sdfg):
-                        currentname = cpp.ptr(argname, arg, bank)
+                            arg_name, arg, sdfg):
+                        current_name = cpp.ptr(arg_name, arg, bank)
                         kernel_args_call_host.append(
-                            arg.as_arg(False, name=currentname))
+                            arg.as_arg(False, name=current_name))
                         kernel_args_opencl.append(
-                            FPGACodeGen.make_opencl_parameter(currentname, arg))
+                            FPGACodeGen.make_opencl_parameter(current_name, arg))
                 elif (not isinstance(arg, dt.Stream)
                       and not isinstance(arg, dt.View)):
                     kernel_args_call_host.append(arg.as_arg(False,
-                                                            name=argname))
+                                                            name=arg_name))
                     kernel_args_opencl.append(
-                        FPGACodeGen.make_opencl_parameter(argname, arg))
+                        FPGACodeGen.make_opencl_parameter(arg_name, arg))
 
             kernel_args_call_host = dtypes.deduplicate(kernel_args_call_host)
             kernel_args_opencl = dtypes.deduplicate(kernel_args_opencl)
@@ -573,7 +573,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             # Differentiate global and local arrays. The former are allocated
             # from the host and passed to the device code, while the latter are
             # (statically) allocated on the device side.
-            for is_output, dataname, desc in candidates:
+            for is_output, data_name, desc in candidates:
                 # Ignore views, as these never need to be explicitly passed
                 if isinstance(desc, dt.View):
                     continue
@@ -584,28 +584,28 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 # memory interface (e.g., DDR or HBM bank)
                 if (isinstance(desc, dt.Array)
                         and desc.storage == dtypes.StorageType.FPGA_Global):
-                    if dataname in data_to_interface:
-                        interface_id = data_to_interface[dataname]
+                    if data_name in data_to_interface:
+                        interface_id = data_to_interface[data_name]
                     else:
                         # Get and update global memory interface ID
                         if utils.is_hbm_array(desc):
                             tmp_interface_ids = []
                             for bank in utils.iterate_hbm_multibank_arrays(
-                                    dataname, desc, sdfg):
-                                ptr_str = cpp.ptr(dataname, desc, bank)
+                                    data_name, desc, sdfg):
+                                ptr_str = cpp.ptr(data_name, desc, bank)
                                 tmp_interface_id = global_interfaces[ptr_str]
                                 global_interfaces[ptr_str] += 1
                                 tmp_interface_ids.append(tmp_interface_id)
                             interface_id = tuple(tmp_interface_ids)
-                            data_to_interface[dataname] = interface_id
+                            data_to_interface[data_name] = interface_id
                         else:
-                            interface_id = global_interfaces[dataname]
-                            global_interfaces[dataname] += 1
-                            data_to_interface[dataname] = interface_id
+                            interface_id = global_interfaces[data_name]
+                            global_interfaces[data_name] += 1
+                            data_to_interface[data_name] = interface_id
                     # Collect the memory bank specification, if present, by
                     # traversing outwards to where the data container is
                     # actually allocated
-                    inner_node = data_to_node[dataname]
+                    inner_node = data_to_node[data_name]
                     trace = utils.trace_nested_access(inner_node, subgraph,
                                                       sdfg)
                     bank = None
@@ -642,26 +642,26 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                 "Memory bank allocation must be present on "
                                 f"outermost data descriptor {outer_node.data} "
                                 "to be allocated correctly.")
-                        bank_assignments[dataname] = (bank_type, bank)
+                        bank_assignments[data_name] = (bank_type, bank)
                     else:
-                        bank_assignments[dataname] = None
+                        bank_assignments[data_name] = None
                 else:
                     interface_id = None
                 if (not desc.transient
                         or desc.storage == dtypes.StorageType.FPGA_Global
-                        or dataname in used_outside):
+                        or data_name in used_outside):
                     # Add the data as a parameter to this PE
                     subgraph_parameters[subgraph].add(
-                        (is_output, dataname, desc, interface_id))
+                        (is_output, data_name, desc, interface_id))
                     # Global data is passed from outside the kernel
                     global_data_parameters.add(
-                        (is_output, dataname, desc, interface_id))
-                elif dataname in shared_data:
+                        (is_output, data_name, desc, interface_id))
+                elif data_name in shared_data:
                     # Add the data as a parameter to this PE
                     subgraph_parameters[subgraph].add(
-                        (is_output, dataname, desc, interface_id))
+                        (is_output, data_name, desc, interface_id))
                     # Must be allocated outside PEs and passed to them
-                    top_level_local_data.add(dataname)
+                    top_level_local_data.add(data_name)
             # Order by name
             subgraph_parameters[subgraph] = list(
                 sorted(subgraph_parameters[subgraph], key=sort_func))
@@ -805,27 +805,27 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                             bank_type, bank = bank_info
                             is_hbm = bank_type == "HBM"
                             if is_hbm:
-                                banklow, bankhigh = utils.get_multibank_ranges_from_subset(
+                                bank_low, bank_high = utils.get_multibank_ranges_from_subset(
                                     bank, sdfg)
-                                memory_bank_arg_count = bankhigh - banklow
-                                arrsize = dace.symbolic.pystr_to_symbolic(
-                                    f"({str(arrsize)}) / {str(bankhigh - banklow)}"
+                                memory_bank_arg_count = bank_high - bank_low
+                                array_size = dace.symbolic.pystr_to_symbolic(
+                                    f"({str(arrsize)}) / {str(bank_high - bank_low)}"
                                 )
-                                bank_offset = banklow
+                                bank_offset = bank_low
                             else:
                                 bank_offset = int(bank)
                         # Define buffer, using proper type
                         for bank_index in range(memory_bank_arg_count):
-                            allocname = cpp.ptr(dataname, nodedesc, bank_index)
+                            alloc_name = cpp.ptr(dataname, nodedesc, bank_index)
                             result_decl.write(
                                 "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n"
-                                .format(nodedesc.dtype.ctype, allocname))
+                                .format(nodedesc.dtype.ctype, alloc_name))
                             if is_hbm:
                                 result_alloc.write(
                                     "{} = __state->fpga_context->Get()."
                                     "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                                     "(hlslib::ocl::StorageType::HBM, {}, {});\n"
-                                    .format(allocname, nodedesc.dtype.ctype,
+                                    .format(alloc_name, nodedesc.dtype.ctype,
                                             bank_offset + bank_index,
                                             cpp.sym2cpp(arrsize)))
                             else:
@@ -833,10 +833,10 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                     "{} = __state->fpga_context->Get()."
                                     "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                                     "(hlslib::ocl::MemoryBank::bank{}, {});".
-                                    format(allocname, nodedesc.dtype.ctype,
+                                    format(alloc_name, nodedesc.dtype.ctype,
                                            bank_offset, cpp.sym2cpp(arrsize)))
                             self._dispatcher.defined_vars.add(
-                                allocname, DefinedType.Pointer,
+                                alloc_name, DefinedType.Pointer,
                                 'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
                                 .format(nodedesc.dtype.ctype))
 
@@ -1108,10 +1108,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
 
             copy_shape = memlet.subset.bounding_box_size()
-            if (src_is_subset and utils.is_hbm_array(src_nodedesc) or not src_is_subset and 
+            if (src_is_subset and utils.is_hbm_array(src_nodedesc)
+                or not src_is_subset and 
                 utils.is_hbm_array(dst_nodedesc)):
                 copy_shape = utils.modify_distributed_subset(
-                    copy_shape, -1)
+                    copy_shape, -1,)
 
             offset_src, offset_dst = "0", "0"
             if memlet.src_subset is not None:

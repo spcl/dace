@@ -30,14 +30,14 @@ from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 def copy_expr(
         dispatcher,
         sdfg,
-        dataname,
+        data_name,
         memlet,
         is_write=None,  # Otherwise it's a read
         offset=None,
         relative_offset=True,
         packed_types=False,
         hbm_bank=None):
-    datadesc = sdfg.arrays[dataname]
+    data_desc = sdfg.arrays[data_name]
     if relative_offset:
         s = memlet.subset
         o = offset
@@ -50,18 +50,18 @@ def copy_expr(
             s = offset
         o = None
     if s is not None:
-        offset_cppstr = cpp_offset_expr(datadesc, s, o)
+        offset_cppstr = cpp_offset_expr(data_desc, s, o)
     else:
         offset_cppstr = "0"
     dt = ""
 
-    def_type, _ = dispatcher.defined_vars.get(dataname)
+    def_type, _ = dispatcher.defined_vars.get(data_name)
 
     # If this is a view, it has already been renamed
     expr = ptr(
-        dataname, datadesc, hbm_bank, sdfg, is_write, dispatcher, 0,
+        data_name, data_desc, hbm_bank, sdfg, is_write, dispatcher, 0,
         def_type == DefinedType.ArrayInterface
-        and not isinstance(datadesc, data.View))
+        and not isinstance(data_desc, data.View))
 
     add_offset = offset_cppstr != "0"
 
@@ -79,12 +79,12 @@ def copy_expr(
 
         if add_offset:
             raise TypeError("Tried to offset address of scalar {}: {}".format(
-                dataname, offset_cppstr))
+                data_name, offset_cppstr))
 
         if def_type == DefinedType.Scalar:
             return "{}&{}".format(dt, expr)
         else:
-            return dataname
+            return data_name
     else:
         raise NotImplementedError("copy_expr not implemented "
                                   "for connector type: {}".format(def_type))

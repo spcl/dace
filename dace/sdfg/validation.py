@@ -60,41 +60,38 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
 
             #Check for valid bank assignments
             try:
-                bankassignment = sdutil.parse_location_bank(desc)
+                bank_assignment = sdutil.parse_location_bank(desc)
             except ValueError as e:
                 raise InvalidSDFGError(
-                    f"Failed to parse location['bank'] for "
-                    f" array {name}: {str(e)}", sdfg, None)
-            if bankassignment is not None:
-                if bankassignment[0] == "DDR":
+                    str(e), sdfg, None)
+            if bank_assignment is not None:
+                if bank_assignment[0] == "DDR":
                     try:
-                        tmp = int(bankassignment[1])
+                        tmp = int(bank_assignment[1])
                     except ValueError:
                         raise InvalidSDFGError(
-                            "bank assignment must be convertible to int"
+                            "Memory bank specifier must be convertible to int"
                             f" for array {name}", sdfg, None)
-                elif bankassignment[0] == "HBM":
+                elif bank_assignment[0] == "HBM":
                     try:
-                        tmp = subsets.Range.from_string(bankassignment[1])
+                        tmp = subsets.Range.from_string(bank_assignment[1])
                     except SyntaxError:
                         raise InvalidSDFGError(
-                            "locationproperty 'bank' must be convertible to subsets.Range"
+                            "Memory bank specifier must be convertible to subsets.Range"
                             f" for array {name} since it uses HBM", sdfg, None)
                     try:
                         low, high = sdutil.get_multibank_ranges_from_subset(
-                            bankassignment[1], sdfg)
-                    except:
+                            bank_assignment[1], sdfg)
+                    except ValueError as e:
                         raise InvalidSDFGError(
-                            "All the indices in locationproperty 'bank' must be"
-                            f" evaluatable to constants and have stride==1"
-                            f" for array {name} since it uses HBM", sdfg, None)
+                            str(e), sdfg, None)
                     if (high - low < 1):
                         raise InvalidSDFGError(
-                            "locationproperty 'bank' must at least define one bank to be used"
+                            "Memory bank specifier must at least define one bank to be used"
                             f" for array {name}", sdfg, None)
                     if (high - low != desc.shape[0] or len(desc.shape) < 2):
                         raise InvalidSDFGError(
-                            "arrays that use HBM must have the size of the first dimension equal"
+                            "Arrays that use HBM must have the size of the first dimension equal"
                             f" the number of banks and have at least 2 dimensions for array {name}",
                             sdfg, None)
 
@@ -194,17 +191,17 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     last_visited_map_entry = []
     for node in sdutil.dfs_topological_sort(state):
         if isinstance(node, nd.EntryNode):
-            otherlist = []
+            other_list = []
             if len(last_visited_map_entry) > 0:
-                otherlist = scope_local_constants[last_visited_map_entry[-1]]
+                other_list = scope_local_constants[last_visited_map_entry[-1]]
             if (isinstance(node, nd.MapEntry)
                     and node.map.schedule == dtypes.ScheduleType.Unrolled):
-                scope_local_constants[node] = list(node.map.params) + otherlist
+                scope_local_constants[node] = list(node.map.params) + other_list
                 last_visited_map_entry.append(node)
             else:
-                scope_local_constants[node] = otherlist
-        elif isinstance(node, nd.MapExit
-                        ) and node.map.schedule == dtypes.ScheduleType.Unrolled:
+                scope_local_constants[node] = other_list
+        elif (isinstance(node, nd.MapExit) and 
+            node.map.schedule == dtypes.ScheduleType.Unrolled):
             last_visited_map_entry.pop()
 
     if not dtypes.validate_name(state._label):
@@ -466,12 +463,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 )
         ########################################
 
-    #Check that HBM Magic Indices are evaluatable
-
-        def validate_hbm_subset(magic_subset: subsets.Subset):
-            if len(magic_subset) <= 1:
+        #Check if distributed subset indices are evaluatable
+        def validate_hbm_subset(distributed_subset: subsets.Subset,
+            sdfg, state_id, eid):
+            if len(distributed_subset) <= 1:
                 return False
-            low, high, stride = magic_subset[0]
+            low, high, stride = distributed_subset[0]
             if (stride != 1):
                 return False
             consts = set(sdfg.constants.keys())
@@ -483,7 +480,11 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                                    consts)
             low_set = set([str(x) for x in low.free_symbols]) - consts
             high_set = set([str(x) for x in high.free_symbols]) - consts
-            return len(low_set) == 0 and len(high_set) == 0
+            if len(low_set) != 0 or len(high_set) != 0:
+                raise InvalidSDFGEdgeError(
+                "The first index accessing HBM-arrays must be constant evaluatable "
+                " and have stride==1", sdfg, state_id, eid)
+
 
     # Memlet checks
     for eid, e in enumerate(state.edges()):
@@ -647,18 +648,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     'Dimensionality mismatch between src/dst subsets', sdfg,
                     state_id, eid)
 
-        wrong_magic_index_error = InvalidSDFGEdgeError(
-            "The first index accessing "
-            "HBM-arrays must be constant evaluatable and have stride==1", sdfg,
-            state_id, eid)
-        if (isinstance(src_node, nd.AccessNode)
-                and sdutil.is_hbm_array(src_node.desc(state))):
-            if not validate_hbm_subset(e.data.src_subset or e.data.subset):
-                raise wrong_magic_index_error
-        if (isinstance(dst_node, nd.AccessNode)
-                and sdutil.is_hbm_array(dst_node.desc(state))):
-            if not validate_hbm_subset(e.data.dst_subset or e.data.subset):
-                raise wrong_magic_index_error
+        if isinstance(src_node, nd.AccessNode) and sdutil.is_hbm_array(src_node.desc(state)):
+            validate_hbm_subset(e.data.src_subset or e.data.subset,
+                sdfg, state_id, eid)
+        if isinstance(dst_node, nd.AccessNode) and sdutil.is_hbm_array(dst_node.desc(state)):
+            validate_hbm_subset(e.data.dst_subset or e.data.subset,
+                sdfg, state_id, eid)
 
     ########################################
 

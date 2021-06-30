@@ -6,7 +6,6 @@ from dace import subsets
 
 # A test checking HBM in the context of nested maps and nested sdfgs
 
-
 def create_deeply_nested_sdfg():
     sdfg = dace.SDFG("deepnest_test")
     state: dace.SDFGState = sdfg.add_state("init")
@@ -15,46 +14,46 @@ def create_deeply_nested_sdfg():
     yarr = state.add_array("y", [4, 10], dace.float32)
     sdfg.arrays["y"].location["bank"] = "hbm.4:8"
 
-    topMapEntry, topMapExit = state.add_map("topmap", dict(k="0:2"))
-    topMapEntry.schedule = dtypes.ScheduleType.Unrolled
+    top_map_entry, top_map_exit = state.add_map("topmap", dict(k="0:2"))
+    top_map_entry.schedule = dtypes.ScheduleType.Unrolled
 
     nsdfg = dace.SDFG("nest")
     nstate = nsdfg.add_state("nested_state")
-    xRead = nstate.add_array("xin", [4, 10], dace.float32,
+    x_read = nstate.add_array("xin", [4, 10], dace.float32,
                              dtypes.StorageType.FPGA_Global)
-    xWrite = nstate.add_array("xout", [4, 10], dace.float32,
+    x_write = nstate.add_array("xout", [4, 10], dace.float32,
                               dtypes.StorageType.FPGA_Global)
     nsdfg.arrays["xin"].location["bank"] = "hbm.0:4"
     nsdfg.arrays["xout"].location["bank"] = "hbm.4:8"
-    mapEntry, mapExit = nstate.add_map("map1", dict(w="0:2"))
-    mapEntry.schedule = dtypes.ScheduleType.Unrolled
-    imapEntry, imapExit = nstate.add_map("map2", dict(i="0:10"))
+    map_entry, map_exit = nstate.add_map("map1", dict(w="0:2"))
+    map_entry.schedule = dtypes.ScheduleType.Unrolled
+    imap_entry, imap_exit = nstate.add_map("map2", dict(i="0:10"))
     nope = nstate.add_tasklet("nop", dict(_in=None), dict(_out=None),
                               "_out = _in")
-    inputMem = mem.Memlet("xin[2*k+w, i]")
-    outputMem = mem.Memlet("xout[2*k+w, i]")
-    nstate.add_memlet_path(xRead,
-                           mapEntry,
-                           imapEntry,
+    input_mem = mem.Memlet("xin[2*k+w, i]")
+    output_mem = mem.Memlet("xout[2*k+w, i]")
+    nstate.add_memlet_path(x_read,
+                           map_entry,
+                           imap_entry,
                            nope,
-                           memlet=inputMem,
+                           memlet=input_mem,
                            dst_conn="_in")
     nstate.add_memlet_path(nope,
-                           imapExit,
-                           mapExit,
-                           xWrite,
-                           memlet=outputMem,
+                           imap_exit,
+                           map_exit,
+                           x_write,
+                           memlet=output_mem,
                            src_conn="_out")
     nsdfg_node = state.add_nested_sdfg(nsdfg, state, set(["xin"]),
                                        set(['xout']))
 
     state.add_memlet_path(xarr,
-                          topMapEntry,
+                          top_map_entry,
                           nsdfg_node,
                           memlet=mem.Memlet.from_array("x", sdfg.arrays["x"]),
                           dst_conn="xin")
     state.add_memlet_path(nsdfg_node,
-                          topMapExit,
+                          top_map_exit,
                           yarr,
                           memlet=mem.Memlet.from_array("y", sdfg.arrays["y"]),
                           src_conn="xout")

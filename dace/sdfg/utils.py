@@ -1043,7 +1043,7 @@ def is_hbm_array(array: dt.Data):
         return False
 
 
-def iterate_hbm_multibank_arrays(arrayname: str, array: dt.Array, sdfg: SDFG):
+def iterate_hbm_multibank_arrays(array_name: str, array: dt.Array, sdfg: SDFG):
     """
     Small helper function that iterates over the bank indices
     if the provided array is spanned across multiple HBM banks.
@@ -1065,11 +1065,10 @@ def iterate_hbm_multibank_arrays(arrayname: str, array: dt.Array, sdfg: SDFG):
 def modify_distributed_subset(subset: Union[sbs.Subset, list, tuple],
                               change: int):
     """
-    Applies changes to magic indices from a subset if array is a HBM-array, otherwise
-    returns subset. subset is deepcopied before any modification to it is done.
-    :param change: magic index is set to this value, unless it's -1 in which case
-        the magic index is completly removed
-    :param force: Modify the first index even if this is not a HBM array
+    Modifies the first index of :param subset: (the one used for distributed subsets).
+    :param subset: is deepcopied before any modification to it is done.
+    :param change: the first index is set to this value, unless it's -1 in which case
+        the first index is completly removed
     """
     cps = copy.deepcopy(subset)
     if isinstance(subset, sbs.Subset):
@@ -1098,10 +1097,6 @@ def get_multibank_ranges_from_subset(subset: Union[sbs.Subset, str],
     """
     Returns the upper and lower end of the accessed HBM-range, evaluated using the
     constants on the SDFG.
-    :param assumeSingle: Throw error if more then a single bank is accessed
-    :param codegenlocation: An optional string describing where in the SDFG 
-        codegen the evaluation takes place. If set, this function will throw 
-        CodegenErrors instead of ValueErrors.
     :returns: (low, high) where low = the lowest accessed bank and high the 
         highest accessed bank + 1.
     """
@@ -1126,7 +1121,8 @@ def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
         split = val.split(".")
         if (len(split) != 2):
             raise ValueError(
-                f"Failed to parse {val} as value for location['bank']")
+                f"Failed to parse memory bank specifier {val}, set in location['bank']. "
+                "Expected format is <type>.<id> (e.g. ddr.2 or hbm.0:2)")
         split[0] = split[0].upper()
 
         if (split[0] == "DDR" or split[0] == "HBM"):
