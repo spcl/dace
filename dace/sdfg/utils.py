@@ -5,6 +5,7 @@ import collections
 import copy
 import os
 import networkx as nx
+from numpy import array
 
 import dace.sdfg.nodes
 from dace.sdfg.graph import MultiConnectorEdge
@@ -1114,9 +1115,19 @@ def get_multibank_ranges_from_subset(subset: Union[sbs.Subset, str],
     return (low, high + 1)
 
 
-def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
-    if "bank" in array.location:
-        val: str = array.location["bank"]
+def parse_location_bank(array_or_bank: Union[dt.Array, str]) -> Tuple[str, str]:
+    """
+    :param array_or_bank: Either an array on FPGA or a valid memory bank specifier string
+    :return: None if an array is given which does not have a location['bank'] value. 
+        Otherwise it will return a tuple (bank_type, bank_assignment), where bank_type
+        is one of 'DDR', 'HBM' and bank_assignment a string that describes which banks are 
+        used.
+    """
+    if "bank" in array_or_bank.location or isinstance(array_or_bank, str):
+        if isinstance(array_or_bank, str):
+            val : str = array_or_bank
+        else:
+            val: str = array_or_bank.location["bank"]
         split = val.split(".")
         if (len(split) != 2):
             raise ValueError(
