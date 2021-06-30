@@ -1067,6 +1067,7 @@ __kernel void \\
 
         result = ""
 
+        is_global = False
         if isinstance(data_desc, dace.data.Stream):
             # Derive the name of the original stream, by tracing the memlet path through nested SDFGs
             outer_stream_node_trace = utils.trace_nested_access(
@@ -1074,8 +1075,9 @@ __kernel void \\
                 sdfg.nodes()[state_id], sdfg)
             data_name = outer_stream_node_trace[0][0][
                 1 if is_output else 0].label
+            is_global = True
 
-        def_type, ctypedef = self._dispatcher.defined_vars.get(data_name)
+        def_type, ctypedef = self._dispatcher.defined_vars.get(data_name, is_global=is_global)
         if def_type == DefinedType.Scalar:
             if cast:
                 rhs = f"(*({memlet_type} const *)&{data_name})"
