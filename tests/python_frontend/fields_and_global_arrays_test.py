@@ -1,9 +1,39 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests class fields and external arrays. """
 import dace
+from dace.frontend.python.common import DaceSyntaxError
 import numpy as np
 from dataclasses import dataclass
 import pytest
+import time
+
+
+def test_bad_closure():
+    """ 
+    Testing functions that should not be in the closure (must be implemented as
+    callbacks).
+    """
+    with pytest.raises(DaceSyntaxError):
+
+        @dace.program
+        def badprog(A: dace.float64[20]):
+            # Library function that does not return the same value every time
+            A[:] = time.time()
+
+        A = np.random.rand(20)
+        badprog(A)
+
+
+def test_dynamic_closure():
+    """ 
+    Testing for function closure that was not defined before the program.
+    """
+    @dace.program
+    def exttest_readonly():
+        return A + 1
+
+    A = np.random.rand(20)
+    assert np.allclose(exttest_readonly(), A + 1)
 
 
 def test_external_ndarray_readonly():
@@ -235,6 +265,8 @@ def test_same_field_different_classes():
 
 
 if __name__ == '__main__':
+    test_bad_closure()
+    test_dynamic_closure()
     test_external_ndarray_readonly()
     test_external_ndarray_modify()
     test_external_dataclass()

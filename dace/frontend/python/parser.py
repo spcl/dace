@@ -123,13 +123,21 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
 class DaceProgram:
     """ A data-centric program object, obtained by decorating a function with
         ``@dace.program``. """
-    def __init__(self, f, args, kwargs, auto_optimize, device, method=False):
+    def __init__(self,
+                 f,
+                 args,
+                 kwargs,
+                 auto_optimize,
+                 device,
+                 constant_functions=False,
+                 method=False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
         self.dec_args = args
         self.dec_kwargs = kwargs
         self.name = f.__name__
+        self.resolve_functions = constant_functions
         self.argnames = _get_argnames(f)
         if method:
             self.objname = self.argnames[0]
@@ -571,14 +579,16 @@ class DaceProgram:
         }
 
         # Parse AST to create the SDFG
-        sdfg = newast.parse_dace_program(dace_func,
-                                         self.name,
-                                         argtypes,
-                                         global_vars,
-                                         modules,
-                                         other_sdfgs,
-                                         self.dec_kwargs,
-                                         strict=strict)
+        sdfg = newast.parse_dace_program(
+            dace_func,
+            self.name,
+            argtypes,
+            global_vars,
+            modules,
+            other_sdfgs,
+            self.dec_kwargs,
+            strict=strict,
+            resolve_functions=self.resolve_functions)
 
         # Set SDFG argument names, filtering out constants
         sdfg.arg_names = [a for a in self.argnames if a in argtypes]

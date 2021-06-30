@@ -134,7 +134,8 @@ def parse_dace_program(f,
                        modules,
                        other_sdfgs,
                        constants,
-                       strict=None):
+                       strict=None,
+                       resolve_functions=False):
     """ Parses a `@dace.program` function into a _ProgramNode object.
         :param f: A Python function to parse.
         :param argtypes: An dictionary of (name, type) for the given
@@ -148,6 +149,9 @@ def parse_dace_program(f,
                             of this function.
         :param constants: A dictionary from a name to a constant value.
         :param strict: Whether to apply strict transformations after parsing nested dace programs.
+        :param resolve_functions: If True, treats all global functions defined
+                                  outside of the program as returning constant
+                                  values.
         :return: Hierarchical tree of `astnodes._Node` objects, where the top
                  level node is an `astnodes._ProgramNode`.
         @rtype: SDFG
@@ -172,7 +176,7 @@ def parse_dace_program(f,
         k: v
         for k, v in global_vars.items() if k not in argtypes and k != '_'
     }
-    src_ast = GlobalResolver(resolved).visit(src_ast)
+    src_ast = GlobalResolver(resolved, resolve_functions).visit(src_ast)
     src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
     src_ast = DeadCodeEliminator().visit(src_ast)
 
@@ -707,8 +711,11 @@ def add_indirection_subgraph(sdfg: SDFG,
 class GlobalResolver(ast.NodeTransformer):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
-    def __init__(self, globals: Dict[str, Any]):
+    def __init__(self,
+                 globals: Dict[str, Any],
+                 resolve_functions: bool = False):
         self.globals = globals
+        self.resolve_functions = resolve_functions
         self.current_scope = set()
 
     def generic_visit(self, node: ast.AST):
@@ -806,6 +813,9 @@ class GlobalResolver(ast.NodeTransformer):
         return self.visit_Attribute(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
+        if not self.resolve_functions:
+            return self.generic_visit(node)
+
         try:
             global_func = astutils.evalnode(node.func, self.globals)
             global_val = astutils.evalnode(node, self.globals)

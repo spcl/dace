@@ -245,8 +245,8 @@ def test_constant_argument_object():
             self.p = parameter * 2
             self.q = parameter * 4
 
-        @staticmethod
-        def get_random_number():
+        @property
+        def get_random_number(self):
             return 4
 
     @dace.program
@@ -257,7 +257,7 @@ def test_constant_argument_object():
     def constant_parameter(cfg: dace.constant, cfg2: dace.constant,
                            A: dace.float64[20]):
         A[cfg.q] = nested_func(cfg, A)
-        A[MyConfiguration.get_random_number()] = nested_func(cfg2, A)
+        A[cfg.get_random_number] = nested_func(cfg2, A)
 
     cfg1 = MyConfiguration(3)
     cfg2 = MyConfiguration(4)
