@@ -17,6 +17,7 @@ from dace.properties import EnumProperty, make_properties, Property, ShapeProper
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
 
+import copy
 import warnings
 
 @registry.autoregister_params(singlestate=True)
@@ -72,7 +73,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
             if expansion.can_be_applied(sdfg, subgraph):
                 # deepcopy
                 graph_indices = [i for (i,n) in enumerate(graph.nodes()) if n in subgraph]
-                sdfg_copy = SDFG.from_json(sdfg.to_json())
+                sdfg_copy = copy.deepcopy(sdfg)
                 graph_copy = sdfg_copy.nodes()[sdfg.nodes().index(graph)]
                 subgraph_copy = SubgraphView(graph_copy,
                 [graph_copy.nodes()[i] for i in graph_indices])

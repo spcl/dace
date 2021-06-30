@@ -56,7 +56,7 @@ def generate_program_folder(sdfg,
         # Write code to file
         basename = "{}.{}".format(name, extension)
         code_path = os.path.join(target_folder, basename)
-        clean_code = re.sub(r'[ \t]*////__DACE:[^\n]*', '', code_object.code)
+        clean_code = code_object.clean_code
 
         # Save the file only if it changed (keeps old timestamps and saves
         # build time)
