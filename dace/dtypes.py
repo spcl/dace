@@ -777,6 +777,30 @@ class struct(typeclass):
         )
 
 
+class constant:
+    """ 
+    Data descriptor type hint signalling that argument evaluation is 
+    deferred to call time.
+
+    Example usage::
+
+        @dace.program
+        def example(A: dace.float64[20], constant: dace.constant):
+            if constant == 0:
+                return A + 1
+            else:
+                return A + 2
+
+    
+    In the above code, ``constant`` will be replaced with its value at call time
+    during parsing.
+    """
+    @staticmethod
+    def __descriptor__():
+        raise ValueError('All constant arguments must be provided in order '
+                         'to compile the SDFG ahead-of-time.')
+
+
 ####### Utility function ##############
 def ptrtonumpy(ptr, inner_ctype, shape):
     import ctypes

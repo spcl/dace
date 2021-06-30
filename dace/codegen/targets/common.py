@@ -39,8 +39,8 @@ def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
     :return: C++-compilable expression or list thereof.
     """
     if not isinstance(s, list):
-        return symbolic.symstr(s, arrayexprs)
-    return [symbolic.symstr(d, arrayexprs) for d in s]
+        return cppunparse.pyexpr2cpp(symbolic.symstr(s, arrayexprs))
+    return [cppunparse.pyexpr2cpp(symbolic.symstr(d, arrayexprs)) for d in s]
 
 
 def codeblock_to_cpp(cb: CodeBlock):
