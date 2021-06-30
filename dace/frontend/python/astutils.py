@@ -54,6 +54,23 @@ def function_to_ast(f):
     return src_ast, src_file, src_line, src
 
 
+def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
+    """
+    Tries to evaluate an AST node given only global variables.
+    :param node: The AST node/subtree to evaluate.
+    :param gvars: A dictionary mapping names to variables.
+    :return: The result of evaluation, or raises ``SyntaxError`` on any
+             failure to evaluate.
+    """
+    if not isinstance(node, ast.AST):
+        return node
+    try:
+        return eval(compile(ast.Expression(node), '<string>', mode='eval'),
+                    gvars)
+    except:  # Anything can happen here
+        raise SyntaxError
+
+
 def rname(node):
     """ Obtains names from different types of AST nodes. """
 
@@ -142,11 +159,10 @@ def subscript_to_ast_slice(node, without_array=False):
             # Slice
             if isinstance(s, ast.Slice):
                 result_slice.append((s.lower, s.upper, s.step))
-            elif isinstance(s, ast.Index): # Index (Python <3.9)
+            elif isinstance(s, ast.Index):  # Index (Python <3.9)
                 result_slice.append(s.value)
             else:  # Index
                 result_slice.append(s)
-
 
     if without_array:
         return result_slice

@@ -33,8 +33,8 @@ from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import validate_name
-from dace.properties import (EnumProperty, ListProperty, make_properties, Property,
-                             CodeProperty, TransformationHistProperty,
+from dace.properties import (EnumProperty, ListProperty, make_properties,
+                             Property, CodeProperty, TransformationHistProperty,
                              SDFGReferenceProperty, DictProperty,
                              OrderedDictProperty, CodeBlock)
 
@@ -243,8 +243,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     instrument = EnumProperty(
         dtype=dtypes.InstrumentationType,
         desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation
-    )
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     global_code = DictProperty(
         str,
@@ -258,10 +257,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     orig_sdfg = SDFGReferenceProperty(allow_none=True)
     transformation_hist = TransformationHistProperty()
 
-    openmp_sections = Property(dtype=bool,
-                               default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
-                               desc='Whether to generate OpenMP sections in code')
-
+    openmp_sections = Property(
+        dtype=bool,
+        default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
+        desc='Whether to generate OpenMP sections in code')
 
     def __init__(self,
                  name: str,
@@ -295,7 +294,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._sdfg_list = [self]
-        self._start_state = None
+        self._start_state: Optional[int] = None
         self._arrays = {}  # type: Dict[str, dt.Array]
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -330,6 +329,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Location in the SDFG list
         self.reset_sdfg_list()
         tmp['sdfg_list_id'] = int(self.sdfg_id)
+        tmp['start_state'] = self._start_state
 
         tmp['attributes']['name'] = self.name
         if hash:
@@ -354,7 +354,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                    parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(
-            ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
+            ret,
+            json_obj,
+            ignore_properties={'constants_prop', 'name', 'hash', 'start_state'})
 
         for n in nodes:
             nci = copy.copy(context_info)
@@ -366,6 +368,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         for e in edges:
             e = dace.serialize.from_json(e)
             ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
+
+        if 'start_state' in json_obj:
+            ret._start_state = json_obj['start_state']
 
         return ret
 
@@ -493,7 +498,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # If starting state is ambiguous (i.e., loop to initial state or more
         # than one possible start state), allow manually overriding start state
         if self._start_state is not None:
-            return self._start_state
+            return self.node(self._start_state)
         raise ValueError('Ambiguous or undefined starting state for SDFG, '
                          'please use "is_start_state=True" when adding the '
                          'starting state with "add_state"')
@@ -504,10 +509,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             :param state_id: The node ID (use `node_id(state)`) of the
                              state to set.
         """
-        states = self.nodes()
-        if state_id < 0 or state_id >= len(states):
+        if state_id < 0 or state_id >= self.number_of_nodes():
             raise ValueError("Invalid state ID")
-        self._start_state = states[state_id]
+        self._start_state = state_id
 
     def set_global_code(self, cpp_code: str, location: str = 'frame'):
         """
@@ -691,24 +695,25 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if hasattr(self, '_build_folder'):
             return self._build_folder
         cache_config = Config.get('cache')
+        base_folder = Config.get('default_build_folder')
         if cache_config == 'single':
             # Always use the same directory, overwriting any other program,
             # preventing parallelism and caching of multiple programs, but
             # saving space and potentially build time
-            return os.path.join('.dacecache', 'single_cache')
+            return os.path.join(base_folder, 'single_cache')
         elif cache_config == 'hash':
             # Any change to the SDFG will result in a new cache folder
             md5_hash = md5(str(self.to_json()).encode('utf-8')).hexdigest()
-            return os.path.join('.dacecache', f'{self.name}_{md5_hash}')
+            return os.path.join(base_folder, f'{self.name}_{md5_hash}')
         elif cache_config == 'unique':
             # Base name on location in memory, so no caching is possible between
-            # processes or subsequent invokations
+            # processes or subsequent invocations
             md5_hash = md5(str(os.getpid()).encode('utf-8')).hexdigest()
-            return os.path.join('.dacecache', f'{self.name}_{md5_hash}')
+            return os.path.join(base_folder, f'{self.name}_{md5_hash}')
         elif cache_config == 'name':
             # Overwrites previous invocations, and can clash with other programs
             # if executed in parallel in the same working directory
-            return os.path.join('.dacecache', self.name)
+            return os.path.join(base_folder, self.name)
         else:
             raise ValueError(f'Unknown cache configuration: {cache_config}')
 
@@ -2102,8 +2107,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     self.validate()
                 except InvalidSDFGError as err:
                     raise InvalidSDFGError(
-                        "Validation failed after applying {}.".format(
-                            match_name), sdfg, match.state_id) from err
+                        f'Validation failed after applying {match_name}. '
+                        f'{type(err).__name__}: {err}', sdfg,
+                        match.state_id) from err
 
         if order_by_transformation:
             applied_anything = True
@@ -2145,7 +2151,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 if applied:
                     raise InvalidSDFGError(
                         "Validation failed after applying {}.".format(
-                            match.print_match(sdfg)), sdfg,
+                            match.print_match(self)), self,
                         match.state_id) from err
                 else:
                     raise err

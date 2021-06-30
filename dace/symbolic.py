@@ -731,6 +731,15 @@ class SympyBooleanConverter(ast.NodeTransformer):
                             keywords=[])
         return ast.copy_location(new_node, node)
 
+    def visit_Constant(self, node):
+        if node.value is None:
+            return ast.copy_location(ast.Name(id='NoneSymbol', ctx=ast.Load()),
+                                     node)
+        return self.generic_visit(node)
+
+    def visit_NameConstant(self, node):
+        return self.visit_Constant(node)
+
 
 @lru_cache(2048)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
@@ -758,7 +767,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
 
     # Sympy processes "not/and/or" as direct evaluation. Replace with
     # And/Or(x, y), Not(x)
-    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b|==|!=',
+    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=',
                                            expr):
         expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
 
@@ -820,15 +829,20 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_NegativeInfinity(self, expr):
         return '-INFINITY'
 
+    def _print_Symbol(self, expr):
+        if expr.name == 'NoneSymbol':
+            return 'nullptr'
+        return super()._print_Symbol(expr)
+
     def _print_Pow(self, expr):
         base = self._print(expr.args[0])
         exponent = self._print(expr.args[1])
         try:
             int_exp = int(exponent)
-            assert(int_exp > 0)
+            assert (int_exp > 0)
             res = "({})".format(base)
             for _ in range(1, int_exp):
-                res += "*{}".format(base)
+                res += "*({})".format(base)
             return res
         except ValueError:
             return "dace::math::pow({f}, {s})".format(

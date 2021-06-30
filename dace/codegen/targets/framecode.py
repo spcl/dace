@@ -457,7 +457,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             cft = cflow.GeneralBlock(dispatch_state, [
                 cflow.SingleState(dispatch_state, s, s is last)
                 for s in states_topological
-            ], [])
+            ], [], [])
 
         callsite_stream.write(
             cft.as_cpp(self.dispatcher.defined_vars, sdfg.symbols), sdfg)

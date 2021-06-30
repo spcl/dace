@@ -51,7 +51,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     MPI = ()  #: MPI processes
     CPU_Multicore = ()  #: OpenMP
     Unrolled = ()  #: Unrolled code
-    SVE_Map = () #: Arm SVE
+    SVE_Map = ()  #: Arm SVE
 
     #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
     GPU_Default = ()
@@ -765,6 +765,30 @@ class struct(typeclass):
         )
 
 
+class constant:
+    """ 
+    Data descriptor type hint signalling that argument evaluation is 
+    deferred to call time.
+
+    Example usage::
+
+        @dace.program
+        def example(A: dace.float64[20], constant: dace.constant):
+            if constant == 0:
+                return A + 1
+            else:
+                return A + 2
+
+    
+    In the above code, ``constant`` will be replaced with its value at call time
+    during parsing.
+    """
+    @staticmethod
+    def __descriptor__():
+        raise ValueError('All constant arguments must be provided in order '
+                         'to compile the SDFG ahead-of-time.')
+
+
 ####### Utility function ##############
 def ptrtonumpy(ptr, inner_ctype, shape):
     import ctypes
@@ -951,7 +975,6 @@ def isconstant(var):
     return type(var) in _CONSTANT_TYPES
 
 
-bool = typeclass(numpy.bool_)
 bool_ = typeclass(numpy.bool_)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
@@ -989,6 +1012,7 @@ class Typeclasses(aenum.AutoNumberEnum):
 
 
 DTYPE_TO_TYPECLASS = {
+    bool: typeclass(bool),
     int: typeclass(int),
     float: typeclass(float),
     complex: typeclass(complex),
@@ -1010,6 +1034,10 @@ DTYPE_TO_TYPECLASS = {
     numpy.longlong: int64,
     numpy.ulonglong: uint64
 }
+
+# Since this overrides the builtin bool, this should be after the
+# DTYPE_TO_TYPECLASS dictionary
+bool = typeclass(numpy.bool_)
 
 TYPECLASS_TO_STRING = {
     bool: "dace::bool",

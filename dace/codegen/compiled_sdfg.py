@@ -230,7 +230,7 @@ class CompiledSDFG(object):
             field_str = field_str.strip()
 
             match_name = re.match(
-                '(?:const)?\s*(.*)(?:\s+\*\s*|\s*\*\s+)([a-zA-Z_][a-zA-Z_0-9]*)$',
+                r'(?:const)?\s*(.*)(?:\s+\*\s*|\s*\*\s+)([a-zA-Z_][a-zA-Z_0-9]*)$',
                 field_str)
             if match_name is None:
                 # reached a non-ptr field or something unparsable, we have to abort here
@@ -342,6 +342,9 @@ class CompiledSDFG(object):
             if not dtypes.is_array(arg) and isinstance(atype, dt.Array):
                 if isinstance(arg, list):
                     print('WARNING: Casting list argument "%s" to ndarray' % a)
+                elif arg is None:
+                    # None values are passed as null pointers
+                    pass
                 else:
                     raise TypeError(
                         'Passing an object (type %s) to an array in argument "%s"'
@@ -389,6 +392,9 @@ class CompiledSDFG(object):
             # List to array
             elif isinstance(arg, list) and isinstance(argtype, dt.Array):
                 arglist[index] = np.array(arg, dtype=argtype.dtype.type)
+            # Null pointer
+            elif arg is None and isinstance(argtype, dt.Array):
+                arglist[index] = ctypes.c_void_p(0)
 
         # Retain only the element datatype for upcoming checks and casts
         arg_ctypes = [t.dtype.as_ctypes() for t in argtypes]
