@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 from dace.libraries import standard
 
 
@@ -103,6 +104,7 @@ def test_symbol_dependent_threadlocal_array():
     assert (np.allclose(B, B_ref))
 
 
+@pytest.mark.gpu
 def test_symbol_dependent_gpu_global_array():
     A = np.random.randn(10, 10, 10)
     B = np.ndarray(10, dtype=np.float64)
@@ -118,6 +120,7 @@ def test_symbol_dependent_gpu_global_array():
     assert (np.allclose(B, B_ref))
 
 
+@pytest.mark.gpu
 def test_symbol_dependent_pinned_array():
     A = np.random.randn(10, 10, 10)
     B = np.ndarray(10, dtype=np.float64)
