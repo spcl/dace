@@ -2428,6 +2428,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 symbolic.pystr_to_symbolic(ranges[0][1]))
             step = self._replace_with_global_symbols(
                 symbolic.pystr_to_symbolic(ranges[0][2]))
+            eoff = -1
+            if (step < 0) == True:
+                eoff = 1
             try:
                 conditions = [s >= 0 for s in (start, stop, step)]
                 if (conditions == [True, True, True]
@@ -2453,7 +2456,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if sym_name in self.sdfg.symbols.keys():
                 for k, v in self.symbols.items():
                     if (str(k) == sym_name
-                            and v != subsets.Range([(start, stop - 1, step)])):
+                            and v != subsets.Range([(start, stop + eoff, step)])):
                         warnings.warn(
                             "Two for-loops using the same variable ({}) but "
                             "different ranges in the same nested SDFG level. "
@@ -2465,7 +2468,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             extra_syms = {sym_name: sym_obj}
 
-            self.symbols[sym_obj] = subsets.Range([(start, stop - 1, step)])
+            self.symbols[sym_obj] = subsets.Range([(start, stop + eoff, step)])
 
             # Add range symbols as necessary
             for rng in ranges[0]:
