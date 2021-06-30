@@ -2,6 +2,7 @@
 """ Various AST parsing utilities for DaCe. """
 import ast
 import astunparse
+import copy
 from collections import OrderedDict
 import inspect
 import numbers
@@ -65,6 +66,10 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     if not isinstance(node, ast.AST):
         return node
     try:
+        # Ensure context is load so eval works (e.g., when using value as lhs)
+        if not isinstance(getattr(node, 'ctx', False), ast.Load):
+            node = copy.deepcopy(node)
+            node.ctx = ast.Load()
         return eval(compile(ast.Expression(node), '<string>', mode='eval'),
                     gvars)
     except:  # Anything can happen here

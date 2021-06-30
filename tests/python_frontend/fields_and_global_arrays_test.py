@@ -91,6 +91,27 @@ def test_dataclass_method():
     assert np.allclose(dc.my_a, acopy + b)
 
 
+def test_dataclass_method_aot():
+    """ AOT compilation of dataclass methods. """
+    @dataclass
+    class MyObject:
+        my_a: dace.float64[20]
+
+        def __init__(self) -> None:
+            self.my_a = np.random.rand(20)
+
+        @dace.method
+        def something(self, B: dace.float64[20]):
+            self.my_a += B
+
+    dc = MyObject()
+    csdfg = dc.something.compile()
+    acopy = np.copy(dc.my_a)
+    b = np.random.rand(20)
+    csdfg(b)
+    assert np.allclose(dc.my_a, acopy + b)
+
+
 def test_object_method():
     """ JIT-based inference of fields at call time. """
     class MyObject:
@@ -110,7 +131,7 @@ def test_object_method():
 
 def test_object_newfield():
     # This syntax (adding new fields at dace.method runtime) is disallowed
-    with pytest.raises(SyntaxError):
+    with pytest.raises(DaceSyntaxError):
 
         class MyObject:
             @dace.method
@@ -140,7 +161,7 @@ def test_object_constant():
     assert np.allclose(B, A + 5)
 
     # Ensure constant was folded
-    assert 'q' not in obj.something.to_sdfg().generate_code[0]
+    assert 'q' not in obj.something.to_sdfg().generate_code()[0].clean_code
 
 
 def test_external_cache():
@@ -261,6 +282,10 @@ def test_same_field_different_classes():
     param = np.random.rand(20)
     obj = B(field)
     obj.mymethod(param)
+
+    # Ensure only one array was created
+    assert len(obj.mymethod._cache[1].arrays) == 2
+
     assert np.allclose(obj.arr, param)
 
 
@@ -271,6 +296,7 @@ if __name__ == '__main__':
     test_external_ndarray_modify()
     test_external_dataclass()
     test_dataclass_method()
+    test_dataclass_method_aot()
     test_object_method()
     test_object_newfield()
     test_object_constant()

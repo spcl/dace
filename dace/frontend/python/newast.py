@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+from dace.frontend.python.wrappers import ndarray
 import astunparse
 from collections import OrderedDict
 import copy
@@ -132,7 +133,6 @@ def parse_dace_program(f,
                        argtypes,
                        global_vars,
                        modules,
-                       other_sdfgs,
                        constants,
                        strict=None,
                        resolve_functions=False):
@@ -145,15 +145,12 @@ def parse_dace_program(f,
                             of `f`.
         :param modules: A dictionary from an imported module name to the
                         module itself.
-        :param other_sdfgs: Other SDFG and DaceProgram objects in the context
-                            of this function.
         :param constants: A dictionary from a name to a constant value.
         :param strict: Whether to apply strict transformations after parsing nested dace programs.
         :param resolve_functions: If True, treats all global functions defined
                                   outside of the program as returning constant
                                   values.
-        :return: Hierarchical tree of `astnodes._Node` objects, where the top
-                 level node is an `astnodes._ProgramNode`.
+        :return: A 2-tuple of SDFG and its reduced (used) closure.
         @rtype: SDFG
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
@@ -176,26 +173,33 @@ def parse_dace_program(f,
         k: v
         for k, v in global_vars.items() if k not in argtypes and k != '_'
     }
-    src_ast = GlobalResolver(resolved, resolve_functions).visit(src_ast)
+    closure_resolver = GlobalResolver(resolved, resolve_functions)
+    src_ast = closure_resolver.visit(src_ast)
     src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
     src_ast = DeadCodeEliminator().visit(src_ast)
 
     # Filter remaining global variables according to type and scoping rules
-    global_vars = {
+    closure_constants = {
         k: v
         for k, v in global_vars.items()
         if k not in argtypes  #and dtypes.isallowed(v)
     }
 
+    # Fill in data descriptors from closure arrays
+    argtypes.update({
+        arrname: v
+        for arrname, v in closure_resolver.closure_arrays.values()
+    })
+
     pv = ProgramVisitor(name=name,
                         filename=src_file,
                         line_offset=src_line,
                         col_offset=0,
-                        global_vars=global_vars,
+                        global_vars=closure_constants,
                         constants=constants,
                         scope_arrays=argtypes,
                         scope_vars={},
-                        other_sdfgs=other_sdfgs,
+                        other_sdfgs=closure_resolver.closure_sdfgs,
                         strict=strict)
 
     sdfg, _, _, _ = pv.parse_program(src_ast.body[0])
@@ -204,7 +208,9 @@ def parse_dace_program(f,
     # We save information in a tmp file for improved source mapping.
     # In the case of the cache config set to 'hash' we don't create a mapping.
     if Config.get('cache') != 'hash':
-        other_functions = [func for func in other_sdfgs if not func == name]
+        other_functions = [
+            func for func in closure_resolver.closure_sdfgs if not func == name
+        ]
         data = {
             "start_line": src_line + 1,
             "end_line": src_line + len(src.split("\n")) - 1,
@@ -214,7 +220,7 @@ def parse_dace_program(f,
         }
         sourcemap.temporaryInfo(name, data)
 
-    return sdfg
+    return sdfg, closure_resolver
 
 
 class StructTransformer(ast.NodeTransformer):
@@ -718,6 +724,19 @@ class GlobalResolver(ast.NodeTransformer):
         self.resolve_functions = resolve_functions
         self.current_scope = set()
 
+        # A dace.program's closure is defined by its constants, arrays, and
+        # other SDFG-convertible objects
+        self.closure_constants: Dict[str, Any] = {}
+        self.closure_arrays: Dict[str, Tuple[str, data.Data]] = {}
+        self.closure_sdfgs: Dict[str, SDFG] = {
+            k: v
+            for k, v in globals.items()
+            if isinstance(v, SDFG) or hasattr(v, '__sdfg__')
+        }
+
+        # Map same array objects (checked via python id) to the same name
+        self.array_mapping: Dict[int, str] = {}
+
     def generic_visit(self, node: ast.AST):
         if hasattr(node, 'body') or hasattr(node, 'orelse'):
             oldscope = self.current_scope
@@ -729,7 +748,12 @@ class GlobalResolver(ast.NodeTransformer):
         else:
             return super().generic_visit(node)
 
-    def global_value_to_node(self, value, parent_node, recurse=False):
+    def _qualname_to_array_name(self, qualname: str) -> str:
+        """ Converts a Python qualified attribute name to an SDFG array name. """
+        # Only '.' has to be replaced, since we only support attributes for now
+        return f"__g_{qualname.replace('.', '__')}"
+
+    def global_value_to_node(self, value, parent_node, qualname, recurse=False):
         # if recurse is false, we don't allow recursion into lists
         # this should not happen anyway; the globals dict should only contain
         # single "level" lists
@@ -738,12 +762,18 @@ class GlobalResolver(ast.NodeTransformer):
             return None
 
         if isinstance(value, list):
-            elts = [self.global_value_to_node(v, parent_node) for v in value]
+            elts = [
+                self.global_value_to_node(v, parent_node, qualname + f'[{i}]')
+                for i, v in enumerate(value)
+            ]
             if any(e is None for e in elts):
                 return None
             newnode = ast.List(elts=elts, ctx=parent_node.ctx)
         elif isinstance(value, tuple):
-            elts = [self.global_value_to_node(v, parent_node) for v in value]
+            elts = [
+                self.global_value_to_node(v, parent_node, qualname + f'[{i}]')
+                for i, v in enumerate(value)
+            ]
             if any(e is None for e in elts):
                 return None
             newnode = ast.Tuple(elts=elts, ctx=parent_node.ctx)
@@ -753,6 +783,10 @@ class GlobalResolver(ast.NodeTransformer):
         elif (dtypes.isconstant(value) or isinstance(value, SDFG)
               or hasattr(value, '__sdfg__')):
             # Could be a constant, an SDFG, or SDFG-convertible object
+            if isinstance(value, SDFG) or hasattr(value, '__sdfg__'):
+                self.closure_sdfgs[qualname] = value
+            else:
+                self.closure_constants[qualname] = value
 
             # Compatibility check since Python changed their AST nodes
             if sys.version_info >= (3, 8):
@@ -762,6 +796,17 @@ class GlobalResolver(ast.NodeTransformer):
                     newnode = ast.NameConstant(value=None)
                 else:
                     newnode = ast.Num(n=value)
+        elif isinstance(value, numpy.ndarray):
+            # Arrays need to be stored as a new name and fed as an argument
+            if id(value) in self.array_mapping:
+                arrname = self.array_mapping[id(value)]
+            else:
+                arrname = self._qualname_to_array_name(qualname)
+                desc = data.create_datadescriptor(value)
+                self.closure_arrays[qualname] = (arrname, desc)
+                self.array_mapping[id(value)] = arrname
+                
+            newnode = ast.Name(id=arrname, ctx=ast.Load())
         else:
             return None
 
@@ -780,6 +825,7 @@ class GlobalResolver(ast.NodeTransformer):
                 global_val = self.globals[node.id]
                 newnode = self.global_value_to_node(global_val,
                                                     parent_node=node,
+                                                    qualname=node.id,
                                                     recurse=True)
                 if newnode is None:
                     return node
@@ -799,17 +845,18 @@ class GlobalResolver(ast.NodeTransformer):
         except SyntaxError:
             return self.generic_visit(node)
 
-        # global_val = getattr(self.globals[node.value.id], node.attr)
-        # TODO: Without this check, dace dtypes do not serialize well
         if not isinstance(global_val, dtypes.typeclass):
             newnode = self.global_value_to_node(global_val,
                                                 parent_node=node,
+                                                qualname=astutils.unparse(node),
                                                 recurse=True)
             if newnode is not None:
                 return newnode
         return self.generic_visit(node)
 
     def visit_Subscript(self, node: ast.Subscript) -> Any:
+        # First visit the subscripted value alone, then the whole subscript
+        node.value = self.visit(node.value)
         return self.visit_Attribute(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
@@ -827,6 +874,7 @@ class GlobalResolver(ast.NodeTransformer):
                 and not isinstance(global_func, dtypes.typeclass)):
             newnode = self.global_value_to_node(global_val,
                                                 parent_node=node,
+                                                qualname=astutils.unparse(node),
                                                 recurse=True)
             if newnode is not None:
                 return newnode
@@ -3317,6 +3365,12 @@ class ProgramVisitor(ExtNodeVisitor):
             if name in defined_vars:
                 true_name = defined_vars[name]
                 true_array = defined_arrays[true_name]
+
+            if (isinstance(target, ast.Attribute) and until(name, '.') in self.globals):
+                raise DaceSyntaxError(
+                    self, target,
+                    f'Cannot assign value to global attribute or field "{name}". '
+                    'Please define it prior to calling the function/method.')
 
             if (not is_return and isinstance(target, ast.Name) and true_name
                     and not op and not isinstance(true_array, data.Scalar)
