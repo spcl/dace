@@ -381,6 +381,17 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             # Wait for all events
             kernel_host_stream.write(" cl::Event::waitForEvents(all_events);")
 
+            # Print profiling information
+            kernel_host_stream.write("""\
+for (auto &event : all_events) {
+    cl_ulong event_start, event_end;
+    event.getProfilingInfo(CL_PROFILING_COMMAND_START, &event_start);
+    event.getProfilingInfo(CL_PROFILING_COMMAND_END, &event_end);
+    const double elapsed = 1e-9 * (event_end - event_start);
+    std::cout << "Kernel executed in " << elapsed << " seconds.\n";
+}
+""")
+
             kernel_host_stream.write("}\n")
 
             callsite_stream.write("{}({});".format(
