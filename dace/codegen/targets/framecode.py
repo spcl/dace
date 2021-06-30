@@ -522,7 +522,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # SDFG memory and shared transients are allocated in the
                 # beginning of their SDFG
                 alloc_scope = sdfg
-                if first_state_instance:
+                if first_state_instance is not None:
                     alloc_state = sdfg.nodes()[first_state_instance]
                 # If unused, skip
                 if first_node_instance is None:
