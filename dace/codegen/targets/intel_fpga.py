@@ -987,6 +987,7 @@ __kernel void \\
         mpath = dfg.memlet_path(edge)
         viewed_dnode = mpath[0].src if edge.dst is node else mpath[-1].dst
         self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, viewed_dnode,
+                                           viewed_dnode.desc(sdfg),
                                            global_stream, allocation_stream)
 
         # Emit memlet as a reference and register defined variable
