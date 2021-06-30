@@ -7,7 +7,7 @@ from dace.libraries import standard
 def _make_sdfg(name, storage=dace.dtypes.StorageType.CPU_Heap):
 
     N = dace.symbol('N', dtype=dace.int32, integer=True, positive=True)
-    i = dace.symbol('i', dtype=dace.int32, integer=True, nonegative=True)
+    i = dace.symbol('i', dtype=dace.int32, integer=True)
 
     sdfg = dace.SDFG(name)
     _, A = sdfg.add_array('A', [N, N, N], dtype=dace.float64)
@@ -15,7 +15,9 @@ def _make_sdfg(name, storage=dace.dtypes.StorageType.CPU_Heap):
     _, tmp1 = sdfg.add_transient('tmp1', [N - 4, N - 4, N - i],
                                  dtype=dace.float64,
                                  storage=storage)
-    _, tmp2 = sdfg.add_transient('tmp2', [1], dtype=dace.float64)
+    _, tmp2 = sdfg.add_transient('tmp2', [1],
+                                 dtype=dace.float64,
+                                 storage=storage)
 
     begin_state = sdfg.add_state("begin", is_start_state=True)
     guard_state = sdfg.add_state("guard")
@@ -42,6 +44,8 @@ def _make_sdfg(name, storage=dace.dtypes.StorageType.CPU_Heap):
 
     read_tmp1 = body2_state.add_read('tmp1')
     rednode = standard.Reduce(wcr='lambda a, b : a + b', identity=0)
+    if storage == dace.dtypes.StorageType.GPU_Global:
+        rednode.implementation = 'CUDA (device)'
     body2_state.add_node(rednode)
     write_tmp2 = body2_state.add_write('tmp2')
     body2_state.add_nedge(read_tmp1, rednode,
@@ -99,7 +103,39 @@ def test_symbol_dependent_threadlocal_array():
     assert (np.allclose(B, B_ref))
 
 
+def test_symbol_dependent_gpu_global_array():
+    A = np.random.randn(10, 10, 10)
+    B = np.ndarray(10, dtype=np.float64)
+    sdfg = _make_sdfg("symbol_dependent_gpu_global_array",
+                      storage=dace.dtypes.StorageType.GPU_Global)
+    # Compile manually to avoid strict transformations
+    sdfg_exec = sdfg.compile()
+    sdfg_exec(A=A, B=B, N=10)
+    B_ref = np.ndarray(10, dtype=np.float64)
+    for i in range(10):
+        tmp = A[2:-2, 2:-2, i:]
+        B_ref[i] = np.sum(tmp)
+    assert (np.allclose(B, B_ref))
+
+
+def test_symbol_dependent_pinned_array():
+    A = np.random.randn(10, 10, 10)
+    B = np.ndarray(10, dtype=np.float64)
+    sdfg = _make_sdfg("symbol_dependent_pinned_array",
+                      storage=dace.dtypes.StorageType.CPU_Pinned)
+    # Compile manually to avoid strict transformations
+    sdfg_exec = sdfg.compile()
+    sdfg_exec(A=A, B=B, N=10)
+    B_ref = np.ndarray(10, dtype=np.float64)
+    for i in range(10):
+        tmp = A[2:-2, 2:-2, i:]
+        B_ref[i] = np.sum(tmp)
+    assert (np.allclose(B, B_ref))
+
+
 if __name__ == '__main__':
     test_symbol_dependent_heap_array()
     test_symbol_dependent_register_array()
     test_symbol_dependent_threadlocal_array()
+    test_symbol_dependent_gpu_global_array()
+    test_symbol_dependent_pinned_array()
