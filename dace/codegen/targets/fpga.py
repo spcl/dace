@@ -690,6 +690,63 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                            callsite_stream,
                                            skip_entry_node=True)
 
+    def declare_array(self, sdfg, dfg, state_id, node, nodedesc,
+                      function_stream, declaration_stream):
+
+        # NOTE: We currently only support Arrays (not Views)
+        # that are dependent on non-free SDFG symbols.
+        assert (isinstance(nodedesc, dt.Array)
+                and not isinstance(nodedesc, dt.View) and any(
+                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                    for s in nodedesc.free_symbols))
+
+        result_decl = StringIO()
+        arrsize = nodedesc.total_size
+        dataname = node.data
+
+        # Check if array is already declared
+        try:
+            self._dispatcher.declared_arrays.get(dataname)
+            return  # Array was already declared in this or upper scopes
+        except KeyError:  # Array not declared yet
+            pass
+
+        allocname = cpp.ptr(dataname, nodedesc, sdfg)
+
+        if nodedesc.storage == dtypes.StorageType.FPGA_Global:
+
+            if self._in_device_code:
+
+                # TODO: Is this needed here?
+                if nodedesc not in self._allocated_global_arrays:
+                    raise RuntimeError("Cannot allocate global array "
+                                       "from device code: {} in {}".format(
+                                           node.label, sdfg.name))
+
+            else:
+                # TODO: Distinguish between read, write, and read+write
+                # Define buffer, using proper type
+                result_decl.write(
+                    "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};"
+                    .format(nodedesc.dtype.ctype, dataname))
+                self._dispatcher.declared_arrays.add(
+                    dataname, DefinedType.Pointer,
+                    'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'.
+                    format(nodedesc.dtype.ctype))
+        elif (nodedesc.storage in (dtypes.StorageType.FPGA_Local,
+                                   dtypes.StorageType.FPGA_Registers,
+                                   dtypes.StorageType.FPGA_ShiftRegister)):
+
+            raise ValueError("Dynamic allocation of FPGA "
+                             "fast memory not allowed: {}, size {}".format(
+                                 dataname, arrsize))
+
+        else:
+            raise NotImplementedError("Unimplemented storage type " +
+                                      str(nodedesc.storage))
+
+        declaration_stream.write(result_decl.getvalue(), sdfg, state_id, node)
+
     def allocate_array(self, sdfg, dfg, state_id, node, nodedesc,
                        function_stream, declaration_stream, allocation_stream):
 
@@ -708,6 +765,14 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 return
             except KeyError:
                 pass  # The variable was not defined,  we can continue
+
+        # Check if array is already declared
+        declared = False
+        try:
+            self._dispatcher.declared_arrays.get(dataname)
+            declared = True  # Array was already declared in this or upper scopes
+        except KeyError:  # Array not declared yet
+            pass
 
         allocname = cpp.ptr(dataname, nodedesc, sdfg)
 
@@ -778,9 +843,10 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                 f"hlslib::ocl::MemoryBank::bank{bank}, ")
 
                         # Define buffer, using proper type
-                        result_decl.write(
-                            "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};"
-                            .format(nodedesc.dtype.ctype, dataname))
+                        if not declared:
+                            result_decl.write(
+                                "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};"
+                                .format(nodedesc.dtype.ctype, dataname))
                         result_alloc.write(
                             "{} = __state->fpga_context->Get()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
