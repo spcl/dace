@@ -147,18 +147,24 @@ class SymExpr(object):
             self._approx_expr = pystr_to_symbolic(approx_expr)
 
     def __new__(cls, *args, **kwargs):
+        main_expr, approx_expr = None, None
+        if len(args) == 0:
+            if 'main_expr' in kwargs:
+                main_expr = kwargs['main_expr']
+            if 'approx_expr' in kwargs:
+                approx_expr = kwargs['approx_expr']
         if len(args) == 1:
-            if isinstance(args[0], str):
-                return pystr_to_symbolic(args[0])
-            return args[0]
+            main_expr = args[0]
+            if 'approx_expr' in kwargs:
+                approx_expr = kwargs['approx_expr']
         if len(args) == 2:
             main_expr, approx_expr = args
-            # If values are equivalent, create a normal symbolic expression
-            if approx_expr is None or main_expr == approx_expr:
-                if isinstance(main_expr, str):
-                    return pystr_to_symbolic(main_expr)
-                return main_expr
-        return super(SymExpr, cls).__new__(cls, *args)
+        # If values are equivalent, create a normal symbolic expression
+        if main_expr and (approx_expr is None or main_expr == approx_expr):
+            if isinstance(main_expr, str):
+                return pystr_to_symbolic(main_expr)
+            return main_expr
+        return super(SymExpr, cls).__new__(cls)
 
     @property
     def expr(self):
