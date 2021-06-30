@@ -1123,7 +1123,7 @@ def parse_location_bank(array_or_bank: Union[dt.Array, str]) -> Tuple[str, str]:
         is one of 'DDR', 'HBM' and bank_assignment a string that describes which banks are 
         used.
     """
-    if "bank" in array_or_bank.location or isinstance(array_or_bank, str):
+    if isinstance(array_or_bank, str) or "bank" in array_or_bank.location:
         if isinstance(array_or_bank, str):
             val : str = array_or_bank
         else:
