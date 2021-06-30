@@ -47,6 +47,8 @@ def _make_sdfg(name, storage=dace.dtypes.StorageType.CPU_Heap):
     rednode = standard.Reduce(wcr='lambda a, b : a + b', identity=0)
     if storage == dace.dtypes.StorageType.GPU_Global:
         rednode.implementation = 'CUDA (device)'
+    elif storage == dace.dtypes.StorageType.FPGA_Global:
+        rednode.implementation = 'FPGAPartialReduction'
     body2_state.add_node(rednode)
     write_tmp2 = body2_state.add_write('tmp2')
     body2_state.add_nedge(read_tmp1, rednode,
@@ -136,9 +138,26 @@ def test_symbol_dependent_pinned_array():
     assert (np.allclose(B, B_ref))
 
 
+@pytest.mark.skip
+def test_symbol_dependent_fpga_global_array():
+    A = np.random.randn(10, 10, 10)
+    B = np.ndarray(10, dtype=np.float64)
+    sdfg = _make_sdfg("symbol_dependent_fpga_global_array",
+                      storage=dace.dtypes.StorageType.FPGA_Global)
+    # Compile manually to avoid strict transformations
+    sdfg_exec = sdfg.compile()
+    sdfg_exec(A=A, B=B, N=10)
+    B_ref = np.ndarray(10, dtype=np.float64)
+    for i in range(10):
+        tmp = A[2:-2, 2:-2, i:]
+        B_ref[i] = np.sum(tmp)
+    assert (np.allclose(B, B_ref))
+
+
 if __name__ == '__main__':
     test_symbol_dependent_heap_array()
     test_symbol_dependent_register_array()
     test_symbol_dependent_threadlocal_array()
     test_symbol_dependent_gpu_global_array()
     test_symbol_dependent_pinned_array()
+    test_symbol_dependent_fpga_global_array()
