@@ -254,7 +254,9 @@ def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         :param node: The node in question
         :return: True if node is in device-level code, False otherwise.
     """
-    return is_in_scope(sdfg, state, node, [dtypes.ScheduleType.FPGA_Device])
+    from dace.codegen.targets.fpga import is_fpga_kernel
+    return (is_in_scope(sdfg, state, node, [dtypes.ScheduleType.FPGA_Device])
+            or is_fpga_kernel(sdfg, state))
 
 
 def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
