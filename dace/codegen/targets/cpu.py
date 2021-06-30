@@ -251,8 +251,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if not isinstance(nodedesc.dtype, dtypes.opaque):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
-        if (nodedesc.storage == dtypes.StorageType.CPU_Heap or
-            nodedesc.storage == dtypes.StorageType.Register):
+        if (nodedesc.storage == dtypes.StorageType.CPU_Heap
+                or nodedesc.storage == dtypes.StorageType.Register):
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
@@ -477,7 +477,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # Close OpenMP parallel section
             allocation_stream.write('}')
             self._dispatcher.defined_vars.add_global(
-                    name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
+                name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
         else:
             raise NotImplementedError("Unimplemented storage type " +
                                       str(nodedesc.storage))

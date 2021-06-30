@@ -1591,8 +1591,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 else:
                     code_str = "{dst}[{idx}] = {src};"
                 slice = self.visit(node.targets[0].slice)
-                if (isinstance(slice, ast.Slice) and
-                        isinstance(slice.value, ast.Tuple)):
+                if (isinstance(slice, ast.Slice)
+                        and isinstance(slice.value, ast.Tuple)):
                     subscript = unparse(slice)[1:-1]
                 else:
                     subscript = unparse(slice)

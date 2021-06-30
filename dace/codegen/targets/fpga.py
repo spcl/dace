@@ -1132,9 +1132,9 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     "{}.CopyToDevice({}, {}, {}, {});".format(
                         cpp.ptr(src_node.data, src_nodedesc, sdfg),
                         (offset if outgoing_memlet else 0), copysize,
-                        cpp.ptr(dst_node.data, dst_nodedesc, sdfg),
-                        (offset if not outgoing_memlet else 0)), sdfg, state_id,
-                    [src_node, dst_node])
+                        cpp.ptr(dst_node.data, dst_nodedesc,
+                                sdfg), (offset if not outgoing_memlet else 0)),
+                    sdfg, state_id, [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data

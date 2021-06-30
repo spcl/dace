@@ -31,6 +31,7 @@ def _get_or_eval_sdfg_first_arg(func, sdfg):
         return func(sdfg)
     return func
 
+
 class DaCeCodeGenerator(object):
     """ DaCe code generator class that writes the generated code for SDFG
         state machines, and uses a dispatcher to generate code for
@@ -188,9 +189,9 @@ struct {sdfg.name}_t {{
         if (config.Config.get_bool('instrumentation', 'report_each_invocation')
                 and len(self._dispatcher.instrumentation) > 1):
             callsite_stream.write(
-                '''__state->report.save("{path}/perf", __HASH_{name});'''
-                .format(path=sdfg.build_folder.replace('\\', '/'),
-                        name=sdfg.name), sdfg)
+                '''__state->report.save("{path}/perf", __HASH_{name});'''.
+                format(path=sdfg.build_folder.replace('\\', '/'),
+                       name=sdfg.name), sdfg)
 
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
@@ -393,8 +394,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         return states_generated
 
     def _get_schedule(
-        self, scope: Union[nodes.EntryNode, SDFGState, SDFG]
-    ) -> dtypes.ScheduleType:
+            self, scope: Union[nodes.EntryNode, SDFGState,
+                               SDFG]) -> dtypes.ScheduleType:
         TOP_SCHEDULE = dtypes.ScheduleType.Sequential
         if scope is None:
             return TOP_SCHEDULE
@@ -487,8 +488,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # self.to_allocate[top_sdfg].append(
                 #     (sdfg.sdfg_id, sdfg.node_id(state), node))
                 self.to_allocate[top_sdfg].append(
-                    (sdfg, first_state_instance, first_node_instance,
-                     True, True, True))
+                    (sdfg, first_state_instance, first_node_instance, True,
+                     True, True))
                 continue
             elif desc.lifetime is dtypes.AllocationLifetime.Global:
                 # Global memory is allocated in the beginning of the program
@@ -505,8 +506,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # self.to_allocate[top_sdfg].append(
                 #     (sdfg.sdfg_id, sdfg.node_id(state), node))
                 self.to_allocate[top_sdfg].append(
-                    (sdfg, first_state_instance, first_node_instance,
-                     True, True, True))
+                    (sdfg, first_state_instance, first_node_instance, True,
+                     True, True))
                 continue
 
             # The rest of the cases change the starting scope we attempt to
@@ -621,38 +622,39 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
             if curscope is None:
                 curscope = top_sdfg
-            
+
             # Check if array shape is dependent on non-free SDFG symbols
             # NOTE: Only arrays supported now
             # NOTE: We may also need to support views
             # NOTE: Tuple is (SDFG, State, Node, declare, allocate deallocate)
-            if (isinstance(desc, data.Array) and any(
-                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in desc.free_symbols)):
+            if (isinstance(desc, data.Array)
+                    and not isinstance(desc, data.View) and any(
+                        str(s) not in sdfg.free_symbols.union(
+                            sdfg.constants.keys()) for s in desc.free_symbols)):
                 # Declare in current (SDFG) scope
                 self.to_allocate[curscope].append(
-                    (sdfg, first_state_instance, first_node_instance,
-                     True, False, False))
+                    (sdfg, first_state_instance, first_node_instance, True,
+                     False, False))
                 # Allocate in first State
                 # Deallocate in last State
                 if first_state_instance != last_state_instance:
                     curscope = sdfg.nodes()[first_state_instance]
                     self.to_allocate[curscope].append(
-                        (sdfg, first_state_instance, first_node_instance,
-                         False, True, False))
+                        (sdfg, first_state_instance, first_node_instance, False,
+                         True, False))
                     curscope = sdfg.nodes()[last_state_instance]
                     self.to_allocate[curscope].append(
-                        (sdfg, last_state_instance, last_node_instance,
-                         False, False, True))
+                        (sdfg, last_state_instance, last_node_instance, False,
+                         False, True))
                 else:
                     curscope = sdfg.nodes()[first_state_instance]
                     self.to_allocate[curscope].append(
-                        (sdfg, first_state_instance, first_node_instance,
-                         False, True, True))
+                        (sdfg, first_state_instance, first_node_instance, False,
+                         True, True))
             else:
                 self.to_allocate[curscope].append(
-                    (sdfg, first_state_instance, first_node_instance,
-                     True, True, True))
+                    (sdfg, first_state_instance, first_node_instance, True,
+                     True, True))
 
             # self.to_allocate[curscope].append(
             #     (sdfg.sdfg_id, first_state_instance, first_node_instance))
@@ -665,7 +667,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         # for sdfg_id, state_id, node in self.to_allocate[scope]:
         #     tsdfg = sdfg.sdfg_list[sdfg_id]
         # for tsdfg, state_id, node in self.to_allocate[scope]:
-        for tsdfg, state_id, node, declare, allocate, _ in self.to_allocate[scope]:
+        for tsdfg, state_id, node, declare, allocate, _ in self.to_allocate[
+                scope]:
             if state_id is not None:
                 state = tsdfg.node(state_id)
             else:

@@ -332,8 +332,8 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
         return options
 
-    def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream,
-                       declaration_stream, allocation_stream):
+    def allocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                       function_stream, declaration_stream, allocation_stream):
         try:
             self._dispatcher.defined_vars.get(node.data)
             return
@@ -1101,7 +1101,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             callsite_stream.write('\n')
 
             # Emit internal transient array deallocation
-            self._frame.deallocate_arrays_in_scope(sdfg, state, function_stream, callsite_stream)
+            self._frame.deallocate_arrays_in_scope(sdfg, state, function_stream,
+                                                   callsite_stream)
 
             # Invoke all instrumentation providers
             for instr in self._frame._dispatcher.instrumentation.values():
@@ -1452,11 +1453,10 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         # Invoke kernel call
         callsite_stream.write(
-            '__dace_runkernel_%s(%s);\n' % (kernel_name, ', '.join(
-                ['__state'] +
-                [cpp.ptr(aname, arg, sdfg)
-                 for aname, arg in kernel_args.items()])),
-            sdfg, state_id, scope_entry)
+            '__dace_runkernel_%s(%s);\n' %
+            (kernel_name, ', '.join(['__state'] + [
+                cpp.ptr(aname, arg, sdfg) for aname, arg in kernel_args.items()
+            ])), sdfg, state_id, scope_entry)
 
         synchronize_streams(sdfg, state, state_id, scope_entry, scope_exit,
                             callsite_stream)

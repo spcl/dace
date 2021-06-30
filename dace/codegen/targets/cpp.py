@@ -264,10 +264,12 @@ def emit_memlet_reference(dispatcher,
     # accordingly.
     defined_types = None
     try:
-        if (isinstance(desc, data.Array) and any(
-                str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                for s in desc.free_symbols)):
-            defined_types = dispatcher.declared_arrays.get(memlet.data, ancestor)
+        if (isinstance(desc, data.Array) and not isinstance(desc, data.View)
+                and any(
+                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                    for s in desc.free_symbols)):
+            defined_types = dispatcher.declared_arrays.get(
+                memlet.data, ancestor)
     except KeyError:
         pass
     if not defined_types:

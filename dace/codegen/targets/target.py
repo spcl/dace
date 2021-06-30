@@ -98,7 +98,7 @@ class TargetCodeGenerator(object):
                                     in the code.
         """
         raise NotImplementedError('Abstract class')
-    
+
     def declare_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
                       node: nodes.Node, nodedesc: dt.Data,
                       global_stream: CodeIOStream,
@@ -119,7 +119,8 @@ class TargetCodeGenerator(object):
         raise NotImplementedError('Abstract class')
 
     def allocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
-                       node: nodes.Node, nodedesc: dt.Data, global_stream: CodeIOStream,
+                       node: nodes.Node, nodedesc: dt.Data,
+                       global_stream: CodeIOStream,
                        declaration_stream: CodeIOStream,
                        allocation_stream: CodeIOStream) -> None:
         """ Generates code for allocating an array, outputting to the given
@@ -140,7 +141,7 @@ class TargetCodeGenerator(object):
         raise NotImplementedError('Abstract class')
 
     def deallocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
-                         node: nodes.Node, nodedesc: dt.Data, 
+                         node: nodes.Node, nodedesc: dt.Data,
                          function_stream: CodeIOStream,
                          callsite_stream: CodeIOStream) -> None:
         """ Generates code for deallocating an array, outputting to the given
