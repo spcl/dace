@@ -462,6 +462,9 @@ class GenericSMemlet(SeparableMemletPattern):
             else:
                 raise NotImplementedError
 
+            if (node_rs < 0) == True:
+                node_rb, node_re, node_rs = node_re, node_rb, - node_rs
+
             # Get true range end
             pos_firstindex = node_rb
             neg_firstindex = node_re
