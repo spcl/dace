@@ -354,11 +354,12 @@ class FPGACodeGen(TargetCodeGenerator):
                         kernel_args_call_host.append(
                             arg.as_arg(False, name=current_name))
                         kernel_args_opencl.append(
-                            FPGACodeGen.make_opencl_parameter(current_name, arg))
+                            FPGACodeGen.make_opencl_parameter(
+                                current_name, arg))
                 elif (not isinstance(arg, dt.Stream)
                       and not isinstance(arg, dt.View)):
-                    kernel_args_call_host.append(arg.as_arg(False,
-                                                            name=arg_name))
+                    kernel_args_call_host.append(
+                        arg.as_arg(False, name=arg_name))
                     kernel_args_opencl.append(
                         FPGACodeGen.make_opencl_parameter(arg_name, arg))
 
@@ -1108,8 +1109,10 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
 
             copy_shape = memlet.subset.bounding_box_size()
-            is_src_using_hbm = src_is_subset and utils.is_hbm_array(src_nodedesc)
-            is_dst_using_hbm = not src_is_subset and utils.is_hbm_array(dst_nodedesc)
+            is_src_using_hbm = src_is_subset and utils.is_hbm_array(
+                src_nodedesc)
+            is_dst_using_hbm = not src_is_subset and utils.is_hbm_array(
+                dst_nodedesc)
             if is_src_using_hbm or is_dst_using_hbm:
                 copy_shape = utils.modify_distributed_subset(copy_shape, -1)
 

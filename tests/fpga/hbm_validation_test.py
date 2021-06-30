@@ -10,6 +10,7 @@ from dace.sdfg import nodes as nd
 # A test to check the changes to the validation required for the support for HBM
 # The three functions will be automatically called by pytest
 
+
 def assert_validation_failure(sdfg, exceptiontype):
     ok = False
     try:
@@ -62,11 +63,13 @@ def test_multi_tasklet():
             m << input[0, 0:10]
             n >> output[1, 0:10]
             n = m
+
     sdfg = singletasklet.to_sdfg()
     sdfg.arrays["input"].location["bank"] = "hbm.0:2"
     sdfg.arrays["output"].location["bank"] = "hbm.2:4"
     sdfg.apply_fpga_transformations()
     sdfg.validate()
+
 
 def test_unsound_location():
     sdfg = dace.SDFG("jdj")

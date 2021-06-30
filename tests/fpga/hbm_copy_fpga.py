@@ -7,6 +7,7 @@ from dace.codegen.targets.fpga import _FPGA_STORAGE_TYPES
 
 # A test checking copies involving HBM-arrays in some way
 
+
 def mkc(sdfg: dace.SDFG,
         state_before,
         src_name,

@@ -62,8 +62,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             try:
                 bank_assignment = sdutil.parse_location_bank(desc)
             except ValueError as e:
-                raise InvalidSDFGError(
-                    str(e), sdfg, None)
+                raise InvalidSDFGError(str(e), sdfg, None)
             if bank_assignment is not None:
                 if bank_assignment[0] == "DDR":
                     try:
@@ -71,7 +70,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                     except ValueError:
                         raise InvalidSDFGError(
                             "Memory bank specifier must be convertible to int, "
-                            f"got {bank_assignment[1]} on array {name}", sdfg, None)
+                            f"got {bank_assignment[1]} on array {name}", sdfg,
+                            None)
                 elif bank_assignment[0] == "HBM":
                     try:
                         tmp = subsets.Range.from_string(bank_assignment[1])
@@ -83,8 +83,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                         low, high = sdutil.get_multibank_ranges_from_subset(
                             bank_assignment[1], sdfg)
                     except ValueError as e:
-                        raise InvalidSDFGError(
-                            str(e), sdfg, None)
+                        raise InvalidSDFGError(str(e), sdfg, None)
                     if (high - low < 1):
                         raise InvalidSDFGError(
                             "Memory bank specifier must at least define one bank to be used"
@@ -200,8 +199,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 last_visited_map_entry.append(node)
             else:
                 scope_local_constants[node] = other_list
-        elif (isinstance(node, nd.MapExit) and 
-            node.map.schedule == dtypes.ScheduleType.Unrolled):
+        elif (isinstance(node, nd.MapExit)
+              and node.map.schedule == dtypes.ScheduleType.Unrolled):
             last_visited_map_entry.pop()
 
     if not dtypes.validate_name(state._label):
@@ -463,8 +462,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 )
         ########################################
 
-        def validate_hbm_subset(distributed_subset: subsets.Subset,
-            sdfg, state_id, eid):
+        def validate_hbm_subset(distributed_subset: subsets.Subset, sdfg,
+                                state_id, eid):
             """
             Check if first index is evaluatable to constant
             """
@@ -484,9 +483,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             high_set = set([str(x) for x in high.free_symbols]) - consts
             if len(low_set) != 0 or len(high_set) != 0:
                 raise InvalidSDFGEdgeError(
-                "The first index accessing HBM-arrays must be constant evaluatable "
-                " and have stride==1", sdfg, state_id, eid)
-
+                    "The first index accessing HBM-arrays must be constant evaluatable "
+                    " and have stride==1", sdfg, state_id, eid)
 
     # Memlet checks
     for eid, e in enumerate(state.edges()):
@@ -651,12 +649,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     state_id, eid)
 
         # Check if first index is evaluatable for HBM arrays
-        if isinstance(src_node, nd.AccessNode) and sdutil.is_hbm_array(src_node.desc(state)):
-            validate_hbm_subset(e.data.src_subset or e.data.subset,
-                sdfg, state_id, eid)
-        if isinstance(dst_node, nd.AccessNode) and sdutil.is_hbm_array(dst_node.desc(state)):
-            validate_hbm_subset(e.data.dst_subset or e.data.subset,
-                sdfg, state_id, eid)
+        if isinstance(src_node, nd.AccessNode) and sdutil.is_hbm_array(
+                src_node.desc(state)):
+            validate_hbm_subset(e.data.src_subset or e.data.subset, sdfg,
+                                state_id, eid)
+        if isinstance(dst_node, nd.AccessNode) and sdutil.is_hbm_array(
+                dst_node.desc(state)):
+            validate_hbm_subset(e.data.dst_subset or e.data.subset, sdfg,
+                                state_id, eid)
 
     ########################################
 

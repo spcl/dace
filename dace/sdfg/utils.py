@@ -1086,9 +1086,8 @@ def modify_distributed_subset(subset: Union[sbs.Subset, list, tuple],
         if isinstance(subset, tuple):
             cps = tuple(cps)
     else:
-        raise ValueError(
-            "unsupported type passed to modify_distributed_subset")
-    
+        raise ValueError("unsupported type passed to modify_distributed_subset")
+
     return cps
 
 

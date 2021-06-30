@@ -6,6 +6,7 @@ from dace import subsets
 
 # A test checking HBM in the context of nested maps and nested sdfgs
 
+
 def create_deeply_nested_sdfg():
     sdfg = dace.SDFG("deepnest_test")
     state: dace.SDFGState = sdfg.add_state("init")
@@ -20,9 +21,9 @@ def create_deeply_nested_sdfg():
     nsdfg = dace.SDFG("nest")
     nstate = nsdfg.add_state("nested_state")
     x_read = nstate.add_array("xin", [4, 10], dace.float32,
-                             dtypes.StorageType.FPGA_Global)
-    x_write = nstate.add_array("xout", [4, 10], dace.float32,
                               dtypes.StorageType.FPGA_Global)
+    x_write = nstate.add_array("xout", [4, 10], dace.float32,
+                               dtypes.StorageType.FPGA_Global)
     nsdfg.arrays["xin"].location["bank"] = "hbm.0:4"
     nsdfg.arrays["xout"].location["bank"] = "hbm.4:8"
     map_entry, map_exit = nstate.add_map("map1", dict(w="0:2"))
