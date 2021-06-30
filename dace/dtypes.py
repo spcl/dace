@@ -1272,7 +1272,8 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # Host-only allocation
     if storage in [
             StorageType.CPU_Heap, StorageType.CPU_Pinned,
-            StorageType.CPU_ThreadLocal, StorageType.FPGA_Global,
+            StorageType.CPU_ThreadLocal,
+            # StorageType.FPGA_Global,
             # StorageType.GPU_Global
     ]:
         return schedule in [
@@ -1285,6 +1286,13 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
             ScheduleType.MPI, ScheduleType.GPU_Default
+        ]
+    
+    # FPGA-global memory
+    if storage is StorageType.FPGA_Global:
+        return schedule in [
+            ScheduleType.CPU_Multicore, ScheduleType.Sequential,
+            ScheduleType.MPI, ScheduleType.FPGA_Device
         ]
 
     # FPGA-local memory
