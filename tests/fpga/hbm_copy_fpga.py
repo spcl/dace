@@ -7,11 +7,8 @@ from dace.codegen.targets.fpga import _FPGA_STORAGE_TYPES
 
 # A test checking copies involving HBM-arrays in some way
 
-
-#helper MaKe_Copy that creates and appends states performing exactly one copy. If a provided
-#arrayname already exists it will use the old array, and ignore all newly passed values
 def mkc(sdfg: dace.SDFG,
-        statebefore,
+        state_before,
         src_name,
         dst_name,
         src_storage=None,
@@ -21,24 +18,29 @@ def mkc(sdfg: dace.SDFG,
         copy_expr=None,
         src_loc=None,
         dst_loc=None):
+    """
+    Helper MaKe_Copy that creates and appends states performing exactly one copy. If a provided
+    arrayname already exists it will use the old array, and ignore all newly passed values
+    """
+
     if copy_expr is None:
         copy_expr = src_name
-    if (statebefore == None):
+    if (state_before == None):
         state = sdfg.add_state(is_start_state=True)
     else:
-        state = sdfg.add_state_after(statebefore)
+        state = sdfg.add_state_after(state_before)
 
     def mkarray(name, shape, storage, loc):
         if (name in sdfg.arrays):
             return sdfg.arrays[name]
-        isTransient = False
+        is_transient = False
         if (storage in _FPGA_STORAGE_TYPES):
-            isTransient = True
+            is_transient = True
         arr = sdfg.add_array(name,
                              shape,
                              dace.int32,
                              storage,
-                             transient=isTransient)
+                             transient=is_transient)
         if loc is not None:
             arr[1].location["bank"] = loc
         return arr
@@ -51,18 +53,18 @@ def mkc(sdfg: dace.SDFG,
 
     edge = state.add_edge(aAcc, None, bAcc, None, mem.Memlet(copy_expr))
 
-    aNpArr, bNpArr = None, None
+    a_np_arr, b_np_arr = None, None
     if src_shape is not None:
         try:
-            aNpArr = np.zeros(src_shape, dtype=np.int32)
+            a_np_arr = np.zeros(src_shape, dtype=np.int32)
         except:
             pass
     if dst_shape is not None:
         try:
-            bNpArr = np.zeros(dst_shape, dtype=np.int32)
+            b_np_arr = np.zeros(dst_shape, dtype=np.int32)
         except:
             pass
-    return (state, aNpArr, bNpArr)
+    return (state, a_np_arr, b_np_arr)
 
 
 def check_hbm2hbm1():

@@ -486,38 +486,38 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # Build kernel signature
         kernel_args = []
         array_args = []
-        for is_output, dataname, data, interface in parameters:
-            is_assigned = dataname in bank_assignments and bank_assignments[
-                dataname] is not None
+        for is_output, data_name, data, interface in parameters:
+            is_assigned = data_name in bank_assignments and bank_assignments[
+                data_name] is not None
             if is_assigned and isinstance(data, dt.Array):
-                memory_bank = bank_assignments[dataname]
+                memory_bank = bank_assignments[data_name]
                 if memory_bank[0] == "HBM":
                     lowest_bank_index, _ = utils.get_multibank_ranges_from_subset(
                         memory_bank[1], sdfg)
                 else:
                     lowest_bank_index = int(memory_bank[1])
                 for bank in utils.iterate_hbm_multibank_arrays(
-                        dataname, data, sdfg):
+                        data_name, data, sdfg):
                     kernel_arg = self.make_kernel_argument(
-                        data, dataname, bank, sdfg, is_output, True, interface)
+                        data, data_name, bank, sdfg, is_output, True, interface)
                     if kernel_arg:
                         kernel_args.append(kernel_arg)
-                        array_args.append((kernel_arg, dataname))
+                        array_args.append((kernel_arg, data_name))
                         argname_to_bank_assignment[kernel_arg] = (
                             memory_bank[0], lowest_bank_index + bank)
             else:
-                kernel_arg = self.make_kernel_argument(data, dataname, None,
+                kernel_arg = self.make_kernel_argument(data, data_name, None,
                                                        None, is_output, True,
                                                        interface)
                 if kernel_arg:
                     kernel_args.append(kernel_arg)
                     if isinstance(data, dt.Array):
-                        array_args.append((kernel_arg, dataname))
+                        array_args.append((kernel_arg, data_name))
                         argname_to_bank_assignment[kernel_arg] = None
 
         stream_args = []
-        for is_output, dataname, data, interface in external_streams:
-            kernel_arg = self.make_kernel_argument(data, dataname, None, None,
+        for is_output, data_name, data, interface in external_streams:
+            kernel_arg = self.make_kernel_argument(data, data_name, None, None,
                                                    is_output, True, interface)
             if kernel_arg:
                 stream_args.append(kernel_arg)
@@ -530,7 +530,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         # Insert interface pragmas
         num_mapped_args = 0
-        for arg, dataname in array_args:
+        for arg, data_name in array_args:
             var_name = re.findall(r"\w+", arg)[-1]
             if "*" in arg:
                 interface_name = "gmem{}".format(num_mapped_args)

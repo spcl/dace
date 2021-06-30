@@ -10,24 +10,24 @@ import numpy as np
 def create_vadd_multibank_sdfg(bank_count_per_array=2,
                                ndim=1,
                                unroll_map_inside=False,
-                               sdfgname="vadd_hbm"):
+                               sdfg_name="vadd_hbm"):
     N = dace.symbol("N")
     M = dace.symbol("M")
     S = dace.symbol("S")
 
-    sdfg = dace.SDFG(sdfgname)
+    sdfg = dace.SDFG(sdfg_name)
     state = sdfg.add_state('vadd_hbm', True)
     shape = [bank_count_per_array, N]
-    accstr = "i"
+    access_str = "i"
     inner_map_range = dict()
     inner_map_range["i"] = "0:N"
     if (ndim >= 2):
         shape = [bank_count_per_array, N, M]
-        accstr = "i, j"
+        access_str = "i, j"
         inner_map_range["j"] = "0:M"
     if (ndim >= 3):
         shape = [bank_count_per_array, N, M, S]
-        accstr = "i, j, t"
+        access_str = "i, j, t"
         inner_map_range["t"] = "0:S"
 
     in1 = sdfg.add_array("in1", shape, dace.float32)
@@ -44,9 +44,9 @@ def create_vadd_multibank_sdfg(bank_count_per_array=2,
     read_in2 = state.add_read("in2")
     out_write = state.add_write("out")
 
-    tmpin1_memlet = dace.Memlet(f"in1[k, {accstr}]")
-    tmpin2_memlet = dace.Memlet(f"in2[k, {accstr}]")
-    tmpout_memlet = dace.Memlet(f"out[k, {accstr}]")
+    tmp_in1_memlet = dace.Memlet(f"in1[k, {access_str}]")
+    tmp_in2_memlet = dace.Memlet(f"in2[k, {access_str}]")
+    tmp_out_memlet = dace.Memlet(f"out[k, {access_str}]")
 
     outer_entry, outer_exit = state.add_map("vadd_outer_map",
                                             dict(k=f'0:{bank_count_per_array}'))
@@ -60,38 +60,38 @@ def create_vadd_multibank_sdfg(bank_count_per_array=2,
                               map_entry,
                               outer_entry,
                               tasklet,
-                              memlet=tmpin1_memlet,
+                              memlet=tmp_in1_memlet,
                               dst_conn="__in1")
         state.add_memlet_path(read_in2,
                               map_entry,
                               outer_entry,
                               tasklet,
-                              memlet=tmpin2_memlet,
+                              memlet=tmp_in2_memlet,
                               dst_conn="__in2")
         state.add_memlet_path(tasklet,
                               outer_exit,
                               map_exit,
                               out_write,
-                              memlet=tmpout_memlet,
+                              memlet=tmp_out_memlet,
                               src_conn="__out")
     else:
         state.add_memlet_path(read_in1,
                               outer_entry,
                               map_entry,
                               tasklet,
-                              memlet=tmpin1_memlet,
+                              memlet=tmp_in1_memlet,
                               dst_conn="__in1")
         state.add_memlet_path(read_in2,
                               outer_entry,
                               map_entry,
                               tasklet,
-                              memlet=tmpin2_memlet,
+                              memlet=tmp_in2_memlet,
                               dst_conn="__in2")
         state.add_memlet_path(tasklet,
                               map_exit,
                               outer_exit,
                               out_write,
-                              memlet=tmpout_memlet,
+                              memlet=tmp_out_memlet,
                               src_conn="__out")
 
     sdfg.apply_fpga_transformations()
@@ -111,9 +111,9 @@ def createTestSet(dim, size1D, banks):
     return (in1, in2, expected, out)
 
 
-def exec_test(dim, size1D, banks, testname, unroll_map_inside=False):
+def exec_test(dim, size1D, banks, test_name, unroll_map_inside=False):
     in1, in2, expected, target = createTestSet(dim, size1D, banks)
-    sdfg = create_vadd_multibank_sdfg(banks, dim, unroll_map_inside, testname)
+    sdfg = create_vadd_multibank_sdfg(banks, dim, unroll_map_inside, test_name)
     if (dim == 1):
         sdfg(in1=in1, in2=in2, out=target, N=size1D)
     elif (dim == 2):
