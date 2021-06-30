@@ -388,7 +388,7 @@ for (auto &event : all_events) {
     event.getProfilingInfo(CL_PROFILING_COMMAND_START, &event_start);
     event.getProfilingInfo(CL_PROFILING_COMMAND_END, &event_end);
     const double elapsed = 1e-9 * (event_end - event_start);
-    std::cout << "Kernel executed in " << elapsed << " seconds.\n";
+    std::cout << "Kernel executed in " << elapsed << " seconds.\\n";
 }
 """)
 
