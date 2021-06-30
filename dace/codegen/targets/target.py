@@ -98,6 +98,25 @@ class TargetCodeGenerator(object):
                                     in the code.
         """
         raise NotImplementedError('Abstract class')
+    
+    def declare_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
+                      node: nodes.Node, nodedesc: dt.Data,
+                      global_stream: CodeIOStream,
+                      declaration_stream: CodeIOStream) -> None:
+        """ Generates code for declaring an array without allocating it,
+            outputting to the given code streams.
+            :param sdfg: The SDFG to generate code from.
+            :param dfg: The SDFG state to generate code from.
+            :param state_id: The node ID of the state in the given SDFG.
+            :param node: The data node to generate allocation for.
+            :param nodedesc: The data descriptor to allocate.
+            :param global_stream: A `CodeIOStream` object that will be
+                                    generated outside the calling code, for
+                                    use when generating global functions.
+            :param declaration_stream: A `CodeIOStream` object that points
+                                       to the point of array declaration.
+        """
+        raise NotImplementedError('Abstract class')
 
     def allocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
                        node: nodes.Node, nodedesc: dt.Data, global_stream: CodeIOStream,
