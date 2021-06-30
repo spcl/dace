@@ -420,8 +420,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         # Check for device-level memory recursively
         node = scope if isinstance(scope, nodes.EntryNode) else None
         cstate = scope if isinstance(scope, SDFGState) else state
-        if isinstance(scope, SDFG):
-            cstate = None
+        # if isinstance(scope, SDFG):
+        #     cstate = None
         csdfg = scope if isinstance(scope, SDFG) else sdfg
 
         if desc.storage in dtypes.FPGA_STORAGES:
@@ -522,6 +522,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # SDFG memory and shared transients are allocated in the
                 # beginning of their SDFG
                 alloc_scope = sdfg
+                alloc_state = sdfg.nodes()[first_state_instance]
                 # If unused, skip
                 if first_node_instance is None:
                     continue
@@ -675,9 +676,9 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 state = None
             desc = node.desc(tsdfg)
 
-            # Skip FPGA memory management for now (handled in backends)
-            if desc.storage in dtypes.FPGA_STORAGES:
-                continue
+            # # Skip FPGA memory management for now (handled in backends)
+            # if desc.storage in dtypes.FPGA_STORAGES:
+            #     continue
 
             self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node,
                                                desc, function_stream,
@@ -702,9 +703,9 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 state = None
             desc = node.desc(tsdfg)
 
-            # Skip FPGA memory management for now (handled in backends)
-            if desc.storage in dtypes.FPGA_STORAGES:
-                continue
+            # # Skip FPGA memory management for now (handled in backends)
+            # if desc.storage in dtypes.FPGA_STORAGES:
+            #     continue
 
             self._dispatcher.dispatch_deallocate(tsdfg, state, state_id, node,
                                                  desc, function_stream,
