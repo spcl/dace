@@ -1486,7 +1486,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         state_dfg = sdfg.nodes()[state_id]
 
         # Check if this is a copy memlet using at least one HBM array
-        do_default_copy = True
+        edge_list = []
         if (isinstance(src_node, dace.sdfg.nodes.AccessNode)
                 and isinstance(dst_node, dace.sdfg.nodes.AccessNode)):
             src_array = src_node.desc(sdfg)
@@ -1494,7 +1494,6 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             src_is_hbm = utils.is_hbm_array(src_array)
             dst_is_hbm = utils.is_hbm_array(dst_array)
             if src_is_hbm or dst_is_hbm:
-                do_default_copy = False
                 modedge = copy.deepcopy(edge)
                 mem: memlet.Memlet = modedge.data
                 if mem.src_subset is None:
@@ -1519,15 +1518,16 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     if dst_is_hbm or num_accessed_banks > 1:
                         mem.dst_subset = utils.modify_distributed_subset(
                             mem.dst_subset, dst_index)
-                    self._emit_copy(sdfg, state_id, src_node, src_storage,
-                                    dst_node, dst_storage, dst_schedule,
-                                    modedge, state_dfg, function_stream,
-                                    callsite_stream)
+                    edge_list.append(copy.deepcopy(modedge))
+            else:
+                edge_list.append(edge)
+        else:
+            edge_list.append(edge)
 
         # Emit actual copy
-        if do_default_copy:
+        for current_edge in edge_list:
             self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
-                            dst_storage, dst_schedule, edge, state_dfg,
+                            dst_storage, dst_schedule, current_edge, state_dfg,
                             function_stream, callsite_stream)
 
     def _generate_PipelineEntry(self, *args, **kwargs):
