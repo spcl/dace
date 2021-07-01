@@ -638,7 +638,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # NOTE: We may also need to support views
             # NOTE: Tuple is (SDFG, State, Node, declare, allocate deallocate)
             if (isinstance(desc, data.Array)
-                    and not isinstance(desc, data.View) and any(
+                    and not isinstance(desc, data.View)
+                    and not isinstance(curscope, nodes.EntryNode) and any(
                         str(s) not in sdfg.free_symbols.union(
                             sdfg.constants.keys()) for s in desc.free_symbols)):
                 # Declare in current (SDFG) scope
