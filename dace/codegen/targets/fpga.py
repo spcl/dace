@@ -797,8 +797,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     # TODO: Distinguish between read, write, and read+write
                     self._allocated_global_arrays.add(node.data)
                     memory_bank_arg_count = 1
-                    bank_offset = -1
-                    storage_type_str = "hlslib::ocl::StorageType::DDR" #one has to specify DDR to use unspecified Memory
+                    bank_offset = -1 
+                    storage_type_str = "hlslib::ocl::StorageType::DDR" #DDR to use unspecified memory
 
                     #Fix bankassignments if present
                     bank_info = utils.parse_location_bank(nodedesc)
