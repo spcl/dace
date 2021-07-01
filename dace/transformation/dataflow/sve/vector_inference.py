@@ -1,3 +1,4 @@
+from enum import Enum, Flag
 from networkx import DiGraph
 from dace.memlet import Memlet
 from collections import defaultdict
@@ -12,6 +13,11 @@ import dace.dtypes as dtypes
 import dace.data as data
 from typing import *
 import dace.symbolic as symbolic
+
+
+class VectorInferenceFlags(Flag):
+    # Allows stride vector loads/stores instead of just contiguous ones
+    Allow_Stride = 1
 
 
 class VectorInferenceException(Exception):
@@ -37,16 +43,39 @@ class InferenceNode():
 
         if self.is_inferred() and self.inferred != inf_type:
             # Node has already been inferred, and it is again inferred to a different type
-            raise VectorInferenceException(
-                f'Violating constraint at {self.belongs_to} (old: {self.inferred}, new: {inf_type})'
-            )
+            # Provide a meaningful exception message
+            exp_str = 'Vector' if self.inferred == InferenceNode.Vector else 'Scalar'
+            inf_str = 'Vector' if inf_type == InferenceNode.Vector else 'Scalar'
+            if isinstance(self.belongs_to, nodes.AccessNode):
+                raise VectorInferenceException(
+                    f'Violating constraint @ {self.belongs_to} (expected: {exp_str}, inferred: {inf_str})'
+                )
+            else:
+                node, conn, inp = self.belongs_to
+                in_out = 'input' if inp else 'output'
+                raise VectorInferenceException(
+                    f'Violating constraint @ {self.belongs_to[0]} at {in_out} connector "{conn}"  (expected: {exp_str}, inferred as: {inf_str})'
+                )
 
         self.inferred = inf_type
 
 
 class VectorInferenceGraph(DiGraph):
-    def __init__(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry,
-                 vec_len):
+    # Default propagation mode, where vectors propagate forwards and scalars propagate backwards.
+    Propagate_Default = 0
+
+    # Inverted propagation mode, where vectors propagate backwards and scalars propagate forwards.
+    Propagate_WCR = 1
+
+    def __init__(self,
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 map_entry: nodes.MapEntry,
+                 vec_len,
+                 initial_constraints: Dict[Union[Tuple[nodes.Tasklet, str,
+                                                       bool], nodes.AccessNode],
+                                           int] = None,
+                 flags: VectorInferenceFlags = None):
         """
             Builds a vector inference graph for a Map to infer vectorizable Tasklet connectors
             and AccessNodes in polynomial time.
@@ -54,7 +83,10 @@ class VectorInferenceGraph(DiGraph):
             :param sdfg: The SDFG where the Map resides.
             :param state: The state where the Map resides.
             :param map_entry: The entry node of the Map.
-            :param vec_len: The vector length that should be used when creating a `dtypes.vector`. 
+            :param vec_len: The vector length that should be used when creating a `dtypes.vector`.
+            :param initial_constraints: A dictionary mapping from a connector specified using `(node, name, is_input)`
+                                        or an `AccessNode` to either `InferenceNode.Scalar` or `InferenceNode.Vector`.
+            :param flags: Additional flags to limit the vectorization.
         """
         super().__init__()
         self.sdfg = sdfg
@@ -64,21 +96,33 @@ class VectorInferenceGraph(DiGraph):
                                              include_entry=False,
                                              include_exit=False)
 
+        self.subgraph2 = state.scope_subgraph(map_entry)
+
         self.map = map_entry.map
 
+        # Infer connectors on the entire subgraph (including the entry and exit)
         self.inf: infer_types.TypeInferenceDict = infer_types.infer_connector_types(
-            sdfg, state, self.subgraph)
+            sdfg, state, state.scope_subgraph(map_entry))
 
         # Use the innermost loop param
         self.param = self.map.params[-1]
 
         self.vec_len = vec_len
-        self.conn_to_node: DefaultDict[Union[Tuple[nodes.Tasklet, str, bool],
-                                             nodes.AccessNode]] = defaultdict(
-                                                 lambda: None)
+
+        # Stores a mapping from SDFG nodes/connectors to InferenceNode's
+        # Used when constructing the internal inference graph
+        self.conn_to_node = DefaultDict[Union[Tuple[nodes.Tasklet, str, bool],
+                                              nodes.AccessNode],
+                                        InferenceNode](lambda: None)
+
+        self.flags = flags
 
         self._build()
         self._detect_constraints()
+
+        if initial_constraints is not None:
+            for n, t in initial_constraints.items():
+                self.set_constraint(n, t)
 
     def set_constraint(self, conn: Union[Tuple[nodes.Tasklet, str, bool],
                                          nodes.AccessNode], infer_type: int):
@@ -96,22 +140,40 @@ class VectorInferenceGraph(DiGraph):
             Allows to obtain the inferred constraint for a Tasklet connector or AccessNode.
             Should be done after calling `infer()`.
         """
-        return self.conn_to_node[conn].inferred
+        inf = self.conn_to_node.get(conn)
+        if inf is None:
+            return InferenceNode.Unknown
+        else:
+            return inf.inferred
 
     def _forward(self, node: InferenceNode):
         # Only vector constraints are only propagated forwards
-        if node.inferred != InferenceNode.Vector:
+        if node.inferred == InferenceNode.Unknown:
+            # Nothing to propagate
             return
-        for _, dst in self.out_edges(node):
-            dst.infer_as(InferenceNode.Vector)
+        for _, dst, data in self.out_edges(node, data=True):
+            # In default mode, vector constraints are propagated forwards
+            if data['mode'] == VectorInferenceGraph.Propagate_Default and node.inferred == InferenceNode.Vector:
+                dst.infer_as(InferenceNode.Vector)
+            # In WCR mode, scalar constraints are propagated forwards
+            if data['mode'] == VectorInferenceGraph.Propagate_WCR and node.inferred == InferenceNode.Scalar:
+                dst.infer_as(InferenceNode.Scalar)
+
             self._forward(dst)
 
     def _backward(self, node: InferenceNode):
         # Only scalar constraints are only propagated backwards
-        if node.inferred != InferenceNode.Scalar:
+        if node.inferred == InferenceNode.Unknown:
+            # Nothing to propagate
             return
-        for src, _ in self.in_edges(node):
-            src.infer_as(InferenceNode.Scalar)
+        for src, _, data in self.in_edges(node, data=True):
+            # In default mode, scalar constraints are propagated backwards
+            if data['mode'] == VectorInferenceGraph.Propagate_Default and node.inferred == InferenceNode.Scalar:
+                src.infer_as(InferenceNode.Scalar)
+            # In WCR mode, vector constraints are propagated backwards
+            if data['mode'] == VectorInferenceGraph.Propagate_WCR and node.inferred == InferenceNode.Vector:
+                src.infer_as(InferenceNode.Vector)
+
             self._backward(src)
 
     def infer(self):
@@ -128,6 +190,31 @@ class VectorInferenceGraph(DiGraph):
         for node in self.nodes():
             if not node.is_inferred():
                 node.infer_as(InferenceNode.Scalar)
+
+        if self.flags is None or VectorInferenceFlags.Allow_Stride not in self.flags:
+            # Make sure no stride vector memlets occur
+            for edge, _ in self.subgraph2.all_edges_recursive():
+                print(edge)
+                src_type = InferenceNode.Unknown
+                if isinstance(edge.src, nodes.Tasklet):
+                    src_type = self.get_constraint(
+                        (edge.src, edge.src_conn, False))
+                elif isinstance(edge.src, nodes.AccessNode):
+                    src_type = self.get_constraint(edge.src)
+
+                dst_type = InferenceNode.Unknown
+                if isinstance(edge.dst, nodes.Tasklet):
+                    dst_type = self.get_constraint(
+                        (edge.dst, edge.dst_conn, True))
+                elif isinstance(edge.dst, nodes.AccessNode):
+                    dst_type = self.get_constraint(edge.dst)
+
+                if src_type == InferenceNode.Vector or dst_type == InferenceNode.Vector:
+                    if not edge.data.get_stride(self.sdfg, self.map) in [0, 1]:
+                        raise VectorInferenceException(
+                            f'Found stride vector Memlet at {edge}')
+
+        return False
 
     def _get_output_subsets(self, node: nodes.Tasklet) -> Dict[str, Set[str]]:
         """
@@ -158,19 +245,6 @@ class VectorInferenceGraph(DiGraph):
             # Only set the pointer out connectors
             for conn in node.out_connectors:
                 if isinstance(self.inf[(node, conn, False)], dtypes.pointer):
-                    in_dict[(node, conn, False)] = self.inf[(node, conn, False)]
-
-            # Special treatment for WCR
-            for conn in node.out_connectors:
-                if any([
-                        e.data.wcr is not None
-                        for e in self.state.out_edges_by_connector(node, conn)
-                ]):
-                    print('WARNING: Vector inference on WCR is experimental')
-                    if isinstance(self.inf[(node, conn, False)], dtypes.vector):
-                        # Violates the propagation rules
-                        raise VectorInferenceException(
-                            'vreduce is not supported')
                     in_dict[(node, conn, False)] = self.inf[(node, conn, False)]
 
             # Toggle the "unit" vector input
@@ -206,13 +280,22 @@ class VectorInferenceGraph(DiGraph):
 
         return relation
 
-    def _try_add_edge(self, src, dst):
+    def _try_add_edge(self, src, dst, mode):
         """
             Adds an edge only if both source and destination are not `None`.
             This is used when building the graph and some connector might be dropped.
         """
         if src is not None and dst is not None:
-            self.add_edge(src, dst)
+            self.add_edge(src, dst, mode=mode)
+
+    def _get_propagation_mode(self, edge: MultiConnectorEdge):
+        """
+            Determines the propagation mode of an SDFG edge.
+        """
+        if edge.data.wcr is None:
+            return VectorInferenceGraph.Propagate_Default
+        else:
+            return VectorInferenceGraph.Propagate_WCR
 
     def _build(self):
         """
@@ -251,7 +334,10 @@ class VectorInferenceGraph(DiGraph):
                 # Connect the inputs of every union to its corresponding output
                 for out, inputs in self._get_output_subsets(node).items():
                     for inp in inputs:
-                        self.add_edge(in_nodes[inp], out_nodes[out])
+                        self.add_edge(
+                            in_nodes[inp],
+                            out_nodes[out],
+                            mode=VectorInferenceGraph.Propagate_Default)
 
             elif isinstance(node, nodes.AccessNode):
                 desc = node.desc(self.sdfg)
@@ -273,21 +359,25 @@ class VectorInferenceGraph(DiGraph):
                     if isinstance(e.src, nodes.Tasklet):
                         self._try_add_edge(
                             self.conn_to_node[(e.src, e.src_conn, False)],
-                            self.conn_to_node[(node, e.dst_conn, True)])
+                            self.conn_to_node[(node, e.dst_conn, True)],
+                            self._get_propagation_mode(e))
                     elif isinstance(e.src, nodes.AccessNode):
                         self._try_add_edge(
                             self.conn_to_node[e.src],
-                            self.conn_to_node[(node, e.dst_conn, True)])
+                            self.conn_to_node[(node, e.dst_conn, True)],
+                            self._get_propagation_mode(e))
             elif isinstance(node, nodes.AccessNode):
                 for e in self.state.in_edges(node):
                     if isinstance(e.src, nodes.Tasklet):
                         self._try_add_edge(
                             self.conn_to_node[(e.src, e.src_conn, False)],
-                            self.conn_to_node[node])
+                            self.conn_to_node[node],
+                            self._get_propagation_mode(e))
                     elif isinstance(e.src, nodes.AccessNode):
                         # TODO: What does that mean?
                         self._try_add_edge(self.conn_to_node[e.src],
-                                           self.conn_to_node[node])
+                                           self.conn_to_node[node],
+                                           self._get_propagation_mode(e))
 
     def _as_type(self, dtype: dace.typeclass, inf_type: int) -> dace.typeclass:
         """
@@ -315,6 +405,8 @@ class VectorInferenceGraph(DiGraph):
             return False
         if edge.data.get_stride(self.sdfg, self.map) == 0:
             return False
+        if edge.data.wcr is not None:
+            return False
         return True
 
     def _carries_scalar_data(self, edge: MultiConnectorEdge[Memlet]) -> bool:
@@ -325,6 +417,8 @@ class VectorInferenceGraph(DiGraph):
         if self.param in edge.data.subset.free_symbols:
             return False
         if edge.data.get_stride(self.sdfg, self.map) != 0:
+            return False
+        if edge.data.wcr is not None:
             return False
         return True
 
@@ -360,7 +454,7 @@ class VectorInferenceGraph(DiGraph):
                                            False)].infer_as(
                                                InferenceNode.Vector)
                     elif self._carries_scalar_data(edge):
-                        # Writing a scalar (with no loop param) from an Array
+                        # Writing a scalar (with no loop param) to an Array
                         # AccessNode is always a scalar
                         dst_node = self.state.memlet_path(edge)[-1].dst
                         if isinstance(dst_node,
@@ -400,7 +494,9 @@ class VectorInferenceGraph(DiGraph):
     def apply(self):
         """
             Applies the inference on the graph by making the suitable connectors vectors.
+            Also sets the dtypes accordingly.
         """
+        infer_types.apply_connector_types(self.inf)
         for node in self.nodes():
             if isinstance(node.belongs_to, nodes.AccessNode):
                 t = node.belongs_to.desc(self.sdfg).dtype
@@ -432,6 +528,11 @@ def infer_vectors(sdfg: SDFG,
                   state: SDFGState,
                   map_entry: nodes.MapEntry,
                   vec_len,
+                  initial_constraints: Dict[Union[Tuple[nodes.Tasklet, str,
+                                                        bool],
+                                                  nodes.AccessNode],
+                                            int] = None,
+                  flags: VectorInferenceFlags = None,
                   apply: bool = True) -> VectorInferenceGraph:
     """
         Builds a vector inference graph for a Map to infer vectorizable Tasklet connectors
@@ -442,9 +543,14 @@ def infer_vectors(sdfg: SDFG,
         :param state: The state where the Map resides.
         :param map_entry: The entry node of the Map.
         :param vec_len: The vector length that should be used when creating a `dtypes.vector`.
+        :param initial_constraints: A dictionary mapping from a connector specified using `(node, name, is_input)`
+                                    or an `AccessNode` to either `InferenceNode.Scalar` or `InferenceNode.Vector`.
+        :param flags: Additional flags to limit the vectorization (e. g. allow stride loads).
+        :param apply: Whether to apply the vectorization or not.
         :returns: The inference graph for analysis.
     """
-    graph = VectorInferenceGraph(sdfg, state, map_entry, vec_len)
+    graph = VectorInferenceGraph(sdfg, state, map_entry, vec_len,
+                                 initial_constraints, flags)
     graph.infer()
     if apply:
         graph.apply()
