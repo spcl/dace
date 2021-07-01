@@ -96,13 +96,13 @@ class VectorInferenceGraph(DiGraph):
                                              include_entry=False,
                                              include_exit=False)
 
-        self.subgraph2 = state.scope_subgraph(map_entry)
+        self.subgraph_with_scope = state.scope_subgraph(map_entry)
 
         self.map = map_entry.map
 
         # Infer connectors on the entire subgraph (including the entry and exit)
         self.inf: infer_types.TypeInferenceDict = infer_types.infer_connector_types(
-            sdfg, state, state.scope_subgraph(map_entry))
+            sdfg, state, self.subgraph_with_scope)
 
         # Use the innermost loop param
         self.param = self.map.params[-1]
@@ -193,8 +193,7 @@ class VectorInferenceGraph(DiGraph):
 
         if self.flags is None or VectorInferenceFlags.Allow_Stride not in self.flags:
             # Make sure no stride vector memlets occur
-            for edge, _ in self.subgraph2.all_edges_recursive():
-                print(edge)
+            for edge, _ in self.subgraph_with_scope.all_edges_recursive():
                 src_type = InferenceNode.Unknown
                 if isinstance(edge.src, nodes.Tasklet):
                     src_type = self.get_constraint(
