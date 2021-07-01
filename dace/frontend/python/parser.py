@@ -165,6 +165,7 @@ class DaceProgram:
         }
         self.symbols = set(k for k, v in self.global_vars.items()
                            if isinstance(v, symbolic.symbol))
+        self.closure_arg_mapping: Dict[str, str] = {}
 
         # Add type annotations from decorator arguments (DEPRECATED)
         if self.dec_args:
@@ -254,6 +255,12 @@ class DaceProgram:
         result.update({aname: arg for aname, arg in zip(self.argnames, args)})
         result.update(kwargs)
 
+        # Add closure arguments to the call
+        result.update({
+            k: eval(v, self.global_vars)
+            for k, v in self.closure_arg_mapping.items()
+        })
+
         # Update arguments with symbols in data shapes
         result.update(
             infer_symbols_from_datadescriptor(
@@ -268,7 +275,7 @@ class DaceProgram:
             program. """
         # Update global variables with current closure
         self.global_vars = _get_locals_and_globals(self.f)
-
+        
         # Move "self" from an argument into the closure
         if self.methodobj is not None:
             self.global_vars[self.objname] = self.methodobj
@@ -285,13 +292,7 @@ class DaceProgram:
         self.clear_cache()
 
         # Parse SDFG
-        sdfg, closure_arg_mapping = self._parse(args, kwargs)
-
-        # Add closure arguments to the call
-        kwargs.update({
-            k: eval(v, self.global_vars)
-            for k, v in closure_arg_mapping.items()
-        })
+        sdfg, self.closure_arg_mapping = self._parse(args, kwargs)
 
         # Add named arguments to the call
         kwargs.update(arg_mapping)
@@ -526,6 +527,10 @@ class DaceProgram:
 
         # If exist, obtain type annotations (for compilation)
         argtypes, _, gvars = self._get_type_annotations(args, kwargs)
+
+        # Move "self" from an argument into the closure
+        if self.methodobj is not None:
+            self.global_vars[self.objname] = self.methodobj
 
         # Parse argument types from call
         if len(self.argnames) > 0:

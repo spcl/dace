@@ -91,6 +91,26 @@ def test_dataclass_method():
     assert np.allclose(dc.my_a, acopy + b)
 
 
+def test_dataclass_method_cache():
+    @dataclass
+    class MyObject:
+        my_a: dace.float64[20]
+
+        def __init__(self) -> None:
+            self.my_a = np.random.rand(20)
+
+        @dace.method
+        def something(self, B: dace.float64[20]):
+            self.my_a += B
+
+    dc = MyObject()
+    acopy = np.copy(dc.my_a)
+    b = np.random.rand(20)
+    dc.something(b)
+    dc.something(b)
+    assert np.allclose(dc.my_a, acopy + b + b)
+
+
 def test_dataclass_method_aot():
     """ AOT compilation of dataclass methods. """
     @dataclass
@@ -296,6 +316,7 @@ if __name__ == '__main__':
     test_external_ndarray_modify()
     test_external_dataclass()
     test_dataclass_method()
+    test_dataclass_method_cache()
     test_dataclass_method_aot()
     test_object_method()
     test_object_newfield()
