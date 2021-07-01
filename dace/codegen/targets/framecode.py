@@ -420,8 +420,6 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         # Check for device-level memory recursively
         node = scope if isinstance(scope, nodes.EntryNode) else None
         cstate = scope if isinstance(scope, SDFGState) else state
-        # if isinstance(scope, SDFG):
-        #     cstate = None
         csdfg = scope if isinstance(scope, SDFG) else sdfg
 
         if desc.storage in dtypes.FPGA_STORAGES:
@@ -447,6 +445,18 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         for sdfg, name, desc in top_sdfg.arrays_recursive():
             if not desc.transient:
                 continue
+
+            # NOTE: In the code below we infer where a transient should be
+            # declared, allocated, and deallocated. The information is stored
+            # in the `to_allocate` dictionary. The key of each entry is the
+            # scope where one of the above actions must occur, while the value
+            # is a tuple containing the following information:
+            # 1. The SDFG object that containts the transient.
+            # 2. The State id where the action should (approx.) take place.
+            # 3. The Access Node id of the transient in the above State.
+            # 4. True if declaration should take place, otherwise False.
+            # 4. True if allocation should take place, otherwise False.
+            # 4. True if deallocation should take place, otherwise False.
 
             # Possibly confusing control flow below finds the first state
             # and node of the data descriptor, or continues the
@@ -485,8 +495,6 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # definition = desc.as_arg(name=f'{name}') + ';'
                 self.statestruct.append(definition)
 
-                # self.to_allocate[top_sdfg].append(
-                #     (sdfg.sdfg_id, sdfg.node_id(state), node))
                 self.to_allocate[top_sdfg].append(
                     (sdfg, first_state_instance, first_node_instance, True,
                      True, True))
@@ -658,17 +666,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                     (sdfg, first_state_instance, first_node_instance, True,
                      True, True))
 
-            # self.to_allocate[curscope].append(
-            #     (sdfg.sdfg_id, first_state_instance, first_node_instance))
-
     def allocate_arrays_in_scope(self, sdfg: SDFG,
                                  scope: Union[nodes.EntryNode, SDFGState, SDFG],
                                  function_stream: CodeIOStream,
                                  callsite_stream: CodeIOStream):
         """ Dispatches allocation of all arrays in the given scope. """
-        # for sdfg_id, state_id, node in self.to_allocate[scope]:
-        #     tsdfg = sdfg.sdfg_list[sdfg_id]
-        # for tsdfg, state_id, node in self.to_allocate[scope]:
         for tsdfg, state_id, node, declare, allocate, _ in self.to_allocate[
                 scope]:
             if state_id is not None:
@@ -676,10 +678,6 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             else:
                 state = None
             desc = node.desc(tsdfg)
-
-            # # Skip FPGA memory management for now (handled in backends)
-            # if desc.storage in dtypes.FPGA_STORAGES:
-            #     continue
 
             self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node,
                                                desc, function_stream,
@@ -692,9 +690,6 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                                    function_stream: CodeIOStream,
                                    callsite_stream: CodeIOStream):
         """ Dispatches deallocation of all arrays in the given scope. """
-        # for sdfg_id, state_id, node in self.to_allocate[scope]:
-        #     tsdfg = sdfg.sdfg_list[sdfg_id]
-        # for tsdfg, state_id, node in self.to_allocate[scope]:
         for tsdfg, state_id, node, _, _, deallocate in self.to_allocate[scope]:
             if not deallocate:
                 continue
@@ -703,10 +698,6 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             else:
                 state = None
             desc = node.desc(tsdfg)
-
-            # # Skip FPGA memory management for now (handled in backends)
-            # if desc.storage in dtypes.FPGA_STORAGES:
-            #     continue
 
             self._dispatcher.dispatch_deallocate(tsdfg, state, state_id, node,
                                                  desc, function_stream,

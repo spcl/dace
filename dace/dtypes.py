@@ -1272,9 +1272,7 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # Host-only allocation
     if storage in [
             StorageType.CPU_Heap, StorageType.CPU_Pinned,
-            StorageType.CPU_ThreadLocal,
-            # StorageType.FPGA_Global,
-            # StorageType.GPU_Global
+            StorageType.CPU_ThreadLocal
     ]:
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,

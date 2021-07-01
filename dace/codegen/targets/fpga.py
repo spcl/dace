@@ -717,7 +717,6 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
             if self._in_device_code:
 
-                # TODO: Is this needed here?
                 if nodedesc not in self._allocated_global_arrays:
                     raise RuntimeError("Cannot allocate global array "
                                        "from device code: {} in {}".format(

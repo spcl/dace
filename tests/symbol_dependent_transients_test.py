@@ -160,4 +160,4 @@ if __name__ == '__main__':
     test_symbol_dependent_threadlocal_array()
     test_symbol_dependent_gpu_global_array()
     test_symbol_dependent_pinned_array()
-    test_symbol_dependent_fpga_global_array()
+    # test_symbol_dependent_fpga_global_array()

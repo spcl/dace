@@ -1068,6 +1068,9 @@ __kernel void \\
 
         result = ""
 
+        # NOTE: FPGA Streams are defined at the top-level scope. We use the
+        # following boolean to pass this informations to the `get` method of
+        # the `defined_vars` object.
         is_global = False
         if isinstance(data_desc, dace.data.Stream):
             # Derive the name of the original stream, by tracing the memlet path through nested SDFGs
