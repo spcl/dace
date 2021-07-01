@@ -32,8 +32,11 @@ def find_map_entry(sdfg: SDFG):
 
 
 def vectorize(sdfg: SDFG) -> vector_inference.VectorInferenceGraph:
-    return vector_inference.infer_vectors(sdfg, sdfg.start_state,
-                                          find_map_entry(sdfg), -1, False)
+    return vector_inference.infer_vectors(sdfg,
+                                          sdfg.start_state,
+                                          find_map_entry(sdfg),
+                                          -1,
+                                          apply=False)
 
 
 def is_vector_connector(inf: vector_inference.VectorInferenceGraph, conn: str,
