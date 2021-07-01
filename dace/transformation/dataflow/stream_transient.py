@@ -3,13 +3,13 @@
     and transient nodes. """
 
 import copy
-from dace.symbolic import symstr
 import warnings
-
+from typing import Dict, Any
 from numpy.core.numeric import outer
 from dace import data, dtypes, registry, symbolic, subsets
 from dace.frontend.operations import detect_reduction_type
-from dace.properties import SymbolicProperty, make_properties, Property
+from dace.properties import (SymbolicProperty, make_properties,
+                             Property, DictProperty)
 from dace.sdfg import nodes
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutil
@@ -18,7 +18,6 @@ import dace
 from dace.transformation.helpers import nest_state_subgraph
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import SDFGState
-from dace.sdfg.nodes import NestedSDFG
 from dace.data import Array
 
 
@@ -170,11 +169,22 @@ class AccumulateTransient(transformation.Transformation):
     map_exit = transformation.PatternNode(nodes.MapExit)
     outer_map_exit = transformation.PatternNode(nodes.MapExit)
 
+    array_identity_dict = DictProperty(key_type=str,
+                                  value_type=symbolic.pystr_to_symbolic,
+                                  desc="dict with key: Array and"
+                                  "value: the Identity value to set",
+                                  allow_none=True)
+
     array = Property(
         dtype=str,
         desc="Array to create local storage for (if empty, first available)",
         default=None,
         allow_none=True)
+
+    prefix = Property(dtype=str,
+                      default="trans_",
+                      allow_none=True,
+                      desc='Prefix for new data node')
 
     identity = SymbolicProperty(desc="Identity value to set",
                                 default=None,
@@ -213,34 +223,42 @@ class AccumulateTransient(transformation.Transformation):
         outer_map_exit = graph.node(
             self.subgraph[AccumulateTransient.outer_map_exit])
 
-        # Choose array
-        array = self.array
-        if array is None or len(array) == 0:
-            array = next(e.data.data
-                         for e in graph.edges_between(map_exit, outer_map_exit)
-                         if e.data.wcr is not None)
-
         # Avoid import loop
         from dace.transformation.dataflow.local_storage import OutLocalStorage
 
-        data_node: nodes.AccessNode = OutLocalStorage.apply_to(
-            sdfg,
-            dict(array=array),
-            verify=False,
-            save=False,
-            node_a=map_exit,
-            node_b=outer_map_exit)
+        array_identity_dict = self.array_identity_dict
 
-        if self.identity is None:
-            warnings.warn('AccumulateTransient did not properly initialize '
-                          'newly-created transient!')
-            return
+        if len(array_identity_dict) == 0:
+            # Choose array
+            array = self.array
+            if array is None or len(array) == 0:
+                array = next(e.data.data
+                            for e in graph.edges_between(map_exit, outer_map_exit)
+                            if e.data.wcr is not None)
+            array_identity_dict[array] = self.identity
+
+        transients: Dict[str, Any] = {}
+        for array, identity in array_identity_dict.items():
+            data_node: nodes.AccessNode = OutLocalStorage.apply_to(
+                sdfg,
+                dict(array=array, prefix=self.prefix),
+                verify=False,
+                save=False,
+                node_a=map_exit,
+                node_b=outer_map_exit)
+
+            transients[data_node.data] = identity
+
+            if identity is None:
+                warnings.warn('AccumulateTransient did not properly initialize '
+                              'newly-created transient!')
+                return
 
         sdfg_state: SDFGState = sdfg.node(self.state_id)
 
         map_entry = sdfg_state.entry_node(map_exit)
 
-        nested_sdfg: NestedSDFG = nest_state_subgraph(
+        nested_sdfg: nodes.NestedSDFG = nest_state_subgraph(
             sdfg=sdfg,
             state=sdfg_state,
             subgraph=SubgraphView(
@@ -251,24 +269,25 @@ class AccumulateTransient(transformation.Transformation):
 
         init_state = nested_sdfg.sdfg.add_state_before(nested_sdfg_state)
 
-        temp_array: Array = sdfg.arrays[data_node.data]
-
-        init_state.add_mapped_tasklet(
-            name='acctrans_init',
-            map_ranges={
-                '_o%d' % i: '0:%s' % symstr(d)
-                for i, d in enumerate(temp_array.shape)
-            },
-            inputs={},
-            code='out = %s' % self.identity,
-            outputs={
-                'out':
-                dace.Memlet.simple(data=data_node.data,
-                                   subset_str=','.join([
-                                       '_o%d' % i
-                                       for i, _ in enumerate(temp_array.shape)
-                                   ]))
-            },
-            external_edges=True)
+        for data_name, identity in transients.items():
+            temp_array: Array = sdfg.arrays[data_name]
+            
+            init_state.add_mapped_tasklet(
+                name='acctrans_init',
+                map_ranges={
+                    '_o%d' % i: '0:%s' % symbolic.symstr(d)
+                    for i, d in enumerate(temp_array.shape)
+                },
+                inputs={},
+                code='out = %s' % identity,
+                outputs={
+                    'out':
+                    dace.Memlet.simple(
+                        data=data_name,
+                        subset_str=','.join([
+                            '_o%d' % i for i, _ in enumerate(temp_array.shape)
+                        ]))
+                },
+                external_edges=True)
 
         # TODO: use trivial map elimintation here when it will be merged to remove map if it has trivial ranges

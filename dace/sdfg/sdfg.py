@@ -1357,7 +1357,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                   total_size=None,
                   find_new_name=False,
                   alignment=0,
-                  may_alias=False) -> Tuple[str, dt.Array]:
+                  may_alias=False,
+                  location={},) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1383,7 +1384,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                         alignment=alignment,
                         debuginfo=debuginfo,
                         total_size=total_size,
-                        may_alias=may_alias)
+                        may_alias=may_alias,
+                        location=location)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1494,7 +1496,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                       total_size=None,
                       find_new_name=False,
                       alignment=0,
-                      may_alias=False) -> Tuple[str, dt.Array]:
+                      may_alias=False,
+                      location={}) -> Tuple[str, dt.Array]:
         """ Convenience function to add a transient array to the data
             descriptor store. """
         return self.add_array(name,
@@ -1510,7 +1513,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                               total_size=total_size,
                               alignment=alignment,
                               may_alias=may_alias,
-                              find_new_name=find_new_name)
+                              find_new_name=find_new_name,
+                              location=location)
 
     def temp_data_name(self):
         """ Returns a temporary data descriptor name that can be used in this SDFG. """

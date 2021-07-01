@@ -6,7 +6,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import SubgraphView
 from dace.transformation import transformation, helpers
-from dace.properties import Property, make_properties
+from dace.properties import Property, make_properties, SymbolicProperty
 
 
 @registry.autoregister_params(singlestate=True)
@@ -31,6 +31,10 @@ class GPUTransformMap(transformation.Transformation):
         dtype=bool,
         default=False)
 
+    gpu_id = SymbolicProperty(default=None,
+                              allow_none=True,
+                              desc="Selects which gpu the map should run on")
+
     sequential_innermaps = Property(desc="Make all internal maps Sequential",
                                     dtype=bool,
                                     default=False)
@@ -54,8 +58,8 @@ class GPUTransformMap(transformation.Transformation):
             candidate_map = map_entry.map
 
             # Map schedules that are disallowed to transform to GPUs
-            if (candidate_map.schedule in [dtypes.ScheduleType.MPI] +
-                    dtypes.GPU_SCHEDULES):
+            if (candidate_map.schedule
+                    in [dtypes.ScheduleType.MPI] + dtypes.GPU_SCHEDULES):
                 return False
             if sd.is_devicelevel_gpu(sdfg, graph, map_entry):
                 return False
@@ -122,6 +126,7 @@ class GPUTransformMap(transformation.Transformation):
         transformation.register_trans = self.register_trans
         transformation.sequential_innermaps = self.sequential_innermaps
         transformation.toplevel_trans = self.toplevel_trans
+        transformation.gpu_id = self.gpu_id
 
         transformation.apply(nsdfg_node.sdfg)
 

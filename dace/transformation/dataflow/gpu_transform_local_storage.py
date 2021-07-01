@@ -8,7 +8,7 @@ from dace import data, dtypes, registry, sdfg as sd, subsets as sbs, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.properties import Property, make_properties
+from dace.properties import Property, SymbolicProperty, make_properties
 from dace.config import Config
 
 
@@ -59,6 +59,10 @@ class GPUTransformLocalStorage(transformation.Transformation):
         default=True,
     )
 
+    gpu_id = SymbolicProperty(default=None,
+                              allow_none=True,
+                              desc="Selects which gpu the map should run on")
+
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
 
     import dace.libraries.standard as stdlib  # Avoid import loop
@@ -86,8 +90,8 @@ class GPUTransformLocalStorage(transformation.Transformation):
             # Map schedules that are disallowed to transform to GPUs
             if (candidate_map.schedule == dtypes.ScheduleType.MPI
                     or candidate_map.schedule == dtypes.ScheduleType.GPU_Device
-                    or candidate_map.schedule ==
-                    dtypes.ScheduleType.GPU_ThreadBlock or
+                    or candidate_map.schedule
+                    == dtypes.ScheduleType.GPU_ThreadBlock or
                     candidate_map.schedule == dtypes.ScheduleType.Sequential):
                 return False
 
@@ -100,8 +104,8 @@ class GPUTransformLocalStorage(transformation.Transformation):
             current_node = map_entry
             while current_node is not None:
                 if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
-                        or current_node.map.schedule ==
-                        dtypes.ScheduleType.GPU_ThreadBlock):
+                        or current_node.map.schedule
+                        == dtypes.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
@@ -132,8 +136,8 @@ class GPUTransformLocalStorage(transformation.Transformation):
             current_node = sdict[reduce]
             while current_node is not None:
                 if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
-                        or current_node.map.schedule ==
-                        dtypes.ScheduleType.GPU_ThreadBlock):
+                        or current_node.map.schedule
+                        == dtypes.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
@@ -151,17 +155,25 @@ class GPUTransformLocalStorage(transformation.Transformation):
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
+        gpu_id = self.gpu_id
         if self.expr_index == 0:
             cnode: nodes.MapEntry = graph.nodes()[self.subgraph[
                 GPUTransformLocalStorage._map_entry]]
             # Change schedule
             cnode.schedule = dtypes.ScheduleType.GPU_Device
             exit_node = graph.exit_node(cnode)
+            if gpu_id:
+                cnode.location = {'gpu': gpu_id}
+                for node in graph.all_nodes_between(cnode, exit_node):
+                    if isinstance(node, nodes.CodeNode):
+                        node.location = {'gpu': gpu_id}
         else:
             cnode: nodes.LibraryNode = graph.nodes()[self.subgraph[
                 GPUTransformLocalStorage._reduce]]
             # Change schedule
             cnode.schedule = dtypes.ScheduleType.GPU_Default
+            if gpu_id:
+                cnode.location = {'gpu': gpu_id}
             exit_node = cnode
 
         if Config.get_bool("debugprint"):
@@ -276,6 +288,8 @@ class GPUTransformLocalStorage(transformation.Transformation):
                         strides=[array.strides[d] for d in actual_dims],
                         offset=[array.offset[d] for d in actual_dims],
                     )
+                if gpu_id:
+                    sdfg.arrays[cloned_name].location = {'gpu': gpu_id}
                 cloned_arrays[array_node.data] = cloned_name
             cloned_node = type(array_node)(cloned_name)
 
@@ -347,6 +361,8 @@ class GPUTransformLocalStorage(transformation.Transformation):
                         strides=[array.strides[d] for d in actual_dims],
                         offset=[array.offset[d] for d in actual_dims],
                     )
+                if gpu_id:
+                    sdfg.arrays[cloned_name].location = {'gpu': gpu_id}
                 cloned_arrays[array_node.data] = cloned_name
             cloned_node = type(array_node)(cloned_name)
             cloned_node.setzero = True

@@ -586,7 +586,7 @@ class TransformationHistProperty(Property):
             raise TypeError(
                 'TransformationHistProperty expects a list input, got %s' %
                 data)
-        return [dace.serialize.from_json(elem) for elem in data]
+        return [dace.serialize.from_json(elem) if elem else None for elem in data]
 
 
 class DictProperty(Property):

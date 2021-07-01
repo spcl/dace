@@ -18,7 +18,7 @@ def axpy(A, X, Y):
 
 
 def test_tiling_number_of_tiles():
-    size = 256
+    size = 250
 
     np.random.seed(0)
     A = np.random.rand()
@@ -26,6 +26,7 @@ def test_tiling_number_of_tiles():
     Y = np.random.rand(size)
     Z = np.copy(Y)
     sdfg = axpy.to_sdfg()
+    sdfg.name = 'tiling_number_of_tiles'
     sdfg.apply_strict_transformations()
     sdfg.apply_transformations(StripMining,
                                options=[{

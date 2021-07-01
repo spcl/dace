@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import collections
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Union
 
 from dace import dtypes, symbolic
 from dace.config import Config
@@ -221,6 +221,110 @@ def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         sdfg = parent
     return False
 
+def get_gpulevel_node_location(
+    sdfg: 'dace.sdfg.SDFG',
+    state: 'dace.sdfg.SDFGState',
+    node: NodeType) -> Union[None, symbolic.SymbolicType]:
+    """ Gets the location of a node that resides inside a GPU scope.
+        :param sdfg: The SDFG in which the node resides.
+        :param state: The SDFG state in which the node resides.
+        :param node: The node in question
+        :return: The location of the node.
+    """
+    schedules = dtypes.GPU_SCHEDULES + [dtypes.ScheduleType.GPU_Default]
+    from dace.sdfg import nodes as nd
+    from dace.sdfg.sdfg import SDFGState
+    from dace.sdfg.utils import get_gpu_location
+
+    node_location = get_gpu_location(sdfg, node)
+    if node_location is not None:
+        return node_location
+
+    while sdfg is not None:
+        sdict = state.scope_dict()
+        try:
+            scope = sdict[node]
+        except KeyError:
+            return None
+        while scope is not None:
+            if scope.schedule in schedules:
+                return scope.location.get('gpu', None)
+            scope = sdict[scope]
+        # Traverse up nested SDFGs
+        if sdfg.parent is not None:
+            parent = sdfg.parent_sdfg
+            state = sdfg.parent
+            node = sdfg.parent_nsdfg_node
+            if node.schedule in schedules:
+                return node.location.get('gpu', None)
+        else:
+            parent = sdfg.parent
+        sdfg = parent
+    return None
+
+
+def get_gpu_scope_type(
+        sdfg: 'dace.sdfg.SDFG',
+        state: 'dace.sdfg.SDFGState',
+        node: NodeType,
+        with_gpu_default: bool = False) -> Union[None, dtypes.ScheduleType]:
+    """ Tests whether a node in an SDFG is contained within a GPU scope 
+        and returns the schedule type.
+        :param sdfg: The SDFG in which the node resides.
+        :param state: The SDFG state in which the node resides.
+        :param node: The node in question
+        :return: The GPU schedule if it exists, None otherwise.
+    """
+    from dace.sdfg import nodes as nd
+    from dace.sdfg.sdfg import SDFGState
+
+    if with_gpu_default:
+        schedules = dtypes.GPU_SCHEDULES + [dtypes.ScheduleType.GPU_Default]
+    else:
+        schedules = dtypes.GPU_SCHEDULES
+
+    while sdfg is not None:
+        sdict = state.scope_dict()
+        scope = sdict[node]
+        while scope is not None:
+            if scope.schedule in schedules:
+                return node.schedule
+            scope = sdict[scope]
+        # Traverse up nested SDFGs
+        if sdfg.parent is not None:
+            parent = sdfg.parent_sdfg
+            state = sdfg.parent
+            node = sdfg.parent_nsdfg_node
+            if node.schedule in schedules:
+                return node.schedule
+        else:
+            parent = sdfg.parent
+        sdfg = parent
+    return None
+
+
+def is_in_gpu_scope(sdfg: 'dace.sdfg.SDFG',
+                    state: 'dace.sdfg.SDFGState',
+                    node: NodeType,
+                    with_gpu_default: bool = False) -> bool:
+    """ Tests whether a node in an SDFG is contained within GPU device-level
+        code.
+        :param sdfg: The SDFG in which the node resides.
+        :param state: The SDFG state in which the node resides.
+        :param node: The node in question
+        :return: True if node is in device-level code, False otherwise.
+    """
+    if with_gpu_default:
+        schedules = dtypes.GPU_SCHEDULES + [dtypes.ScheduleType.GPU_Default]
+    else:
+        schedules = dtypes.GPU_SCHEDULES
+    return is_in_scope(
+        sdfg,
+        state,
+        node,
+        schedules,
+    )
+
 
 def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG',
                        state: 'dace.sdfg.SDFGState',
@@ -234,9 +338,9 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG',
         :return: True if node is in device-level code, False otherwise.
     """
     if with_gpu_default:
-        schedules = dtypes.GPU_SCHEDULES + [dtypes.ScheduleType.GPU_Default]
+        schedules = dtypes.GPU_DEVICE_SCHEDULES + [dtypes.ScheduleType.GPU_Default]
     else:
-        schedules = dtypes.GPU_SCHEDULES
+        schedules = dtypes.GPU_DEVICE_SCHEDULES
     return is_in_scope(
         sdfg,
         state,

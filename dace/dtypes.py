@@ -37,6 +37,13 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
     FPGA_ShiftRegister = ()  #: Only accessible at constant indices
 
+# Storage that can be accessed by a GPU
+GPU_STORAGES = [
+    StorageType.GPU_Global, 
+    StorageType.GPU_Shared,
+    StorageType.CPU_Pinned
+]
+
 
 @undefined_safe_enum
 @extensible_enum
@@ -59,6 +66,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     GPU_ThreadBlock = ()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
+    GPU_Multidevice = ()  #: Multiple GPUs
     FPGA_Device = ()
 
 
@@ -68,6 +76,15 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
     ScheduleType.GPU_Persistent,
+    ScheduleType.GPU_Multidevice
+]
+
+# GPU schedule types that only involve 1 GPU
+GPU_DEVICE_SCHEDULES = [
+    ScheduleType.GPU_Device,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_ThreadBlock_Dynamic,
+    ScheduleType.GPU_Persistent
 ]
 
 # A subset of on-GPU storage types
@@ -176,6 +193,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
+    ScheduleType.GPU_Multidevice: StorageType.GPU_Global,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
     ScheduleType.SVE_Map: StorageType.CPU_Heap
 }
@@ -193,6 +211,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
+    ScheduleType.GPU_Multidevice: ScheduleType.GPU_Device,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential
 }

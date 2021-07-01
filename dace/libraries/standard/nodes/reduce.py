@@ -491,6 +491,7 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
                                    {'_in': dace.pointer(input_data.dtype)},
                                    {'_out': dace.pointer(output_data.dtype)},
                                    host_localcode.getvalue(),
+                                   location = node.location,
                                    language=dace.Language.CPP)
 
         # Add the rest of the code
@@ -637,6 +638,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
                                    {'_in': dace.pointer(input_data.dtype)},
                                    {'_out': dace.pointer(output_data.dtype)},
                                    localcode.getvalue(),
+                                   location = node.location,
                                    language=dace.Language.CPP)
 
         # Add the rest of the code
@@ -786,6 +788,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         tasklet_node = graph.add_tasklet(name='block_reduce_write',
                                          inputs=['inp'],
                                          outputs=['out'],
+                                         location = node.location,
                                          code=code)
 
         edge_out_outtrans = graph.out_edges(out_transient)[0]

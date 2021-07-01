@@ -1314,6 +1314,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                      *self._make_iterators(map_ranges),
                      schedule=schedule,
                      unroll=unroll_map,
+                     location=location,
                      debuginfo=debuginfo)
         map_entry = nd.MapEntry(map)
         map_exit = nd.MapExit(map)

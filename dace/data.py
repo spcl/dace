@@ -131,6 +131,9 @@ class Data(object):
         for s in self.shape:
             if isinstance(s, sp.Basic):
                 result |= set(s.free_symbols)
+        # Add symbolic location values
+        result.update(*(symbolic.pystr_to_symbolic(v).free_symbols
+                for v in self.location.values()))
         return result
 
     def __repr__(self):
@@ -428,7 +431,7 @@ class Array(Data):
         ]
 
     @property
-    def free_symbols(self):
+    def free_symbols(self) -> Set[symbolic.SymbolicType]:
         result = super().free_symbols
         for s in self.strides:
             if isinstance(s, sp.Expr):
@@ -590,7 +593,7 @@ class Stream(Data):
         return True
 
     @property
-    def free_symbols(self):
+    def free_symbols(self) -> Set[symbolic.SymbolicType]:
         result = super().free_symbols
         if isinstance(self.buffer_size, sp.Expr):
             result |= set(self.buffer_size.free_symbols)

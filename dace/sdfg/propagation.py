@@ -1485,6 +1485,25 @@ def propagate_subset(memlets: List[Memlet],
     # Propagate volume:
     # Number of accesses in the propagated memlet is the sum of the internal
     # number of accesses times the size of the map range set (unbounded dynamic)
+
+    # if there is an intersection between params and free symbols of a memlet
+    # we need to substitute the params with the range values in the volume of 
+    # the memlet
+    # if any(str(fs) in params for m in memlets for fs in m.volume.free_symbols):
+    #     # generator that maps each parameter to its corresponding range element, 
+    #     # enables sympy's subs method.
+    #     # Format: [..., (parameter[i], index[i]), ...]
+    #     substitution_generator = (list(
+    #         zip([pystr_to_symbolic(p)
+    #              for p in params], rng.coord_at(list(tup))))
+    #                               for tup in itertools.product(
+    #                                   *[range(i) for i in rng.size()]))
+    #     # sum over all substitute values of a volume of each memlet
+    #     new_volume = sum(
+    #         m.volume.subs(s) for m in memlets for s in substitution_generator)
+    #     new_memlet.volume = simplify(new_volume)
+    # # base case
+    # else:
     new_memlet.volume = simplify(
         sum(m.volume for m in memlets) *
         functools.reduce(lambda a, b: a * b, rng.size(), 1))

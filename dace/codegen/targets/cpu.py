@@ -7,7 +7,8 @@ import warnings
 
 from sympy.functions.elementary.complexes import arg
 
-from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
+from dace import (data, dtypes, registry, memlet as mmlt, subsets,
+                  symbolic, Config)
 from dace.codegen import cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
@@ -19,7 +20,8 @@ from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
                        is_array_stream_view, NodeNotExpandedError,
                        dynamic_map_inputs, local_transients)
-from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga
+from dace.sdfg.scope import (is_devicelevel_gpu, is_devicelevel_fpga,
+                             get_gpu_scope_type, get_gpulevel_node_location)
 from typing import Union
 from dace.codegen.targets import fpga
 
@@ -777,11 +779,11 @@ class CPUCodeGen(TargetCodeGenerator):
                                         edge, stream, None, copy_shape,
                                         src_strides, dst_strides)
 
-            nc = True
+            atomic = False
             if memlet.wcr is not None:
-                nc = not cpp.is_write_conflicted(
+                atomic = cpp.is_write_conflicted(
                     dfg, edge, sdfg_schedule=self._toplevel_schedule)
-            if nc:
+            if not atomic:
                 stream.write(
                     """
                     dace::CopyND{copy_tmpl}::{shape_tmpl}::{copy_func}(
@@ -817,10 +819,11 @@ class CPUCodeGen(TargetCodeGenerator):
                                     ]:  # Special case: accumulating one element
                     dst_expr = self.memlet_view_ctor(sdfg, memlet,
                                                      dst_nodedesc.dtype, True)
+                    atomic = '_atomic'
                     stream.write(
                         self.write_and_resolve_expr(sdfg,
                                                     memlet,
-                                                    nc,
+                                                    atomic,
                                                     dst_expr,
                                                     '*(' + src_expr + ')',
                                                     dtype=dst_nodedesc.dtype) +
@@ -856,7 +859,7 @@ class CPUCodeGen(TargetCodeGenerator):
     def write_and_resolve_expr(self,
                                sdfg,
                                memlet,
-                               nc,
+                               atomic,
                                outname,
                                inname,
                                indices=None,
@@ -866,7 +869,6 @@ class CPUCodeGen(TargetCodeGenerator):
         """
 
         redtype = operations.detect_reduction_type(memlet.wcr)
-        atomic = "_atomic" if not nc else ""
         defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
         if isinstance(indices, str):
             ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet,
@@ -994,12 +996,17 @@ class CPUCodeGen(TargetCodeGenerator):
                     state_dfg = sdfg.nodes()[state_id]
 
                     if memlet.wcr is not None:
-                        nc = not cpp.is_write_conflicted(
+                        atomic = cpp.is_write_conflicted(
                             dfg, edge, sdfg_schedule=self._toplevel_schedule)
+                        atomic = '' if atomic is False else '_atomic'
+                        src_gpu_loc = get_gpulevel_node_location(sdfg, dfg, node)
+                        dst_gpu_loc = get_gpulevel_node_location(sdfg, dfg, dst_node)
+                        if atomic and src_gpu_loc != None and src_gpu_loc != dst_gpu_loc:
+                            atomic += '_system'
                         write_expr = codegen.write_and_resolve_expr(
                             sdfg,
                             memlet,
-                            nc,
+                            atomic,
                             out_local_name,
                             in_local_name,
                             dtype=node.out_connectors[uconn]) + ";"
