@@ -794,52 +794,62 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                                node.label, sdfg.name))
 
                 else:
-                    if isinstance(nodedesc, dt.Array):
+                    # TODO: Distinguish between read, write, and read+write
+                    self._allocated_global_arrays.add(node.data)
+                    memory_bank_arg_count = 1
+                    bank_offset = -1
+                    storage_type_str = "hlslib::ocl::StorageType::DDR" #one has to specify DDR to use unspecified Memory
 
-                        # TODO: Distinguish between read, write, and read+write
-                        self._allocated_global_arrays.add(node.data)
-                        memory_bank_arg_count = 1
-                        bank_offset = 0
-                        is_hbm = False
-                        bank_info = utils.parse_location_bank(nodedesc)
-                        if bank_info is not None:
-                            bank_type, bank = bank_info
-                            is_hbm = bank_type == "HBM"
-                            if is_hbm:
-                                bank_low, bank_high = utils.get_multibank_ranges_from_subset(
-                                    bank, sdfg)
-                                memory_bank_arg_count = bank_high - bank_low
-                                array_size = dace.symbolic.pystr_to_symbolic(
-                                    f"({str(arrsize)}) / {str(bank_high - bank_low)}"
-                                )
-                                bank_offset = bank_low
-                            else:
-                                bank_offset = int(bank)
-                        # Define buffer, using proper type
-                        for bank_index in range(memory_bank_arg_count):
-                            alloc_name = cpp.ptr(dataname, nodedesc, bank_index)
-                            result_decl.write(
-                                "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n"
-                                .format(nodedesc.dtype.ctype, alloc_name))
-                            if is_hbm:
-                                result_alloc.write(
-                                    "{} = __state->fpga_context->Get()."
-                                    "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                                    "(hlslib::ocl::StorageType::HBM, {}, {});\n"
-                                    .format(alloc_name, nodedesc.dtype.ctype,
-                                            bank_offset + bank_index,
-                                            cpp.sym2cpp(arrsize)))
-                            else:
-                                result_alloc.write(
-                                    "{} = __state->fpga_context->Get()."
-                                    "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                                    "(hlslib::ocl::MemoryBank::bank{}, {});".
-                                    format(alloc_name, nodedesc.dtype.ctype,
-                                           bank_offset, cpp.sym2cpp(arrsize)))
-                            self._dispatcher.defined_vars.add(
-                                alloc_name, DefinedType.Pointer,
-                                'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
-                                .format(nodedesc.dtype.ctype))
+                    #Fix bankassignments if present
+                    bank_info = utils.parse_location_bank(nodedesc)
+                    if bank_info is not None:
+                        bank_type, bank = bank_info
+                        if bank_type == "HBM":
+                            bank_low, bank_high = utils.get_multibank_ranges_from_subset(
+                                bank, sdfg)
+                            memory_bank_arg_count = bank_high - bank_low
+                            arrsize = dace.symbolic.pystr_to_symbolic(
+                                f"({str(arrsize)}) / {str(bank_high - bank_low)}"
+                            )
+                            bank_offset = bank_low
+                            storage_type_str = "hlslib::ocl::StorageType::HBM"
+                        else:
+                            bank_offset = int(bank)
+                            storage_type_str = "hlslib::ocl::StorageType::DDR"
+
+                    # Define buffer, using proper type
+                    for bank_index in range(memory_bank_arg_count):
+                        alloc_name = cpp.ptr(dataname, nodedesc, bank_index)
+                        result_decl.write(
+                            "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n"
+                            .format(nodedesc.dtype.ctype, alloc_name))
+                        result_alloc.write(
+                            f"{alloc_name} = __state->fpga_context.Get()."
+                            f"MakeBuffer<{nodedesc.dtype.ctype}, hlslib::ocl::Access::readWrite>"
+                            f"({storage_type_str}, {bank_offset + bank_index}, "
+                            f"{cpp.sym2cpp(arrsize)});\n"
+                        )
+                        """
+                        if is_hbm:
+                            result_alloc.write(
+                                "{} = __state->fpga_context->Get()."
+                                "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
+                                "(hlslib::ocl::StorageType::HBM, {}, {});\n"
+                                .format(alloc_name, nodedesc.dtype.ctype,
+                                        bank_offset + bank_index,
+                                        cpp.sym2cpp(arrsize)))
+                        else:
+                            result_alloc.write(
+                                "{} = __state->fpga_context->Get()."
+                                "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
+                                "(hlslib::ocl::MemoryBank::bank{}, {});".
+                                format(alloc_name, nodedesc.dtype.ctype,
+                                        bank_offset, cpp.sym2cpp(arrsize)))
+                        """
+                        self._dispatcher.defined_vars.add(
+                            alloc_name, DefinedType.Pointer,
+                            'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
+                            .format(nodedesc.dtype.ctype))
 
             elif (nodedesc.storage in (dtypes.StorageType.FPGA_Local,
                                        dtypes.StorageType.FPGA_Registers,
