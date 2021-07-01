@@ -60,9 +60,8 @@ def test_load_precompiled():
     prog = program_generator(10, 2.0)
     sdfg = prog.to_sdfg()
     func1 = sdfg.compile()
-    print(sdfg.is_loaded())
     build_folder = dace.Config.get('default_build_folder')
-    func2 = load_precompiled_sdfg(os.path.join(build_folder, prog.name))
+    func2 = load_precompiled_sdfg(os.path.join(build_folder, sdfg.name))
 
     inp = np.random.rand(10).astype(np.float64)
     output_one = np.zeros(10, dtype=np.float64)
