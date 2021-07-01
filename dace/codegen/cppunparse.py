@@ -184,7 +184,7 @@ class CPPUnparser:
         self.indent_output = indent_output
         self.indent_offset = indent_offset
         self.expr_semicolon = expr_semicolon
-        self.defined_symbols = defined_symbols
+        self.defined_symbols = defined_symbols or {}
         self.type_inference = type_inference
         self.dtype = None
         self.locals = locals
@@ -313,9 +313,11 @@ class CPPUnparser:
             if isinstance(target, ast.Tuple):
                 if len(target.elts) > 1:
                     self.dispatch_lhs_tuple(target.elts)
-                target = target.elts[0]
+                    target = None
+                else:
+                    target = target.elts[0]
 
-            if not isinstance(
+            if target and not isinstance(
                     target,
                 (ast.Subscript, ast.Attribute)) and not self.locals.is_defined(
                     target.id, self._indent):
@@ -351,7 +353,8 @@ class CPPUnparser:
                         self.write("auto ")
 
             # dispatch target
-            self.dispatch(target)
+            if target:
+                self.dispatch(target)
 
         self.write(" = ")
         self.dispatch(t.value)
