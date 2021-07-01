@@ -3,6 +3,7 @@ import dace
 import numpy as np
 import pytest
 from dace.libraries import standard
+from dace.transformation import interstate
 
 
 def _make_sdfg(name, storage=dace.dtypes.StorageType.CPU_Heap):
@@ -154,6 +155,30 @@ def test_symbol_dependent_fpga_global_array():
     assert (np.allclose(B, B_ref))
 
 
+def test_symbol_dependent_array_in_map():
+
+    @dace.program
+    def symbol_dependent_array_in_map(A: dace.float32[10]):
+        out = np.ndarray(10, dtype=np.float32)
+        for i in dace.map[0:10]:
+            tmp = A[0:i+1]
+            out[i] = np.sum(tmp)
+        return out
+    
+    # Compile manually to avoid strict transformations
+    sdfg = symbol_dependent_array_in_map.to_sdfg(strict=False)
+    sdfg.apply_transformations_repeated(interstate.StateFusion)
+    sdfg.apply_transformations_repeated(interstate.InlineSDFG)
+    # NOTE: Temporary fix for issue with symbols/free_symbols
+    if 'i' in sdfg.free_symbols:
+        sdfg.remove_symbol('i')
+    func = sdfg.compile()
+    A = np.random.randn(10).astype(np.float32)
+    val = func(A=A)
+    ref = np.cumsum(A)
+    assert (np.allclose(val, ref))
+
+
 if __name__ == '__main__':
     test_symbol_dependent_heap_array()
     test_symbol_dependent_register_array()
@@ -161,3 +186,4 @@ if __name__ == '__main__':
     test_symbol_dependent_gpu_global_array()
     test_symbol_dependent_pinned_array()
     # test_symbol_dependent_fpga_global_array()
+    test_symbol_dependent_array_in_map()
