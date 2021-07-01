@@ -2455,8 +2455,8 @@ class ProgramVisitor(ExtNodeVisitor):
             # but different ranges?
             if sym_name in self.sdfg.symbols.keys():
                 for k, v in self.symbols.items():
-                    if (str(k) == sym_name
-                            and v != subsets.Range([(start, stop + eoff, step)])):
+                    if (str(k) == sym_name and
+                            v != subsets.Range([(start, stop + eoff, step)])):
                         warnings.warn(
                             "Two for-loops using the same variable ({}) but "
                             "different ranges in the same nested SDFG level. "
@@ -4566,9 +4566,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 new_axes = other_subset.unsqueeze(expr.new_axes)
             other_subset.squeeze(ignore_indices=new_axes)
 
-            tmp, tmparr = self.sdfg.add_temp_transient(other_subset.size(),
-                                                       arrobj.dtype,
-                                                       arrobj.storage)
+            # NOTE: This is fixing azimint_hist (issue is `if x == a_max`)
+            # TODO: Follow Numpy, i.e. slicing with indices returns scalar but
+            # slicing with a range of (squeezed) size 1 returns array/view.
+            if all(s == 1 for s in other_subset.size()):
+                tmp = self.sdfg.temp_data_name()
+                tmp, tmparr = self.sdfg.add_scalar(tmp,
+                                                   arrobj.dtype,
+                                                   arrobj.storage,
+                                                   transient=True)
+            else:
+                tmp, tmparr = self.sdfg.add_temp_transient(
+                    other_subset.size(), arrobj.dtype, arrobj.storage)
             wnode = self.last_state.add_write(tmp,
                                               debuginfo=self.current_lineinfo)
             self.last_state.add_nedge(
