@@ -650,12 +650,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     state_id, eid)
 
         # Check if first index is evaluatable for HBM arrays
-        if isinstance(src_node, nd.AccessNode) and sdutil.is_hbm_array(
-                src_node.desc(state)):
+        if (isinstance(src_node, nd.AccessNode) and sdutil.is_hbm_array(
+                src_node.desc(state)) and e.data.data is not None):
             validate_hbm_subset(e.data.src_subset or e.data.subset, sdfg,
                                 state_id, eid)
-        if isinstance(dst_node, nd.AccessNode) and sdutil.is_hbm_array(
-                dst_node.desc(state)):
+        if (isinstance(dst_node, nd.AccessNode) and sdutil.is_hbm_array(
+                dst_node.desc(state)) and e.data.data is not None):
             validate_hbm_subset(e.data.dst_subset or e.data.subset, sdfg,
                                 state_id, eid)
 
