@@ -3734,6 +3734,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 funcname = func.name
                 fcopy._cache = (None, None, None)
                 fcopy.global_vars = {**func.global_vars, **self.globals}
+                fcopy.signature = copy.deepcopy(func.signature)
                 fargs = (self._eval_arg(arg) for _, arg in args)
                 sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
                 required_args = [k for k, _ in args if k in sdfg.arg_names]
