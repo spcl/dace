@@ -134,12 +134,15 @@ class SVEVectorization(transformation.Transformation):
 
         # Run the vector inference algorithm to check if vectorization is feasible
         try:
-            inf_graph = vector_inference.infer_vectors(sdfg,
-                                                       state,
-                                                       map_entry,
-                                                       util.SVE_LEN,
-                                                       apply=False)
-        except vector_inference.VectorInferenceException:
+            inf_graph = vector_inference.infer_vectors(
+                sdfg,
+                state,
+                map_entry,
+                util.SVE_LEN,
+                flags=vector_inference.VectorInferenceFlags.Allow_Stride,
+                apply=False)
+        except vector_inference.VectorInferenceException as ex:
+            print(f'UserWarning: Vector inference failed! {ex}')
             return False
 
         return True
@@ -171,8 +174,10 @@ class SVEVectorization(transformation.Transformation):
         infer_types.apply_connector_types(inferred)
 
         # Infer vector connectors and AccessNodes and apply them
-        vector_inference.infer_vectors(sdfg,
-                                       state,
-                                       map_entry,
-                                       util.SVE_LEN,
-                                       apply=True)
+        vector_inference.infer_vectors(
+            sdfg,
+            state,
+            map_entry,
+            util.SVE_LEN,
+            flags=vector_inference.VectorInferenceFlags.Allow_Stride,
+            apply=True)
