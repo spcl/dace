@@ -1052,9 +1052,9 @@ def iterate_hbm_multibank_arrays(array_name: str, array: dt.Array, sdfg: SDFG):
     """
     res = parse_location_bank(array)
     if res is not None:
-        banktype, bankplace = res
-        if (banktype == "HBM"):
-            low, high = get_multibank_ranges_from_subset(bankplace, sdfg)
+        bank_type, bank_place = res
+        if (bank_type == "HBM"):
+            low, high = get_multibank_ranges_from_subset(bank_place, sdfg)
             for i in range(high - low):
                 yield i
         else:

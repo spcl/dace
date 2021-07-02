@@ -995,7 +995,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                 vconn,
                 conntype=node.in_connectors[vconn],
                 is_write=False,
-                bank_info=0)  #dummy variable, so ptr works for HBM
+                bank_info=0)  # dummy variable, so ptr works for HBM
             if not is_memory_interface:
                 memlet_references.append(ref)
 
@@ -1010,7 +1010,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                 uconn,
                 conntype=node.out_connectors[uconn],
                 is_write=True,
-                bank_info=0)  #dummy variable, so ptr works for HBM
+                bank_info=0)  # dummy variable, so ptr works for HBM
             is_memory_interface = (self._dispatcher.defined_vars.get(
                 out_memlet.data, 1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:

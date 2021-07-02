@@ -83,7 +83,7 @@ TESTS = [
     ], True, False, []),
     ("tests/fpga/hbm_vadd_fpga.py", ["vadd_2b1d_1", "vadd_2b2d_1",
      "vadd_2b3d_1", "vadd_8b1d_1"], True, False, []),
-      #For hbm_reduction not all sdfgs are added, since relatively redundant
+      # For hbm_reduction not all sdfgs are added, since relatively redundant
      ("tests/fpga/hbm_reduce_fpga.py", ["red_2x3_2b_1", "red_1x40_8b_1", 
      "red_1x50_1b_1"], True, False, []),
     ("tests/fpga/hbm_dynamic_memlets.py", ["dyn_memlet_1"], True, False, []),
