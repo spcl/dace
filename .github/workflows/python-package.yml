@@ -198,7 +198,6 @@ jobs:
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
         python tests/fpga/intel_fpga_test.py
-        codecov
 
     - name: Run Xilinx tests
       run: |
@@ -207,7 +206,6 @@ jobs:
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
         python tests/fpga/xilinx_test.py
-        codecov
 
     - name: Report overall coverage
       run: |
