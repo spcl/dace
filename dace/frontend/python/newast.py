@@ -186,10 +186,9 @@ def parse_dace_program(f,
     }
 
     # Fill in data descriptors from closure arrays
-    argtypes.update({
-        arrname: v
-        for arrname, v in closure_resolver.closure_arrays.values()
-    })
+    argtypes.update(
+        {arrname: v
+         for arrname, v in closure_resolver.closure_arrays.values()})
 
     pv = ProgramVisitor(name=name,
                         filename=src_file,
@@ -204,6 +203,18 @@ def parse_dace_program(f,
 
     sdfg, _, _, _ = pv.parse_program(src_ast.body[0])
     sdfg.set_sourcecode(src, 'python')
+
+    # Combine nested closures with the current one
+    for name, (arr, desc) in pv.nested_closure_arrays.items():
+        # Check if the same array is already passed as part of a nested closure
+        if id(arr) in closure_resolver.array_mapping:
+            existing_name = closure_resolver.array_mapping[id(arr)]
+            del sdfg.arrays[name]
+            for state in sdfg.nodes():
+                state.replace(name, existing_name)
+        else:
+            # Only supported in JIT mode
+            closure_resolver.closure_arrays[name] = (arr, desc)
 
     # We save information in a tmp file for improved source mapping.
     # In the case of the cache config set to 'hash' we don't create a mapping.
@@ -805,7 +816,7 @@ class GlobalResolver(ast.NodeTransformer):
                 desc = data.create_datadescriptor(value)
                 self.closure_arrays[qualname] = (arrname, desc)
                 self.array_mapping[id(value)] = arrname
-                
+
             newnode = ast.Name(id=arrname, ctx=ast.Load())
         else:
             return None
@@ -1369,6 +1380,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
         self.views: Dict[str, str] = {}  # Keeps track of views
+        self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
 
         # Keep track of map symbols from upper scopes
         map_symbols = map_symbols or set()
@@ -3366,7 +3378,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 true_name = defined_vars[name]
                 true_array = defined_arrays[true_name]
 
-            if (isinstance(target, ast.Attribute) and until(name, '.') in self.globals):
+            if (isinstance(target, ast.Attribute)
+                    and until(name, '.') in self.globals):
                 raise DaceSyntaxError(
                     self, target,
                     f'Cannot assign value to global attribute or field "{name}". '
@@ -3800,6 +3813,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 required_args = [k for k, _ in args if k in sdfg.arg_names]
                 # Filter out constant arguments
                 args = [(k, v) for k, v in args if k not in fcopy.constant_args]
+
+                # Handle nested closure
+                for aname, arr in fcopy.__sdfg_closure__().items():
+                    desc = data.create_datadescriptor(arr)
+                    outer_name = self.sdfg.add_datadesc(aname,
+                                                        desc,
+                                                        find_new_name=True)
+                    self.nested_closure_arrays[outer_name] = (arr, desc)
+                    # Add closure arrays as function arguments
+                    args.append((aname, outer_name))
+                    required_args.append(aname)
+
             elif self._has_sdfg(func):
                 fargs = tuple(
                     self._eval_arg(self._parse_function_arg(arg))
@@ -3942,7 +3967,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         'scalar', {}, {conn},
                         '%s = %s' % (conn, arg),
                         debuginfo=self.current_lineinfo)
-                
+
             # Handle scalar inputs that become symbols in the nested SDFG
             for sym, local in mapping.items():
                 if local in self.sdfg.arrays:
@@ -3959,7 +3984,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
                     # Replace mapping with symbol
                     mapping[sym] = newsym
-
 
             inputs = {
                 k: v

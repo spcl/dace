@@ -253,7 +253,7 @@ class DaceProgram:
         program as a mapping between array name and the corresponding value.
         """
         return {
-            k: eval(v, self.global_vars)
+            k: eval(v, self.global_vars) if isinstance(v, str) else v
             for k, v in self.closure_arg_mapping.items()
         }
 
@@ -614,7 +614,16 @@ class DaceProgram:
         sdfg.arg_names = [a for a in self.argnames if a in argtypes]
 
         # Create new argument mapping from closure arrays
-        arg_mapping = {v: k for k, (v, _) in closure.closure_arrays.items()}
+        arg_mapping = {
+            v: k
+            for k, (v, _) in closure.closure_arrays.items()
+            if isinstance(v, str)
+        }
+        arg_mapping.update({
+            k: v
+            for k, (v, _) in closure.closure_arrays.items()
+            if not isinstance(v, str)
+        })
         self.closure_arg_mapping = arg_mapping
 
         return sdfg, arg_mapping
