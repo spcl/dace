@@ -137,6 +137,18 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             arrdims[indices[idx]] = dim.id
             idx += 1
             new_idx += 1
+        elif isinstance(dim, ast.Name) and isinstance(dim.id, slice):
+            # slice literal
+            rb, re, rs = dim.id.start, dim.id.stop, dim.id.step
+            if rb is None:
+                rb = 0
+            if re is None:
+                re = array.shape[indices[idx]] - 1
+            if rs is None:
+                rs = 1
+            ndslice[idx] = (rb, re, rs)
+            idx += 1
+            new_idx += 1
         elif (isinstance(dim, ast.Name) and dim.id in das
               and isinstance(das[dim.id], data.Array)):
             # Accessing an array with another
