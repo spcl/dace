@@ -797,8 +797,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     # TODO: Distinguish between read, write, and read+write
                     self._allocated_global_arrays.add(node.data)
                     memory_bank_arg_count = 1
-                    bank_offset = -1 
-                    storage_type_str = "hlslib::ocl::StorageType::DDR" #DDR to use unspecified memory
+                    bank_offset = -1
+                    storage_type_str = "hlslib::ocl::StorageType::DDR"  #DDR to use unspecified memory
 
                     #Fix bankassignments if present
                     bank_info = utils.parse_location_bank(nodedesc)
@@ -827,25 +827,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                             f"{alloc_name} = __state->fpga_context->Get()."
                             f"MakeBuffer<{nodedesc.dtype.ctype}, hlslib::ocl::Access::readWrite>"
                             f"({storage_type_str}, {bank_offset + bank_index}, "
-                            f"{cpp.sym2cpp(arrsize)});\n"
-                        )
-                        """
-                        if is_hbm:
-                            result_alloc.write(
-                                "{} = __state->fpga_context->Get()."
-                                "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                                "(hlslib::ocl::StorageType::HBM, {}, {});\n"
-                                .format(alloc_name, nodedesc.dtype.ctype,
-                                        bank_offset + bank_index,
-                                        cpp.sym2cpp(arrsize)))
-                        else:
-                            result_alloc.write(
-                                "{} = __state->fpga_context->Get()."
-                                "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                                "(hlslib::ocl::MemoryBank::bank{}, {});".
-                                format(alloc_name, nodedesc.dtype.ctype,
-                                        bank_offset, cpp.sym2cpp(arrsize)))
-                        """
+                            f"{cpp.sym2cpp(arrsize)});\n")
                         self._dispatcher.defined_vars.add(
                             alloc_name, DefinedType.Pointer,
                             'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'

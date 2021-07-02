@@ -1125,7 +1125,7 @@ def parse_location_bank(array_or_bank: Union[dt.Array, str]) -> Tuple[str, str]:
     """
     if isinstance(array_or_bank, str) or "bank" in array_or_bank.location:
         if isinstance(array_or_bank, str):
-            val : str = array_or_bank
+            val: str = array_or_bank
         else:
             val: str = array_or_bank.location["bank"]
         split = val.split(".")
