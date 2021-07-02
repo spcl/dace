@@ -6,6 +6,8 @@ from typing import List
 import dace
 from dace import dtypes
 from dace import data
+from dace import sourcemap
+from dace import vscode
 from dace.sdfg import SDFG
 from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
@@ -133,6 +135,9 @@ def generate_code(sdfg) -> List[CodeObject]:
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
+    if vscode.pre_codegen_transform():
+        sdfg = vscode.stop_and_transform(sdfg)
+
     frame = framecode.DaCeCodeGenerator()
 
     # Instantiate CPU first (as it is used by the other code generators)
@@ -215,7 +220,7 @@ def generate_code(sdfg) -> List[CodeObject]:
                        linkable=False)
     target_objects.append(dummy)
 
-    return target_objects
+    return (target_objects, sdfg)
 
 
 ##################################################################

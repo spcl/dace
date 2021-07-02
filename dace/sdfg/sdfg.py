@@ -1770,7 +1770,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         sdfg.fill_scope_connectors()
 
         # Generate code for the program by traversing the SDFG state by state
-        program_objects = codegen.generate_code(sdfg)
+        program_objects, sdfg = codegen.generate_code(sdfg)
 
         # Generate the program folder and write the source files
         program_folder = compiler.generate_program_folder(
