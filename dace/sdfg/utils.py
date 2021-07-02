@@ -1068,7 +1068,7 @@ def modify_distributed_subset(subset: Union[sbs.Subset, list, tuple],
     """
     Modifies the first index of :param subset: (the one used for distributed subsets).
     :param subset: is deepcopied before any modification to it is done.
-    :param change: the first index is set to this value, unless it's -1 in which case
+    :param change: the first index is set to this value, unless it's (-1) in which case
         the first index is completly removed
     """
     cps = copy.deepcopy(subset)
