@@ -824,7 +824,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                             "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n"
                             .format(nodedesc.dtype.ctype, alloc_name))
                         result_alloc.write(
-                            f"{alloc_name} = __state->fpga_context.Get()."
+                            f"{alloc_name} = __state->fpga_context->Get()."
                             f"MakeBuffer<{nodedesc.dtype.ctype}, hlslib::ocl::Access::readWrite>"
                             f"({storage_type_str}, {bank_offset + bank_index}, "
                             f"{cpp.sym2cpp(arrsize)});\n"
