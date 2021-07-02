@@ -2,8 +2,8 @@
 import re
 import json
 import os
-import socket
 from dace import Config
+from dace import vscode
 from dace.sdfg import state
 from dace.sdfg import nodes
 
@@ -102,24 +102,6 @@ def remove_tmp(name: str, remove_cache: bool = False):
         if os.path.exists(path):
             os.rmdir(os.path.join(path, 'map'))
             os.rmdir(path)
-
-
-def send(data: json):
-    """ Sends a json object to the port given as the env variable DACE_port.
-        If the port isn't set we don't send anything.
-        :param data: json object to send
-    """
-
-    if "DACE_port" not in os.environ:
-        return
-
-    HOST = socket.gethostname()
-    PORT = os.environ["DACE_port"]
-
-    data_bytes = bytes(json.dumps(data), "utf-8")
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect((HOST, int(PORT)))
-        s.sendall(data_bytes)
 
 
 def save(language: str, name: str, map: dict, build_folder: str) -> str:
@@ -222,7 +204,7 @@ def create_cpp_map(code: str, name: str, target_name: str):
                  tmp.get("build_folder"))
 
         # Send information about the SDFG to VSCode
-        send({
+        vscode.send({
             "type": "registerFunction",
             "name": name,
             "path_cache": folder,
@@ -232,7 +214,10 @@ def create_cpp_map(code: str, name: str, target_name: str):
             "codegen_map": codegen_debug
         })
     else:
-        send({'type': 'restrictedFeatures', 'reason': 'config.cache.hash'})
+        vscode.send({
+            'type': 'restrictedFeatures',
+            'reason': 'config.cache.hash'
+        })
 
 
 class MapCpp:
