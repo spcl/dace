@@ -159,7 +159,7 @@ def someprog_indirection(a):
 
 
 def test_decorator():
-    @dace.program
+    @dace.program(constant_functions=True)
     def otherprog(A: dace.float64[20]):
         res = np.empty_like(A)
         someprog_indirection(3)(A=A, __return=res)
