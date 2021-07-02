@@ -309,6 +309,33 @@ def test_same_field_different_classes():
     assert np.allclose(obj.arr, param)
 
 
+def test_object_methods_ref_across_methods():
+    """ 
+    JIT-based inference of fields at call time, same attribute used on 
+    different levels of nesting.
+    """
+    class MyObject:
+        def __init__(self) -> None:
+            self.my_a = np.random.rand(20)
+            self.my_b = np.random.rand(20)
+
+        @dace.method
+        def something_else(self):
+            self.my_b[...] = self.my_a
+
+        @dace.method
+        def something(self, B: dace.float64[20]):
+            self.my_a += B
+            self.something_else()
+
+    obj = MyObject()
+    acopy = np.copy(obj.my_a)
+    b = np.random.rand(20)
+    obj.something(b)
+    assert np.allclose(obj.my_a, acopy + b)
+    assert np.allclose(obj.my_a, obj.my_b)
+
+
 if __name__ == '__main__':
     test_bad_closure()
     test_dynamic_closure()
@@ -326,3 +353,4 @@ if __name__ == '__main__':
     test_nested_constants()
     test_nested_object_access()
     test_same_field_different_classes()
+    test_object_methods_ref_across_methods()
