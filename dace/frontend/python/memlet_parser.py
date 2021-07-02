@@ -143,10 +143,11 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             if rb is None:
                 rb = 0
             if re is None:
-                re = array.shape[indices[idx]] - 1
+                re = array.shape[indices[idx]]
             if rs is None:
                 rs = 1
-            ndslice[idx] = (rb, re, rs)
+            
+            ndslice[idx] = (rb, re - 1, rs)
             idx += 1
             new_idx += 1
         elif (isinstance(dim, ast.Name) and dim.id in das
