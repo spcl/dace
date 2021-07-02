@@ -25,7 +25,7 @@ def stop_and_transform(sdfg):
     sdfg.save(filename)
     send({'type': 'stopForTransformation', 'filename': filename})
     time.sleep(1.2)  # --- vscode Breaks here ---
-    return sdfg.from_file(filename)
+    return dace.SDFG.from_file(filename)
 
 
 def send(data: json):
