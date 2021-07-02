@@ -1343,6 +1343,20 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return name + ('_%d' % index)
 
+    def find_new_symbol(self, name: str):
+        """
+        Tries to find a new symbol name by adding an underscore and a number.
+        """
+        symbols = self.symbols
+        if name not in symbols:
+            return name
+
+        index = 0
+        while (name + ('_%d' % index)) in symbols:
+            index += 1
+
+        return name + ('_%d' % index)
+
     def add_array(self,
                   name: str,
                   shape,

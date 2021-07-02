@@ -3942,6 +3942,24 @@ class ProgramVisitor(ExtNodeVisitor):
                         'scalar', {}, {conn},
                         '%s = %s' % (conn, arg),
                         debuginfo=self.current_lineinfo)
+                
+            # Handle scalar inputs that become symbols in the nested SDFG
+            for sym, local in mapping.items():
+                if local in self.sdfg.arrays:
+                    # Add assignment state and inter-state edge
+                    symassign_state = self.sdfg.add_state_before(state)
+                    isedge = self.sdfg.edges_between(symassign_state, state)[0]
+                    newsym = self.sdfg.find_new_symbol(f'sym_{local}')
+                    desc = self.sdfg.arrays[local]
+                    self.sdfg.add_symbol(newsym, desc.dtype)
+                    if isinstance(desc, data.Array):
+                        isedge.data.assignments[newsym] = f'{local}[0]'
+                    else:
+                        isedge.data.assignments[newsym] = local
+
+                    # Replace mapping with symbol
+                    mapping[sym] = newsym
+
 
             inputs = {
                 k: v
