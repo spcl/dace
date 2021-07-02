@@ -56,7 +56,44 @@ def test_slice_with_nones():
     assert np.allclose(expected, A)
 
 
+def test_literal_slice():
+    @dace.program
+    def slicer(A: dace.float64[20]):
+        A[slice(2, 10, 2)] = 2
+
+    A = np.random.rand(20)
+    expected = np.copy(A)
+    expected[slice(2, 10, 2)] = 2
+
+    slicer(A)
+    assert np.allclose(A, expected)
+
+
+def test_slice_member():
+    @dace.program
+    def inner(q, kslice: dace.constant):
+        q[kslice] = 2 * q[kslice]
+
+    class AClass:
+        def __init__(self):
+            self.kslice = slice(1, 80)
+
+        @dace.method
+        def forward(self, q):
+            inner(q, self.kslice)
+
+    obj = AClass()
+    A = np.random.rand(90)
+    expected = np.copy(A)
+    expected[obj.kslice] *= 2
+    obj.forward(A)
+    assert np.allclose(A, expected)
+
+
+
 if __name__ == '__main__':
     test()
     test_slice_constant()
     test_slice_with_nones()
+    test_literal_slice()
+    test_slice_member()

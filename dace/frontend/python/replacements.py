@@ -752,6 +752,11 @@ def _pymin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
     return left_arg
 
 
+@oprepo.replaces('slice')
+def _slice(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, *args, **kwargs):
+    return slice(*args, **kwargs)
+
+
 @oprepo.replaces('numpy.argmax')
 def _argmax(pv: 'ProgramVisitor',
             sdfg: SDFG,

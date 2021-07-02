@@ -948,6 +948,7 @@ _CONSTANT_TYPES = [
     complex,
     str,
     bool,
+    slice,
     numpy.bool_,
     numpy.intc,
     numpy.intp,
