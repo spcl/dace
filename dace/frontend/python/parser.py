@@ -247,6 +247,16 @@ class DaceProgram:
         del self._cache
         self._cache = (None, None, None)
 
+    def __sdfg_closure__(self) -> Dict[str, Any]:
+        """ 
+        Returns the closure arrays of the SDFG represented by the dace 
+        program as a mapping between array name and the corresponding value.
+        """
+        return {
+            k: eval(v, self.global_vars)
+            for k, v in self.closure_arg_mapping.items()
+        }
+
     def _create_sdfg_args(self, sdfg: SDFG, args: Tuple[Any],
                           kwargs: Dict[str, Any]) -> Dict[str, Any]:
         # Start with default arguments, then add other arguments
@@ -256,10 +266,7 @@ class DaceProgram:
         result.update(kwargs)
 
         # Add closure arguments to the call
-        result.update({
-            k: eval(v, self.global_vars)
-            for k, v in self.closure_arg_mapping.items()
-        })
+        result.update(self.__sdfg_closure__())
 
         # Update arguments with symbols in data shapes
         result.update(
@@ -275,7 +282,7 @@ class DaceProgram:
             program. """
         # Update global variables with current closure
         self.global_vars = _get_locals_and_globals(self.f)
-        
+
         # Move "self" from an argument into the closure
         if self.methodobj is not None:
             self.global_vars[self.objname] = self.methodobj
@@ -608,5 +615,6 @@ class DaceProgram:
 
         # Create new argument mapping from closure arrays
         arg_mapping = {v: k for k, (v, _) in closure.closure_arrays.items()}
+        self.closure_arg_mapping = arg_mapping
 
         return sdfg, arg_mapping

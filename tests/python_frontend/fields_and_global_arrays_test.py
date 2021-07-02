@@ -128,7 +128,7 @@ def test_dataclass_method_aot():
     csdfg = dc.something.compile()
     acopy = np.copy(dc.my_a)
     b = np.random.rand(20)
-    csdfg(b)
+    csdfg(b, **dc.something.__sdfg_closure__())
     assert np.allclose(dc.my_a, acopy + b)
 
 
