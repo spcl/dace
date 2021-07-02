@@ -195,7 +195,7 @@ jobs:
       run: |
         export NOSTATUSBAR=1
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode --concurrency=thread"
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode --concurrency=multiprocessing --timid"
         . /opt/setupenv
         $PYTHON_BINARY tests/fpga/intel_fpga_test.py
 
@@ -203,7 +203,7 @@ jobs:
       run: |
         export NOSTATUSBAR=1
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode --concurrency=thread"
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode --concurrency=multiprocessing --timid"
         . /opt/setupenv
         $PYTHON_BINARY tests/fpga/xilinx_test.py
 
