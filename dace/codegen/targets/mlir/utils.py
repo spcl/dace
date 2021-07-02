@@ -34,7 +34,7 @@ TYPE_DICT = {
 
 
 def get_ast(code: str):
-    return mlir.parse_string(code).module[0]
+    return mlir.parse_string(code).modules[0]
 
 
 def is_generic(ast: Union[mlir.astnodes.Module, mlir.astnodes.GenericModule]):
