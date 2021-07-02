@@ -187,7 +187,8 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         # Get reduction type for OpenMP
         redtype = detect_reduction_type(node.wcr, openmp=True)
         if redtype not in ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP:
-            raise ValueError('Reduction type not supported for "%s"' % node.wcr)
+            warnings.warn('Reduction type not supported for "%s"' % node.wcr)
+            return ExpandReducePure.expansion(node, state, sdfg)
         omptype, expr = ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP[redtype]
 
         # Standardize axes
@@ -219,7 +220,7 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
 
         # Write identity value first
         if node.identity is not None:
-            code += '%s = %s;\n' % (outexpr, node.identity)
+            code += '%s = %s;\n' % (outexpr, sym2cpp(node.identity))
 
         # Reduction OpenMP clause
         code += '#pragma omp parallel for collapse({cdim}) ' \
