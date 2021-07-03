@@ -6,9 +6,9 @@ from typing import List
 import dace
 from dace import dtypes
 from dace import data
-from dace import sourcemap
-from dace import vscode
 from dace.sdfg import SDFG
+from dace.codegen import sourcemap
+from dace.codegen import vscode
 from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config

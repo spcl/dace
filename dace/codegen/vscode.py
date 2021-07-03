@@ -24,7 +24,7 @@ def stop_and_transform(sdfg):
     filename = os.path.abspath(os.path.join(sdfg.build_folder, 'program.sdfg'))
     sdfg.save(filename)
     send({'type': 'stopForTransformation', 'filename': filename})
-    time.sleep(1.2)  # --- vscode Breaks here ---
+    breakpoint()
     return dace.SDFG.from_file(filename)
 
 
