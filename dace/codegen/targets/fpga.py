@@ -451,7 +451,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     # Global data is passed from outside the kernel
                     global_data_parameters.add(
                         (is_output, dataname, desc, interface_id))
-                elif dataname in shared_data:
+                elif dataname in shared_data or isinstance(desc, dt.Stream):
                     # Add the data as a parameter to this PE
                     subgraph_parameters[subgraph].add(
                         (is_output, dataname, desc, interface_id))
