@@ -3,7 +3,7 @@ import re
 import json
 import os
 from dace import Config
-from dace import vscode
+from dace.codegen import vscode
 from dace.sdfg import state
 from dace.sdfg import nodes
 

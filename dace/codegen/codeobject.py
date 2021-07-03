@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import re
-from dace import sourcemap
+from dace.codegen import sourcemap
 from dace.properties import (Property, DictProperty, SetProperty,
                              make_properties)
 
