@@ -15,6 +15,14 @@ from typing import Union
 
 # Only these types and the vector version of them are supported
 TYPE_DICT = {
+    "ui8": dace.uint8,
+    "ui16": dace.uint16,
+    "ui32": dace.uint32,
+    "ui64": dace.uint64,
+    "si8": dace.int8,
+    "si16": dace.int16,
+    "si32": dace.int32,
+    "si64": dace.int64,
     "i8": dace.int8,
     "i16": dace.int16,
     "i32": dace.int32,
@@ -26,7 +34,7 @@ TYPE_DICT = {
 
 
 def get_ast(code: str):
-    return mlir.parse_string(code)
+    return mlir.parse_string(code).modules[0]
 
 
 def is_generic(ast: Union[mlir.astnodes.Module, mlir.astnodes.GenericModule]):
@@ -42,15 +50,18 @@ def get_entry_func(ast: Union[mlir.astnodes.Module,
     if func_uid is not None:
         entry_func_name = entry_func_name + func_uid
 
-    # Iterating over every function in the body to check if ast contains exactly one entry and saving the entry function
+    # Iterating over every function in the body of every region to check if ast contains exactly one entry and saving the entry function
     entry_func = None
-    for func in ast.body:
-        func_name = get_func_name(func, is_generic)
+    for body in ast.region.body:
+        for op in body.body:
+            func = op.op
+            func_name = get_func_name(func, is_generic)
 
-        if func_name == entry_func_name:
-            if entry_func is not None:
-                raise SyntaxError("Multiple entry function in MLIR tasklet.")
-            entry_func = func
+            if func_name == entry_func_name:
+                if entry_func is not None:
+                    raise SyntaxError(
+                        "Multiple entry function in MLIR tasklet.")
+                entry_func = func
 
     if entry_func is None:
         raise SyntaxError(
@@ -63,10 +74,10 @@ def get_entry_func(ast: Union[mlir.astnodes.Module,
 def get_func_name(func: Union[mlir.astnodes.Function,
                               mlir.astnodes.GenericModule], is_generic: bool):
     if is_generic:
-        # In generic ast the name can be found in ast->body->func[]->attributes->values[0]->value
+        # In generic ast the name can be found in ast->module[0]->region->body[0]->body[]->op->attributes->values[0]->value
         # The consecutive .values ensure to read the name as a string
         return func.attributes.values[0].value.value.value
-    # In dialect ast the name can be found in ast->body->func[]->name->value
+    # In dialect ast the name can be found in ast->module[0]->region->body[0]->body[]->op->name->value
     return func.name.value
 
 
@@ -76,9 +87,9 @@ def get_entry_args(entry_func: Union[mlir.astnodes.Function,
     ret = []
 
     if is_generic:
-        # In generic ast the list of arguments can be found in ast->body->func[]->body[0]->label->arg_ids
-        arg_names = entry_func.body[0].label.arg_ids
-        arg_types = entry_func.body[0].label.arg_types
+        # In generic ast the list of arguments can be found in ast->module[0]->region->body[0]->body[]->op->region->body[0]->label->arg_ids
+        arg_names = entry_func.region.body[0].label.arg_ids
+        arg_types = entry_func.region.body[0].label.arg_types
 
         for idx in range(len(arg_names)):
             arg_name = arg_names[idx].value
@@ -118,12 +129,9 @@ def get_entry_result_type(entry_func: Union[mlir.astnodes.Function,
 def get_dace_type(node: Union[mlir.astnodes.IntegerType,
                               mlir.astnodes.FloatType,
                               mlir.astnodes.VectorType]):
-    if isinstance(node, mlir.astnodes.IntegerType):
-        result_width = node.width.value
-        return TYPE_DICT["i" + result_width]
-
-    if isinstance(node, mlir.astnodes.FloatType):
-        return TYPE_DICT[node.type.name]
+    if isinstance(node, mlir.astnodes.IntegerType) or isinstance(
+            node, mlir.astnodes.FloatType):
+        return TYPE_DICT[node.dump()]
 
     if isinstance(node, mlir.astnodes.VectorType):
         result_dim = node.dimensions[0]
