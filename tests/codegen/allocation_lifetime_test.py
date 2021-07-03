@@ -268,6 +268,34 @@ def test_alloc_persistent_threadlocal():
     del csdfg
 
 
+def test_alloc_multistate():
+    i = dace.symbol('i')
+    sdfg = dace.SDFG('multistate')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_array('B', [20], dace.float64)
+    sdfg.add_transient('tmp', [i], dace.float64)
+
+    init = sdfg.add_state()
+    end = sdfg.add_state()
+    s2 = sdfg.add_state()
+    sdfg.add_loop(init, s2, end, 'i', '0', 'i < 5', 'i + 1')
+
+    s1 = sdfg.add_state_before(s2)
+
+    ar = s1.add_read('A')
+    tw = s1.add_write('tmp')
+    s1.add_nedge(ar, tw, dace.Memlet('A[0:i]'))
+
+    tr = s2.add_read('tmp')
+    bw = s2.add_write('B')
+    s2.add_nedge(tr, bw, dace.Memlet('tmp'))
+
+    A = np.random.rand(20)
+    B = np.random.rand(20)
+    sdfg(A=A, B=B)
+    assert np.allclose(A[:5], B[:5])
+
+
 if __name__ == '__main__':
     test_determine_alloc_scope()
     test_determine_alloc_state()
@@ -278,3 +306,4 @@ if __name__ == '__main__':
     test_alloc_persistent_register()
     test_alloc_persistent()
     test_alloc_persistent_threadlocal()
+    test_alloc_multistate()
