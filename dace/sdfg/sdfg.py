@@ -2252,7 +2252,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
         # Generate code for the program by traversing the SDFG state by state
-        program_code = codegen.generate_code(sdfg)
+        program_code, _ = codegen.generate_code(sdfg)
 
         return program_code
 
