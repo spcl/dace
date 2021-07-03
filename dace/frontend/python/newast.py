@@ -297,6 +297,7 @@ class ConditionalCodeResolver(ast.NodeTransformer):
         self.globals = globals
 
     def visit_If(self, node: ast.If) -> Any:
+        node = self.generic_visit(node)
         try:
             test = RewriteSympyEquality(self.globals).visit(node.test)
             result = astutils.evalnode(test, self.globals)
@@ -314,7 +315,7 @@ class ConditionalCodeResolver(ast.NodeTransformer):
             # Cannot evaluate if condition at compile time
             pass
 
-        return self.generic_visit(node)
+        return node
 
     def visit_IfExp(self, node: ast.IfExp) -> Any:
         return self.visit_If(node)
@@ -800,6 +801,9 @@ class GlobalResolver(ast.NodeTransformer):
             if newnode is not None:
                 return newnode
         return self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> Any:
+        return self.visit_Attribute(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
         try:
@@ -3729,6 +3733,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 fcopy.global_vars = {**func.global_vars, **self.globals}
                 fargs = (self._eval_arg(arg) for _, arg in args)
                 sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
+                required_args = [k for k, _ in args if k in sdfg.arg_names]
+                # Filter out constant arguments
+                args = [(k, v) for k, v in args if k not in fcopy.constant_args]
             elif self._has_sdfg(func):
                 fargs = tuple(
                     self._eval_arg(self._parse_function_arg(arg))

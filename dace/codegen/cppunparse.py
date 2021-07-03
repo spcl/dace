@@ -1092,7 +1092,10 @@ def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None):
 # Code can either be a string or a function
 def py2cpp(code, expr_semicolon=True, defined_symbols=None):
     if isinstance(code, str):
-        return cppunparse(ast.parse(code), expr_semicolon, defined_symbols=defined_symbols)
+        try:
+            return cppunparse(ast.parse(code), expr_semicolon, defined_symbols=defined_symbols)
+        except SyntaxError:
+            return code
     elif isinstance(code, ast.AST):
         return cppunparse(code, expr_semicolon, defined_symbols=defined_symbols)
     elif isinstance(code, list):
