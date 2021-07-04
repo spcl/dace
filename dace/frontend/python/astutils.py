@@ -155,7 +155,7 @@ def subscript_to_ast_slice(node, without_array=False):
     if result_slice is None:
         if isinstance(slice, ast.Tuple):
             slices = slice.elts
-        elif isinstance(slice, tuple):
+        elif isinstance(slice, (list, tuple)):
             slices = slice
         else:
             slices = [slice]

@@ -92,7 +92,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     new_idx = 0
     has_ellipsis = False
     for dim in ast_ndslice:
-        if isinstance(dim, (str, list)):
+        if isinstance(dim, (str, list, slice)):
             dim = ast.Name(id=dim)
 
         if isinstance(dim, tuple):
