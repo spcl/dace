@@ -143,22 +143,22 @@ def subscript_to_ast_slice(node, without_array=False):
     # Python <3.9 compatibility
     result_slice = None
     if isinstance(node.slice, ast.Index):
-        slice = node.slice.value
-        if not isinstance(slice, ast.Tuple):
-            result_slice = [slice]
+        slc = node.slice.value
+        if not isinstance(slc, ast.Tuple):
+            result_slice = [slc]
     elif isinstance(node.slice, ast.ExtSlice):
-        slice = tuple(node.slice.dims)
+        slc = tuple(node.slice.dims)
     else:
-        slice = node.slice
+        slc = node.slice
 
     # Decode slice tuple
     if result_slice is None:
-        if isinstance(slice, ast.Tuple):
-            slices = slice.elts
-        elif isinstance(slice, (list, tuple)):
-            slices = slice
+        if isinstance(slc, ast.Tuple):
+            slices = slc.elts
+        elif isinstance(slc, tuple):
+            slices = slc
         else:
-            slices = [slice]
+            slices = [slc]
         result_slice = []
         for s in slices:
             # Slice
