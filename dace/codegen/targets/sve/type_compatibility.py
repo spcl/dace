@@ -12,7 +12,7 @@
 
 import dace
 import dace.dtypes as dtypes
-import dace.codegen.targets.sve.util as util
+from dace.codegen.targets.sve import util as util
 import collections
 
 
