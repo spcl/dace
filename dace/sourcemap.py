@@ -172,13 +172,10 @@ def create_py_map(sdfg):
     # mapping as we don't know where to save it to due to
     # the hash value changing every time the state of the SDFG changes.
     if Config.get('cache') != 'hash':
-        tmp = get_tmp(sdfg.name)
         py_mapper = MapPython(sdfg.name)
-        py_mapper.mapper(sdfg, tmp)
+        made_with_api = py_mapper.mapper(sdfg)
         folder = sdfg.build_folder
         save("py", sdfg.name, py_mapper.map, folder)
-        if tmp:
-            remove_tmp(sdfg.name, True)
         # If the SDFG was made with the API we need to create tmp info
         # as it doesn't have any
         sourceFiles = [src for src in get_src_files(sdfg, set())]
@@ -186,7 +183,7 @@ def create_py_map(sdfg):
         return {
             'build_folder': folder,
             'src_files': sourceFiles,
-            'made_with_api': True if tmp is None else False,
+            'made_with_api': made_with_api,
         }
 
 
@@ -258,6 +255,7 @@ class MapCpp:
     def mapper(self, codegen_debug: bool = False):
         """ For each line of code retrieve the corresponding identifiers
             and create the mapping
+            :param codegen_debug: if the codegen mapping should be created
         """
         for line_num, line in enumerate(self.code.split("\n"), 1):
             nodes = self.get_nodes(line)
@@ -346,46 +344,33 @@ class MapPython:
         self.map = {}
         self.debuginfo = {}
 
-    def mapper(self, sdfg, line_info) -> dict:
+    def mapper(self, sdfg) -> dict:
         """ Creates the source to SDFG node mapping
             :param sdfg: SDFG to create the mapping for
-            :line_info: source information from the tmp file
+            :return: if the sdfg was created only by the API
         """
         self.debuginfo = self.sdfg_debuginfo(sdfg)
         self.debuginfo = self.divide()
         self.sorter()
 
-        # If we haven't saved line and/or src info
-        # return after creating the map
-        # Happens when only using the SDFG API
-        if (line_info is None or "start_line" not in line_info
-                or "end_line" not in line_info or "src_file" not in line_info):
-            self.create_mapping()
-            return
-
         # Store the start and end line as a tuple
         # for each function/sub-function in the SDFG
-        range_dict = {
-            line_info["src_file"]:
-            [(line_info["start_line"], line_info["end_line"])]
-        }
+        range_dict = {}
 
-        if "other_sdfgs" in line_info:
-            for other_sdfg_name in line_info["other_sdfgs"]:
-                other_tmp = get_tmp(other_sdfg_name)
-                # SDFGs created with the API don't have tmp files
-                if (other_tmp is not None and "src_file" in other_tmp
-                        and "start_line" in other_tmp
-                        and "end_line" in other_tmp):
-                    remove_tmp(other_sdfg_name, True)
-                    ranges = range_dict.get(other_tmp["src_file"])
-                    if ranges is None:
-                        ranges = []
-                    ranges.append(
-                        (other_tmp["start_line"], other_tmp["end_line"]))
-                    range_dict[other_tmp["src_file"]] = ranges
+        for nested_sdfg in sdfg.all_sdfgs_recursive():
+            tmp = get_tmp(nested_sdfg.name)
+            # SDFGs created with the API don't have tmp files
+            if (tmp and "src_file" in tmp and "start_line" in tmp
+                    and "end_line" in tmp):
+                remove_tmp(nested_sdfg.name, True)
+                ranges = range_dict.get(tmp["src_file"])
+                if ranges is None:
+                    ranges = []
+                ranges.append((tmp["start_line"], tmp["end_line"]))
+                range_dict[tmp["src_file"]] = ranges
 
         self.create_mapping(range_dict)
+        return len(range_dict.items()) == 0
 
     def divide(self):
         """ Divide debuginfo into an array where each entry
