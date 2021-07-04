@@ -19,7 +19,7 @@ def test_assign_scalar():
                 b >> B[i]
                 b = 0.0
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     # Scalar must be duplicated and brought into right type
     assert 'svdup_f32' in code
@@ -37,7 +37,7 @@ def test_assign_pointer():
 
     # Assigning a pointer to a vector is bad!
     with pytest.raises(NotSupportedError):
-        get_code(program, 'i')
+        get_code(program)
 
 
 def test_compare_scalar_vector():
@@ -49,7 +49,7 @@ def test_compare_scalar_vector():
                 b >> B[i]
                 b = a if 0.0 < a else a * 2.0
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     assert 'svcmplt' in code
 
@@ -66,7 +66,7 @@ def test_if_block():
                 else:
                     b *= 2
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     # Accumulator must be used for predicates
     assert '__pg_acc' in code
@@ -85,7 +85,7 @@ def test_assign_new_variable():
                     c = 0
                 b = a
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     # c will be once defined as vector, once as scalar (locally)
     assert 'svfloat64_t c = ' in code
@@ -103,7 +103,7 @@ def test_math_functions():
                 b = math.sqrt(a)
                 b = math.max(41, 42)
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     # Vectorized max
     assert 'svmax' in code
@@ -128,7 +128,7 @@ def test_fused_operations():
                 b = a - a * a
                 c = 0 * 1 + a
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     # All fused ops
     assert 'svmad' in code

@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 import scipy as sp
-from tests.codegen.sve.vectorization import vectorize
+
 import tests.codegen.sve.common as common
 import pytest
 
@@ -41,8 +41,7 @@ def test_axpy():
     X_regression[:] = X[:]
     Y_regression[:] = Y[:]
 
-    sdfg = axpy.to_sdfg()
-    vectorize(sdfg, 'i')
+    sdfg = common.vectorize(axpy)
 
     sdfg(A=A, X=X, Y=Y, N=N)
 

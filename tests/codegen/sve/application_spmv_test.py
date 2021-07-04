@@ -7,7 +7,6 @@ import dace
 import math
 import numpy as np
 import scipy
-from tests.codegen.sve.vectorization import vectorize
 import tests.codegen.sve.common as common
 import pytest
 
@@ -78,8 +77,7 @@ def test_spmv():
     A_sparse = scipy.sparse.csr_matrix((A_val, A_col, A_row),
                                        shape=(H.get(), W.get()))
 
-    sdfg = spmv.to_sdfg()
-    vectorize(sdfg, 'j')
+    sdfg = common.vectorize(spmv)
 
     sdfg(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=H, W=W, nnz=nnz)
 

@@ -15,7 +15,7 @@ def test_map_simple():
                 b >> B[i]
                 b = a
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     assert '__pg_i' in code
 
@@ -30,7 +30,7 @@ def test_map_advanced():
                 b >> B[k]
                 b = a
 
-    code = get_code(program, 'k')
+    code = get_code(program)
 
     # Only innermost should be SVE
     assert '__pg_i' not in code

@@ -16,10 +16,10 @@ def test_wcr_sum():
                 b >> B(1, lambda x, y: x + y)[0]
                 b = a
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     assert 'ReductionType::Sum' in code
-    assert 'svaddv(__pg_i, b)' in code
+    assert 'svaddv' in code
 
 
 def test_wcr_min():
@@ -31,10 +31,10 @@ def test_wcr_min():
                 b >> B(1, lambda x, y: min(x, y))[0]
                 b = a
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     assert 'ReductionType::Min' in code
-    assert 'svminv(__pg_i, b)' in code
+    assert 'svminv' in code
 
 
 def test_wcr_max():
@@ -46,33 +46,8 @@ def test_wcr_max():
                 b >> B(1, lambda x, y: max(x, y))[0]
                 b = a
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     assert 'ReductionType::Max' in code
-    assert 'svmaxv(__pg_i, b)' in code
+    assert 'svmaxv' in code
 
-
-def test_wcr_unsupported():
-    # Product reduction not supported
-    @dace.program(dace.float64[N], dace.float64[N])
-    def program_prod(A, B):
-        for i in dace.map[0:N]:
-            with dace.tasklet:
-                a << A[i]
-                b >> B(1, lambda x, y: x * y)[i]
-                b = a
-
-    with pytest.raises(NotSupportedError):
-        get_code(program_prod, 'i')
-
-    # WCR using the SVE param is unvectorizable (no atomic bulk store)
-    @dace.program(dace.float64[N], dace.float64[N])
-    def program_wcr_sve_param(A, B):
-        for i in dace.map[0:N]:
-            with dace.tasklet:
-                a << A[i]
-                b >> B(1, lambda x, y: x + y)[i]
-                b = a
-
-    with pytest.raises(NotSupportedError):
-        get_code(program_wcr_sve_param, 'i')
