@@ -77,15 +77,22 @@ class SVEVectorization(transformation.Transformation):
 
         ########################
         # Check for unsupported datatypes on the connectors (including on the Map itself)
+        bit_widths = set()
         for node, _ in subgraph.all_nodes_recursive():
             for conn in node.in_connectors:
-                if not inferred[(node, conn,
-                                 True)].type in sve.util.TYPE_TO_SVE:
+                t = inferred[(node, conn, True)]
+                bit_widths.add(util.get_base_type(t).bytes)
+                if not t.type in sve.util.TYPE_TO_SVE:
                     return False
             for conn in node.out_connectors:
-                if not inferred[(node, conn,
-                                 False)].type in sve.util.TYPE_TO_SVE:
+                t = inferred[(node, conn, False)]
+                bit_widths.add(util.get_base_type(t).bytes)
+                if not t.type in sve.util.TYPE_TO_SVE:
                     return False
+
+        # Multiple different bit widths occuring (messes up the predicates)
+        if len(bit_widths) > 1:
+            return False
 
         ########################
         # Check for unsupported memlets
@@ -108,8 +115,20 @@ class SVEVectorization(transformation.Transformation):
                     return False
 
                 # Param in memlet during WCR is not supported
-                if param_name in e.data.free_symbols:
+                if param_name in e.data.subset.free_symbols:
                     return False
+
+                # vreduce is not supported
+                dst_node = state.memlet_path(e)[-1]
+                if isinstance(dst_node, nodes.Tasklet):
+                    if isinstance(dst_node.in_connectors[e.dst_conn],
+                                  dtypes.vector):
+                        return False
+                elif isinstance(dst_node, nodes.AccessNode):
+                    desc = dst_node.desc(sdfg)
+                    if isinstance(desc, data.Scalar) and isinstance(
+                            desc.dtype, dtypes.vector):
+                        return False
 
         ########################
         # Check for invalid copies in the subgraph
