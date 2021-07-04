@@ -166,6 +166,7 @@ def create_py_map(sdfg):
     """ Creates the mapping from the python source lines to the SDFG nodes.
         The mapping gets saved at: <SDFG build folder>/map/map_py.json
         :param sdfg: The SDFG for which the mapping will be created
+        :return: an object with the build_folder, src_files and made_with_api
     """
     # If the cache setting is set to 'hash' then we don't create a
     # mapping as we don't know where to save it to due to
@@ -176,34 +177,26 @@ def create_py_map(sdfg):
         py_mapper.mapper(sdfg, tmp)
         folder = sdfg.build_folder
         save("py", sdfg.name, py_mapper.map, folder)
+        remove_tmp(sdfg.name, True)
         # If the SDFG was made with the API we need to create tmp info
         # as it doesn't have any
         sourceFiles = [src for src in get_src_files(sdfg, set())]
         # If tmp is None, then the SDFG was created with the API
-        if tmp is None:
-            temporaryInfo(
-                sdfg.name, {
-                    'build_folder': folder,
-                    'src_files': sourceFiles,
-                    'made_with_api': True,
-                })
-        else:
-            tmp['src_files'] = sourceFiles
-            temporaryInfo(sdfg.name, tmp)
+        return {
+            'build_folder': folder,
+            'src_files': sourceFiles,
+            'made_with_api': True if tmp is None else False,
+        }
 
 
-def create_cpp_map(code: str, name: str, target_name: str):
+def create_cpp_map(code: str, name: str, target_name: str, sdfg_info):
     """ Creates the mapping from the SDFG nodes to the C++ code lines.
         The mapping gets saved at: <SDFG build folder>/map/map_cpp.json
         :param code: C++ code containing the identifiers '////__DACE:0:0:0'
         :param name: The name of the SDFG
         :param target_name: The target type, example: 'cpu'
+        :param: sdfg_info: An object with build_folder, made_with_api and src_files
     """
-    tmp = get_tmp(name)
-    if tmp is None:
-        return
-    remove_tmp(name, True)
-
     # If the cache setting is set to 'hash' then we don't create a
     # mapping as we don't know where to save it to due to
     # the hash value changing every time the state of the SDFG changes.
@@ -214,25 +207,36 @@ def create_cpp_map(code: str, name: str, target_name: str):
         cpp_mapper = MapCpp(code, name, target_name)
         cpp_mapper.mapper(codegen_debug)
 
-        folder = save("cpp", name, cpp_mapper.map, tmp.get("build_folder"))
-        api = tmp.get('made_with_api')
+        folder = save("cpp", name, cpp_mapper.map,
+                      sdfg_info.get("build_folder"))
+        api = sdfg_info.get('made_with_api')
 
         if codegen_debug:
             save("codegen", name, cpp_mapper.codegen_map,
-                 tmp.get("build_folder"))
+                 sdfg_info.get("build_folder"))
 
         # Send information about the SDFG to VSCode
         send({
             "type": "registerFunction",
             "name": name,
             "path_cache": folder,
-            "path_file": tmp.get("src_files"),
+            "path_file": sdfg_info.get("src_files"),
             "target_name": target_name,
             "made_with_api": api if api else False,
             "codegen_map": codegen_debug
         })
     else:
         send({'type': 'restrictedFeatures', 'reason': 'config.cache.hash'})
+
+
+def create_maps(sdfg, code: str, target_name: str):
+    """ Creates the C++, Py and Codegen mapping
+        :param sdfg: The sdfg to create the mapping for
+        :param code: The generated code
+        :param target_name: The target name
+    """
+    sdfg_info = create_py_map(sdfg)
+    create_cpp_map(code, sdfg.name, target_name, sdfg_info)
 
 
 class MapCpp:
