@@ -43,7 +43,7 @@ def test_filter():
 
     sdfg = common.vectorize(pbf)
 
-    sdfg(A=A, B=B, outsz=outsize, ratio=ratio, N=N)
+    sdfg(A=A, out=B, outsz=outsize, ratio=ratio, N=N)
 
     if dace.Config.get_bool('profiling'):
         dace.timethis('filter', 'numpy', 0, regression, A, ratio)
