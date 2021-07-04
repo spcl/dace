@@ -180,20 +180,19 @@ def create_py_map(sdfg):
         # as it doesn't have any
         sourceFiles = [src for src in get_src_files(sdfg, set())]
         # If tmp is None, then the SDFG was created with the API
-        return {
-            'build_folder': folder,
-            'src_files': sourceFiles,
-            'made_with_api': made_with_api,
-        }
+        return (folder, sourceFiles, made_with_api)
 
 
-def create_cpp_map(code: str, name: str, target_name: str, sdfg_info):
+def create_cpp_map(code: str, name: str, target_name: str, build_folder: str,
+                   sourceFiles: [str], made_with_api: bool):
     """ Creates the mapping from the SDFG nodes to the C++ code lines.
         The mapping gets saved at: <SDFG build folder>/map/map_cpp.json
         :param code: C++ code containing the identifiers '////__DACE:0:0:0'
         :param name: The name of the SDFG
         :param target_name: The target type, example: 'cpu'
-        :param: sdfg_info: An object with build_folder, made_with_api and src_files
+        :param build_folder: The build_folder of the SDFG
+        :param sourceFiles: A list of source files of to the SDFG
+        :param made_with_api: true if the SDFG was created just with the API
     """
     # If the cache setting is set to 'hash' then we don't create a
     # mapping as we don't know where to save it to due to
@@ -205,22 +204,19 @@ def create_cpp_map(code: str, name: str, target_name: str, sdfg_info):
         cpp_mapper = MapCpp(code, name, target_name)
         cpp_mapper.mapper(codegen_debug)
 
-        folder = save("cpp", name, cpp_mapper.map,
-                      sdfg_info.get("build_folder"))
-        api = sdfg_info.get('made_with_api')
+        folder = save("cpp", name, cpp_mapper.map, build_folder)
 
         if codegen_debug:
-            save("codegen", name, cpp_mapper.codegen_map,
-                 sdfg_info.get("build_folder"))
+            save("codegen", name, cpp_mapper.codegen_map, build_folder)
 
         # Send information about the SDFG to VSCode
         send({
             "type": "registerFunction",
             "name": name,
             "path_cache": folder,
-            "path_file": sdfg_info.get("src_files"),
+            "path_file": sourceFiles,
             "target_name": target_name,
-            "made_with_api": api if api else False,
+            "made_with_api": made_with_api,
             "codegen_map": codegen_debug
         })
     else:
@@ -233,8 +229,9 @@ def create_maps(sdfg, code: str, target_name: str):
         :param code: The generated code
         :param target_name: The target name
     """
-    sdfg_info = create_py_map(sdfg)
-    create_cpp_map(code, sdfg.name, target_name, sdfg_info)
+    build_folder, sourceFiles, made_with_api = create_py_map(sdfg)
+    create_cpp_map(code, sdfg.name, target_name, build_folder, sourceFiles,
+                   made_with_api)
 
 
 class MapCpp:
@@ -353,16 +350,25 @@ class MapPython:
         self.debuginfo = self.divide()
         self.sorter()
 
+        func_names = []
+        for nested_sdfg in sdfg.all_sdfgs_recursive():
+            func_names.append(nested_sdfg.name)
+
         # Store the start and end line as a tuple
         # for each function/sub-function in the SDFG
         range_dict = {}
 
-        for nested_sdfg in sdfg.all_sdfgs_recursive():
-            tmp = get_tmp(nested_sdfg.name)
+        for func_name in func_names:
+            tmp = get_tmp(func_name)
             # SDFGs created with the API don't have tmp files
             if (tmp and "src_file" in tmp and "start_line" in tmp
-                    and "end_line" in tmp):
-                remove_tmp(nested_sdfg.name, True)
+                    and "end_line" in tmp and "other_sdfgs" in tmp):
+                remove_tmp(func_name, True)
+
+                for other_name in tmp['other_sdfgs']:
+                    if other_name not in func_names:
+                        func_names.append(other_name)
+
                 ranges = range_dict.get(tmp["src_file"])
                 if ranges is None:
                     ranges = []
