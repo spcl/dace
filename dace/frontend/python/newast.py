@@ -198,16 +198,14 @@ def parse_dace_program(f,
     sdfg.set_sourcecode(src, 'python')
 
     # We save information in a tmp file for improved source mapping.
-    # In the case of the cache config set to 'hash' we don't create a mapping.
-    if Config.get('cache') != 'hash':
-        other_functions = [func for func in other_sdfgs if not func == name]
-        data = {
-            "start_line": src_line + 1,
-            "end_line": src_line + len(src.split("\n")) - 1,
-            "src_file": path.abspath(src_file),
-            "other_sdfgs": other_functions,
-        }
-        sourcemap.temporaryInfo(name, data)
+    other_functions = [func for func in other_sdfgs if not func == name]
+    data = {
+        "start_line": src_line + 1,
+        "end_line": src_line + len(src.split("\n")) - 1,
+        "src_file": path.abspath(src_file),
+        "other_sdfgs": other_functions,
+    }
+    sourcemap.temporaryInfo(name, data)
 
     return sdfg
 

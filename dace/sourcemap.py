@@ -168,19 +168,15 @@ def create_py_map(sdfg):
         :param sdfg: The SDFG for which the mapping will be created
         :return: an object with the build_folder, src_files and made_with_api
     """
-    # If the cache setting is set to 'hash' then we don't create a
-    # mapping as we don't know where to save it to due to
-    # the hash value changing every time the state of the SDFG changes.
-    if Config.get('cache') != 'hash':
-        py_mapper = MapPython(sdfg.name)
-        made_with_api = py_mapper.mapper(sdfg)
-        folder = sdfg.build_folder
-        save("py", sdfg.name, py_mapper.map, folder)
-        # If the SDFG was made with the API we need to create tmp info
-        # as it doesn't have any
-        sourceFiles = [src for src in get_src_files(sdfg, set())]
-        # If tmp is None, then the SDFG was created with the API
-        return (folder, sourceFiles, made_with_api)
+    py_mapper = MapPython(sdfg.name)
+    made_with_api = py_mapper.mapper(sdfg)
+    folder = sdfg.build_folder
+    save("py", sdfg.name, py_mapper.map, folder)
+    # If the SDFG was made with the API we need to create tmp info
+    # as it doesn't have any
+    sourceFiles = [src for src in get_src_files(sdfg, set())]
+    # If tmp is None, then the SDFG was created with the API
+    return (folder, sourceFiles, made_with_api)
 
 
 def create_cpp_map(code: str, name: str, target_name: str, build_folder: str,
@@ -194,33 +190,25 @@ def create_cpp_map(code: str, name: str, target_name: str, build_folder: str,
         :param sourceFiles: A list of source files of to the SDFG
         :param made_with_api: true if the SDFG was created just with the API
     """
-    # If the cache setting is set to 'hash' then we don't create a
-    # mapping as we don't know where to save it to due to
-    # the hash value changing every time the state of the SDFG changes.
-    # We send a message to the IDE in that case to notify the user of
-    # restricted features.
-    if Config.get('cache') != 'hash':
-        codegen_debug = Config.get_bool('compiler', 'codegen_lineinfo')
-        cpp_mapper = MapCpp(code, name, target_name)
-        cpp_mapper.mapper(codegen_debug)
+    codegen_debug = Config.get_bool('compiler', 'codegen_lineinfo')
+    cpp_mapper = MapCpp(code, name, target_name)
+    cpp_mapper.mapper(codegen_debug)
 
-        folder = save("cpp", name, cpp_mapper.map, build_folder)
+    folder = save("cpp", name, cpp_mapper.map, build_folder)
 
-        if codegen_debug:
-            save("codegen", name, cpp_mapper.codegen_map, build_folder)
+    if codegen_debug:
+        save("codegen", name, cpp_mapper.codegen_map, build_folder)
 
-        # Send information about the SDFG to VSCode
-        send({
-            "type": "registerFunction",
-            "name": name,
-            "path_cache": folder,
-            "path_file": sourceFiles,
-            "target_name": target_name,
-            "made_with_api": made_with_api,
-            "codegen_map": codegen_debug
-        })
-    else:
-        send({'type': 'restrictedFeatures', 'reason': 'config.cache.hash'})
+    # Send information about the SDFG to VSCode
+    send({
+        "type": "registerFunction",
+        "name": name,
+        "path_cache": folder,
+        "path_file": sourceFiles,
+        "target_name": target_name,
+        "made_with_api": made_with_api,
+        "codegen_map": codegen_debug
+    })
 
 
 def create_maps(sdfg, code: str, target_name: str):
