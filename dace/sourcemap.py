@@ -177,7 +177,8 @@ def create_py_map(sdfg):
         py_mapper.mapper(sdfg, tmp)
         folder = sdfg.build_folder
         save("py", sdfg.name, py_mapper.map, folder)
-        remove_tmp(sdfg.name, True)
+        if tmp:
+            remove_tmp(sdfg.name, True)
         # If the SDFG was made with the API we need to create tmp info
         # as it doesn't have any
         sourceFiles = [src for src in get_src_files(sdfg, set())]
