@@ -61,7 +61,10 @@ def pure_graph(implementation, dtype, veclen):
 
 def fpga_graph(dtype, veclen, tile_size_x, tile_size_y):
     ger_node, state, sdfg = pure_graph("FPGA", dtype, veclen)
-    ger_node.expand(sdfg, state, tile_size_x=tile_size_x, tile_size_y=tile_size_y)
+    ger_node.expand(sdfg,
+                    state,
+                    tile_size_x=tile_size_x,
+                    tile_size_y=tile_size_y)
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
     sdfg.expand_library_nodes()
     sdfg.apply_transformations_repeated(
@@ -125,15 +128,29 @@ if __name__ == "__main__":
         print("Unsupported target")
         exit(-1)
 
-    x = aligned_ndarray(np.random.rand(m).astype(np.float32), alignment=4*veclen)
-    y = aligned_ndarray(np.random.rand(n).astype(np.float32), alignment=4*veclen)
-    A = aligned_ndarray(np.random.rand(m, n).astype(np.float32), alignment=4*veclen)
-    res = aligned_ndarray(np.empty(A.shape, dtype=A.dtype), alignment=4*veclen)
-    ref = aligned_ndarray(np.empty(A.shape, dtype=A.dtype), alignment=4*veclen)
+    x = aligned_ndarray(np.random.rand(m).astype(np.float32),
+                        alignment=4 * veclen)
+    y = aligned_ndarray(np.random.rand(n).astype(np.float32),
+                        alignment=4 * veclen)
+    A = aligned_ndarray(np.random.rand(m, n).astype(np.float32),
+                        alignment=4 * veclen)
+    res = aligned_ndarray(np.empty(A.shape, dtype=A.dtype),
+                          alignment=4 * veclen)
+    ref = aligned_ndarray(np.empty(A.shape, dtype=A.dtype),
+                          alignment=4 * veclen)
     res[:] = A[:]
     ref[:] = A[:]
 
-    sdfg(x=x, y=y, A=A, res=res, m=dace.int32(m), n=dace.int32(n), alpha=alpha)
+    with dace.config.set_temporary('compiler',
+                                   'allow_view_arguments',
+                                   value=True):
+        sdfg(x=x,
+             y=y,
+             A=A,
+             res=res,
+             m=dace.int32(m),
+             n=dace.int32(n),
+             alpha=alpha)
 
     ref = scipy.linalg.blas.sger(alpha=alpha, x=x, y=y, a=ref)
 
@@ -142,4 +159,3 @@ if __name__ == "__main__":
         raise RuntimeError(f"Validation failed: {diff}")
     else:
         print("Validation successful.")
-
