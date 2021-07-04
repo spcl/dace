@@ -182,7 +182,7 @@ def create_cpp_map(code: str, name: str, target_name: str, build_folder: str,
         save("codegen", name, cpp_mapper.codegen_map, build_folder)
 
     # Send information about the SDFG to VSCode
-    send({
+    vscode.send({
         "type": "registerFunction",
         "name": name,
         "path_cache": folder,
