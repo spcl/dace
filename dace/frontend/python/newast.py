@@ -3855,8 +3855,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 fargs = (self._eval_arg(arg) for _, arg in args)
                 sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
                 required_args = [k for k, _ in args if k in sdfg.arg_names]
-                # Filter out constant arguments
-                args = [(k, v) for k, v in args if k not in fcopy.constant_args]
+                # Filter out constant and None-constant arguments
+                req = sdfg.arglist().keys()
+                args = [(k, v) for k, v in args
+                        if k not in fcopy.constant_args and (
+                            v is not None or k in req)]
 
                 # Handle nested closure
                 for aname, arr in fcopy.__sdfg_closure__().items():

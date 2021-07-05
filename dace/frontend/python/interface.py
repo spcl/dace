@@ -6,8 +6,8 @@ import inspect
 from dace import dtypes
 from dace.dtypes import paramdec
 from dace.frontend.python import parser, ndloop, tasklet_runner
-from typing import (Any, Callable, Deque, Generator, Optional, Tuple, TypeVar,
-                    overload, Union)
+from typing import (Any, Callable, Deque, Dict, Generator, Optional, Tuple,
+                    TypeVar, overload, Union)
 
 #############################################
 
@@ -99,24 +99,27 @@ def method(f: F,
 
     # Create a wrapper class that can bind to the object instance
     class MethodWrapper:
-        def __init__(self, prog):
-            self.prog = prog
+        def __init__(self):
+            self.wrapped: Dict[int, parser.DaceProgram] = {}
 
-        def __get__(self, obj, objtype=None):
+        def __get__(self, obj, objtype=None) -> parser.DaceProgram:
             # Modify wrapped instance as necessary, only clearing
             # compiled program cache if needed.
-            if self.prog.methodobj is not obj:
-                self.prog.methodobj = obj
-            return self.prog
+            objid = id(obj)
+            if objid in self.wrapped:
+                return self.wrapped[objid]
+            prog = parser.DaceProgram(f,
+                                      args,
+                                      kwargs,
+                                      auto_optimize,
+                                      device,
+                                      constant_functions,
+                                      method=True)
+            prog.methodobj = obj
+            self.wrapped[objid] = prog
+            return prog
 
-    return MethodWrapper(
-        parser.DaceProgram(f,
-                           args,
-                           kwargs,
-                           auto_optimize,
-                           device,
-                           constant_functions,
-                           method=True))
+    return MethodWrapper()
 
 
 # DaCe functions
