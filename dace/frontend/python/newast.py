@@ -181,8 +181,7 @@ def parse_dace_program(f,
     # Filter remaining global variables according to type and scoping rules
     program_globals = {
         k: v
-        for k, v in global_vars.items()
-        if k not in argtypes
+        for k, v in global_vars.items() if k not in argtypes
     }
 
     # Fill in data descriptors from closure arrays
@@ -731,7 +730,7 @@ class GlobalResolver(ast.NodeTransformer):
     def __init__(self,
                  globals: Dict[str, Any],
                  resolve_functions: bool = False):
-        self.globals = globals
+        self._globals = globals
         self.resolve_functions = resolve_functions
         self.current_scope = set()
 
@@ -747,6 +746,13 @@ class GlobalResolver(ast.NodeTransformer):
 
         # Map same array objects (checked via python id) to the same name
         self.array_mapping: Dict[int, str] = {}
+
+    @property
+    def globals(self):
+        return {
+            k: v
+            for k, v in self._globals.items() if k not in self.current_scope
+        }
 
     def generic_visit(self, node: ast.AST):
         if hasattr(node, 'body') or hasattr(node, 'orelse'):
@@ -922,6 +928,25 @@ class GlobalResolver(ast.NodeTransformer):
             warnings.warn(f'Runtime assertion at line {node.lineno} could not'
                           ' be checked in DaCe program, skipping check.')
         return None
+
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> Any:
+        try:
+            global_val = astutils.evalnode(node, self.globals)
+            return ast.copy_location(ast.Constant(value=global_val), node)
+        except SyntaxError:
+            warnings.warn(f'f-string at line {node.lineno} could not '
+                          'be fully evaluated in DaCe program, converting to '
+                          'partially-evaluated string.')
+            visited = self.generic_visit(node)
+            parsed = [
+                not isinstance(v, ast.FormattedValue)
+                or isinstance(v.value, ast.Constant) for v in visited.values
+            ]
+            values = [astutils.unparse(v.value) for v in visited.values]
+            return ast.copy_location(
+                ast.Constant(value=''.join(('{%s}' % v) if not p else v
+                                           for p, v in zip(parsed, values))),
+                node)
 
 
 class TaskletTransformer(ExtNodeTransformer):
