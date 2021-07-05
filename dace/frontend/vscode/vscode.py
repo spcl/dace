@@ -12,7 +12,7 @@ def pre_codegen_transform() -> bool:
         :return: true if the env variable DACE_sdfg_edit is set
     """
     if "DACE_sdfg_edit" in os.environ:
-        return os.environ["DACE_sdfg_edit"]
+        return os.environ["DACE_sdfg_edit"] == 'transform'
     return False
 
 
@@ -23,7 +23,7 @@ def stop_and_transform(sdfg):
     """
     filename = os.path.abspath(os.path.join(sdfg.build_folder, 'program.sdfg'))
     sdfg.save(filename)
-    send({'type': 'stopForTransformation', 'filename': filename})
+    send({'type': 'openSDFG', 'filename': filename})
     breakpoint()
     return dace.SDFG.from_file(filename)
 
