@@ -179,10 +179,10 @@ def parse_dace_program(f,
     src_ast = DeadCodeEliminator().visit(src_ast)
 
     # Filter remaining global variables according to type and scoping rules
-    closure_constants = {
+    program_globals = {
         k: v
         for k, v in global_vars.items()
-        if k not in argtypes  #and dtypes.isallowed(v)
+        if k not in argtypes
     }
 
     # Fill in data descriptors from closure arrays
@@ -194,7 +194,7 @@ def parse_dace_program(f,
                         filename=src_file,
                         line_offset=src_line,
                         col_offset=0,
-                        global_vars=closure_constants,
+                        global_vars=program_globals,
                         constants=constants,
                         scope_arrays=argtypes,
                         scope_vars={},
@@ -825,6 +825,15 @@ class GlobalResolver(ast.NodeTransformer):
             return ast.copy_location(newnode, parent_node)
         else:
             return newnode
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
+        for arg in ast.walk(node.args):
+            if isinstance(arg, ast.arg):
+                self.current_scope.add(arg.arg)
+        return self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
+        return self.visit_FunctionDef(node)
 
     def visit_Name(self, node: ast.Name):
         if isinstance(node.ctx, (ast.Store, ast.AugStore)):
@@ -2401,7 +2410,8 @@ class ProgramVisitor(ExtNodeVisitor):
         for mv in nsdfg_node.symbol_mapping.values():
             for sym in mv.free_symbols:
                 if (sym.name not in self.sdfg.symbols
-                        and sym.name in self.globals):
+                        and sym.name in self.globals
+                        and isinstance(sym.name, symbolic.symbol)):
                     self.sdfg.add_symbol(sym.name, self.globals[sym.name].dtype)
 
     def _recursive_visit(self,
