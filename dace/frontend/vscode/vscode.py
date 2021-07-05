@@ -13,14 +13,31 @@ def is_available() -> bool:
     return "DACE_port" in os.environ
 
 
-def pre_codegen_transform() -> bool:
+def load_or_transform() -> bool:
     """ Checks if the user want's to apply transformations before the
         codegen runs on the SDFG
         :return: true if the env variable DACE_sdfg_edit is set
+        to transform or load
     """
     if "DACE_sdfg_edit" in os.environ:
-        return os.environ["DACE_sdfg_edit"] == 'transform'
+        return (os.environ["DACE_sdfg_edit"] == 'transform'
+                or os.environ["DACE_sdfg_edit"] == 'load')
     return False
+
+
+def stop_and_load(sdfg):
+    """ Stops and loads a SDFG file to create the code with
+        :param sdfg: The current SDFG
+        :return: The loaded SDFG
+    """
+    send({'type': 'loadSDFG'})
+    breakpoint()
+    # If the env variable isn't set or none then the user doesn't want
+    # to load an SDFG so return the current one
+    if ("DACE_load_filename" not in os.environ
+            or os.environ["DACE_load_filename"] != "none"):
+        return sdfg
+    return dace.SDFG.from_file(os.environ["DACE_load_filename"])
 
 
 def stop_and_transform(sdfg):
@@ -33,6 +50,18 @@ def stop_and_transform(sdfg):
     send({'type': 'openSDFG', 'filename': filename})
     breakpoint()
     return dace.SDFG.from_file(filename)
+
+
+def pre_codegen_action(sdfg):
+    """ Before the code generation we either load a saved SDFG
+        or apply transformations o the current one
+        :param sdfg: The current SDFG
+        :return: The newly loaded SDFG 
+    """
+    if os.environ["DACE_sdfg_edit"] == 'load':
+        return stop_and_load(sdfg)
+    elif os.environ["DACE_sdfg_edit"] == 'transform':
+        return stop_and_transform(sdfg)
 
 
 def send(data: json):

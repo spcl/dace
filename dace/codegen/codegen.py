@@ -135,8 +135,8 @@ def generate_code(sdfg) -> [List[CodeObject], SDFG]:
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
-    if vscode.pre_codegen_transform():
-        sdfg = vscode.stop_and_transform(sdfg)
+    if vscode.load_or_transform():
+        sdfg = vscode.pre_codegen_action(sdfg)
 
     frame = framecode.DaCeCodeGenerator()
 
