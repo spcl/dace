@@ -247,14 +247,23 @@ class DaceProgram:
         del self._cache
         self._cache = (None, None, None)
 
-    def __sdfg_closure__(self) -> Dict[str, Any]:
+    def __sdfg_closure__(
+            self,
+            reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """ 
         Returns the closure arrays of the SDFG represented by the dace 
         program as a mapping between array name and the corresponding value.
+        :param reevaluate: If given, re-evaluates closure elements based on the
+                           input mapping (keys: array names, values: expressions
+                           to evaluate). Otherwise, re-evaluates 
+                           ``self.closure_arg_mapping``.
+        :return: A dictionary mapping between a name in the closure and the 
+                 currently evaluated value.
         """
+        mapping = self.closure_arg_mapping if reevaluate is None else reevaluate
         return {
             k: eval(v, self.global_vars) if isinstance(v, str) else v
-            for k, v in self.closure_arg_mapping.items()
+            for k, v in mapping.items()
         }
 
     def _create_sdfg_args(self, sdfg: SDFG, args: Tuple[Any],
