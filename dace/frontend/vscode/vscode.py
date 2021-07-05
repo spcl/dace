@@ -6,6 +6,13 @@ import time
 import dace
 
 
+def is_available() -> bool:
+    """ Checks if vscode is listening to messages
+        :return: if VSCode is listening to messages
+    """
+    return "DACE_port" in os.environ
+
+
 def pre_codegen_transform() -> bool:
     """ Checks if the user want's to apply transformations before the
         codegen runs on the SDFG
@@ -34,7 +41,7 @@ def send(data: json):
         :param data: json object to send
     """
 
-    if "DACE_port" not in os.environ:
+    if not is_available():
         return
 
     HOST = socket.gethostname()
