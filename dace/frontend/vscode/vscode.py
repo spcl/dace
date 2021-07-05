@@ -35,7 +35,7 @@ def stop_and_load(sdfg):
     # If the env variable isn't set or none then the user doesn't want
     # to load an SDFG so return the current one
     if ("DACE_load_filename" not in os.environ
-            or os.environ["DACE_load_filename"] != "none"):
+            or os.environ["DACE_load_filename"] == "none"):
         return sdfg
     return dace.SDFG.from_file(os.environ["DACE_load_filename"])
 
