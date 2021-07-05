@@ -30,14 +30,10 @@ def stop_and_load(sdfg):
         :param sdfg: The current SDFG
         :return: The loaded SDFG
     """
-    send({'type': 'loadSDFG'})
-    breakpoint()
-    # If the env variable isn't set or none then the user doesn't want
-    # to load an SDFG so return the current one
-    if ("DACE_load_filename" not in os.environ
-            or os.environ["DACE_load_filename"] == "none"):
+    reply = send_and_recv_bp({'type': 'loadSDFG'})
+    if reply is None or reply['filename'] == 'none':
         return sdfg
-    return dace.SDFG.from_file(os.environ["DACE_load_filename"])
+    return dace.SDFG.from_file(reply['filename'])
 
 
 def stop_and_transform(sdfg):
@@ -80,3 +76,50 @@ def send(data: json):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((HOST, int(PORT)))
         s.sendall(data_bytes)
+
+
+def recv(data: json):
+    """ Sends a json object to the port given as the env variable DACE_port
+        and returns the received json object
+        If the port isn't set we don't send anything.
+        :param data: json object with request data
+        :return: returns the object received
+    """
+
+    if not is_available():
+        return
+
+    HOST = socket.gethostname()
+    PORT = os.environ["DACE_port"]
+
+    data_bytes = bytes(json.dumps(data), "utf-8")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((HOST, int(PORT)))
+        s.sendall(data_bytes)
+        result = s.recv(1024)
+        return json.loads(result)
+    return None
+
+
+def send_and_recv_bp(data: json) -> json:
+    """ Sends a json object to the port given as the env variable DACE_port.
+        After the data is sent a breakpint is set. As soon as the debugger
+        continues, return the received data
+        :param data: json object with request data
+        :return: the received data as a json object
+    """
+
+    if not is_available():
+        return
+
+    HOST = socket.gethostname()
+    PORT = os.environ["DACE_port"]
+
+    data_bytes = bytes(json.dumps(data), "utf-8")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((HOST, int(PORT)))
+        s.sendall(data_bytes)
+        breakpoint()
+        result = s.recv(1024)
+        return json.loads(result)
+    return None
