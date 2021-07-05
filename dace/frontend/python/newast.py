@@ -216,19 +216,16 @@ def parse_dace_program(f,
             closure_resolver.closure_arrays[name] = (arr, desc)
 
     # We save information in a tmp file for improved source mapping.
-    # In the case of the cache config set to 'hash' we don't create a mapping.
-    if Config.get('cache') != 'hash':
-        other_functions = [
+    other_functions = [
             func for func in closure_resolver.closure_sdfgs if not func == name
-        ]
-        data = {
-            "start_line": src_line + 1,
-            "end_line": src_line + len(src.split("\n")) - 1,
-            "src_file": path.abspath(src_file),
-            "other_sdfgs": other_functions,
-            "build_folder": sdfg.build_folder,
-        }
-        sourcemap.temporaryInfo(name, data)
+    ]
+    data = {
+        "start_line": src_line + 1,
+        "end_line": src_line + len(src.split("\n")) - 1,
+        "src_file": path.abspath(src_file),
+        "other_sdfgs": other_functions,
+    }
+    sourcemap.temporaryInfo(name, data)
 
     return sdfg, closure_resolver
 

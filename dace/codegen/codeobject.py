@@ -41,7 +41,8 @@ class CodeObject(object):
                  target_type="",
                  additional_compiler_kwargs=None,
                  linkable=True,
-                 environments=None):
+                 environments=None,
+                 sdfg=None):
         super(CodeObject, self).__init__()
 
         self.name = name
@@ -54,8 +55,8 @@ class CodeObject(object):
         self.linkable = linkable
         self.environments = environments or set()
 
-        if language == 'cpp' and title == 'Frame':
-            sourcemap.create_cpp_map(code, name, self.target.target_name)
+        if language == 'cpp' and title == 'Frame' and sdfg:
+            sourcemap.create_maps(sdfg, code, self.target.target_name)
 
     @property
     def clean_code(self):
