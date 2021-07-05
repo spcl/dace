@@ -685,6 +685,10 @@ def _structured_control_flow_traversal(
                     branch_block = IfScope(dispatch_state, sdfg, node,
                                            oe[0].data.condition, cblocks[oe[0]],
                                            cblocks[oe[1]])
+
+                merge_edges = [e for e in sdfg.in_edges(mergestate)]
+                cblocks[oe[0]].gotos_to_ignore.extend(merge_edges)
+                cblocks[oe[1]].gotos_to_ignore.extend(merge_edges)
             else:
                 # If there are 2 or more edges (one is not the negation of the
                 # other):

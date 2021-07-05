@@ -336,6 +336,112 @@ def test_object_methods_ref_across_methods():
     assert np.allclose(obj.my_a, obj.my_b)
 
 
+def test_nested_objects_call():
+    class ObjA:
+        def __init__(self, q) -> None:
+            self.q = np.full([20], q)
+
+        @dace.method
+        def __call__(self, A):
+            return A + self.q
+
+    class ObjB:
+        def __init__(self, q) -> None:
+            self.q = np.full([20], q)
+            self.obja = ObjA(q * 2)
+
+        @dace.method
+        def outer(self, A):
+            return A + self.q + self.obja(A)
+
+    A = np.random.rand(20)
+    obj = ObjB(5)
+    expected = A + obj.q + A + (obj.q * 2)
+    result = obj.outer(A)
+    assert np.allclose(expected, result)
+
+
+class MyObjA:
+    @dace.method
+    def method_a(self, A):
+        A[...] = 1.0 + A
+
+    @dace.method
+    def method_b(self, B):
+        B[...] = 2.0
+
+    @dace.method
+    def switch(self, A, B, C):
+        if C is None:
+            self.method_b(A)
+        else:
+            self.method_a(B)
+
+
+class MyObjB:
+    def __init__(self) -> None:
+        self.obja = MyObjA()
+
+    @dace.method
+    def arg_none_explicit(self, A, B):
+        self.obja.switch(A, B, None)
+
+    @dace.method
+    def arg_field(self, A, B, C):
+        self.obja.switch(A, B, C)
+
+
+def test_arg_none_explicit():
+    A = np.random.rand(20)
+    B = np.random.rand(20)
+    obj = MyObjB()
+    expected = np.empty_like(A)
+    expected[...] = 2.0
+    obj.arg_none_explicit(A, B)
+    assert np.allclose(expected, A)
+
+
+def test_arg_field():
+    A = np.random.rand(20)
+    B = np.random.rand(20)
+    C = np.random.rand(20)
+    obj = MyObjB()
+    expected = np.empty_like(A)
+    expected[...] = 1.0 + B
+    obj.arg_field(A, B, C)
+    assert np.allclose(expected, B)
+
+
+def test_nested_methods_different_inner_objects():
+    class ObjA:
+        def __init__(self, key):
+            self.key = key
+
+        @dace.method
+        def method(self, A):
+            if self.key == "1":
+                A[...] = A + 1.0
+            if self.key == "2":
+                A[...] = A + 2.0
+
+    class ObjB:
+        def __init__(self) -> None:
+            self.obja1 = ObjA("1")
+            self.obja2 = ObjA("2")
+
+        @dace.method
+        def call_them_both(self, A):
+            self.obja1.method(A)
+            self.obja2.method(A)
+            return A
+
+    A = np.zeros(20)
+    obj = ObjB()
+    expected = A + 1.0 + 2.0
+    result = obj.call_them_both(A)
+    assert np.allclose(expected, result)
+
+
 if __name__ == '__main__':
     test_bad_closure()
     test_dynamic_closure()
@@ -354,3 +460,7 @@ if __name__ == '__main__':
     test_nested_object_access()
     test_same_field_different_classes()
     test_object_methods_ref_across_methods()
+    test_nested_objects_call()
+    test_arg_none_explicit()
+    test_arg_field()
+    test_nested_methods_different_inner_objects()
