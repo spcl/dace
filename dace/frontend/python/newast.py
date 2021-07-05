@@ -733,6 +733,7 @@ class GlobalResolver(ast.NodeTransformer):
         self._globals = globals
         self.resolve_functions = resolve_functions
         self.current_scope = set()
+        self.toplevel_function = True
 
         # A dace.program's closure is defined by its constants, arrays, and
         # other SDFG-convertible objects
@@ -813,6 +814,9 @@ class GlobalResolver(ast.NodeTransformer):
                     newnode = ast.NameConstant(value=None)
                 else:
                     newnode = ast.Num(n=value)
+        elif hasattr(value, '__call__') and hasattr(value.__call__, '__sdfg__'):
+            return self.global_value_to_node(value.__call__, parent_node,
+                                             qualname, recurse)
         elif isinstance(value, numpy.ndarray):
             # Arrays need to be stored as a new name and fed as an argument
             if id(value) in self.array_mapping:
@@ -833,6 +837,11 @@ class GlobalResolver(ast.NodeTransformer):
             return newnode
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
+        # Skip the top function definition (handled outside of the resolver)
+        if self.toplevel_function:
+            self.toplevel_function = False
+            return self.generic_visit(node)
+
         for arg in ast.walk(node.args):
             if isinstance(arg, ast.arg):
                 self.current_scope.add(arg.arg)
