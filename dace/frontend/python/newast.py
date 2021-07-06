@@ -217,7 +217,7 @@ def parse_dace_program(f,
 
     # We save information in a tmp file for improved source mapping.
     other_functions = [
-            func for func in closure_resolver.closure_sdfgs if not func == name
+        func for func in closure_resolver.closure_sdfgs if not func == name
     ]
     data = {
         "start_line": src_line + 1,
@@ -768,7 +768,12 @@ class GlobalResolver(ast.NodeTransformer):
         # Only '.' has to be replaced, since we only support attributes for now
         return f"__g_{qualname.replace('.', '__')}"
 
-    def global_value_to_node(self, value, parent_node, qualname, recurse=False):
+    def global_value_to_node(self,
+                             value,
+                             parent_node,
+                             qualname,
+                             recurse=False,
+                             detect_callables=False):
         # if recurse is false, we don't allow recursion into lists
         # this should not happen anyway; the globals dict should only contain
         # single "level" lists
@@ -778,7 +783,10 @@ class GlobalResolver(ast.NodeTransformer):
 
         if isinstance(value, list):
             elts = [
-                self.global_value_to_node(v, parent_node, qualname + f'[{i}]')
+                self.global_value_to_node(v,
+                                          parent_node,
+                                          qualname + f'[{i}]',
+                                          detect_callables=detect_callables)
                 for i, v in enumerate(value)
             ]
             if any(e is None for e in elts):
@@ -786,7 +794,10 @@ class GlobalResolver(ast.NodeTransformer):
             newnode = ast.List(elts=elts, ctx=parent_node.ctx)
         elif isinstance(value, tuple):
             elts = [
-                self.global_value_to_node(v, parent_node, qualname + f'[{i}]')
+                self.global_value_to_node(v,
+                                          parent_node,
+                                          qualname + f'[{i}]',
+                                          detect_callables=detect_callables)
                 for i, v in enumerate(value)
             ]
             if any(e is None for e in elts):
@@ -811,9 +822,11 @@ class GlobalResolver(ast.NodeTransformer):
                     newnode = ast.NameConstant(value=None)
                 else:
                     newnode = ast.Num(n=value)
-        elif hasattr(value, '__call__') and hasattr(value.__call__, '__sdfg__'):
+        elif detect_callables and hasattr(value, '__call__') and hasattr(
+                value.__call__, '__sdfg__'):
             return self.global_value_to_node(value.__call__, parent_node,
-                                             qualname, recurse)
+                                             qualname, recurse,
+                                             detect_callables)
         elif isinstance(value, numpy.ndarray):
             # Arrays need to be stored as a new name and fed as an argument
             if id(value) in self.array_mapping:
@@ -907,7 +920,8 @@ class GlobalResolver(ast.NodeTransformer):
             newnode = self.global_value_to_node(global_val,
                                                 parent_node=node,
                                                 qualname=astutils.unparse(node),
-                                                recurse=True)
+                                                recurse=True,
+                                                detect_callables=True)
             if newnode is not None:
                 return newnode
         return self.generic_visit(node)
