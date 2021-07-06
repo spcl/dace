@@ -8,7 +8,6 @@ from dace.libraries.blas import environments
 from dace import (config, data as dt, dtypes, memlet as mm, SDFG, SDFGState,
                   symbolic)
 from dace.frontend.common import op_repository as oprepo
-from dace.transformation.dataflow import hbm_transform
 
 @dace.library.expansion
 class ExpandAxpyVectorized(ExpandTransformation):
@@ -134,6 +133,7 @@ class ExpandAxpyFpgaHbm(ExpandTransformation):
             utils.parse_location_bank(desc_x)[1], sdfg)
         bank_count = tmp_bank_c[1] - tmp_bank_c[0] # We know this is equal for all arrays it's checked in validation
 
+        from dace.transformation.dataflow import hbm_transform # Avoid import loop
         xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
         xform.outer_map_range = {param : f"0:{bank_count}"}
         xform.update_hbm_access_list.extend([(state, node, "k") for node in state.source_nodes()])

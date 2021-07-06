@@ -80,7 +80,6 @@ def exec_axpy(data_size_per_bank: int, banks_per_array: int, load_from=None):
         return sdfg
 
     sdfg = create_or_load(load_from, create_axpy_sdfg)
-    sdfg.view()
     x = random_array(data_size_per_bank*banks_per_array)
     y = random_array(data_size_per_bank*banks_per_array)
     alpha = random_array(1)
@@ -89,4 +88,5 @@ def exec_axpy(data_size_per_bank: int, banks_per_array: int, load_from=None):
     sdfg(in1=x, in2=y, out=result, a=alpha[0], n=data_size_per_bank)
     assert np.allclose(result, check)
 
-exec_axpy(1000, 8)
+if __name__ == "__main__":
+    exec_axpy(1000, 8)

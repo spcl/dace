@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
+from dace import dtypes
+from dace.sdfg import utils
 import numpy as np
 
 import argparse
@@ -13,6 +15,8 @@ from dace.memlet import Memlet
 import dace.libraries.blas as blas
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory
+from dace.transformation.dataflow import hbm_copy_transform
+from dace.transformation import optimizer
 
 from dace.libraries.standard.memory import aligned_ndarray
 
@@ -110,6 +114,37 @@ def fpga_graph(veclen, dtype, test_case, expansion):
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
     return sdfg
 
+def fpga_hbm_graph(banks_per_array):
+        N = dace.symbol("n")
+
+        sdfg = dace.SDFG("axpy_test_hbm")
+        sdfg.add_symbol("a", dace.float32)
+        state = sdfg.add_state("axpy")
+        axpy_node = blas.Axpy("saxpy_node")
+        axpy_node.implementation = "fpga_hbm"
+        state.add_node(axpy_node)
+        create_hbm_access(state, "in1", f"hbm.0:{banks_per_array}", 
+            [banks_per_array, N], axpy_node, "_x", False, "in1")
+        create_hbm_access(state, "in2", f"hbm.{banks_per_array}:{2*banks_per_array}",
+            [banks_per_array, N], axpy_node, "_y", False, "in2")
+        create_hbm_access(state, "out", f"hbm.{2*banks_per_array}:{3*banks_per_array}",
+            [banks_per_array, N], axpy_node, "_res", True, "out")
+        axpy_node.expand(sdfg, state)
+        
+        sdfg.sdfg_list[2].symbols["a"] = sdfg.sdfg_list[1].symbols["a"] #Why does inference fail?
+
+        sdfg.apply_fpga_transformations(False)
+        utils.update_array_shape(sdfg, "in1", [banks_per_array*N])
+        utils.update_array_shape(sdfg, "in2", [banks_per_array*N])
+        utils.update_array_shape(sdfg, "out", [banks_per_array*N])
+        sdfg.arrays["in1"].storage = dtypes.StorageType.CPU_Heap
+        sdfg.arrays["in2"].storage = dtypes.StorageType.CPU_Heap
+        sdfg.arrays["out"].storage = dtypes.StorageType.CPU_Heap
+        for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
+            patterns=[hbm_copy_transform.HbmCopyTransform]):
+            xform.apply(sdfg)
+
+        return sdfg
 
 def stream_fpga_graph(veclen, precision, test_case, expansion):
     sdfg = fpga_graph(veclen, precision, test_case, expansion)
@@ -124,7 +159,6 @@ def stream_fpga_graph(veclen, precision, test_case, expansion):
 def _test_fpga(target):
     configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
     run_test(configs, target)
-
 
 if __name__ == "__main__":
 
