@@ -2442,7 +2442,7 @@ class ProgramVisitor(ExtNodeVisitor):
             for sym in mv.free_symbols:
                 if (sym.name not in self.sdfg.symbols
                         and sym.name in self.globals
-                        and isinstance(sym.name, symbolic.symbol)):
+                        and isinstance(sym, symbolic.symbol)):
                     self.sdfg.add_symbol(sym.name, self.globals[sym.name].dtype)
 
     def _recursive_visit(self,
