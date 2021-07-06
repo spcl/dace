@@ -93,12 +93,7 @@ acc_out=out_data""")
     B = np.ndarray([N.get()], dtype=dace.float32.type)
     A[:] = [dace.float32(0),dace.float32(1),dace.float32(2),dace.float32(3),dace.float32(4),]
 
-    sdfg(A, B)
-
-    print(A)
-    print(B)
-
-    #assert sdfg.generate_code()[2].clean_code.count('dace::FIFO<double, 1, 1> accumulator_stream("accumulator_stream");') == 1
+    assert sdfg.generate_code()[2].clean_code.count('dace::FIFO<double, 1, 1> accumulator_stream("accumulator_stream");') == 1
 
 def test_stream_allocation_scope():
     sdfg = dace.SDFG("stream_allocation")
