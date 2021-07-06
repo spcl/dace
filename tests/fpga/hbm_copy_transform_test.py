@@ -43,6 +43,6 @@ def test_explicit_split_3d():
     assert np.allclose(a[40:80, 0:50, 25:50], b[9])
 
 if __name__ == "__main__":
-    #test_even_split_3d()
-    #test_sec_dim_split_2d()
+    test_even_split_3d()
+    test_sec_dim_split_2d()
     test_explicit_split_3d()

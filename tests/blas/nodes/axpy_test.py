@@ -44,7 +44,7 @@ def run_test(configs, target):
         elif target == "fpga_array":
             sdfg = fpga_graph(veclen, dtype, "fpga", i)
         elif target == "fpga_hbm":
-            sdfg = fpga_hbm_graph(veclen, dtype, "fpga", i)
+            sdfg = fpga_hbm_graph(veclen, dtype, i)
         else:
             sdfg = pure_graph(veclen, dtype, "pure", i)
         program = sdfg.compile()
@@ -117,7 +117,7 @@ def fpga_graph(veclen, dtype, test_case, expansion):
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
     return sdfg
 
-def fpga_hbm_graph(veclen, dtype, test_case, expansion):
+def fpga_hbm_graph(veclen, dtype, expansion):
     sdfg = pure_graph(veclen, dtype, "fpga_hbm", expansion, False)
 
     banks_per_array = 8
@@ -161,8 +161,6 @@ def _test_fpga(target):
     run_test(configs, target)
 
 if __name__ == "__main__":
-    _test_fpga("fpga_hbm")
-    exit()
 
     cmdParser = argparse.ArgumentParser(allow_abbrev=False)
 
