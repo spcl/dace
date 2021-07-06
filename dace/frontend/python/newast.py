@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from dace.frontend.python.wrappers import ndarray
 import astunparse
 from collections import OrderedDict
 import copy
@@ -905,25 +904,35 @@ class GlobalResolver(ast.NodeTransformer):
         return self.visit_Attribute(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
-        if not self.resolve_functions:
-            return self.generic_visit(node)
-
         try:
             global_func = astutils.evalnode(node.func, self.globals)
-            global_val = astutils.evalnode(node, self.globals)
+            if self.resolve_functions:
+                global_val = astutils.evalnode(node, self.globals)
+            else:
+                global_val = node
         except SyntaxError:
             return self.generic_visit(node)
 
-        # Without this check, casts don't generate code
-        if (not isinstance(global_val, dtypes.typeclass)
-                and not isinstance(global_func, dtypes.typeclass)):
-            newnode = self.global_value_to_node(global_val,
+        newnode = None
+        if self.resolve_functions and global_val is not node:
+            # Without this check, casts don't generate code
+            if not isinstance(global_val, dtypes.typeclass):
+                newnode = self.global_value_to_node(
+                    global_val,
+                    parent_node=node,
+                    qualname=astutils.unparse(node),
+                    recurse=True)
+                if newnode is not None:
+                    return newnode
+        elif not isinstance(global_func, dtypes.typeclass):
+            newnode = self.global_value_to_node(global_func,
                                                 parent_node=node,
                                                 qualname=astutils.unparse(node),
                                                 recurse=True,
                                                 detect_callables=True)
             if newnode is not None:
-                return newnode
+                node.func = newnode
+                return node
         return self.generic_visit(node)
 
     def visit_Assert(self, node: ast.Assert) -> Any:
@@ -965,7 +974,8 @@ class GlobalResolver(ast.NodeTransformer):
             ]
             values = [astutils.unparse(v.value) for v in visited.values]
             return ast.copy_location(
-                ast.Constant(kind='', value=''.join(('{%s}' % v) if not p else v
+                ast.Constant(kind='',
+                             value=''.join(('{%s}' % v) if not p else v
                                            for p, v in zip(parsed, values))),
                 node)
 
@@ -3839,6 +3849,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # If the function exists as a global SDFG or @dace.program, use it
         if func or funcname in self.other_sdfgs:
             # Avoid import loops
+            from dace.frontend.python.common import SDFGConvertible
             from dace.frontend.python.parser import DaceProgram
 
             if func is None:
@@ -3853,29 +3864,36 @@ class ProgramVisitor(ExtNodeVisitor):
                 required_args = [
                     a for a in sdfg.arglist().keys() if a not in sdfg.symbols
                 ]
-            elif isinstance(func, DaceProgram):
+            elif isinstance(func, SDFGConvertible) or self._has_sdfg(func):
+                argnames, constant_args = func.__sdfg_signature__()
                 args = [(aname, self._parse_function_arg(arg))
-                        for aname, arg in zip(func.argnames, node.args)]
+                        for aname, arg in zip(argnames, node.args)]
                 args += [(arg.arg, self._parse_function_arg(arg.value))
                          for arg in node.keywords]
-                required_args = func.argnames
+                required_args = argnames
+                fargs = (self._eval_arg(arg) for _, arg in args)
 
                 fcopy = copy.copy(func)
-                funcname = func.name
-                fcopy._cache = (None, None, None)
-                # TODO: Can the line below be removed?
-                fcopy.global_vars = {**func.global_vars, **self.globals}
-                fargs = (self._eval_arg(arg) for _, arg in args)
-                sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
+                if isinstance(fcopy, DaceProgram):
+                    fcopy.clear_cache()
+                    fcopy.global_vars = {**func.global_vars, **self.globals}
+                    sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
+                else:
+                    sdfg = fcopy.__sdfg__(*fargs)
+
+                funcname = sdfg.name
                 required_args = [k for k, _ in args if k in sdfg.arg_names]
                 # Filter out constant and None-constant arguments
                 req = sdfg.arglist().keys()
-                args = [(k, v) for k, v in args
-                        if k not in fcopy.constant_args and (
-                            v is not None or k in req)]
+                args = [
+                    (k, v) for k, v in args
+                    if k not in constant_args and (v is not None or k in req)
+                ]
 
                 # Handle nested closure
-                for aname, arr in fcopy.__sdfg_closure__().items():
+                closure_arrays = getattr(fcopy, '__sdfg_closure__',
+                                         lambda: {})()
+                for aname, arr in closure_arrays.items():
                     desc = data.create_datadescriptor(arr)
                     outer_name = self.sdfg.add_datadesc(aname,
                                                         desc,
@@ -3884,45 +3902,6 @@ class ProgramVisitor(ExtNodeVisitor):
                     # Add closure arrays as function arguments
                     args.append((aname, outer_name))
                     required_args.append(aname)
-
-            elif self._has_sdfg(func):
-                fargs = tuple(
-                    self._eval_arg(self._parse_function_arg(arg))
-                    for arg in node.args)
-                fkwargs = {
-                    arg.arg: self._eval_arg(self._parse_function_arg(arg.value))
-                    for arg in node.keywords
-                }
-
-                argnames = func.__sdfg_argnames__()
-                args = [(aname, self._parse_function_arg(arg))
-                        for aname, arg in zip(argnames, node.args)]
-                args += [(arg.arg, self._parse_function_arg(arg.value))
-                         for arg in node.keywords]
-                required_args = argnames
-
-                fargs = (self._eval_arg(arg) for _, arg in args)
-                sdfg = copy.deepcopy(self._get_sdfg(func, fargs, fkwargs))
-                funcname = sdfg.name
-                required_args = [k for k, _ in args if k in sdfg.arg_names]
-                # Filter out constant and None-constant arguments
-                req = sdfg.arglist().keys()
-                const_args = func.__sdfg_constant_args__()
-                args = [(k, v) for k, v in args
-                        if k not in const_args and (
-                            v is not None or k in req)]
-
-                # Handle nested closure
-                if hasattr(func, '__sdfg_closure__'):
-                    for aname, arr in func.__sdfg_closure__().items():
-                        desc = data.create_datadescriptor(arr)
-                        outer_name = self.sdfg.add_datadesc(aname,
-                                                            desc,
-                                                            find_new_name=True)
-                        self.nested_closure_arrays[outer_name] = (arr, desc)
-                        # Add closure arrays as function arguments
-                        args.append((aname, outer_name))
-                        required_args.append(aname)
             else:
                 raise DaceSyntaxError(
                     self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %

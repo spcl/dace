@@ -6,12 +6,12 @@ import itertools
 import copy
 import os
 import sympy
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Sequence, Tuple
 import warnings
 
 from dace import symbolic, dtypes
 from dace.config import Config
-from dace.frontend.python import newast
+from dace.frontend.python import newast, common as pycommon
 from dace.sdfg import SDFG
 from dace.data import create_datadescriptor, Data
 
@@ -128,7 +128,7 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
     return {str(k)[8:]: v for k, v in result.items()}
 
 
-class DaceProgram:
+class DaceProgram(pycommon.SDFGConvertible):
     """ A data-centric program object, obtained by decorating a function with
         ``@dace.program``. """
     def __init__(self,
@@ -231,7 +231,7 @@ class DaceProgram:
 
         return True
 
-    def clear_cache(self):
+    def clear_cache(self) -> None:
         """ Force-clear compiled SDFG cache of this program. """
         del self._cache
         self._cache = (None, None, None)
@@ -246,6 +246,9 @@ class DaceProgram:
         # Clear cache upon changing parent object
         del self._cache
         self._cache = (None, None, None)
+
+    def __sdfg_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
+        return self.argnames, self.constant_args
 
     def __sdfg_closure__(
             self,

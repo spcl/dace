@@ -53,6 +53,9 @@ class MyTestCallAttributesClass:
 
             return call.__sdfg__(*args)
 
+        def __sdfg_signature__(self):
+            return ['A'], []
+
     def __init__(self, n=5) -> None:
         self.n = n
         self.call_me = MyTestCallAttributesClass.SDFGMethodTestClass()
