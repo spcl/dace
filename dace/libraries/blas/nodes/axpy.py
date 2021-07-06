@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from dace.sdfg import utils
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -7,7 +8,7 @@ from dace.libraries.blas import environments
 from dace import (config, data as dt, dtypes, memlet as mm, SDFG, SDFGState,
                   symbolic)
 from dace.frontend.common import op_repository as oprepo
-
+from dace.transformation.dataflow import hbm_transform
 
 @dace.library.expansion
 class ExpandAxpyVectorized(ExpandTransformation):
@@ -114,6 +115,34 @@ class ExpandAxpyFpga(ExpandTransformation):
             schedule=dace.ScheduleType.FPGA_Device,
             **kwargs)
 
+@dace.library.expansion
+class ExpandAxpyFpgaHbm(ExpandTransformation):
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state: SDFGState, parent_sdfg: SDFG, param="k", **kwargs):
+        sdfg: SDFG = ExpandAxpyFpga.expansion(node, parent_state, parent_sdfg, **kwargs)
+        state: SDFGState = sdfg.states()[0]
+
+        desc_x = parent_sdfg.arrays[parent_state.in_edges(node)[0].data.data]
+        desc_y = parent_sdfg.arrays[parent_state.in_edges(node)[1].data.data]
+        desc_res = parent_sdfg.arrays[parent_state.out_edges(node)[0].data.data]
+        banks_x = desc_x.location["bank"]
+        banks_y = desc_y.location["bank"]
+        banks_res = desc_res.location["bank"]
+        tmp_bank_c = utils.get_multibank_ranges_from_subset(
+            utils.parse_location_bank(desc_x)[1], sdfg)
+        bank_count = tmp_bank_c[1] - tmp_bank_c[0] # We know this is equal for all arrays it's checked in validation
+
+        xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
+        xform.outer_map_range = {param : f"0:{bank_count}"}
+        xform.update_hbm_access_list.extend([(state, node, "k") for node in state.source_nodes()])
+        xform.update_hbm_access_list.append((state, state.sink_nodes()[0], "k"))
+        xform.update_array_list.extend([("_x", banks_x), ("_y", banks_y), ("_res", banks_res)])
+        xform.apply(sdfg)
+
+        return sdfg
+        
 
 @dace.library.node
 class Axpy(dace.sdfg.nodes.LibraryNode):
@@ -127,6 +156,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "pure": ExpandAxpyVectorized,
         "fpga": ExpandAxpyFpga,
+        "fpga_hbm": ExpandAxpyFpgaHbm,
     }
     default_implementation = None
 
@@ -154,7 +184,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         else:
             return False
 
-    def validate(self, sdfg, state):
+    def validate(self, sdfg: SDFG, state: SDFGState):
 
         in_edges = state.in_edges(self)
         if len(in_edges) != 2:
@@ -168,8 +198,27 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         out_memlet = out_edges[0].data
         size = in_memlets[0].subset.size()
 
-        if len(size) != 1:
+        if len(size) != 1 and self.implementation != "fpga_hbm":
             raise ValueError("axpy only supported on 1-dimensional arrays")
+        elif len(size) != 2 and self.implementation == "fpga_hbm":
+            raise ValueError("axpy for hbm only supports 2-dimensional arrays")
+
+        if self.implementation == "fpga_hbm":
+            desc_x = sdfg.arrays[in_memlets[0].data]
+            desc_y = sdfg.arrays[in_memlets[1].data]
+            desc_z = sdfg.arrays[out_memlet.data]
+            parse_x = utils.parse_location_bank(desc_x)
+            parse_y = utils.parse_location_bank(desc_y)
+            parse_z = utils.parse_location_bank(desc_z)
+            if(parse_x[0] != "HBM" or parse_y[0] != "HBM" or parse_z[0] != "HBM"):
+                raise ValueError("All attached arrays must be on HBM for this "
+                    "axpy implementation")
+            low1, high1 = utils.get_multibank_ranges_from_subset(parse_x[1], sdfg)
+            low2, high2 = utils.get_multibank_ranges_from_subset(parse_y[1], sdfg)
+            low3, high3 = utils.get_multibank_ranges_from_subset(parse_z[1], sdfg)
+            if (high1 - low1) != (high2 - low2) or (high2 - low2) != (high3 - low3):
+                raise ValueError("All attached arrays should be distributed among "
+                    "the same number of banks")
 
         if size != in_memlets[1].subset.size():
             raise ValueError("Inputs to axpy must have equal size")
