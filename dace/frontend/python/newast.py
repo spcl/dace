@@ -938,7 +938,8 @@ class GlobalResolver(ast.NodeTransformer):
     def visit_JoinedStr(self, node: ast.JoinedStr) -> Any:
         try:
             global_val = astutils.evalnode(node, self.globals)
-            return ast.copy_location(ast.Constant(value=global_val), node)
+            return ast.copy_location(ast.Constant(kind='', value=global_val),
+                                     node)
         except SyntaxError:
             warnings.warn(f'f-string at line {node.lineno} could not '
                           'be fully evaluated in DaCe program, converting to '
@@ -950,7 +951,7 @@ class GlobalResolver(ast.NodeTransformer):
             ]
             values = [astutils.unparse(v.value) for v in visited.values]
             return ast.copy_location(
-                ast.Constant(value=''.join(('{%s}' % v) if not p else v
+                ast.Constant(kind='', value=''.join(('{%s}' % v) if not p else v
                                            for p, v in zip(parsed, values))),
                 node)
 
