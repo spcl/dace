@@ -13,6 +13,14 @@ def is_available() -> bool:
     return "DACE_port" in os.environ
 
 
+def sdfg_edit() -> bool:
+    """ If the debugger is in sdfg_edit mode
+        :return: Returns true if the debugger is in sdfg_edit mode
+    """
+    return ("DACE_sdfg_edit" in os.environ
+            and os.environ["DACE_sdfg_edit"] != "none")
+
+
 def load_or_transform() -> bool:
     """ Checks if the user want's to apply transformations before the
         codegen runs on the SDFG
@@ -30,7 +38,7 @@ def stop_and_load(sdfg):
         :param sdfg: The current SDFG
         :return: The loaded SDFG
     """
-    reply = send_and_recv_bp({'type': 'loadSDFG'})
+    reply = send_bp_recv({'type': 'loadSDFG'})
     if reply is None or reply['filename'] == 'none':
         return sdfg
     return dace.SDFG.from_file(reply['filename'])
@@ -101,7 +109,7 @@ def recv(data: json):
     return None
 
 
-def send_and_recv_bp(data: json) -> json:
+def send_bp_recv(data: json) -> json:
     """ Sends a json object to the port given as the env variable DACE_port.
         After the data is sent a breakpint is set. As soon as the debugger
         continues, return the received data
