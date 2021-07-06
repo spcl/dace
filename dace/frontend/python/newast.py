@@ -3862,6 +3862,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 fcopy = copy.copy(func)
                 funcname = func.name
                 fcopy._cache = (None, None, None)
+                # TODO: Can the line below be removed?
                 fcopy.global_vars = {**func.global_vars, **self.globals}
                 fargs = (self._eval_arg(arg) for _, arg in args)
                 sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
@@ -3891,15 +3892,36 @@ class ProgramVisitor(ExtNodeVisitor):
                     arg.arg: self._eval_arg(self._parse_function_arg(arg.value))
                     for arg in node.keywords
                 }
-                sdfg = copy.deepcopy(self._get_sdfg(func, fargs, fkwargs))
-                funcname = sdfg.name
+
+                argnames = func.__sdfg_argnames__()
                 args = [(aname, self._parse_function_arg(arg))
-                        for aname, arg in zip(sdfg.arg_names, node.args)]
+                        for aname, arg in zip(argnames, node.args)]
                 args += [(arg.arg, self._parse_function_arg(arg.value))
                          for arg in node.keywords]
-                required_args = [
-                    a for a in sdfg.arglist().keys() if a not in sdfg.symbols
-                ]
+                required_args = argnames
+
+                fargs = (self._eval_arg(arg) for _, arg in args)
+                sdfg = copy.deepcopy(self._get_sdfg(func, fargs, fkwargs))
+                funcname = sdfg.name
+                required_args = [k for k, _ in args if k in sdfg.arg_names]
+                # Filter out constant and None-constant arguments
+                req = sdfg.arglist().keys()
+                const_args = func.__sdfg_constant_args__()
+                args = [(k, v) for k, v in args
+                        if k not in const_args and (
+                            v is not None or k in req)]
+
+                # Handle nested closure
+                if hasattr(func, '__sdfg_closure__'):
+                    for aname, arr in func.__sdfg_closure__().items():
+                        desc = data.create_datadescriptor(arr)
+                        outer_name = self.sdfg.add_datadesc(aname,
+                                                            desc,
+                                                            find_new_name=True)
+                        self.nested_closure_arrays[outer_name] = (arr, desc)
+                        # Add closure arrays as function arguments
+                        args.append((aname, outer_name))
+                        required_args.append(aname)
             else:
                 raise DaceSyntaxError(
                     self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
@@ -3929,6 +3951,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     [sym for sym in symbols if sym not in mapping])
             else:
                 required_args.extend(symbols)
+            required_args = dtypes.deduplicate(required_args)
 
             # Argument checks
             for arg in node.keywords:
