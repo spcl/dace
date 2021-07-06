@@ -108,10 +108,9 @@ class HbmCopyTransform(transformation.Transformation):
         target_size = [str(x) for x in self._get_split_size(true_size, split_info)]
         target_hbm_bank = []
         for i in range(ndim):
-            current = usable_params[i]
-            if i > 0:
-                current += f"*{target_hbm_bank[i-1]}"
             target_hbm_bank.append(usable_params[i])
+            for j in range(i):
+                target_hbm_bank[j] = f"{split_info[i]}*{target_hbm_bank[j]}"
         target_offset = []
         for i in range(ndim):
             target_offset.append(f"{usable_params[i]}*{target_size[i]}")
@@ -131,4 +130,3 @@ class HbmCopyTransform(transformation.Transformation):
                 f"{target_size_str}"
             )
         graph.add_edge(src, None, dst, None, copy_memlet)
-        
