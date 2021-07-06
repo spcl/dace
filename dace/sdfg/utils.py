@@ -14,7 +14,7 @@ from dace.sdfg.nodes import Node
 from dace.sdfg.state import SDFGState
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
-from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic, subsets, memlet
+from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from string import ascii_uppercase
 from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple, Union, Any
 import dace.codegen.exceptions
@@ -1043,18 +1043,6 @@ def is_hbm_array(array: dt.Data):
     else:
         return False
 
-def is_hbm_array_with_distributed_index(array : dt.Data):
-    """
-    :return: True if this array is placed on HBM and has a 'fake' first 
-    dimension equal to the number of banks is placed on. For hbm arrays
-    spanning across multiple banks this is always true
-    """
-    if is_hbm_array(array):
-        res = parse_location_bank(array)
-        low, high = get_multibank_ranges_from_subset(res[1], None)
-        return high - low > 1 or str(array.shape[0]) == "1"
-    else:
-        return False
 
 def iterate_hbm_multibank_arrays(array_name: str, array: dt.Array, sdfg: SDFG):
     """
@@ -1118,16 +1106,11 @@ def get_multibank_ranges_from_subset(subset: Union[sbs.Subset, str],
     if stride != 1:
         raise NotImplementedError(f"Strided HBM subsets not supported.")
     try:
-        if sdfg is None:
-            low = int(low)
-            high = int(high)
-        else:   
-            low = int(symbolic.resolve_symbol_to_constant(low, sdfg))
-            high = int(symbolic.resolve_symbol_to_constant(high, sdfg))
+        low = int(symbolic.resolve_symbol_to_constant(low, sdfg))
+        high = int(symbolic.resolve_symbol_to_constant(high, sdfg))
     except:
         raise ValueError(
-            f"Only constant evaluatable indices allowed for HBM-memlets on the bank index. "
-            f"Only constant indicies are allowed for the first index of array shapes placed on multiple HBM banks"
+            f"Only constant evaluatable indices allowed for HBM-memlets on the bank index."
         )
     return (low, high + 1)
 
@@ -1161,6 +1144,7 @@ def parse_location_bank(array_or_bank: Union[dt.Array, str]) -> Tuple[str, str]:
     else:
         return None
 
+
 def accessnode_to_innermost_edge(state : SDFGState, node : nd.AccessNode):
     """
     Takes a node that only has one out- or ingoing edge,
@@ -1179,7 +1163,7 @@ def accessnode_to_innermost_edge(state : SDFGState, node : nd.AccessNode):
 
 def update_path_subsets(state: SDFGState, 
     inner_edge_info: Union[MultiConnectorEdge, nd.AccessNode],
-    new_subset : subsets.Subset,):
+    new_subset : sbs.Subset,):
     """
     Will take the memlet path defined by :param inner_edge:, and recreate it with
     :param new_subset:, where :param inner_edge: has to be the innermost edge.
@@ -1187,7 +1171,7 @@ def update_path_subsets(state: SDFGState,
     """
     if isinstance(inner_edge_info, nd.AccessNode):
         inner_edge_info = accessnode_to_innermost_edge(state, inner_edge_info)
-    mem : memlet.Memlet = inner_edge_info.data
+    mem : mm.Memlet = inner_edge_info.data
     mem.subset = new_subset
 
     path = state.memlet_path(inner_edge_info)
