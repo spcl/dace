@@ -33,10 +33,6 @@ def test_nested_symbol():
 
 
 def test_nested_symbol_dynamic():
-    if not dace.Config.get_bool('optimizer',
-                                'automatic_strict_transformations'):
-        warnings.warn("Test disabled (missing allocation lifetime support)")
-        return
 
     A = np.random.rand(5)
     expected = A.copy()
