@@ -1081,7 +1081,8 @@ __kernel void \\
                 1 if is_output else 0].label
             is_global = True
 
-        def_type, ctypedef = self._dispatcher.defined_vars.get(data_name, is_global=is_global)
+        def_type, ctypedef = self._dispatcher.defined_vars.get(
+            data_name, is_global=is_global)
         if def_type == DefinedType.Scalar:
             if cast:
                 rhs = f"(*({memlet_type} const *)&{data_name})"

@@ -1096,7 +1096,9 @@ def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None):
 def py2cpp(code, expr_semicolon=True, defined_symbols=None):
     if isinstance(code, str):
         try:
-            return cppunparse(ast.parse(code), expr_semicolon, defined_symbols=defined_symbols)
+            return cppunparse(ast.parse(code),
+                              expr_semicolon,
+                              defined_symbols=defined_symbols)
         except SyntaxError:
             return code
     elif isinstance(code, ast.AST):
@@ -1116,7 +1118,9 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
 
         except:  # Can be different exceptions coming from Python's AST module
             raise NotImplementedError('Invalid function given')
-        return cppunparse(ast.parse(code_str), expr_semicolon, defined_symbols=defined_symbols)
+        return cppunparse(ast.parse(code_str),
+                          expr_semicolon,
+                          defined_symbols=defined_symbols)
 
     else:
         raise NotImplementedError('Unsupported type for py2cpp')
