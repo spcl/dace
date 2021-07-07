@@ -1152,9 +1152,7 @@ def accessnode_to_innermost_edge(state: SDFGState, node: nd.AccessNode):
     """
     some_edge = list(state.all_edges(node))
     if len(some_edge) != 1:
-        raise ValueError(
-            "There has to be exactly one attached edge"
-        )
+        raise ValueError("There has to be exactly one attached edge")
     some_edge = some_edge[0]
     if some_edge.dst == node:
         edge = state.memlet_path(some_edge)[0]

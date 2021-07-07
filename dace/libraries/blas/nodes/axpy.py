@@ -222,8 +222,9 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
             parse_y = utils.parse_location_bank(desc_y)
             parse_z = utils.parse_location_bank(desc_z)
             if parse_x is None or parse_y is None or parse_z is None:
-                raise ValueError("All attached arrays must be placed explicitly in memory "
-                                 "for this axpy implementation")
+                raise ValueError(
+                    "All attached arrays must be placed explicitly in memory "
+                    "for this axpy implementation")
             low1, high1 = utils.get_multibank_ranges_from_subset(
                 parse_x[1], sdfg)
             low2, high2 = utils.get_multibank_ranges_from_subset(
