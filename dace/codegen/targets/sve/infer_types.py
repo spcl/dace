@@ -29,8 +29,8 @@ def infer_connector_types(sdfg: SDFG):
                     continue
                 scalar = (e.data.subset and e.data.subset.num_elements() == 1)
                 if e.data.data is not None:
-                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is
-                                           not dtypes.StorageType.GPU_Global)
+                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage
+                                           is not dtypes.StorageType.GPU_Global)
                 else:
                     allocated_as_scalar = True
 
@@ -45,10 +45,11 @@ def infer_connector_types(sdfg: SDFG):
                     elif e.data.data is not None:  # Obtain type from memlet
                         src_edge = state.memlet_path(e)[0]
                         if src_edge.src_conn is not None:
-                            ctype = src_edge.src.out_connectors[src_edge.src_conn]
+                            ctype = src_edge.src.out_connectors[
+                                src_edge.src_conn]
                         else:
                             scalar |= isinstance(sdfg.arrays[e.data.data],
-                                                data.Scalar)
+                                                 data.Scalar)
                             if isinstance(node, nodes.LibraryNode):
                                 scalar &= allocated_as_scalar
                             dtype = sdfg.arrays[e.data.data].dtype
@@ -75,11 +76,11 @@ def infer_connector_types(sdfg: SDFG):
                           and (not e.data.dynamic or
                                (e.data.dynamic and e.data.wcr is not None)))
                 if e.data.data is not None:
-                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is
-                                           not dtypes.StorageType.GPU_Global)
+                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage
+                                           is not dtypes.StorageType.GPU_Global)
                 else:
                     allocated_as_scalar = True
-                
+
                 if node.out_connectors[cname].type is None:
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
@@ -106,4 +107,3 @@ def infer_connector_types(sdfg: SDFG):
                     raise TypeError('Ambiguous or uninferable type in'
                                     ' connector "%s" of node "%s"' %
                                     (cname, node))
-

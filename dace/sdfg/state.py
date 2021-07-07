@@ -11,8 +11,9 @@ from dace.sdfg.graph import (OrderedMultiDiConnectorGraph, MultiConnectorEdge,
                              SubgraphView)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
-from dace.properties import (EnumProperty, Property, DictProperty, SubsetProperty,
-                             SymbolicProperty, CodeBlock, make_properties)
+from dace.properties import (EnumProperty, Property, DictProperty,
+                             SubsetProperty, SymbolicProperty, CodeBlock,
+                             make_properties)
 from inspect import getframeinfo, stack
 import itertools
 from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple,
@@ -712,8 +713,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
     instrument = EnumProperty(
         dtype=dtypes.InstrumentationType,
         desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation
-    )
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "
@@ -1338,13 +1338,15 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                 else:
                     outdict[out] = self.add_write(out)
 
+        edges = []
+
         # Connect inputs from map to tasklet
         tomemlet = {}
         for name, memlet in inputs.items():
             # Set memlet local name
             memlet.name = name
             # Add internal memlet edge
-            self.add_edge(map_entry, None, tasklet, name, memlet)
+            edges.append(self.add_edge(map_entry, None, tasklet, name, memlet))
             tomemlet[memlet.data] = memlet
 
         # If there are no inputs, add empty memlet
@@ -1359,8 +1361,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                                                     map_entry, True)
                 else:
                     outer_memlet = tomemlet[inp]
-                self.add_edge(inpnode, None, map_entry, "IN_" + inp,
-                              outer_memlet)
+                edges.append(
+                    self.add_edge(inpnode, None, map_entry, "IN_" + inp,
+                                  outer_memlet))
 
                 # Add connectors to internal edges
                 for e in self.out_edges(map_entry):
@@ -1377,7 +1380,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             # Set memlet local name
             memlet.name = name
             # Add internal memlet edge
-            self.add_edge(tasklet, name, map_exit, None, memlet)
+            edges.append(self.add_edge(tasklet, name, map_exit, None, memlet))
             tomemlet[memlet.data] = memlet
 
         # If there are no outputs, add empty memlet
@@ -1392,8 +1395,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                                                     map_exit, True)
                 else:
                     outer_memlet = tomemlet[out]
-                self.add_edge(map_exit, "OUT_" + out, outnode, None,
-                              outer_memlet)
+                edges.append(
+                    self.add_edge(map_exit, "OUT_" + out, outnode, None,
+                                  outer_memlet))
 
                 # Add connectors to internal edges
                 for e in self.in_edges(map_exit):
@@ -1403,6 +1407,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                 # Add connectors to map entry
                 map_exit.add_in_connector("IN_" + out)
                 map_exit.add_out_connector("OUT_" + out)
+
+        # Try to initialize memlets
+        for edge in edges:
+            edge.data.try_initialize(self.parent, self, edge)
 
         return tasklet, map_entry, map_exit
 
@@ -1587,6 +1595,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                 external_connector,
                 external_memlet,
             )
+
+        # Try to initialize memlets
+        iedge.data.try_initialize(self.parent, self, iedge)
+        eedge.data.try_initialize(self.parent, self, eedge)
 
         return (iedge, eedge)
 
