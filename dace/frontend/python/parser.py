@@ -196,12 +196,25 @@ class DaceProgram(pycommon.SDFGConvertible):
         from dace.transformation.auto import auto_optimize as autoopt
         return autoopt.auto_optimize(sdfg, self.device, symbols=symbols)
 
-    def to_sdfg(self, *args, strict=None, save=False, **kwargs) -> SDFG:
+    def to_sdfg(self,
+                *args,
+                strict=None,
+                save=False,
+                validate=False,
+                **kwargs) -> SDFG:
         """ Parses the DaCe function into an SDFG. """
-        return self._parse(args, kwargs, strict=strict, save=save)[0]
+        return self._parse(args,
+                           kwargs,
+                           strict=strict,
+                           save=save,
+                           validate=validate)[0]
 
     def __sdfg__(self, *args, **kwargs) -> SDFG:
-        return self._parse(args, kwargs, strict=None, save=False)[0]
+        return self._parse(args,
+                           kwargs,
+                           strict=None,
+                           save=False,
+                           validate=False)[0]
 
     def compile(self, *args, strict=None, save=False, **kwargs):
         """ Convenience function that parses and compiles a DaCe program. """
@@ -336,7 +349,12 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         return result
 
-    def _parse(self, args, kwargs, strict=None, save=False) -> SDFG:
+    def _parse(self,
+               args,
+               kwargs,
+               strict=None,
+               save=False,
+               validate=False) -> SDFG:
         """ 
         Try to parse a DaceProgram object and return the `dace.SDFG` object
         that corresponds to it.
@@ -348,6 +366,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                        uses configuration-defined value). 
         :param save: If True, saves the generated SDFG to 
                     ``_dacegraphs/program.sdfg`` after parsing.
+        :param validate: If True, validates the resulting SDFG after creation.
         :return: The generated SDFG object.
         """
         # Avoid import loop
@@ -379,7 +398,8 @@ class DaceProgram(pycommon.SDFGConvertible):
             sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
         # Validate SDFG
-        sdfg.validate()
+        if validate:
+            sdfg.validate()
 
         return sdfg, arg_mapping
 

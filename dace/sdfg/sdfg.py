@@ -1747,11 +1747,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None) -> \
+    def compile(self, output_file=None, validate=True) -> \
             'dace.codegen.compiler.CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
             :param output_file: If not None, copies the output library file to
                                 the specified path.
+            :param validate: If True, validates the SDFG prior to generating 
+                             code.
             :return: A callable CompiledSDFG object.
         """
 
@@ -1784,7 +1786,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         sdfg.fill_scope_connectors()
 
         # Generate code for the program by traversing the SDFG state by state
-        program_objects = codegen.generate_code(sdfg)
+        program_objects = codegen.generate_code(sdfg, validate=validate)
 
         # Generate the program folder and write the source files
         program_folder = compiler.generate_program_folder(
