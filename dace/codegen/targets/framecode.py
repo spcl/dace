@@ -427,7 +427,6 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         elif desc.storage in dtypes.GPU_STORAGES:
             return sdscope.is_devicelevel_gpu(csdfg, cstate, node)
 
-        # return True
         return False
 
     def determine_allocation_lifetime(self, top_sdfg: SDFG):
@@ -455,8 +454,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # 2. The State id where the action should (approx.) take place.
             # 3. The Access Node id of the transient in the above State.
             # 4. True if declaration should take place, otherwise False.
-            # 4. True if allocation should take place, otherwise False.
-            # 4. True if deallocation should take place, otherwise False.
+            # 5. True if allocation should take place, otherwise False.
+            # 6. True if deallocation should take place, otherwise False.
 
             # Possibly confusing control flow below finds the first state
             # and node of the data descriptor, or continues the
@@ -466,7 +465,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             last_state_instance: int = None
             last_node_instance: nodes.AccessNode = None
             first = True
-            for id, state in enumerate(sdfg.nodes()):
+            for state in sdfg.topological_sort():
+                id = sdfg.nodes().index(state)
                 for node in state.data_nodes():
                     if node.data == name:
                         if first:
@@ -634,9 +634,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 curscope = top_sdfg
 
             # Check if array shape is dependent on non-free SDFG symbols
-            # NOTE: Only arrays supported now
-            # NOTE: We may also need to support views
-            # NOTE: Tuple is (SDFG, State, Node, declare, allocate deallocate)
+            # NOTE: Only arrays supported now (not Views)
+            # NOTE: Tuple is (SDFG, State, Node, declare, allocate, deallocate)
             if (isinstance(desc, data.Array)
                     and not isinstance(desc, data.View)
                     and not isinstance(curscope, nodes.EntryNode) and any(
