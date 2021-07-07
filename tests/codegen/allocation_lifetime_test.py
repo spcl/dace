@@ -273,7 +273,7 @@ def test_alloc_multistate():
     sdfg = dace.SDFG('multistate')
     sdfg.add_array('A', [20], dace.float64)
     sdfg.add_array('B', [20], dace.float64)
-    sdfg.add_transient('tmp', [i], dace.float64)
+    sdfg.add_transient('tmp', [i+1], dace.float64)
 
     init = sdfg.add_state()
     end = sdfg.add_state()
@@ -284,7 +284,7 @@ def test_alloc_multistate():
 
     ar = s1.add_read('A')
     tw = s1.add_write('tmp')
-    s1.add_nedge(ar, tw, dace.Memlet('A[0:i]'))
+    s1.add_nedge(ar, tw, dace.Memlet('A[0:i+1]'))
 
     tr = s2.add_read('tmp')
     bw = s2.add_write('B')
