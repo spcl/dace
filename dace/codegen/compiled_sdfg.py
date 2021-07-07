@@ -15,6 +15,7 @@ from dace import data as dt, dtypes, symbolic
 from dace.codegen import exceptions as cgx
 from dace.config import Config
 from dace.frontend import operations
+from dace.frontend.vscode import vscode
 
 
 class ReloadableDLL(object):
@@ -272,6 +273,36 @@ class CompiledSDFG(object):
             kwargs.update(
                 {aname: arg
                  for aname, arg in zip(self.argnames, args)})
+
+        if vscode.is_available() and vscode.sdfg_edit():
+            mode = vscode.send_bp_recv({'type': 'sdfgEditMode'})['mode']
+            argtuple, initargtuple = self._construct_args(kwargs)
+            compiledSdfg = self
+            while mode != 'run':
+                # unload lib as the sdfg might change
+                if compiledSdfg._lib.is_loaded():
+                    compiledSdfg._lib.unload()
+
+                if mode == 'profile':
+                    try:
+                        compiledSdfg._lib.load()
+                        if compiledSdfg._initialized is False:
+                            compiledSdfg.initialize(*initargtuple)
+                        operations.timethis(compiledSdfg._sdfg, 'DaCe', 0,
+                                            compiledSdfg._cfunc,
+                                            compiledSdfg._libhandle, *argtuple)
+                    except (RuntimeError, TypeError, UnboundLocalError,
+                            KeyError, cgx.DuplicateDLLError, ReferenceError):
+                        compiledSdfg._lib.unload()
+                        raise
+                elif mode == 'load':
+                    sdfg = vscode.stop_and_load(compiledSdfg._sdfg)
+                    compiledSdfg = sdfg.compile()
+                elif mode == 'transform':
+                    sdfg = vscode.stop_and_transform(compiledSdfg._sdfg)
+                    compiledSdfg = sdfg.compile()
+                mode = vscode.send_bp_recv({'type': 'sdfgEditMode'})['mode']
+            self = compiledSdfg
 
         try:
             argtuple, initargtuple = self._construct_args(kwargs)
