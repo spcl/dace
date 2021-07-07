@@ -227,12 +227,15 @@ class CPUCodeGen(TargetCodeGenerator):
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc,
                       function_stream, declaration_stream):
 
-        # NOTE: We currently only support Arrays (not Views)
-        # that are dependent on non-free SDFG symbols.
-        assert (isinstance(nodedesc, data.Array)
+        if not (isinstance(nodedesc, data.Array)
                 and not isinstance(nodedesc, data.View) and any(
                     str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in nodedesc.free_symbols))
+                    for s in nodedesc.free_symbols)):
+            raise NotImplementedError(
+                "The declare_array method should only be used for variables "
+                "that must have their declaration and allocation separate. "
+                "Currently, we support only Arrays (not Views) depedent on "
+                "non-free SDFG symbols.")
 
         name = node.data
 
@@ -240,11 +243,8 @@ class CPUCodeGen(TargetCodeGenerator):
             return
 
         # Check if array is already declared
-        try:
-            self._dispatcher.declared_arrays.get(name)
-            return  # Array was already declared in this or upper scopes
-        except KeyError:  # Array not declared yet
-            pass
+        if self._dispatcher.declared_arrays.has(name):
+            return
 
         # Compute array size
         arrsize = nodedesc.total_size
@@ -287,19 +287,11 @@ class CPUCodeGen(TargetCodeGenerator):
             return
 
         # Check if array is already allocated
-        try:
-            self._dispatcher.defined_vars.get(name)
-            return  # Array was already allocated in this or upper scopes
-        except KeyError:  # Array not allocated yet
-            pass
+        if self._dispatcher.defined_vars.has(name):
+            return
 
         # Check if array is already declared
-        declared = False
-        try:
-            self._dispatcher.declared_arrays.get(name)
-            declared = True  # Array was already declared in this or upper scopes
-        except KeyError:  # Array not declared yet
-            pass
+        declared = self._dispatcher.declared_arrays.has(name)
 
         # Compute array size
         arrsize = nodedesc.total_size
