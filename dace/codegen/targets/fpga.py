@@ -693,23 +693,23 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc,
                       function_stream, declaration_stream):
 
-        # NOTE: We currently only support Arrays (not Views)
-        # that are dependent on non-free SDFG symbols.
-        assert (isinstance(nodedesc, dt.Array)
+        if not (isinstance(nodedesc, dt.Array)
                 and not isinstance(nodedesc, dt.View) and any(
                     str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in nodedesc.free_symbols))
+                    for s in nodedesc.free_symbols)):
+            raise NotImplementedError(
+                "The declare_array method should only be used for variables "
+                "that must have their declaration and allocation separate. "
+                "Currently, we support only Arrays (not Views) depedent on "
+                "non-free SDFG symbols.")
 
         result_decl = StringIO()
         arrsize = nodedesc.total_size
         dataname = node.data
 
         # Check if array is already declared
-        try:
-            self._dispatcher.declared_arrays.get(dataname)
-            return  # Array was already declared in this or upper scopes
-        except KeyError:  # Array not declared yet
-            pass
+        if self._dispatcher.declared_arrays.has(dataname):
+            return
 
         allocname = cpp.ptr(dataname, nodedesc, sdfg)
 
@@ -759,19 +759,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             # Unless this is a Stream, if the variable has been already defined we can return
             # For Streams, we still allocate them to keep track of their names across
             # nested SDFGs (needed by Intel FPGA backend for channel mangling)
-            try:
-                self._dispatcher.defined_vars.get(dataname)
+            if self._dispatcher.defined_vars.has(dataname):
                 return
-            except KeyError:
-                pass  # The variable was not defined,  we can continue
 
         # Check if array is already declared
-        declared = False
-        try:
-            self._dispatcher.declared_arrays.get(dataname)
-            declared = True  # Array was already declared in this or upper scopes
-        except KeyError:  # Array not declared yet
-            pass
+        declared = self._dispatcher.declared_arrays.has(dataname)
 
         allocname = cpp.ptr(dataname, nodedesc, sdfg)
 
