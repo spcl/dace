@@ -249,7 +249,7 @@ def ptr(name: str,
         from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
         if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
             return f'__state->{name}'
-    if (desc is not None and utils.is_hbm_array(desc)):
+    if (desc is not None and utils.is_hbm_array_with_distributed_index(desc)):
         if (subset_info_hbm == None):
             raise ValueError(
                 "Cannot generate name for HBM bank without subset info")
@@ -560,7 +560,7 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    if utils.is_hbm_array(d):
+    if utils.is_hbm_array_with_distributed_index(d):
         subset_in = utils.modify_distributed_subset(subset_in, 0)
 
     # Offset according to parameters, then offset according to array

@@ -1101,9 +1101,9 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
 
             copy_shape = memlet.subset.bounding_box_size()
-            is_src_using_hbm = src_is_subset and utils.is_hbm_array(
+            is_src_using_hbm = src_is_subset and utils.is_hbm_array_with_distributed_index(
                 src_nodedesc)
-            is_dst_using_hbm = not src_is_subset and utils.is_hbm_array(
+            is_dst_using_hbm = not src_is_subset and utils.is_hbm_array_with_distributed_index(
                 dst_nodedesc)
             if is_src_using_hbm or is_dst_using_hbm:
                 copy_shape = utils.modify_distributed_subset(copy_shape, -1)
@@ -1486,8 +1486,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 and isinstance(dst_node, dace.sdfg.nodes.AccessNode)):
             src_array = src_node.desc(sdfg)
             dst_array = dst_node.desc(sdfg)
-            src_is_hbm = utils.is_hbm_array(src_array)
-            dst_is_hbm = utils.is_hbm_array(dst_array)
+            src_is_hbm = utils.is_hbm_array_with_distributed_index(src_array)
+            dst_is_hbm = utils.is_hbm_array_with_distributed_index(dst_array)
             if src_is_hbm or dst_is_hbm:
                 modedge = copy.deepcopy(edge)
                 mem: memlet.Memlet = modedge.data
@@ -2003,7 +2003,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)
                     and self._dispatcher.defined_vars.has(edge.src_conn)):
-                if utils.is_hbm_array(datadesc):
+                if utils.is_hbm_array_with_distributed_index(datadesc):
                     accessed_subset, _ = utils.get_multibank_ranges_from_subset(
                         edge.data.dst_subset or edge.data.subset, sdfg)
                 else:

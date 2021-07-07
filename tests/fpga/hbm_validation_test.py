@@ -85,13 +85,17 @@ def test_unsound_location():
     assert_validation_failure(sdfg, InvalidSDFGError)
     sdfg.arrays["a"].location["bank"] = "hbm.k:5"
     assert_validation_failure(sdfg, InvalidSDFGError)
-    sdfg.add_constant("k", 1)
-    sdfg.arrays["a"].location["bank"] = "hbm.k:5"
-    sdfg.validate()
     sdfg.constants_prop.clear()
     assert_validation_failure(sdfg, InvalidSDFGError)
     sdfg.arrays["a"].location["bank"] = "hbm.2:2"
     assert_validation_failure(sdfg, InvalidSDFGError)
+    sdfg.arrays["a"].location["bank"] = "hbm.2"
+    sdfg.validate()
+    sdfg.arrays["b"].location["bank"] = "hbm.3"
+    sdfg.validate()
+    sdfg.arrays["b"].location["bank"] = "hbm.3:5"
+    assert_validation_failure(sdfg, InvalidSDFGError)
+    sdfg.arrays["b"].location.clear()
     sdfg.arrays["a"].location["bank"] = "hbm.0:4"
     sdfg.validate()
     sdfg.arrays["b"].location["bank"] = "hbm.0:4"

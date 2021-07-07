@@ -80,14 +80,15 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                             f" for array {name} since it uses HBM", sdfg, None)
                     try:
                         low, high = sdutil.get_multibank_ranges_from_subset(
-                            bank_assignment[1], sdfg)
+                            bank_assignment[1], None)
                     except ValueError as e:
                         raise InvalidSDFGError(str(e), sdfg, None)
                     if (high - low < 1):
                         raise InvalidSDFGError(
                             "Memory bank specifier must at least define one bank to be used"
                             f" for array {name}", sdfg, None)
-                    if (high - low != desc.shape[0] or len(desc.shape) < 2):
+                    if (high - low > 1 and (high - low != desc.shape[0] or
+                        len(desc.shape) < 2)):
                         raise InvalidSDFGError(
                             "Arrays that use HBM must have the size of the first dimension equal"
                             f" the number of banks and have at least 2 dimensions for array {name}",
@@ -365,7 +366,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if isinstance(node, nd.Tasklet):
             for attached in state.all_edges(node):
                 if attached.data.data in sdfg.arrays:
-                    if sdutil.is_hbm_array(sdfg.arrays[attached.data.data]):
+                    if sdutil.is_hbm_array_with_distributed_index(sdfg.arrays[attached.data.data]):
                         low, high, _ = attached.data.subset[0]
                         if (low != high):
                             raise InvalidSDFGNodeError(
@@ -651,12 +652,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Check if first index is evaluatable for HBM arrays
         if (isinstance(src_node, nd.AccessNode)
-                and sdutil.is_hbm_array(src_node.desc(state))
+                and sdutil.is_hbm_array_with_distributed_index(src_node.desc(state))
                 and e.data.data is not None):
             validate_hbm_subset(e.data.src_subset or e.data.subset, sdfg,
                                 state_id, eid)
         if (isinstance(dst_node, nd.AccessNode)
-                and sdutil.is_hbm_array(dst_node.desc(state))
+                and sdutil.is_hbm_array_with_distributed_index(dst_node.desc(state))
                 and e.data.data is not None):
             validate_hbm_subset(e.data.dst_subset or e.data.subset, sdfg,
                                 state_id, eid)
