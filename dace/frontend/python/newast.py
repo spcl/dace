@@ -2425,6 +2425,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 symbolic.pystr_to_symbolic(ranges[0][1]))
             step = self._replace_with_global_symbols(
                 symbolic.pystr_to_symbolic(ranges[0][2]))
+            eoff = -1
+            if (step < 0) == True:
+                eoff = 1
             try:
                 conditions = [s >= 0 for s in (start, stop, step)]
                 if (conditions == [True, True, True]
@@ -2449,8 +2452,8 @@ class ProgramVisitor(ExtNodeVisitor):
             # but different ranges?
             if sym_name in self.sdfg.symbols.keys():
                 for k, v in self.symbols.items():
-                    if (str(k) == sym_name
-                            and v != subsets.Range([(start, stop - 1, step)])):
+                    if (str(k) == sym_name and
+                            v != subsets.Range([(start, stop + eoff, step)])):
                         warnings.warn(
                             "Two for-loops using the same variable ({}) but "
                             "different ranges in the same nested SDFG level. "
@@ -2462,7 +2465,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             extra_syms = {sym_name: sym_obj}
 
-            self.symbols[sym_obj] = subsets.Range([(start, stop - 1, step)])
+            self.symbols[sym_obj] = subsets.Range([(start, stop + eoff, step)])
 
             # Add range symbols as necessary
             for rng in ranges[0]:
@@ -3728,6 +3731,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 funcname = func.name
                 fcopy._cache = (None, None, None)
                 fcopy.global_vars = {**func.global_vars, **self.globals}
+                fcopy.signature = copy.deepcopy(func.signature)
                 fargs = (self._eval_arg(arg) for _, arg in args)
                 sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
                 required_args = [k for k, _ in args if k in sdfg.arg_names]
@@ -4560,9 +4564,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 new_axes = other_subset.unsqueeze(expr.new_axes)
             other_subset.squeeze(ignore_indices=new_axes)
 
-            tmp, tmparr = self.sdfg.add_temp_transient(other_subset.size(),
-                                                       arrobj.dtype,
-                                                       arrobj.storage)
+            # NOTE: This is fixing azimint_hist (issue is `if x == a_max`)
+            # TODO: Follow Numpy, i.e. slicing with indices returns scalar but
+            # slicing with a range of (squeezed) size 1 returns array/view.
+            if all(s == 1 for s in other_subset.size()):
+                tmp = self.sdfg.temp_data_name()
+                tmp, tmparr = self.sdfg.add_scalar(tmp,
+                                                   arrobj.dtype,
+                                                   arrobj.storage,
+                                                   transient=True)
+            else:
+                tmp, tmparr = self.sdfg.add_temp_transient(
+                    other_subset.size(), arrobj.dtype, arrobj.storage)
             wnode = self.last_state.add_write(tmp,
                                               debuginfo=self.current_lineinfo)
             self.last_state.add_nedge(

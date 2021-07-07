@@ -514,7 +514,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # Emit allocations of inter-kernel memories
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               callsite_stream,
+                                               node.desc(sdfg), callsite_stream,
                                                kernel_body_stream)
 
         kernel_body_stream.write("\n")
@@ -740,7 +740,7 @@ __attribute__((autorun))\n"""
                 continue
             allocated.add(node.data)
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               module_stream,
+                                               node.desc(sdfg), module_stream,
                                                module_body_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
@@ -987,6 +987,7 @@ __kernel void \\
         mpath = dfg.memlet_path(edge)
         viewed_dnode = mpath[0].src if edge.dst is node else mpath[-1].dst
         self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, viewed_dnode,
+                                           viewed_dnode.desc(sdfg),
                                            global_stream, allocation_stream)
 
         # Emit memlet as a reference and register defined variable
@@ -1067,6 +1068,10 @@ __kernel void \\
 
         result = ""
 
+        # NOTE: FPGA Streams are defined at the top-level scope. We use the
+        # following boolean to pass this informations to the `get` method of
+        # the `defined_vars` object.
+        is_global = False
         if isinstance(data_desc, dace.data.Stream):
             # Derive the name of the original stream, by tracing the memlet path through nested SDFGs
             outer_stream_node_trace = utils.trace_nested_access(
@@ -1074,8 +1079,10 @@ __kernel void \\
                 sdfg.nodes()[state_id], sdfg)
             data_name = outer_stream_node_trace[0][0][
                 1 if is_output else 0].label
+            is_global = True
 
-        def_type, ctypedef = self._dispatcher.defined_vars.get(data_name)
+        def_type, ctypedef = self._dispatcher.defined_vars.get(
+            data_name, is_global=is_global)
         if def_type == DefinedType.Scalar:
             if cast:
                 rhs = f"(*({memlet_type} const *)&{data_name})"
@@ -1591,8 +1598,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 else:
                     code_str = "{dst}[{idx}] = {src};"
                 slice = self.visit(node.targets[0].slice)
-                if (isinstance(slice, ast.Slice) and
-                        isinstance(slice.value, ast.Tuple)):
+                if (isinstance(slice, ast.Slice)
+                        and isinstance(slice.value, ast.Tuple)):
                     subscript = unparse(slice)[1:-1]
                 else:
                     subscript = unparse(slice)

@@ -230,7 +230,7 @@ class CompiledSDFG(object):
             field_str = field_str.strip()
 
             match_name = re.match(
-                r'(?:const)?\s*(.*)(?:\s+\*\s*|\s*\*\s+)([a-zA-Z_][a-zA-Z_0-9]*)$',
+                r'(?:const)?\s*(.*)(?:\s+\*\s*|\s*\*\s+\_\_restrict\_\_\s+)([a-zA-Z_][a-zA-Z_0-9]*)$',
                 field_str)
             if match_name is None:
                 # reached a non-ptr field or something unparsable, we have to abort here

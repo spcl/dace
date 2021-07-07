@@ -20,6 +20,7 @@ from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
 from dace.codegen import compiled_sdfg as csd
 from dace.codegen.targets.target import make_absolute
+
 T = TypeVar('T')
 
 
@@ -90,7 +91,7 @@ def generate_program_folder(sdfg,
     if sdfg is not None:
         # Save the SDFG itself and its hash
         hash = sdfg.save(os.path.join(out_path, "program.sdfg"), hash=True)
-        filepath = os.path.join(out_path, 'include', 'hash.h') 
+        filepath = os.path.join(out_path, 'include', 'hash.h')
         contents = f'#define __HASH_{sdfg.name} "{hash}"\n'
         if not identical_file_exists(filepath, contents):
             with open(filepath, 'w') as hfile:
@@ -191,7 +192,8 @@ def configure_and_compile(program_folder,
         except ValueError as ex:  # Cannot find compiler executable
             raise cgx.CompilerConfigurationError(str(ex))
 
-    cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
+    cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(
+        sorted(libraries))))
 
     # Set linker and linker arguments, iff they have been specified
     cmake_linker = Config.get('compiler', 'linker', 'executable') or ''
@@ -348,7 +350,8 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
     ]
     # Escape variable expansions to defer their evaluation
     environment_flags = [
-        cmd.replace("$", "_DACE_CMAKE_EXPAND") for cmd in sorted(environment_flags)
+        cmd.replace("$", "_DACE_CMAKE_EXPAND")
+        for cmd in sorted(environment_flags)
     ]
 
     return environment_flags, cmake_link_flags

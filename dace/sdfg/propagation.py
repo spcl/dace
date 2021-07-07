@@ -436,9 +436,9 @@ class GenericSMemlet(SeparableMemletPattern):
             if symbolic.issymbolic(dim):
                 used_symbols.update(dim.free_symbols)
 
-        if (used_symbols & set(self.params)
-                and any(s not in defined_vars
-                        for s in node_range.free_symbols)):
+        if (used_symbols & set(self.params) and any(
+                symbolic.pystr_to_symbolic(s) not in defined_vars
+                for s in node_range.free_symbols)):
             # Cannot propagate symbols that are undefined in the outer range
             # (e.g., dynamic map ranges).
             return False
@@ -462,14 +462,21 @@ class GenericSMemlet(SeparableMemletPattern):
             else:
                 raise NotImplementedError
 
+            if (node_rs < 0) == True:
+                node_rb, node_re, node_rs = node_re, node_rb, - node_rs
+
             # Get true range end
-            lastindex = node_re
+            pos_firstindex = node_rb
+            neg_firstindex = node_re
+            pos_lastindex = node_re
+            neg_lastindex = node_rb
             if node_rs != 1:
-                lastindex = symbolic.pystr_to_symbolic(
+                pos_lastindex = symbolic.pystr_to_symbolic(
                     '%s + int_floor(%s - %s, %s) * %s' %
                     (symbolic.symstr(node_rb), symbolic.symstr(node_re),
                      symbolic.symstr(node_rb), symbolic.symstr(node_rs),
                      symbolic.symstr(node_rs)))
+                neg_firstindex = pos_lastindex
 
             if isinstance(dim_exprs, list):
                 dim_exprs = dim_exprs[0]
@@ -490,10 +497,28 @@ class GenericSMemlet(SeparableMemletPattern):
             else:
                 rb, re = (dim_exprs, dim_exprs)
 
+            # Support for affine expressions with a negative multiplier
+            firstindex = pos_firstindex
+            lastindex = pos_lastindex
+            a = sympy.Wild('a', exclude=self.params)
+            b = sympy.Wild('b', exclude=self.params)
             if result_begin is None:
-                result_begin = rb.subs(self.params[idx], node_rb)
+                matches = rb.match(a * self.params[idx] + b)
             else:
-                result_begin = result_begin.subs(self.params[idx], node_rb)
+                matches = result_begin.match(a * self.params[idx] + b)
+            if matches and (matches[a] < 0) == True:
+                firstindex = neg_firstindex
+            if result_end is None:
+                matches = re.match(a * self.params[idx] + b)
+            else:
+                matches = result_end.match(a * self.params[idx] + b)
+            if matches and (matches[a] < 0) == True:
+                lastindex = neg_lastindex
+
+            if result_begin is None:
+                result_begin = rb.subs(self.params[idx], firstindex)
+            else:
+                result_begin = result_begin.subs(self.params[idx], firstindex)
             if result_end is None:
                 result_end = re.subs(self.params[idx], lastindex)
             else:
