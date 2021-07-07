@@ -1043,11 +1043,11 @@ def is_hbm_array(array: dt.Data):
     else:
         return False
 
-def is_hbm_array_with_distributed_index(array : dt.Data):
+def is_hbm_array_with_distributed_index(array: dt.Data):
     """
     :return: True if this array is placed on HBM and has a 'fake' first 
-    dimension equal to the number of banks is placed on. For hbm arrays
-    spanning across multiple banks this is always true
+    dimension equal to the number of banks is placed on. For HBM arrays
+    spanning across multiple banks this is always true.
     """
     if is_hbm_array(array):
         res = parse_location_bank(array)
@@ -1117,18 +1117,23 @@ def get_multibank_ranges_from_subset(subset: Union[sbs.Subset, str],
     low, high, stride = subset[0]
     if stride != 1:
         raise NotImplementedError(f"Strided HBM subsets not supported.")
-    try:
-        if sdfg is None:
+    if sdfg is None:
+        try:
             low = int(low)
             high = int(high)
-        else:   
+        except:
+            raise ValueError(
+                "Only constant indicies are allowed for the first index of array shapes "
+                "placed on multiple HBM banks and HBM bank assignments"
+            )
+    else:
+        try:
             low = int(symbolic.resolve_symbol_to_constant(low, sdfg))
             high = int(symbolic.resolve_symbol_to_constant(high, sdfg))
-    except:
-        raise ValueError(
-            f"Only constant evaluatable indices allowed for HBM-memlets on the bank index. "
-            f"Only constant indicies are allowed for the first index of array shapes placed on multiple HBM banks"
-        )
+        except:
+            raise ValueError(
+                f"Only constant evaluatable indices allowed for HBM-memlets on the bank index. "
+            )
     return (low, high + 1)
 
 
