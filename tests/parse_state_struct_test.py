@@ -92,7 +92,8 @@ def test_preallocate_transients_in_state_struct(cuda_helper):
     state_struct = compiledsdfg.get_state_struct()
 
     # copy the B array into the transient ptr
-    cuda_helper.host_to_gpu(state_struct.persistent_transient, B.copy())
+    ptr = getattr(state_struct, f'__{sdfg.sdfg_id}_persistent_transient')
+    cuda_helper.host_to_gpu(ptr, B.copy())
     result = np.zeros_like(B)
     compiledsdfg(A=A, __return=result)
 

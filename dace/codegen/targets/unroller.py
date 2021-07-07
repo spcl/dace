@@ -37,18 +37,18 @@ class UnrollCodeGen(TargetCodeGenerator):
         return []
 
     #Generate new names for nsdfgs, and adds defined variables to constants
-    def nsdfg_prepare_unroll(self, scope : ScopeSubgraphView, paramname : str, paramval : str):
+    def nsdfg_prepare_unroll(self, scope: ScopeSubgraphView, paramname: str,
+                             paramval: str):
         backup = []
         for node in scope.nodes():
             if (isinstance(node, nd.NestedSDFG)):
-                backup.append((node, node.unique_name,
-                                node.sdfg.name,
-                                node.symbol_mapping,
-                                node.sdfg.constants_prop))
+                backup.append((node, node.unique_name, node.sdfg.name,
+                               node.symbol_mapping, node.sdfg.constants_prop))
                 node.unique_name = copy.deepcopy(node.unique_name)
                 node.sdfg.name = copy.deepcopy(node.sdfg.name)
                 node.symbol_mapping = copy.deepcopy(node.symbol_mapping)
-                node.sdfg.constants_prop = copy.deepcopy(node.sdfg.constants_prop)
+                node.sdfg.constants_prop = copy.deepcopy(
+                    node.sdfg.constants_prop)
                 node.unique_name = f"{node.unique_name}_{paramname}{paramval}"
                 node.sdfg.name = f"{node.sdfg.name}_{paramname}{paramval}"
                 for nstate in node.sdfg.nodes():
@@ -59,7 +59,7 @@ class UnrollCodeGen(TargetCodeGenerator):
                 node.sdfg.add_constant(paramname, int(paramval))
         return backup
 
-    def nsdfg_after_unroll(self, backup : "list[tuple[str, str, dict, dict]]"):
+    def nsdfg_after_unroll(self, backup: "list[tuple[str, str, dict, dict]]"):
         for node, unique_name, name, symbols, constants in backup:
             node.unique_name = unique_name
             node.sdfg.name = name
@@ -71,7 +71,7 @@ class UnrollCodeGen(TargetCodeGenerator):
                        state_id: int, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream):
 
-        entry_node : nd.MapEntry = scope.source_nodes()[0]
+        entry_node: nd.MapEntry = scope.source_nodes()[0]
         index_list = []
 
         for begin, end, stride in entry_node.map.range:
@@ -84,7 +84,8 @@ class UnrollCodeGen(TargetCodeGenerator):
         sdfgconsts = sdfg.constants_prop
         sdfg.constants_prop = copy.deepcopy(sdfg.constants_prop)
 
-        mapsymboltypes = entry_node.new_symbols(sdfg, scope, [entry_node.map.params])
+        mapsymboltypes = entry_node.new_symbols(sdfg, scope,
+                                                [entry_node.map.params])
         for indices in product(*index_list):
             callsite_stream.write('{')
             nsdfg_unroll_info = None
@@ -94,9 +95,9 @@ class UnrollCodeGen(TargetCodeGenerator):
                         scope, str(param), str(index))
                 else:
                     self.nsdfg_prepare_unroll(scope, str(param), str(index))
-                callsite_stream.write(f"constexpr {mapsymboltypes[param]} {param} = "
-                    f"{dace.codegen.targets.common.sym2cpp(index)};\n",
-                    sdfg)
+                callsite_stream.write(
+                    f"constexpr {mapsymboltypes[param]} {param} = "
+                    f"{dace.codegen.targets.common.sym2cpp(index)};\n", sdfg)
                 sdfg.add_constant(param, int(index))
 
             callsite_stream.write('{')

@@ -55,9 +55,24 @@ def copy_expr(
         offset_cppstr = "0"
     dt = ""
 
-    expr = ptr(dataname, datadesc)
+    expr = ptr(dataname, datadesc, sdfg)
 
-    def_type, _ = dispatcher.defined_vars.get(dataname)
+    is_global = datadesc.lifetime in (dtypes.AllocationLifetime.Global,
+                                      dtypes.AllocationLifetime.Persistent)
+    defined_types = None
+    try:
+        if (isinstance(datadesc, data.Array)
+                and not isinstance(datadesc, data.View) and any(
+                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                    for s in datadesc.free_symbols)):
+            defined_types = dispatcher.declared_arrays.get(dataname,
+                                                           is_global=is_global)
+    except KeyError:
+        pass
+    if not defined_types:
+        defined_types = dispatcher.defined_vars.get(dataname,
+                                                    is_global=is_global)
+    def_type, _ = defined_types
 
     add_offset = offset_cppstr != "0"
 
@@ -216,7 +231,7 @@ def memlet_copy_to_absolute_strides(dispatcher,
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
 
-def ptr(name: str, desc: data.Data) -> str:
+def ptr(name: str, desc: data.Data, sdfg: SDFG = None) -> str:
     """
     Returns a string that points to the data based on its name and descriptor.
     :param name: Data name.
@@ -229,7 +244,9 @@ def ptr(name: str, desc: data.Data) -> str:
             and desc.storage != dtypes.StorageType.CPU_ThreadLocal):
         from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
         if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
-            return f'__state->{name}'
+            if not sdfg:
+                raise ValueError("Missing SDFG value")
+            return f'__state->__{sdfg.sdfg_id}_{name}'
 
     return name
 
@@ -250,7 +267,7 @@ def emit_memlet_reference(dispatcher,
     """
     desc = sdfg.arrays[memlet.data]
     typedef = conntype.ctype
-    datadef = ptr(memlet.data, desc)
+    datadef = ptr(memlet.data, desc, sdfg)
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
@@ -258,8 +275,19 @@ def emit_memlet_reference(dispatcher,
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
-    defined_type, defined_ctype = dispatcher.defined_vars.get(
-        memlet.data, ancestor)
+    defined_types = None
+    try:
+        if (isinstance(desc, data.Array) and not isinstance(desc, data.View)
+                and any(
+                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                    for s in desc.free_symbols)):
+            defined_types = dispatcher.declared_arrays.get(
+                memlet.data, ancestor)
+    except KeyError:
+        pass
+    if not defined_types:
+        defined_types = dispatcher.defined_vars.get(memlet.data, ancestor)
+    defined_type, defined_ctype = defined_types
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface
                 and isinstance(desc, data.View))):
@@ -528,7 +556,7 @@ def cpp_array_expr(sdfg,
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     if with_brackets:
-        ptrname = ptr(memlet.data, desc)
+        ptrname = ptr(memlet.data, desc, sdfg)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
@@ -568,7 +596,7 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = indices
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
-    dname = ptr(memlet.data, desc)
+    dname = ptr(memlet.data, desc, sdfg)
 
     if defined_type == DefinedType.ArrayInterface:
         if is_write is None:

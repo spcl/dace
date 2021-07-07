@@ -134,8 +134,8 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
 
             idstr = 'b' + self._idstr(sdfg, state, node)
             stream = getattr(node, '_cuda_stream', -1)
-            outer_stream.write(self._record_event(idstr, stream),
-                               sdfg, state_id, node)
+            outer_stream.write(self._record_event(idstr, stream), sdfg,
+                               state_id, node)
 
     def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream,
                       global_stream):
@@ -145,8 +145,8 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         if s.instrument == dtypes.InstrumentationType.GPU_Events:
             idstr = 'e' + self._idstr(sdfg, state, entry_node)
             stream = getattr(node, '_cuda_stream', -1)
-            outer_stream.write(self._record_event(idstr, stream),
-                               sdfg, state_id, node)
+            outer_stream.write(self._record_event(idstr, stream), sdfg,
+                               state_id, node)
             outer_stream.write(
                 self._report('%s %s' % (type(s).__name__, s.label), sdfg, state,
                              entry_node), sdfg, state_id, node)
@@ -162,8 +162,8 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
             state_id = sdfg.node_id(state)
             idstr = 'b' + self._idstr(sdfg, state, node)
             stream = getattr(node, '_cuda_stream', -1)
-            outer_stream.write(self._record_event(idstr, stream),
-                               sdfg, state_id, node)
+            outer_stream.write(self._record_event(idstr, stream), sdfg,
+                               state_id, node)
 
     def on_node_end(self, sdfg, state, node, outer_stream, inner_stream,
                     global_stream):
@@ -176,8 +176,8 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
             state_id = sdfg.node_id(state)
             idstr = 'e' + self._idstr(sdfg, state, node)
             stream = getattr(node, '_cuda_stream', -1)
-            outer_stream.write(self._record_event(idstr, stream),
-                               sdfg, state_id, node)
+            outer_stream.write(self._record_event(idstr, stream), sdfg,
+                               state_id, node)
             outer_stream.write(
                 self._report('%s %s' % (type(node).__name__, node.label), sdfg,
                              state, node), sdfg, state_id, node)

@@ -1070,6 +1070,8 @@ class UnsqueezeViewRemove(pm.Transformation):
         for e in state.memlet_tree(vedge):
             e.data.data = out_array.data
             e.data.subset.unsqueeze(asqdims_mirror)
+            for i in asqdims_mirror:
+                e.data.subset.ranges[i] = aedge.data.subset.ranges[i]
 
         # Redirect original edge to point to data
         state.remove_edge(vedge)
