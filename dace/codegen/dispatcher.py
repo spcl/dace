@@ -10,7 +10,7 @@ from dace import config, data as dt, dtypes, nodes, registry
 from dace.codegen import exceptions as cgx, prettycode
 from dace.codegen.targets import target
 from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
-from typing import Tuple
+from typing import Dict, Tuple
 
 
 @registry.extensible_enum
@@ -51,7 +51,8 @@ class DefinedMemlets:
         except KeyError:
             return False
 
-    def get(self, name: str,
+    def get(self,
+            name: str,
             ancestor: int = 0,
             is_global: bool = False) -> Tuple[DefinedType, str]:
         last_visited_scope = None
@@ -68,7 +69,7 @@ class DefinedMemlets:
 
         # Search among globally defined variables (top scope), if not already visited
         # TODO: The following change makes it so we look in all top scopes, not
-        # just the very top-level one. However, it we are in a nested SDFG,
+        # just the very top-level one. However, ft we are in a nested SDFG,
         # then we must limit the search to that SDFG only. There is one
         # exception, when the data has Global or Persistent allocation lifetime.
         # Then, we expect it to be only in the very top-level scope.
@@ -137,8 +138,9 @@ class TargetDispatcher(object):
         # type: Dict[dace.dtypes.InstrumentationType, InstrumentationProvider]
         self.instrumentation = {}
 
-        self._array_dispatchers : dict[dtypes.StorageType, target.TargetCodeGenerator] = {
-        }  # Type: dtypes.StorageType -> TargetCodeGenerator
+        self._array_dispatchers: Dict[
+            dtypes.StorageType, target.TargetCodeGenerator] = {
+            }  # Type: dtypes.StorageType -> TargetCodeGenerator
         self._map_dispatchers = {
         }  # Type: dtypes.ScheduleType -> TargetCodeGenerator
         self._copy_dispatchers = {}  # Type: (dtypes.StorageType src,
@@ -159,12 +161,20 @@ class TargetDispatcher(object):
 
     @property
     def declared_arrays(self) -> DefinedMemlets:
-        """ Returns a list of declared variables. """
+        """ Returns a list of declared variables.
+        
+            This is used for variables that must have their declaration and
+            allocation separate. It includes all such variables that have been
+            declared by the dispatcher.
+        """
         return self._declared_arrays
 
     @property
     def defined_vars(self) -> DefinedMemlets:
-        """ Returns a list of defined variables. """
+        """ Returns a list of defined variables.
+        
+            This includes all variables defined by the dispatcher.
+        """
         return self._defined_vars
 
     @property
@@ -427,12 +437,16 @@ class TargetDispatcher(object):
             sdfg, sub_dfg, state_id, function_stream, callsite_stream)
         self.defined_vars.exit_scope(entry_node)
 
-    def dispatch_allocate(self, sdfg: SDFG, dfg: ScopeSubgraphView,
-                          state_id: int, node: nodes.AccessNode,
+    def dispatch_allocate(self,
+                          sdfg: SDFG,
+                          dfg: ScopeSubgraphView,
+                          state_id: int,
+                          node: nodes.AccessNode,
                           datadesc: dt.Data,
                           function_stream: prettycode.CodeIOStream,
                           callsite_stream: prettycode.CodeIOStream,
-                          declare: bool = True, allocate: bool = True):
+                          declare: bool = True,
+                          allocate: bool = True):
         """ Dispatches a code generator for data allocation. """
         self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
