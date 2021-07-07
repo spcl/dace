@@ -59,7 +59,20 @@ def copy_expr(
 
     is_global = datadesc.lifetime in (dtypes.AllocationLifetime.Global,
                                       dtypes.AllocationLifetime.Persistent)
-    def_type, _ = dispatcher.defined_vars.get(dataname, is_global=is_global)
+    defined_types = None
+    try:
+        if (isinstance(datadesc, data.Array)
+                and not isinstance(datadesc, data.View) and any(
+                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                    for s in datadesc.free_symbols)):
+            defined_types = dispatcher.declared_arrays.get(dataname,
+                                                           is_global=is_global)
+    except KeyError:
+        pass
+    if not defined_types:
+        defined_types = dispatcher.defined_vars.get(dataname,
+                                                    is_global=is_global)
+    def_type, _ = defined_types
 
     add_offset = offset_cppstr != "0"
 
