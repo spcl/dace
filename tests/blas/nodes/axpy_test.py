@@ -117,6 +117,7 @@ def fpga_graph(veclen, dtype, test_case, expansion):
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
     return sdfg
 
+
 def fpga_hbm_graph(veclen, dtype, expansion):
     sdfg = pure_graph(veclen, dtype, "fpga_hbm", expansion, False)
 
@@ -125,13 +126,17 @@ def fpga_hbm_graph(veclen, dtype, expansion):
     utils.update_array_shape(sdfg, "x", [banks_per_array, per_array_size])
     utils.update_array_shape(sdfg, "y", [banks_per_array, per_array_size])
     sdfg.arrays["x"].location["bank"] = f"hbm.0:{banks_per_array}"
-    sdfg.arrays["y"].location["bank"] = f"hbm.{banks_per_array}:{2*banks_per_array}"
+    sdfg.arrays["y"].location[
+        "bank"] = f"hbm.{banks_per_array}:{2*banks_per_array}"
     state = sdfg.states()[0]
     for node in state:
         if isinstance(node, nodes.AccessNode):
-            utils.update_path_subsets(state, node,
-                subsets.Range.from_string(f"0:{banks_per_array}, 0:{per_array_size}"))
-    libnode = list(filter(lambda x : isinstance(x, nodes.LibraryNode), state.nodes()))[0]
+            utils.update_path_subsets(
+                state, node,
+                subsets.Range.from_string(
+                    f"0:{banks_per_array}, 0:{per_array_size}"))
+    libnode = list(
+        filter(lambda x: isinstance(x, nodes.LibraryNode), state.nodes()))[0]
     libnode.n = dace.symbolic.pystr_to_symbolic("n/8")
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
     sdfg.expand_library_nodes()
@@ -140,11 +145,13 @@ def fpga_hbm_graph(veclen, dtype, expansion):
     sdfg.arrays["x"].storage = dtypes.StorageType.CPU_Heap
     sdfg.arrays["y"].storage = dtypes.StorageType.CPU_Heap
     for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
-        patterns=[hbm_copy_transform.HbmCopyTransform]):
+            patterns=[hbm_copy_transform.HbmCopyTransform]):
         xform.apply(sdfg)
-    sdfg.sdfg_list[3].symbols["a"] = sdfg.sdfg_list[2].symbols["a"] #Why does inference fail?
+    sdfg.sdfg_list[3].symbols["a"] = sdfg.sdfg_list[2].symbols[
+        "a"]  #Why does inference fail?
 
     return sdfg
+
 
 def stream_fpga_graph(veclen, precision, test_case, expansion):
     sdfg = fpga_graph(veclen, precision, test_case, expansion)
@@ -159,6 +166,7 @@ def stream_fpga_graph(veclen, precision, test_case, expansion):
 def _test_fpga(target):
     configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
     run_test(configs, target)
+
 
 if __name__ == "__main__":
 
