@@ -71,6 +71,9 @@ def test_load_precompiled():
 
     assert (np.allclose(output_one, output_two))
 
+    del func1
+    del func2
+
 
 if __name__ == '__main__':
     test_reload()
