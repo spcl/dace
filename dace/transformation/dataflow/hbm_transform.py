@@ -12,9 +12,9 @@ from dace import SDFG, SDFGState, memlet
 @properties.make_properties
 class HbmTransform(transformation.Transformation):
     ######################
-    #Properties
+    # Properties
 
-    #dtype=List[Tuple[SDFGState, Union[nd.AccessNode, graph.MultiConnectorEdge], symbolic.symbol)]]
+    # dtype=List[Tuple[SDFGState, Union[nd.AccessNode, graph.MultiConnectorEdge], symbolic.symbol)]]
     update_hbm_access_list = properties.Property(
         dtype=List,
         default=[],
@@ -24,7 +24,7 @@ class HbmTransform(transformation.Transformation):
          "with an AccessNode, this may also be used to specify which path to modify. "
          ))
 
-    #dtype=List[Tuple[str, str]]
+    # dtype=List[Tuple[str, str]]
     update_array_list = properties.Property(
         dtype=List,
         default=[],
@@ -39,7 +39,7 @@ class HbmTransform(transformation.Transformation):
         desc="Stores the range for the outer HBM map. Defaults to k = 0.")
 
     ######################
-    #functions for avoiding long unsplitted code
+    # Helpers
 
     def _multiply_sdfg_executions(self, sdfg: SDFG,
                                   unrollparams: Union[Dict[str, str],
@@ -149,7 +149,7 @@ class HbmTransform(transformation.Transformation):
         desc.storage = dtypes.StorageType.FPGA_Global
 
     ######################
-    #public methods
+    # public
 
     @staticmethod
     def can_be_applied(self, graph: Union[SDFG, SDFGState],
@@ -163,7 +163,7 @@ class HbmTransform(transformation.Transformation):
         return [networkx.DiGraph()]
 
     def apply(self, sdfg: SDFG) -> Union[Any, None]:
-        #update memlet subset to access hbm
+        # update memlet subset to access hbm
         for path_desc_state, path_description, subset_index in self.update_hbm_access_list:
             if isinstance(path_description, nd.AccessNode):
                 path_description = utils.accessnode_to_innermost_edge(
@@ -171,9 +171,9 @@ class HbmTransform(transformation.Transformation):
             self._update_memlet_hbm(path_desc_state, path_description,
                                     subset_index)
 
-        #update array bank positions
+        # update array bank positions
         for array_name, bankprop in self.update_array_list:
             self._update_array_hbm(array_name, bankprop, sdfg)
 
-        #nest the sdfg and execute in parallel
+        # nest the sdfg and execute in parallel
         self._multiply_sdfg_executions(sdfg, self.outer_map_range)

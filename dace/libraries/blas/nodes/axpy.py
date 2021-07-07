@@ -221,10 +221,9 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
             parse_x = utils.parse_location_bank(desc_x)
             parse_y = utils.parse_location_bank(desc_y)
             parse_z = utils.parse_location_bank(desc_z)
-            if (parse_x[0] != "HBM" or parse_y[0] != "HBM"
-                    or parse_z[0] != "HBM"):
-                raise ValueError("All attached arrays must be on HBM for this "
-                                 "axpy implementation")
+            if parse_x is None or parse_y is None or parse_z is None:
+                raise ValueError("All attached arrays must be placed explicitly in memory "
+                                 "for this axpy implementation")
             low1, high1 = utils.get_multibank_ranges_from_subset(
                 parse_x[1], sdfg)
             low2, high2 = utils.get_multibank_ranges_from_subset(

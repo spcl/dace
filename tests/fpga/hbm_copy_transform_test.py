@@ -20,7 +20,7 @@ def test_even_split_3d():
     assert np.allclose(a[0:50, 50:100, 0:50], b[2, :, :, :])
 
 
-def test_sec_dim_split_2d():
+def test_second_dim_split_2d():
     sdfg = dace.SDFG("hbm_copy_transform_sec_dim_split2d")
     s, a, b = mkc(sdfg, None, "a", "b", StorageType.CPU_Heap,
                   StorageType.CPU_Heap, [10, 100], [10, 10, 10], "b")
@@ -51,5 +51,5 @@ def test_explicit_split_3d():
 
 if __name__ == "__main__":
     test_even_split_3d()
-    test_sec_dim_split_2d()
+    test_second_dim_split_2d()
     test_explicit_split_3d()

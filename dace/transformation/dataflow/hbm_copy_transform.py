@@ -1,12 +1,11 @@
 from typing import Any, Dict, Iterable, List, Tuple, Union
 
-import networkx
-from networkx.algorithms.centrality import current_flow_betweenness
-from dace import dtypes, properties, registry, subsets, symbolic
-from dace.sdfg import utils, graph
-from dace.transformation import transformation, interstate
+from dace import dtypes, properties, registry
+from dace.sdfg import utils
+from dace.transformation import transformation
 from dace.sdfg import nodes as nd
 from dace import SDFG, SDFGState, memlet
+import functools
 
 
 @registry.autoregister_params(singlestate=True)
@@ -26,18 +25,18 @@ class HbmCopyTransform(transformation.Transformation):
         "If None, then the transform will try to split equally in each dimension."
     )
 
-    def _get_split_size(self, virtualshape: Iterable,
-                        splitcount: List[int]) -> List[int]:
+    def _get_split_size(self, virtual_shape: Iterable,
+                        split_count: List[int]) -> List[int]:
         """
-        :returns: the shape of a part-array on one HBMbank
+        :return: the shape of a part-array on one HBMbank
         """
-        newshapelist = []
-        for d in range(len(virtualshape)):
-            if splitcount[d] != 1:
-                newshapelist.append(virtualshape[d] // splitcount[d])
+        new_shape_list = []
+        for d in range(len(virtual_shape)):
+            if split_count[d] != 1:
+                new_shape_list.append(virtual_shape[d] // split_count[d])
             else:
-                newshapelist.append(virtualshape[d])
-        return newshapelist
+                new_shape_list.append(virtual_shape[d])
+        return new_shape_list
 
     @staticmethod
     def can_be_applied(graph: Union[SDFG, SDFGState],
@@ -48,7 +47,7 @@ class HbmCopyTransform(transformation.Transformation):
         src_array = sdfg.arrays[src.data]
         dst_array = sdfg.arrays[dst.data]
 
-        #same dimensions means HBM-array needs 1 dimension more
+        # same dimensions means HBM-array needs 1 dimension more
         collect_src = len(src_array.shape) - 1 == len(dst_array.shape)
         distribute_dst = len(src_array.shape) + 1 == len(dst_array.shape)
         if collect_src:
@@ -71,7 +70,7 @@ class HbmCopyTransform(transformation.Transformation):
         ]
 
     def apply(self, sdfg: SDFG) -> Union[Any, None]:
-        #Load/parse infos from the SDFG
+        # Load/parse infos from the SDFG
         graph = sdfg.nodes()[self.state_id]
         src = graph.nodes()[self.subgraph[HbmCopyTransform._src_node]]
         dst = graph.nodes()[self.subgraph[HbmCopyTransform._dst_node]]
@@ -79,7 +78,7 @@ class HbmCopyTransform(transformation.Transformation):
         dst_array = sdfg.arrays[dst.data]
         collect_src = len(src_array.shape) - 1 == len(
             dst_array.shape
-        )  #If this is not true distribute_dst is (checked in can_apply)
+        )  # If this is not true we have to distribute to dst (checked in can_apply)
         if collect_src:
             bank_count = int(src_array.shape[0])
             true_size = dst_array.shape
@@ -88,13 +87,9 @@ class HbmCopyTransform(transformation.Transformation):
             true_size = src_array.shape
         ndim = len(true_size)
 
-        #Figure out how to split
+        # Figure out how to split
         if self.split_array_info is None:
             tmp_split = round((bank_count)**(1 / ndim))
-            if tmp_split**ndim != bank_count:
-                raise RuntimeError(
-                    "Splitting equally is not possible with "
-                    "this array dimension and number of HBM-banks")
             split_info = [tmp_split] * ndim
         else:
             split_info = self.split_array_info
@@ -102,8 +97,13 @@ class HbmCopyTransform(transformation.Transformation):
                 raise RuntimeError(
                     "Length of split_array_info must match number of "
                     "dimensions")
+        if functools.reduce(lambda a,b : a*b, split_info) != bank_count:
+            raise RuntimeError(
+                "Splitting is not possible with the selected splits"
+                "and this number of HBM-banks (required number of banks "
+                "!= actual number of banks)")
 
-        #create the copy-subgraph
+        # create the copy-subgraph
         ndrange = dict()
         usable_params = ["i", "j", "k"]
         for i in range(ndim):

@@ -1153,8 +1153,7 @@ def accessnode_to_innermost_edge(state: SDFGState, node: nd.AccessNode):
     some_edge = list(state.all_edges(node))
     if len(some_edge) != 1:
         raise ValueError(
-            "You may not specify an AccessNode in the update_access_list or in "
-            "update_hbm_access_list if it does not have exactly one attached memlet path"
+            "There has to be exactly one attached edge"
         )
     some_edge = some_edge[0]
     if some_edge.dst == node:

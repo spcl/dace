@@ -148,7 +148,7 @@ def fpga_hbm_graph(veclen, dtype, expansion):
             patterns=[hbm_copy_transform.HbmCopyTransform]):
         xform.apply(sdfg)
     sdfg.sdfg_list[3].symbols["a"] = sdfg.sdfg_list[2].symbols[
-        "a"]  #Why does inference fail?
+        "a"]  # Why does inference fail?
 
     return sdfg
 
