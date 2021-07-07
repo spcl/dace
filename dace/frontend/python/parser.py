@@ -155,6 +155,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.auto_optimize = auto_optimize
         self.device = device
         self._methodobj: Any = None  #: Object whose method this program is
+        self.validate: bool = True  #: Whether to validate on code generation
 
         self.global_vars = _get_locals_and_globals(f)
         self.signature = inspect.signature(f)
@@ -224,7 +225,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
             sdfg = self._auto_optimize(sdfg)
 
-        return sdfg.compile()
+        return sdfg.compile(validate=self.validate)
 
     def is_cached(self, argtypes: ArgTypes, gvars: Dict[str, Any]) -> bool:
         """
@@ -340,7 +341,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
-        binaryobj = sdfg.compile()
+        binaryobj = sdfg.compile(validate=self.validate)
 
         self._cache = ({**argtypes, **gvars}, sdfg, binaryobj)
 
