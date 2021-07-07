@@ -3,6 +3,7 @@
 import click
 from datetime import datetime
 import multiprocessing as mp
+from multiprocessing import pool as mpool
 from pathlib import Path
 import re
 import subprocess as sp
@@ -59,7 +60,8 @@ def dump_logs(proc_or_logs: Union[sp.CompletedProcess, Tuple[str, str]]):
 
 def run_parallel(test_func, tests, sequentialize):
     # Run tests in parallel using default number of workers
-    with mp.Pool(1 if sequentialize else None) as pool:
+    # with mp.Pool(1 if sequentialize else None) as pool:
+    with mpool.ThreadPool(1 if sequentialize else None) as pool:
         results = pool.starmap(test_func, tests)
         if all(results):
             print_success("All tests passed.")

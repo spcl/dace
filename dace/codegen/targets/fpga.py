@@ -303,7 +303,7 @@ class FPGACodeGen(TargetCodeGenerator):
                             and not isinstance(data, dt.View)):
                         allocated.add(node.data)
                         self._dispatcher.dispatch_allocate(
-                            sdfg, kern, state_id, node, function_stream,
+                            sdfg, kern, state_id, node, data, function_stream,
                             callsite_stream)
 
                 # Create a unique kernel name to avoid name clashes
@@ -409,7 +409,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 allocated.add(node.data)
                 # Allocate transients
                 self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                                   function_stream,
+                                                   data, function_stream,
                                                    callsite_stream)
 
             self.generate_nested_state(sdfg, state, state.label, subgraphs,
@@ -690,12 +690,67 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                            callsite_stream,
                                            skip_entry_node=True)
 
-    def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                       declaration_stream, allocation_stream):
+    def declare_array(self, sdfg, dfg, state_id, node, nodedesc,
+                      function_stream, declaration_stream):
+
+        if not (isinstance(nodedesc, dt.Array)
+                and not isinstance(nodedesc, dt.View) and any(
+                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                    for s in nodedesc.free_symbols)):
+            raise NotImplementedError(
+                "The declare_array method should only be used for variables "
+                "that must have their declaration and allocation separate. "
+                "Currently, we support only Arrays (not Views) depedent on "
+                "non-free SDFG symbols.")
+
+        result_decl = StringIO()
+        arrsize = nodedesc.total_size
+        dataname = node.data
+
+        # Check if array is already declared
+        if self._dispatcher.declared_arrays.has(dataname):
+            return
+
+        allocname = cpp.ptr(dataname, nodedesc, sdfg)
+
+        if nodedesc.storage == dtypes.StorageType.FPGA_Global:
+
+            if self._in_device_code:
+
+                if nodedesc not in self._allocated_global_arrays:
+                    raise RuntimeError("Cannot allocate global array "
+                                       "from device code: {} in {}".format(
+                                           node.label, sdfg.name))
+
+            else:
+                # TODO: Distinguish between read, write, and read+write
+                # Define buffer, using proper type
+                result_decl.write(
+                    "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};"
+                    .format(nodedesc.dtype.ctype, dataname))
+                self._dispatcher.declared_arrays.add(
+                    dataname, DefinedType.Pointer,
+                    'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'.
+                    format(nodedesc.dtype.ctype))
+        elif (nodedesc.storage in (dtypes.StorageType.FPGA_Local,
+                                   dtypes.StorageType.FPGA_Registers,
+                                   dtypes.StorageType.FPGA_ShiftRegister)):
+
+            raise ValueError("Dynamic allocation of FPGA "
+                             "fast memory not allowed: {}, size {}".format(
+                                 dataname, arrsize))
+
+        else:
+            raise NotImplementedError("Unimplemented storage type " +
+                                      str(nodedesc.storage))
+
+        declaration_stream.write(result_decl.getvalue(), sdfg, state_id, node)
+
+    def allocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                       function_stream, declaration_stream, allocation_stream):
 
         result_decl = StringIO()
         result_alloc = StringIO()
-        nodedesc = node.desc(sdfg)
         arrsize = nodedesc.total_size
         is_dynamically_sized = dace.symbolic.issymbolic(arrsize, sdfg.constants)
         dataname = node.data
@@ -704,13 +759,13 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             # Unless this is a Stream, if the variable has been already defined we can return
             # For Streams, we still allocate them to keep track of their names across
             # nested SDFGs (needed by Intel FPGA backend for channel mangling)
-            try:
-                self._dispatcher.defined_vars.get(dataname)
+            if self._dispatcher.defined_vars.has(dataname):
                 return
-            except KeyError:
-                pass  # The variable was not defined,  we can continue
 
-        allocname = cpp.ptr(dataname, nodedesc)
+        # Check if array is already declared
+        declared = self._dispatcher.declared_arrays.has(dataname)
+
+        allocname = cpp.ptr(dataname, nodedesc, sdfg)
 
         if isinstance(nodedesc, dt.View):
             return self.allocate_view(sdfg, dfg, state_id, node,
@@ -779,9 +834,10 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                 f"hlslib::ocl::MemoryBank::bank{bank}, ")
 
                         # Define buffer, using proper type
-                        result_decl.write(
-                            "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};"
-                            .format(nodedesc.dtype.ctype, dataname))
+                        if not declared:
+                            result_decl.write(
+                                "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};"
+                                .format(nodedesc.dtype.ctype, dataname))
                         result_alloc.write(
                             "{} = __state->fpga_context->Get()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
@@ -844,8 +900,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         declaration_stream.write(result_decl.getvalue(), sdfg, state_id, node)
         allocation_stream.write(result_alloc.getvalue(), sdfg, state_id, node)
 
-    def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
+    def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                         function_stream, callsite_stream):
         pass  # Handled by destructor
 
     def partition_kernels(self, state: dace.SDFGState, default_kernel: int = 0):
@@ -1099,7 +1155,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
             if host_to_device:
 
-                ptr_str = (cpp.ptr(src_node.data, src_nodedesc) +
+                ptr_str = (cpp.ptr(src_node.data, src_nodedesc, sdfg) +
                            (" + {}".format(offset)
                             if outgoing_memlet and str(offset) != "0" else ""))
                 if cast:
@@ -1108,13 +1164,13 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
                 callsite_stream.write(
                     "{}.CopyFromHost({}, {}, {});".format(
-                        cpp.ptr(dst_node.data, dst_nodedesc),
+                        cpp.ptr(dst_node.data, dst_nodedesc, sdfg),
                         (offset if not outgoing_memlet else 0), copysize,
                         ptr_str), sdfg, state_id, [src_node, dst_node])
 
             elif device_to_host:
 
-                ptr_str = (cpp.ptr(dst_node.data, dst_nodedesc) +
+                ptr_str = (cpp.ptr(dst_node.data, dst_nodedesc, sdfg) +
                            (" + {}".format(offset)
                             if outgoing_memlet and str(offset) != "0" else ""))
                 if cast:
@@ -1123,7 +1179,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
                 callsite_stream.write(
                     "{}.CopyToHost({}, {}, {});".format(
-                        cpp.ptr(src_node.data, src_nodedesc),
+                        cpp.ptr(src_node.data, src_nodedesc, sdfg),
                         (offset if outgoing_memlet else 0), copysize, ptr_str),
                     sdfg, state_id, [src_node, dst_node])
 
@@ -1131,11 +1187,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
                 callsite_stream.write(
                     "{}.CopyToDevice({}, {}, {}, {});".format(
-                        cpp.ptr(src_node.data, src_nodedesc),
+                        cpp.ptr(src_node.data, src_nodedesc, sdfg),
                         (offset if outgoing_memlet else 0), copysize,
-                        cpp.ptr(dst_node.data, dst_nodedesc),
-                        (offset if not outgoing_memlet else 0)), sdfg, state_id,
-                    [src_node, dst_node])
+                        cpp.ptr(dst_node.data, dst_nodedesc,
+                                sdfg), (offset if not outgoing_memlet else 0)),
+                    sdfg, state_id, [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data
@@ -1676,8 +1732,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             if child.data not in to_allocate or child.data in allocated:
                 continue
             allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child, None,
-                                               result)
+            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child,
+                                               child.desc(sdfg), None, result)
 
     def _generate_PipelineExit(self, *args, **kwargs):
         self._generate_MapExit(*args, **kwargs)
@@ -1863,7 +1919,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         # allocated and passed to the kernel
         for arr_node in nested_global_transients:
             self._dispatcher.dispatch_allocate(sdfg, state, None, arr_node,
-                                               None, host_code_stream)
+                                               arr_node.desc(sdfg), None,
+                                               host_code_stream)
 
     def _generate_Tasklet(self, *args, **kwargs):
         # Call CPU implementation with this code generator as callback
