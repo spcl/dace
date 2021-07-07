@@ -3,7 +3,7 @@ import copy
 import dace
 
 
-def make_sdfg(dtype, name="pipeline_test"):
+def make_sdfg(dtype, name="pipeline_test", input_device_bank="ddr.0", output_device_bank="ddr.1"):
 
     n = dace.symbol("N")
     k = dace.symbol("K")
@@ -111,17 +111,11 @@ else:
 
     return sdfg
 
-
-if __name__ == "__main__":
-
-    import numpy as np
-
-    dtype = np.float64
+def exec_pipeline_scope(jacobi):
     n = 16
     k = 24
     m = 32
 
-    jacobi = make_sdfg(dtype=dtype)
     jacobi.specialize({"N": n, "K": k, "M": m})
 
     a = np.arange(n * k * m, dtype=dtype).reshape((n, k, m))
@@ -138,3 +132,11 @@ if __name__ == "__main__":
         print(b)
         print(ref)
         raise ValueError("Unexpected output.")
+
+if __name__ == "__main__":
+
+    import numpy as np
+    dtype = np.float64
+
+    jacobi = make_sdfg(dtype=dtype)
+    exec_pipeline_scope(jacobi)
