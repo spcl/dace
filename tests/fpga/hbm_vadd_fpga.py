@@ -125,7 +125,8 @@ def exec_test(dim, size1D, banks, test_name, unroll_map_inside=False):
 
 
 if __name__ == '__main__':
-    exec_test(1, 50, 2, "vadd_2b1d")  #2 banks, 1 dimensional
-    exec_test(2, 50, 2, "vadd_2b2d")  #2 banks 2 dimensional
-    exec_test(3, 10, 2, "vadd_2b3d")  #2 banks 3 dimensional
-    exec_test(1, 50, 8, "vadd_8b1d", True)  #8 banks 1d, 1 pipeline
+    exec_test(1, 50, 1, "vadd_1b1d")  # 1 bank, 1 dimensional
+    exec_test(1, 50, 2, "vadd_2b1d")  # 2 banks, 1 dimensional
+    exec_test(2, 50, 2, "vadd_2b2d")  # 2 banks 2 dimensional
+    exec_test(3, 10, 2, "vadd_2b3d")  # 2 banks 3 dimensional
+    exec_test(1, 50, 8, "vadd_8b1d", True)  # 8 banks 1d, 1 pipeline

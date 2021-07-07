@@ -17,7 +17,7 @@ from fpga_testing import (Colors, DACE_DIR, TEST_DIR, cli, dump_logs,
 TESTS = [
     ("tests/fpga/remove_degenerate_loop.py", "remove_degenerate_loop_test",
      True, True, []),
-    ("tests/fpga/pipeline_scope.py", "pipeline_test", True, True, []),
+    ("tests/fpga/pipeline_scope.py", ["pipeline_test", "pipeline_test_hbm"], True, True, []),
     ("tests/fpga/veclen_copy_conversion.py", "veclen_copy_conversion", True,
      True, []),
     ("samples/fpga/axpy_transformed.py", "axpy_fpga_24", True, True, [24]),
@@ -81,7 +81,7 @@ TESTS = [
         "kernels_inside_component_2_1", "kernels_inside_components_0_1",
         "kernels_lns_inside_component_1", "multiple_kernels_multiple_states"
     ], True, False, []),
-    ("tests/fpga/hbm_vadd_fpga.py", ["vadd_2b1d_1", "vadd_2b2d_1",
+    ("tests/fpga/hbm_vadd_fpga.py", ["vadd_1b1d_1", "vadd_2b1d_1", "vadd_2b2d_1",
      "vadd_2b3d_1", "vadd_8b1d_1"], True, False, []),
       # For hbm_reduction not all sdfgs are added, since relatively redundant
      ("tests/fpga/hbm_reduce_fpga.py", ["red_2x3_2b_1", "red_1x40_8b_1", 

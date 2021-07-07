@@ -21,11 +21,11 @@ def make_sdfg(dtype, name="pipeline_test", input_device_bank="ddr.0", output_dev
     _, desc_output_host = sdfg.add_array("b", (n, k, m), dtype)
     desc_input_device = copy.copy(desc_input_host)
     desc_input_device.storage = dace.StorageType.FPGA_Global
-    desc_input_device.location["bank"] = "ddr.0"
+    desc_input_device.location["bank"] = input_device_bank
     desc_input_device.transient = True
     desc_output_device = copy.copy(desc_output_host)
     desc_output_device.storage = dace.StorageType.FPGA_Global
-    desc_output_device.location["bank"] = "ddr.1"
+    desc_output_device.location["bank"] = output_device_bank
     desc_output_device.transient = True
     sdfg.add_datadesc("a_device", desc_input_device)
     sdfg.add_datadesc("b_device", desc_output_device)
@@ -139,4 +139,6 @@ if __name__ == "__main__":
     dtype = np.float64
 
     jacobi = make_sdfg(dtype=dtype)
+    exec_pipeline_scope(jacobi)
+    jacobi = make_sdfg(dtype, "pipeline_test_hbm", "hbm.1", "hbm.4")
     exec_pipeline_scope(jacobi)
