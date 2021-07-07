@@ -3,7 +3,10 @@ import copy
 import dace
 
 
-def make_sdfg(dtype, name="pipeline_test", input_device_bank="ddr.0", output_device_bank="ddr.1"):
+def make_sdfg(dtype,
+              name="pipeline_test",
+              input_device_bank="ddr.0",
+              output_device_bank="ddr.1"):
 
     n = dace.symbol("N")
     k = dace.symbol("K")
@@ -111,6 +114,7 @@ else:
 
     return sdfg
 
+
 def exec_pipeline_scope(jacobi):
     n = 16
     k = 24
@@ -132,6 +136,7 @@ def exec_pipeline_scope(jacobi):
         print(b)
         print(ref)
         raise ValueError("Unexpected output.")
+
 
 if __name__ == "__main__":
 

@@ -1043,6 +1043,7 @@ def is_hbm_array(array: dt.Data):
     else:
         return False
 
+
 def is_hbm_array_with_distributed_index(array: dt.Data):
     """
     :return: True if this array is placed on HBM and has a 'fake' first 
@@ -1055,6 +1056,7 @@ def is_hbm_array_with_distributed_index(array: dt.Data):
         return high - low > 1 or str(array.shape[0]) == "1"
     else:
         return False
+
 
 def iterate_hbm_multibank_arrays(array_name: str, array: dt.Array, sdfg: SDFG):
     """
@@ -1124,8 +1126,7 @@ def get_multibank_ranges_from_subset(subset: Union[sbs.Subset, str],
         except:
             raise ValueError(
                 "Only constant indicies are allowed for the first index of array shapes "
-                "placed on multiple HBM banks and HBM bank assignments"
-            )
+                "placed on multiple HBM banks and HBM bank assignments")
     else:
         try:
             low = int(symbolic.resolve_symbol_to_constant(low, sdfg))
