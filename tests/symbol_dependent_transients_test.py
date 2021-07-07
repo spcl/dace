@@ -70,6 +70,7 @@ def test_symbol_dependent_heap_array():
     # Compile manually to avoid strict transformations
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
+    del sdfg_exec
     B_ref = np.ndarray(10, dtype=np.float64)
     for i in range(10):
         tmp = A[2:-2, 2:-2, i:]
@@ -85,6 +86,7 @@ def test_symbol_dependent_register_array():
     # Compile manually to avoid strict transformations
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
+    del sdfg_exec
     B_ref = np.ndarray(10, dtype=np.float64)
     for i in range(10):
         tmp = A[2:-2, 2:-2, i:]
@@ -100,6 +102,7 @@ def test_symbol_dependent_threadlocal_array():
     # Compile manually to avoid strict transformations
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
+    del sdfg_exec
     B_ref = np.ndarray(10, dtype=np.float64)
     for i in range(10):
         tmp = A[2:-2, 2:-2, i:]
@@ -116,6 +119,7 @@ def test_symbol_dependent_gpu_global_array():
     # Compile manually to avoid strict transformations
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
+    del sdfg_exec
     B_ref = np.ndarray(10, dtype=np.float64)
     for i in range(10):
         tmp = A[2:-2, 2:-2, i:]
@@ -132,6 +136,7 @@ def test_symbol_dependent_pinned_array():
     # Compile manually to avoid strict transformations
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
+    del sdfg_exec
     B_ref = np.ndarray(10, dtype=np.float64)
     for i in range(10):
         tmp = A[2:-2, 2:-2, i:]
@@ -148,6 +153,7 @@ def test_symbol_dependent_fpga_global_array():
     # Compile manually to avoid strict transformations
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
+    del sdfg_exec
     B_ref = np.ndarray(10, dtype=np.float64)
     for i in range(10):
         tmp = A[2:-2, 2:-2, i:]
