@@ -335,19 +335,19 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc,
                       function_stream, declaration_stream):
 
-        # NOTE: We currently only support Arrays (not Views)
-        # that are dependent on non-free SDFG symbols.
-        assert (isinstance(nodedesc, dt.Array)
+        if not (isinstance(nodedesc, dt.Array)
                 and not isinstance(nodedesc, dt.View) and any(
                     str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in nodedesc.free_symbols))
+                    for s in nodedesc.free_symbols)):
+            raise NotImplementedError(
+                "The declare_array method should only be used for variables "
+                "that must have their declaration and allocation separate. "
+                "Currently, we support only Arrays (not Views) depedent on "
+                "non-free SDFG symbols.")
 
         # Check if array is already declared
-        try:
-            self._dispatcher.declared_arrays.get(node.data)
-            return  # Array was already declared in this or upper scopes
-        except KeyError:  # Array not declared yet
-            pass
+        if self._dispatcher.declared_arrays.has(node.data):
+            return
 
         result_decl = StringIO()
         ctypedef = '%s *' % nodedesc.dtype.ctype
