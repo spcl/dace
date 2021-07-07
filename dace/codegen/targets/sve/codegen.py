@@ -30,6 +30,7 @@ import numpy as np
 from dace.codegen.targets.cpp import is_write_conflicted
 from dace import data as data
 from dace.frontend.operations import detect_reduction_type
+import dace.codegen.targets
 
 
 @dace.registry.autoregister_params(name='sve')
@@ -57,7 +58,8 @@ class SVECodeGen(TargetCodeGenerator):
             self, lambda state, sdfg, node: is_in_scope(
                 state, sdfg, node, [dace.ScheduleType.SVE_Map]))
 
-        self.cpu_codegen = self.dispatcher.get_generic_node_dispatcher()
+        self.cpu_codegen: dace.codegen.targets.CPUCodeGen = self.dispatcher.get_generic_node_dispatcher(
+        )
 
     def generate_node(self, sdfg: SDFG, state: SDFGState, state_id: int,
                       node: nodes.Node, function_stream: CodeIOStream,
@@ -412,7 +414,7 @@ class SVECodeGen(TargetCodeGenerator):
                 else:
                     # Arrays defined within a scope
                     self.cpu_codegen.allocate_array(sdfg, scope, state_id, node,
-                                                    function_stream,
+                                                    desc, function_stream,
                                                     callsite_stream,
                                                     callsite_stream)
             elif isinstance(node, nodes.Tasklet):
@@ -434,12 +436,14 @@ class SVECodeGen(TargetCodeGenerator):
         # Deallocate scope related memory
         already_deallocated = []
         for node, _ in scope.all_nodes_recursive():
-            if isinstance(node, nodes.AccessNode) and node.desc(
-                    sdfg) not in already_deallocated:
-                self.cpu_codegen.deallocate_array(sdfg, scope, state_id, node,
-                                                  function_stream,
-                                                  callsite_stream)
-                already_deallocated.append(node.desc(sdfg))
+            if isinstance(node, nodes.AccessNode):
+                desc = node.desc(sdfg)
+                if desc not in already_deallocated:
+                    self.cpu_codegen.deallocate_array(sdfg, scope, state_id,
+                                                      node, desc,
+                                                      function_stream,
+                                                      callsite_stream)
+                    already_deallocated.append(node.desc(sdfg))
 
         # Increase the counting variable (according to the number of processed elements)
         callsite_stream.write(
