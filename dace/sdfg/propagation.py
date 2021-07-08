@@ -641,6 +641,10 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
                         iedge.data.assignments[itvar]).free_symbols:
                     increment_edge = iedge
                     break
+            # NOTE: If an increment edge was not found, then the state cannot
+            # be a valid guard state.
+            if not increment_edge:
+                continue
             if increment_edge.src not in cycle:
                 continue
 
