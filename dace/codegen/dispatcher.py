@@ -7,10 +7,10 @@ functionality to registered code generators based on user-defined predicates.
 from dace.codegen.prettycode import CodeIOStream
 import aenum
 from dace import config, data as dt, dtypes, nodes, registry
-from dace.codegen import exceptions as cgx
+from dace.codegen import exceptions as cgx, prettycode
 from dace.codegen.targets import target
-from dace.sdfg import utils as sdutil
-from typing import Tuple
+from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
+from typing import Dict, Tuple
 
 
 @registry.extensible_enum
@@ -51,9 +51,13 @@ class DefinedMemlets:
         except KeyError:
             return False
 
-    def get(self, name: str, ancestor: int = 0) -> Tuple[DefinedType, str]:
+    def get(self,
+            name: str,
+            ancestor: int = 0,
+            is_global: bool = False) -> Tuple[DefinedType, str]:
         last_visited_scope = None
-        for _, scope, can_access_parent in reversed(self._scopes):
+        for parent, scope, can_access_parent in reversed(self._scopes):
+            last_parent = parent
             last_visited_scope = scope
             if ancestor > 0:
                 ancestor -= 1
@@ -64,9 +68,23 @@ class DefinedMemlets:
                 break
 
         # Search among globally defined variables (top scope), if not already visited
-        if last_visited_scope != self._scopes[0]:
-            if name in self._scopes[0][1]:
-                return self._scopes[0][1][name]
+        # TODO: The following change makes it so we look in all top scopes, not
+        # just the very top-level one. However, ft we are in a nested SDFG,
+        # then we must limit the search to that SDFG only. There is one
+        # exception, when the data has Global or Persistent allocation lifetime.
+        # Then, we expect it to be only in the very top-level scope.
+        # if last_visited_scope != self._scopes[0]:
+        #     if name in self._scopes[0][1]:
+        #         return self._scopes[0][1][name]
+        if is_global:
+            last_parent = None
+        if last_parent:
+            if isinstance(last_parent, SDFGState):
+                last_parent = last_parent.parent
+        for parent, scope, _ in self._scopes:
+            if not last_parent or parent == last_parent:
+                if name in scope:
+                    return scope[name]
 
         raise KeyError("Variable {} has not been defined".format(name))
 
@@ -120,8 +138,9 @@ class TargetDispatcher(object):
         # type: Dict[dace.dtypes.InstrumentationType, InstrumentationProvider]
         self.instrumentation = {}
 
-        self._array_dispatchers = {
-        }  # Type: dtypes.StorageType -> TargetCodeGenerator
+        self._array_dispatchers: Dict[
+            dtypes.StorageType, target.TargetCodeGenerator] = {
+            }  # Type: dtypes.StorageType -> TargetCodeGenerator
         self._map_dispatchers = {
         }  # Type: dtypes.ScheduleType -> TargetCodeGenerator
         self._copy_dispatchers = {}  # Type: (dtypes.StorageType src,
@@ -137,11 +156,25 @@ class TargetDispatcher(object):
         self._state_dispatchers = []  # [(predicate, dispatcher)]
         self._generic_state_dispatcher = None  # Type: TargetCodeGenerator
 
+        self._declared_arrays = DefinedMemlets()
         self._defined_vars = DefinedMemlets()
 
     @property
+    def declared_arrays(self) -> DefinedMemlets:
+        """ Returns a list of declared variables.
+        
+            This is used for variables that must have their declaration and
+            allocation separate. It includes all such variables that have been
+            declared by the dispatcher.
+        """
+        return self._declared_arrays
+
+    @property
     def defined_vars(self) -> DefinedMemlets:
-        """ Returns a list of defined variables. """
+        """ Returns a list of defined variables.
+        
+            This includes all variables defined by the dispatcher.
+        """
         return self._defined_vars
 
     @property
@@ -404,45 +437,48 @@ class TargetDispatcher(object):
             sdfg, sub_dfg, state_id, function_stream, callsite_stream)
         self.defined_vars.exit_scope(entry_node)
 
-    def dispatch_allocate(self, sdfg, dfg, state_id, node, function_stream,
-                          allocation_stream):
+    def dispatch_allocate(self,
+                          sdfg: SDFG,
+                          dfg: ScopeSubgraphView,
+                          state_id: int,
+                          node: nodes.AccessNode,
+                          datadesc: dt.Data,
+                          function_stream: prettycode.CodeIOStream,
+                          callsite_stream: prettycode.CodeIOStream,
+                          declare: bool = True,
+                          allocate: bool = True):
         """ Dispatches a code generator for data allocation. """
+        self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
-        nodedesc = node.desc(sdfg)
-        storage = (nodedesc.storage if not isinstance(node, nodes.Tasklet) else
-                   dtypes.StorageType.Register)
-        self._used_targets.add(self._array_dispatchers[storage])
-
-        # TODO: Move to central allocator (see PR #434)
-        if nodedesc.lifetime is dtypes.AllocationLifetime.Persistent:
+        if datadesc.lifetime is dtypes.AllocationLifetime.Persistent:
             declaration_stream = CodeIOStream()
-            allocation_stream = self.frame._initcode
+            callsite_stream = self.frame._initcode
         else:
-            declaration_stream = allocation_stream
+            declaration_stream = callsite_stream
 
-        dispatcher = self._array_dispatchers[storage]
-        dispatcher.allocate_array(sdfg, dfg, state_id, node, function_stream,
-                                  declaration_stream, allocation_stream)
+        if declare and not allocate:
+            self._array_dispatchers[datadesc.storage].declare_array(
+                sdfg, dfg, state_id, node, datadesc, function_stream,
+                declaration_stream)
+        elif allocate:
+            self._array_dispatchers[datadesc.storage].allocate_array(
+                sdfg, dfg, state_id, node, datadesc, function_stream,
+                declaration_stream, callsite_stream)
 
-        # TODO: Move to central allocator (see PR #434)
-        if nodedesc.lifetime is dtypes.AllocationLifetime.Persistent:
-            self.frame.statestruct.append(declaration_stream.getvalue())
-
-    def dispatch_deallocate(self, sdfg, dfg, state_id, node, function_stream,
-                            callsite_stream):
+    def dispatch_deallocate(self, sdfg: SDFG, dfg: ScopeSubgraphView,
+                            state_id: int, node: nodes.AccessNode,
+                            datadesc: dt.Data,
+                            function_stream: prettycode.CodeIOStream,
+                            callsite_stream: prettycode.CodeIOStream):
         """ Dispatches a code generator for a data deallocation. """
+        self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
-        nodedesc = node.desc(sdfg)
-        storage = (nodedesc.storage if not isinstance(node, nodes.Tasklet) else
-                   dtypes.StorageType.Register)
-        self._used_targets.add(self._array_dispatchers[storage])
-
-        # TODO: Move to central allocator (see PR #434)
-        if nodedesc.lifetime is dtypes.AllocationLifetime.Persistent:
+        if datadesc.lifetime is dtypes.AllocationLifetime.Persistent:
             callsite_stream = self.frame._exitcode
 
-        self._array_dispatchers[storage].deallocate_array(
-            sdfg, dfg, state_id, node, function_stream, callsite_stream)
+        self._array_dispatchers[datadesc.storage].deallocate_array(
+            sdfg, dfg, state_id, node, datadesc, function_stream,
+            callsite_stream)
 
     # Dispatches copy code for a memlet
     def _get_copy_dispatcher(self, src_node, dst_node, edge, sdfg, dfg,

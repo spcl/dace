@@ -55,13 +55,27 @@ def copy_expr(
         offset_cppstr = "0"
     dt = ""
 
-    def_type, _ = dispatcher.defined_vars.get(data_name)
-
+    is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
+                                      dtypes.AllocationLifetime.Persistent)
+    defined_types = None
+    try:
+        if (isinstance(data_desc, data.Array)
+                and not isinstance(data_desc, data.View) and any(
+                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                    for s in data_desc.free_symbols)):
+            defined_types = dispatcher.declared_arrays.get(data_name,
+                                                           is_global=is_global)
+    except KeyError:
+        pass
+    if not defined_types:
+        defined_types = dispatcher.defined_vars.get(data_name,
+                                                    is_global=is_global)
+    def_type, _ = defined_types
     expr = ptr(
         data_name,
         data_desc,
+        sdfg, 
         hbm_bank,
-        sdfg,
         is_write,
         dispatcher,
         0,
@@ -224,8 +238,8 @@ def memlet_copy_to_absolute_strides(dispatcher,
 
 def ptr(name: str,
         desc: data.Data = None,
-        subset_info_hbm: Union[subsets.Subset, int] = None,
         sdfg: dace.SDFG = None,
+        subset_info_hbm: Union[subsets.Subset, int] = None,
         is_write: bool = None,
         dispatcher=None,
         ancestor: int = 0,
@@ -248,7 +262,9 @@ def ptr(name: str,
             and desc.storage != dtypes.StorageType.CPU_ThreadLocal):
         from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
         if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
-            return f'__state->{name}'
+            if not sdfg:
+                raise ValueError("Missing SDFG value")
+            return f'__state->__{sdfg.sdfg_id}_{name}'
     if (desc is not None and utils.is_hbm_array(desc)):
         if (subset_info_hbm == None):
             raise ValueError(
@@ -324,12 +340,22 @@ def emit_memlet_reference(
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
-    defined_type, defined_ctype = dispatcher.defined_vars.get(
-        memlet.data, ancestor)
-
-    datadef = ptr(memlet.data, desc, bank_info, sdfg, is_write, dispatcher,
+    defined_types = None
+    try:
+        if (isinstance(desc, data.Array) and not isinstance(desc, data.View)
+                and any(
+                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                    for s in desc.free_symbols)):
+            defined_types = dispatcher.declared_arrays.get(
+                memlet.data, ancestor)
+    except KeyError:
+        pass
+    if not defined_types:
+        defined_types = dispatcher.defined_vars.get(memlet.data, ancestor)
+    defined_type, defined_ctype = defined_types
+    datadef = ptr(memlet.data, desc, sdfg, bank_info, is_write, dispatcher,
                   ancestor, defined_type == DefinedType.ArrayInterface)
-
+    
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface
                 and isinstance(desc, data.View))):
@@ -598,7 +624,7 @@ def cpp_array_expr(sdfg,
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     if with_brackets:
-        ptrname = ptr(memlet.data, desc, subset, sdfg)
+        ptrname = ptr(memlet.data, desc, sdfg, subset)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
@@ -638,7 +664,7 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = indices
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
-    dname = ptr(memlet.data, desc, memlet.subset, sdfg, is_write, None, None,
+    dname = ptr(memlet.data, desc, sdfg, memlet.subset, is_write, None, None,
                 defined_type == DefinedType.ArrayInterface)
 
     if defined_type == DefinedType.Scalar:
@@ -1207,8 +1233,9 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                             ))
                         else:
                             array_interface_name = ptr(memlet.data, desc,
+                                                        self.sdfg,
                                                        memlet.dst_subset,
-                                                       self.sdfg, True, None,
+                                                        True, None,
                                                        None, True)
                             newnode = ast.Name(
                                 id=f"{array_interface_name}"

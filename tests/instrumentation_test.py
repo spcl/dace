@@ -40,6 +40,9 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
         if isinstance(node, nodes.MapEntry) and node.map.label == 'mult':
             node.map.instrument = instrumentation
             state.instrument = instrumentation
+    # Set Timer instrumentation on the whole SDFG
+    if instrumentation == dace.InstrumentationType.Timer:
+        sdfg.instrument = instrumentation
 
     if instrumentation == dace.InstrumentationType.GPU_Events:
         sdfg.apply_transformations(GPUTransformSDFG)

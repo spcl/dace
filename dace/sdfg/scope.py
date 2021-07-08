@@ -151,6 +151,47 @@ def scope_contains_scope(sdict: ScopeDictType, node: NodeType,
     return False
 
 
+def _scope_path(sdict: ScopeDictType, scope: NodeType) -> List[NodeType]:
+    result = []
+    curnode = scope
+    while curnode is not None:
+        curnode = sdict[scope]
+        result.append(curnode)
+    return result
+
+
+def common_parent_scope(sdict: ScopeDictType, scope_a: NodeType,
+                        scope_b: NodeType) -> NodeType:
+    """
+    Finds a common parent scope for both input scopes, or None if the scopes
+    are in different connected components.
+    :param sdict: Scope parent dictionary.
+    :param scope_a: First scope.
+    :param scope_b: Second scope.
+    :return: Scope node or None for top-level scope.
+    """
+    if scope_a is scope_b:
+        return scope_a
+
+    # Scope B is in scope A
+    if scope_contains_scope(sdict, scope_a, scope_b):
+        return scope_a
+    # Scope A is in scope B
+    if scope_contains_scope(sdict, scope_b, scope_a):
+        return scope_b
+
+    # Disjoint scopes: prepare two paths and traverse in reversed fashion
+    spath_a = _scope_path(sdict, scope_a)
+    spath_b = _scope_path(sdict, scope_b)
+    common = None
+    for spa, spb in reversed(zip(spath_a, spath_b)):
+        if spa is spb:
+            common = spa
+        else:
+            break
+    return common
+
+
 def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
                 node: NodeType, schedules: List[dtypes.ScheduleType]) -> bool:
     """ Tests whether a node in an SDFG is contained within a certain set of 
@@ -160,16 +201,14 @@ def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         :param node: The node in question
         :return: True if node is in device-level code, False otherwise.
     """
-    from dace.sdfg import nodes as nd
-    from dace.sdfg.sdfg import SDFGState
-
     while sdfg is not None:
-        sdict = state.scope_dict()
-        scope = sdict[node]
-        while scope is not None:
-            if scope.schedule in schedules:
-                return True
-            scope = sdict[scope]
+        if state is not None and node is not None:
+            sdict = state.scope_dict()
+            scope = sdict[node]
+            while scope is not None:
+                if scope.schedule in schedules:
+                    return True
+                scope = sdict[scope]
         # Traverse up nested SDFGs
         if sdfg.parent is not None:
             parent = sdfg.parent_sdfg
@@ -215,7 +254,9 @@ def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         :param node: The node in question
         :return: True if node is in device-level code, False otherwise.
     """
-    return is_in_scope(sdfg, state, node, [dtypes.ScheduleType.FPGA_Device])
+    from dace.codegen.targets.fpga import is_fpga_kernel
+    return (is_in_scope(sdfg, state, node, [dtypes.ScheduleType.FPGA_Device])
+            or (state and is_fpga_kernel(sdfg, state)))
 
 
 def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',

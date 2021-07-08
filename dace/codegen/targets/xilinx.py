@@ -269,7 +269,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                              with_vectorization: bool,
                              interface_id: Union[int, List[int]] = None):
         if isinstance(data, dt.Array):
-            var_name = cpp.ptr(var_name, data, subset_info, sdfg, is_output,
+            var_name = cpp.ptr(var_name, data, sdfg, subset_info, is_output,
                                None, None, True, interface_id)
             if with_vectorization:
                 dtype = data.dtype
@@ -460,8 +460,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         var_name = cpp.ptr(
             var_name,
             array,
-            accessed_subset,
             sdfg,
+            accessed_subset,
             True,
             self._dispatcher,
             is_array_interface=(defined_type == DefinedType.ArrayInterface))
@@ -583,7 +583,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             if isinstance(p, dt.Array):
                 for bank in utils.iterate_hbm_multibank_arrays(name, p, sdfg):
                     kernel_args.append(
-                        p.as_arg(False, name=cpp.ptr(name, p, bank)))
+                        p.as_arg(False, name=cpp.ptr(name, p, sdfg, bank)))
             else:
                 kernel_args.append(p.as_arg(False, name=name))
 
@@ -629,16 +629,16 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 for bank in utils.iterate_hbm_multibank_arrays(pname, p, sdfg):
                     arr_name = cpp.ptr(pname,
                                        p,
+                                       sdfg, 
                                        bank,
-                                       None,
                                        is_output,
                                        is_array_interface=True)
                     # Add interface ID to called module, but not to the module
                     # arguments
                     argname = cpp.ptr(pname,
                                       p,
+                                      sdfg, 
                                       bank,
-                                      None,
                                       is_output,
                                       is_array_interface=True,
                                       interface_id=interface_id)
@@ -786,8 +786,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 ctype = dtypes.pointer(arg.dtype).ctype
                 ptr_name = cpp.ptr(argname,
                                    arg,
+                                   sdfg, 
                                    bank,
-                                   sdfg,
                                    is_output,
                                    None,
                                    is_array_interface=True)
@@ -816,7 +816,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 continue
             allocated.add(node.data)
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               module_stream,
+                                               node.desc(sdfg), module_stream,
                                                module_body_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
@@ -891,7 +891,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # Emit allocations
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               module_stream, entry_stream)
+                                               node.desc(sdfg), module_stream,
+                                               entry_stream)
         for is_output, name, node, _ in external_streams:
             self._dispatcher.defined_vars.add_global(name, DefinedType.Stream,
                                                      node.ctype)
@@ -923,7 +924,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         for is_output, name, arg, interface_id in parameters:
             if isinstance(arg, dt.Array):
                 for bank in utils.iterate_hbm_multibank_arrays(name, arg, sdfg):
-                    argname = cpp.ptr(name, arg, bank, sdfg, is_output, None,
+                    argname = cpp.ptr(name, arg, sdfg, bank, is_output, None,
                                       None, True, interface_id)
                     kernel_args.append(arg.as_arg(with_types=True,
                                                   name=argname))
@@ -973,8 +974,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                         in_memlet.data, sdfg.arrays[in_memlet.data], sdfg):
                     interface_name = cpp.ptr(vconn,
                                              sdfg.arrays[in_memlet.data],
+                                             sdfg, 
                                              bank,
-                                             sdfg,
                                              False,
                                              is_array_interface=True)
                     interface_ref = cpp.emit_memlet_reference(
@@ -1018,8 +1019,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                         out_memlet.data, sdfg.arrays[out_memlet.data], sdfg):
                     interface_name = cpp.ptr(uconn,
                                              sdfg.arrays[out_memlet.data],
+                                             sdfg, 
                                              bank,
-                                             sdfg,
                                              True,
                                              is_array_interface=True)
                     memlet_references.append(
