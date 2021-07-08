@@ -9,7 +9,7 @@ import networkx as nx
 import dace.sdfg.nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.nodes import Node
+from dace.sdfg.nodes import Node, NestedSDFG
 from dace.sdfg.state import SDFGState
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
@@ -982,6 +982,46 @@ def fuse_states(sdfg: SDFG) -> int:
                 break
     if config.Config.get_bool('debugprint'):
         print(f'Applied {counter} State Fusions')
+    return counter
+
+
+def inline_sdfgs(sdfg: SDFG, progress: bool = False) -> int:
+    """
+    Inlines all possible nested SDFGs (or sub-SDFGs) using an optimized
+    routine that uses the structure of the SDFG hierarchy.
+    :param sdfg: The SDFG to transform.
+    :param progress: If True, prints out a progress bar of inlining (may be
+                     inaccurate, requires ``tqdm``)
+    :return: The total number of SDFGs inlined.
+    """
+    from dace.transformation.interstate import InlineSDFG  # Avoid import loop
+    counter = 0
+    sdfgs = list(sdfg.all_sdfgs_recursive())
+    if progress:
+        from tqdm import tqdm
+        pbar = tqdm(total=len(sdfgs))
+
+    for sd in reversed(sdfgs):
+        id = sd.sdfg_id
+        for state_id, state in enumerate(sd.nodes()):
+            for node in state.nodes():
+                if not isinstance(node, NestedSDFG):
+                    continue
+                # We have to reevaluate every time due to changing IDs
+                node_id = state.node_id(node)
+                candidate = {
+                    InlineSDFG._nested_sdfg: node_id,
+                }
+                inliner = InlineSDFG(id, state_id, candidate, 0, override=True)
+                if inliner.can_be_applied(state, candidate, 0, sd, strict=True):
+                    inliner.apply(sd)
+                    counter += 1
+                    if progress:
+                        pbar.update(1)
+    if config.Config.get_bool('debugprint'):
+        print(f'Inlined {counter} SDFGs')
+    if progress:
+        pbar.close()
     return counter
 
 

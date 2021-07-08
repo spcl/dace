@@ -70,7 +70,7 @@ class InlineSDFG(transformation.Transformation):
         :return: True if all strides match, False otherwise.
         """
         # Replace all inner symbols based on symbol mapping
-        istrides = copy.copy(inner_strides)
+        istrides = list(inner_strides)
         def replfunc(mapping):
             for i, s in enumerate(istrides):
                 if symbolic.issymbolic(s):
