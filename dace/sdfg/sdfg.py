@@ -326,8 +326,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         tmp['attributes']['constants_prop'] = json.loads(
             dace.serialize.dumps(tmp['attributes']['constants_prop']))
 
-        # Location in the SDFG list
-        self.reset_sdfg_list()
+        # Location in the SDFG list (only for root SDFG)
+        if self.parent_sdfg is None:
+            self.reset_sdfg_list()
+
         tmp['sdfg_list_id'] = int(self.sdfg_id)
         tmp['start_state'] = self._start_state
 
