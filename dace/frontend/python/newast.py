@@ -1353,6 +1353,9 @@ class ProgramVisitor(ExtNodeVisitor):
         # Tmp fix for missing state symbol propagation
         self.symbols = dict()
 
+        # Indirections
+        self.indirections = dict()
+
     def visit(self, node: ast.AST):
         """Visit a node."""
         if hasattr(node, 'lineno'):
@@ -4465,78 +4468,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                  'assignment targets (e.g., "A[A > 5] += 1")')
             has_array_indirection = True
 
-        if _subset_has_indirection(expr.subset, self) and not has_array_indirection:
-            memlet = Memlet.simple(array,
-                                   expr.subset,
-                                   num_accesses=expr.accesses,
-                                   wcr_str=expr.wcr)
-            self._add_state(f'set_symbols_{node.lineno}_{node.col_offset}')
-            assignments = {}
-            # Step 1
-            accesses = OrderedDict()
-            newsubset = copy.deepcopy(memlet.subset)
-            for dimidx, dim in enumerate(memlet.subset):
-                # Range/Index disambiguation
-                direct_assignment = False
-                if not isinstance(dim, tuple):
-                    dim = [dim]
-                    direct_assignment = True
-                elif dim[0] == dim[1]:
-                    dim = [dim[0]]
-                    direct_assignment = True
-
-                for i, r in enumerate(dim):
-                    for ex in symbolic.swalk(r, enter_functions=True):
-                        fname = None
-                        if symbolic.is_sympy_userfunction(ex):
-                            fname = ex.func.__name__
-                        else:
-                            try:
-                                rname = self._visitname(str(ex), None)
-                            except DaceSyntaxError:
-                                continue
-                            if rname in self.sdfg.arrays:
-                                fname = rname
-                        if fname:
-                            if fname not in accesses:
-                                accesses[fname] = []
-
-                            # Replace function with symbol (memlet local name to-be)
-                            if ex.args in accesses[fname]:
-                                aindex = accesses[fname].index(ex.args)
-                                toreplace = dace.symbol('index_' + fname + '_' + str(aindex), dtype=dace.int32)
-                            else:
-                                if ex.args:
-                                    accesses[fname].append(ex.args)
-                                else:
-                                    # Scalar access
-                                    accesses[fname].append(0)
-                                toreplace = dace.symbol('index_' + fname + '_' + str(
-                                    len(accesses[fname]) - 1), dtype=dace.int32)
-                                if str(toreplace) not in self.sdfg.symbols:
-                                    self.sdfg.add_symbol(str(toreplace), dace.int32)
-                                    assignments[str(toreplace)] = str(ex)
-
-                            if direct_assignment:
-                                token = r.subs(ex, toreplace)
-                                newsubset[dimidx] = (token, token, 1)
-                            else:
-                                rng = list(newsubset[dimidx])
-                                rng[i] = rng[i].subs(ex, toreplace)
-                                newsubset[dimidx] = tuple(rng)
-            state = self._add_state('slice_%s_%d' % (array, node.lineno))
-            edge = self.sdfg.in_edges(state)[0]
-            edge.data.assignments = assignments
-            # tmp = self.sdfg.temp_data_name()
-            has_array_indirection = False
-            expr.subset = newsubset
-        else:
-            self._add_state('slice_%s_%d' % (array, node.lineno))
-            # return add_indirection_subgraph(self.sdfg, self.last_state, rnode,
-            #                                 None, memlet, tmp, self)
-
         # Add slicing state
-        # self._add_state('slice_%s_%d' % (array, node.lineno))
+        self._add_state('slice_%s_%d' % (array, node.lineno))
         rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
         if has_array_indirection:
             # Make copy slicing state
@@ -4636,103 +4569,59 @@ class ProgramVisitor(ExtNodeVisitor):
             raise DaceSyntaxError(self, node,
                                   'Type "%s" cannot be sliced' % arrtype)
 
-        def _promote(scalar):
+        def _promote(node: ast.AST):
+            node_str = astutils.unparse(node)
+            if node_str in self.indirections:
+                scalar, sym = self.indirections[node_str]
+            else:
+                scalar = self.visit(node)
+                sym = None
             if isinstance(scalar, str) and scalar in self.sdfg.arrays:
                 desc = self.sdfg.arrays[scalar]
-                sym = dace.symbol(f'__sym_{scalar}', dtype=desc.dtype)
-                state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
-                edge = self.sdfg.in_edges(state)[0]
-                edge.data.assignments = {str(sym): scalar}
-                return sym
+                if isinstance(desc, data.Scalar):
+                    if not sym:
+                        sym = dace.symbol(f'__sym_{scalar}', dtype=desc.dtype)
+                        self.indirections[node_str] = (scalar, sym)
+                    state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
+                    edge = self.sdfg.in_edges(state)[0]
+                    edge.data.assignments = {str(sym): scalar}
+                    return sym
             return scalar
 
+        def _parse_slice(s: ast.AST, multidim: bool = False):
+            if isinstance(s, ast.Constant):  # 1D index (since Python 3.9)
+                res = self._visit_ast_or_value(s)
+            elif isinstance(s, ast.Slice):
+                lower = s.lower
+                if isinstance(lower, ast.AST):
+                    lower = _promote(lower)
+                upper = s.upper
+                if isinstance(upper, ast.AST):
+                    upper = _promote(upper)
+                step = s.step
+                if isinstance(step, ast.AST):
+                    step = _promote(step)
+                if multidim:
+                    res = (lower, upper, step)
+                else:
+                    res = ((lower, upper, step),)
+            elif isinstance(s, ast.Tuple):
+                res = tuple(_parse_slice(d, multidim=True) for d in s.elts)
+            else:
+                res = _promote(s)
+            return res
+
         # Visit slice contents
-        nslice = node.slice
-        if isinstance(nslice, ast.Constant):  # 1D index (since Python 3.9)
-            nslice = _promote(self._visit_ast_or_value(nslice))
-        elif isinstance(nslice, ast.Slice):
-            lower = nslice.lower
-            if isinstance(lower, ast.AST):
-                lower = _promote(self.visit(lower))
-            upper = nslice.upper
-            if isinstance(upper, ast.AST):
-                upper = _promote(self.visit(upper))
-            step = nslice.step
-            if isinstance(step, ast.AST):
-                step = _promote(self.visit(step))
-            nslice = ((lower, upper, step),)
-        else:
-            nslice = _promote(self.visit(nslice))
+        nslice = _parse_slice(node.slice)
 
         # Try to construct memlet from subscript
-        # expr: MemletExpr = ParseMemlet(self, self.defined, node)
-        # TODO: This needs to be formalized better
         node.value = ast.Name(id=array)
-        # expr: MemletExpr = ParseMemlet(self, self.sdfg.arrays, node)
         expr: MemletExpr = ParseMemlet(self, {
             **self.sdfg.arrays,
             **self.defined
         }, node, nslice)
-        # arrobj = self.sdfg.arrays[array]
 
         return self._add_read_slice(array, node, expr)
-
-        # # Consider array dims (rhs expression)
-        # has_array_indirection = False
-        # for dim, arrname in expr.arrdims.items():
-        #     # Boolean arrays only allowed as lhs
-        #     if (isinstance(arrname, str)
-        #             and self.sdfg.arrays[arrname].dtype == dtypes.bool):
-        #         raise IndexError('Boolean array indexing is only supported for '
-        #                          'assignment targets (e.g., "A[A > 5] += 1")')
-        #     has_array_indirection = True
-
-        # # Add slicing state
-        # self._add_state('slice_%s_%d' % (array, node.lineno))
-        # rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
-        # if has_array_indirection:
-        #     # Make copy slicing state
-        #     return self._array_indirection_subgraph(rnode, expr)
-        # if _subset_has_indirection(expr.subset, self):
-        #     memlet = Memlet.simple(array,
-        #                            expr.subset,
-        #                            num_accesses=expr.accesses,
-        #                            wcr_str=expr.wcr)
-        #     tmp = self.sdfg.temp_data_name()
-        #     return add_indirection_subgraph(self.sdfg, self.last_state, rnode,
-        #                                     None, memlet, tmp, self)
-        # else:
-        #     other_subset = copy.deepcopy(expr.subset)
-
-        #     # Make new axes and squeeze for scalar subsets (as per numpy behavior)
-        #     # For example: A[0, np.newaxis, 5:7] results in a 1x2 ndarray
-        #     new_axes = []
-        #     if expr.new_axes:
-        #         new_axes = other_subset.unsqueeze(expr.new_axes)
-        #     other_subset.squeeze(ignore_indices=new_axes)
-
-        #     # NOTE: This is fixing azimint_hist (issue is `if x == a_max`)
-        #     # TODO: Follow Numpy, i.e. slicing with indices returns scalar but
-        #     # slicing with a range of (squeezed) size 1 returns array/view.
-        #     if all(s == 1 for s in other_subset.size()):
-        #         tmp = self.sdfg.temp_data_name()
-        #         tmp, tmparr = self.sdfg.add_scalar(tmp,
-        #                                            arrobj.dtype,
-        #                                            arrobj.storage,
-        #                                            transient=True)
-        #     else:
-        #         tmp, tmparr = self.sdfg.add_temp_transient(
-        #             other_subset.size(), arrobj.dtype, arrobj.storage)
-        #     wnode = self.last_state.add_write(tmp,
-        #                                       debuginfo=self.current_lineinfo)
-        #     self.last_state.add_nedge(
-        #         rnode, wnode,
-        #         Memlet.simple(array,
-        #                       expr.subset,
-        #                       num_accesses=expr.accesses,
-        #                       wcr_str=expr.wcr,
-        #                       other_subset_str=other_subset))
-        #     return tmp
 
     def _visit_ast_or_value(self, node: ast.AST):
         result = self.visit(node)
