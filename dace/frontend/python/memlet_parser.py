@@ -58,6 +58,11 @@ def pyexpr_to_symbolic(defined_arrays_and_symbols: Dict[str, Any],
         :return: Symbolic expression.
     """
     # TODO!
+    # # NOTE: Fix for ast.Slice
+    # expr = expr_ast
+    # if isinstance(expr_ast, ast.Subscript) and isinstance(expr_ast.slice, str):
+    #     expr = copy.deepcopy(expr_ast)
+    #     expr.slice = ast.Name(id=expr_ast.slice)
     return inner_eval_ast(defined_arrays_and_symbols, expr_ast)
 
 
@@ -193,7 +198,8 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 
 
 def parse_memlet_subset(array: data.Data, node: Union[ast.Name, ast.Subscript],
-                        das: Dict[str, Any]) -> Tuple[subsets.Range, List[int]]:
+                        das: Dict[str, Any],
+                        parsed_slice: Any = None) -> Tuple[subsets.Range, List[int]]:
     """ 
     Parses an AST subset and returns access range, as well as new dimensions to
     add.
@@ -209,7 +215,12 @@ def parse_memlet_subset(array: data.Data, node: Union[ast.Name, ast.Subscript],
     arrdims: Dict[int, str] = {}
     if isinstance(node, ast.Subscript):
         # Parse and evaluate ND slice(s) (possibly nested)
-        ast_ndslices = astutils.subscript_to_ast_slice_recursive(node)
+        if parsed_slice:
+            cnode = copy.deepcopy(node)
+            cnode.slice = parsed_slice
+        else:
+            cnode = node
+        ast_ndslices = astutils.subscript_to_ast_slice_recursive(cnode)
         offsets = list(range(len(array.shape)))
 
         # Loop over nd-slices (A[i][j][k]...)
@@ -249,7 +260,7 @@ def parse_memlet_subset(array: data.Data, node: Union[ast.Name, ast.Subscript],
 
 # Parses a memlet statement
 def ParseMemlet(visitor, defined_arrays_and_symbols: Dict[str, Any],
-                node: MemletType) -> MemletExpr:
+                node: MemletType, parsed_slice: Any = None) -> MemletExpr:
     das = defined_arrays_and_symbols
     arrname = rname(node)
     if arrname not in das:
@@ -280,7 +291,7 @@ def ParseMemlet(visitor, defined_arrays_and_symbols: Dict[str, Any],
         if len(node.value.args) >= 2:
             write_conflict_resolution = node.value.args[1]
 
-    subset, new_axes, arrdims = parse_memlet_subset(array, node, das)
+    subset, new_axes, arrdims = parse_memlet_subset(array, node, das, parsed_slice)
 
     # If undefined, default number of accesses is the slice size
     if num_accesses is None:
