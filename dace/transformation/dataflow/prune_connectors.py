@@ -96,6 +96,8 @@ class PruneConnectors(pm.Transformation):
 
         G = helpers.simplify_state(state)
         for src in to_reconnect_inp:
+            if src not in state.nodes():
+                continue  # Removed orphan access node
             has_path = False
             try:
                 has_path = nx.has_path(G, src, nsdfg)
@@ -104,6 +106,8 @@ class PruneConnectors(pm.Transformation):
             if not has_path:
                 state.add_nedge(src, nsdfg, dace.Memlet())
         for dst in to_reconnect_out:
+            if dst not in state.nodes():
+                continue  # Removed orphan access node
             has_path = False
             try:
                 has_path = nx.has_path(G, nsdfg, dst)
