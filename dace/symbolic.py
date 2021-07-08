@@ -514,7 +514,7 @@ def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
 def sympy_numeric_fix(expr):
     """ Fix for printing out integers as floats with ".00000000".
         Converts the float constants in a given expression to integers. """
-    if not isinstance(expr, sympy.Basic):
+    if not isinstance(expr, sympy.Basic) or isinstance(expr, sympy.Number):
         try:
             # NOTE: If expr is ~ 1.8e308, i.e. infinity, `numpy.int64(expr)`
             # will throw OverflowError (which we want).
@@ -523,14 +523,14 @@ def sympy_numeric_fix(expr):
             if numpy.int64(expr) == expr:
                 return int(expr)
         except OverflowError:
-            if expr > 0:
-                return sympy.oo
-            else:
-                return -sympy.oo
-        return expr
-
-    if isinstance(expr, sympy.Number) and expr == int(expr):
-        return int(expr)
+            try:
+                if numpy.float64(expr) == expr:
+                    return expr
+            except OverflowError:
+                if expr > 0:
+                    return sympy.oo
+                else:
+                    return -sympy.oo
     return expr
 
 
@@ -767,8 +767,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
 
     # Sympy processes "not/and/or" as direct evaluation. Replace with
     # And/Or(x, y), Not(x)
-    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=',
-                                           expr):
+    if isinstance(expr, str) and re.search(
+            r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=', expr):
         expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
@@ -796,8 +796,9 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         self.arrays = arrays or set()
 
     def _print_Float(self, expr):
-        if int(expr) == expr:
-            return str(int(expr))
+        nf = sympy_numeric_fix(expr)
+        if nf != expr:
+            return self._print(nf)
         return super()._print_Float(expr)
 
     def _print_Function(self, expr):
