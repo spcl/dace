@@ -4636,28 +4636,33 @@ class ProgramVisitor(ExtNodeVisitor):
             raise DaceSyntaxError(self, node,
                                   'Type "%s" cannot be sliced' % arrtype)
 
+        def _promote(scalar):
+            if isinstance(scalar, str) and scalar in self.sdfg.arrays:
+                desc = self.sdfg.arrays[scalar]
+                sym = dace.symbol(f'__sym_{scalar}', dtype=desc.dtype)
+                state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
+                edge = self.sdfg.in_edges(state)[0]
+                edge.data.assignments = {str(sym): scalar}
+                return sym
+            return scalar
+
         # Visit slice contents
         nslice = node.slice
-        lslice = None
-        while not isinstance(nslice, (str, tuple)) and nslice != lslice:
-            lslice = nslice
-            if isinstance(nslice, ast.Constant):  # 1D index (since Python 3.9)
-                nslice = self._visit_ast_or_value(nslice)
-            else:
-                nslice = self.visit(nslice)
-            # if isinstance(nslice, str) and nslice in self.sdfg.arrays:
-            #     node.slice = ast.Name(id=nslice)
-            # else:
-            #     node.slice = nslice
-        # node.slice = ast.Name(id=nslice)
-        if isinstance(nslice, str):
-            node.slice = ast.Name(id=nslice)
-        elif isinstance(nslice, tuple):
-            args = (ast.Name(id=s) if isinstance(s, str) else s for s in nslice)
-            node.slice = ast.Tuple(*args)
+        if isinstance(nslice, ast.Constant):  # 1D index (since Python 3.9)
+            nslice = _promote(self._visit_ast_or_value(nslice))
+        elif isinstance(nslice, ast.Slice):
+            lower = nslice.lower
+            if isinstance(lower, ast.AST):
+                lower = _promote(self.visit(lower))
+            upper = nslice.upper
+            if isinstance(upper, ast.AST):
+                upper = _promote(self.visit(upper))
+            step = nslice.step
+            if isinstance(step, ast.AST):
+                step = _promote(self.visit(step))
+            nslice = ((lower, upper, step),)
         else:
-            node.slice = nslice
-            nslice = None
+            nslice = _promote(self.visit(nslice))
 
         # Try to construct memlet from subscript
         # expr: MemletExpr = ParseMemlet(self, self.defined, node)
