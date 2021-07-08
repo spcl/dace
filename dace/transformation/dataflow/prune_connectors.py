@@ -1,8 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from os import stat
 from typing import Any, AnyStr, Dict, Set, Tuple, Union
+import networkx as nx
+from networkx.exception import NodeNotFound
 import re
 
+import dace
 from dace import dtypes, registry, SDFG, SDFGState, symbolic
 from dace.transformation import transformation as pm, helpers
 from dace.sdfg import nodes, utils
@@ -42,14 +45,6 @@ class PruneConnectors(pm.Transformation):
                             iter(graph.in_edges_by_connector(
                                 nsdfg, e.src_conn))).src) > 0):
                     prune_in.remove(e.src_conn)
-        has_before = all(
-            graph.in_degree(graph.memlet_path(e)[0].src) > 0
-            for e in graph.in_edges(nsdfg) if e.dst_conn in prune_in)
-        has_after = all(
-            graph.out_degree(graph.memlet_path(e)[-1].dst) > 0
-            for e in graph.out_edges(nsdfg) if e.src_conn in prune_out)
-        if has_before and has_after:
-            return False
         if len(prune_in) > 0 or len(prune_out) > 0:
             return True
 
@@ -76,33 +71,46 @@ class PruneConnectors(pm.Transformation):
                             iter(state.in_edges_by_connector(
                                 nsdfg, e.src_conn))).src) > 0):
                     prune_in.remove(e.src_conn)
-        do_not_prune = set()
+        to_reconnect_inp = set()
         for conn in prune_in:
-            if any(
-                    state.in_degree(state.memlet_path(e)[0].src) > 0
-                    for e in state.in_edges(nsdfg) if e.dst_conn == conn):
-                do_not_prune.add(conn)
-                continue
             for e in state.in_edges_by_connector(nsdfg, conn):
+                for e2 in state.in_edges(e.src):
+                    to_reconnect_inp.add(e2.src)
                 state.remove_memlet_path(e, remove_orphans=True)
 
+        to_reconnect_out = set()
         for conn in prune_out:
-            if any(
-                    state.out_degree(state.memlet_path(e)[-1].dst) > 0
-                    for e in state.out_edges(nsdfg) if e.src_conn == conn):
-                do_not_prune.add(conn)
-                continue
             for e in state.out_edges_by_connector(nsdfg, conn):
+                for e2 in state.out_edges(e.dst):
+                    to_reconnect_out.add(e2.dst)
                 state.remove_memlet_path(e, remove_orphans=True)
 
         for conn in prune_in:
-            if conn in nsdfg.sdfg.arrays and conn not in all_data_used and conn not in do_not_prune:
+            if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
                 # If the data is now unused, we can purge it from the SDFG
                 nsdfg.sdfg.remove_data(conn)
         for conn in prune_out:
-            if conn in nsdfg.sdfg.arrays and conn not in all_data_used and conn not in do_not_prune:
+            if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
                 # If the data is now unused, we can purge it from the SDFG
                 nsdfg.sdfg.remove_data(conn)
+
+        G = helpers.simplify_state(state)
+        for src in to_reconnect_inp:
+            has_path = False
+            try:
+                has_path = nx.has_path(G, src, nsdfg)
+            except NodeNotFound:
+                has_path = nx.has_path(state.nx, src, nsdfg)
+            if not has_path:
+                state.add_nedge(src, nsdfg, dace.Memlet())
+        for dst in to_reconnect_out:
+            has_path = False
+            try:
+                has_path = nx.has_path(G, nsdfg, dst)
+            except NodeNotFound:
+                has_path = nx.has_path(state.nx, nsdfg, dst)
+            if not has_path:
+                state.add_nedge(nsdfg, dst, dace.Memlet())
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
