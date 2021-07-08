@@ -587,6 +587,11 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG,
                 elif input.language is dtypes.Language.CPP:
                     newcode = re.findall(r'.*?=\s*(.*);',
                                          input.code.as_string.strip())[0]
+                    # NOTE: The following convert C/C++ ||/&& to Python or/and
+                    # TODO: Add any other conversions from C/C++ to Python that
+                    # are necessary. 
+                    newcode = re.sub(r'\|\|', ' or ', newcode)
+                    newcode = re.sub(r'&&', ' and ', newcode)
                 # Replace tasklet inputs with incoming edges
                 for e in new_state.in_edges(input):
                     memlet_str: str = e.data.data
