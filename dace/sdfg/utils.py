@@ -5,6 +5,7 @@ import collections
 import copy
 import os
 import networkx as nx
+import warnings
 
 import dace.sdfg.nodes
 from dace.sdfg.graph import MultiConnectorEdge
@@ -972,12 +973,19 @@ def fuse_states(sdfg: SDFG) -> int:
                     StateFusion.second_state: v
                 }
                 sf = StateFusion(id, -1, candidate, 0, override=True)
-                if sf.can_be_applied(sd, candidate, 0, sd, strict=True):
-                    sf.apply(sd)
-                    applied += 1
-                    counter += 1
-                    skip_nodes.add(u)
-                    skip_nodes.add(v)
+                try:
+                    if sf.can_be_applied(sd, candidate, 0, sd, strict=True):
+                        sf.apply(sd)
+                        applied += 1
+                        counter += 1
+                        skip_nodes.add(u)
+                        skip_nodes.add(v)
+                except Exception as e:
+                    if config.Config.get_bool('optimizer', 'match_exception'):
+                        raise
+                    warnings.warn(
+                        f'WARNING: {sf.__name__}::can_be_applied triggered a '
+                        f'{e.__class__.__name__} exception: {e}')
             if applied == 0:
                 break
     if config.Config.get_bool('debugprint'):
