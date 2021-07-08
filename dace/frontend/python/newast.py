@@ -4591,6 +4591,8 @@ class ProgramVisitor(ExtNodeVisitor):
         def _parse_slice(s: ast.AST, multidim: bool = False):
             if isinstance(s, ast.Constant):  # 1D index (since Python 3.9)
                 res = self._visit_ast_or_value(s)
+            elif isinstance(s, ast.Index):
+                res = _parse_slice(s.value)
             elif isinstance(s, ast.Slice):
                 lower = s.lower
                 if isinstance(lower, ast.AST):
@@ -4607,6 +4609,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     res = ((lower, upper, step),)
             elif isinstance(s, ast.Tuple):
                 res = tuple(_parse_slice(d, multidim=True) for d in s.elts)
+            elif isinstance(s, ast.ExtSlice):
+                res = tuple(_parse_slice(d, multidim=True) for d in s.dims)
             else:
                 res = _promote(s)
             return res
