@@ -4133,7 +4133,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         # Two-step replacement (N -> __dacesym_N --> mapping[N])
                         # to avoid clashes
                         symbolic.safe_replace(
-                            mapping, lambda m: sd.replace_properties(newarr, m))
+                            mapping,
+                            lambda m: sd.replace_properties_dict(newarr, m))
 
                     new_arrname = self.sdfg.add_datadesc(new_arrname,
                                                          newarr,

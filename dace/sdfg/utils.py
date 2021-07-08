@@ -949,15 +949,25 @@ def trace_nested_access(
     return list(reversed(trace))
 
 
-def fuse_states(sdfg: SDFG) -> int:
+def fuse_states(sdfg: SDFG, strict: bool = True, progress: bool = False) -> int:
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs) using an optimized
     routine that uses the structure of the StateFusion transformation.
     :param sdfg: The SDFG to transform.
+    :param strict: If True (default), operates in strict mode.
+    :param progress: If True, prints out a progress bar of fusion (may be
+                     inaccurate, requires ``tqdm``)
     :return: The total number of states fused.
     """
     from dace.transformation.interstate import StateFusion  # Avoid import loop
     counter = 0
+    if progress:
+        from tqdm import tqdm
+        fusible_states = 0
+        for sd in sdfg.all_sdfgs_recursive():
+            fusible_states += sd.number_of_edges()
+        pbar = tqdm(total=fusible_states)
+
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
         while True:
@@ -972,24 +982,31 @@ def fuse_states(sdfg: SDFG) -> int:
                     StateFusion.second_state: v
                 }
                 sf = StateFusion(id, -1, candidate, 0, override=True)
-                if sf.can_be_applied(sd, candidate, 0, sd, strict=True):
+                if sf.can_be_applied(sd, candidate, 0, sd, strict=strict):
                     sf.apply(sd)
                     applied += 1
                     counter += 1
+                    if progress:
+                        pbar.update(1)
                     skip_nodes.add(u)
                     skip_nodes.add(v)
             if applied == 0:
                 break
+    if progress:
+        pbar.close()
     if config.Config.get_bool('debugprint'):
         print(f'Applied {counter} State Fusions')
     return counter
 
 
-def inline_sdfgs(sdfg: SDFG, progress: bool = False) -> int:
+def inline_sdfgs(sdfg: SDFG,
+                 strict: bool = True,
+                 progress: bool = False) -> int:
     """
     Inlines all possible nested SDFGs (or sub-SDFGs) using an optimized
     routine that uses the structure of the SDFG hierarchy.
     :param sdfg: The SDFG to transform.
+    :param strict: If True (default), operates in strict mode.
     :param progress: If True, prints out a progress bar of inlining (may be
                      inaccurate, requires ``tqdm``)
     :return: The total number of SDFGs inlined.
@@ -1013,15 +1030,19 @@ def inline_sdfgs(sdfg: SDFG, progress: bool = False) -> int:
                     InlineSDFG._nested_sdfg: node_id,
                 }
                 inliner = InlineSDFG(id, state_id, candidate, 0, override=True)
-                if inliner.can_be_applied(state, candidate, 0, sd, strict=True):
+                if inliner.can_be_applied(state,
+                                          candidate,
+                                          0,
+                                          sd,
+                                          strict=strict):
                     inliner.apply(sd)
                     counter += 1
                     if progress:
                         pbar.update(1)
-    if config.Config.get_bool('debugprint'):
-        print(f'Inlined {counter} SDFGs')
     if progress:
         pbar.close()
+    if config.Config.get_bool('debugprint'):
+        print(f'Inlined {counter} SDFGs')
     return counter
 
 
