@@ -21,6 +21,7 @@ from dace.codegen.instrumentation import InstrumentationProvider
 def generate_headers(sdfg: SDFG) -> str:
     """ Generate a header file for the SDFG """
     proto = ""
+    proto += "#include <dace/dace.h>\n"
     init_params = (sdfg.name, sdfg.name,
                    sdfg.signature(with_types=True,
                                   for_call=False,

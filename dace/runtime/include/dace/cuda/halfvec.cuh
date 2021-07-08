@@ -3,7 +3,7 @@
 #define __DACE_HALFVEC_H
 
 // Only enable for supporting GPUs
-#if __CUDA_ARCH__ >= 600 || !defined(__CUDA_ARCH__)
+#if __CUDA_ARCH__ >= 530 || !defined(__CUDA_ARCH__)
 
 // Support for half-precision vector types in CUDA/HIP
 #ifdef __CUDACC__
@@ -576,6 +576,32 @@ DACE_DFI half8 max(half8 a, half8 b) {
                  max(a.h2<1>(), b.h2<1>()),
                  max(a.h2<2>(), b.h2<2>()),
                  max(a.h2<3>(), b.h2<3>()));
+}
+
+// Scalar operations that involve half arguments
+DACE_DFI float operator-(float a, half b) { return a - ((float)b); }
+DACE_DFI float operator-(half a, float b) { return ((float)a) - b; }
+
+DACE_DFI float operator*(float a, half b) { return a * ((float)b); }
+DACE_DFI float operator*(half a, float b) { return ((float)a) * b; }
+
+DACE_DFI float operator+(float a, half b) { return a + ((float)b); }
+DACE_DFI float operator+(half a, float b) { return ((float)a) + b; }
+
+DACE_HDFI float operator>(int a, half b) {
+    #ifdef __CUDA_ARCH__
+        return ((half)a) > b;
+    #else
+        return ((float)a) > ((float)b);
+    #endif
+}
+
+DACE_HDFI float operator>(half a, int b) {
+    #ifdef __CUDA_ARCH__
+        return a > ((half)b);
+    #else
+        return ((float)a) > ((float)b);
+    #endif
 }
 
 #else  // __CUDA_ARCH__
