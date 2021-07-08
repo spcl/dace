@@ -4,7 +4,7 @@ from functools import lru_cache
 import sympy
 import pickle
 import re
-from typing import Any, Dict, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Set, Tuple, Union
 import warnings
 import numpy
 
@@ -880,6 +880,51 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
     except (AttributeError, TypeError, ValueError):
         sstr = DaceSympyPrinter(arrayexprs).doprint(sym)
         return '(' + repstr(sstr) + ')'
+
+
+def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType,
+                                                               str]],
+                 replace_callback: Callable[[Dict[str, str]], None]) -> None:
+    """
+    Safely replaces symbolic expressions that may clash with each other via a
+    two-step replacement. For example, the mapping ``{M: N, N: M}`` would be
+    translated to replacing ``{N, M} -> __dacesym_{N, M}`` followed by
+    ``__dacesym{N, M} -> {M, N}``.
+    :param mapping: The replacement dictionary.
+    :param replace_callback: A callable function that receives a replacement
+                             dictionary and performs the replacement (can be 
+                             unsafe).
+    """
+    # First, filter out direct (to constants) and degenerate (N -> N) replacements
+    repl = {}
+    invrepl = {}
+    for k, v in mapping.items():
+        # Degenerate
+        if str(k) == str(v):
+            continue
+
+        # Not symbolic
+        try:
+            v = pystr_to_symbolic(v)
+        except (TypeError, ValueError, AttributeError, sympy.SympifyError):
+            repl[k] = v
+            continue
+
+        # Constant
+        try:
+            float(v)
+            repl[k] = v
+            continue
+        except (TypeError, ValueError, AttributeError):
+            pass
+
+        # Otherwise, symbolic replacement
+        repl[k] = f'__dacesym_{k}'
+        invrepl[f'__dacesym_{k}'] = v
+
+    # Make the two-step replacement
+    replace_callback(repl)
+    replace_callback(invrepl)
 
 
 def _spickle(obj):

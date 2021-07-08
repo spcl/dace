@@ -70,22 +70,12 @@ class InlineSDFG(transformation.Transformation):
         :return: True if all strides match, False otherwise.
         """
         # Replace all inner symbols based on symbol mapping
-        repldict = {
-            symbolic.pystr_to_symbolic(k):
-            symbolic.pystr_to_symbolic('__dacesym_' + str(v))
-            for k, v in nested_sdfg.symbol_mapping.items()
-        }
-        # need two dicts to avoid clashes
-        repldict_inv = {
-            symbolic.pystr_to_symbolic('__dacesym_' + str(v)):
-            symbolic.pystr_to_symbolic(v)
-            for v in nested_sdfg.symbol_mapping.values()
-        }
-
-        istrides = [
-            istr.subs(repldict).subs(repldict_inv)
-            if symbolic.issymbolic(istr) else istr for istr in inner_strides
-        ]
+        istrides = copy.copy(inner_strides)
+        def replfunc(mapping):
+            for i, s in enumerate(istrides):
+                if symbolic.issymbolic(s):
+                    istrides[i] = s.subs(mapping)
+        symbolic.safe_replace(nested_sdfg.symbol_mapping, replfunc)
 
         if istrides == list(outer_strides):
             return True
@@ -325,12 +315,7 @@ class InlineSDFG(transformation.Transformation):
 
         # Replace symbols using invocation symbol mapping
         # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        for symname, symvalue in nsdfg_node.symbol_mapping.items():
-            if str(symname) != str(symvalue):
-                nsdfg.replace(symname, '__dacesym_' + symname)
-        for symname, symvalue in nsdfg_node.symbol_mapping.items():
-            if str(symname) != str(symvalue):
-                nsdfg.replace('__dacesym_' + symname, symvalue)
+        symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
 
         # All transients become transients of the parent (if data already
         # exists, find new name)

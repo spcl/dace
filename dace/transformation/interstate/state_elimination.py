@@ -293,10 +293,10 @@ class HoistState(transformation.Transformation):
                                edge.data)
 
         # Safe replacement of edge contents
-        for k, v in mapping.items():
-            nisedge.data.replace(k, '__dacesym_' + k, replace_keys=False)
-        for k, v in mapping.items():
-            nisedge.data.replace('__dacesym_' + k, v, replace_keys=False)
+        def replfunc(m):
+            for k, v in mapping.items():
+                nisedge.data.replace(k, v, replace_keys=False)
+        symbolic.safe_replace(mapping, replfunc)
 
         # Add interstate edge
         for akey, aval in nisedge.data.assignments.items():

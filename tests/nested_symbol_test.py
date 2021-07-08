@@ -107,9 +107,32 @@ def test_nested_symbol_in_args():
     sdfg(np.random.randn(10, ), 1.0)
 
 
+def test_nested_symbol_as_constant():
+    inner = dace.SDFG('inner')
+    state = inner.add_state('inner_state')
+    inner.add_symbol('rdt', stype=float)
+    inner.add_datadesc('field', dace.float64[10])
+    tasklet, map_entry, map_exit = state.add_mapped_tasklet(
+        'tasklet',
+        map_ranges={'i': "0:10"},
+        inputs={},
+        outputs={'field_out': dace.Memlet.simple('field', subset_str="i")},
+        code="field_out = rdt",
+        external_edges=True)
+    inner.arg_names = ['field', 'rdt']
+    rdt = 1e30
+
+    @dace.program
+    def funct(field):
+        inner(field, rdt)
+
+    funct(np.random.randn(10, ))
+
+
 if __name__ == '__main__':
     test_nested_symbol()
     test_nested_symbol_dynamic()
     test_scal2sym()
     test_arr2sym()
     test_nested_symbol_in_args()
+    test_nested_symbol_as_constant()

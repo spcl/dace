@@ -4132,20 +4132,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     if mapping is not None:
                         # Two-step replacement (N -> __dacesym_N --> mapping[N])
                         # to avoid clashes
-                        for sym, symvalue in mapping.items():
-                            if str(sym) != str(symvalue):
-                                sd.replace_properties(
-                                    newarr, {
-                                        symbolic.symbol(str(sym)):
-                                        symbolic.symbol('__dacesym_' + str(sym))
-                                    }, sym, '__dacesym_' + sym)
-                        for sym, symvalue in mapping.items():
-                            if str(sym) != str(symvalue):
-                                sd.replace_properties(
-                                    newarr, {
-                                        symbolic.symbol('__dacesym_' + str(sym)):
-                                        symbolic.pystr_to_symbolic(symvalue)
-                                    }, '__dacesym_' + str(sym), symvalue)
+                        symbolic.safe_replace(
+                            mapping, lambda m: sd.replace_properties(newarr, m))
 
                     new_arrname = self.sdfg.add_datadesc(new_arrname,
                                                          newarr,

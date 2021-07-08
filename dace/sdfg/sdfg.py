@@ -468,6 +468,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         for state in self.nodes():
             state.replace(name, new_name)
 
+    def replace_dict(self, repldict: Dict[str, str]) -> None:
+        """
+        Replaces all occurrences of keys in the given dictionary with the mapped
+        values.
+        :param repldict: The replacement dictionary.
+        :param replace_keys: If False, skips replacing assignment keys.
+        """
+        for k, v in repldict.items():
+            self.replace(k, v)
+
     def add_symbol(self, name, stype):
         """ Adds a symbol to the SDFG.
             :param name: Symbol name.
