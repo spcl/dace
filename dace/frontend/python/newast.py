@@ -932,7 +932,7 @@ class GlobalResolver(ast.NodeTransformer):
                                                 detect_callables=True)
             if newnode is not None:
                 node.func = newnode
-                return node
+                return self.generic_visit(node)
         return self.generic_visit(node)
 
     def visit_Assert(self, node: ast.Assert) -> Any:
