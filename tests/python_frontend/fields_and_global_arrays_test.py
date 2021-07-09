@@ -442,6 +442,84 @@ def test_nested_methods_different_inner_objects():
     assert np.allclose(expected, result)
 
 
+def test_constant_closure_cache():
+    class Obj:
+        def __init__(self, q) -> None:
+            self.q = q
+
+        @dace.method
+        def __call__(self, A):
+            return A + self.q
+
+    obj = Obj(2)
+    A = np.random.rand(20)
+    expected = A + obj.q
+    assert np.allclose(obj(A), expected)
+
+    assert len(obj.__call__._cache.cache) == 1
+
+    # Should not replace cache
+    expected = A + obj.q
+    assert np.allclose(obj(A), expected)
+    assert len(obj.__call__._cache.cache) == 1
+
+    obj.q = 5
+    expected = A + obj.q
+    assert np.allclose(obj(A), expected)
+    if obj.__call__._cache.size > 1:
+        assert len(obj.__call__._cache.cache) == 2
+
+
+def test_constant_closure_cache_nested():
+    class ObjB:
+        def __init__(self, q) -> None:
+            self.q = q
+
+    class ObjA:
+        def __init__(self, obj) -> None:
+            self.obj = obj
+
+        @dace.method
+        def __call__(self, A):
+            return A + self.obj.q
+
+    obj = ObjA(ObjB(2))
+    A = np.random.rand(20)
+    expected = A + obj.obj.q
+    assert np.allclose(obj(A), expected)
+
+    obj.obj.q = 5
+    expected = A + obj.obj.q
+    assert np.allclose(obj(A), expected)
+    if obj.__call__._cache.size > 1:
+        assert len(obj.__call__._cache.cache) == 2
+
+
+def test_array_closure_cache():
+    class ObjB:
+        def __init__(self, q) -> None:
+            self.q = np.random.rand(q)
+
+    class ObjA:
+        def __init__(self, obj) -> None:
+            self.obj = obj
+
+        @dace.method
+        def __call__(self, A):
+            return A + self.obj.q[0]
+
+    obj = ObjA(ObjB(2))
+    A = np.random.rand(20)
+    expected = A + obj.obj.q[0]
+    assert np.allclose(obj(A), expected)
+
+    obj.obj.q = np.random.rand(5)
+    expected = A + obj.obj.q[0]
+    assert np.allclose(obj(A), expected)
+    if obj.__call__._cache.size > 1:
+        assert len(obj.__call__._cache.cache) == 2
+
+
 if __name__ == '__main__':
     test_bad_closure()
     test_dynamic_closure()
@@ -464,3 +542,6 @@ if __name__ == '__main__':
     test_arg_none_explicit()
     test_arg_field()
     test_nested_methods_different_inner_objects()
+    test_constant_closure_cache()
+    test_constant_closure_cache_nested()
+    test_array_closure_cache()

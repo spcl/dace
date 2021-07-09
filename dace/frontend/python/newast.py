@@ -3875,7 +3875,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 fcopy = copy.copy(func)
                 if isinstance(fcopy, DaceProgram):
-                    fcopy.clear_cache()
                     fcopy.global_vars = {**func.global_vars, **self.globals}
                     sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
                 else:

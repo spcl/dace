@@ -752,7 +752,26 @@ required:
                             Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
 
     #############################################
+    # Python frontend settings
+    
+    frontend:
+        type: dict
+        title: Frontend
+        description: Python frontend preferences
+        required:
+            cache_size:
+                type: int
+                title: Program cache size
+                default: 32
+                description: >
+                    The number of compiled programs to cache (based on argument 
+                    types, closure constants, and closure array types) to avoid
+                    reparsing/compiling when calling a @dace.program or method.
+
+
+    #############################################
     # General settings
+
     debugprint:
         type: bool
         default: false

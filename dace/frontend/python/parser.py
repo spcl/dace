@@ -11,7 +11,7 @@ import warnings
 
 from dace import symbolic, dtypes
 from dace.config import Config
-from dace.frontend.python import newast, common as pycommon
+from dace.frontend.python import newast, common as pycommon, cached_program
 from dace.sdfg import SDFG
 from dace.data import create_datadescriptor, Data
 
@@ -185,9 +185,12 @@ class DaceProgram(pycommon.SDFGConvertible):
         if self.argnames is None:
             self.argnames = []
 
-        # Cache SDFG with last used arguments
-        self._cache: Tuple[ArgTypes, SDFG,
-                           compiled_sdfg.CompiledSDFG] = (None, None, None)
+        # Cache SDFGs with last used arguments
+        self._cache = cached_program.DaceProgramCache(self._eval_closure)
+        # These sets fill up after the first parsing of the program and stay
+        # the same unless the argument types change
+        self.closure_array_keys: Set[str] = set()
+        self.closure_constant_keys: Set[str] = set()
 
     def _auto_optimize(self,
                        sdfg: SDFG,
@@ -227,29 +230,6 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         return sdfg.compile(validate=self.validate)
 
-    def is_cached(self, argtypes: ArgTypes, gvars: Dict[str, Any]) -> bool:
-        """
-        Returns True if the given arguments exist in the compiled SDFG cache.
-        """
-        if self._cache[0] is None:
-            return False
-        for k, v in self._cache[0].items():
-            if k in argtypes:
-                if not v.is_equivalent(argtypes[k]):
-                    return False
-            elif k in gvars:
-                if v != gvars[k]:
-                    return False
-            else:
-                return False
-
-        return True
-
-    def clear_cache(self) -> None:
-        """ Force-clear compiled SDFG cache of this program. """
-        del self._cache
-        self._cache = (None, None, None)
-
     @property
     def methodobj(self) -> Any:
         return self._methodobj
@@ -257,9 +237,6 @@ class DaceProgram(pycommon.SDFGConvertible):
     @methodobj.setter
     def methodobj(self, new_obj: Any):
         self._methodobj = new_obj
-        # Clear cache upon changing parent object
-        del self._cache
-        self._cache = (None, None, None)
 
     def __sdfg_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
         return self.argnames, self.constant_args
@@ -282,6 +259,9 @@ class DaceProgram(pycommon.SDFGConvertible):
             k: eval(v, self.global_vars) if isinstance(v, str) else v
             for k, v in mapping.items()
         }
+
+    def _eval_closure(self, arg: str) -> Any:
+        return eval(arg, self.global_vars)
 
     def _create_sdfg_args(self, sdfg: SDFG, args: Tuple[Any],
                           kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -313,16 +293,21 @@ class DaceProgram(pycommon.SDFGConvertible):
         if self.methodobj is not None:
             self.global_vars[self.objname] = self.methodobj
 
-        argtypes, arg_mapping, gvars = self._get_type_annotations(args, kwargs)
+        argtypes, arg_mapping, _ = self._get_type_annotations(args, kwargs)
 
-        if self.is_cached(argtypes, gvars):
+        # Cache key
+        cachekey = self._cache.make_key(argtypes, self.closure_array_keys,
+                                        self.closure_constant_keys)
+
+        if self._cache.has(cachekey):
+            entry = self._cache.get(cachekey)
             kwargs.update(arg_mapping)
-            self._cache[2].clear_return_values()
-            return self._cache[2](
-                **self._create_sdfg_args(self._cache[1], args, kwargs))
+            entry.compiled_sdfg.clear_return_values()
+            return entry.compiled_sdfg(
+                **self._create_sdfg_args(entry.sdfg, args, kwargs))
 
         # Clear cache to enforce deletion and closure of compiled program
-        self.clear_cache()
+        # self._cache.pop()
 
         # Parse SDFG
         sdfg, self.closure_arg_mapping = self._parse(args, kwargs)
@@ -343,7 +328,10 @@ class DaceProgram(pycommon.SDFGConvertible):
         # altering transformations such as Vectorization)
         binaryobj = sdfg.compile(validate=self.validate)
 
-        self._cache = ({**argtypes, **gvars}, sdfg, binaryobj)
+        # Recreate key and add to cache
+        cachekey = self._cache.make_key(argtypes, self.closure_array_keys,
+                                        self.closure_constant_keys)
+        self._cache.add(cachekey, sdfg, binaryobj)
 
         # Call SDFG
         result = binaryobj(**sdfg_args)
@@ -658,5 +646,7 @@ class DaceProgram(pycommon.SDFGConvertible):
             if not isinstance(v, str)
         })
         self.closure_arg_mapping = arg_mapping
+        self.closure_array_keys = set(closure.closure_arrays.keys())
+        self.closure_constant_keys = set(closure.closure_constants.keys())
 
         return sdfg, arg_mapping
