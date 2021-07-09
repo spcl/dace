@@ -1099,10 +1099,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if not isnotebook():
             result = preamble()
 
-        # Make sure to not store metadata (saves space)
-        old_meta = dace.serialize.JSON_STORE_METADATA
-        dace.serialize.JSON_STORE_METADATA = False
-
         # Create renderer canvas and load SDFG
         result += """
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
@@ -1115,9 +1111,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             # recursively
             sdfg=dace.serialize.dumps(dace.serialize.dumps(self.to_json())),
             uid=random.randint(0, sys.maxsize - 1))
-
-        # Reset metadata state
-        dace.serialize.JSON_STORE_METADATA = old_meta
 
         return result
 
@@ -1196,16 +1189,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def save(self,
              filename: str,
              use_pickle=False,
-             with_metadata=False,
              hash=None,
              exception=None) -> Optional[str]:
         """ Save this SDFG to a file.
             :param filename: File name to save to.
             :param use_pickle: Use Python pickle as the SDFG format (default:
                                JSON).
-            :param with_metadata: Save property metadata (e.g. name,
-                                  description). False or True override current
-                                  option, whereas None keeps default.
             :param hash: By default, saves the hash if SDFG is JSON-serialized.
                          Otherwise, if True, saves the hash along with the SDFG.
             :param exception: If not None, stores error information along with
@@ -1224,16 +1213,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 return self.hash_sdfg()
         else:
             hash = True if hash is None else hash
-            if with_metadata is not None:
-                old_meta = dace.serialize.JSON_STORE_METADATA
-                dace.serialize.JSON_STORE_METADATA = with_metadata
             with open(filename, "w") as fp:
                 json_output = self.to_json(hash=hash)
                 if exception:
                     json_output['error'] = exception.to_json()
                 fp.write(dace.serialize.dumps(json_output))
-            if with_metadata is not None:
-                dace.serialize.JSON_STORE_METADATA = old_meta
             if hash and 'hash' in json_output['attributes']:
                 return json_output['attributes']['hash']
 
