@@ -3718,7 +3718,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 args += [(arg.arg, self._parse_function_arg(arg.value))
                          for arg in node.keywords]
                 required_args = [
-                    a for a in sdfg.arglist().keys() if a not in sdfg.symbols
+                    a for a in sdfg.arglist().keys()
+                    if a not in sdfg.symbols and not a.startswith('__return')
                 ]
             elif isinstance(func, DaceProgram):
                 args = [(aname, self._parse_function_arg(arg))
