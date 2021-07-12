@@ -261,6 +261,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         }
 
     def _eval_closure(self, arg: str) -> Any:
+        if arg in self.closure_arg_mapping:
+            return self.closure_arg_mapping[arg]
         return eval(arg, self.global_vars)
 
     def _create_sdfg_args(self, sdfg: SDFG, args: Tuple[Any],

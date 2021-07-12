@@ -520,6 +520,29 @@ def test_array_closure_cache():
         assert len(obj.__call__._cache.cache) == 2
 
 
+def test_array_closure_cache_nested():
+    class ObjB:
+        def __init__(self, q) -> None:
+            self.q = np.random.rand(20)
+
+        @dace.method
+        def nested(self, A):
+            return A + self.q
+
+    class ObjA:
+        def __init__(self, obj) -> None:
+            self.obj = obj
+
+        @dace.method
+        def __call__(self, A):
+            return self.obj.nested(A)
+
+    obj = ObjA(ObjB(2))
+    A = np.random.rand(20)
+    expected = A + obj.obj.q
+    assert np.allclose(obj(A), expected)
+
+
 if __name__ == '__main__':
     test_bad_closure()
     test_dynamic_closure()
@@ -545,3 +568,4 @@ if __name__ == '__main__':
     test_constant_closure_cache()
     test_constant_closure_cache_nested()
     test_array_closure_cache()
+    test_array_closure_cache_nested()
