@@ -156,7 +156,64 @@ class StateAssignElimination(transformation.Transformation):
                 if varname in sdfg.symbols:
                     sdfg.remove_symbol(varname)
                     # Substitute removed symbol with the assignment's RHS
-                    sdfg.replace(varname, assignments_to_consider[varname])
+                    if varname in sdfg.free_symbols:
+                        sdfg.replace(varname, assignments_to_consider[varname])
+
+
+# def _alias_assignments(sdfg, edge):
+#     assignments_to_consider = {}
+#     for var, assign in edge.data.assignments.items():
+#         if assign in sdfg.symbols:
+#             assignments_to_consider[var] = assign
+#     return assignments_to_consider
+
+# @registry.autoregister_params(strict=False)
+# class SymbolAliasElimination(transformation.Transformation):
+#     """
+#     Symbol alias elimination finds symbols used in a state that are assigned by
+#     another symbol in the immediate incoming edge and substitutes them.
+#     """
+
+#     _end_state = sdfg.SDFGState()
+
+#     @staticmethod
+#     def expressions():
+#         return [sdutil.node_path_graph(SymbolAliasElimination._end_state)]
+
+#     @staticmethod
+#     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+#         state = graph.nodes()[candidate[SymbolAliasElimination._end_state]]
+
+#         out_edges = graph.out_edges(state)
+#         in_edges = graph.in_edges(state)
+
+#         # We only match end states with one source and at least one assignment
+#         if len(in_edges) != 1:
+#             return False
+#         edge = in_edges[0]
+
+#         assignments_to_consider = _alias_assignments(sdfg, edge)
+
+#         # No assignments to eliminate
+#         if len(assignments_to_consider) == 0:
+#             return False
+#         if all(s not in state.free_symbols for s in assignments_to_consider.keys()):
+#             return False
+
+#         return True
+
+#     @staticmethod
+#     def match_to_str(graph, candidate):
+#         state = graph.nodes()[candidate[SymbolAliasElimination._end_state]]
+#         return state.label
+
+#     def apply(self, sdfg):
+#         state = sdfg.nodes()[self.subgraph[SymbolAliasElimination._end_state]]
+#         edge = sdfg.in_edges(state)[0]
+
+#         assignments_to_consider = _alias_assignments(sdfg, edge)
+#         for varname, assignment in assignments_to_consider.items():
+#             state.replace(varname, assignment)
 
 
 @registry.autoregister_params(singlestate=True)
