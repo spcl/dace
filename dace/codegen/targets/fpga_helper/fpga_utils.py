@@ -85,31 +85,25 @@ def get_multibank_ranges_from_subset(subset: Union[sbs.Subset, str],
     return (low, high + 1)
 
 
-def parse_location_bank(array_or_bank: Union[dt.Array, str]) -> Tuple[str, str]:
+def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
     """
-    :param array_or_bank: Either an array on FPGA or a valid memory bank specifier string
+    :param array: an array on FPGA
     :return: None if an array is given which does not have a location['bank'] value. 
         Otherwise it will return a tuple (bank_type, bank_assignment), where bank_type
         is one of 'DDR', 'HBM' and bank_assignment a string that describes which banks are 
         used.
     """
-    if isinstance(array_or_bank, str) or "bank" in array_or_bank.location:
-        if isinstance(array_or_bank, str):
-            val: str = array_or_bank
-        else:
-            val: str = array_or_bank.location["bank"]
-        split = val.split(".")
-        if (len(split) != 2):
-            raise ValueError(
-                f"Failed to parse memory bank specifier {val}, set in location['bank']. "
-                "Expected format is <type>.<id> (e.g. ddr.2 or hbm.0:2)")
-        split[0] = split[0].upper()
-
-        if (split[0] == "DDR" or split[0] == "HBM"):
-            return (split[0], split[1])
+    if "memorytype" in array.location:
+        if "bank" not in array.location:
+            raise ValueError("If 'memorytype' is specified for an array 'bank' must also be specified")
+        val: str = array.location["bank"]
+        memorytype: str = array.location["memorytype"]
+        memorytype = memorytype.upper()
+        if (memorytype == "DDR" or memorytype == "HBM"):
+            return (memorytype, array.location["bank"])
         else:
             raise ValueError(
-                f"{split[0]} is an invalid bank type for location['bank']. Supported are HBM and DDR."
+                f"{memorytype} is an invalid memorytype. Supported are HBM and DDR."
             )
     else:
         return None
