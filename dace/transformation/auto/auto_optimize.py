@@ -428,6 +428,8 @@ def set_fast_implementations(sdfg: SDFG,
         if isinstance(node, nodes.LibraryNode):
             for impl in implementation_prio:
                 if impl in node.implementations:
+                    if isinstance(node, dace.libraries.standard.nodes.reduce.Reduce) and node.implementation == 'CUDA (block)':
+                        continue
                     node.implementation = impl
                     break
 
