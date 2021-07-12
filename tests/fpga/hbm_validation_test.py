@@ -76,45 +76,41 @@ def test_multi_tasklet():
     sdfg.apply_fpga_transformations()
     sdfg.validate()
 
-#TODO: Rewrite this test for the new format
-"""
 def test_unsound_location():
     sdfg = dace.SDFG("jdj")
     sdfg.add_array("a", [4, 3], dtypes.int32, dtypes.StorageType.FPGA_Global)
     sdfg.add_array("b", [4], dtypes.int32, dtypes.StorageType.FPGA_Global)
     state = sdfg.add_state("dummy")
     sdfg.validate()
-    sdfg.arrays["a"].location["bank"] = ":"
+    sdfg.arrays["a"].location["memorytype"] = ":"
     assert_validation_failure(sdfg, InvalidSDFGError)
+    sdfg.arrays["a"].location["memorytype"] = "hbm"
     sdfg.arrays["a"].location["bank"] = "2:5"
     assert_validation_failure(sdfg, InvalidSDFGError)
-    sdfg.arrays["a"].location["bank"] = "hbm.2:5"
-    assert_validation_failure(sdfg, InvalidSDFGError)
-    sdfg.arrays["a"].location["bank"] = "hbm.k:5"
-    assert_validation_failure(sdfg, InvalidSDFGError)
     sdfg.add_constant("k", 1)
-    sdfg.arrays["a"].location["bank"] = "hbm.k:5"
+    sdfg.arrays["a"].location["memorytype"] = "hbm"
+    sdfg.arrays["a"].location["bank"] = "k:5"
     sdfg.validate()
     sdfg.constants_prop.clear()
     assert_validation_failure(sdfg, InvalidSDFGError)
-    sdfg.arrays["a"].location["bank"] = "hbm.2:2"
+    sdfg.arrays["a"].location["memorytype"] = "hbm"
+    sdfg.arrays["a"].location["bank"] = "2:2"
     assert_validation_failure(sdfg, InvalidSDFGError)
-    sdfg.arrays["a"].location["bank"] = "hbm.0:4"
+    sdfg.arrays["a"].location["memorytype"] = "hbm"
+    sdfg.arrays["a"].location["bank"] = "0:4"
     sdfg.validate()
-    sdfg.arrays["b"].location["bank"] = "hbm.0:4"
+    sdfg.arrays["b"].location["memorytype"] = "hbm"
+    sdfg.arrays["b"].location["bank"] = "0:4"
     assert_validation_failure(sdfg, InvalidSDFGError)
-    sdfg.arrays["b"].location["bank"] = "ddr.abc"
+    sdfg.arrays["b"].location["memorytype"] = "ddr"
+    sdfg.arrays["b"].location["bank"] = "abc"
     assert_validation_failure(sdfg, InvalidSDFGError)
-    sdfg.arrays["b"].location["bank"] = "ddr.1"
+    sdfg.arrays["b"].location["memorytype"] = "ddr"
+    sdfg.arrays["b"].location["bank"] = "1"
     sdfg.validate()
-    sdfg.arrays["b"].location["bank"] = "wut.32"
-    assert_validation_failure(sdfg, InvalidSDFGError)
-    sdfg.arrays["b"].location["bank"] = "ddr8"
-    assert_validation_failure(sdfg, InvalidSDFGError)
-"""
 
 
 if __name__ == "__main__":
     test_deep_scope()
     test_multi_tasklet()
-    #test_unsound_location()
+    test_unsound_location()
