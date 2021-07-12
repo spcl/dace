@@ -24,6 +24,7 @@ from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
                                          make_absolute)
+from dace.codegen.targets.fpga_helper import fpga_utils
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.symbolic import evaluate
@@ -348,7 +349,7 @@ class FPGACodeGen(TargetCodeGenerator):
             for is_output, arg_name, arg, _ in state_parameters:
                 # Streams and Views are not passed as arguments
                 if (isinstance(arg, dt.Array)):
-                    for bank in utils.iterate_hbm_multibank_arrays(
+                    for bank in fpga_utils.iterate_hbm_multibank_arrays(
                             arg_name, arg, sdfg):
                         current_name = cpp.ptr(arg_name, arg, sdfg, bank)
                         kernel_args_call_host.append(
@@ -589,9 +590,9 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         interface_id = data_to_interface[data_name]
                     else:
                         # Get and update global memory interface ID
-                        if utils.is_hbm_array(desc):
+                        if fpga_utils.is_hbm_array(desc):
                             tmp_interface_ids = []
-                            for bank in utils.iterate_hbm_multibank_arrays(
+                            for bank in fpga_utils.iterate_hbm_multibank_arrays(
                                     data_name, desc, sdfg):
                                 ptr_str = cpp.ptr(data_name, desc, sdfg, bank)
                                 tmp_interface_id = global_interfaces[ptr_str]
@@ -616,7 +617,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         trace_name = trace_node.data
                         trace_desc = trace_node.desc(trace_sdfg)
                         if "bank" in trace_desc.location:
-                            trace_type, trace_bank = utils.parse_location_bank(
+                            trace_type, trace_bank = fpga_utils.parse_location_bank(
                                 trace_desc)
                             if (bank is not None and bank_type is not None
                                     and (bank != trace_bank
@@ -634,7 +635,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         outer_desc = outer_node.desc(trace[0][2])
                         okbank = False
                         if ("bank" in outer_desc.location):
-                            trace_type, trace_bank = utils.parse_location_bank(
+                            trace_type, trace_bank = fpga_utils.parse_location_bank(
                                 outer_desc)
                             okbank = (trace_type == bank_type
                                       and trace_bank == bank)
@@ -854,11 +855,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     storage_type_str = "hlslib::ocl::StorageType::DDR"  #DDR to use unspecified memory
 
                     #Fix bankassignments if present
-                    bank_info = utils.parse_location_bank(nodedesc)
+                    bank_info = fpga_utils.parse_location_bank(nodedesc)
                     if bank_info is not None:
                         bank_type, bank = bank_info
                         if bank_type == "HBM":
-                            bank_low, bank_high = utils.get_multibank_ranges_from_subset(
+                            bank_low, bank_high = fpga_utils.get_multibank_ranges_from_subset(
                                 bank, sdfg)
                             memory_bank_arg_count = bank_high - bank_low
                             arrsize = dace.symbolic.pystr_to_symbolic(
@@ -1155,12 +1156,12 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
 
             copy_shape = memlet.subset.bounding_box_size()
-            is_src_using_hbm = src_is_subset and utils.is_hbm_array(
+            is_src_using_hbm = src_is_subset and fpga_utils.is_hbm_array(
                 src_nodedesc)
-            is_dst_using_hbm = not src_is_subset and utils.is_hbm_array(
+            is_dst_using_hbm = not src_is_subset and fpga_utils.is_hbm_array(
                 dst_nodedesc)
             if is_src_using_hbm or is_dst_using_hbm:
-                copy_shape = utils.modify_distributed_subset(copy_shape, -1)
+                copy_shape = fpga_utils.modify_distributed_subset(copy_shape, -1)
 
             offset_src, offset_dst = "0", "0"
             if memlet.src_subset is not None:
@@ -1540,8 +1541,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 and isinstance(dst_node, dace.sdfg.nodes.AccessNode)):
             src_array = src_node.desc(sdfg)
             dst_array = dst_node.desc(sdfg)
-            src_is_hbm = utils.is_hbm_array(src_array)
-            dst_is_hbm = utils.is_hbm_array(dst_array)
+            src_is_hbm = fpga_utils.is_hbm_array(src_array)
+            dst_is_hbm = fpga_utils.is_hbm_array(dst_array)
             if src_is_hbm or dst_is_hbm:
                 modedge = copy.deepcopy(edge)
                 mem: memlet.Memlet = modedge.data
@@ -1550,10 +1551,10 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 if mem.dst_subset is None:
                     mem.dst_subset = subsets.Range.from_array(dst_array)
                 if src_is_hbm:
-                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(
+                    bankbeg, bankend = fpga_utils.get_multibank_ranges_from_subset(
                         mem.src_subset, sdfg)
                 if dst_is_hbm:
-                    bankbeg, bankend = utils.get_multibank_ranges_from_subset(
+                    bankbeg, bankend = fpga_utils.get_multibank_ranges_from_subset(
                         mem.dst_subset, sdfg)
                 num_accessed_banks = bankend - bankbeg
                 oldmem = copy.deepcopy(mem)
@@ -1562,10 +1563,10 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     dst_index = oldmem.dst_subset[0][0] + i
                     # Support for ignoring the distributed index if it's not required, e.g. on the host
                     if src_is_hbm or num_accessed_banks > 1:
-                        mem.src_subset = utils.modify_distributed_subset(
+                        mem.src_subset = fpga_utils.modify_distributed_subset(
                             mem.src_subset, src_index)
                     if dst_is_hbm or num_accessed_banks > 1:
-                        mem.dst_subset = utils.modify_distributed_subset(
+                        mem.dst_subset = fpga_utils.modify_distributed_subset(
                             mem.dst_subset, dst_index)
                     edge_list.append(copy.deepcopy(modedge))
             else:
@@ -2058,8 +2059,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)
                     and self._dispatcher.defined_vars.has(edge.src_conn)):
-                if utils.is_hbm_array(datadesc):
-                    accessed_subset, _ = utils.get_multibank_ranges_from_subset(
+                if fpga_utils.is_hbm_array(datadesc):
+                    accessed_subset, _ = fpga_utils.get_multibank_ranges_from_subset(
                         edge.data.dst_subset or edge.data.subset, sdfg)
                 else:
                     accessed_subset = 0

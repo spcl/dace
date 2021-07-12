@@ -18,6 +18,7 @@ from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
 from dace.codegen import cppunparse
 from dace.codegen.targets.common import (sym2cpp, find_incoming_edges,
                                          codeblock_to_cpp)
+from dace.codegen.targets.fpga_helper import fpga_utils
 from dace.codegen.dispatcher import DefinedType
 from dace.config import Config
 from dace.frontend import operations
@@ -265,7 +266,7 @@ def ptr(name: str,
             if not sdfg:
                 raise ValueError("Missing SDFG value")
             return f'__state->__{sdfg.sdfg_id}_{name}'
-    if (desc is not None and utils.is_hbm_array(desc)):
+    if (desc is not None and fpga_utils.is_hbm_array(desc)):
         if (subset_info_hbm == None):
             raise ValueError(
                 "Cannot generate name for HBM bank without subset info")
@@ -276,7 +277,7 @@ def ptr(name: str,
                 raise ValueError(
                     "Cannot generate name for HBM bank using subset if sdfg not provided"
                 )
-            low, high = utils.get_multibank_ranges_from_subset(
+            low, high = fpga_utils.get_multibank_ranges_from_subset(
                 subset_info_hbm, sdfg)
             if (low + 1 != high):
                 raise ValueError(
@@ -586,8 +587,8 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    if utils.is_hbm_array(d):
-        subset_in = utils.modify_distributed_subset(subset_in, 0)
+    if fpga_utils.is_hbm_array(d):
+        subset_in = fpga_utils.modify_distributed_subset(subset_in, 0)
 
     # Offset according to parameters, then offset according to array
     if offset is not None:

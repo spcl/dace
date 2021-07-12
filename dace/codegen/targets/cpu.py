@@ -14,6 +14,7 @@ from dace.codegen.targets import cpp
 from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
+from dace.codegen.targets.fpga_helper import fpga_utils
 from dace.frontend import operations
 from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
@@ -1601,7 +1602,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         for _, _, _, vconn, memlet in state.all_edges(node):
             if (memlet.data in sdfg.arrays
-                    and sdutils.is_hbm_array(sdfg.arrays[memlet.data])):
+                    and fpga_utils.is_hbm_array(sdfg.arrays[memlet.data])):
                 raise NotImplementedError(
                     "HBM in nested SDFGs not supported in non-FPGA code.")
 
