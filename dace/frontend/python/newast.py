@@ -163,7 +163,7 @@ def parse_dace_program(f,
         if mod == 'builtins':
             continue
         newmod = global_vars[mod]
-        del global_vars[mod]
+        #del global_vars[mod]
         global_vars[modval] = newmod
 
     # Resolve constants to their values (if they are not already defined in this scope)
@@ -266,8 +266,18 @@ class StructTransformer(ast.NodeTransformer):
 class ModuleResolver(ast.NodeTransformer):
     def __init__(self, modules: Dict[str, str]):
         self.modules = modules
+        self.should_replace = False
+
+    def visit_Call(self, node) -> Any:
+        self.should_replace = True
+        node.func = self.visit(node.func)
+        self.should_replace = False
+        return self.generic_visit(node)
+
 
     def visit_Attribute(self, node):
+        if not self.should_replace:
+            return self.generic_visit(node)
         # Traverse AST until reaching the top-level value (could be a name
         # or a function)
         cnode = node
