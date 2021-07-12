@@ -64,7 +64,10 @@ class SDFGConvertible(object):
     def __sdfg_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
         """
         Returns the SDFG signature represented by this object, as a sequence
-        of regular argument names and a sequence of constant argument names.
-        :return: A 2-tuple of (regular arguments, constant arguments).
+        of all argument names that will be found in a call to this object
+        (i.e., including regular and constant arguments, but excluding "self"
+        for bound methods) and a sequence of the constant argument names from
+        the first sequence.
+        :return: A 2-tuple of (all arguments, constant arguments).
         """
         raise NotImplementedError

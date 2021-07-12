@@ -3900,7 +3900,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 # Handle nested closure
                 closure_arrays = getattr(fcopy, '__sdfg_closure__',
-                                         lambda: {})()
+                                         lambda *args: {})()
                 for aname, arr in closure_arrays.items():
                     desc = data.create_datadescriptor(arr)
                     outer_name = self.sdfg.add_datadesc(aname,
