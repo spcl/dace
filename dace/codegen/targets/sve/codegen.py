@@ -58,6 +58,12 @@ class SVECodeGen(TargetCodeGenerator):
             self, lambda state, sdfg, node: is_in_scope(
                 state, sdfg, node, [dace.ScheduleType.SVE_Map]))
 
+        cpu_storage = [
+            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal,
+            dtypes.StorageType.Register
+        ]
+        self.dispatcher.register_array_dispatcher(cpu_storage, self)
+
         self.cpu_codegen: dace.codegen.targets.CPUCodeGen = self.dispatcher.get_generic_node_dispatcher(
         )
 
@@ -346,6 +352,35 @@ class SVECodeGen(TargetCodeGenerator):
             raise util.NotSupportedError(
                 'Only writeback to Tasklets and AccessNodes is supported')
 
+    def allocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
+                       node: nodes.Node, nodedesc: data.Data,
+                       global_stream: CodeIOStream,
+                       declaration_stream: CodeIOStream,
+                       allocation_stream: CodeIOStream) -> None:
+        if util.get_sve_scope(sdfg, dfg, node) is not None and isinstance(
+                nodedesc, data.Scalar) and isinstance(nodedesc.dtype,
+                                                      dtypes.vector):
+            # Special allocation if vector Scalar in SVE scope (vector register)
+            if self.dispatcher.defined_vars.has(node.data):
+                # Special case because Scalars might be vectorized
+                sve_type = util.TYPE_TO_SVE[nodedesc.dtype.vtype]
+                self.dispatcher.defined_vars.add(node.data, DefinedType.Scalar,
+                                                 sve_type)
+                declaration_stream.write(f'{sve_type} {node.data};')
+            return
+
+        self.cpu_codegen.allocate_array(sdfg, dfg, state_id, node, nodedesc,
+                                        global_stream, declaration_stream,
+                                        allocation_stream)
+
+    def deallocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
+                         node: nodes.Node, nodedesc: data.Data,
+                         function_stream: CodeIOStream,
+                         callsite_stream: CodeIOStream) -> None:
+        return self.cpu_codegen.deallocate_array(sdfg, dfg, state_id, node,
+                                                 nodedesc, function_stream,
+                                                 callsite_stream)
+
     def generate_scope(self, sdfg: dace.SDFG, scope: ScopeSubgraphView,
                        state_id: int, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream):
@@ -401,23 +436,7 @@ class SVECodeGen(TargetCodeGenerator):
 
         # Allocate scope related memory
         for node, _ in scope.all_nodes_recursive():
-            if isinstance(node, nodes.AccessNode):
-                desc = node.desc(sdfg)
-                if isinstance(desc, data.Scalar) and isinstance(
-                        desc.dtype, dtypes.vector):
-                    # Special case because Scalars might be vectorized
-                    sve_type = util.TYPE_TO_SVE[desc.dtype.vtype]
-                    self.dispatcher.defined_vars.add(node.data,
-                                                     DefinedType.Scalar,
-                                                     sve_type)
-                    callsite_stream.write(f'{sve_type} {node.data};')
-                else:
-                    # Arrays defined within a scope
-                    self.cpu_codegen.allocate_array(sdfg, scope, state_id, node,
-                                                    desc, function_stream,
-                                                    callsite_stream,
-                                                    callsite_stream)
-            elif isinstance(node, nodes.Tasklet):
+            if isinstance(node, nodes.Tasklet):
                 # Create empty shared registers for outputs into other tasklets
                 for edge in state_dfg.out_edges(node):
                     if isinstance(edge.dst, dace.nodes.Tasklet):
@@ -432,18 +451,6 @@ class SVECodeGen(TargetCodeGenerator):
                                           callsite_stream,
                                           skip_entry_node=True,
                                           skip_exit_node=True)
-
-        # Deallocate scope related memory
-        already_deallocated = []
-        for node, _ in scope.all_nodes_recursive():
-            if isinstance(node, nodes.AccessNode):
-                desc = node.desc(sdfg)
-                if desc not in already_deallocated:
-                    self.cpu_codegen.deallocate_array(sdfg, scope, state_id,
-                                                      node, desc,
-                                                      function_stream,
-                                                      callsite_stream)
-                    already_deallocated.append(node.desc(sdfg))
 
         # Increase the counting variable (according to the number of processed elements)
         callsite_stream.write(
