@@ -166,67 +166,60 @@ def create_py_map(sdfg):
     """ Creates the mapping from the python source lines to the SDFG nodes.
         The mapping gets saved at: <SDFG build folder>/map/map_py.json
         :param sdfg: The SDFG for which the mapping will be created
+        :return: an object with the build_folder, src_files and made_with_api
     """
-    # If the cache setting is set to 'hash' then we don't create a
-    # mapping as we don't know where to save it to due to
-    # the hash value changing every time the state of the SDFG changes.
-    if Config.get('cache') != 'hash':
-        tmp = get_tmp(sdfg.name)
-        py_mapper = MapPython(sdfg.name)
-        py_mapper.mapper(sdfg, tmp)
-        folder = sdfg.build_folder
-        save("py", sdfg.name, py_mapper.map, folder)
-        # If the SDFG was made with the API we need to create tmp info
-        # as it doesn't have any
-        sourceFiles = [src for src in get_src_files(sdfg, set())]
-        # If tmp is None, then the SDFG was created with the API
-        if tmp is None:
-            temporaryInfo(
-                sdfg.name, {
-                    'build_folder': folder,
-                    'src_files': sourceFiles,
-                    'made_with_api': True,
-                })
-        else:
-            tmp['src_files'] = sourceFiles
-            temporaryInfo(sdfg.name, tmp)
+    py_mapper = MapPython(sdfg.name)
+    made_with_api = py_mapper.mapper(sdfg)
+    folder = sdfg.build_folder
+    save("py", sdfg.name, py_mapper.map, folder)
+    # If the SDFG was made with the API we need to create tmp info
+    # as it doesn't have any
+    sourceFiles = [src for src in get_src_files(sdfg, set())]
+    # If tmp is None, then the SDFG was created with the API
+    return (folder, sourceFiles, made_with_api)
 
 
-def create_cpp_map(code: str, name: str, target_name: str):
+def create_cpp_map(code: str, name: str, target_name: str, build_folder: str,
+                   sourceFiles: [str], made_with_api: bool):
     """ Creates the mapping from the SDFG nodes to the C++ code lines.
         The mapping gets saved at: <SDFG build folder>/map/map_cpp.json
         :param code: C++ code containing the identifiers '////__DACE:0:0:0'
         :param name: The name of the SDFG
         :param target_name: The target type, example: 'cpu'
+        :param build_folder: The build_folder of the SDFG
+        :param sourceFiles: A list of source files of to the SDFG
+        :param made_with_api: true if the SDFG was created just with the API
     """
-    tmp = get_tmp(name)
-    if tmp is None:
-        return
-    remove_tmp(name, True)
+    codegen_debug = Config.get_bool('compiler', 'codegen_lineinfo')
+    cpp_mapper = MapCpp(code, name, target_name)
+    cpp_mapper.mapper(codegen_debug)
 
-    # If the cache setting is set to 'hash' then we don't create a
-    # mapping as we don't know where to save it to due to
-    # the hash value changing every time the state of the SDFG changes.
-    # We send a message to the IDE in that case to notify the user of
-    # restricted features.
-    if Config.get('cache') != 'hash':
-        cpp_mapper = MapCpp(code, name, target_name)
-        cpp_mapper.mapper()
+    folder = save("cpp", name, cpp_mapper.map, build_folder)
 
-        folder = save("cpp", name, cpp_mapper.map, tmp.get("build_folder"))
-        api = tmp.get('made_with_api')
+    if codegen_debug:
+        save("codegen", name, cpp_mapper.codegen_map, build_folder)
 
-        # Send information about the SDFG to VSCode
-        send({
-            "type": "registerFunction",
-            "name": name,
-            "path_cache": folder,
-            "path_file": tmp.get("src_files"),
-            "target_name": target_name,
-            "made_with_api": api if api else False,
-        })
-    else:
-        send({'type': 'restrictedFeatures', 'reason': 'config.cache.hash'})
+    # Send information about the SDFG to VSCode
+    send({
+        "type": "registerFunction",
+        "name": name,
+        "path_cache": folder,
+        "path_file": sourceFiles,
+        "target_name": target_name,
+        "made_with_api": made_with_api,
+        "codegen_map": codegen_debug
+    })
+
+
+def create_maps(sdfg, code: str, target_name: str):
+    """ Creates the C++, Py and Codegen mapping
+        :param sdfg: The sdfg to create the mapping for
+        :param code: The generated code
+        :param target_name: The target name
+    """
+    build_folder, sourceFiles, made_with_api = create_py_map(sdfg)
+    create_cpp_map(code, sdfg.name, target_name, build_folder, sourceFiles,
+                   made_with_api)
 
 
 class MapCpp:
@@ -237,15 +230,24 @@ class MapCpp:
         self.name = name
         self.code = code
         self.map = {'target': target_name}
+        self.codegen_map = {}
+        self.cpp_pattern = re.compile(
+            r'(\/\/\/\/__DACE:[0-9]+:[0-9]+:[0-9]+(,[0-9])*)')
+        self.codegen_pattern = re.compile(
+            r'(\/\/\/\/__CODEGEN;([A-z]:)?(\/|\\)([A-z0-9-_+]+(\/|\\))*([A-z0-9]+\.[A-z0-9]+);[0-9]+)'
+        )
 
-    def mapper(self):
-        """ For each line of code retrieve the corresponding nodes
-            and map the nodes to this line
+    def mapper(self, codegen_debug: bool = False):
+        """ For each line of code retrieve the corresponding identifiers
+            and create the mapping
+            :param codegen_debug: if the codegen mapping should be created
         """
         for line_num, line in enumerate(self.code.split("\n"), 1):
             nodes = self.get_nodes(line)
             for node in nodes:
                 self.create_mapping(node, line_num)
+            if codegen_debug:
+                self.codegen_mapping(line, line_num)
 
     def create_mapping(self, node: SdfgLocation, line_num: int):
         """ Adds a C++ line number to the mapping
@@ -286,17 +288,36 @@ class MapCpp:
                     ids_split[3].split(",")))
         return nodes
 
-    def get_identifiers(self, line: str):
+    def codegen_mapping(self, line: str, line_num: int):
+        """ Searches the code line for the first ////__CODEGEN identifier
+            and adds the information to the codegen_map
+            :param line: code line to search for identifiers
+            :param line_num: corresponding line number
+        """
+        codegen_identifier = self.get_identifiers(line, findall=False)
+        if codegen_identifier:
+            codegen_debuginfo = codegen_identifier.split(';')
+            self.codegen_map[line_num] = {
+                'file': codegen_debuginfo[1],
+                'line': codegen_debuginfo[2]
+            }
+
+    def get_identifiers(self, line: str, findall: bool = True):
         """ Retruns a list of identifiers found in the code line
             :param line: line of C++ code with identifiers
-            :return: list of identifers
+            :param findall: if it should return all finds or just the first one
+            :return: if findall is true return list of identifers 
+            otherwise a single identifier
         """
-        line_identifier = re.findall(
-            r'(\/\/\/\/__DACE:[0-9]:[0-9]:[0-9]*(,[0-9])*)', line)
-        # The regex expression returns 2 groups (a tuple) due to us also
-        # considering edges. We are only interested in the first element.
-        # Example tuple in the case of an edge ('////__DACE:0:0:2,6', ',6')
-        return [x for (x, y) in line_identifier]
+        if findall:
+            line_identifiers = re.findall(self.cpp_pattern, line)
+            # The regex expression returns multiple groups (a tuple).
+            # We are only interested in the first element of the tuple (the entire match).
+            # Example tuple in the case of an edge ('////__DACE:0:0:2,6', ',6')
+            return [groups[0] for groups in line_identifiers]
+        else:
+            line_identifier = re.search(self.codegen_pattern, line)
+            return line_identifier.group(0) if line_identifier else None
 
 
 class MapPython:
@@ -308,46 +329,42 @@ class MapPython:
         self.map = {}
         self.debuginfo = {}
 
-    def mapper(self, sdfg, line_info) -> dict:
+    def mapper(self, sdfg) -> dict:
         """ Creates the source to SDFG node mapping
             :param sdfg: SDFG to create the mapping for
-            :line_info: source information from the tmp file
+            :return: if the sdfg was created only by the API
         """
         self.debuginfo = self.sdfg_debuginfo(sdfg)
         self.debuginfo = self.divide()
         self.sorter()
 
-        # If we haven't saved line and/or src info
-        # return after creating the map
-        # Happens when only using the SDFG API
-        if (line_info is None or "start_line" not in line_info
-                or "end_line" not in line_info or "src_file" not in line_info):
-            self.create_mapping()
-            return
+        func_names = []
+        for nested_sdfg in sdfg.all_sdfgs_recursive():
+            func_names.append(nested_sdfg.name)
 
         # Store the start and end line as a tuple
         # for each function/sub-function in the SDFG
-        range_dict = {
-            line_info["src_file"]:
-            [(line_info["start_line"], line_info["end_line"])]
-        }
+        range_dict = {}
 
-        if "other_sdfgs" in line_info:
-            for other_sdfg_name in line_info["other_sdfgs"]:
-                other_tmp = get_tmp(other_sdfg_name)
-                # SDFGs created with the API don't have tmp files
-                if (other_tmp is not None and "src_file" in other_tmp
-                        and "start_line" in other_tmp
-                        and "end_line" in other_tmp):
-                    remove_tmp(other_sdfg_name, True)
-                    ranges = range_dict.get(other_tmp["src_file"])
-                    if ranges is None:
-                        ranges = []
-                    ranges.append(
-                        (other_tmp["start_line"], other_tmp["end_line"]))
-                    range_dict[other_tmp["src_file"]] = ranges
+        for func_name in func_names:
+            tmp = get_tmp(func_name)
+            # SDFGs created with the API don't have tmp files
+            if (tmp and "src_file" in tmp and "start_line" in tmp
+                    and "end_line" in tmp and "other_sdfgs" in tmp):
+                remove_tmp(func_name, True)
+
+                for other_name in tmp['other_sdfgs']:
+                    if other_name not in func_names:
+                        func_names.append(other_name)
+
+                ranges = range_dict.get(tmp["src_file"])
+                if ranges is None:
+                    ranges = []
+                ranges.append((tmp["start_line"], tmp["end_line"]))
+                range_dict[tmp["src_file"]] = ranges
 
         self.create_mapping(range_dict)
+        return len(range_dict.items()) == 0
 
     def divide(self):
         """ Divide debuginfo into an array where each entry

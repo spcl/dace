@@ -70,6 +70,18 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Persistent,
 ]
 
+# A subset of on-GPU storage types
+GPU_STORAGES = [
+    StorageType.GPU_Shared,
+]
+
+# A subset of on-FPGA storage types
+FPGA_STORAGES = [
+    StorageType.FPGA_Local,
+    StorageType.FPGA_Registers,
+    StorageType.FPGA_ShiftRegister,
+]
+
 
 @undefined_safe_enum
 class ReductionType(aenum.AutoNumberEnum):
@@ -765,6 +777,30 @@ class struct(typeclass):
         )
 
 
+class constant:
+    """ 
+    Data descriptor type hint signalling that argument evaluation is 
+    deferred to call time.
+
+    Example usage::
+
+        @dace.program
+        def example(A: dace.float64[20], constant: dace.constant):
+            if constant == 0:
+                return A + 1
+            else:
+                return A + 2
+
+    
+    In the above code, ``constant`` will be replaced with its value at call time
+    during parsing.
+    """
+    @staticmethod
+    def __descriptor__():
+        raise ValueError('All constant arguments must be provided in order '
+                         'to compile the SDFG ahead-of-time.')
+
+
 ####### Utility function ##############
 def ptrtonumpy(ptr, inner_ctype, shape):
     import ctypes
@@ -1236,12 +1272,25 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # Host-only allocation
     if storage in [
             StorageType.CPU_Heap, StorageType.CPU_Pinned,
-            StorageType.CPU_ThreadLocal, StorageType.FPGA_Global,
-            StorageType.GPU_Global
+            StorageType.CPU_ThreadLocal
     ]:
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
             ScheduleType.MPI
+        ]
+    
+    # GPU-global memory
+    if storage is StorageType.GPU_Global:
+        return schedule in [
+            ScheduleType.CPU_Multicore, ScheduleType.Sequential,
+            ScheduleType.MPI, ScheduleType.GPU_Default
+        ]
+    
+    # FPGA-global memory
+    if storage is StorageType.FPGA_Global:
+        return schedule in [
+            ScheduleType.CPU_Multicore, ScheduleType.Sequential,
+            ScheduleType.MPI, ScheduleType.FPGA_Device
         ]
 
     # FPGA-local memory

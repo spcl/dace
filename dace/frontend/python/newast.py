@@ -198,17 +198,14 @@ def parse_dace_program(f,
     sdfg.set_sourcecode(src, 'python')
 
     # We save information in a tmp file for improved source mapping.
-    # In the case of the cache config set to 'hash' we don't create a mapping.
-    if Config.get('cache') != 'hash':
-        other_functions = [func for func in other_sdfgs if not func == name]
-        data = {
-            "start_line": src_line + 1,
-            "end_line": src_line + len(src.split("\n")) - 1,
-            "src_file": path.abspath(src_file),
-            "other_sdfgs": other_functions,
-            "build_folder": sdfg.build_folder,
-        }
-        sourcemap.temporaryInfo(name, data)
+    other_functions = [func for func in other_sdfgs if not func == name]
+    data = {
+        "start_line": src_line + 1,
+        "end_line": src_line + len(src.split("\n")) - 1,
+        "src_file": path.abspath(src_file),
+        "other_sdfgs": other_functions,
+    }
+    sourcemap.temporaryInfo(name, data)
 
     return sdfg
 
@@ -297,6 +294,7 @@ class ConditionalCodeResolver(ast.NodeTransformer):
         self.globals = globals
 
     def visit_If(self, node: ast.If) -> Any:
+        node = self.generic_visit(node)
         try:
             test = RewriteSympyEquality(self.globals).visit(node.test)
             result = astutils.evalnode(test, self.globals)
@@ -314,7 +312,7 @@ class ConditionalCodeResolver(ast.NodeTransformer):
             # Cannot evaluate if condition at compile time
             pass
 
-        return self.generic_visit(node)
+        return node
 
     def visit_IfExp(self, node: ast.IfExp) -> Any:
         return self.visit_If(node)
@@ -800,6 +798,9 @@ class GlobalResolver(ast.NodeTransformer):
             if newnode is not None:
                 return newnode
         return self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> Any:
+        return self.visit_Attribute(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
         try:
@@ -2424,6 +2425,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 symbolic.pystr_to_symbolic(ranges[0][1]))
             step = self._replace_with_global_symbols(
                 symbolic.pystr_to_symbolic(ranges[0][2]))
+            eoff = -1
+            if (step < 0) == True:
+                eoff = 1
             try:
                 conditions = [s >= 0 for s in (start, stop, step)]
                 if (conditions == [True, True, True]
@@ -2448,8 +2452,8 @@ class ProgramVisitor(ExtNodeVisitor):
             # but different ranges?
             if sym_name in self.sdfg.symbols.keys():
                 for k, v in self.symbols.items():
-                    if (str(k) == sym_name
-                            and v != subsets.Range([(start, stop - 1, step)])):
+                    if (str(k) == sym_name and
+                            v != subsets.Range([(start, stop + eoff, step)])):
                         warnings.warn(
                             "Two for-loops using the same variable ({}) but "
                             "different ranges in the same nested SDFG level. "
@@ -2461,7 +2465,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             extra_syms = {sym_name: sym_obj}
 
-            self.symbols[sym_obj] = subsets.Range([(start, stop - 1, step)])
+            self.symbols[sym_obj] = subsets.Range([(start, stop + eoff, step)])
 
             # Add range symbols as necessary
             for rng in ranges[0]:
@@ -2987,14 +2991,14 @@ class ProgramVisitor(ExtNodeVisitor):
                     in1_subset.offset(wtarget_subset, True)
                     in1_memlet = Memlet.simple(
                         rtarget_name, ','.join([
-                            '__i%d + %d' % (i, s)
+                            '__i%d + %s' % (i, s)
                             for i, (s, _, _) in enumerate(in1_subset)
                         ]))
                     in2_subset = copy.deepcopy(op_subset)
                     in2_subset.offset(wtarget_subset, True)
                     in2_memlet = Memlet.simple(
                         op_name, ','.join([
-                            '__i%d + %d' % (i, s)
+                            '__i%d + %s' % (i, s)
                             for i, (s, _, _) in enumerate(in2_subset)
                         ]))
                     out_memlet = Memlet.simple(
@@ -3616,7 +3620,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_function_arg(self, arg: ast.AST):
         # Obtain a string representation
-        return self.visit(arg)
+        result = self.visit(arg)
+        if isinstance(result, (list, tuple)):
+            if len(result) == 1 and isinstance(result[0], str):
+                return result[0]
+        return result
 
     def _is_inputnode(self, sdfg: SDFG, name: str):
         visited_data = set()
@@ -3723,8 +3731,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 funcname = func.name
                 fcopy._cache = (None, None, None)
                 fcopy.global_vars = {**func.global_vars, **self.globals}
+                fcopy.signature = copy.deepcopy(func.signature)
                 fargs = (self._eval_arg(arg) for _, arg in args)
                 sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
+                required_args = [k for k, _ in args if k in sdfg.arg_names]
+                # Filter out constant arguments
+                args = [(k, v) for k, v in args if k not in fcopy.constant_args]
             elif self._has_sdfg(func):
                 fargs = tuple(
                     self._eval_arg(self._parse_function_arg(arg))
@@ -4552,9 +4564,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 new_axes = other_subset.unsqueeze(expr.new_axes)
             other_subset.squeeze(ignore_indices=new_axes)
 
-            tmp, tmparr = self.sdfg.add_temp_transient(other_subset.size(),
-                                                       arrobj.dtype,
-                                                       arrobj.storage)
+            # NOTE: This is fixing azimint_hist (issue is `if x == a_max`)
+            # TODO: Follow Numpy, i.e. slicing with indices returns scalar but
+            # slicing with a range of (squeezed) size 1 returns array/view.
+            if all(s == 1 for s in other_subset.size()):
+                tmp = self.sdfg.temp_data_name()
+                tmp, tmparr = self.sdfg.add_scalar(tmp,
+                                                   arrobj.dtype,
+                                                   arrobj.storage,
+                                                   transient=True)
+            else:
+                tmp, tmparr = self.sdfg.add_temp_transient(
+                    other_subset.size(), arrobj.dtype, arrobj.storage)
             wnode = self.last_state.add_write(tmp,
                                               debuginfo=self.current_lineinfo)
             self.last_state.add_nedge(

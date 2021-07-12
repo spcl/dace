@@ -749,7 +749,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 continue
             allocated.add(node.data)
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               module_stream,
+                                               node.desc(sdfg), module_stream,
                                                module_body_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
@@ -824,7 +824,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # Emit allocations
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               module_stream, entry_stream)
+                                               node.desc(sdfg), module_stream,
+                                               entry_stream)
         for is_output, name, node, _ in external_streams:
             self._dispatcher.defined_vars.add_global(name, DefinedType.Stream,
                                                      node.ctype)
