@@ -274,7 +274,6 @@ class ModuleResolver(ast.NodeTransformer):
         self.should_replace = False
         return self.generic_visit(node)
 
-
     def visit_Attribute(self, node):
         if not self.should_replace:
             return self.generic_visit(node)
