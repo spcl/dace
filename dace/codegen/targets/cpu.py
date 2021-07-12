@@ -7,8 +7,8 @@ import warnings
 
 from sympy.functions.elementary.complexes import arg
 
-from dace import (data, dtypes, registry, memlet as mmlt, subsets,
-                  symbolic, Config)
+from dace import (data, dtypes, registry, memlet as mmlt, subsets, symbolic,
+                  Config)
 from dace.codegen import cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
@@ -375,8 +375,7 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.defined_vars.add(name, DefinedType.Stream,
                                               ctypedef)
 
-        elif (
-                nodedesc.storage == dtypes.StorageType.CPU_Heap or
+        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap or
             (nodedesc.storage == dtypes.StorageType.Register and
              ((symbolic.issymbolic(arrsize, sdfg.constants)) or
               ((arrsize_bytes > Config.get("compiler", "max_stack_array_size"))
@@ -999,8 +998,10 @@ class CPUCodeGen(TargetCodeGenerator):
                         atomic = cpp.is_write_conflicted(
                             dfg, edge, sdfg_schedule=self._toplevel_schedule)
                         atomic = '' if atomic is False else '_atomic'
-                        src_gpu_loc = get_gpulevel_node_location(sdfg, dfg, node)
-                        dst_gpu_loc = get_gpulevel_node_location(sdfg, dfg, dst_node)
+                        src_gpu_loc = get_gpulevel_node_location(
+                            sdfg, dfg, node)
+                        dst_gpu_loc = get_gpulevel_node_location(
+                            sdfg, dfg, dst_node)
                         if atomic and src_gpu_loc != None and src_gpu_loc != dst_gpu_loc:
                             atomic += '_system'
                         write_expr = codegen.write_and_resolve_expr(

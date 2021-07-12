@@ -854,26 +854,30 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
         # set the stream to a local variable.
         max_streams = int(
             Config.get("compiler", "cuda", "max_concurrent_streams"))
-        gpu = sdutils.get_gpu_location(sdfg, node)
+        gpu_id = sdutils.get_gpu_location(sdfg, node)
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and (
                 hasattr(node, "_cuda_stream")
                 or connected_to_gpu_memory(node, state_dfg, sdfg)):
             if max_streams >= 0:
-                callsite_stream.write('''\
+                callsite_stream.write(
+                    '''\
             const int __dace_current_stream_id = {cs_id};
             const int __dace_cuda_device = {gpu_id};
             {backend}Stream_t __dace_current_stream = __state->gpu_context->at(__dace_cuda_device).streams[__dace_current_stream_id];\
-            '''.format(cs_id=node._cuda_stream[gpu],
+            '''.format(cs_id=node._cuda_stream[gpu_id],
                        backend=Config.get('compiler', 'cuda', 'backend'),
-                       gpu_id=gpu),
+                       gpu_id=gpu_id),
                     sdfg,
                     state_id,
                     node,
                 )
             else:
                 callsite_stream.write(
-                    '%sStream_t __dace_current_stream = nullptr;' %
-                    Config.get('compiler', 'cuda', 'backend'),
+                    '''const int __dace_cuda_device = {gpu_id};
+                    '{backend}Stream_t __dace_current_stream = nullptr;
+                    '''.format(gpu_id=gpu_id,
+                               backend=Config.get('compiler', 'cuda',
+                                                  'backend')),
                     sdfg,
                     state_id,
                     node,

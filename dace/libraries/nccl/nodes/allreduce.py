@@ -24,7 +24,7 @@ class ExpandAllreduceNCCL(ExpandTransformation):
 
     @staticmethod
     def expansion(node: 'Allreduce', state: SDFGState, sdfg: SDFG, **kwargs):
-        
+
         node.validate(sdfg, state)
         input_edge: graph.MultiConnectorEdge = state.in_edges(node)[0]
         output_edge: graph.MultiConnectorEdge = state.out_edges(node)[0]
@@ -47,7 +47,8 @@ class ExpandAllreduceNCCL(ExpandTransformation):
 
         redtype = detect_reduction_type(node.wcr)
         if redtype not in dtypes.NCCL_SUPPORTED_REDUCTIONS:
-            raise ValueError('NCCL only supports sum, product, min and max reductions.')
+            raise ValueError(
+                'NCCL only supports sum, product, min and max reductions.')
         redtype = dtypes.NCCL_SUPPORTED_REDUCTIONS[redtype]
         wcrstr = str(redtype)
         wcrstr = wcrstr[wcrstr.find('.') + 1:]  # Skip "NcclReductionType."
@@ -57,9 +58,16 @@ class ExpandAllreduceNCCL(ExpandTransformation):
 
         if input_data.dtype.veclen > 1:
             raise (NotImplementedError)
+
         code = f"""
-            ncclAllReduce(_inbuffer, _outbuffer, {count_str}, {nccl_dtype_str}, {wcrstr},  __state->nccl_handle->ncclCommunicators->at({node.location['gpu']}),  __dace_current_stream_id);
-            """
+            ncclAllReduce(_inbuffer, _outbuffer, {count_str}, {nccl_dtype_str}, {wcrstr},  __state->ncclCommunicators->at(__dace_cuda_device),  __dace_current_stream);"""
+
+        if node.use_group_calls:
+            code = """
+            ncclGroupStart();""" + code
+            code += """
+            ncclGroupEnd();"""
+
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -79,13 +87,17 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
     default_implementation = "NCCL"
 
     # Object fields
-    # axes = ListProperty(element_type=int, allow_none=True)
     wcr = LambdaProperty(default='lambda a, b: a + b')
 
-    def __init__(self, 
-                 wcr="lambda a, b: a + b",
+    use_group_calls = Property(dtype=bool,
+                               default=False,
+                               desc='True: use NCCL group calls.')
+
+    def __init__(self,
+                 wcr: str = "lambda a, b: a + b",
+                 use_group_calls: bool = False,
                  debuginfo=None,
-                 *args, 
+                 *args,
                  **kwargs):
 
         super().__init__(name='nccl_AllReduce',
@@ -94,63 +106,69 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
                          outputs={"_outbuffer"},
                          **kwargs)
         self.wcr = wcr
+        self.use_group_calls = use_group_calls
         self.schedule = dtypes.ScheduleType.GPU_Multidevice
         self.debuginfo = debuginfo
-    
+
     @staticmethod
     def from_json(json_obj, context=None):
         ret = Allreduce("lambda a, b: a + b", None)
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         return ret
-    
+
     def __str__(self):
         # Autodetect reduction type
         redtype = detect_reduction_type(self.wcr)
         if redtype not in dtypes.NCCL_SUPPORTED_REDUCTIONS:
-            raise ValueError('NCCL only supports sum, product, min and max reductions.')
-        
+            raise ValueError(
+                'NCCL only supports sum, product, min and max reductions.')
+
         wcrstr = str(redtype)
         wcrstr = wcrstr[wcrstr.find('.') + 1:]  # Skip "ReductionType."
-        
+
         return 'nccl_AllReduce ({op})'.format(op=wcrstr)
-    
+
     def __label__(self, sdfg, state):
         return str(self).replace(' Axes', '\nAxes')
-    
+
     def _ged_redtype(self):
         redtype = detect_reduction_type(self.wcr)
         if redtype not in dtypes.NCCL_SUPPORTED_REDUCTIONS:
-            raise ValueError('NCCL only supports sum, product, min and max reductions.')
+            raise ValueError(
+                'NCCL only supports sum, product, min and max reductions.')
         return redtype
 
     def validate(self, sdfg: SDFG, state: SDFGState):
         redtype = detect_reduction_type(self.wcr)
         if redtype not in dtypes.NCCL_SUPPORTED_REDUCTIONS:
-            raise ValueError('NCCL only supports sum, product, min and max reductions.')
-        
+            raise ValueError(
+                'NCCL only supports sum, product, min and max reductions.')
+
         in_edges = state.in_edges(self)
         if len(in_edges) != 1:
             raise ValueError("NCCL Allreduce must have one input.")
-        
+
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("NCCL Allreduce must have one output.")
+
 
 @oprepo.replaces('dace.nccl.allreduce')
 @oprepo.replaces('dace.nccl.Allreduce')
 @oprepo.replaces('dace.nccl.AllReduce')
 def nccl_allreduce(pv: 'ProgramVisitor',
-            sdfg: SDFG,
-            state: SDFGState,
-            redfunction: Callable[[Any, Any], Any],
-            in_array: str,
-            out_array: str,):
-    
+                   sdfg: SDFG,
+                   state: SDFGState,
+                   redfunction: Callable[[Any, Any], Any],
+                   in_array: str,
+                   out_array: Union[str, None] = None,
+                   use_group_calls: bool = False):
+
     # Add nodes
     in_node = state.add_read(in_array)
     out_node = state.add_write(out_array)
 
-    libnode = Allreduce(redfunction)
+    libnode = Allreduce(redfunction, use_group_calls=use_group_calls)
 
     # Connect nodes
     state.add_edge(in_node, None, libnode, '_inbuffer', Memlet(in_array))

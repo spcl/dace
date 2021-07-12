@@ -158,8 +158,7 @@ class CUDACodeGen(TargetCodeGenerator):
     def _emit_sync(self, codestream: CodeIOStream):
         if Config.get_bool('compiler', 'cuda', 'syncdebug'):
             codestream.write('''{backend}GetLastError();
-            {backend}DeviceSynchronize();'''.format(
-                backend=self.backend))
+            {backend}DeviceSynchronize();'''.format(backend=self.backend))
 
     def on_target_used(self) -> None:
         # Right before finalizing code, write GPU context to state structure
@@ -627,8 +626,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
     def _get_gpus_and_default_gpu(
         self, sdfg: SDFG
-    ) -> Tuple[Dict[symbolic.SymbolicType, Union[
-            Iterable[int], List[int]]], Set[int], symbolic.SymbolicType]:
+    ) -> Tuple[Dict[symbolic.SymbolicType, Union[Iterable[int], List[int]]],
+               Set[int], symbolic.SymbolicType]:
         """ Checks which GPUs are used in the sdfg and sets the default gpu
             to the lowest used GPU id if default_gpu=-1. If no gpus are 
             specified it will set the location to the default_gpu.
@@ -643,7 +642,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # dictionary with symbolic GPU as key and the corresponding numeric
         # values as value. If the key is a symbol then the value will be a range.
         gpus: Dict[symbolic.SymbolicType, Union[Iterable[int],
-                                                       List[int]]] = dict()
+                                                List[int]]] = dict()
         gpu_vals: Set[int] = set()
         for node, graph in sdfg.all_nodes_recursive():
             if (isinstance(node, nodes.ConsumeEntry) and
@@ -652,8 +651,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 gpu_key = symbolic.pystr_to_symbolic(node.pe_index)
                 max_range = symbolic.evaluate(node.num_pes, sdfg.constants)
                 gpus[gpu_key] = range(0, max_range, 1)
-                gpu_vals.update(map(symbolic.pystr_to_symbolic,
-                                    range(0, max_range, 1)))
+                gpu_vals.update(
+                    map(symbolic.pystr_to_symbolic, range(0, max_range, 1)))
             elif (isinstance(node, nodes.MapEntry) and
                   node.schedule is dace.dtypes.ScheduleType.GPU_Multidevice):
                 # translate map range into python range
@@ -661,13 +660,19 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 dim_index = 0
                 multi_map = node.map
                 map_range = multi_map.range
-                min_map_range = symbolic.evaluate(map_range.min_element()[dim_index], sdfg.constants)
-                max_map_range = symbolic.evaluate(map_range.max_element()[dim_index], sdfg.constants)
-                stride_map_range = symbolic.evaluate(map_range.strides()[dim_index],sdfg.constants)
+                min_map_range = symbolic.evaluate(
+                    map_range.min_element()[dim_index], sdfg.constants)
+                max_map_range = symbolic.evaluate(
+                    map_range.max_element()[dim_index], sdfg.constants)
+                stride_map_range = symbolic.evaluate(
+                    map_range.strides()[dim_index], sdfg.constants)
                 gpus[gpu_key] = range(min_map_range, max_map_range + 1,
                                       stride_map_range)
-                gpu_vals.update(map(symbolic.pystr_to_symbolic,
-                    range(min_map_range, max_map_range + 1, stride_map_range)))
+                gpu_vals.update(
+                    map(
+                        symbolic.pystr_to_symbolic,
+                        range(min_map_range, max_map_range + 1,
+                              stride_map_range)))
             else:
                 gpu_id = sdutil.get_gpu_location(graph, node)
                 if gpu_id is not None and gpu_id.is_number:
@@ -695,29 +700,50 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         for node, graph in sdfg.all_nodes_recursive():
             if isinstance(node, (nodes.ExitNode, SDFGState)):
                 continue
-            # Map, Consume, NestedSDFGs
-            if hasattr(node, 'schedule'):
+            # Map, Consume
+            if isinstance(node, nodes.EntryNode):
                 if node.schedule == dtypes.ScheduleType.GPU_Multidevice:
                     continue
                 if (node.schedule in dtypes.GPU_DEVICE_SCHEDULES
                         and 'gpu' not in node.location):
                     node.location['gpu'] = default_gpu
+            # NestedSDFGs
+            if isinstance(node, nodes.NestedSDFG):
+                if (node.schedule in dtypes.GPU_SCHEDULES
+                        and 'gpu' not in node.location):
+                    node.location['gpu'] = default_gpu
+                # Check that the location is in the symbols and symbol mapping.
+                if node.schedule == dtypes.ScheduleType.GPU_Multidevice:
+                    if str(node.location['gpu']) not in node.sdfg.symbols:
+                        node.sdfg.add_symbol(str(node.location['gpu']),
+                                             dtypes.int64)
+                    if str(node.location['gpu']) not in node.symbol_mapping:
+                        node.symbol_mapping[str(
+                            node.location['gpu'])] = symbolic.pystr_to_symbolic(
+                                node.location['gpu'])
+
             # Data
-            elif ((isinstance(node, nodes.AccessNode)
+            elif (
+                (isinstance(node, nodes.AccessNode)
                  and node.desc(graph).storage == dtypes.StorageType.GPU_Global)
                     and 'gpu' not in node.desc(graph).location):
                 node.desc(graph).location['gpu'] = default_gpu
 
-            elif (isinstance(node, nodes.Tasklet) 
-                 and 'gpu' not in node.location
-                 and not is_devicelevel_gpu(sdfg, graph, node)):
+            # Tasklets
+            elif (isinstance(node, nodes.Tasklet) and 'gpu' not in node.location
+                  and not is_devicelevel_gpu(sdfg, graph, node)):
+                # Check if the tasklet calls code that runs on a GPU. It runs on
+                # a GPU if it is connected to data that resides on a GPU.
                 for e in graph.in_edges(node):
                     if e.data.data in sdfg.arrays:
-                        if sdfg.arrays[e.data.data].storage in dtypes.GPU_STORAGES:
+                        if sdfg.arrays[
+                                e.data.data].storage in dtypes.GPU_STORAGES:
                             node.location['gpu'] = default_gpu
                 for e in graph.out_edges(node):
                     if e.data.data in sdfg.arrays:
-                        if sdfg.arrays[e.data.data].storage in dtypes.GPU_STORAGES:
+                        if sdfg.arrays[
+                                e.data.data].storage in dtypes.GPU_STORAGES:
+                            node.location['gpu'] = default_gpu
 
         return gpus, gpu_vals, default_gpu
 
@@ -734,13 +760,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         """
         gpu_location = sdutil.get_gpu_location(state, node_or_array_or_id)
         if gpu_location is not None:
-            code.write('%sSetDevice(%s);\n' %
-                       (self.backend, gpu_location))
+            code.write('%sSetDevice(%s);\n' % (self.backend, gpu_location))
 
     def _compute_cudastreams(
         self, sdfg: SDFG
-    ) -> Tuple[Dict[symbolic.SymbolicType, int], Dict[
-            symbolic.SymbolicType, int]]:
+    ) -> Tuple[Dict[symbolic.SymbolicType, int], Dict[symbolic.SymbolicType,
+                                                      int]]:
         """ 
         Wrapper for _compute_cudastreams_sdfg.
         :param sdfg: The sdfg to modify.
@@ -750,7 +775,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # GPUs used in the SDFG, both symbolic and numeric ones.
         gpu_ids: Set[symbolic.SymbolicType] = self._gpu_values | set(self._gpus)
 
-
         max_streams: Dict[symbolic.SymbolicType, int] = {k: 0 for k in gpu_ids}
         max_events: Dict[symbolic.SymbolicType, int] = {k: 0 for k in gpu_ids}
 
@@ -758,12 +782,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # Only use default CUDA stream
             return max_streams, max_events
 
-        current_streams: Dict[symbolic.SymbolicType, int] = {k: 0 for k in gpu_ids}
-        unused_streams: Dict[symbolic.SymbolicType, Set[int]] = {k: set() for k in gpu_ids}
+        current_streams: Dict[symbolic.SymbolicType,
+                              int] = {k: 0
+                                      for k in gpu_ids}
+        unused_streams: Dict[symbolic.SymbolicType,
+                             Set[int]] = {k: set()
+                                          for k in gpu_ids}
 
-        max_streams_sdfg, max_events_sdfg =self._compute_cudastreams_sdfg(sdfg, max_streams,
-                                              current_streams, unused_streams,
-                                              max_events)
+        max_streams_sdfg, max_events_sdfg = self._compute_cudastreams_sdfg(
+            sdfg, max_streams, current_streams, unused_streams, max_events)
         return max_streams_sdfg, max_events_sdfg
 
     def _compute_cudastreams_sdfg(
@@ -774,7 +801,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         unused_streams: Dict[symbolic.SymbolicType,
                              Set[int]] = collections.defaultdict(set),
         default_events: Dict[symbolic.SymbolicType, int] = dict()
-    ) -> Tuple[Dict[symbolic.SymbolicType, int], Dict[symbolic.SymbolicType, int]]:
+    ) -> Tuple[Dict[symbolic.SymbolicType, int], Dict[symbolic.SymbolicType,
+                                                      int]]:
         """
         Annotates an SDFG (and all nested ones) to include a `_cuda_stream`
         and a '_cuda_event' field. The '_cuda_stream' field is applied to all
@@ -793,7 +821,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         gpu_ids: Set[symbolic.SymbolicType] = self._gpu_values | set(self._gpus)
 
         # For tracking the number of CUDA streams for each GPU over the states
-        max_streams_sdfg: Dict[symbolic.SymbolicType, int] = {k: 0 for k in gpu_ids}
+        max_streams_sdfg: Dict[symbolic.SymbolicType,
+                               int] = {k: 0
+                                       for k in gpu_ids}
 
         # For tracking the number of CUDA events for each GPU in NestedSDFGs
         state_subsdfg_events: List[Dict[symbolic.SymbolicType, int]] = []
@@ -815,7 +845,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             state_subsdfg_events.append(max_events_state)
 
         # Annotate the sdfg with CUDA events
-        max_events_sdfg = self._compute_cudaevents_sdfg(sdfg, state_subsdfg_events)
+        max_events_sdfg = self._compute_cudaevents_sdfg(sdfg,
+                                                        state_subsdfg_events)
 
         return max_streams_sdfg, max_events_sdfg
 
@@ -847,13 +878,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         # GPU ids that are used in the location property
         gpu_ids: Dict[symbolic.SymbolicType, Union[Iterable[int],
-                                                       List[int]]] = self._gpus
+                                                   List[int]]] = self._gpus
 
         # For tracking which GPUs are on the DFS path.
         gpu_id_last_path: Dict[symbolic.SymbolicType,
                                int] = collections.defaultdict(int)
-        gpu_ids_used: Set[symbolic.SymbolicType]=set()
-
+        gpu_ids_used: Set[symbolic.SymbolicType] = set()
 
         if not isinstance(sources, list):
             sources = [sources]
@@ -893,7 +923,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             # either runs on a GPU or distributes its scope
                             # over multiple GPUs.
 
-
                             # Skip nodes of the subgraph
                             scope_subgraph = graph.scope_subgraph(
                                 child, include_exit=False)
@@ -902,7 +931,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             # Add exit node to the stack
                             exit_node = graph.exit_node(child)
                             stack.append(graph.successors(exit_node).__iter__())
-
 
                             if child.schedule == dtypes.ScheduleType.GPU_Multidevice:
                                 # Scope is distributed over multiple GPUs.
@@ -929,8 +957,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                 # stream get used on a new path.
                                 # If they do, increment the maximal stream.
                                 for a_max_gpu in arg_max_gpus:
-                                    if (a_max_gpu in gpu_ids_used and gpu_id_last_path[
-                                            a_max_gpu] != current_path):
+                                    if (a_max_gpu in gpu_ids_used
+                                            and gpu_id_last_path[a_max_gpu] !=
+                                            current_path):
                                         increment_max_numeric_stream = (
                                             max_numeric_stream +
                                             1) % self._concurrent_streams
@@ -986,17 +1015,17 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         return max_streams, current_streams, unused_streams, max_events
 
     def _compute_cudastreams_node(
-            self,
-            graph: Union[SDFGState, ScopeSubgraphView],
-            node: nodes.Node,
-            current_path: int,
-            gpu_id_last_path: Dict[symbolic.SymbolicType, int],
-            gpu_ids_used: Set[symbolic.SymbolicType],
-            max_streams: Dict[symbolic.SymbolicType, int] = dict(),
-            current_streams: Dict[symbolic.SymbolicType, int] = dict(),
-            unused_streams: Dict[symbolic.SymbolicType,
-                                    Set[int]] = collections.defaultdict(set),
-            max_events: Dict[symbolic.SymbolicType, int] = dict()
+        self,
+        graph: Union[SDFGState, ScopeSubgraphView],
+        node: nodes.Node,
+        current_path: int,
+        gpu_id_last_path: Dict[symbolic.SymbolicType, int],
+        gpu_ids_used: Set[symbolic.SymbolicType],
+        max_streams: Dict[symbolic.SymbolicType, int] = dict(),
+        current_streams: Dict[symbolic.SymbolicType, int] = dict(),
+        unused_streams: Dict[symbolic.SymbolicType,
+                             Set[int]] = collections.defaultdict(set),
+        max_events: Dict[symbolic.SymbolicType, int] = dict()
     ) -> Tuple[Dict[symbolic.SymbolicType, int], Dict[
             symbolic.SymbolicType, int], Dict[symbolic.SymbolicType, Set[int]],
                Dict[symbolic.SymbolicType, int]]:
@@ -1015,7 +1044,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         """
         def update_streams(max_streams: Dict[symbolic.SymbolicType, int],
                            current_streams: Dict[symbolic.SymbolicType, int],
-                           unused_streams: Dict[symbolic.SymbolicType, Set[int]],
+                           unused_streams: Dict[symbolic.SymbolicType,
+                                                Set[int]],
                            gpu_id: symbolic.SymbolicType) -> None:
             """
             Updates the CUDA streams for a given GPU id.
@@ -1117,8 +1147,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         # For tracking the number of CUDA events for each GPU over the states
         max_events: Dict[symbolic.SymbolicType,
-                           int] = {k: 0
-                                   for k in gpu_values | set(gpu_ids)}
+                         int] = {k: 0
+                                 for k in gpu_values | set(gpu_ids)}
 
         # Compute maximal number of events per GPU by counting edges (within the
         # same state) that point from one stream to another
@@ -1424,9 +1454,9 @@ DACE_EXPORTED void __dace_runkernel_{id}({fargs});
             copysize += ' * sizeof(%s)' % dtype.ctype
 
             callsite_stream.write(
-                '%sMemcpyPeerAsync(%s, %s, %s, %s, %s, %s);\n'
-                % (self.backend, dst_expr, dst_gpuid, src_expr, src_gpuid,
-                   copysize, src_cudastream), sdfg, state_id,
+                '%sMemcpyPeerAsync(%s, %s, %s, %s, %s, %s);\n' %
+                (self.backend, dst_expr, dst_gpuid, src_expr, src_gpuid,
+                 copysize, src_cudastream), sdfg, state_id,
                 [src_node, dst_node])
             current_device = src_gpuid
 
@@ -1511,9 +1541,8 @@ DACE_EXPORTED void __dace_runkernel_{id}({fargs});
                     cudastream = '__state->gpu_context->at(%s).streams[%d]' % (
                         gpuid, cudastream)
 
-            callsite_stream.write(
-                '%sSetDevice(%s);\n' % (self.backend, gpuid),
-                sdfg, state_id, [src_node, dst_node])
+            callsite_stream.write('%sSetDevice(%s);\n' % (self.backend, gpuid),
+                                  sdfg, state_id, [src_node, dst_node])
 
             dst_dtype = dst_node.desc(sdfg).dtype
             src_dtype = src_node.desc(sdfg).dtype
@@ -1632,9 +1661,9 @@ DACE_EXPORTED void __dace_runkernel_{id}({fargs});
                 copysize += ' * sizeof(%s)' % dst_dtype.ctype
 
                 callsite_stream.write(
-                    '%sMemcpyAsync(%s, %s, %s, %sMemcpy%sTo%s, %s);\n'
-                    % (self.backend, dst_expr, src_expr, copysize, self.backend,
-                       src_location, dst_location, cudastream), sdfg, state_id,
+                    '%sMemcpyAsync(%s, %s, %s, %sMemcpy%sTo%s, %s);\n' %
+                    (self.backend, dst_expr, src_expr, copysize, self.backend,
+                     src_location, dst_location, cudastream), sdfg, state_id,
                     [src_node, dst_node])
                 node_dtype = dst_node.desc(sdfg).dtype
                 if issubclass(node_dtype.type, ctypes.Structure):
@@ -3005,16 +3034,17 @@ for(int {scope} = {scopebeginning}; {scope} < {scopeEnd}; {scope}++){{
             node,
             memlet_references,
             sdfg_label,
-            state_struct=False)
+            state_struct=not self._in_device_code)
 
     def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
                             sdfg_label):
-        return self._cpu_codegen.generate_nsdfg_call(sdfg,
-                                                     state,
-                                                     node,
-                                                     memlet_references,
-                                                     sdfg_label,
-                                                     state_struct=False)
+        return self._cpu_codegen.generate_nsdfg_call(
+            sdfg,
+            state,
+            node,
+            memlet_references,
+            sdfg_label,
+            state_struct=not self._in_device_code)
 
     def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
         result = self._cpu_codegen.generate_nsdfg_arguments(

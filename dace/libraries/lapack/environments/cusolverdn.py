@@ -32,7 +32,6 @@ class cuSolverDn:
                 raise ValueError("Invalid GPU identifier: {}".format(location))
 
         code = """\
-const int __dace_cuda_device = {location};
 cusolverDnHandle_t &__dace_cusolverDn_handle = __state->cusolverDn_handle.Get(__dace_cuda_device);
 cusolverDnSetStream(__dace_cusolverDn_handle, __dace_current_stream);\n"""
 

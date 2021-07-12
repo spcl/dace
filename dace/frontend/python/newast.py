@@ -586,7 +586,8 @@ def add_indirection_subgraph(sdfg: SDFG,
                                     rng.bounding_box_size(),
                                     array.dtype,
                                     storage=dtypes.StorageType.Default,
-                                    transient=True)
+                                    transient=True,
+                                    find_new_name=True)
         # Force creation of transients for range indirection
         if output:
             if src:

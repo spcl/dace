@@ -6,32 +6,35 @@ import dace.library
 class NCCL:
 
     cmake_minimum_version = None
-    cmake_packages = ["NCCL"]
+    cmake_packages = []
     cmake_files = []
     cmake_variables = {}
-    cmake_includes = []
-    cmake_libraries = ["$nccl"]
+    cmake_includes = ["/users/tbaumann/local_nccl/nccl/build/include/"]
+    cmake_libraries = ["nccl"]
     cmake_compile_flags = []
     cmake_link_flags = []
 
-    headers = ["../inlcude/dace_nccl.h"]
-    state_fields = ["dace::nccl::NCCLHandle nccl_handle;"]
+    headers = ["../include/dace_nccl.h"]
+    state_fields = ["std::unordered_map<int, ncclComm_t> *ncclCommunicators;"]
     init_code = """\
         const int nGPUs = __state->gpu_context->size();
-        _state.nccl_handle = NcclHandle(nGPUs);
+        __state->ncclCommunicators = new std::unordered_map<int, ncclComm_t> {nGPUs};
+        int gpu_ids[nGPUs];
+        for (int i = 0; i < nGPUs; i++){
+            gpu_ids[i] = i;
+        }
+        ncclComm_t comms[nGPUs];
+        dace::nccl::CheckNcclError(ncclCommInitAll(comms, nGPUs, gpu_ids));
+        for (int i = 0; i< nGPUs; i++){
+            __state->ncclCommunicators->insert({gpu_ids[i], comms[i]});
+        }
         """
-    # gpu_init_code = """\
-    #     int nGPUs = 3;
-    #     int[] gpu_ids = {0,1,2,};
-    #     _state.nccl_handle = NcclHandle(nGPUs, gpu_ids);
-    #     """
 
-
-    finalize_code = """"""
+    finalize_code = """
+        const int nGPUs = __state->gpu_context->size();
+        for (int i = 0; i < nGPUs; i++){
+                dace::nccl::CheckNcclError(ncclCommDestroy(__state->ncclCommunicators->at(i)));
+            }
+        
+    """
     dependencies = []
-
-#     @staticmethod
-#     def handle_setup_code(node):
-#         code = """\
-# ncclComm_t comms[];
-# ncclResult_t ncclCommInitAll(ncclComm_t* comm, int ndev, const int* devlist) """

@@ -206,7 +206,7 @@ class Property:
                     type(obj).__name__))
 
         # Accept all DaCe/numpy typeclasses as Python native types
-        if isinstance(val, np.number):
+        if isinstance(val, (np.number, np.bool_)):
             val = val.item()
 
         # Edge cases for integer and float types

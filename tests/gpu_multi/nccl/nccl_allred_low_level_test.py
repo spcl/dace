@@ -30,7 +30,7 @@ def make_sdfg():
     reduction_state = red_sdfg.add_state('reduction_state')
     input = reduction_state.add_read('input')
     output = reduction_state.add_write('output')
-    reduction = nccl.Allreduce('ncclAllreduce', operation='ncclSum', location={'gpu':'gpu_id'})
+    reduction = nccl.Allreduce("lambda a,b: a+b", location={'gpu':'gpu_id'})
 
     # input path (input->reduction)
     reduction_state.add_memlet_path(input,
