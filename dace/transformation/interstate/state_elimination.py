@@ -155,6 +155,8 @@ class StateAssignElimination(transformation.Transformation):
                 # remove symbol
                 if varname in sdfg.symbols:
                     sdfg.remove_symbol(varname)
+                    # Substitute removed symbol with the assignment's RHS
+                    sdfg.replace(varname, assignments_to_consider[varname])
 
 
 @registry.autoregister_params(singlestate=True)
