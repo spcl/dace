@@ -1028,7 +1028,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             array_expr = cpp.cpp_array_expr(sdfg,
                                                             memlet,
                                                             with_brackets=False)
-                            ptr_str = cpp.ptr(memlet.data, desc, sdfg, memlet.subset,
+                            ptr_str = fpga_utils.ptr(memlet.data, desc, sdfg, memlet.subset, # we are on fpga, this is array interface
                                             True, None, None, True)
                             write_expr = (f"*({ptr_str} + {array_expr}) "
                                           f"= {in_local_name};")
@@ -1213,10 +1213,13 @@ class CPUCodeGen(TargetCodeGenerator):
         if not types:
             types = self._dispatcher.defined_vars.get(memlet.data)
         var_type, ctypedef = types
-        ptr = cpp.ptr(
-            memlet.data, desc, sdfg, memlet.subset, output, self._dispatcher, 0,
-            var_type == DefinedType.ArrayInterface
-            and not isinstance(desc, data.View))
+        if fpga_utils.is_fpga_array(desc):
+            ptr = fpga_utils.ptr(
+                memlet.data, desc, sdfg, memlet.subset, output, self._dispatcher, 0,
+                var_type == DefinedType.ArrayInterface
+                and not isinstance(desc, data.View))
+        else:
+            ptr = cpp.ptr(memlet.data, desc, sdfg)
         
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
