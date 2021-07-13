@@ -160,60 +160,137 @@ class StateAssignElimination(transformation.Transformation):
                         sdfg.replace(varname, assignments_to_consider[varname])
 
 
-# def _alias_assignments(sdfg, edge):
-#     assignments_to_consider = {}
-#     for var, assign in edge.data.assignments.items():
-#         if assign in sdfg.symbols:
-#             assignments_to_consider[var] = assign
-#     return assignments_to_consider
+def _alias_assignments(sdfg, edge):
+    assignments_to_consider = {}
+    for var, assign in edge.assignments.items():
+        if assign in sdfg.symbols or (assign in sdfg.arrays and isinstance(
+                sdfg.arrays[assign], dt.Scalar)):
+            assignments_to_consider[var] = assign
+    return assignments_to_consider
 
-# @registry.autoregister_params(strict=False)
-# class SymbolAliasElimination(transformation.Transformation):
-#     """
-#     Symbol alias elimination finds symbols used in a state that are assigned by
-#     another symbol in the immediate incoming edge and substitutes them.
-#     """
 
-#     _end_state = sdfg.SDFGState()
+@registry.autoregister_params(strict=True)
+class SymbolAliasPromotion(transformation.Transformation):
+    """
+    1. We define inter-state edge assignments to be "SymbolAlias" when a symbol
+    has is set equal to another symbol or (potentially promotable) scalar.
+    2. We define inter-state edge assignment promotion as moving the assignment
+    to the previous inter-state edge according to the topological order, when
+    this is unambiguous.
+    3. SymbolAliasPromotion moves SymbolAlias assignments to the previous
+    inter-state edge according to the topological order.
 
-#     @staticmethod
-#     def expressions():
-#         return [sdutil.node_path_graph(SymbolAliasElimination._end_state)]
+    The purpose of this transformation is to iteratively move symbolic aliases
+    together, so that true duplicates can be easily removed.
+    """
 
-#     @staticmethod
-#     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-#         state = graph.nodes()[candidate[SymbolAliasElimination._end_state]]
+    _first_state = sdfg.SDFGState()
+    _second_state = sdfg.SDFGState()
 
-#         out_edges = graph.out_edges(state)
-#         in_edges = graph.in_edges(state)
+    @staticmethod
+    def expressions():
+        return [
+            sdutil.node_path_graph(SymbolAliasPromotion._first_state,
+                                   SymbolAliasPromotion._second_state)
+        ]
 
-#         # We only match end states with one source and at least one assignment
-#         if len(in_edges) != 1:
-#             return False
-#         edge = in_edges[0]
+    @staticmethod
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        fstate = graph.nodes()[candidate[SymbolAliasPromotion._first_state]]
+        sstate = graph.nodes()[candidate[SymbolAliasPromotion._second_state]]
 
-#         assignments_to_consider = _alias_assignments(sdfg, edge)
+        # For the topological order to be unambiguous:
+        # 1. First state must have unique input edge.
+        in_fedges = graph.in_edges(fstate)
+        if len(in_fedges) != 1:
+            return False
+        in_edge = in_fedges[0].data
+        # 2. There must be a unique edge from the first state to the second
+        # one and no edge from the second state to the first one.
+        edges = graph.edges_between(fstate, sstate)
+        if len(edges) != 1:
+            return False
+        if len(graph.edges_between(sstate, fstate)) > 1:
+            return False
 
-#         # No assignments to eliminate
-#         if len(assignments_to_consider) == 0:
-#             return False
-#         if all(s not in state.free_symbols for s in assignments_to_consider.keys()):
-#             return False
+        edge = edges[0].data
+        in_edge = in_fedges[0].data
 
-#         return True
+        to_consider = _alias_assignments(sdfg, edge)
 
-#     @staticmethod
-#     def match_to_str(graph, candidate):
-#         state = graph.nodes()[candidate[SymbolAliasElimination._end_state]]
-#         return state.label
+        to_not_consider = set()
+        for k, v in to_consider.items():
+            # Remove symbols that are taking part in the edge's condition
+            condsyms = [str(s) for s in edge.condition_sympy().free_symbols]
+            if k in condsyms:
+                to_not_consider.add(k)
+            # Remove symbols that are set in the in_edge
+            # with a different assignment
+            if k in in_edge.assignments and in_edge.assignments[k] != v:
+                to_not_consider.add(k)
+            # Remove symbols whose assignment (RHS) is a symbol
+            # and is set in the in_edge.
+            if v in sdfg.symbols and v in in_edge.assignments:
+                to_not_consider.add(k)
+            # Remove symbols whose assignment (RHS) is a scalar
+            # and is set in the first state.
+            if v in sdfg.arrays and isinstance(sdfg.arrays[v], dt.Scalar):
+                if any(
+                        isinstance(n, nodes.AccessNode) and n.data == v
+                        for n in fstate.nodes()):
+                    to_not_consider.add(k)
 
-#     def apply(self, sdfg):
-#         state = sdfg.nodes()[self.subgraph[SymbolAliasElimination._end_state]]
-#         edge = sdfg.in_edges(state)[0]
+        for k in to_not_consider:
+            del to_consider[k]
 
-#         assignments_to_consider = _alias_assignments(sdfg, edge)
-#         for varname, assignment in assignments_to_consider.items():
-#             state.replace(varname, assignment)
+        # No assignments to promote
+        if len(to_consider) == 0:
+            return False
+
+        return True
+
+    @staticmethod
+    def match_to_str(graph, candidate):
+        state = graph.nodes()[candidate[SymbolAliasPromotion._second_state]]
+        return state.label
+
+    def apply(self, sdfg):
+        fstate = sdfg.nodes()[self.subgraph[SymbolAliasPromotion._first_state]]
+        sstate = sdfg.nodes()[self.subgraph[SymbolAliasPromotion._second_state]]
+
+        edge = sdfg.edges_between(fstate, sstate)[0].data
+        in_edge = sdfg.in_edges(fstate)[0].data
+
+        to_consider = _alias_assignments(sdfg, edge)
+
+        to_not_consider = set()
+        for k, v in to_consider.items():
+            # Remove symbols that are taking part in the edge's condition
+            condsyms = [str(s) for s in edge.condition_sympy().free_symbols]
+            if k in condsyms:
+                to_not_consider.add(k)
+            # Remove symbols that are set in the in_edge
+            # with a different assignment
+            if k in in_edge.assignments and in_edge.assignments[k] != v:
+                to_not_consider.add(k)
+            # Remove symbols whose assignment (RHS) is a symbol
+            # and is set in the in_edge.
+            if v in sdfg.symbols and v in in_edge.assignments:
+                to_not_consider.add(k)
+            # Remove symbols whose assignment (RHS) is a scalar
+            # and is set in the first state.
+            if v in sdfg.arrays and isinstance(sdfg.arrays[v], dt.Scalar):
+                if any(
+                        isinstance(n, nodes.AccessNode) and n.data == v
+                        for n in fstate.nodes()):
+                    to_not_consider.add(k)
+
+        for k in to_not_consider:
+            del to_consider[k]
+
+        for k, v in to_consider.items():
+            del edge.assignments[k]
+            in_edge.assignments[k] = v
 
 
 @registry.autoregister_params(singlestate=True)
