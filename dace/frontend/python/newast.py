@@ -3787,6 +3787,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Argument checks
             for arg in node.keywords:
+                # Skip explicit return values
+                if arg.arg.startswith('__return'):
+                    required_args.append(arg.arg)
+                    continue
                 if arg.arg not in required_args:
                     raise DaceSyntaxError(
                         self, node, 'Invalid keyword argument "%s" in call to '
