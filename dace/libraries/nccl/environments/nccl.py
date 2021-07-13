@@ -31,10 +31,10 @@ class NCCL:
         """
 
     finalize_code = """
-        const int nGPUs = __state->gpu_context->size();
+        const int nGPUs = __state->ncclCommunicators->size();
         for (int i = 0; i < nGPUs; i++){
                 dace::nccl::CheckNcclError(ncclCommDestroy(__state->ncclCommunicators->at(i)));
             }
-        
+        delete __state->ncclCommunicators;
     """
     dependencies = []

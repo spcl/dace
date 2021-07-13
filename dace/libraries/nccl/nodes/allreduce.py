@@ -13,7 +13,7 @@ from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.transformation.transformation import ExpandTransformation
 from dace.frontend.common import op_repository as oprepo
-from dace import dtypes, symbolic
+from dace import dtypes, symbolic, Config
 from dace.libraries.nccl import environments, utils as nutil
 
 
@@ -45,23 +45,24 @@ class ExpandAllreduceNCCL(ExpandTransformation):
             raise ValueError('Output of NCCL allreduce must either reside '
                              ' in global GPU memory or pinned CPU memory')
 
-        redtype = detect_reduction_type(node.wcr)
-        if redtype not in dtypes.NCCL_SUPPORTED_REDUCTIONS:
-            raise ValueError(
-                'NCCL only supports sum, product, min and max reductions.')
-        redtype = dtypes.NCCL_SUPPORTED_REDUCTIONS[redtype]
+        redtype = node.reduction_type
+        
+        redtype = dtypes.NCCL_SUPPORTED_OPERATIONS[redtype]
         wcrstr = str(redtype)
         wcrstr = wcrstr[wcrstr.find('.') + 1:]  # Skip "NcclReductionType."
 
-        nccl_dtype_str = nutil.NCCL_DDT(input_data.dtype.base_type)
+        nccl_dtype_str = nutil.Nccl_dtypes(input_data.dtype.base_type)
         count_str = "*".join(str(e) for e in input_dims)
 
         if input_data.dtype.veclen > 1:
             raise (NotImplementedError)
 
-        code = f"""
-            ncclAllReduce(_inbuffer, _outbuffer, {count_str}, {nccl_dtype_str}, {wcrstr},  __state->ncclCommunicators->at(__dace_cuda_device),  __dace_current_stream);"""
-
+        code = f"""ncclAllReduce(_inbuffer, _outbuffer, {count_str}, {nccl_dtype_str}, {wcrstr},  __state->ncclCommunicators->at(__dace_cuda_device),  __dace_current_stream)"""
+        
+        if Config.get('compiler', 'build_type') == 'Debug':
+            code = '''\ndace::nccl::CheckNcclError('''+code+''');\n'''
+        else:
+            code = '''\n''' + code + ''';\n'''
         if node.use_group_calls:
             code = """
             ncclGroupStart();""" + code
@@ -117,11 +118,7 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
         return ret
 
     def __str__(self):
-        # Autodetect reduction type
-        redtype = detect_reduction_type(self.wcr)
-        if redtype not in dtypes.NCCL_SUPPORTED_REDUCTIONS:
-            raise ValueError(
-                'NCCL only supports sum, product, min and max reductions.')
+        redtype = self.reduction_type
 
         wcrstr = str(redtype)
         wcrstr = wcrstr[wcrstr.find('.') + 1:]  # Skip "ReductionType."
@@ -130,19 +127,17 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
 
     def __label__(self, sdfg, state):
         return str(self).replace(' Axes', '\nAxes')
-
-    def _ged_redtype(self):
+    @property
+    def reduction_type(self):
+        # Autodetect reduction type
         redtype = detect_reduction_type(self.wcr)
-        if redtype not in dtypes.NCCL_SUPPORTED_REDUCTIONS:
+        if redtype not in dtypes.NCCL_SUPPORTED_OPERATIONS:
             raise ValueError(
-                'NCCL only supports sum, product, min and max reductions.')
+                'NCCL only supports sum, product, min and max operations.')
         return redtype
 
     def validate(self, sdfg: SDFG, state: SDFGState):
-        redtype = detect_reduction_type(self.wcr)
-        if redtype not in dtypes.NCCL_SUPPORTED_REDUCTIONS:
-            raise ValueError(
-                'NCCL only supports sum, product, min and max reductions.')
+        redtype = self.reduction_type
 
         in_edges = state.in_edges(self)
         if len(in_edges) != 1:
@@ -156,6 +151,7 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
 @oprepo.replaces('dace.nccl.allreduce')
 @oprepo.replaces('dace.nccl.Allreduce')
 @oprepo.replaces('dace.nccl.AllReduce')
+@oprepo.replaces('dace.nccl.allReduce')
 def nccl_allreduce(pv: 'ProgramVisitor',
                    sdfg: SDFG,
                    state: SDFGState,
@@ -164,11 +160,16 @@ def nccl_allreduce(pv: 'ProgramVisitor',
                    out_array: Union[str, None] = None,
                    use_group_calls: bool = False):
 
+    # If out_array is not specified, the operation will be in-place.
+    if out_array is None:
+        out_array = in_array
+        
     # Add nodes
     in_node = state.add_read(in_array)
     out_node = state.add_write(out_array)
 
     libnode = Allreduce(redfunction, use_group_calls=use_group_calls)
+
 
     # Connect nodes
     state.add_edge(in_node, None, libnode, '_inbuffer', Memlet(in_array))

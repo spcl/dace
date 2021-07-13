@@ -5,60 +5,60 @@ import pytest
 from numba import cuda
 from dace.sdfg import nodes, infer_types
 from dace import dtypes
-import dace.libraries.nccl as nccl
-from dace.transformation.dataflow import GPUMultiTransformMap, GPUTransformMap
-N = dace.symbol('N')
-M = dace.symbol('M')
 
+
+N = dace.symbol('N')
+num_gpus = dace.symbol('num_gpus')
 # Define data type to use
 dtype = dace.float64
 np_dtype = np.float64
 
 
 @dace.program
-def red(inbuff: dtype[N], outbuff: dtype[N]):
-    dace.nccl.AllReduce(lambda a, b: a + b, inbuff, outbuff)
-
+def allreduce(inbuff: dtype[N], outbuff: dtype[N]):
+    dace.nccl.AllReduce(lambda a, b: a + b, inbuff, outbuff, use_group_calls=False)
 
 @dace.program
-def sum(N: dtype, out: dtype[N]):
-    for gpu in dace.map[0:3]:
-        reduction_output = dace.ndarray([N], dtype=dtype)
+def allreduce_inplace(inbuff: dtype[N]):
+    dace.nccl.AllReduce(lambda a, b: a + b, inbuff, use_group_calls=False)
+
+@dace.program
+def reduction_test(out: dtype[N]):
+    for gpu in dace.map[0:num_gpus]:
         gpu_A = dace.ndarray([N], dtype=dtype)
         for i in dace.map[0:N]:
             gpu_A[i] = gpu
-        red(gpu_A, reduction_output)
+        allreduce_inplace(gpu_A)
         if gpu == 0:
-            out[:] = reduction_output[:]
+            out[:] = gpu_A[:]
 
 
 @pytest.mark.gpu
-def test_nccl_allreduce():
-    sdfg: dace.SDFG = sum.to_sdfg(strict=True)
+def test_nccl_allreduce_inplace():
+    ng=3
+    n = 15
+    sdfg: dace.SDFG = reduction_test.to_sdfg(strict=True)
     state = sdfg.start_state
     gpu_map = state.nodes()[0]
     gpu_map.schedule = dtypes.ScheduleType.GPU_Multidevice
     infer_types.set_default_schedule_storage_types_and_location(sdfg, None)
+    sdfg.specialize(dict(num_gpus=ng))
+    sdfg.name = 'nccl_allreduce_inplace'
 
-    sdfg.name = 'nccl_allreduce_multimap'
-
-    n = 15
     out = cuda.pinned_array(shape=n, dtype=np_dtype)
     out.fill(0)
 
-    sdfg(n, out=out)
+    sdfg(out=out, N=n)
 
-    print(np.unique(out))
-    assert np.unique(out) == np.array([3])
+    res = sum(range(ng))
+    assert np.unique(out)[0] == res
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
     # out_path = '.dacecache/local/nccl/' + sdfg.name
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
-    # Compile the code and get the shared library path
-    # shared_library = compiler.configure_and_compile(program_folder, sdfg.name)
 
 
 if __name__ == "__main__":
-    test_nccl_allreduce()
+    test_nccl_allreduce_inplace()

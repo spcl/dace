@@ -76,29 +76,29 @@ def test_batchnorm2d_model_parallelism():
     w = 128
     c = 64
 
-    size = 256
-    np.random.seed(0)
-    X = cuda.pinned_array(shape=[n, h, w, c], dtype=np_dtype)
-    # X = np.empty(shape=[n, h, w, c], dtype=np_dtype)
-    X[:] = np.random.rand(n, h, w, c)[:]
-    Z = np.copy(X)
+    # size = 256
+    # np.random.seed(0)
+    # X = cuda.pinned_array(shape=[n, h, w, c], dtype=np_dtype)
+    # # X = np.empty(shape=[n, h, w, c], dtype=np_dtype)
+    # X[:] = np.random.rand(n, h, w, c)[:]
+    # Z = np.copy(X)
 
-    print('GPU')
-    sdfg(X, N=n, H=h, W=w, C=c)
-    print('GPU done')
+    # print('GPU')
+    # sdfg(X, N=n, H=h, W=w, C=c)
+    # print('GPU done')
 
-    bnsdfg: dace.SDFG = batchnorm2d.to_sdfg()
+    # bnsdfg: dace.SDFG = batchnorm2d.to_sdfg()
 
-    print('CPU')
-    bnsdfg(Z, N=n, H=h, W=w, C=c)
-    print('CPU done')
-    assert np.allclose(X, Z)
+    # print('CPU')
+    # bnsdfg(Z, N=n, H=h, W=w, C=c)
+    # print('CPU done')
+    # assert np.allclose(X, Z)
 
-    # program_objects = sdfg.generate_code()
-    # from dace.codegen import compiler
-    # out_path = '.dacecache/local/batchnorm/' + sdfg.name
-    # program_folder = compiler.generate_program_folder(sdfg, program_objects,
-    #                                                   out_path)
+    program_objects = sdfg.generate_code()
+    from dace.codegen import compiler
+    out_path = '.dacecache/local/batchnorm/' + sdfg.name
+    program_folder = compiler.generate_program_folder(sdfg, program_objects,
+                                                      out_path)
 
 
 if __name__ == "__main__":

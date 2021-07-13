@@ -131,7 +131,7 @@ class NcclReductionType(aenum.AutoNumberEnum):
     ncclMax = ()  #: Maximum value
 
 
-NCCL_SUPPORTED_REDUCTIONS = {
+NCCL_SUPPORTED_OPERATIONS = {
     None: NcclReductionType.ncclSum,
     ReductionType.Sum: NcclReductionType.ncclSum,
     ReductionType.Product: NcclReductionType.ncclProd,

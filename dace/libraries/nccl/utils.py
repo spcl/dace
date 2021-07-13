@@ -1,7 +1,7 @@
 import dace
 
 
-def NCCL_DDT(dtype):
+def Nccl_dtypes(dtype):
     nccl_dtype_str = ""
     if dtype == dace.dtypes.float16:
         nccl_dtype_str = "ncclFloat16"
