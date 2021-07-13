@@ -392,6 +392,13 @@ def _subset_has_indirection(subset, pvisitor: 'ProgramVisitor' = None):
     return False
 
 
+def _subset_is_local_symbol_dependent(subset: subsets.Subset,
+                                      pvisitor: 'ProgramVisitor') -> bool:
+    if any(s not in pvisitor.map_symbols for s in subset.free_symbols):
+        return True
+    return False
+
+
 def add_indirection_subgraph(sdfg: SDFG,
                              graph: SDFGState,
                              src: nodes.Node,
@@ -3129,7 +3136,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
         parent_name = self.scope_vars[name]
         parent_array = self.scope_arrays[parent_name]
-        if _subset_has_indirection(rng, self):
+
+        has_indirection = (_subset_has_indirection(rng, self) or
+                           _subset_is_local_symbol_dependent(rng, self))
+        if has_indirection:
             # squeezed_rng = list(range(len(rng)))
             shape = parent_array.shape
             # strides = [parent_array.strides[d] for d in squeezed_rng]
@@ -3173,6 +3183,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if arr_type is None:
             arr_type = type(parent_array)
+            # Size (1,) slice of NumPy array returns scalar value
+            if shape == [1] or shape == (1,):
+                arr_type = data.Scalar
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
         elif arr_type == data.Array:
@@ -3192,14 +3205,14 @@ class ProgramVisitor(ExtNodeVisitor):
         inner_indices = set(non_squeezed)
 
         if access_type == 'r':
-            if _subset_has_indirection(rng, self):
+            if has_indirection:
                 self.inputs[var_name] = (dace.Memlet.from_array(
                     parent_name, parent_array), inner_indices)
             else:
                 self.inputs[var_name] = (dace.Memlet.simple(parent_name,
                                                             rng), inner_indices)
         else:
-            if _subset_has_indirection(rng, self):
+            if has_indirection:
                 self.outputs[var_name] = (dace.Memlet.from_array(
                     parent_name, parent_array), inner_indices)
             else:
@@ -3227,7 +3240,8 @@ class ProgramVisitor(ExtNodeVisitor):
             new_name, new_rng = self._add_access(name, rng, 'r', target,
                                                  new_name, arr_type)
             full_rng = subsets.Range.from_array(self.sdfg.arrays[new_name])
-            if _subset_has_indirection(rng, self):
+            if (_subset_has_indirection(rng, self) or
+                    _subset_is_local_symbol_dependent(rng, self)):
                 new_name, new_rng = self.make_slice(new_name, rng)
             elif full_rng != new_rng:
                 new_name, new_rng = self.make_slice(new_name, new_rng)
@@ -4510,65 +4524,6 @@ class ProgramVisitor(ExtNodeVisitor):
     ### Subscript (slicing) handling
     def visit_Subscript(self, node: ast.Subscript):
 
-        if self.nested:
-
-            defined_vars = {**self.variables, **self.scope_vars}
-            defined_arrays = {
-                **self.sdfg.arrays,
-                **self.scope_arrays,
-                **self.defined
-            }
-
-            name = rname(node)
-            true_name = defined_vars[name]
-
-            # If this subscript originates from an external array, create the
-            # subset in the edge going to the connector, as well as a local
-            # reference to the subset
-            if (true_name not in self.sdfg.arrays
-                    and isinstance(node.value, ast.Name)):
-                true_node = copy.deepcopy(node)
-                true_node.value.id = true_name
-                expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node)
-                rng = expr.subset
-                # rng = dace.subsets.Range(
-                #     astutils.subscript_to_slice(true_node, defined_arrays)[1])
-
-                # return self._add_read_access(name, rng, node)
-                new_name, new_rng = self._add_read_access(name, rng, node)
-                new_arr = self.sdfg.arrays[new_name]
-                full_rng = subsets.Range.from_array(new_arr)
-                if new_rng.ranges == full_rng.ranges:
-                    return new_name
-                else:
-                    new_name, _ = self.make_slice(new_name, new_rng)
-                    return new_name
-
-        # Obtain array/tuple
-        node_parsed = self._gettype(node.value)
-
-        if len(node_parsed) > 1:
-            # If the value is a tuple of constants (e.g., array.shape) and the
-            # slice is constant, return the value itself
-            nslice = self.visit(node.slice)
-            if isinstance(nslice, (ast.Index, Number)):
-                if isinstance(nslice, ast.Index):
-                    v = self._parse_value(nslice.value)
-                else:
-                    v = nslice
-                try:
-                    value, valtype = node_parsed[int(v)]
-                    return value
-                except (TypeError, ValueError):
-                    pass  # Passthrough to exception
-
-            raise DaceSyntaxError(self, node.value, 'Subscripted object cannot '
-                                  'be a tuple')
-        array, arrtype = node_parsed[0]
-        if arrtype == 'str' or arrtype in dtypes._CTYPES:
-            raise DaceSyntaxError(self, node,
-                                  'Type "%s" cannot be sliced' % arrtype)
-
         def _promote(node: ast.AST):
             node_str = astutils.unparse(node)
             if node_str in self.indirections:
@@ -4614,6 +4569,67 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 res = _promote(s)
             return res
+
+        if self.nested:
+
+            defined_vars = {**self.variables, **self.scope_vars}
+            defined_arrays = {
+                **self.sdfg.arrays,
+                **self.scope_arrays,
+                **self.defined
+            }
+
+            name = rname(node)
+            true_name = defined_vars[name]
+
+            # If this subscript originates from an external array, create the
+            # subset in the edge going to the connector, as well as a local
+            # reference to the subset
+            if (true_name not in self.sdfg.arrays
+                    and isinstance(node.value, ast.Name)):
+                true_node = copy.deepcopy(node)
+                true_node.value.id = true_name
+
+
+                # Visit slice contents
+                nslice = _parse_slice(node.slice)
+
+                # Try to construct memlet from subscript
+                expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node, nslice)
+                rng = expr.subset
+                new_name, new_rng = self._add_read_access(name, rng, node)
+                new_arr = self.sdfg.arrays[new_name]
+                full_rng = subsets.Range.from_array(new_arr)
+                if new_rng.ranges == full_rng.ranges:
+                    return new_name
+                else:
+                    new_name, _ = self.make_slice(new_name, new_rng)
+                    return new_name
+
+        # Obtain array/tuple
+        node_parsed = self._gettype(node.value)
+
+        if len(node_parsed) > 1:
+            # If the value is a tuple of constants (e.g., array.shape) and the
+            # slice is constant, return the value itself
+            nslice = self.visit(node.slice)
+            if isinstance(nslice, (ast.Index, Number)):
+                if isinstance(nslice, ast.Index):
+                    v = self._parse_value(nslice.value)
+                else:
+                    v = nslice
+                try:
+                    value, valtype = node_parsed[int(v)]
+                    return value
+                except (TypeError, ValueError):
+                    pass  # Passthrough to exception
+
+            raise DaceSyntaxError(self, node.value, 'Subscripted object cannot '
+                                  'be a tuple')
+        array, arrtype = node_parsed[0]
+        if arrtype == 'str' or arrtype in dtypes._CTYPES:
+            raise DaceSyntaxError(self, node,
+                                  'Type "%s" cannot be sliced' % arrtype)
 
         # Visit slice contents
         nslice = _parse_slice(node.slice)

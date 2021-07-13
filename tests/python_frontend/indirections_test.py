@@ -14,6 +14,22 @@ def test_indirection_scalar():
     res = indirection_scalar(A)[0]
     assert (res == A[0])
 
+@dc.program
+def indirection_scalar_nsdfg(A: dc.float32[10], x: dc.int32[10]):
+    B = np.empty_like(A)
+    # TODO: This doesn't work with 0:A.shape[0]
+    for i in dc.map[0:10]:
+        a = x[i]
+        B[i] = A[a]
+    return B
+
+
+def test_indirection_scalar_nsdfg():
+    A = np.random.randn(10).astype(np.float32)
+    x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
+    res = indirection_scalar_nsdfg(A, x)
+    assert (np.allclose(res, A[x]))
+
 
 @dc.program
 def indirection_scalar_multi(A: dc.float32[10, 10]):
@@ -30,6 +46,26 @@ def test_indirection_scalar_multi():
 
 
 @dc.program
+def indirection_scalar_multi_nsdfg(A: dc.float32[10, 10],
+                                   x: dc.int32[10, 10],
+                                   y: dc.int32[10, 10]):
+    B = np.empty_like(A)
+    for i, j in dc.map[0:10, 0:10]:
+        i0 = x[i, j]
+        i1 = y[i, j]
+        B[i, j] = A[i0, i1]
+    return B
+
+
+def test_indirection_scalar_multi_nsdfg():
+    A = np.random.randn(10, 10).astype(np.float32)
+    x = np.random.randint(0, 10, size=(10, 10), dtype=np.int32)
+    y = np.random.randint(0, 10, size=(10, 10), dtype=np.int32)
+    res = indirection_scalar_multi_nsdfg(A, x, y)
+    assert (np.allclose(res, A[x, y]))
+
+
+@dc.program
 def indirection_scalar_op(A: dc.float32[10]):
     i = 0
     return A[i+5]
@@ -39,6 +75,23 @@ def test_indirection_scalar_op():
     A = np.random.randn(10).astype(np.float32)
     res = indirection_scalar_op(A)[0]
     assert (res == A[5])
+
+
+@dc.program
+def indirection_scalar_op_nsdfg(A: dc.float32[10], x: dc.int32[10]):
+    B = np.empty_like(A)
+    # TODO: This doesn't work with 0:A.shape[0]
+    for i in dc.map[0:10]:
+        a = x[i]
+        B[i] = A[a+5]
+    return B
+
+
+def test_indirection_scalar_op_nsdfg():
+    A = np.random.randn(10).astype(np.float32)
+    x = np.random.randint(0, 5, size=(10,), dtype=np.int32)
+    res = indirection_scalar_op_nsdfg(A, x)
+    assert (np.allclose(res, A[x+5]))
 
 
 @dc.program
@@ -56,6 +109,27 @@ def test_indirection_scalar_range():
 
 
 @dc.program
+def indirection_scalar_range_nsdfg(A: dc.float32[10], x: dc.int32[11]):
+    B = np.empty_like(A)
+    # TODO: This doesn't work with 0:A.shape[0]
+    for i in dc.map[0:10]:
+        i0 = min(x[i], x[i+1])
+        i1 = max(x[i], x[i+1]) + 1
+        B[i] = np.sum(A[i0:i1])
+    return B
+
+
+def test_indirection_scalar_range_nsdfg():
+    A = np.random.randn(10).astype(np.float32)
+    x = np.random.randint(0, 9, size=(11,), dtype=np.int32)
+    res = indirection_scalar_range_nsdfg(A, x)
+    for i in range(10):
+        i0 = min(x[i], x[i+1])
+        i1 = max(x[i], x[i+1]) + 1
+        assert (np.allclose(res[i], np.sum(A[i0:i1])))
+
+
+@dc.program
 def indirection_array(A: dc.float32[10], x: dc.int32[10]):
     i = 0
     return A[x[i]]
@@ -66,6 +140,22 @@ def test_indirection_array():
     x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
     res = indirection_array(A, x)[0]
     assert (res == A[x[0]])
+
+
+@dc.program
+def indirection_array_nsdfg(A: dc.float32[10], x: dc.int32[10]):
+    B = np.empty_like(A)
+    # TODO: This doesn't work with 0:A.shape[0]
+    for i in dc.map[0:10]:
+        B[i] = A[x[i]]
+    return B
+
+
+def test_indirection_array_nsdfg():
+    A = np.random.randn(10).astype(np.float32)
+    x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
+    res = indirection_array_nsdfg(A, x)
+    assert (np.allclose(res, A[x]))
 
 
 @dc.program
@@ -83,6 +173,24 @@ def test_indirection_array_multi():
 
 
 @dc.program
+def indirection_array_multi_nsdfg(A: dc.float32[10, 10],
+                                   x: dc.int32[10, 10],
+                                   y: dc.int32[10, 10]):
+    B = np.empty_like(A)
+    for i, j in dc.map[0:10, 0:10]:
+        B[i, j] = A[x[i, j], y[i, j]]
+    return B
+
+
+def test_indirection_array_multi_nsdfg():
+    A = np.random.randn(10, 10).astype(np.float32)
+    x = np.random.randint(0, 10, size=(10, 10), dtype=np.int32)
+    y = np.random.randint(0, 10, size=(10, 10), dtype=np.int32)
+    res = indirection_array_multi_nsdfg(A, x, y)
+    assert (np.allclose(res, A[x, y]))
+
+
+@dc.program
 def indirection_array_op(A: dc.float32[10], x: dc.int32[10]):
     i = 0
     return A[x[i] + 2]
@@ -93,6 +201,22 @@ def test_indirection_array_op():
     x = np.random.randint(0, 8, size=(10,), dtype=np.int32)
     res = indirection_array_op(A, x)[0]
     assert (res == A[x[0] + 2])
+
+
+@dc.program
+def indirection_array_op_nsdfg(A: dc.float32[10], x: dc.int32[10]):
+    B = np.empty_like(A)
+    # TODO: This doesn't work with 0:A.shape[0]
+    for i in dc.map[0:10]:
+        B[i] = A[x[i] + 5]
+    return B
+
+
+def test_indirection_array_op_nsdfg():
+    A = np.random.randn(10).astype(np.float32)
+    x = np.random.randint(0, 5, size=(10,), dtype=np.int32)
+    res = indirection_array_op_nsdfg(A, x)
+    assert (np.allclose(res, A[x + 5]))
 
 
 @dc.program
@@ -109,6 +233,22 @@ def test_indirection_array_range():
 
 
 @dc.program
+def indirection_array_range_nsdfg(A: dc.float32[10], x: dc.int32[10]):
+    B = np.empty_like(A)
+    # TODO: This doesn't work with 0:A.shape[0]
+    for i in dc.map[0:10]:
+        B[i] = np.sum(A[x[i]:x[i]+1])
+    return B
+
+
+def test_indirection_array_range_nsdfg():
+    A = np.random.randn(10).astype(np.float32)
+    x = np.random.randint(0, 9, size=(10,), dtype=np.int32)
+    res = indirection_array_range_nsdfg(A, x)
+    assert (np.allclose(res, A[x]))
+
+
+@dc.program
 def indirection_array_nested(A: dc.float32[10], x: dc.int32[10]):
     i = 0
     return A[x[x[i]]]
@@ -119,6 +259,22 @@ def test_indirection_array_nested():
     x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
     res = indirection_array_nested(A, x)[0]
     assert (res == A[x[x[0]]])
+
+
+@dc.program
+def indirection_array_nested_nsdfg(A: dc.float32[10], x: dc.int32[10]):
+    B = np.empty_like(A)
+    # TODO: This doesn't work with 0:A.shape[0]
+    for i in dc.map[0:10]:
+        B[i] = A[x[x[i]]]
+    return B
+
+
+def test_indirection_array_nested_nsdfg():
+    A = np.random.randn(10).astype(np.float32)
+    x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
+    res = indirection_array_nested_nsdfg(A, x)
+    assert (np.allclose(res, A[x[x]]))
 
 
 @dc.program
@@ -162,12 +318,21 @@ def test_spmv():
 
 if __name__ == "__main__":
     test_indirection_scalar()
+    test_indirection_scalar_nsdfg()
     test_indirection_scalar_multi()
+    test_indirection_scalar_multi_nsdfg()
     test_indirection_scalar_op()
+    test_indirection_scalar_op_nsdfg()
     test_indirection_scalar_range()
+    test_indirection_scalar_range_nsdfg()
     test_indirection_array()
+    test_indirection_array_nsdfg()
     test_indirection_array_multi()
+    test_indirection_array_multi_nsdfg()
     test_indirection_array_op()
+    test_indirection_array_op_nsdfg()
     test_indirection_array_range()
+    test_indirection_array_range_nsdfg()
     test_indirection_array_nested()
+    test_indirection_array_nested_nsdfg()
     test_spmv()
