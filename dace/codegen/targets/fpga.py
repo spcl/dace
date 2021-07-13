@@ -403,7 +403,7 @@ cl_ulong last_end = std::numeric_limits<unsigned long int>::min();""")
     if (event_end > last_end) {{
         last_end = event_end;
     }}
-    __state->report.add_completion("{module_name}", "FPGA", event_start, event_end, {sdfg.sdfg_id}, {state_id}, -1);
+    __state->report.add_completion("{module_name}", "FPGA", event_start, event_end, {sdfg.sdfg_id}, {state_id}, {state.node_id(sg.nodes()[0])});
 }}""")
                 kernel_host_stream.write(f"""\
 __state->report.add_completion("FPGA Runtime for State {state.label}", "FPGA", first_start, last_end, {sdfg.sdfg_id}, {state_id}, -1);
