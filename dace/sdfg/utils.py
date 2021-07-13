@@ -5,7 +5,6 @@ import collections
 import copy
 import os
 import networkx as nx
-from numpy import array
 
 import dace.sdfg.nodes
 from dace.sdfg.graph import MultiConnectorEdge
@@ -16,8 +15,7 @@ from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from string import ascii_uppercase
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union, Any
-import dace.codegen.exceptions
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 
 def node_path_graph(*args):
@@ -1030,6 +1028,7 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
     result = {s for s in result if not s.is_empty()}
 
     return result
+
 
 def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
                      node: Node) -> str:
