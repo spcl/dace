@@ -62,7 +62,7 @@ def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
     return sdfg
 
 
-def createTestSet(N, M, banks):
+def create_test_set(N, M, banks):
     in1 = np.random.rand(*[banks, N, M]).astype('f')
     in2 = np.random.rand(*[banks, N, M]).astype('f')
     expected = np.sum(in1 * in2, axis=2, dtype=np.float32)
@@ -71,7 +71,7 @@ def createTestSet(N, M, banks):
 
 
 def exec_test(N, M, banks, name):
-    in1, in2, expected, target = createTestSet(N, M, banks)
+    in1, in2, expected, target = create_test_set(N, M, banks)
     sdfg = create_hbm_reduce_sdfg(banks, name)
     sdfg(in1=in1, in2=in2, out=target, N=N, M=M)
     assert np.allclose(expected, target, rtol=1e-6)

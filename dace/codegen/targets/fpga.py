@@ -8,7 +8,7 @@ import re
 import warnings
 import sympy as sp
 import numpy as np
-from typing import Dict, Union
+from typing import Dict, Tuple, Union
 import copy
 
 import dace
@@ -485,7 +485,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         external_streams: Set[tuple[bool, str, dt, dict[str, int]]] = set()
 
         # Mapping from global arrays to memory interfaces
-        bank_assignments: Dict[str, (str, Union[int, subsets.Range])] = {}
+        bank_assignments: Dict[str, Tuple[str, Union[int, subsets.Range]]] = {}
 
         # Mapping from symbol to a unique parameter tuple
         all_symbols = {
@@ -854,7 +854,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     bank_offset = -1
                     storage_type_str = "hlslib::ocl::StorageType::DDR"  #DDR to use unspecified memory
 
-                    #Fix bankassignments if present
+                    # Fix bankassignments if present
                     bank_info = fpga_utils.parse_location_bank(nodedesc)
                     if bank_info is not None:
                         bank_type, bank = bank_info

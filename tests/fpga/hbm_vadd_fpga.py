@@ -99,7 +99,7 @@ def create_vadd_multibank_sdfg(bank_count_per_array=2,
     return sdfg
 
 
-def createTestSet(dim, size1D, banks):
+def create_test_set(dim, size1D, banks):
     shape = [banks]
     for i in range(dim):
         shape.append(size1D)
@@ -113,7 +113,7 @@ def createTestSet(dim, size1D, banks):
 
 
 def exec_test(dim, size1D, banks, test_name, unroll_map_inside=False):
-    in1, in2, expected, target = createTestSet(dim, size1D, banks)
+    in1, in2, expected, target = create_test_set(dim, size1D, banks)
     sdfg = create_vadd_multibank_sdfg(banks, dim, unroll_map_inside, test_name)
     if (dim == 1):
         sdfg(in1=in1, in2=in2, out=target, N=size1D)
