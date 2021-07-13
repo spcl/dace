@@ -115,7 +115,8 @@ class SVECodeGen(TargetCodeGenerator):
         """
             Responsible for generating code for reads into a Tasklet, given the ingoing edge.
         """
-
+        if edge.dst_conn is None:
+            return
         src_node = state.memlet_path(edge)[0].src
         dst_type = edge.dst.in_connectors[edge.dst_conn]
         dst_name = edge.dst_conn
@@ -221,6 +222,8 @@ class SVECodeGen(TargetCodeGenerator):
             Responsible for generating temporary out registers in a Tasklet, given an outgoing edge.
             Returns `True` if a writeback of this register is needed.
         """
+        if edge.src_conn is None:
+            return
 
         dst_node = state.memlet_path(edge)[-1].dst
 
@@ -264,6 +267,9 @@ class SVECodeGen(TargetCodeGenerator):
             Responsible for generating code for a writeback in a Tasklet, given the outgoing edge.
             This is mainly taking the temporary register and writing it back.
         """
+        if edge.src_conn is None:
+            return
+
         dst_node = state.memlet_path(edge)[-1].dst
 
         src_type = edge.src.out_connectors[edge.src_conn]
