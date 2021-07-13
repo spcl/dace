@@ -266,7 +266,6 @@ def emit_memlet_reference(dispatcher,
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
     :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
-    :param bank_info: An integer to declare for which bank the memlet is generated in case of multibank arrays
     :return: A tuple of the form (type, name, value).
     """
     desc = sdfg.arrays[memlet.data]

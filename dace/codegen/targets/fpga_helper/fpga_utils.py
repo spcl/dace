@@ -2,7 +2,7 @@ import copy
 from typing import List, Union, Tuple
 from dace import data as dt, SDFG, dtypes, subsets, symbolic
 
-_FPGA_STORAGE_TYPES = {
+_FPGA_STORAGE_TYPES = {    
     dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
     dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister
 }
@@ -100,8 +100,8 @@ def get_multibank_ranges_from_subset(subset: Union[subsets.Subset, str],
 
 def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
     """
-    :param array: an array on FPGA
-    :return: None if an array is given which does not have a location['bank'] value. 
+    :param array: an array on FPGA global memory
+    :return: None if an array is given which does not have a location['memorytype'] value. 
         Otherwise it will return a tuple (bank_type, bank_assignment), where bank_type
         is one of 'DDR', 'HBM' and bank_assignment a string that describes which banks are 
         used.
@@ -139,6 +139,8 @@ def ptr(name: str,
     :param name: Data name.
     :param desc: Data descriptor.
     :param subset_info_hbm: Any additional information about the accessed subset. 
+    :param ancestor: The ancestor level where the variable should be searched for if
+        is_array_interface is True when dispatcher is not None
     :param is_array_interface: Data is pointing to an interface in FPGA-Kernel compilation
     :param interface_id: An optional interface id that will be added to the name (only for array interfaces)
     :return: C-compatible name that can be used to access the data.

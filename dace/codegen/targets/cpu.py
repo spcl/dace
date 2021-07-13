@@ -1028,12 +1028,11 @@ class CPUCodeGen(TargetCodeGenerator):
                             array_expr = cpp.cpp_array_expr(sdfg,
                                                             memlet,
                                                             with_brackets=False)
-                            ptr_str = fpga_utils.ptr(
+                            ptr_str = fpga_utils.ptr( # we are on fpga, since this is array interface
                                 memlet.data,
                                 desc,
                                 sdfg,
-                                memlet.
-                                subset,  # we are on fpga, this is array interface
+                                memlet.subset,
                                 True,
                                 None,
                                 None,

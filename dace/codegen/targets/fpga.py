@@ -853,7 +853,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     self._allocated_global_arrays.add(node.data)
                     memory_bank_arg_count = 1
                     bank_offset = -1
-                    storage_type_str = "hlslib::ocl::StorageType::DDR"  #DDR to use unspecified memory
+                    storage_type_str = "hlslib::ocl::StorageType::DDR"  # DDR to use unspecified memory
 
                     # Fix bankassignments if present
                     bank_info = fpga_utils.parse_location_bank(nodedesc)

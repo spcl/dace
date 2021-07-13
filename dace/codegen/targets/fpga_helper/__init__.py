@@ -4,4 +4,5 @@ from .fpga_utils import (
     modify_distributed_subset,
     get_multibank_ranges_from_subset,
     parse_location_bank,
+    ptr,
 )
