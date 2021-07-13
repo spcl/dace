@@ -391,6 +391,13 @@ cl_ulong first_start = std::numeric_limits<unsigned long int>::max();
 cl_ulong last_end = std::numeric_limits<unsigned long int>::min();""")
                 for i, sg in enumerate(all_subgraphs):
                     module_name = self._module_name(sg, state)
+                    if Config.get_bool("instrumentation", "print_fpga_runtime"):
+                        print_str = f"""
+    const double elapsed = 1e-9 * (event_end - event_start);
+    std::cout << "Kernel \\"{module_name}\\" executed in " << elapsed << " seconds.\\n";\
+"""
+                    else:
+                        print_str = ""
                     kernel_host_stream.write(f"""\
 {{
     cl_ulong event_start = 0;
@@ -404,7 +411,7 @@ cl_ulong last_end = std::numeric_limits<unsigned long int>::min();""")
     if (event_end > last_end) {{
         last_end = event_end;
     }}
-    __state->report.add_completion("{module_name}", "FPGA", event_start, event_end, {sdfg.sdfg_id}, {state_id}, {state.node_id(sg.nodes()[0])});
+    __state->report.add_completion("{module_name}", "FPGA", event_start, event_end, {sdfg.sdfg_id}, {state_id}, {state.node_id(sg.nodes()[0])});{print_str}
 }}""")
                 kernel_host_stream.write(f"""\
 __state->report.add_completion("FPGA Runtime for State {state.label}", "FPGA", first_start, last_end, {sdfg.sdfg_id}, {state_id}, -1);
