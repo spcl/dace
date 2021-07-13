@@ -1325,14 +1325,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         if external_edges:
             input_nodes = input_nodes or {}
             output_nodes = output_nodes or {}
-            input_data = set(memlet.data for memlet in inputs.values())
-            output_data = set(memlet.data for memlet in outputs.values())
-            for inp in input_data:
+            for inp in (memlet.data for memlet in inputs.values()):
                 if inp in input_nodes:
                     inpdict[inp] = input_nodes[inp]
                 else:
                     inpdict[inp] = self.add_read(inp)
-            for out in output_data:
+            for out in (memlet.data for memlet in outputs.values()):
                 if out in output_nodes:
                     outdict[out] = output_nodes[out]
                 else:
