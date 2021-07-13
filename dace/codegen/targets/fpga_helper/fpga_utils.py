@@ -5,7 +5,8 @@ from dace import data as dt, SDFG, dtypes, subsets, symbolic
 _FPGA_STORAGE_TYPES = {
     dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
     dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister
-    }
+}
+
 
 def is_hbm_array(array: dt.Data):
     """
@@ -18,11 +19,13 @@ def is_hbm_array(array: dt.Data):
     else:
         return False
 
+
 def is_fpga_array(array: dt.Data):
     """
     :return: True if this array is placed on FPGA memory
     """
     return isinstance(array, dt.Array) and array.storage in _FPGA_STORAGE_TYPES
+
 
 def iterate_hbm_multibank_arrays(array_name: str, array: dt.Array, sdfg: SDFG):
     """
@@ -105,7 +108,9 @@ def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
     """
     if "memorytype" in array.location:
         if "bank" not in array.location:
-            raise ValueError("If 'memorytype' is specified for an array 'bank' must also be specified")
+            raise ValueError(
+                "If 'memorytype' is specified for an array 'bank' must also be specified"
+            )
         val: str = array.location["bank"]
         memorytype: str = array.location["memorytype"]
         memorytype = memorytype.upper()
@@ -118,15 +123,16 @@ def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
     else:
         return None
 
+
 def ptr(name: str,
-    desc: dt.Data = None,
-    sdfg: SDFG = None,
-    subset_info_hbm: Union[subsets.Subset, int] = None,
-    is_write: bool = None,
-    dispatcher=None,
-    ancestor: int = 0,
-    is_array_interface: bool = False,
-    interface_id: Union[int, List[int]] = None):
+        desc: dt.Data = None,
+        sdfg: SDFG = None,
+        subset_info_hbm: Union[subsets.Subset, int] = None,
+        is_write: bool = None,
+        dispatcher=None,
+        ancestor: int = 0,
+        is_array_interface: bool = False,
+        interface_id: Union[int, List[int]] = None):
     """
     Returns a string that points to the data based on its name, and various other conditions
     that may apply for that data field.
@@ -148,8 +154,7 @@ def ptr(name: str,
                 raise ValueError(
                     "Cannot generate name for HBM bank using subset if sdfg not provided"
                 )
-            low, high = get_multibank_ranges_from_subset(
-                subset_info_hbm, sdfg)
+            low, high = get_multibank_ranges_from_subset(subset_info_hbm, sdfg)
             if (low + 1 != high):
                 raise ValueError(
                     "ptr cannot generate HBM names for subsets accessing more than one HBM bank"

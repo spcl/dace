@@ -76,6 +76,7 @@ def test_multi_tasklet():
     sdfg.apply_fpga_transformations()
     sdfg.validate()
 
+
 def test_unsound_location():
     sdfg = dace.SDFG("jdj")
     sdfg.add_array("a", [4, 3], dtypes.int32, dtypes.StorageType.FPGA_Global)

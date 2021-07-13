@@ -594,7 +594,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                             tmp_interface_ids = []
                             for bank in fpga_utils.iterate_hbm_multibank_arrays(
                                     data_name, desc, sdfg):
-                                ptr_str = fpga_utils.ptr(data_name, desc, sdfg, bank)
+                                ptr_str = fpga_utils.ptr(
+                                    data_name, desc, sdfg, bank)
                                 tmp_interface_id = global_interfaces[ptr_str]
                                 global_interfaces[ptr_str] += 1
                                 tmp_interface_ids.append(tmp_interface_id)
@@ -873,7 +874,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
                     # Define buffer, using proper type
                     for bank_index in range(memory_bank_arg_count):
-                        alloc_name = fpga_utils.ptr(dataname, nodedesc, sdfg, bank_index)
+                        alloc_name = fpga_utils.ptr(dataname, nodedesc, sdfg,
+                                                    bank_index)
                         if not declared:
                             result_decl.write(
                                 "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n"
@@ -1161,7 +1163,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             is_dst_using_hbm = not src_is_subset and fpga_utils.is_hbm_array(
                 dst_nodedesc)
             if is_src_using_hbm or is_dst_using_hbm:
-                copy_shape = fpga_utils.modify_distributed_subset(copy_shape, -1)
+                copy_shape = fpga_utils.modify_distributed_subset(
+                    copy_shape, -1)
 
             offset_src, offset_dst = "0", "0"
             if memlet.src_subset is not None:
@@ -1221,33 +1224,35 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             dst_subset = memlet.dst_subset or memlet.subset
             if host_to_device:
 
-                ptr_str = (
-                    fpga_utils.ptr(src_node.data, src_nodedesc, sdfg, src_subset) +
-                    (" + {}".format(offset_src)
-                     if outgoing_memlet and str(offset_src) != "0" else ""))
+                ptr_str = (fpga_utils.ptr(src_node.data, src_nodedesc, sdfg,
+                                          src_subset) +
+                           (" + {}".format(offset_src) if outgoing_memlet
+                            and str(offset_src) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} const *>({})".format(
                         device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
                     "{}.CopyFromHost({}, {}, {});".format(
-                        fpga_utils.ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset),
+                        fpga_utils.ptr(dst_node.data, dst_nodedesc, sdfg,
+                                       dst_subset),
                         (offset_dst if not outgoing_memlet else 0), copysize,
                         ptr_str), sdfg, state_id, [src_node, dst_node])
 
             elif device_to_host:
 
-                ptr_str = (
-                    fpga_utils.ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset) +
-                    (" + {}".format(offset_dst)
-                     if outgoing_memlet and str(offset_dst) != "0" else ""))
+                ptr_str = (fpga_utils.ptr(dst_node.data, dst_nodedesc, sdfg,
+                                          dst_subset) +
+                           (" + {}".format(offset_dst) if outgoing_memlet
+                            and str(offset_dst) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} *>({})".format(
                         device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
                     "{}.CopyToHost({}, {}, {});".format(
-                        fpga_utils.ptr(src_node.data, src_nodedesc, sdfg, src_subset),
+                        fpga_utils.ptr(src_node.data, src_nodedesc, sdfg,
+                                       src_subset),
                         (offset_src if outgoing_memlet else 0), copysize,
                         ptr_str), sdfg, state_id, [src_node, dst_node])
 
@@ -1255,9 +1260,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
                 callsite_stream.write(
                     "{}.CopyToDevice({}, {}, {}, {});".format(
-                        fpga_utils.ptr(src_node.data, src_nodedesc, sdfg, src_subset),
+                        fpga_utils.ptr(src_node.data, src_nodedesc, sdfg,
+                                       src_subset),
                         (offset_src if outgoing_memlet else 0), copysize,
-                        fpga_utils.ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset),
+                        fpga_utils.ptr(dst_node.data, dst_nodedesc, sdfg,
+                                       dst_subset),
                         (offset_dst if not outgoing_memlet else 0)), sdfg,
                     state_id, [src_node, dst_node])
 

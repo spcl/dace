@@ -104,7 +104,8 @@ def check_hbm2ddr1():
     s, _, _ = mkc(sdfg, s, "x", "d1", None, StorageType.FPGA_Global, None,
                   [3, 5, 5], "x[2, 0:5, 0:5]->1, 0:5, 0:5", None, ("DDR", "1"))
     s, _, _ = mkc(sdfg, s, "d1", "y", None, StorageType.FPGA_Global, None,
-                  [1, 7, 7], "d1[1, 0:5,0:5]->0, 2:7, 2:7", None, ("hbm", "3:4"))
+                  [1, 7, 7], "d1[1, 0:5,0:5]->0, 2:7, 2:7", None,
+                  ("hbm", "3:4"))
     s, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default, None, [1, 7, 7],
                   "y")
 

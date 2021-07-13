@@ -39,7 +39,8 @@ def create_vadd_multibank_sdfg(bank_count_per_array=2,
     out[1].location["memorytype"] = "hbm"
     in1[1].location["bank"] = f"0:{bank_count_per_array}"
     in2[1].location["bank"] = f"{bank_count_per_array}:{2*bank_count_per_array}"
-    out[1].location["bank"] = f"{2*bank_count_per_array}:{3*bank_count_per_array}"
+    out[1].location[
+        "bank"] = f"{2*bank_count_per_array}:{3*bank_count_per_array}"
 
     read_in1 = state.add_read("in1")
     read_in2 = state.add_read("in2")

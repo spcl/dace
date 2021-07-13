@@ -144,8 +144,9 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                           memlet=dace.Memlet(f"{input_buffer.data}[0]"))
     state.add_memlet_path(input_buffer,
                           shift_register,
-                          memlet=dace.Memlet(f"{input_buffer.data}[0]",
-                                             other_subset=f"2*M:(2*M + {veclen})"))
+                          memlet=dace.Memlet(
+                              f"{input_buffer.data}[0]",
+                              other_subset=f"2*M:(2*M + {veclen})"))
 
     # Stencils accesses
     state.add_memlet_path(

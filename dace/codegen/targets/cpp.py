@@ -29,14 +29,15 @@ from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 
 
 def copy_expr(
-        dispatcher,
-        sdfg,
-        data_name,
-        memlet,
-        is_write=None,  # Otherwise it's a read
-        offset=None,
-        relative_offset=True,
-        packed_types=False,):
+    dispatcher,
+    sdfg,
+    data_name,
+    memlet,
+    is_write=None,  # Otherwise it's a read
+    offset=None,
+    relative_offset=True,
+    packed_types=False,
+):
     data_desc = sdfg.arrays[data_name]
     if relative_offset:
         s = memlet.subset
@@ -56,7 +57,7 @@ def copy_expr(
     dt = ""
 
     is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
-                                      dtypes.AllocationLifetime.Persistent)
+                                       dtypes.AllocationLifetime.Persistent)
     defined_types = None
     try:
         if (isinstance(data_desc, data.Array)
@@ -75,7 +76,7 @@ def copy_expr(
         expr = fpga_utils.ptr(
             data_name,
             data_desc,
-            sdfg, 
+            sdfg,
             s,
             is_write,
             dispatcher,
@@ -253,15 +254,14 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None) -> str:
     return name
 
 
-def emit_memlet_reference(
-        dispatcher,
-        sdfg: SDFG,
-        memlet: mmlt.Memlet,
-        pointer_name: str,
-        conntype: dtypes.typeclass,
-        ancestor: int = 1,
-        is_write: bool = None,
-        device_code: bool = False) -> Tuple[str, str, str]:
+def emit_memlet_reference(dispatcher,
+                          sdfg: SDFG,
+                          memlet: mmlt.Memlet,
+                          pointer_name: str,
+                          conntype: dtypes.typeclass,
+                          ancestor: int = 1,
+                          is_write: bool = None,
+                          device_code: bool = False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -293,11 +293,12 @@ def emit_memlet_reference(
     defined_type, defined_ctype = defined_types
 
     if fpga_utils.is_fpga_array(desc):
-        datadef = fpga_utils.ptr(memlet.data, desc, sdfg, memlet.subset, is_write, dispatcher,
-                    ancestor, defined_type == DefinedType.ArrayInterface)
+        datadef = fpga_utils.ptr(memlet.data, desc, sdfg, memlet.subset,
+                                 is_write, dispatcher, ancestor,
+                                 defined_type == DefinedType.ArrayInterface)
     else:
         datadef = ptr(memlet.data, desc, sdfg)
-    
+
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface
                 and isinstance(desc, data.View))):
@@ -611,7 +612,7 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     if fpga_utils.is_fpga_array(desc):
         dname = fpga_utils.ptr(memlet.data, desc, sdfg, s, is_write, None, None,
-                    defined_type == DefinedType.ArrayInterface)
+                               defined_type == DefinedType.ArrayInterface)
     else:
         dname = ptr(memlet.data, desc, sdfg)
 
@@ -1180,11 +1181,16 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                                       expr_semicolon=False),
                             ))
                         else:
-                            array_interface_name = fpga_utils.ptr(memlet.data, desc,
-                                                        self.sdfg,
-                                                       memlet.dst_subset,
-                                                        True, None,
-                                                       None, True,)
+                            array_interface_name = fpga_utils.ptr(
+                                memlet.data,
+                                desc,
+                                self.sdfg,
+                                memlet.dst_subset,
+                                True,
+                                None,
+                                None,
+                                True,
+                            )
                             newnode = ast.Name(
                                 id=f"{array_interface_name}"
                                 f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False)}]"
