@@ -286,9 +286,11 @@ class FPGACodeGen(TargetCodeGenerator):
             state_host_body_stream = CodeIOStream()
 
             # Kernels are now sorted considering their dependencies
+            all_subgraphs = []
             for kern, kern_id in kernels:
                 # Generate all kernels in this state
                 subgraphs = dace.sdfg.concurrent_subgraphs(kern)
+                all_subgraphs += subgraphs
                 shared_transients = set(sdfg.shared_transients())
 
                 # Allocate global memory transients, unless they are shared with
@@ -369,8 +371,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
             kernel_host_stream.write(f"""\
 DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
-      hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();"""
-                                     )
+      hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();\
+""")
             # Create a vector to collect all events that are being generated to allow
             # waiting before exiting this state
             kernel_host_stream.write(f"std::vector<cl::Event> all_events;", )
@@ -381,15 +383,30 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             # Wait for all events
             kernel_host_stream.write(" cl::Event::waitForEvents(all_events);")
 
-            # Print profiling information
-            kernel_host_stream.write("""\
-for (auto &event : all_events) {
+            # Instrumentation
+            if state.instrument == dtypes.InstrumentationType.FPGA:
+                kernel_host_stream.write("""
+// Begin FPGA kernel runtime instrumentation
+cl_ulong first_start = std::numeric_limits<unsigned long int>::max();
+cl_ulong last_end = std::numeric_limits<unsigned long int>::min();""")
+                for i, sg in enumerate(all_subgraphs):
+                    module_name = self._module_name(sg, state)
+                    kernel_host_stream.write(f"""\
+{{
     cl_ulong event_start, event_end;
+    cl::Event const &event = all_events[{i}];
     event.getProfilingInfo(CL_PROFILING_COMMAND_START, &event_start);
     event.getProfilingInfo(CL_PROFILING_COMMAND_END, &event_end);
-    const double elapsed = 1e-9 * (event_end - event_start);
-    std::cout << "Kernel executed in " << elapsed << " seconds.\\n";
-}
+    if (event_start < first_start) {{
+        first_start = event_start;
+    }}
+    if (event_end > last_end) {{
+        last_end = event_end;
+    }}
+    __state->report.add_completion("{module_name}", "FPGA", event_start, event_end, {sdfg.sdfg_id}, {state_id}, -1);
+}}""")
+                kernel_host_stream.write(f"""\
+__state->report.add_completion("FPGA Runtime for State {state.label}", "FPGA", first_start, last_end, {sdfg.sdfg_id}, {state_id}, -1);
 """)
 
             kernel_host_stream.write("}\n")
@@ -1853,45 +1870,47 @@ for (auto &event : all_events) {
 
         self._allocated_global_arrays = set()
 
+    def _module_name(self, subgraph, state):
+        """
+        Generate the name of an FPGA module produced from the given subgraph.i
+        """
+        to_traverse = subgraph.source_nodes()
+        seen = set()
+        tasklet_list = []
+        access_nodes = []
+        while len(to_traverse) > 0:
+            n = to_traverse.pop()
+            if n in seen:
+                continue
+            seen.add(n)
+            if (isinstance(n, dace.sdfg.nodes.Tasklet)
+                    or isinstance(n, dace.sdfg.nodes.NestedSDFG)):
+                tasklet_list.append(n)
+            else:
+                if isinstance(n, dace.sdfg.nodes.AccessNode):
+                    access_nodes.append(n)
+                for e in subgraph.out_edges(n):
+                    if e.dst not in seen:
+                        to_traverse.append(e.dst)
+        # Name module according to all reached tasklets (can be just one)
+        labels = [
+            n.label.replace(" ", "_") + f"_{state.node_id(n)}"
+            for n in tasklet_list
+        ]
+        # If there are no tasklets, name it after access nodes in the
+        # subgraph
+        if len(labels) == 0:
+            labels = [n.label.replace(" ", "_") for n in access_nodes]
+        if len(labels) == 0:
+            raise RuntimeError("Expected at least one tasklet or data node.")
+        return "_".join(labels)
+
     def generate_modules(self, sdfg, state, kernel_name, subgraphs,
                          subgraph_parameters, module_stream, entry_stream,
                          host_stream):
-        """Generate all PEs inside an FPGA Kernel"""
-
-        # Module generation
+        """Generate all PEs inside an FPGA Kernel."""
         for subgraph in subgraphs:
-            # Traverse to find first tasklets reachable in topological order
-            to_traverse = subgraph.source_nodes()
-            seen = set()
-            tasklet_list = []
-            access_nodes = []
-            while len(to_traverse) > 0:
-                n = to_traverse.pop()
-                if n in seen:
-                    continue
-                seen.add(n)
-                if (isinstance(n, dace.sdfg.nodes.Tasklet)
-                        or isinstance(n, dace.sdfg.nodes.NestedSDFG)):
-                    tasklet_list.append(n)
-                else:
-                    if isinstance(n, dace.sdfg.nodes.AccessNode):
-                        access_nodes.append(n)
-                    for e in subgraph.out_edges(n):
-                        if e.dst not in seen:
-                            to_traverse.append(e.dst)
-            # Name module according to all reached tasklets (can be just one)
-            labels = [
-                n.label.replace(" ", "_") + f"_{state.node_id(n)}"
-                for n in tasklet_list
-            ]
-            # If there are no tasklets, name it after access nodes in the
-            # subgraph
-            if len(labels) == 0:
-                labels = [n.label.replace(" ", "_") for n in access_nodes]
-            if len(labels) == 0:
-                raise RuntimeError("Expected at least one tasklet or data node")
-            module_name = "_".join(labels)
-
+            module_name = self._module_name(subgraph, state)
             self.generate_module(sdfg, state, kernel_name, module_name,
                                  subgraph, subgraph_parameters[subgraph],
                                  module_stream, entry_stream, host_stream)
