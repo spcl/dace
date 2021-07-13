@@ -5,6 +5,8 @@
 import dace
 import numpy as np
 import pytest
+import re
+from dace.codegen.targets.fpga import is_fpga_kernel
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 
 
@@ -59,11 +61,19 @@ def test_kernels_inside_component_0():
 
     sdfg = kernels_inside_component_0.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+    for state in sdfg.states():
+        if is_fpga_kernel(sdfg, state):
+            state.instrument = dace.InstrumentationType.FPGA
     program = sdfg.compile()
 
     assert count_kernels("kernels_inside_component_0_1") == 3
     res = program(x=x, y=y, v=v, w=w, z=z)
     assert np.allclose(res, x + y + v + w + z)
+    report = sdfg.get_latest_report()
+    assert (len(
+        re.findall(
+            r"Node \([0-9]+\)\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+",
+            str(report))) == 3)
 
 
 def test_kernels_inside_component_1():

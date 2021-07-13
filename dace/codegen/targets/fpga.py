@@ -375,13 +375,13 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 """)
             # Create a vector to collect all events that are being generated to allow
             # waiting before exiting this state
-            kernel_host_stream.write(f"std::vector<cl::Event> all_events;", )
+            kernel_host_stream.write("std::vector<cl::Event> all_events;")
 
             # Kernels invocations
             kernel_host_stream.write(state_host_body_stream.getvalue())
 
             # Wait for all events
-            kernel_host_stream.write(" cl::Event::waitForEvents(all_events);")
+            kernel_host_stream.write("cl::Event::waitForEvents(all_events);")
 
             # Instrumentation
             if state.instrument == dtypes.InstrumentationType.FPGA:
@@ -393,7 +393,8 @@ cl_ulong last_end = std::numeric_limits<unsigned long int>::min();""")
                     module_name = self._module_name(sg, state)
                     kernel_host_stream.write(f"""\
 {{
-    cl_ulong event_start, event_end;
+    cl_ulong event_start = 0;
+    cl_ulong event_end = 0;
     cl::Event const &event = all_events[{i}];
     event.getProfilingInfo(CL_PROFILING_COMMAND_START, &event_start);
     event.getProfilingInfo(CL_PROFILING_COMMAND_END, &event_end);
