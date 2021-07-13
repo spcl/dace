@@ -29,7 +29,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
         on failure.
     """
     # Avoid import loop
-    from dace.sdfg import utils as sdutil
+    from dace.codegen.targets.fpga_helper import fpga_utils
 
     try:
         # SDFG-level checks
@@ -59,7 +59,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
 
             # Check for valid bank assignments
             try:
-                bank_assignment = sdutil.parse_location_bank(desc)
+                bank_assignment = fpga_utils.parse_location_bank(desc)
             except ValueError as e:
                 raise InvalidSDFGError(str(e), sdfg, None)
             if bank_assignment is not None:
@@ -79,7 +79,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                             "Memory bank specifier must be convertible to subsets.Range"
                             f" for array {name} since it uses HBM", sdfg, None)
                     try:
-                        low, high = sdutil.get_multibank_ranges_from_subset(
+                        low, high = fpga_utils.get_multibank_ranges_from_subset(
                             bank_assignment[1], sdfg)
                     except ValueError as e:
                         raise InvalidSDFGError(str(e), sdfg, None)
@@ -180,6 +180,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     from dace import data as dt
     from dace import subsets as sbs
     from dace.sdfg import utils as sdutil
+    from dace.codegen.targets.fpga_helper import fpga_utils
 
     sdfg = sdfg or state.parent
     state_id = state_id or sdfg.node_id(state)
@@ -365,7 +366,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if isinstance(node, nd.Tasklet):
             for attached in state.all_edges(node):
                 if attached.data.data in sdfg.arrays:
-                    if sdutil.is_hbm_array(sdfg.arrays[attached.data.data]):
+                    if fpga_utils.is_hbm_array(sdfg.arrays[attached.data.data]):
                         low, high, _ = attached.data.subset[0]
                         if (low != high):
                             raise InvalidSDFGNodeError(
@@ -651,12 +652,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Check if first index is evaluatable for HBM arrays
         if (isinstance(src_node, nd.AccessNode)
-                and sdutil.is_hbm_array(src_node.desc(state))
+                and fpga_utils.is_hbm_array(src_node.desc(state))
                 and e.data.data is not None):
             validate_hbm_subset(e.data.src_subset or e.data.subset, sdfg,
                                 state_id, eid)
         if (isinstance(dst_node, nd.AccessNode)
-                and sdutil.is_hbm_array(dst_node.desc(state))
+                and fpga_utils.is_hbm_array(dst_node.desc(state))
                 and e.data.data is not None):
             validate_hbm_subset(e.data.dst_subset or e.data.subset, sdfg,
                                 state_id, eid)

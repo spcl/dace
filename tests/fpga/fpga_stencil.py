@@ -22,11 +22,13 @@ def make_sdfg(name="fpga_stcl_test", dtype=dace.float32, veclen=8):
     _, desc_output_host = sdfg.add_array("b", (n, m / veclen), vtype)
     desc_input_device = copy.copy(desc_input_host)
     desc_input_device.storage = dace.StorageType.FPGA_Global
-    desc_input_device.location["bank"] = "ddr.0"
+    desc_input_device.location["memorytype"] = "ddr"
+    desc_input_device.location["bank"] = "0"
     desc_input_device.transient = True
     desc_output_device = copy.copy(desc_output_host)
     desc_output_device.storage = dace.StorageType.FPGA_Global
-    desc_output_device.location["bank"] = "ddr.1"
+    desc_output_device.location["memorytype"] = "ddr"
+    desc_output_device.location["bank"] = "1"
     desc_output_device.transient = True
     sdfg.add_datadesc("a_device", desc_input_device)
     sdfg.add_datadesc("b_device", desc_output_device)
@@ -142,8 +144,9 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                           memlet=dace.Memlet(f"{input_buffer.data}[0]"))
     state.add_memlet_path(input_buffer,
                           shift_register,
-                          memlet=dace.Memlet(f"{input_buffer.data}[0]",
-                                             other_subset=f"2*M:(2*M + {veclen})"))
+                          memlet=dace.Memlet(
+                              f"{input_buffer.data}[0]",
+                              other_subset=f"2*M:(2*M + {veclen})"))
 
     # Stencils accesses
     state.add_memlet_path(

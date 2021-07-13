@@ -43,7 +43,8 @@ def mkc(sdfg: dace.SDFG,
                              storage,
                              transient=is_transient)
         if loc is not None:
-            arr[1].location["bank"] = loc
+            arr[1].location["memorytype"] = loc[0]
+            arr[1].location["bank"] = loc[1]
         return arr
 
     a = mkarray(src_name, src_shape, src_storage, src_loc)
@@ -72,15 +73,15 @@ def check_hbm2hbm1():
     sdfg = dace.SDFG("hbm2hbm1")
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
                   StorageType.FPGA_Global, [3, 4, 4], [3, 4, 4], "a", None,
-                  "HBM.0:3")
+                  ("HBM", "0:3"))
     s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global, None,
                   [2, 4, 4, 4], "x[1, 1:4, 1:4]->1, 1:4, 1:4, 1", None,
-                  "HBM.3:5")
+                  ("HBM", "3:5"))
     s, _, _ = mkc(sdfg, s, "y", "z", None, StorageType.FPGA_Global, None,
                   [1, 4, 4, 4], "y[1, 0:4, 0:4, 0:4]->0, 0:4, 0:4, 0:4", None,
-                  "HBM.5:6")
+                  ("HBM", "5:6"))
     s, _, _ = mkc(sdfg, s, "z", "w", None, StorageType.FPGA_Global, None,
-                  [1, 4, 4, 4], "z", None, "hbm.6:7")
+                  [1, 4, 4, 4], "z", None, ("hbm", "6:7"))
     s, _, c = mkc(sdfg, s, "w", "c", None, StorageType.Default, None,
                   [1, 4, 4, 4], "w")
 
@@ -99,11 +100,12 @@ def check_hbm2ddr1():
     sdfg = dace.SDFG("hbm2ddr1")
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
                   StorageType.FPGA_Global, [3, 5, 5], [3, 5, 5], "a", None,
-                  "hbm.0:3")
+                  ("hbm", "0:3"))
     s, _, _ = mkc(sdfg, s, "x", "d1", None, StorageType.FPGA_Global, None,
-                  [3, 5, 5], "x[2, 0:5, 0:5]->1, 0:5, 0:5", None, "DDR.1")
+                  [3, 5, 5], "x[2, 0:5, 0:5]->1, 0:5, 0:5", None, ("DDR", "1"))
     s, _, _ = mkc(sdfg, s, "d1", "y", None, StorageType.FPGA_Global, None,
-                  [1, 7, 7], "d1[1, 0:5,0:5]->0, 2:7, 2:7", None, "hbm.3:4")
+                  [1, 7, 7], "d1[1, 0:5,0:5]->0, 2:7, 2:7", None,
+                  ("hbm", "3:4"))
     s, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default, None, [1, 7, 7],
                   "y")
 

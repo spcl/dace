@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
+import copy
 import dace
 from dace import data, memlet, dtypes, registry, sdfg as sd, subsets
 from dace.sdfg import nodes
@@ -187,7 +188,7 @@ class FPGATransformState(transformation.Transformation):
                         allow_conflicts=desc.allow_conflicts,
                         strides=desc.strides,
                         offset=desc.offset)
-                    fpga_array[1].location = desc.location
+                    fpga_array[1].location = copy.copy(desc.location)
                     desc.location.clear()
                     fpga_data[node.data] = fpga_array
 
@@ -231,7 +232,7 @@ class FPGATransformState(transformation.Transformation):
                         allow_conflicts=desc.allow_conflicts,
                         strides=desc.strides,
                         offset=desc.offset)
-                    fpga_array[1].location = desc.location
+                    fpga_array[1].location = copy.copy(desc.location)
                     desc.location.clear()
                     fpga_data[node.data] = fpga_array
                 # fpga_node = type(node)(fpga_array)

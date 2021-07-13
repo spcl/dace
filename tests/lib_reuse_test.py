@@ -4,7 +4,9 @@ from __future__ import print_function
 import dace
 from dace.frontend.python.parser import DaceProgram
 from dace.codegen.exceptions import CompilationError
+from dace.sdfg.utils import load_precompiled_sdfg
 import numpy as np
+import os
 
 
 # Dynamically creates DaCe programs with the same name
@@ -53,5 +55,26 @@ def test_reload():
     print("Differences:", diff1, diff2)
     assert (diff1 < 1e-5 and diff2 < 1e-5)
 
+
+def test_load_precompiled():
+    prog = program_generator(10, 2.0)
+    sdfg = prog.to_sdfg()
+    func1 = sdfg.compile()
+    func2 = load_precompiled_sdfg(sdfg.build_folder)
+
+    inp = np.random.rand(10).astype(np.float64)
+    output_one = np.zeros(10, dtype=np.float64)
+    output_two = np.zeros(10, dtype=np.float64)
+
+    func1(input=inp, output=output_one)
+    func2(input=inp, output=output_two)
+
+    assert (np.allclose(output_one, output_two))
+
+    del func1
+    del func2
+
+
 if __name__ == '__main__':
     test_reload()
+    test_load_precompiled()

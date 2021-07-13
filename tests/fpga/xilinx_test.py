@@ -91,7 +91,6 @@ TESTS = [
     ("tests/fpga/hbm_copy_fpga.py", ["hbm2hbm1", "hbm2ddr1"], True, False, []),
 ]
 
-
 def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
         assert_ii_1: bool, args: Iterable[Any]):
 

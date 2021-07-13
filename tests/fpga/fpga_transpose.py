@@ -21,11 +21,13 @@ def make_sdfg(name="transpose"):
     _, desc_output_host = sdfg.add_array("a_output", (m, n), dace.float64)
     desc_input_device = copy.copy(desc_input_host)
     desc_input_device.storage = dace.StorageType.FPGA_Global
-    desc_input_device.location["bank"] = "ddr.0"
+    desc_input_device.location["memorytype"] = "ddr"
+    desc_input_device.location["bank"] = "0"
     desc_input_device.transient = True
     desc_output_device = copy.copy(desc_output_host)
     desc_output_device.storage = dace.StorageType.FPGA_Global
-    desc_output_device.location["bank"] = "ddr.1"
+    desc_output_device.location["memorytype"] = "ddr"
+    desc_output_device.location["bank"] = "1"
     desc_output_device.transient = True
     sdfg.add_datadesc("a_input_device", desc_input_device)
     sdfg.add_datadesc("a_output_device", desc_output_device)

@@ -172,6 +172,13 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
                                     cstr) is None:
                             candidates.remove(candidate)
                             continue
+                        newcode = translate_cpp_tasklet_to_python(cstr)
+                        try:
+                            parsed_ast = ast.parse(str(newcode))
+                        except SyntaxError:
+                            #if we cannot parse the expression to pythonize it, we cannot promote the candidate
+                            candidates.remove(candidate)
+                            continue
                     else:  # Other languages are currently unsupported
                         candidates.remove(candidate)
                         continue
@@ -525,6 +532,15 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
             [n for n in scalar_nodes if len(state.all_edges(n)) == 0])
 
 
+def translate_cpp_tasklet_to_python(code: str):
+    newcode: str = ''
+    newcode = re.findall(r'.*?=\s*(.*);', code)[0]
+    # We need to also translate the tasklet itself from CPP to Python
+    newcode = re.sub(r'\|\|', ' or ', newcode)
+    newcode = re.sub(r'\&\&', ' and ', newcode)
+    return newcode
+
+
 def promote_scalars_to_symbols(sdfg: sd.SDFG,
                                ignore: Optional[Set[str]] = None) -> Set[str]:
     """
@@ -565,11 +581,13 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG,
         ]
         # Step 2: Assignment tasklets
         for node in scalar_nodes:
-            # There is only zero or one incoming edges by definition
             if state.in_degree(node) == 0:
                 continue
             in_edge = state.in_edges(node)[0]
             input = in_edge.src
+
+            # There is only zero or one incoming edges by definition
+
             tasklet_inputs = [e.src for e in state.in_edges(input)]
             # Step 2.1
             new_state = xfh.state_fission(
@@ -585,8 +603,9 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG,
                 if input.language is dtypes.Language.Python:
                     newcode = astutils.unparse(input.code.code[0].value)
                 elif input.language is dtypes.Language.CPP:
-                    newcode = re.findall(r'.*?=\s*(.*);',
-                                         input.code.as_string.strip())[0]
+                    newcode = translate_cpp_tasklet_to_python(
+                        input.code.as_string.strip())
+
                 # Replace tasklet inputs with incoming edges
                 for e in new_state.in_edges(input):
                     memlet_str: str = e.data.data

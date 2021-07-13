@@ -11,9 +11,11 @@ def create_deeply_nested_sdfg():
     sdfg = dace.SDFG("deepnest_test")
     state: dace.SDFGState = sdfg.add_state("init")
     xarr = state.add_array("x", [4, 10], dace.float32)
-    sdfg.arrays["x"].location["bank"] = "hbm.0:4"
+    sdfg.arrays["x"].location["memorytype"] = "hbm"
+    sdfg.arrays["x"].location["bank"] = "0:4"
     yarr = state.add_array("y", [4, 10], dace.float32)
-    sdfg.arrays["y"].location["bank"] = "hbm.4:8"
+    sdfg.arrays["y"].location["memorytype"] = "hbm"
+    sdfg.arrays["y"].location["bank"] = "4:8"
 
     top_map_entry, top_map_exit = state.add_map("topmap", dict(k="0:2"))
     top_map_entry.schedule = dtypes.ScheduleType.Unrolled
@@ -24,8 +26,10 @@ def create_deeply_nested_sdfg():
                               dtypes.StorageType.FPGA_Global)
     x_write = nstate.add_array("xout", [4, 10], dace.float32,
                                dtypes.StorageType.FPGA_Global)
-    nsdfg.arrays["xin"].location["bank"] = "hbm.0:4"
-    nsdfg.arrays["xout"].location["bank"] = "hbm.4:8"
+    nsdfg.arrays["xin"].location["memorytype"] = "hbm"
+    nsdfg.arrays["xin"].location["bank"] = "0:4"
+    nsdfg.arrays["xout"].location["memorytype"] = "hbm"
+    nsdfg.arrays["xout"].location["bank"] = "4:8"
     map_entry, map_exit = nstate.add_map("map1", dict(w="0:2"))
     map_entry.schedule = dtypes.ScheduleType.Unrolled
     imap_entry, imap_exit = nstate.add_map("map2", dict(i="0:10"))

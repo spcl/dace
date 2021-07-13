@@ -34,11 +34,13 @@ def create_vadd_multibank_sdfg(bank_count_per_array=2,
     in2 = sdfg.add_array("in2", shape, dace.float32)
     out = sdfg.add_array("out", shape, dace.float32)
 
-    in1[1].location["bank"] = f"hbm.0:{bank_count_per_array}"
-    in2[1].location[
-        "bank"] = f"hbm.{bank_count_per_array}:{2*bank_count_per_array}"
+    in1[1].location["memorytype"] = "hbm"
+    in2[1].location["memorytype"] = "hbm"
+    out[1].location["memorytype"] = "hbm"
+    in1[1].location["bank"] = f"0:{bank_count_per_array}"
+    in2[1].location["bank"] = f"{bank_count_per_array}:{2*bank_count_per_array}"
     out[1].location[
-        "bank"] = f"hbm.{2*bank_count_per_array}:{3*bank_count_per_array}"
+        "bank"] = f"{2*bank_count_per_array}:{3*bank_count_per_array}"
 
     read_in1 = state.add_read("in1")
     read_in2 = state.add_read("in2")
@@ -98,7 +100,7 @@ def create_vadd_multibank_sdfg(bank_count_per_array=2,
     return sdfg
 
 
-def createTestSet(dim, size1D, banks):
+def create_test_set(dim, size1D, banks):
     shape = [banks]
     for i in range(dim):
         shape.append(size1D)
@@ -112,7 +114,7 @@ def createTestSet(dim, size1D, banks):
 
 
 def exec_test(dim, size1D, banks, test_name, unroll_map_inside=False):
-    in1, in2, expected, target = createTestSet(dim, size1D, banks)
+    in1, in2, expected, target = create_test_set(dim, size1D, banks)
     sdfg = create_vadd_multibank_sdfg(banks, dim, unroll_map_inside, test_name)
     if (dim == 1):
         sdfg(in1=in1, in2=in2, out=target, N=size1D)
