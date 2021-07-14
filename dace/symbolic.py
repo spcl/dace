@@ -479,7 +479,7 @@ def swalk(expr, enter_functions=False):
 
 _builtin_userfunctions = {
     'int_floor', 'int_ceil', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq',
-    'NotEq', 'Ne'
+    'NotEq', 'Ne', 'AND', 'OR'
 }
 
 
