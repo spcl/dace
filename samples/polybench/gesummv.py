@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import math
 import dace
 import polybench
@@ -33,6 +33,14 @@ def init_array(A, B, tmp, x, y, alpha, beta):
 @dace.program(datatype[N, N], datatype[N, N], datatype[N], datatype[N],
               datatype[N], datatype[1], datatype[1])
 def gesummv(A, B, tmp, x, y, alpha, beta):
+
+    @dace.map
+    def init(i: _[0:N]):
+        ot >> tmp[i]
+        oy >> y[i]
+        ot = 0.0
+        oy = 0.0
+
     @dace.map
     def compute_ty(i: _[0:N], j: _[0:N]):
         ia << A[i, j]

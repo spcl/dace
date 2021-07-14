@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import sympy
 import pickle
@@ -634,7 +634,7 @@ def simplify_ext(expr):
 
 
 class SympyBooleanConverter(ast.NodeTransformer):
-    """ 
+    """
     Replaces boolean operations with the appropriate SymPy functions to avoid
     non-symbolic evaluation.
     """
@@ -672,17 +672,45 @@ class SympyBooleanConverter(ast.NodeTransformer):
 
     def visit_Compare(self, node: ast.Compare):
         if len(node.ops) > 1 or len(node.comparators) > 1:
-            raise NotImplementedError
-        op = node.ops[0]
-        arguments = [node.left, node.comparators[0]]
-        func_node = ast.copy_location(
-            ast.Name(
-                id=SympyBooleanConverter._ast_to_sympy_comparators[type(op)],
-                ctx=ast.Load()), node)
-        new_node = ast.Call(func=func_node,
-                            args=[self.visit(arg) for arg in arguments],
-                            keywords=[])
-        return ast.copy_location(new_node, node)
+            new_nodes = []
+            new_node = ast.Call(
+                func=ast.copy_location(
+                    new_node=ast.Name(
+                        id=SympyBooleanConverter._ast_to_sympy_comparators[type(
+                            node.ops[0])],
+                        ctx=ast.Load()),
+                    old_node=node),
+                args=[self.visit(node.left), self.visit(node.comparators[0])],
+                keywords=[])
+            new_nodes.append(new_node)
+            for i in range(len(node.ops)-1):
+                new_node = ast.Call(
+                    func=ast.copy_location(
+                        new_node=ast.Name(
+                            id=SympyBooleanConverter._ast_to_sympy_comparators[
+                                type(
+                                    node.ops[i+1])],
+                            ctx=ast.Load()),
+                        old_node=node),
+                    args=[self.visit(node.comparators[i]),
+                          self.visit(node.comparators[i+1])],
+                    keywords=[])
+                new_nodes.append(new_node)
+            and_node = ast.BoolOp(ast.And(), new_nodes)
+            expr = SympyBooleanConverter().visit(and_node)
+            return ast.copy_location(expr, node)
+        else:
+            op = node.ops[0]
+            arguments = [node.left, node.comparators[0]]
+            func_node = ast.copy_location(
+                ast.Name(
+                    id=SympyBooleanConverter._ast_to_sympy_comparators[type(op)],
+                    ctx=ast.Load()), node)
+            new_node = ast.Call(func=func_node,
+                                args=[self.visit(arg) for arg in arguments],
+                                keywords=[])
+            return ast.copy_location(new_node, node)
+
 
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):

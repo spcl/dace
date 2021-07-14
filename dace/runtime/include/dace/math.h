@@ -1,4 +1,4 @@
-// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #ifndef __DACE_MATH_H
 #define __DACE_MATH_H
 
@@ -82,9 +82,45 @@ static DACE_CONSTEXPR DACE_HDFI T int_floor(const T& numerator, const T2& denomi
     return numerator / denominator;
 }
 
+// Integer division with positive divisor, rounded towards negative infinity.
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T floord(const T& n, const T2& d) {
+    return ((n < 0) ? (n - d + 1) : n) / d;
+}
+
 template <typename T>
 static DACE_CONSTEXPR DACE_HDFI int sgn(T val) {
     return (T(0) < val) - (val < T(0));
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_and(const T& left_operand, const T2& right_operand) {
+    return left_operand & right_operand;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_or(const T& left_operand, const T2& right_operand) {
+    return left_operand | right_operand;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_xor(const T& left_operand, const T2& right_operand) {
+    return left_operand ^ right_operand;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_invert(const T& value) {
+    return ~value;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T right_shift(const T& left_operand, const T2& right_operand) {
+    return left_operand >> right_operand;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T left_shift(const T& left_operand, const T2& right_operand) {
+    return left_operand << right_operand;
 }
 
 
@@ -256,6 +292,10 @@ template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T heaviside(const T& a, const T& b) {
     return (a < 0) ? 0 : ( (a > 0) ? 1 : b); 
 }
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T heaviside(const T& a) {
+    return (a > 0) ? 1 : 0;
+}
 
 // Computes the conjugate of a number (support for non-complex numbers)
 template<typename T>
@@ -423,6 +463,13 @@ namespace dace
             return (T)std::exp(a);
         }
 
+#ifdef __CUDACC__
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI thrust::complex<T> pow(const thrust::complex<T>& a, const thrust::complex<T>& b)
+        {
+            return (thrust::complex<T>)thrust::pow(a, b);
+        }
+#endif
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const T& b)
         {

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import math
 import dace
 import polybench
@@ -52,6 +52,7 @@ def atax(A, x, y):
         out = 0.0
 
     for i in range(M):
+        tmp[i] = 0.0
 
         @dace.map
         def compute_tmp(j: _[0:N]):

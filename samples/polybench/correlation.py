@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import math
 import dace
 import polybench
@@ -41,6 +41,12 @@ def init_array(data, corr, mean, stddev, M, N):
 
 @dace.program(datatype[N, M], datatype[M, M], datatype[M], datatype[M])
 def correlation(data, corr, mean, stddev):
+
+    @dace.map
+    def init_mean(j: _[0:M]):
+        out >> mean[j]
+        out = 0.0
+
     @dace.map
     def comp_mean(j: _[0:M], i: _[0:N]):
         inp << data[i, j]
@@ -52,6 +58,11 @@ def correlation(data, corr, mean, stddev):
         inp << mean[j]
         out >> mean[j]
         out = inp / N
+
+    @dace.map
+    def init_stddev(j: _[0:M]):
+        out >> stddev[j]
+        out = 0.0
 
     @dace.map
     def comp_stddev(j: _[0:M], i: _[0:N]):
@@ -85,6 +96,12 @@ def correlation(data, corr, mean, stddev):
     def comp_corr_row(i: _[0:M - 1]):
         @dace.mapscope
         def comp_corr_col(j: _[i + 1:M]):
+            corr[i, j] = 0.0
+
+    @dace.mapscope
+    def comp_corr_row(i: _[0:M - 1]):
+        @dace.mapscope
+        def comp_corr_col(j: _[i + 1:M]):
             @dace.map
             def comp_cov_k(k: _[0:N]):
                 indi << data[k, i]
@@ -99,6 +116,9 @@ def correlation(data, corr, mean, stddev):
             corrin << corr[i, j]
             corrout >> corr[j, i]
             corrout = corrin
+
+    corr[M - 1, M - 1] = 1.0
+
 
 
 if __name__ == '__main__':

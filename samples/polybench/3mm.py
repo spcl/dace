@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import math
 import dace
 
@@ -79,6 +79,21 @@ def init_array(A, B, C, D, G):
 def k3mm(A, B, C, D, G):
     E = dace.define_local([NI, NJ], dtype=datatype)
     F = dace.define_local([NJ, NL], dtype=datatype)
+
+    @dace.map
+    def mult_E(i: _[0:NI], j: _[0:NJ]):
+        out >> E[i, j]
+        out = 0.0
+
+    @dace.map
+    def mult_F(i: _[0:NJ], j: _[0:NL]):
+        out >> F[i, j]
+        out = 0.0
+
+    @dace.map
+    def mult_G(i: _[0:NI], j: _[0:NL]):
+        out >> G[i, j]
+        out = 0.0
 
     @dace.map
     def mult_E(i: _[0:NI], j: _[0:NJ], k: _[0:NK]):
