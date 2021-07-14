@@ -270,6 +270,29 @@ def test_constant_argument_object():
     assert np.allclose(A, reg_A)
 
 
+def test_none_field():
+    class ClassA:
+        def __init__(self, field_or_none):
+            self.field_or_none = field_or_none
+
+        @dace.method
+        def method(self, A):
+            if (self.field_or_none is None) and (self.field_or_none is None):
+                A[...] = 7.0
+            if (self.field_or_none is not None) and (self.field_or_none
+                                                     is not None):
+                A[...] += self.field_or_none
+
+    A = np.ones((10, ))
+    obja = ClassA(None)
+    obja.method(A)
+    assert np.allclose(A, 7.0)
+    A = np.ones((10, ))
+    obja = ClassA(np.ones((10, )))
+    obja.method(A)
+    assert np.allclose(A, 2.0)
+
+
 def test_array_by_str_key():
     class AClass:
         def __init__(self):
@@ -302,4 +325,5 @@ if __name__ == '__main__':
     test_constant_argument_simple()
     test_constant_argument_default()
     test_constant_argument_object()
+    test_none_field()
     test_array_by_str_key()

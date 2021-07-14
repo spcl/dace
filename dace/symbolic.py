@@ -760,6 +760,9 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         'GtE': sympy.Ge,
         'LtE': sympy.Le,
         'NotEq': sympy.Ne,
+        # Convert and/or to special sympy functions to avoid boolean evaluation
+        'And': sympy.Function('AND'),
+        'Or': sympy.Function('OR'),
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters

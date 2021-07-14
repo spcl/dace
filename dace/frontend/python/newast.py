@@ -2672,7 +2672,7 @@ class ProgramVisitor(ExtNodeVisitor):
             raise DaceSyntaxError(
                 self, node, 'Unsupported for-loop iterator "%s"' % iterator)
 
-    def _visit_test(self, node: ast.Expr):
+    def _is_test_simple(self, node: ast.AST):
         # Fix for scalar promotion tests
         # TODO: Maybe those tests should use the SDFG API instead of the
         # Python frontend which can change how it handles conditions.
@@ -2684,7 +2684,13 @@ class ProgramVisitor(ExtNodeVisitor):
                 is_right_simple = (len(node.comparators) == 1 and isinstance(
                     node.comparators[0], simple_ast_nodes))
                 if is_left_simple and is_right_simple:
-                    is_test_simple = True
+                    return True
+            elif isinstance(node, ast.BoolOp):
+                return all(self._is_test_simple(value) for value in node.values)
+        return is_test_simple
+
+    def _visit_test(self, node: ast.Expr):
+        is_test_simple = self._is_test_simple(node)
 
         # Visit test-condition
         if not is_test_simple:
