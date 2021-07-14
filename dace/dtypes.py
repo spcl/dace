@@ -69,7 +69,7 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
     ScheduleType.GPU_Persistent,
-    ScheduleType.GPU_Multidevice
+    ScheduleType.GPU_Multidevice,
 ]
 
 # GPU schedule types that only involve 1 GPU
@@ -77,14 +77,14 @@ GPU_DEVICE_SCHEDULES = [
     ScheduleType.GPU_Device,
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
-    ScheduleType.GPU_Persistent
+    ScheduleType.GPU_Persistent,
 ]
 
 # Storage that can be accessed by a GPU
 GPU_STORAGES = [
-    StorageType.GPU_Global, 
+    StorageType.GPU_Global,
     StorageType.GPU_Shared,
-    StorageType.CPU_Pinned
+    StorageType.CPU_Pinned,
 ]
 
 # A subset of on-FPGA storage types
@@ -117,6 +117,7 @@ class ReductionType(aenum.AutoNumberEnum):
     # Only supported in OpenMP
     Sub = ()  #: Subtraction (only supported in OpenMP)
     Div = ()  #: Division (only supported in OpenMP)
+
 
 class NcclReductionType(aenum.AutoNumberEnum):
     """ Reduction types supported by NCCL. """
@@ -190,6 +191,7 @@ class TilingType(aenum.AutoNumberEnum):
     Normal = ()
     CeilRange = ()
     NumberOfTiles = ()
+
 
 @extensible_enum
 class ReductionLibType(aenum.AutoNumberEnum):
@@ -1321,7 +1323,8 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     if storage is StorageType.GPU_Global:
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
-            ScheduleType.MPI, ScheduleType.GPU_Default
+            ScheduleType.MPI, ScheduleType.GPU_Default,
+            ScheduleType.GPU_Multidevice
         ]
 
     # FPGA-global memory

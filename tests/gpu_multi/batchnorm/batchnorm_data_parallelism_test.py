@@ -55,6 +55,7 @@ def test_batchnorm2d_dp_gpu():
     program_folder = compiler.generate_program_folder(bngpusdfg,
                                                       program_objects, out_path)
 
+
 @dace.program
 def batchnorm2d(x: dc_dtype[N, H, W, C]):
     # mean = np.mean(x, axis=0, keepdims=True)
@@ -66,6 +67,7 @@ def batchnorm2d(x: dc_dtype[N, H, W, C]):
     std[:] = np.sqrt(np.sum((x - mean) * (x - mean), axis=0) / np.float32(N))
     # return (x - mean) / np.sqrt(std + eps)
     return (x - mean) / np.sqrt(std + 1e-5)
+
 
 @pytest.mark.multigpu
 def test_batchnorm2d_data_parallelism():
@@ -87,14 +89,14 @@ def test_batchnorm2d_data_parallelism():
     X = cuda.pinned_array(shape=[n, h, w, c], dtype=np_dtype)
     X[:] = np.random.rand(n, h, w, c)[:]
     Z = np.copy(X)
-    
+
     print('GPU')
 
     sdfg(X)
     print('GPU done')
 
     bnsdfg: dace.SDFG = batchnorm2d.to_sdfg()
-    
+
     print('CPU')
     bnsdfg(Z)
     print('CPU done')

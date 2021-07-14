@@ -14,6 +14,7 @@ np_dtype = np.float64
 def aGPU_aCPU(a: dtype[1]):
     a += 10
 
+
 @pytest.mark.multigpu
 def test_aGPU_aCPU():
     sdfg: dace.SDFG = aGPU_aCPU.to_sdfg(strict=True)
@@ -26,9 +27,8 @@ def test_aGPU_aCPU():
     mem = graph.out_edges(gpu_a)[0].data
     mem.wcr = 'lambda old, new: new'
 
-    
     np.random.seed(0)
-    a = cuda.pinned_array(shape=1, dtype = np_dtype)
+    a = cuda.pinned_array(shape=1, dtype=np_dtype)
     a.fill(0)
 
     sdfg(a=a)

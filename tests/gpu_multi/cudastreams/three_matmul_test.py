@@ -7,7 +7,6 @@ from dace.dtypes import ScheduleType, StorageType
 from dace.sdfg import nodes, SDFG, SDFGState
 from dace.data import Scalar
 
-
 import dace.libraries.blas
 
 # Define symbolic sizes for arbitrary inputs
@@ -56,7 +55,7 @@ def test_three_matmul():
     sdfg.expand_library_nodes()
 
     state = sdfg.start_state
-    output=state.sink_nodes()[0]
+    output = state.sink_nodes()[0]
     mM1M2sdfg = state.predecessors(output)[0]
     m1 = state.predecessors(mM1M2sdfg)[0]
     m2 = state.predecessors(mM1M2sdfg)[1]
@@ -85,14 +84,14 @@ def test_three_matmul():
     n = 3000
     l = 900
     o = 7777
-    A = cuda.pinned_array(shape=[m, k], dtype = np_dtype)
-    B = cuda.pinned_array(shape=[k, n], dtype = np_dtype)
-    C = cuda.pinned_array(shape=[n, l], dtype = np_dtype)
-    D = cuda.pinned_array(shape=[l, o], dtype = np_dtype)
-    A[:] = np.random.rand(m,k)[:]
-    B[:] = np.random.rand(k,n)[:]
-    C[:] = np.random.rand(n,l)[:]
-    D[:] = np.random.rand(l,o)[:]
+    A = cuda.pinned_array(shape=[m, k], dtype=np_dtype)
+    B = cuda.pinned_array(shape=[k, n], dtype=np_dtype)
+    C = cuda.pinned_array(shape=[n, l], dtype=np_dtype)
+    D = cuda.pinned_array(shape=[l, o], dtype=np_dtype)
+    A[:] = np.random.rand(m, k)[:]
+    B[:] = np.random.rand(k, n)[:]
+    C[:] = np.random.rand(n, l)[:]
+    D[:] = np.random.rand(l, o)[:]
 
     E = sdfg(A=A, B=B, C=C, D=D, M=m, K=k, N=n, L=l, O=o)
     res = (A @ B) @ (C @ D)

@@ -10,8 +10,9 @@ from dace.data import Scalar
 N = dace.symbol('N')
 np_dtype = np.float64
 
+
 @dace.program
-def axpySelGPU(A:dace.float64, X: dace.float64[N], Y: dace.float64[N]):
+def axpySelGPU(A: dace.float64, X: dace.float64[N], Y: dace.float64[N]):
     @dace.map(_[0:N])
     def multiplication(i):
         in_A << A
@@ -28,9 +29,6 @@ def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
                 if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
 
 
-
-
-
 @pytest.mark.multigpu
 def test_select_gpu():
     sdfg: dace.SDFG = axpySelGPU.to_sdfg(strict=True)
@@ -40,9 +38,9 @@ def test_select_gpu():
 
     size = 256
     np.random.seed(0)
-    A = cuda.pinned_array(shape=1, dtype = np_dtype)
-    X = cuda.pinned_array(shape=size, dtype = np_dtype)
-    Y = cuda.pinned_array(shape=size, dtype = np_dtype)
+    A = cuda.pinned_array(shape=1, dtype=np_dtype)
+    X = cuda.pinned_array(shape=size, dtype=np_dtype)
+    Y = cuda.pinned_array(shape=size, dtype=np_dtype)
     A.fill(np.random.rand())
     X[:] = np.random.rand(size)[:]
     Y[:] = np.random.rand(size)[:]
@@ -53,9 +51,10 @@ def test_select_gpu():
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
-    # out_path = '.dacecache/local/basic/'+sdfg.name
+    # out_path = '.dacecache/local/basic/' + sdfg.name
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
+
 
 if __name__ == "__main__":
     test_select_gpu()

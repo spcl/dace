@@ -6,6 +6,7 @@ from numba import cuda
 from dace.sdfg import nodes, infer_types
 from dace import dtypes
 import dace.libraries.nccl as nccl
+from dace.config import Config
 
 N = dace.symbol('N')
 num_gpus = dace.symbol('num_gpus')
@@ -32,26 +33,21 @@ def reduction_test(out: dtype[num_gpus, N]):
                 out[root_gpu, :] = reduction_output[:]
 
 
-def find_map_by_param(state: dace.SDFGState, pname: str) -> dace.nodes.MapEntry:
+def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
     """ Finds the first map entry node by the given parameter name. """
-    try:
-        return next(n for n in state.nodes()
-                    if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
-
-    except StopIteration:
-        return False
+    return next(n for n, _ in sdfg.all_nodes_recursive()
+                if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
 
 
 @pytest.mark.multigpu
 def test_nccl_reduce_symbolic():
-    ng = 4
+    ng = Config.get('compiler', 'cuda', 'max_number_gpus')
     n = 2
     sdfg: dace.SDFG = reduction_test.to_sdfg(strict=True)
-    state = sdfg.start_state
-    outer_map = find_map_by_param(state, 'root_gpu')
+    outer_map = find_map_by_param(sdfg, 'root_gpu')
     if outer_map:
         outer_map.schedule = dtypes.ScheduleType.Sequential
-    gpu_map = find_map_by_param(state, 'gpu')
+    gpu_map = find_map_by_param(sdfg, 'gpu')
     gpu_map.schedule = dtypes.ScheduleType.GPU_Multidevice
     infer_types.set_default_schedule_storage_types_and_location(sdfg, None)
     sdfg.specialize(dict(num_gpus=ng))
@@ -62,7 +58,7 @@ def test_nccl_reduce_symbolic():
 
     sdfg(out=out, N=n)
 
-    res = np.array([0, 4, 8, 12])
+    res = np.array([ng * i for i in range(ng)])
     assert (np.unique(out) == res).all()
 
     # program_objects = sdfg.generate_code()

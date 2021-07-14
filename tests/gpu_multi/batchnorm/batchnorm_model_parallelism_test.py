@@ -61,6 +61,7 @@ def batchnorm2d(x: dc_dtype[N, H, W, C]):
     # return (x - mean) / np.sqrt(std + eps)
     return (x - mean) / np.sqrt(std + 1e-5)
 
+
 @pytest.mark.multigpu
 def test_batchnorm2d_model_parallelism():
     sdfg: dace.SDFG = batchnorm2d_model_parallelism.to_sdfg(strict=True)

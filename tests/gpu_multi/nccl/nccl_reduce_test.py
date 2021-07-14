@@ -6,6 +6,7 @@ from numba import cuda
 from dace.sdfg import nodes, infer_types
 from dace import dtypes
 import dace.libraries.nccl as nccl
+from dace.config import Config
 
 N = dace.symbol('N')
 root_device = dace.symbol('root_device')
@@ -32,23 +33,18 @@ def reduction_test(out: dtype[N]):
             out[:] = reduction_output[:]
 
 
-def find_map_by_param(state: dace.SDFGState, pname: str) -> dace.nodes.MapEntry:
+def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
     """ Finds the first map entry node by the given parameter name. """
-    try:
-        return next(n for n in state.nodes()
-                    if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
-
-    except StopIteration:
-        return False
+    return next(n for n, _ in sdfg.all_nodes_recursive()
+                if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
 
 
 @pytest.mark.multigpu
 def test_nccl_reduce():
-    ng = 3
+    ng = Config.get('compiler', 'cuda', 'max_number_gpus')
     n = 15
     sdfg: dace.SDFG = reduction_test.to_sdfg(strict=True)
-    state = sdfg.start_state
-    gpu_map = find_map_by_param(state, 'gpu')
+    gpu_map = find_map_by_param(sdfg, 'gpu')
     gpu_map.schedule = dtypes.ScheduleType.GPU_Multidevice
     infer_types.set_default_schedule_storage_types_and_location(sdfg, None)
     sdfg.specialize(dict(root_device=0, num_gpus=ng))

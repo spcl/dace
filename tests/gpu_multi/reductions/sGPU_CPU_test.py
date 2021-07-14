@@ -17,6 +17,7 @@ np_dtype = np.float64
 def sum(A: dtype[N], sumA: dtype[1]):
     dace.reduce(lambda a, b: a + b, A, sumA, identity=0)
 
+
 @pytest.mark.multigpu
 def test_sGPU_CPU_library():
 
@@ -26,21 +27,20 @@ def test_sGPU_CPU_library():
     sdfg.apply_transformations(GPUTransformSDFG)
     for n, s in sdfg.all_nodes_recursive():
         if isinstance(n, nodes.LibraryNode):
-            n.expand(sdfg,sdfg.nodes()[0])
-     
+            n.expand(sdfg, sdfg.nodes()[0])
 
     np.random.seed(0)
     n = 1200
-    sumA = cuda.pinned_array(shape=1, dtype = np_dtype)
+    sumA = cuda.pinned_array(shape=1, dtype=np_dtype)
     sumA.fill(0)
-    A = cuda.pinned_array(shape=n, dtype = np_dtype)
+    A = cuda.pinned_array(shape=n, dtype=np_dtype)
     Aa = np.random.rand(n)
     A[:] = Aa[:]
 
     sdfg(A=A, sumA=sumA, N=n)
     res = np.sum(A)
     assert np.isclose(sumA, res, atol=0, rtol=1e-7)
-    
+
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
     # out_path = '.dacecache/local/reductions/'+sdfg.name

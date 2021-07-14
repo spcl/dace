@@ -4,9 +4,8 @@ import numpy as np
 import pytest
 from numba import cuda
 from dace.transformation.interstate import GPUTransformSDFG
-N = dace.symbol('N')
-M = dace.symbol('M')
 
+N = dace.symbol('N')
 n = 1200
 
 # Define data type to use
@@ -30,9 +29,9 @@ def test_reduction_GPU0_GPU1_sum():
     sdfg.arrays['gpu_sumA'].location = {'gpu': 1}
 
     np.random.seed(0)
-    sumA = cuda.pinned_array(shape=1, dtype = np_dtype)
+    sumA = cuda.pinned_array(shape=1, dtype=np_dtype)
     sumA.fill(0)
-    A = cuda.pinned_array(shape=n, dtype = np_dtype)
+    A = cuda.pinned_array(shape=n, dtype=np_dtype)
     Aa = np.random.rand(n)
     A[:] = Aa[:]
 
@@ -56,9 +55,9 @@ def test_reduction_GPU0_GPU0_sum():
                                         0})  # options={'number_of_gpus':4})
 
     np.random.seed(0)
-    sumA = cuda.pinned_array(shape=1, dtype = np_dtype)
+    sumA = cuda.pinned_array(shape=1, dtype=np_dtype)
     sumA.fill(0)
-    A = cuda.pinned_array(shape=n, dtype = np_dtype)
+    A = cuda.pinned_array(shape=n, dtype=np_dtype)
     Aa = np.random.rand(n)
     A[:] = Aa[:]
 
@@ -71,6 +70,7 @@ def test_reduction_GPU0_GPU0_sum():
     # out_path = '.dacecache/local/reductions/' + sdfg.name
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
+
 
 if __name__ == "__main__":
     test_reduction_GPU0_GPU0_sum()

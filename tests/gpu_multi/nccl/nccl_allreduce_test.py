@@ -6,6 +6,7 @@ from numba import cuda
 from dace.sdfg import nodes, infer_types
 from dace import dtypes
 import dace.libraries.nccl as nccl
+from dace.config import Config
 
 N = dace.symbol('N')
 num_gpus = dace.symbol('num_gpus')
@@ -37,7 +38,7 @@ def reduction_test(out: dtype[N]):
 
 @pytest.mark.multigpu
 def test_nccl_allreduce():
-    ng = 3
+    ng = Config.get('compiler', 'cuda', 'max_number_gpus')
     n = 15
     sdfg: dace.SDFG = reduction_test.to_sdfg(strict=True)
     state = sdfg.start_state

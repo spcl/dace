@@ -24,9 +24,10 @@ np_dtype = np.float64
 
 
 @dace.program
-def axpyMultiGPU(A:dace.float64, X: dace.float64[N], Y: dace.float64[N]):
+def axpyMultiGPU(A: dace.float64, X: dace.float64[N], Y: dace.float64[N]):
     for i in dace.map[0:N]:
         Y[i] = A * X[i] + Y[i]
+
 
 @pytest.mark.multigpu
 def test_gpu_multi():
@@ -36,12 +37,11 @@ def test_gpu_multi():
     sdfg.apply_transformations(GPUMultiTransformMap)
     #                           options={'number_of_gpus': 4})
 
-
     size = 256
     np.random.seed(0)
-    A = cuda.pinned_array(shape=1, dtype = np_dtype)
-    X = cuda.pinned_array(shape=size, dtype = np_dtype)
-    Y = cuda.pinned_array(shape=size, dtype = np_dtype)
+    A = cuda.pinned_array(shape=1, dtype=np_dtype)
+    X = cuda.pinned_array(shape=size, dtype=np_dtype)
+    Y = cuda.pinned_array(shape=size, dtype=np_dtype)
     A.fill(np.random.rand())
     X[:] = np.random.rand(size)[:]
     Y[:] = np.random.rand(size)[:]
@@ -53,13 +53,11 @@ def test_gpu_multi():
         print(i, Y[i], Z[i], A * X[i] + Z[i])
     assert np.allclose(Y, A * X + Z)
 
-
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
     # out_path = '.dacecache/local/multi_transform_map/'+sdfg.name
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
-
 
 
 if __name__ == "__main__":

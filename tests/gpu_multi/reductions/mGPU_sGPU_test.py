@@ -6,9 +6,8 @@ from numba import cuda
 from dace.sdfg import nodes
 from dace import dtypes
 from dace.transformation.dataflow import GPUMultiTransformMap, GPUTransformMap
-N = dace.symbol('N')
-M = dace.symbol('M')
 
+N = dace.symbol('N')
 n = 1200
 
 # Define data type to use
@@ -18,30 +17,31 @@ np_dtype = np.float64
 
 @dace.program
 def sum(A: dtype[N], sumA: dtype[1]):
-    gpu_sumA=dace.define_local_scalar(dtype)
+    gpu_sumA = dace.ndarray([1], dtype=dtype)
 
-    for i in dace.map[0]:
-        gpu_sumA = 0
-    
+    for i in dace.map[0:1]:
+        gpu_sumA[i] = 0
+
     for j in dace.map[0:N]:
         gpu_sumA += A[j]
-    
-    sumA = gpu_sumA
+
+    sumA[0] = gpu_sumA[0]
 
 
 @pytest.mark.multigpu
 def test_reduction_mGPU_GPU0_sum():
     sdfg: dace.SDFG = sum.to_sdfg(strict=True)
     sdfg.name = 'mGPU_GPU0_sum'
-    sdfg.arrays['gpu_sumA'].location={'gpu':0}
-    sdfg.arrays['gpu_sumA'].storage=dtypes.StorageType.GPU_Global
-    sdfg.apply_transformations(GPUTransformMap, options={'gpu_id':0})  
-    sdfg.apply_transformations(GPUMultiTransformMap)  # options={'number_of_gpus':4})
+    sdfg.arrays['gpu_sumA'].location = {'gpu': 0}
+    sdfg.arrays['gpu_sumA'].storage = dtypes.StorageType.GPU_Global
+    sdfg.apply_transformations(GPUTransformMap, options={'gpu_id': 0})
+    sdfg.apply_transformations(
+        GPUMultiTransformMap)  # options={'number_of_gpus':4})
 
     np.random.seed(0)
-    sumA = cuda.pinned_array(shape=1, dtype = np_dtype)
+    sumA = cuda.pinned_array(shape=1, dtype=np_dtype)
     sumA.fill(0)
-    A = cuda.pinned_array(shape=n, dtype = np_dtype)
+    A = cuda.pinned_array(shape=n, dtype=np_dtype)
     Aa = np.random.rand(n)
     A[:] = Aa[:]
 
@@ -54,6 +54,7 @@ def test_reduction_mGPU_GPU0_sum():
     # out_path = '.dacecache/local/reductions/' + sdfg.name
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
+
 
 if __name__ == "__main__":
     test_reduction_mGPU_GPU0_sum()

@@ -6,10 +6,10 @@ import numpy as np
 from numba import cuda
 import pytest
 
-
 # Define data type to use
 dtype = dace.float64
 np_dtype = np.float64
+
 
 def create_sdfg() -> dace.SDFG:
     sdfg = dace.SDFG('aCPU_aGPU')
@@ -49,20 +49,20 @@ def create_sdfg() -> dace.SDFG:
 
     return sdfg
 
+
 @pytest.mark.multigpu
 def test_aCPU_aGPU():
     sdfg = create_sdfg()
 
-
     np.random.seed(0)
-    a = cuda.pinned_array(shape=1, dtype = np_dtype)
+    a = cuda.pinned_array(shape=1, dtype=np_dtype)
     a.fill(1)
-    b = cuda.pinned_array(shape = 1, dtype = np_dtype)
+    b = cuda.pinned_array(shape=1, dtype=np_dtype)
     b.fill(10)
-    
+
     sdfg(a=a, b=b)
     assert (b[0] == 1 and a[0] == 10)
-    
+
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
     # out_path = '.dacecache/local/reductions/'+sdfg.name
