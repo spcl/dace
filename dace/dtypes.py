@@ -37,13 +37,6 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
     FPGA_ShiftRegister = ()  #: Only accessible at constant indices
 
-# Storage that can be accessed by a GPU
-GPU_STORAGES = [
-    StorageType.GPU_Global, 
-    StorageType.GPU_Shared,
-    StorageType.CPU_Pinned
-]
-
 
 @undefined_safe_enum
 @extensible_enum
@@ -87,9 +80,11 @@ GPU_DEVICE_SCHEDULES = [
     ScheduleType.GPU_Persistent
 ]
 
-# A subset of on-GPU storage types
+# Storage that can be accessed by a GPU
 GPU_STORAGES = [
+    StorageType.GPU_Global, 
     StorageType.GPU_Shared,
+    StorageType.CPU_Pinned
 ]
 
 # A subset of on-FPGA storage types
