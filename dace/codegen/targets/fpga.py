@@ -370,7 +370,14 @@ class FPGACodeGen(TargetCodeGenerator):
             kernel_host_stream.write(state_host_header_stream.getvalue())
 
             kernel_host_stream.write(f"""\
-DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
+DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{""")
+
+            if state.instrument == dtypes.InstrumentationType.FPGA:
+                kernel_host_stream.write("""\
+const unsigned long int _dace_fpga_begin_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+""")
+
+            kernel_host_stream.write(f"""\
       hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();\
 """)
             # Create a vector to collect all events that are being generated to allow
@@ -389,12 +396,15 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 // Begin FPGA kernel runtime instrumentation
 cl_ulong first_start = std::numeric_limits<unsigned long int>::max();
 cl_ulong last_end = std::numeric_limits<unsigned long int>::min();""")
+                if Config.get_bool("instrumentation", "print_fpga_runtime"):
+                    kernel_host_stream.write("""
+std::cout << std::scientific;""")
                 for i, sg in enumerate(all_subgraphs):
                     module_name = self._module_name(sg, state)
                     if Config.get_bool("instrumentation", "print_fpga_runtime"):
                         print_str = f"""
-    const double elapsed = 1e-9 * (event_end - event_start);
-    std::cout << "Kernel \\"{module_name}\\" executed in " << elapsed << " seconds.\\n";\
+const double elapsed = 1e-9 * (event_end - event_start);
+std::cout << "FPGA OpenCL kernel \\"{module_name}\\" executed in " << elapsed << " seconds.\\n";\
 """
                     else:
                         print_str = ""
@@ -411,10 +421,17 @@ cl_ulong last_end = std::numeric_limits<unsigned long int>::min();""")
     if (event_end > last_end) {{
         last_end = event_end;
     }}
-    __state->report.add_completion("{module_name}", "FPGA", event_start, event_end, {sdfg.sdfg_id}, {state_id}, {state.node_id(sg.nodes()[0])});{print_str}
+    __state->report.add_completion("{module_name} [ns]", "FPGA", event_start, event_end, {sdfg.sdfg_id}, {state_id}, {state.node_id(sg.nodes()[0])});{print_str}
 }}""")
                 kernel_host_stream.write(f"""\
-__state->report.add_completion("FPGA Runtime for State {state.label}", "FPGA", first_start, last_end, {sdfg.sdfg_id}, {state_id}, -1);
+const unsigned long int _dace_fpga_end_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+__state->report.add_completion("Full FPGA kernel runtime for {state.label} [ns]", "FPGA", first_start, last_end, {sdfg.sdfg_id}, {state_id}, -1);
+__state->report.add_completion("Full FPGA state runtime for {state.label} [ns]", "FPGA", _dace_fpga_begin_ns, _dace_fpga_end_ns, {sdfg.sdfg_id}, {state_id}, -1);
+""")
+                if Config.get_bool("instrumentation", "print_fpga_runtime"):
+                    kernel_host_stream.write(f"""
+const double elapsed = 1e-9 * (_dace_fpga_end_ns - _dace_fpga_begin_ns);
+std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " seconds.\\n";\
 """)
 
             kernel_host_stream.write("}\n")
@@ -1880,7 +1897,7 @@ __state->report.add_completion("FPGA Runtime for State {state.label}", "FPGA", f
 
     def _module_name(self, subgraph, state):
         """
-        Generate the name of an FPGA module produced from the given subgraph.i
+        Generate the name of an FPGA module produced from the given subgraph.
         """
         to_traverse = subgraph.source_nodes()
         seen = set()

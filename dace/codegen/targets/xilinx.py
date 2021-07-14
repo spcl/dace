@@ -113,7 +113,16 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         host_code.write("""\
 #include "dace/xilinx/host.h"
 #include "dace/dace.h"
-#include <iostream>\n\n""")
+""")
+        if len(self._dispatcher.instrumentation) > 1:
+            host_code.write("""\
+#include "dace/perf/reporting.h"
+#include <chrono>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+""")
+        host_code.write("\n\n")
 
         self._frame.generate_fileheader(self._global_sdfg, host_code,
                                         'xilinx_host')
