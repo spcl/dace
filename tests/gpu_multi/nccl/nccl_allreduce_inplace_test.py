@@ -5,7 +5,7 @@ import pytest
 from numba import cuda
 from dace.sdfg import nodes, infer_types
 from dace import dtypes
-
+import dace.libraries.nccl as nccl
 
 N = dace.symbol('N')
 num_gpus = dace.symbol('num_gpus')
@@ -16,11 +16,16 @@ np_dtype = np.float64
 
 @dace.program
 def allreduce(inbuff: dtype[N], outbuff: dtype[N]):
-    dace.nccl.AllReduce(lambda a, b: a + b, inbuff, outbuff, use_group_calls=False)
+    dace.nccl.AllReduce(lambda a, b: a + b,
+                        inbuff,
+                        outbuff,
+                        use_group_calls=False)
+
 
 @dace.program
 def allreduce_inplace(inbuff: dtype[N]):
     dace.nccl.AllReduce(lambda a, b: a + b, inbuff, use_group_calls=False)
+
 
 @dace.program
 def reduction_test(out: dtype[N]):
@@ -35,7 +40,7 @@ def reduction_test(out: dtype[N]):
 
 @pytest.mark.gpu
 def test_nccl_allreduce_inplace():
-    ng=3
+    ng = 3
     n = 15
     sdfg: dace.SDFG = reduction_test.to_sdfg(strict=True)
     state = sdfg.start_state

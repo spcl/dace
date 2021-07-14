@@ -5,7 +5,7 @@ import pytest
 from numba import cuda
 from dace.sdfg import nodes, infer_types
 from dace import dtypes
-
+import dace.libraries.nccl as nccl
 
 N = dace.symbol('N')
 root_device = dace.symbol('root_device')
@@ -24,7 +24,7 @@ def reduction_test(out: dtype[N]):
             gpu_A[i] = gpu
         dace.nccl.Reduce(lambda a, b: a + b,
                          gpu_A,
-                         root = root_device,
+                         root=root_device,
                          use_group_calls=False)
         if gpu == root_device:
             out[:] = gpu_A[:]
@@ -49,7 +49,7 @@ def test_nccl_reduce_inplace():
     gpu_map = find_map_by_param(state, 'gpu')
     gpu_map.schedule = dtypes.ScheduleType.GPU_Multidevice
     infer_types.set_default_schedule_storage_types_and_location(sdfg, None)
-    sdfg.specialize(dict(root=0, num_gpus=ng))
+    sdfg.specialize(dict(root_device=0, num_gpus=ng))
 
     sdfg.name = 'nccl_reduce_inplace'
 

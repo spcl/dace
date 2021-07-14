@@ -7,10 +7,10 @@ class NCCL:
 
     cmake_minimum_version = None
     cmake_packages = []
-    cmake_files = []
+    cmake_files = ["../FindNCCL.cmake"]
     cmake_variables = {}
-    cmake_includes = ["/users/tbaumann/local_nccl/nccl/build/include/"]
-    cmake_libraries = ["nccl"]
+    cmake_includes = []
+    cmake_libraries = []
     cmake_compile_flags = []
     cmake_link_flags = []
 

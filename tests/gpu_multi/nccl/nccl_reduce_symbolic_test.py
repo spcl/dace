@@ -5,7 +5,7 @@ import pytest
 from numba import cuda
 from dace.sdfg import nodes, infer_types
 from dace import dtypes
-
+import dace.libraries.nccl as nccl
 
 N = dace.symbol('N')
 num_gpus = dace.symbol('num_gpus')
@@ -14,25 +14,30 @@ num_gpus = dace.symbol('num_gpus')
 dtype = dace.float64
 np_dtype = np.float64
 
+
 @dace.program
-def reduction_test(out: dtype[num_gpus,N]):
+def reduction_test(out: dtype[num_gpus, N]):
     for root_gpu in dace.map[0:num_gpus]:
         for gpu in dace.map[0:num_gpus]:
             reduction_output = dace.ndarray([N], dtype=dtype)
             gpu_A = dace.ndarray([N], dtype=dtype)
             for i in dace.map[0:N]:
                 gpu_A[i] = root_gpu
-            dace.nccl.Reduce(lambda a, b: a + b, gpu_A, reduction_output, root_gpu, use_group_calls=False)
+            dace.nccl.Reduce(lambda a, b: a + b,
+                             gpu_A,
+                             reduction_output,
+                             root_gpu,
+                             use_group_calls=False)
             if gpu == root_gpu:
-                out[root_gpu,:] = reduction_output[:]
+                out[root_gpu, :] = reduction_output[:]
 
 
 def find_map_by_param(state: dace.SDFGState, pname: str) -> dace.nodes.MapEntry:
     """ Finds the first map entry node by the given parameter name. """
     try:
         return next(n for n in state.nodes()
-                if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
-        
+                    if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
+
     except StopIteration:
         return False
 
@@ -52,14 +57,13 @@ def test_nccl_reduce_symbolic():
     sdfg.specialize(dict(num_gpus=ng))
     sdfg.name = 'nccl_reduce_symbolic'
 
-    out = cuda.pinned_array(shape=[ng,n], dtype=np_dtype)
+    out = cuda.pinned_array(shape=[ng, n], dtype=np_dtype)
     out.fill(0)
 
     sdfg(out=out, N=n)
-    
-    res = np.array([0,4,8,12])
-    assert (np.unique(out)== res).all()
 
+    res = np.array([0, 4, 8, 12])
+    assert (np.unique(out) == res).all()
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
