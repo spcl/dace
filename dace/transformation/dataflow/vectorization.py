@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the vectorization transformation. """
 from dace import data, dtypes, registry, symbolic, subsets
-from dace.sdfg import nodes, SDFG, propagation
+from dace.sdfg import nodes, SDFG, SDFGState, propagation
 from dace.sdfg import utils as sdutil
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.transformation import transformation
@@ -42,20 +42,24 @@ class Vectorization(transformation.Transformation):
         desc='Force creation or skipping a postamble map without vectors')
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
-    _tasklet = nodes.Tasklet('_')
-    _map_exit = nodes.MapExit(nodes.Map("", [], []))
 
     @staticmethod
     def expressions():
         return [
-            sdutil.node_path_graph(Vectorization._map_entry,
-                                   Vectorization._tasklet,
-                                   Vectorization._map_exit)
+            sdutil.node_path_graph(Vectorization._map_entry)
         ]
 
-    def can_be_applied(self, graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(self, graph: SDFGState, candidate, expr_index, sdfg, strict=False):
         map_entry = graph.nodes()[candidate[Vectorization._map_entry]]
-        tasklet = graph.nodes()[candidate[Vectorization._tasklet]]
+
+        # Only accept scopes that have one internal tasklet
+        scope = graph.scope_subgraph(map_entry, False, False)
+        if len(scope.nodes()) != 1:
+            return False
+        tasklet = scope.nodes()[0]
+        if not isinstance(tasklet, nodes.Tasklet):
+            return False
+
         param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
         found = False
 
@@ -110,17 +114,13 @@ class Vectorization(transformation.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-
         map_entry = candidate[Vectorization._map_entry]
-        tasklet = candidate[Vectorization._tasklet]
-        map_exit = candidate[Vectorization._map_exit]
-
-        return ' -> '.join(str(node) for node in [map_entry, tasklet, map_exit])
+        return str(map_entry)
 
     def apply(self, sdfg: SDFG):
         graph = sdfg.nodes()[self.state_id]
         map_entry = graph.nodes()[self.subgraph[Vectorization._map_entry]]
-        tasklet = graph.nodes()[self.subgraph[Vectorization._tasklet]]
+        tasklet: nodes.Tasklet = graph.successors(map_entry)[0]
         param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
 
         # Create new vector size.
@@ -205,7 +205,8 @@ class Vectorization(transformation.Transformation):
                 oldtype = desc.dtype
 
             # Vector to scalar WCR edge: change connector and continue
-            if (edge.data.subset.num_elements() == 1
+            lastedge = graph.memlet_path(edge)[-1]
+            if (lastedge.data.subset.num_elements() == 1
                     and edge.data.wcr is not None):
                 connectors[conn] = dtypes.vector(oldtype, vector_size)
                 continue
