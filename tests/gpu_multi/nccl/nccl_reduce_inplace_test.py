@@ -40,7 +40,7 @@ def find_map_by_param(state: dace.SDFGState, pname: str) -> dace.nodes.MapEntry:
         return False
 
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_nccl_reduce_inplace():
     ng = 3
     n = 15

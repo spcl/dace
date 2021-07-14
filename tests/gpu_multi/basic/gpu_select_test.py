@@ -10,8 +10,8 @@ from dace.data import Scalar
 N = dace.symbol('N')
 np_dtype = np.float64
 
-@dace.program(dace.float64, dace.float64[N], dace.float64[N])
-def axpySelGPU(A, X, Y):
+@dace.program
+def axpySelGPU(A:dace.float64, X: dace.float64[N], Y: dace.float64[N]):
     @dace.map(_[0:N])
     def multiplication(i):
         in_A << A
@@ -31,7 +31,7 @@ def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
 
 
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_select_gpu():
     sdfg: dace.SDFG = axpySelGPU.to_sdfg(strict=True)
     sdfg.name = 'gpu_select'

@@ -39,7 +39,7 @@ def add_gpu_location(sdfg: dace.SDFG, mapEntry, gpu):
         data_node = e.src
         data_node.desc(sdfg).location = {'gpu': gpu}
     
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_gpu_dma():
     sdfg: dace.SDFG = gpu_dma.to_sdfg(strict=True)
     sdfg.name = 'gpu_dma'

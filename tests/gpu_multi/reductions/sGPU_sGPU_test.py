@@ -20,7 +20,7 @@ def sum(A: dtype[N], sumA: dtype[1]):
         sumA += A[j]
 
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_reduction_GPU0_GPU1_sum():
     sdfg: dace.SDFG = sum.to_sdfg(strict=True)
     sdfg.name = 'GPU0_GPU1_sum'
@@ -47,7 +47,7 @@ def test_reduction_GPU0_GPU1_sum():
     #                                                   out_path)
 
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_reduction_GPU0_GPU0_sum():
     sdfg: dace.SDFG = sum.to_sdfg(strict=True)
     sdfg.name = 'GPU0_GPU0_sum'

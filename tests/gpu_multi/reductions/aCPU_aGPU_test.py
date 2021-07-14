@@ -49,7 +49,7 @@ def create_sdfg() -> dace.SDFG:
 
     return sdfg
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_aCPU_aGPU():
     sdfg = create_sdfg()
 

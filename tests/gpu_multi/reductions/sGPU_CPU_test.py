@@ -17,7 +17,7 @@ np_dtype = np.float64
 def sum(A: dtype[N], sumA: dtype[1]):
     dace.reduce(lambda a, b: a + b, A, sumA, identity=0)
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_sGPU_CPU_library():
 
     Reduce.default_implementation = 'CUDA (device)'

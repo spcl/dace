@@ -35,7 +35,7 @@ def custom(A: dtype[N], customA: dtype[1]):
         customA += A[j] + A[j] * A[j]
 
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_multi_gpu_reduction_sum():
     sdfg: dace.SDFG = sum.to_sdfg(strict=True)
     sdfg.name = 'mGPU_CPU_sum'
@@ -59,7 +59,7 @@ def test_multi_gpu_reduction_sum():
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_multi_gpu_reduction_prod():
     sdfg: dace.SDFG = sum.to_sdfg(strict=True)
     sdfg.name = 'mGPU_CPU_prod'
@@ -83,7 +83,7 @@ def test_multi_gpu_reduction_prod():
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_multi_gpu_reduction_max():
     sdfg: dace.SDFG = sum.to_sdfg(strict=True)
     sdfg.name = 'mGPU_CPU_max'
@@ -107,7 +107,7 @@ def test_multi_gpu_reduction_max():
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_multi_gpu_reduction_custom():
     sdfg: dace.SDFG = sum.to_sdfg(strict=True)
     sdfg.name = 'mGPU_CPU_custom'

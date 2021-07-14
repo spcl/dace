@@ -45,7 +45,7 @@ def three_matmul_debug(A: dtype[M, K], B: dtype[K, N], C: dtype[N, L],
     return matmul_lib(M1, M2)
 
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_three_matmul():
     gpuHelper = 1
     gpuMain = 0

@@ -29,7 +29,7 @@ def sum(A: dtype[N], sumA: dtype[1]):
     sumA = gpu_sumA
 
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_reduction_mGPU_GPU0_sum():
     sdfg: dace.SDFG = sum.to_sdfg(strict=True)
     sdfg.name = 'mGPU_GPU0_sum'

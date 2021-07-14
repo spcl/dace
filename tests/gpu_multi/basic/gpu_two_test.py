@@ -10,40 +10,31 @@ from dace.data import Scalar
 N = dace.symbol('N')
 np_dtype = np.float64
 
-@dace.program(dace.float64, dace.float64[N], dace.float64[N])
-def axpy2GPU(A, X, Y):
+@dace.program
+def axpy2GPU(A:dace.float64, X: dace.float64[N], Y: dace.float64[N]):
     X1 = X[:N / 2]
     Y1 = Y[:N / 2]
 
     X2 = X[N / 2:]
     Y2 = Y[N / 2:]
 
-    @dace.map(_[0:N / 2])
-    def multiplication(i):
-        in_A1 << A
-        in_X1 << X1[i]
-        in_Y1 << Y1[i]
-        out1 >> Y[i]
+    for i in dace.map[0:N/2]:
+        Y[i]=A*X1[i]+Y1[i]
 
-        out1 = in_A1 * in_X1 + in_Y1
-
-    @dace.map(_[0:N / 2])
-    def multiplication(j):
-        in_A2 << A
-        in_X2 << X2[j]
-        in_Y2 << Y2[j]
-        out2 >> Y[j + N / 2]
-
-        out2 = in_A2 * in_X2 + in_Y2
+    for j in dace.map[0:N/2]:
+        Y[j + N / 2]=A*X2[j]+Y2[j]
 
 
 def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
     """ Finds the first map entry node by the given parameter name. """
-    return next(n for n, _ in sdfg.all_nodes_recursive()
+    try:
+        return next(n for n, _ in sdfg.all_nodes_recursive()
                 if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
+    except StopIteration:
+        return None
 
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_two_gpus():
     sdfg: dace.SDFG = axpy2GPU.to_sdfg(strict=True)
     sdfg.name = 'gpu_two_test'

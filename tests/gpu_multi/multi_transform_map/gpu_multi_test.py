@@ -23,12 +23,12 @@ np_dtype = np.float64
 #         out = in_A * in_X + in_Y
 
 
-@dace.program(dace.float64, dace.float64[N], dace.float64[N])
-def axpyMultiGPU(A, X, Y):
+@dace.program
+def axpyMultiGPU(A:dace.float64, X: dace.float64[N], Y: dace.float64[N]):
     for i in dace.map[0:N]:
         Y[i] = A * X[i] + Y[i]
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_gpu_multi():
     sdfg: dace.SDFG = axpyMultiGPU.to_sdfg(strict=False)
     sdfg.name = 'gpu_multi_map'

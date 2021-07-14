@@ -35,7 +35,7 @@ def reduction_test(out: dtype[N]):
             out[:] = reduction_output[:]
 
 
-@pytest.mark.gpu
+@pytest.mark.multigpu
 def test_nccl_allreduce():
     ng = 3
     n = 15
