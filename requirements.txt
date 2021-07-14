@@ -24,3 +24,4 @@ sympy==1.7
 urllib3==1.25.10
 websockets==8.1
 Werkzeug==1.0.1
+islpy==2021.1

@@ -68,7 +68,7 @@ setup(
     install_requires=[
         'numpy', 'networkx >= 2.2', 'astunparse', 'sympy', 'pyyaml',
         'ply', 'websockets', 'requests', 'flask', 'scikit-build', 'cmake',
-        'aenum', 'dataclasses; python_version < "3.7"'
+        'aenum', 'islpy', 'dataclasses; python_version < "3.7"'
     ],
     extras_require={'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum']},
     entry_points={
