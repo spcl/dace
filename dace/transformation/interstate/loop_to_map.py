@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Tuple
 from dace import dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
 from dace.properties import Property, make_properties, CodeBlock
 from dace.sdfg import graph as gr, nodes
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
 from dace.frontend.python.astutils import ASTFindReplace
@@ -72,16 +72,16 @@ class LoopToMap(DetectLoop):
             return False
 
         # Only support loops with a single-state body
-        begin_outedges = graph.out_edges(begin)
-        if len(begin_outedges) != 1 or begin_outedges[0].dst != guard:
-            return False
+        # begin_outedges = graph.out_edges(begin)
+        # if len(begin_outedges) != 1 or begin_outedges[0].dst != guard:
+        #     return False
 
         # If loop cannot be detected, fail
         found = find_for_loop(graph, guard, begin)
         if not found:
             return False
 
-        itervar, (start, end, step), _ = found
+        itervar, (start, end, step), (_, body_end) = found
 
         # We cannot handle symbols read from data containers unless they are
         # scalar
@@ -89,18 +89,38 @@ class LoopToMap(DetectLoop):
             if symbolic.contains_sympy_functions(expr):
                 return False
 
-        _, write_set = begin.read_and_write_sets()
+        # Find all loop-body states
+        states = set([body_end])
+        to_visit = [begin]
+        while to_visit:
+            state = to_visit.pop(0)
+            for _, dst, _ in graph.out_edges(state):
+                if dst not in states:
+                    to_visit.append(dst)
+            states.add(state)
+
+        write_set = set()
+        for state in states:
+            _, wset = state.read_and_write_sets()
+            write_set |= wset
+
+        # _, write_set = begin.read_and_write_sets()
 
         # Get access nodes from other states to isolate local loop variables
         other_access_nodes = set()
         for state in sdfg.nodes():
-            if state is begin:
+            # if state is begin:
+            if state in states:
                 continue
             other_access_nodes |= set(n.data for n in state.data_nodes()
                                       if sdfg.arrays[n.data].transient)
         # Add non-transient nodes from loop state
-        other_access_nodes |= set(n.data for n in begin.data_nodes()
-                                  if not sdfg.arrays[n.data].transient)
+        other_access_nodes = set()
+        for state in states:
+            other_access_nodes |= set(n.data for n in state.data_nodes()
+                                      if not sdfg.arrays[n.data].transient)
+        # other_access_nodes |= set(n.data for n in begin.data_nodes()
+        #                           if not sdfg.arrays[n.data].transient)
 
         write_memlets = defaultdict(list)
 
@@ -108,63 +128,65 @@ class LoopToMap(DetectLoop):
         a = sp.Wild('a', exclude=[itersym])
         b = sp.Wild('b', exclude=[itersym])
 
-        for dn in begin.data_nodes():
-            if dn.data not in other_access_nodes:
-                continue
-            # Take all writes that are not conflicted into consideration
-            if dn.data in write_set:
-                for e in begin.in_edges(dn):
-                    if e.data.dynamic and e.data.wcr is None:
-                        # If pointers are involved, give up
-                        return False
-                    # To be sure that the value is only written at unique
-                    # indices per loop iteration, we want to match symbols
-                    # of the form "a*i+b" where a >= 1, and i is the iteration
-                    # variable. The iteration variable must be used.
-                    if e.data.wcr is None:
-                        dst_subset = e.data.get_dst_subset(e, begin)
-                        if not _check_range(dst_subset, a, itersym, b, step):
+        for state in states:
+            for dn in state.data_nodes():
+                if dn.data not in other_access_nodes:
+                    continue
+                # Take all writes that are not conflicted into consideration
+                if dn.data in write_set:
+                    for e in state.in_edges(dn):
+                        if e.data.dynamic and e.data.wcr is None:
+                            # If pointers are involved, give up
                             return False
-                    # End of check
+                        # To be sure that the value is only written at unique
+                        # indices per loop iteration, we want to match symbols
+                        # of the form "a*i+b" where a >= 1, and i is the iteration
+                        # variable. The iteration variable must be used.
+                        if e.data.wcr is None:
+                            dst_subset = e.data.get_dst_subset(e, state)
+                            if not _check_range(dst_subset, a, itersym, b, step):
+                                return False
+                        # End of check
 
-                    write_memlets[dn.data].append(e.data)
+                        write_memlets[dn.data].append(e.data)
 
         # After looping over relevant writes, consider reads that may overlap
-        for dn in begin.data_nodes():
-            if dn.data not in other_access_nodes:
-                continue
-            data = dn.data
-            if data in write_memlets:
-                # Import as necessary
-                from dace.sdfg.propagation import propagate_subset
+        for state in states:
+            for dn in state.data_nodes():
+                if dn.data not in other_access_nodes:
+                    continue
+                data = dn.data
+                if data in write_memlets:
+                    # Import as necessary
+                    from dace.sdfg.propagation import propagate_subset
 
-                for e in begin.out_edges(dn):
-                    # If the same container is both read and written, only match if
-                    # it read and written at locations that will not create data races
-                    if e.data.dynamic and e.data.src_subset.num_elements() != 1:
-                        # If pointers are involved, give up
-                        return False
-                    src_subset = e.data.get_src_subset(e, begin)
-                    if not _check_range(src_subset, a, itersym, b, step):
-                        return False
+                    for e in state.out_edges(dn):
+                        # If the same container is both read and written, only match if
+                        # it read and written at locations that will not create data races
+                        if e.data.dynamic and e.data.src_subset.num_elements() != 1:
+                            # If pointers are involved, give up
+                            return False
+                        src_subset = e.data.get_src_subset(e, state)
+                        if not _check_range(src_subset, a, itersym, b, step):
+                            return False
 
-                    pread = propagate_subset([e.data], sdfg.arrays[data],
-                                             [itervar],
-                                             subsets.Range([(start, end, step)
-                                                            ]))
-                    for candidate in write_memlets[data]:
-                        # Simple case: read and write are in the same subset
-                        if e.data.subset == candidate.subset:
-                            break
-                        # Propagated read does not overlap with propagated write
-                        pwrite = propagate_subset([candidate],
-                                                  sdfg.arrays[data], [itervar],
-                                                  subsets.Range([(start, end,
-                                                                  step)]))
-                        if subsets.intersects(pread.subset,
-                                              pwrite.subset) is False:
-                            break
-                        return False
+                        pread = propagate_subset([e.data], sdfg.arrays[data],
+                                                [itervar],
+                                                subsets.Range([(start, end, step)
+                                                                ]))
+                        for candidate in write_memlets[data]:
+                            # Simple case: read and write are in the same subset
+                            if e.data.subset == candidate.subset:
+                                break
+                            # Propagated read does not overlap with propagated write
+                            pwrite = propagate_subset([candidate],
+                                                    sdfg.arrays[data], [itervar],
+                                                    subsets.Range([(start, end,
+                                                                    step)]))
+                            if subsets.intersects(pread.subset,
+                                                pwrite.subset) is False:
+                                break
+                            return False
 
         # Check that the iteration variable is not used on other edges or states
         # before it is reassigned
@@ -174,6 +196,9 @@ class LoopToMap(DetectLoop):
             if prior_states:
                 if state is begin:
                     prior_states = False
+                continue
+            # We do not need to check the loop-body states
+            if state in states:
                 continue
             if itervar in state.free_symbols:
                 return False
@@ -202,7 +227,53 @@ class LoopToMap(DetectLoop):
         after: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
 
         # Obtain iteration variable, range, and stride
-        itervar, (start, end, step), _ = find_for_loop(sdfg, guard, body)
+        itervar, (start, end, step), (_, body_end) = find_for_loop(sdfg, guard, body)
+
+        # Find all loop-body states
+        states = set([body_end])
+        to_visit = [body]
+        while to_visit:
+            state = to_visit.pop(0)
+            for _, dst, _ in sdfg.out_edges(state):
+                if dst not in states:
+                    to_visit.append(dst)
+            states.add(state)
+
+        # Nest loop-body states
+        if len(states) > 1:
+            # Create nested SDFG and add all loop-body states and edges
+            new_body = sdfg.add_state('single_state_body')
+            nsdfg = SDFG("loop_body", constants=sdfg.constants, parent=new_body)
+            nsdfg.add_node(body, is_start_state=True)
+            exit_state = nsdfg.add_state('exit')
+            for state in states:
+                if state is body:
+                    continue
+                nsdfg.add_node(state)
+            for state in states:
+                if state is body:
+                    continue
+                for src, dst, data in sdfg.in_edges(state):
+                    nsdfg.add_edge(src, dst, data)
+            nsdfg.add_edge(body_end, exit_state, InterstateEdge())
+
+            # Move guard -> body edge to guard -> new_body
+            for src, dst, data, in sdfg.edges_between(guard, body):
+                sdfg.add_edge(src, new_body, data)
+            # Move body_end -> guard edge to new_body -> guard
+            for src, dst, data in sdfg.edges_between(body_end, guard):
+                sdfg.add_edge(new_body, dst, data)
+            
+            # Delete loop-body states and edges from parent SDFG
+            for state in states:
+                for e in sdfg.all_edges(state):
+                    sdfg.remove_edge(e)
+                sdfg.remove_node(state)
+            
+            # Added nested sdfg node
+            new_body.add_nested_sdfg(nsdfg, None, {}, {})
+            body = new_body
+
 
         if (step < 0) == True:
             # If step is negative, we have to flip start and end to produce a
