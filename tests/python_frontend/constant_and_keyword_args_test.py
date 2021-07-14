@@ -270,6 +270,21 @@ def test_constant_argument_object():
     assert np.allclose(A, reg_A)
 
 
+def test_array_by_str_key():
+    class AClass:
+        def __init__(self):
+            self.adict = dict(akey=7.0 * np.ones((10, )))
+
+        @dace.method
+        def __call__(self, A):
+            A[...] = self.adict['akey']
+
+    aobj = AClass()
+    arr = np.empty((10, ))
+    aobj(arr)
+    assert np.allclose(7.0, arr)
+
+
 if __name__ == '__main__':
     test_kwargs()
     test_kwargs_jit()
@@ -287,3 +302,4 @@ if __name__ == '__main__':
     test_constant_argument_simple()
     test_constant_argument_default()
     test_constant_argument_object()
+    test_array_by_str_key()

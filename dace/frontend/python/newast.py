@@ -773,8 +773,13 @@ class GlobalResolver(ast.NodeTransformer):
 
     def _qualname_to_array_name(self, qualname: str) -> str:
         """ Converts a Python qualified attribute name to an SDFG array name. """
-        # Only '.' has to be replaced, since we only support attributes for now
-        return f"__g_{qualname.replace('.', '__')}"
+        # We only support attributes and subscripts for now
+        sanitized = re.sub(r'[\.\[\]\'\",]', '_', qualname)
+        if not dtypes.validate_name(sanitized):
+            raise NameError(
+                f'Variable name "{sanitized}" is not sanitized '
+                'properly during parsing. Please report this issue.')
+        return f"__g_{sanitized}"
 
     def global_value_to_node(self,
                              value,
