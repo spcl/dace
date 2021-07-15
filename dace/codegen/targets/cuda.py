@@ -734,16 +734,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                   and not is_devicelevel_gpu(sdfg, graph, node)):
                 # Check if the tasklet calls code that runs on a GPU. It runs on
                 # a GPU if it is connected to data that resides on a GPU.
-                for e in graph.in_edges(node):
-                    if e.data.data in sdfg.arrays:
-                        if sdfg.arrays[
-                                e.data.data].storage in dtypes.GPU_STORAGES:
-                            node.location['gpu'] = default_gpu
-                for e in graph.out_edges(node):
-                    if e.data.data in sdfg.arrays:
-                        if sdfg.arrays[
-                                e.data.data].storage in dtypes.GPU_STORAGES:
-                            node.location['gpu'] = default_gpu
+                for e in graph.all_edges(node):
+                    if graph.parent.arrays[
+                            e.data.data].storage in dtypes.GPU_STORAGES:
+                        node.location['gpu'] = default_gpu
+                        break
 
         return gpus, gpu_vals, default_gpu
 
@@ -1013,7 +1008,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         unused_streams,
                         max_events,
                     )
-                
+
 
         return max_streams, current_streams, unused_streams, max_events
 
@@ -1446,7 +1441,7 @@ DACE_EXPORTED void __dace_runkernel_{id}({fargs});
                 return
 
             # #############################
-            
+
             callsite_stream.write('%sSetDevice(%s);\n' %
                                   (self.backend, src_gpuid))
 
