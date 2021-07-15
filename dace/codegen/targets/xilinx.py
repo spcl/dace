@@ -113,7 +113,16 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         host_code.write("""\
 #include "dace/xilinx/host.h"
 #include "dace/dace.h"
-#include <iostream>\n\n""")
+""")
+        if len(self._dispatcher.instrumentation) > 1:
+            host_code.write("""\
+#include "dace/perf/reporting.h"
+#include <chrono>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+""")
+        host_code.write("\n\n")
 
         self._frame.generate_fileheader(self._global_sdfg, host_code,
                                         'xilinx_host')
@@ -547,7 +556,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         if needs_synch:
             # Build a vector containing all the events associated with the kernels from which this one depends
             kernel_deps_name = f"deps_{kernel_name}"
-            kernel_stream.write(f"std::vector<cl::Event > {kernel_deps_name};")
+            kernel_stream.write(f"std::vector<cl::Event> {kernel_deps_name};")
             for pred in predecessors:
                 # concatenate events from predecessor kernel
                 kernel_stream.write(
@@ -557,7 +566,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_stream.write(
             f"""\
   auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});
-  cl::Event {kernel_name}_event =  {kernel_name}_kernel.ExecuteTaskFork({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''});
+  cl::Event {kernel_name}_event = {kernel_name}_kernel.ExecuteTaskFork({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''});
   all_events.push_back({kernel_name}_event);""", sdfg, sdfg.node_id(state))
 
         # Join RTL tasklets

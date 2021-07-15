@@ -741,6 +741,12 @@ required:
                         description: >
                             Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
 
+            print_fpga_runtime:
+                type: bool
+                default: false
+                title: Print FPGA runtime 
+                description: Prints the runtime of instrumented FPGA kernel states to standard output. 
+
     #############################################
     # General settings
     debugprint:

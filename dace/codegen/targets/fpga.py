@@ -286,9 +286,11 @@ class FPGACodeGen(TargetCodeGenerator):
             state_host_body_stream = CodeIOStream()
 
             # Kernels are now sorted considering their dependencies
+            all_subgraphs = []
             for kern, kern_id in kernels:
                 # Generate all kernels in this state
                 subgraphs = dace.sdfg.concurrent_subgraphs(kern)
+                all_subgraphs += subgraphs
                 shared_transients = set(sdfg.shared_transients())
 
                 # Allocate global memory transients, unless they are shared with
@@ -368,18 +370,69 @@ class FPGACodeGen(TargetCodeGenerator):
             kernel_host_stream.write(state_host_header_stream.getvalue())
 
             kernel_host_stream.write(f"""\
-DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
-      hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();"""
-                                     )
+DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{""")
+
+            if state.instrument == dtypes.InstrumentationType.FPGA:
+                kernel_host_stream.write("""\
+const unsigned long int _dace_fpga_begin_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+""")
+
+            kernel_host_stream.write(f"""\
+      hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();\
+""")
             # Create a vector to collect all events that are being generated to allow
             # waiting before exiting this state
-            kernel_host_stream.write(f"std::vector<cl::Event> all_events;", )
+            kernel_host_stream.write("std::vector<cl::Event> all_events;")
 
             # Kernels invocations
             kernel_host_stream.write(state_host_body_stream.getvalue())
 
             # Wait for all events
-            kernel_host_stream.write(" cl::Event::waitForEvents(all_events);")
+            kernel_host_stream.write("cl::Event::waitForEvents(all_events);")
+
+            # Instrumentation
+            if state.instrument == dtypes.InstrumentationType.FPGA:
+                kernel_host_stream.write("""
+// Begin FPGA kernel runtime instrumentation
+cl_ulong first_start = std::numeric_limits<unsigned long int>::max();
+cl_ulong last_end = std::numeric_limits<unsigned long int>::min();""")
+                if Config.get_bool("instrumentation", "print_fpga_runtime"):
+                    kernel_host_stream.write("""
+std::cout << std::scientific;""")
+                for i, sg in enumerate(all_subgraphs):
+                    module_name = self._module_name(sg, state)
+                    if Config.get_bool("instrumentation", "print_fpga_runtime"):
+                        print_str = f"""
+const double elapsed = 1e-9 * (event_end - event_start);
+std::cout << "FPGA OpenCL kernel \\"{module_name}\\" executed in " << elapsed << " seconds.\\n";\
+"""
+                    else:
+                        print_str = ""
+                    kernel_host_stream.write(f"""\
+{{
+    cl_ulong event_start = 0;
+    cl_ulong event_end = 0;
+    cl::Event const &event = all_events[{i}];
+    event.getProfilingInfo(CL_PROFILING_COMMAND_START, &event_start);
+    event.getProfilingInfo(CL_PROFILING_COMMAND_END, &event_end);
+    if (event_start < first_start) {{
+        first_start = event_start;
+    }}
+    if (event_end > last_end) {{
+        last_end = event_end;
+    }}
+    __state->report.add_completion("{module_name} [ns]", "FPGA", event_start, event_end, {sdfg.sdfg_id}, {state_id}, {state.node_id(sg.nodes()[0])});{print_str}
+}}""")
+                kernel_host_stream.write(f"""\
+const unsigned long int _dace_fpga_end_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+__state->report.add_completion("Full FPGA kernel runtime for {state.label} [ns]", "FPGA", first_start, last_end, {sdfg.sdfg_id}, {state_id}, -1);
+__state->report.add_completion("Full FPGA state runtime for {state.label} [ns]", "FPGA", _dace_fpga_begin_ns, _dace_fpga_end_ns, {sdfg.sdfg_id}, {state_id}, -1);
+""")
+                if Config.get_bool("instrumentation", "print_fpga_runtime"):
+                    kernel_host_stream.write(f"""
+const double elapsed = 1e-9 * (_dace_fpga_end_ns - _dace_fpga_begin_ns);
+std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " seconds.\\n";\
+""")
 
             kernel_host_stream.write("}\n")
 
@@ -1842,45 +1895,47 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
         self._allocated_global_arrays = set()
 
+    def _module_name(self, subgraph, state):
+        """
+        Generate the name of an FPGA module produced from the given subgraph.
+        """
+        to_traverse = subgraph.source_nodes()
+        seen = set()
+        tasklet_list = []
+        access_nodes = []
+        while len(to_traverse) > 0:
+            n = to_traverse.pop()
+            if n in seen:
+                continue
+            seen.add(n)
+            if (isinstance(n, dace.sdfg.nodes.Tasklet)
+                    or isinstance(n, dace.sdfg.nodes.NestedSDFG)):
+                tasklet_list.append(n)
+            else:
+                if isinstance(n, dace.sdfg.nodes.AccessNode):
+                    access_nodes.append(n)
+                for e in subgraph.out_edges(n):
+                    if e.dst not in seen:
+                        to_traverse.append(e.dst)
+        # Name module according to all reached tasklets (can be just one)
+        labels = [
+            n.label.replace(" ", "_") + f"_{state.node_id(n)}"
+            for n in tasklet_list
+        ]
+        # If there are no tasklets, name it after access nodes in the
+        # subgraph
+        if len(labels) == 0:
+            labels = [n.label.replace(" ", "_") for n in access_nodes]
+        if len(labels) == 0:
+            raise RuntimeError("Expected at least one tasklet or data node.")
+        return "_".join(labels)
+
     def generate_modules(self, sdfg, state, kernel_name, subgraphs,
                          subgraph_parameters, module_stream, entry_stream,
                          host_stream):
-        """Generate all PEs inside an FPGA Kernel"""
-
-        # Module generation
+        """Generate all PEs inside an FPGA Kernel."""
         for subgraph in subgraphs:
-            # Traverse to find first tasklets reachable in topological order
-            to_traverse = subgraph.source_nodes()
-            seen = set()
-            tasklet_list = []
-            access_nodes = []
-            while len(to_traverse) > 0:
-                n = to_traverse.pop()
-                if n in seen:
-                    continue
-                seen.add(n)
-                if (isinstance(n, dace.sdfg.nodes.Tasklet)
-                        or isinstance(n, dace.sdfg.nodes.NestedSDFG)):
-                    tasklet_list.append(n)
-                else:
-                    if isinstance(n, dace.sdfg.nodes.AccessNode):
-                        access_nodes.append(n)
-                    for e in subgraph.out_edges(n):
-                        if e.dst not in seen:
-                            to_traverse.append(e.dst)
-            # Name module according to all reached tasklets (can be just one)
-            labels = [
-                n.label.replace(" ", "_") + f"_{state.node_id(n)}"
-                for n in tasklet_list
-            ]
-            # If there are no tasklets, name it after access nodes in the
-            # subgraph
-            if len(labels) == 0:
-                labels = [n.label.replace(" ", "_") for n in access_nodes]
-            if len(labels) == 0:
-                raise RuntimeError("Expected at least one tasklet or data node")
-            module_name = "_".join(labels)
-
+            module_name = self._module_name(subgraph, state)
             self.generate_module(sdfg, state, kernel_name, module_name,
                                  subgraph, subgraph_parameters[subgraph],
                                  module_stream, entry_stream, host_stream)

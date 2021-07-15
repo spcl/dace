@@ -151,6 +151,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
     Timer = ()
     PAPI_Counters = ()
     GPU_Events = ()
+    FPGA = ()
 
 
 @undefined_safe_enum
@@ -452,8 +453,8 @@ def min_value(dtype: typeclass):
 
 
 def reduction_identity(dtype: typeclass, red: ReductionType) -> Any:
-    """ 
-    Returns known identity values (which we can safely reset transients to) 
+    """
+    Returns known identity values (which we can safely reset transients to)
     for built-in reduction types.
     :param dtype: Input type.
     :param red: Reduction type.
@@ -778,8 +779,8 @@ class struct(typeclass):
 
 
 class constant:
-    """ 
-    Data descriptor type hint signalling that argument evaluation is 
+    """
+    Data descriptor type hint signalling that argument evaluation is
     deferred to call time.
 
     Example usage::
@@ -791,7 +792,7 @@ class constant:
             else:
                 return A + 2
 
-    
+
     In the above code, ``constant`` will be replaced with its value at call time
     during parsing.
     """
@@ -1278,14 +1279,14 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
             ScheduleType.MPI
         ]
-    
+
     # GPU-global memory
     if storage is StorageType.GPU_Global:
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
             ScheduleType.MPI, ScheduleType.GPU_Default
         ]
-    
+
     # FPGA-global memory
     if storage is StorageType.FPGA_Global:
         return schedule in [
