@@ -430,7 +430,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         return False
 
     def determine_allocation_lifetime(self, top_sdfg: SDFG):
-        """ 
+        """
         Determines where (at which scope/state/SDFG) each data descriptor
         will be allocated/deallocated.
         :param top_sdfg: The top-level SDFG to determine for.
