@@ -186,7 +186,8 @@ class InlineSDFG(transformation.Transformation):
                     if access in out_data.keys():
                         rem_inpconns.remove(inpconn)
                         break
-        if len(rem_inpconns) > 0:
+        if (len(rem_inpconns) > 0 and
+                not (len(rem_inpconns) == 1 and list(rem_inpconns)[0] is None)):
             return False
 
         return True
