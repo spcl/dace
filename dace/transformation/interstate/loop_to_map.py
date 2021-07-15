@@ -251,6 +251,13 @@ class LoopToMap(DetectLoop):
                 rset, wset = state.read_and_write_sets()
                 read_set |= rset
                 write_set |= wset
+                # Add data from edges
+                for src in states:
+                    for dst in states:
+                        for edge in sdfg.edges_between(src, dst):
+                            for s in edge.data.free_symbols:
+                                if s in sdfg.arrays:
+                                    read_set.add(s)
 
             # Find NestedSDFG's unique data
             rw_set = read_set | write_set
