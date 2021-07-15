@@ -8,8 +8,8 @@ from typing import Dict, Any
 from numpy.core.numeric import outer
 from dace import data, dtypes, registry, symbolic, subsets
 from dace.frontend.operations import detect_reduction_type
-from dace.properties import (SymbolicProperty, make_properties,
-                             Property, DictProperty)
+from dace.properties import (SymbolicProperty, make_properties, Property,
+                             DictProperty)
 from dace.sdfg import nodes
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutil
@@ -170,10 +170,11 @@ class AccumulateTransient(transformation.Transformation):
     outer_map_exit = transformation.PatternNode(nodes.MapExit)
 
     array_identity_dict = DictProperty(key_type=str,
-                                  value_type=symbolic.pystr_to_symbolic,
-                                  desc="dict with key: Array and"
-                                  "value: the Identity value to set",
-                                  allow_none=True)
+                                       value_type=symbolic.pystr_to_symbolic,
+                                       desc="dict with key: Array and"
+                                       "value: the Identity value to set",
+                                       default=dict(),
+                                       allow_none=True)
 
     array = Property(
         dtype=str,
@@ -228,13 +229,15 @@ class AccumulateTransient(transformation.Transformation):
 
         array_identity_dict = self.array_identity_dict
 
-        if len(array_identity_dict) == 0:
-            # Choose array
-            array = self.array
-            if array is None or len(array) == 0:
-                array = next(e.data.data
-                            for e in graph.edges_between(map_exit, outer_map_exit)
-                            if e.data.wcr is not None)
+        # Choose array
+        array = self.array
+        if array is not None and len(array) != 0:
+            array_identity_dict[array] = self.identity
+        elif ((array is None or len(array) == 0)
+              and len(array_identity_dict) == 0):
+            array = next(e.data.data
+                         for e in graph.edges_between(map_exit, outer_map_exit)
+                         if e.data.wcr is not None)
             array_identity_dict[array] = self.identity
 
         transients: Dict[str, Any] = {}
@@ -271,7 +274,7 @@ class AccumulateTransient(transformation.Transformation):
 
         for data_name, identity in transients.items():
             temp_array: Array = sdfg.arrays[data_name]
-            
+
             init_state.add_mapped_tasklet(
                 name='acctrans_init',
                 map_ranges={
