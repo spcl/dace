@@ -424,7 +424,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
         if desc.storage in dtypes.FPGA_STORAGES:
             return sdscope.is_devicelevel_fpga(csdfg, cstate, node)
-        elif desc.storage in dtypes.GPU_STORAGES:
+        elif desc.storage in dtypes.GPU_LOCAL_STORAGES:
             return sdscope.is_devicelevel_gpu(csdfg, cstate, node)
 
         return False

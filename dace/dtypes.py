@@ -87,6 +87,11 @@ GPU_STORAGES = [
     StorageType.CPU_Pinned,
 ]
 
+# A subset of on-GPU storage types
+GPU_LOCAL_STORAGES = [
+    StorageType.GPU_Shared,
+]
+
 # A subset of on-FPGA storage types
 FPGA_STORAGES = [
     StorageType.FPGA_Local,

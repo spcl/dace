@@ -1427,6 +1427,7 @@ DACE_EXPORTED void __dace_runkernel_{id}({fargs});
                     self._cpu_codegen._packed_types))
             dims = len(copy_shape)
             dtype = dst_node.desc(sdfg).dtype
+
             if memlet.wcr is not None:
                 if ((memlet.subset.num_elements() > 1) == True):
                     raise NotImplementedError(
@@ -1444,8 +1445,11 @@ DACE_EXPORTED void __dace_runkernel_{id}({fargs});
                                       [src_node, dst_node])
                 return
 
+            # #############################
+            
             callsite_stream.write('%sSetDevice(%s);\n' %
                                   (self.backend, src_gpuid))
+
             # Handle unsupported copy types
             if dims > 1:
                 raise NotImplementedError(
@@ -2939,14 +2943,14 @@ void  *{kname}_args[] = {{ {kargs} }};
 
             subgraphs = dace.sdfg.concurrent_subgraphs(dfg_scope)
             for dfg in subgraphs:
-                components = dace.sdfg.sdutil.separate_maps(
+                components = sdutil.separate_maps(
                     sdfg.nodes()[state_id],
                     dfg,
                     dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
                 )
 
                 for c in components:
-                    if not isinstance(c, dace.sdfg.scope.ScopeSubgraphView):
+                    if not isinstance(c, ScopeSubgraphView):
                         callsite_stream.write(
                             'if ({} < {}) {{'.format(
                                 scope_map.params[0],
@@ -2962,7 +2966,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                                                        callsite_stream,
                                                        skip_entry_node=False)
 
-                    if not isinstance(c, dace.sdfg.scope.ScopeSubgraphView):
+                    if not isinstance(c, ScopeSubgraphView):
                         callsite_stream.write('}')
 
             # exit node gets lost in the process, thus needs to be
