@@ -34,14 +34,23 @@ def load_or_transform() -> bool:
 
 
 def stop_and_load(sdfg):
-    """ Stops and loads a SDFG file to create the code with
+    """ Stops and loads an SDFG file to create the code with
         :param sdfg: The current SDFG
         :return: The loaded SDFG
     """
     reply = send_bp_recv({'type': 'loadSDFG'})
-    if reply is None or reply['filename'] == 'none':
-        return sdfg
-    return dace.SDFG.from_file(reply['filename'])
+    if reply and 'filename' in reply:
+        return dace.SDFG.from_file(reply['filename'])
+    return sdfg
+
+
+def stop_and_save(sdfg):
+    """ Stops and save an SDFG to the chosen location
+        :param sdfg: The current SDFG
+    """
+    reply = send_bp_recv({'type': 'saveSDFG'})
+    if reply and 'filename' in reply:
+        sdfg.save(reply['filename'])
 
 
 def stop_and_transform(sdfg):
@@ -51,8 +60,7 @@ def stop_and_transform(sdfg):
     """
     filename = os.path.abspath(os.path.join(sdfg.build_folder, 'program.sdfg'))
     sdfg.save(filename)
-    send({'type': 'openSDFG', 'filename': filename})
-    breakpoint()
+    send_bp_recv({'type': 'stopAndTransform', 'filename': filename})
     return dace.SDFG.from_file(filename)
 
 
@@ -127,7 +135,6 @@ def send_bp_recv(data: json) -> json:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((HOST, int(PORT)))
         s.sendall(data_bytes)
-        breakpoint()
         result = s.recv(1024)
         return json.loads(result)
     return None
