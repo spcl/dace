@@ -276,9 +276,11 @@ class CompiledSDFG(object):
 
         if vscode.is_available() and vscode.sdfg_edit():
             mode = vscode.send_bp_recv({'type': 'sdfgEditMode'})['mode']
-            argtuple, initargtuple = self._construct_args(kwargs)
             compiledSdfg = self
+
             while mode != 'run':
+                argtuple, initargtuple = compiledSdfg._construct_args(kwargs)
+
                 # unload lib as the sdfg might change
                 if compiledSdfg._lib.is_loaded():
                     compiledSdfg._lib.unload()
@@ -298,11 +300,15 @@ class CompiledSDFG(object):
                 elif mode == 'load':
                     sdfg = vscode.stop_and_load(compiledSdfg._sdfg)
                     compiledSdfg = sdfg.compile()
+                elif mode == 'save':
+                    vscode.stop_and_save(compiledSdfg._sdfg)
                 elif mode == 'transform':
                     sdfg = vscode.stop_and_transform(compiledSdfg._sdfg)
                     compiledSdfg = sdfg.compile()
                 mode = vscode.send_bp_recv({'type': 'sdfgEditMode'})['mode']
             self = compiledSdfg
+            if self._initialized and not self._lib.is_loaded():
+                self._lib.load()
 
         try:
             argtuple, initargtuple = self._construct_args(kwargs)
