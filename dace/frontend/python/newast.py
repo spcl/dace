@@ -3185,7 +3185,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if arr_type is None:
             arr_type = type(parent_array)
             # Size (1,) slice of NumPy array returns scalar value
-            if shape == [1] or shape == (1,):
+            if arr_type != data.Stream and (shape == [1] or shape == (1,)):
                 arr_type = data.Scalar
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
