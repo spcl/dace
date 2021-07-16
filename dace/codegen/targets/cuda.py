@@ -89,6 +89,9 @@ class CUDACodeGen(TargetCodeGenerator):
         self._concurrent_streams = int(
             Config.get('compiler', 'cuda', 'max_concurrent_streams'))
 
+        self._debug = 1 if Config.get('compiler',
+                                      'build_type') == 'Debug' else 0
+
         # Keep track of current gpu device
         self._gpus, self._gpu_values, self._default_gpu = self._get_gpus_and_default_gpu(
             sdfg)
@@ -738,7 +741,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     # Needed for empty memlets, e.g. initialization of an array.
                     if e.data.data in graph.parent.arrays:
                         if graph.parent.arrays[
-                                e.data.data].storage == dtypes.StorageType.GPU_Global:
+                                e.data.
+                                data].storage == dtypes.StorageType.GPU_Global:
                             node.location['gpu'] = default_gpu
                             break
 
@@ -746,7 +750,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
     def _set_gpu_device(self, state: Union[SDFG, SDFGState],
                         node_or_array_or_id: Union[dt.Data, nodes.Node,
-                                                   str], code: CodeIOStream):
+                                                   str], codeIO: CodeIOStream):
         """ Checks if the codegenerator is on the correct device. If it is on
             the correct device it does nothing, otherwise it writes SetDevice
             into the code.
@@ -757,7 +761,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         """
         gpu_location = sdutil.get_gpu_location(state, node_or_array_or_id)
         if gpu_location is not None:
-            code.write('%sSetDevice(%s);\n' % (self.backend, gpu_location))
+            codeIO.write('%sSetDevice(%s);\n' % (self.backend, gpu_location))
 
     def _compute_cudastreams(
         self, sdfg: SDFG
@@ -952,8 +956,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             max_numeric_stream = max(
                                 max_streams[gpu_id]
                                 for gpu_id in gpu_ids[param])
-                            arg_max_gpus = (k
-                                            for k, v in max_streams.items()
+                            arg_max_gpus = (k for k, v in max_streams.items()
                                             if v == max_numeric_stream)
                             increment_max_numeric_stream = max_numeric_stream
 
@@ -972,8 +975,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                             # Set max stream of the symbolic GPU id to the
                             # incremented max.
-                            max_streams[
-                                param] = increment_max_numeric_stream
+                            max_streams[param] = increment_max_numeric_stream
                             current_streams[
                                 param] = increment_max_numeric_stream
 
@@ -982,13 +984,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             for gpu_id in list(gpu_ids[param]) + [param]:
                                 unused_streams[gpu_id].update(
                                     range(max_streams[gpu_id],
-                                            max_numeric_stream))
+                                          max_numeric_stream))
 
                             # Compute CUDA streams on the scopesubgraph
                             subgraph_max_streams, subgraph_current_streams, subgraph_unused_streams, subgraph_max_events = self._compute_cudastreams_graph(
                                 scope_subgraph, graph.successors(child),
-                                max_streams, current_streams,
-                                unused_streams, max_events)
+                                max_streams, current_streams, unused_streams,
+                                max_events)
                             max_streams.update(subgraph_max_streams)
                             current_streams.update(subgraph_current_streams)
                             unused_streams.update(subgraph_unused_streams)
@@ -1010,7 +1012,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         unused_streams,
                         max_events,
                     )
-
 
         return max_streams, current_streams, unused_streams, max_events
 
@@ -1456,12 +1457,14 @@ DACE_EXPORTED void __dace_runkernel_{id}({fargs});
                 [cppunparse.pyexpr2cpp(symbolic.symstr(s)) for s in copy_shape])
             array_length = copysize
             copysize += ' * sizeof(%s)' % dtype.ctype
-
-            callsite_stream.write(
-                '%sMemcpyPeerAsync(%s, %s, %s, %s, %s, %s);\n' %
-                (self.backend, dst_expr, dst_gpuid, src_expr, src_gpuid,
-                 copysize, src_cudastream), sdfg, state_id,
-                [src_node, dst_node])
+            code = '%sMemcpyPeerAsync(%s, %s, %s, %s, %s, %s)' % (
+                self.backend, dst_expr, dst_gpuid, src_expr, src_gpuid,
+                copysize, src_cudastream)
+            if self._debug:
+                code = '''\nDACE_CUDA_CHECK(''' + code + ''');\n'''
+            else:
+                code = '''\n''' + code + ''';\n'''
+            callsite_stream.write(code, sdfg, state_id, [src_node, dst_node])
             current_device = src_gpuid
 
             sync_string = '''\n'''
@@ -1640,18 +1643,21 @@ DACE_EXPORTED void __dace_runkernel_{id}({fargs});
                         "(__copyidx{} * ({}))".format(d, sym2cpp(s))
                         for d, s in enumerate(dst_strides[:-2])
                     ])
-                    callsite_stream.write(
-                        '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n'
-                        %
-                        (self.backend, current_dst_expr, _topy(dst_strides[-2])
-                         + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                         current_src_expr, sym2cpp(src_strides[-2]) +
-                         ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
-                         sym2cpp(copy_shape[-1]) +
-                         ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                         sym2cpp(copy_shape[-2]), self.backend, src_location,
-                         dst_location, cudastream), sdfg, state_id,
-                        [src_node, dst_node])
+                    code = '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s)' % (
+                        self.backend, current_dst_expr, _topy(dst_strides[-2]) +
+                        ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
+                        current_src_expr, sym2cpp(src_strides[-2]) +
+                        ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
+                        sym2cpp(copy_shape[-1]) +
+                        ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
+                        sym2cpp(copy_shape[-2]), self.backend, src_location,
+                        dst_location, cudastream)
+                    if self._debug:
+                        code = '''\nDACE_CUDA_CHECK(''' + code + ''');\n'''
+                    else:
+                        code = '''\n''' + code + ''';\n'''
+                    callsite_stream.write(code, sdfg, state_id,
+                                          [src_node, dst_node])
                     # Write for-loop footers
                     for d in range(dims - 2):
                         callsite_stream.write("}")
@@ -1663,12 +1669,15 @@ DACE_EXPORTED void __dace_runkernel_{id}({fargs});
                 ])
                 array_length = copysize
                 copysize += ' * sizeof(%s)' % dst_dtype.ctype
-
-                callsite_stream.write(
-                    '%sMemcpyAsync(%s, %s, %s, %sMemcpy%sTo%s, %s);\n' %
-                    (self.backend, dst_expr, src_expr, copysize, self.backend,
-                     src_location, dst_location, cudastream), sdfg, state_id,
-                    [src_node, dst_node])
+                code = '%sMemcpyAsync(%s, %s, %s, %sMemcpy%sTo%s, %s)' % (
+                    self.backend, dst_expr, src_expr, copysize, self.backend,
+                    src_location, dst_location, cudastream)
+                if self._debug:
+                    code = '''\nDACE_CUDA_CHECK(''' + code + ''');\n'''
+                else:
+                    code = '''\n''' + code + ''';\n'''
+                callsite_stream.write(code, sdfg, state_id,
+                                      [src_node, dst_node])
                 node_dtype = dst_node.desc(sdfg).dtype
                 if issubclass(node_dtype.type, ctypes.Structure):
                     callsite_stream.write(
@@ -1686,42 +1695,54 @@ DACE_EXPORTED void __dace_runkernel_{id}({fargs});
                                                 fname=field_name,
                                                 sz=size,
                                                 backend=self.backend))
-                            callsite_stream.write(
-                                '{backend}MemcpyAsync({dst}[__idx].{fname}, '
-                                '{src}[__idx].{fname}, {sz}, '
-                                '{backend}Memcpy{sloc}To{dloc}, {stream});'.
-                                format(dst=str(dst_node),
-                                       src=str(src_node),
-                                       fname=field_name,
-                                       sz=size,
-                                       sloc=src_location,
-                                       dloc=dst_location,
-                                       stream=cudastream,
-                                       backend=self.backend), sdfg, state_id,
-                                [src_node, dst_node])
+                            code = '''{backend}MemcpyAsync({dst}[__idx].{fname}, 
+                                {src}[__idx].{fname}, {sz}, 
+                                {backend}Memcpy{sloc}To{dloc}, {stream})'''.format(
+                                dst=str(dst_node),
+                                src=str(src_node),
+                                fname=field_name,
+                                sz=size,
+                                sloc=src_location,
+                                dloc=dst_location,
+                                stream=cudastream,
+                                backend=self.backend)
+                            if self._debug:
+                                code = '''\nDACE_CUDA_CHECK(''' + code + ''');\n'''
+                            else:
+                                code = '''\n''' + code + ''';\n'''
+                            callsite_stream.write(code, sdfg, state_id,
+                                                  [src_node, dst_node])
                     callsite_stream.write('}')
             elif dims == 1 and ((src_strides[-1] != 1 or dst_strides[-1] != 1)):
-                callsite_stream.write(
-                    '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n'
-                    % (self.backend, dst_expr, _topy(dst_strides[0]) +
-                       ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                       src_expr, sym2cpp(src_strides[0]) +
-                       ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
-                       'sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                       sym2cpp(copy_shape[0]), self.backend, src_location,
-                       dst_location, cudastream), sdfg, state_id,
-                    [src_node, dst_node])
+                code = '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s)' % (
+                    self.backend, dst_expr, _topy(dst_strides[0]) +
+                    ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype, src_expr,
+                    sym2cpp(src_strides[0]) +
+                    ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
+                    'sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
+                    sym2cpp(copy_shape[0]), self.backend, src_location,
+                    dst_location, cudastream)
+                if self._debug:
+                    code = '''\nDACE_CUDA_CHECK(''' + code + ''');\n'''
+                else:
+                    code = '''\n''' + code + ''';\n'''
+                callsite_stream.write(code, sdfg, state_id,
+                                      [src_node, dst_node])
             elif dims == 2:
-                callsite_stream.write(
-                    '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n'
-                    % (self.backend, dst_expr, _topy(dst_strides[0]) +
-                       ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                       src_expr, sym2cpp(src_strides[0]) + ' * sizeof(%s)' %
-                       src_node.desc(sdfg).dtype.ctype, sym2cpp(copy_shape[1]) +
-                       ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                       sym2cpp(copy_shape[0]), self.backend, src_location,
-                       dst_location, cudastream), sdfg, state_id,
-                    [src_node, dst_node])
+                code = '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s)' % (
+                    self.backend, dst_expr, _topy(dst_strides[0]) +
+                    ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype, src_expr,
+                    sym2cpp(src_strides[0]) + ' * sizeof(%s)' %
+                    src_node.desc(sdfg).dtype.ctype, sym2cpp(copy_shape[1]) +
+                    ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
+                    sym2cpp(copy_shape[0]), self.backend, src_location,
+                    dst_location, cudastream)
+                if self._debug:
+                    code = '''\nDACE_CUDA_CHECK(''' + code + ''');\n'''
+                else:
+                    code = '''\n''' + code + ''';\n'''
+                callsite_stream.write(code, sdfg, state_id,
+                                      [src_node, dst_node])
 
             # Post-copy synchronization
             if is_sync:
@@ -2268,7 +2289,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 scope_entry)
 
         self._set_gpu_device(sdfg, scope_entry, self._localcode)
-
         self._localcode.write(
             '''
 void  *{kname}_args[] = {{ {kargs} }};
