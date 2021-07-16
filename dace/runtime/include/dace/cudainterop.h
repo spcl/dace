@@ -48,6 +48,12 @@ extern "C"
                                 size_t count,
                                 enum cudaMemcpyKind kind,
                                 cudaStream_t stream = 0);
+    cudaError_t cudaMemcpyPeerAsync(void* dst,
+                                    int  dstDevice,
+                                    const void* src,
+                                    int  srcDevice,
+                                    size_t count,
+                                    cudaStream_t stream = 0);
     cudaError_t cudaMemcpy2D(void *  dst,
                              size_t  dpitch,
                              const void *  src,
@@ -96,7 +102,14 @@ template<typename T> cudaError_t cudaMemcpyAsync(T *dst, const void *src,
                                                  cudaStream_t stream = 0) {
     return cudaMemcpyAsync((void *)dst, src, count, kind, stream);
 }
-
+template<typename T> cudaError_t cudaMemcpyPeerAsync(T *dst,
+                                                 int dstDevice,
+                                                 const void *src,
+                                                 int srcDevice,
+                                                 size_t count,
+                                                 cudaStream_t stream = 0) {
+    return cudaMemcpyPeerAsync((void *)dst, dstDevice, src, srcDevice, count, stream);
+}
 template<typename T> cudaError_t cudaMemcpy2D(T *  dst,
                                               size_t  dpitch,
                                               const void *  src,

@@ -213,8 +213,9 @@ DACE_EXPORTED void __dace_exit_cuda({sdfg.name}_t *__state);
 {other_globalcode}
 
 int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
+    {init_start_print}
     int count;
-
+    
     // Check that we are able to run {backend} code
     if ({backend}GetDeviceCount(&count) != {backend}Success)
     {{
@@ -261,10 +262,12 @@ int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
         }}
     }}
     {initcode}
+    {init_end_print}
     return 0;
 }}
 
 void __dace_exit_cuda({sdfg.name}_t *__state) {{
+    {exit_start_print}
     {exitcode}
 
     int gpu_devices[{ngpus}] = {{{list_gpus}}};
@@ -283,10 +286,19 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         }}
     }}
     delete __state->gpu_context;
+    {exit_end_print}
 }}
 
 {localcode}
 """.format(
+            init_start_print="\n    printf(\"dace_init_cuda: start\\n\");\n"
+            if self._debug else '',
+            init_end_print="\n    printf(\"dace_init_cuda: end\\n\");\n"
+            if self._debug else '',
+            exit_start_print="\n    printf(\"dace_init_cuda: start\\n\");\n"
+            if self._debug else '',
+            exit_end_print="\n    printf(\"dace_init_cuda: end\\n\");\n"
+            if self._debug else '',
             params=params_comma,
             initcode=initcode.getvalue(),
             exitcode=exitcode.getvalue(),
@@ -1630,6 +1642,10 @@ DACE_EXPORTED void __dace_runkernel_{id}({fargs});
                                               'not supported for N-dimensions')
                 else:
                     # Write for-loop headers
+                    if self._debug:
+                        callsite_stream.write(
+                            f"printf(\"Begin 2DAsync: {src_node.data} -> {dst_node.data}\\n\");",
+                            sdfg, state_id, [src_node, dst_node])
                     for d in range(dims - 2):
                         callsite_stream.write(f"for (int __copyidx{d} = 0; "
                                               f"__copyidx{d} < {copy_shape[d]};"
@@ -1661,6 +1677,10 @@ DACE_EXPORTED void __dace_runkernel_{id}({fargs});
                     # Write for-loop footers
                     for d in range(dims - 2):
                         callsite_stream.write("}")
+                    if self._debug:
+                        callsite_stream.write(
+                            f"printf(\"End 2DAsync: {src_node.data} -> {dst_node.data}\\n\");",
+                            sdfg, state_id, [src_node, dst_node])
 
             if dims == 1 and not (src_strides[-1] != 1 or dst_strides[-1] != 1):
                 copysize = ' * '.join([
@@ -2063,13 +2083,14 @@ DACE_EXPORTED void __dace_runkernel_{id}({fargs});
         # Multi GPU scope
         if scope_entry.map.schedule == dtypes.ScheduleType.GPU_Multidevice:
             callsite_stream.write(
-                '''{{
+                '''{{ {debug_print}
 #pragma omp parallel for num_threads({scopeEnd})
 for(int {scope} = {scopebeginning}; {scope} < {scopeEnd}; {scope}++){{
 '''.format(scope=scope_entry.params[0],
             scopebeginning=scope_entry.map.range.ranges[0][0],
-            scopeEnd=scope_entry.map.range.ranges[0][1] + 1), sdfg, state_id,
-                scope_entry)
+            scopeEnd=scope_entry.map.range.ranges[0][1] + 1,
+            debug_print='\nprintf("GPU_Multidevice start\\n");'
+            if self._debug else ''), sdfg, state_id, scope_entry)
 
             # Emit internal array allocation (deallocation handled at MapExit)
             self._frame.allocate_arrays_in_scope(sdfg, scope_entry,
@@ -2328,6 +2349,10 @@ void  *{kname}_args[] = {{ {kargs} }};
                     e.dst.in_connectors[e.dst_conn]), sdfg, state_id, node)
 
         # Invoke kernel call
+        if self._debug:
+            callsite_stream.write(
+                '''printf("__dace_runkernel_%s\\n");''' % (kernel_name), sdfg,
+                state_id, scope_entry)
         callsite_stream.write(
             '__dace_runkernel_%s(%s);\n' %
             (kernel_name, ', '.join(['__state'] + [
