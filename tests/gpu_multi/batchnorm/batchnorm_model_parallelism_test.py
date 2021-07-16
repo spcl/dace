@@ -1,3 +1,4 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
 import dace.libraries.nccl as nccl
@@ -15,8 +16,7 @@ number_of_gpus = 4
 
 
 @dace.program
-def batchnorm2d_model_parallelism_gpu(x_gpu: dc_dtype[N, H, W, C_gpu],
-                                      num_samples: dace.int64):
+def batchnorm2d_model_parallelism_gpu(x_gpu: dc_dtype[N, H, W, C_gpu]):
     # x_tmp = dace.ndarray([1, H, W, C_gpu], dtype=dc_dtype, storage=dace.StorageType.GPU_Global)
     x_tmp = dace.ndarray([N, H, W, C_gpu],
                          dtype=dc_dtype,
@@ -28,7 +28,7 @@ def batchnorm2d_model_parallelism_gpu(x_gpu: dc_dtype[N, H, W, C_gpu],
                          dtype=dc_dtype,
                          storage=dace.StorageType.GPU_Global)
     dace.reduce(lambda a, b: a + b, x_gpu, x_mean, axis=(0), identity=0)
-    fn = np.float32(num_samples)
+    fn = np.float32(N)
     x_mean[:] = x_mean[:] / fn
     x_gpu[:] = x_gpu - x_mean
     x_tmp[:] = x_gpu * x_gpu
@@ -44,7 +44,24 @@ def batchnorm2d_model_parallelism(x: dc_dtype[N, H, W, C]):
                              dtype=dc_dtype,
                              storage=dace.StorageType.GPU_Global)
         x_gpu[:, :, :, :] = x[:, :, :, C_gpu * gpu_id:C_gpu * (gpu_id + 1)]
-        batchnorm2d_model_parallelism_gpu(x_gpu, N)
+        # batchnorm2d_model_parallelism_gpu(x_gpu)
+        x_tmp = dace.ndarray([N, H, W, C_gpu],
+                             dtype=dc_dtype,
+                             storage=dace.StorageType.GPU_Global)
+        x_mean = dace.ndarray([1, H, W, C_gpu],
+                              dtype=dc_dtype,
+                              storage=dace.StorageType.GPU_Global)
+        x_std = dace.ndarray([1, H, W, C_gpu],
+                             dtype=dc_dtype,
+                             storage=dace.StorageType.GPU_Global)
+        dace.reduce(lambda a, b: a + b, x_gpu, x_mean, axis=(0), identity=0)
+        fn = np.float32(N)
+        x_mean[:] = x_mean[:] / fn
+        x_gpu[:] = x_gpu - x_mean
+        x_tmp[:] = x_gpu * x_gpu
+        dace.reduce(lambda a, b: a + b, x_tmp, x_std, axis=(0), identity=0)
+        x_std[:] = np.sqrt(x_std / fn)
+        x_gpu[:] = (x_gpu - x_mean) / np.sqrt(x_std + 1e-5)
         x[:, :, :, C_gpu * gpu_id:C_gpu * (gpu_id + 1)] = x_gpu[:, :, :, :]
 
 
@@ -64,6 +81,7 @@ def batchnorm2d(x: dc_dtype[N, H, W, C]):
 @pytest.mark.multigpu
 def test_batchnorm2d_model_parallelism():
     sdfg: dace.SDFG = batchnorm2d_model_parallelism.to_sdfg(strict=True)
+    sdfg.name = sdfg.name + 'inline'
     state = sdfg.start_state
     source = state.source_nodes()[0]
     multi_gpu_map = state.successors(source)[0]

@@ -1,3 +1,4 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
 import dace.libraries.nccl as nccl
@@ -16,13 +17,13 @@ number_of_gpus = dace.symbol('number_of_gpus')
 
 @dace.program
 def batchnorm2d_data_parallelism_gpu(x_gpu: dc_dtype[N_gpu, H, W, C],
-                                     n: dace.int64):
+                                     N: dace.int32):
     x_tmp = dace.ndarray([N_gpu, H, W, C], dtype=dc_dtype)
     x_mean = dace.ndarray([1, H, W, C], dtype=dc_dtype)
     x_std = dace.ndarray([1, H, W, C], dtype=dc_dtype)
     dace.reduce(lambda a, b: a + b, x_gpu, x_mean, axis=(0), identity=0)
     dace.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
-    fn = np.float32(n)
+    fn = np.float32(N)
     x_mean[:] = x_mean[:] / fn
     x_gpu[:] = x_gpu - x_mean
     x_tmp[:] = x_gpu * x_gpu
@@ -39,7 +40,20 @@ def batchnorm2d_data_parallelism(x: dc_dtype[N, H, W, C]):
                              dtype=dc_dtype,
                              storage=dace.StorageType.GPU_Global)
         x_gpu[:] = x[N_gpu * gpu_id:N_gpu * (gpu_id + 1)]
-        batchnorm2d_data_parallelism_gpu(x_gpu, N)
+        # batchnorm2d_data_parallelism_gpu(x_gpu, N)
+        x_tmp = dace.ndarray([N_gpu, H, W, C], dtype=dc_dtype)
+        x_mean = dace.ndarray([1, H, W, C], dtype=dc_dtype)
+        x_std = dace.ndarray([1, H, W, C], dtype=dc_dtype)
+        dace.reduce(lambda a, b: a + b, x_gpu, x_mean, axis=(0), identity=0)
+        dace.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
+        fn = np.float32(N)
+        x_mean[:] = x_mean[:] / fn
+        x_gpu[:] = x_gpu - x_mean
+        x_tmp[:] = x_gpu * x_gpu
+        dace.reduce(lambda a, b: a + b, x_tmp, x_std, axis=(0), identity=0)
+        dace.nccl.allreduce(lambda a, b: a + b, x_std, x_std)
+        x_std[:] = np.sqrt(x_std / fn)
+        x_gpu[:] = x_gpu / np.sqrt(x_std + 1e-5)
         x[N_gpu * gpu_id:N_gpu * (gpu_id + 1)] = x_gpu[:]
 
 
@@ -73,6 +87,7 @@ def batchnorm2d(x: dc_dtype[N, H, W, C]):
 @pytest.mark.multigpu
 def test_batchnorm2d_data_parallelism():
     sdfg: dace.SDFG = batchnorm2d_data_parallelism.to_sdfg(strict=True)
+    sdfg.name = sdfg.name + 'inline'
     state = sdfg.start_state
     source = state.source_nodes()[0]
     multi_gpu_map = state.successors(source)[0]
@@ -93,6 +108,7 @@ def test_batchnorm2d_data_parallelism():
     print('GPU')
 
     sdfg(X)
+
     print('GPU done')
 
     bnsdfg: dace.SDFG = batchnorm2d.to_sdfg()
