@@ -53,7 +53,7 @@ def test_multi_gpu_reduction_sum():
 
     sdfg(A=A, sumA=sumA, N=n)
     res = np.sum(A)
-    assert np.isclose(sumA, res, atol=0, rtol=1e-7)
+    assert np.isclose(sumA[0], res, atol=0, rtol=1e-7)
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
@@ -78,7 +78,7 @@ def test_multi_gpu_reduction_prod():
 
     sdfg(A=A, prodA=prodA, N=n)
     res = np.prod(A)
-    assert np.isclose(prodA, res, atol=0, rtol=1e-7)
+    assert np.isclose(prodA[0], res, atol=0, rtol=1e-7)
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
@@ -87,7 +87,8 @@ def test_multi_gpu_reduction_prod():
     #                                                   out_path)
 
 
-@pytest.mark.multigpu
+# @pytest.mark.multigpu
+@pytest.mark.skip
 def test_multi_gpu_reduction_max():
     sdfg: dace.SDFG = max_.to_sdfg(strict=True)
     sdfg.name = 'mGPU_CPU_max'
@@ -103,7 +104,7 @@ def test_multi_gpu_reduction_max():
 
     sdfg(A=A, maxA=maxA, N=n)
     res = np.max(A)
-    assert np.isclose(maxA, res, atol=0, rtol=1e-7)
+    assert np.isclose(maxA[0], res, atol=0, rtol=1e-7)
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
@@ -128,7 +129,7 @@ def test_multi_gpu_reduction_custom():
 
     sdfg(A=A, customA=customA, N=n)
     res = np.sum(A) + np.sum(np.square(A))
-    assert np.isclose(customA, res, atol=0, rtol=1e-7)
+    assert np.isclose(customA[0], res, atol=0, rtol=1e-7)
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler

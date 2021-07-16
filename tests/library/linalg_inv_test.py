@@ -322,6 +322,7 @@ def test_inv(implementation, dtype, size, shape, overwrite, getri):
 
     sdfg = make_sdfg(implementation, dtype, id, in_shape, out_shape,
                      in_subset_str, out_subset_str, overwrite, getri)
+    sdfg.name = sdfg.name + f"_{implementation}_{dtype}_{np.sum(shape)}_{overwrite}_{getri}"
     if implementation == 'cuSolverDn':
         sdfg.apply_gpu_transformations()
         sdfg.apply_strict_transformations()

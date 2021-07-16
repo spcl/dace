@@ -4,7 +4,7 @@
 # options
 red="reductions"
 ignore_directories=("batchnorm")
-ignore_files=("${red}/aCPU_aGPU_test.py" "a${red}/GPU_aCPU_test.py" "${red}/mGPU_sGPU_test.py")
+ignore_files=("${red}/aCPU_aGPU_test.py" "${red}/aGPU_aCPU_test.py")
 deselect_tests=("reductions/mGPU_CPU_test.py::test_multi_gpu_reduction_max")
 
 # Cleanup in gpu_multi

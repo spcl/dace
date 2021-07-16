@@ -1002,7 +1002,9 @@ class CPUCodeGen(TargetCodeGenerator):
                             sdfg, dfg, node)
                         dst_gpu_loc = get_gpulevel_node_location(
                             sdfg, dfg, dst_node)
-                        if atomic and src_gpu_loc != None and src_gpu_loc != dst_gpu_loc:
+                        if (atomic and src_gpu_loc != None
+                                and src_gpu_loc != dst_gpu_loc
+                                and is_devicelevel_gpu(sdfg, state_dfg, node)):
                             atomic += '_system'
                         write_expr = codegen.write_and_resolve_expr(
                             sdfg,

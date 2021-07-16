@@ -14,7 +14,7 @@ from dace.sdfg import infer_types
 @pytest.mark.parametrize('expand_first', [True, False])
 def test_gpu(input_array, output_array, expand_first):
 
-    sdfg = dace.SDFG("test_gpu_scalars")
+    sdfg = dace.SDFG(f"test_gpu_scalars_{input_array}_{output_array}_{expand_first}")
     state = sdfg.add_state()
 
     if input_array:
@@ -63,7 +63,11 @@ def test_gpu(input_array, output_array, expand_first):
 
 
 if __name__ == '__main__':
-    test_gpu(True, True, False)
     test_gpu(True, True, True)
-    test_gpu(False, False, False)
+    test_gpu(True, True, False)
+    test_gpu(True, False, True)
+    test_gpu(True, False, False)
+    test_gpu(False, True, True)
+    test_gpu(False, True, False)
     test_gpu(False, False, True)
+    test_gpu(False, False, False)

@@ -874,7 +874,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
             else:
                 callsite_stream.write(
                     '''const int __dace_cuda_device = {gpu_id};
-                    '{backend}Stream_t __dace_current_stream = nullptr;
+                    {backend}Stream_t __dace_current_stream = nullptr;
                     '''.format(gpu_id=gpu_id,
                                backend=Config.get('compiler', 'cuda',
                                                   'backend')),

@@ -3,6 +3,7 @@ import dace
 import dace.libraries.nccl as nccl
 from numba import cuda
 from dace.transformation.interstate import GPUTransformSDFG
+import pytest
 
 N, H, W, C, N_gpu, H_gpu, W_gpu, C_gpu = (dace.symbol(s, dtype=dace.int64)
                                           for s in ('N', 'H', 'W', 'C', 'N_gpu',

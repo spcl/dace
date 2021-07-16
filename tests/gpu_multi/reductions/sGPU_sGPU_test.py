@@ -37,7 +37,7 @@ def test_reduction_GPU0_GPU1_sum():
 
     sdfg(A=A, sumA=sumA, N=n)
     res = np.sum(A)
-    assert np.isclose(sumA, res, atol=0, rtol=1e-7)
+    assert np.isclose(sumA[0], res, atol=0, rtol=1e-7)
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
@@ -63,7 +63,7 @@ def test_reduction_GPU0_GPU0_sum():
 
     sdfg(A=A, sumA=sumA, N=n)
     res = np.sum(A)
-    assert np.isclose(sumA, res, atol=0, rtol=1e-7)
+    assert np.isclose(sumA[0], res, atol=0, rtol=1e-7)
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler

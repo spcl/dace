@@ -735,10 +735,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 # Check if the tasklet calls code that runs on a GPU. It runs on
                 # a GPU if it is connected to data that resides on a GPU.
                 for e in graph.all_edges(node):
-                    if graph.parent.arrays[
-                            e.data.data].storage in dtypes.GPU_STORAGES:
-                        node.location['gpu'] = default_gpu
-                        break
+                    # Needed for empty memlets, e.g. initialization of an array.
+                    if e.data.data in graph.parent.arrays:
+                        if graph.parent.arrays[
+                                e.data.data].storage == dtypes.StorageType.GPU_Global:
+                            node.location['gpu'] = default_gpu
+                            break
 
         return gpus, gpu_vals, default_gpu
 
@@ -1480,7 +1482,7 @@ DACE_EXPORTED void __dace_runkernel_{id}({fargs});
                     stream=stream[0], event=event[0], backend=self.backend)
             callsite_stream.write(sync_string, sdfg, state_id,
                                   [src_node, dst_node])
-        # CPU -> GPU and GPU -> CPU copies
+        # CPU -> GPU, GPU -> CPU copies and GPU -> GPU copies that are not in device code
         elif (
                 isinstance(src_node, nodes.AccessNode)
                 and isinstance(dst_node, nodes.AccessNode)
