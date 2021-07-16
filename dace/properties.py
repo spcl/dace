@@ -728,7 +728,7 @@ class RangeProperty(Property):
 
     @property
     def dtype(self):
-        return sbs.Range
+        return sbs.Subset
 
     @staticmethod
     def to_string(obj):
@@ -1090,8 +1090,7 @@ class SubsetProperty(Property):
     def __set__(self, obj, val):
         if isinstance(val, str):
             val = self.from_string(val)
-        if (val is not None and not isinstance(val, sbs.Range)
-                and not isinstance(val, sbs.Indices)):
+        if (val is not None and not isinstance(val, sbs.Subset)):
             raise TypeError(
                 "Subset property must be either Range or Indices: got {}".
                 format(type(val).__name__))
