@@ -40,14 +40,12 @@ def batchnorm2d_model_parallelism_gpu(x_gpu: dc_dtype[N, H, W, C_gpu],
 @dace.program
 def batchnorm2d_model_parallelism(x: dc_dtype[N, H, W, C]):
     for gpu_id in dace.map[0:number_of_gpus]:
-        x_gpu = dace.ndarray([N, H, W, C // number_of_gpus],
+        x_gpu = dace.ndarray([N, H, W, C_gpu],
                              dtype=dc_dtype,
                              storage=dace.StorageType.GPU_Global)
-        x_gpu[:] = x[:, :, :, (C // number_of_gpus) *
-                     gpu_id:(C // number_of_gpus) * (gpu_id + 1)]
+        x_gpu[:, :, :, :] = x[:, :, :, C_gpu * gpu_id:C_gpu * (gpu_id + 1)]
         batchnorm2d_model_parallelism_gpu(x_gpu, N)
-        x[:, :, :, (C // number_of_gpus) * gpu_id:(C // number_of_gpus) *
-          (gpu_id + 1)] = x_gpu[:]
+        x[:, :, :, C_gpu * gpu_id:C_gpu * (gpu_id + 1)] = x_gpu[:, :, :, :]
 
 
 @dace.program
@@ -71,14 +69,13 @@ def test_batchnorm2d_model_parallelism():
     multi_gpu_map = state.successors(source)[0]
     multi_gpu_map.schedule = dace.ScheduleType.GPU_Multidevice
     # sdfg.apply_transformations(GPUTransformSDFG)
-    sdfg.specialize(dict(number_of_gpus=4))
-
     n = 16
     h = 128
     w = 128
     c = 64
+    ng = 4
+    sdfg.specialize(dict(number_of_gpus=ng, N=n, H=h, W=w, C=c, C_gpu=c // ng))
 
-    size = 256
     np.random.seed(0)
     X = cuda.pinned_array(shape=[n, h, w, c], dtype=np_dtype)
     # X = np.empty(shape=[n, h, w, c], dtype=np_dtype)
@@ -86,7 +83,7 @@ def test_batchnorm2d_model_parallelism():
     Z = np.copy(X)
 
     print('GPU')
-    sdfg(X, N=n, H=h, W=w, C=c)
+    sdfg(X)
     print('GPU done')
 
     bnsdfg: dace.SDFG = batchnorm2d.to_sdfg()

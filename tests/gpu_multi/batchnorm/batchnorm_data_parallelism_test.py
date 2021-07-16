@@ -78,14 +78,13 @@ def test_batchnorm2d_data_parallelism():
     multi_gpu_map = state.successors(source)[0]
     multi_gpu_map.schedule = dace.ScheduleType.GPU_Multidevice
     # sdfg.apply_transformations(GPUTransformSDFG)
-    sdfg.specialize(dict(number_of_gpus=4))
-
     n = 16
     h = 128
     w = 128
     c = 64
+    ng = 4
+    sdfg.specialize(dict(number_of_gpus=ng, N=n, H=h, W=w, C=c, N_gpu=n // ng))
 
-    size = 256
     np.random.seed(0)
     X = cuda.pinned_array(shape=[n, h, w, c], dtype=np_dtype)
     X[:] = np.random.rand(n, h, w, c)[:]
