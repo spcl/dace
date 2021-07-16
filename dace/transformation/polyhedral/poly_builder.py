@@ -14,8 +14,8 @@ from dace.subsets import Range, Subset
 from dace.codegen import control_flow as cflow
 from dace.frontend.python.astutils import negate_expr
 from dace.symbolic import pystr_to_symbolic
-from sympy_isl_conversion import SympyToPwAff, extract_end_cond, \
-    extract_step_cond, to_sympy, sympy_to_pystr
+from dace.transformation.polyhedral.sympy_isl_conversion import SympyToPwAff, \
+    extract_end_cond, extract_step_cond, to_sympy, sympy_to_pystr
 from typing import List, Set, Dict, Tuple, Union
 
 from dace.transformation.polyhedral.sympy_isl_conversion import parse_isl_set
@@ -226,7 +226,6 @@ def isl_set_to_ranges(isl_set: isl.Set):
     """
     ctx = isl_set.get_ctx()
     set_var_names = isl_set.get_var_names(isl.dim_type.set)
-    param_var_names = isl_set.get_var_names(isl.dim_type.param)
 
     # build a schedule for n_dim dimensions
     schedule = isl.Schedule.from_domain(isl_set)
@@ -297,11 +296,10 @@ def isl_set_to_ranges(isl_set: isl.Set):
     printer = isl.Printer.to_str(ctx)
     printer = printer.set_output_format(isl.format.C)
     printer = ast.print_(printer, options)
-    c_code = printer.get_str()
 
     # print("Domain:", isl_set, "\n")
     # print("Schedule: ", schedule, "\n")
-    # print("Code:\n", c_code, "\n")
+    # print("Code:\n", printer.get_str(), "\n")
 
     return loop_ranges, repl_dict
 
@@ -959,7 +957,6 @@ class IslAstVisitor:
         loop_rng = subsets.Range([(init_sympy, end_sympy, step_sym)])
         loop_ranges.append((iterator_var, loop_rng))
 
-        # TODO START ###########################################################
         stmt_domain = create_constrained_set(
             ctx=self.ctx,
             params=self.poly_builder.param_vars,
@@ -967,20 +964,28 @@ class IslAstVisitor:
             constr_ranges=loop_ranges,
             constraints=constraints)
         stmt_domain = stmt_domain.coalesce()
-        poly_rng = Polytope([(init_sympy, end_sympy, step_sym)],
-                            [iterator_var])
-        # TODO END #############################################################
+
+        while stmt_domain.n_dim() > 1:
+            stmt_domain = stmt_domain.move_dims(isl.dim_type.param, 0,
+                                                isl.dim_type.set, 0, 1)
 
         is_parallel = False
         if self.parallelize:
             build = ast_node.get_annotation().user.build
-            schedule = build.get_schedule()
-            domain = schedule.domain()
+            part_schedule = build.get_schedule()
             deps = self.poly_builder.deps
-            is_parallel = ast_node.get_annotation().user.is_parallel
+            is_parallel = BuildFns.is_parallel(part_schedule, deps)
+            # is_parallel = ast_node.get_annotation().user.is_parallel
         if is_parallel:
             state = self.sdfg.add_state('MapState')
-            subset = poly_rng if self.use_polytope else loop_rng
+            if self.use_polytope:
+                subset = Polytope([(init_sympy, end_sympy, step_sym)],
+                                            [iterator_var])
+                # subset = Polytope.from_isl_set(stmt_domain)
+                pass
+            else:
+                subset = loop_rng
+
             map_nodes = nodes.Map(label='map',
                                   params=[iterator_var],
                                   ndrange=subset)
@@ -1046,6 +1051,7 @@ class IslAstVisitor:
                 arr = body_sdfg.arrays[arr_name]
                 if self.use_polytope:
                     subset = Polytope.from_array(arr)
+                    # TODO: the following gives tighter bound for the memlets
                     # read_range = loop_poly.read.intersect_domain(
                     #     loop_poly.domain).range().coalesce()
                     # set_dict = get_set_dict(read_range)
@@ -1072,14 +1078,11 @@ class IslAstVisitor:
                 arr = body_sdfg.arrays[arr_name]
                 if self.use_polytope:
                     subset = Polytope.from_array(arr)
+                    # TODO: the following gives tighter bound for the memlets
                     # write_range = loop_poly.write.intersect_domain(
-                    # loop_poly.domain).range().coalesce()
+                    #     loop_poly.domain).range().coalesce()
                     # set_dict = get_set_dict(write_range)
                     # arr_set = set_dict[arr_name]
-                    # arr_set = arr_set.bounded_simple_hull().coalesce()
-                    # arr_set = get_overapprox_range_list_from_set(arr_set)
-                    # subset = Polytope(arr_set)
-                    # new_range = subsets.Range(bounding_ranges)
                     # subset = Polytope.from_isl_set(arr_set)
                 else:
                     subset = Range.from_array(arr)
@@ -1184,7 +1187,6 @@ class IslAstVisitor:
                 new_sym = pystr_to_symbolic(new_var)
                 repl_dict[old_sym] = new_sym
 
-            # TODO START #######################################################
             param_vars = self.poly_builder.param_vars
             constants = self.poly_builder.constants
             loop_vars = [v for v, r in loop_ranges]
@@ -1195,18 +1197,17 @@ class IslAstVisitor:
                                                  constr_ranges=loop_ranges,
                                                  constraints=constraints,
                                                  set_name=stmt_name)
+
             stmt_poly.domain = isl.UnionSet.from_set(stmt_domain)
             stmt_poly.schedule = isl.Schedule.from_domain(stmt_domain)
             stmt_poly.write = isl.UnionMap.empty(stmt_domain.get_space())
             stmt_poly.read = isl.UnionMap.empty(stmt_domain.get_space())
-            # TODO END #########################################################
 
             state.add_node(tasklet)
             for conn, out_mem in out_data.items():
                 arr_name = out_mem.data
                 new_subset = subsets.Range(out_mem.subset)
                 new_subset.replace(repl_dict)
-                # TODO START ###################################################
                 access = [
                     pystr_to_symbolic(a) for a in new_subset.string_list()
                 ]
@@ -1218,9 +1219,7 @@ class IslAstVisitor:
                                           stmt_name=stmt_name,
                                           access_name=arr_name)
                 stmt_poly.write = stmt_poly.write.union(write)
-                write = write.intersect_domain(stmt_domain)
                 polytope = Polytope(new_subset)
-                # TODO END #####################################################
                 write_node = state.add_write(arr_name)
                 if self.use_polytope:
                     memlet = Memlet(data=arr_name, subset=polytope)
@@ -1232,7 +1231,6 @@ class IslAstVisitor:
                 arr_name = in_mem.data
                 new_subset = subsets.Range(in_mem.subset)
                 new_subset.replace(repl_dict)
-                # TODO START ###################################################
                 access = [
                     pystr_to_symbolic(a) for a in new_subset.string_list()
                 ]
@@ -1244,10 +1242,7 @@ class IslAstVisitor:
                                          stmt_name=stmt_name,
                                          access_name=arr_name)
                 stmt_poly.read = stmt_poly.read.union(read)
-                read = read.intersect_domain(stmt_domain)
                 polytope = Polytope(new_subset)
-
-                # TODO END #####################################################
                 read_node = state.add_read(arr_name)
                 if self.use_polytope:
                     memlet = Memlet(data=arr_name, subset=polytope)
@@ -1514,9 +1509,11 @@ class Polytope(Subset):
 
     @staticmethod
     def from_isl_set(isl_set):
+        params = isl_set.get_var_names(isl.dim_type.set)
+        if isl_set.is_empty():
+            return Range([])
         new_tuple, new_mapping = isl_set_to_ranges(isl_set)
         rng_list = []
-        params = isl_set.get_var_names(isl.dim_type.set)
         if None in params:
             for i in range(len(params)):
                 params[i] = "i{}".format(i)
@@ -1542,13 +1539,12 @@ class Polytope(Subset):
                 index = range_dict[p]
                 rng_list.append((index, index, 1))
         else:
-            range_dict = {str(k): v for (k, v) in new_tuple}
+            range_dict = {str(new_mapping[k]): v for (k, v) in new_tuple}
             for p in self.dim_vars:
                 rng = range_dict[p]
                 rng_list.append(rng.ranges[0])
 
         new_range = Range(rng_list)
-        # assert new_range == subsets.Range(self.ranges)
         return new_range
 
     def to_json(self):
@@ -1632,7 +1628,7 @@ class Polytope(Subset):
         return constr
 
     def offset(self, other, negative, indices=None):
-        raise NotImplementedError
+        return self.to_ranges().offset(other, negative, indices)
 
     def at(self, i, strides):
         raise NotImplementedError
@@ -1720,16 +1716,12 @@ class Polytope(Subset):
         raise NotImplementedError
 
     def __eq__(self, other):
-        if not isinstance(other, Polytope):
-            return False
-        if len(self.ranges) != len(other.ranges):
-            return False
-        return all([(rb == orb and re == ore and rs == ors)
-                    for (rb, re, rs), (orb, ore,
-                                       ors) in zip(self.ranges, other.ranges)])
+        other_new = isl.Set(other.isl_set.to_str(),
+                            context=self.isl_set.get_ctx())
+        return self.isl_set.is_equal(other_new)
 
     def __ne__(self, other):
-        raise NotImplementedError
+        return not (self == other)
 
     def compose(self, other):
         raise NotImplementedError
@@ -1750,11 +1742,15 @@ class Polytope(Subset):
         raise NotImplementedError
 
     def intersects(self, other: 'Polytope'):
-        intersected_set = self.isl_set.intersect(other.isl_set)
+        other_new = isl.Set(other.isl_set.to_str(),
+                            context=self.isl_set.get_ctx())
+        intersected_set = self.isl_set.intersect(other_new)
         Polytope.from_isl_set(intersected_set)
 
     def union(self, other: 'Polytope'):
-        intersected_set = self.isl_set.union(other.isl_set)
+        other_new = isl.Set(other.isl_set.to_str(),
+                            context=self.isl_set.get_ctx())
+        intersected_set = self.isl_set.union(other_new)
         Polytope.from_isl_set(intersected_set)
 
 

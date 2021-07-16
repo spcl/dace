@@ -1380,36 +1380,24 @@ def example_polybench_seidel2d():
     sdfg_orig(A=A_exp, N=N, tsteps=tsteps)
 
     sdfg = seidel2d.to_sdfg(strict=False)
+
     # propagate_memlets_sdfg(sdfg)
     # sdfg.view()
     sdfg.apply_transformations(PolyLoopToMap,
+                               options={
+                                   "use_scheduler": True,
+                                   "parallelize_loops": True,
+                                   "use_polytopes": True
+                               },
                                validate=True)
-    # propagate_memlets_sdfg(sdfg)
-    # sdfg.apply_strict_transformations()
-
-    polytopes_to_ranges(sdfg)
     sdfg.apply_strict_transformations()
-    # sdfg.view()
-    # return
-    #
-    # from ranges_to_polytopes import RangeMapsToPolytopeMaps
-    # sdfg.apply_strict_transformations()
-    # sdfg.apply_transformations(RangeMapsToPolytopeMaps, validate=True)
-    # # sdfg.view()
-    # sdfg.apply_transformations(MapExpansion, validate=True)
-    #
-    # # sdfg.view()
-    # return
 
-    # from ranges_to_polytopes import RangeMapsToPolytopeMaps
-    # sdfg.apply_transformations(RangeMapsToPolytopeMaps, validate=True)
-    # sdfg.apply_strict_transformations()
-    # propagate_memlets_sdfg(sdfg)
-    # # sdfg.view()
-    # sdfg.apply_transformations(MapExpansion, validate=True)
-    # sdfg.apply_strict_transformations()
-    # propagate_memlets_sdfg(sdfg)
-    # # sdfg.view()
+    # sdfg.view()
+    # ranges_to_polytopes(sdfg)
+    # sdfg.view()
+    polytopes_to_ranges(sdfg)
+    # sdfg.view()
+    sdfg.apply_strict_transformations()
 
     csdfg = sdfg.compile()
 
@@ -1524,11 +1512,11 @@ def example_convert_0():
     sdfg.apply_strict_transformations()
     propagate_memlets_sdfg(sdfg)
 
-    sdfg.view()
+    # sdfg.view()
     ranges_to_polytopes(sdfg)
-    sdfg.view()
+    # sdfg.view()
     polytopes_to_ranges(sdfg)
-    sdfg.view()
+    # sdfg.view()
 
     A = np.random.rand(N, N).astype(np.float64)
     B = np.random.rand(N, N).astype(np.float64)
@@ -1573,10 +1561,14 @@ def example_convert_1():
     sdfg.apply_transformations(PolyLoopToMap,
                                options={
                                    "use_scheduler": True,
-                                   "parallelize_loops": True
+                                   "parallelize_loops": True,
+                                   "use_polytopes": True
                                },
                                validate=True)
     sdfg.apply_strict_transformations()
+
+    # sdfg.view()
+    polytopes_to_ranges(sdfg)
     # sdfg.view()
 
     A = np.arange(0, N, dtype=np.float64)
@@ -1618,10 +1610,19 @@ def example_convert_2():
                 c_out = c_in + 1
 
     sdfg = polynomial_product.to_sdfg(strict=True)
-    # sdfg.view()
-    sdfg.apply_transformations(PolyLoopToMap, validate=True)
-    # sdfg.view()
+    sdfg.apply_transformations(PolyLoopToMap,
+                               options={
+                                   "use_scheduler": True,
+                                   "parallelize_loops": True,
+                                   "use_polytopes": True
+                               },
+                               validate=True)
     sdfg.apply_strict_transformations()
+
+    # sdfg.view()
+    # ranges_to_polytopes(sdfg)
+    # sdfg.view()
+    polytopes_to_ranges(sdfg)
     # sdfg.view()
 
     N = np.int32(20)
@@ -1670,7 +1671,7 @@ def example_convert_3():
                 c_ok >> C[m - 1]
                 c_ok = c_ik * 2
             for i in range(N):
-                for j in range(N):
+                for j in range(i):
                     with dace.tasklet:
                         a_in << A[i]
                         b_in << B[j]
@@ -1679,10 +1680,20 @@ def example_convert_3():
                         c_out = c_in + a_in * b_in
 
     sdfg = polynomial_product.to_sdfg(strict=True)
-    # sdfg.view()
-    sdfg.apply_transformations(PolyLoopToMap, validate=True)
-    # sdfg.view()
+
+    sdfg.apply_transformations(PolyLoopToMap,
+                               options={
+                                   "use_scheduler": True,
+                                   "parallelize_loops": True,
+                                   "use_polytopes": True
+                               },
+                               validate=True)
     sdfg.apply_strict_transformations()
+
+    # sdfg.view()
+    # ranges_to_polytopes(sdfg)
+    # sdfg.view()
+    polytopes_to_ranges(sdfg)
     # sdfg.view()
 
     N = np.int32(20)
@@ -1698,7 +1709,7 @@ def example_convert_3():
     for m in range(1, N - 1, 2):
         C_exp[m - 1] = C_exp[m] * 2
         for i in range(N):
-            for j in range(N):
+            for j in range(i):
                 C_exp[i + j] = C_exp[i + j] + A[i] * B[j]
 
     print('Difference C:', np.linalg.norm(C_exp - C))
@@ -1728,9 +1739,20 @@ def example_convert_4():
     sdfg = fun.to_sdfg(strict=True)
     # sdfg.view()
     sdfg.add_constant('N', N)
-    sdfg.apply_transformations(PolyLoopToMap, validate=True)
-    # sdfg.view()
+
+    sdfg.apply_transformations(PolyLoopToMap,
+                               options={
+                                   "use_scheduler": True,
+                                   "parallelize_loops": True,
+                                   "use_polytopes": True
+                               },
+                               validate=True)
     sdfg.apply_strict_transformations()
+
+    # sdfg.view()
+    # ranges_to_polytopes(sdfg)
+    # sdfg.view()
+    polytopes_to_ranges(sdfg)
     # sdfg.view()
 
     A = np.arange(0, N, dtype=np.float64)
@@ -1757,7 +1779,7 @@ def example_convert_5():
                            C: dace.float64[2 * N]):
 
         for i in range(1, N - 1, 2):
-            for j in range(N):
+            for j in range(i):
                 with dace.tasklet:
                     a_in << A[i]
                     b_in << B[j]
@@ -1766,10 +1788,19 @@ def example_convert_5():
                     c_out = c_in + a_in * b_in
 
     sdfg = polynomial_product.to_sdfg(strict=True)
-    # sdfg.view()
-    sdfg.apply_transformations(PolyLoopToMap, validate=True)
-    # sdfg.view()
+    sdfg.apply_transformations(PolyLoopToMap,
+                               options={
+                                   "use_scheduler": True,
+                                   "parallelize_loops": True,
+                                   "use_polytopes": True
+                               },
+                               validate=True)
     sdfg.apply_strict_transformations()
+
+    # sdfg.view()
+    # ranges_to_polytopes(sdfg)
+    # sdfg.view()
+    polytopes_to_ranges(sdfg)
     # sdfg.view()
 
     N = np.int32(20)
@@ -1780,7 +1811,7 @@ def example_convert_5():
     sdfg(A=A, B=B, C=C, N=N)
 
     for i in range(1, N - 1, 2):
-        for j in range(N):
+        for j in range(i):
             C_exp[i + j] = C_exp[i + j] + A[i] * B[j]
 
     print('Difference C:', np.linalg.norm(C_exp - C))
@@ -1806,10 +1837,19 @@ def example_convert_6():
                     A_out = 2 * A_in
 
     sdfg = example.to_sdfg(strict=False)
-    # sdfg.view()
-    sdfg.apply_transformations(PolyLoopToMap, validate=True)
-    # sdfg.view()
+    sdfg.apply_transformations(PolyLoopToMap,
+                               options={
+                                   "use_scheduler": True,
+                                   "parallelize_loops": True,
+                                   "use_polytopes": True
+                               },
+                               validate=True)
     sdfg.apply_strict_transformations()
+
+    # sdfg.view()
+    # ranges_to_polytopes(sdfg)
+    # sdfg.view()
+    polytopes_to_ranges(sdfg)
     # sdfg.view()
 
     N = 10
@@ -1848,16 +1888,13 @@ def run_test():
     assert example_polybench_adi()
     assert example_polybench_cholesky()
     assert example_polybench_seidel2d()
+    assert example_convert_1()
+    assert example_convert_2()
+    assert example_convert_3()
+    assert example_convert_4()
+    assert example_convert_5()
+    assert example_convert_6()
 
 
 if __name__ == '__main__':
-    example_convert_0()
-    # example_convert_1()
-    # example_convert_2()
-    # example_convert_3()
-    # example_convert_4()
-    # example_convert_5()
-    # example_convert_6()
-
-    # example_0()
-    # run_test()
+    run_test()

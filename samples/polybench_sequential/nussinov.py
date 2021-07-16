@@ -1,0 +1,76 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import dace
+import polybench
+
+N = dace.symbol('N')
+
+#datatypes = [dace.float64, dace.int32, dace.float32]
+datatype = dace.int32
+
+# Dataset sizes
+sizes = [{N: 60}, {N: 180}, {N: 500}, {N: 2500}, {N: 5500}]
+
+args = [([N], datatype), ([N, N], datatype)]
+
+
+def init_array(seq, table):
+    n = N.get()
+
+    for i in range(0, n):
+        seq[i] = datatype((i + 1) % 4)
+    table[:] = datatype(0)
+
+
+@dace.program
+def nussinov(seq: datatype[N], table: datatype[N, N]):
+    for i in range(N - 1, -1, -1):
+        for j in range(i + 1, N, 1):
+            if j - 1 >= 0:
+                with dace.tasklet:
+                    center << table[i, j]
+                    west << table[i, j - 1]
+                    out >> table[i, j]
+                    out = max(center, west)
+            if i + 1 < N:
+                with dace.tasklet:
+                    center << table[i, j]
+                    south << table[i + 1, j]
+                    out >> table[i, j]
+                    out = max(center, south)
+            if j - 1 >= 0 and i + 1 < N:
+                if i < j - 1:
+                    with dace.tasklet:
+                        center << table[i, j]
+                        swest << table[i + 1, j - 1]
+                        seq_i << seq[i]
+                        seq_j << seq[j]
+                        out >> table[i, j]
+                        out = max(center, swest + int(seq_i + seq_j == 3))
+                else:
+                    with dace.tasklet:
+                        center << table[i, j]
+                        swest << table[i + 1, j - 1]
+                        out >> table[i, j]
+                        out = max(center, swest)
+            for k in range(i + 1, j, 1):
+                with dace.tasklet:
+                    center << table[i, j]
+                    k_center << table[i, k]
+                    k_south << table[k + 1, j]
+                    out >> table[i, j]
+                    out = max(center, k_center + k_south)
+
+def print_result(filename, *args):
+    with open(filename, 'w') as fp:
+        fp.write("==BEGIN DUMP_ARRAYS==\n")
+        fp.write("begin dump: %s\n" % 'table')
+        for i in range(0, N.get()):
+            for j in range(i, N.get()):
+                fp.write("{} ".format(args[1][i, j]))
+            fp.write("\n")
+        fp.write("\nend   dump: %s\n" % 'table')
+        fp.write("==END   DUMP_ARRAYS==\n")
+
+
+if __name__ == '__main__':
+    polybench.main(sizes, args, print_result, init_array, nussinov)

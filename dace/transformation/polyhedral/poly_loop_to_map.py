@@ -3,7 +3,7 @@
 
 from dace import registry, sdfg as sd
 from dace.transformation.interstate.loop_detection import DetectLoop
-from poly_builder import PolyhedralBuilder
+from dace.transformation.polyhedral.poly_builder import PolyhedralBuilder
 from dace.properties import Property, make_properties
 
 
