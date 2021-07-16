@@ -189,9 +189,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 # TODO: Support HBM
                 link_cfg.write(f"sp={kernel_name}_1.m_axi_{interface_name}:DDR[{memory_bank}]")
         # Emit mapping between inter-kernel streaming interfaces
-        if len(self._stream_connections) > 0:
-            for _, (src, dst) in self._stream_connections.items():
-                link_cfg.write(f"stream_connect={src}:{dst}")
+        for _, (src, dst) in self._stream_connections.items():
+            link_cfg.write(f"stream_connect={src}:{dst}")
 
         other_objs = []
         for name, code in self._other_codes.items():
