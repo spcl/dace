@@ -9,7 +9,7 @@ from polytopes_to_ranges import polytopes_to_ranges
 from ranges_to_polytopes import ranges_to_polytopes
 
 
-def example_0():
+def test_0():
     N = dace.symbol('N')
 
     @dace.program
@@ -58,7 +58,7 @@ def example_0():
     return np.allclose(A_exp, A)
 
 
-def example_1():
+def test_1():
     N = dace.symbol('N')
 
     @dace.program
@@ -108,7 +108,7 @@ def example_1():
     return np.allclose(C_exp, C) and np.allclose(B_exp, B)
 
 
-def example_2():
+def test_2():
     N = dace.symbol('N')
 
     @dace.program
@@ -150,7 +150,7 @@ def example_2():
     return np.allclose(C_exp, C)
 
 
-def example_3():
+def test_3():
     N = dace.symbol('N')
     """
     parameter: N
@@ -214,7 +214,7 @@ def example_3():
     return np.allclose(C_exp, C)
 
 
-def example_4():
+def test_4():
     N = dace.symbol('N')
 
     @dace.program
@@ -257,7 +257,7 @@ def example_4():
     return np.allclose(C_exp, C)
 
 
-def example_5():
+def test_5():
     N = dace.symbol('N')
 
     @dace.program
@@ -296,7 +296,7 @@ def example_5():
     return np.allclose(C_exp, C)
 
 
-def example_6():
+def test_6():
     N = dace.symbol('N')
 
     @dace.program
@@ -336,7 +336,7 @@ def example_6():
     return np.allclose(A_exp, A)
 
 
-def example_loop_skewing():
+def test_loop_skewing():
     N = dace.symbol('N')
 
     @dace.program
@@ -377,7 +377,7 @@ def example_loop_skewing():
     return np.allclose(A_exp, A)
 
 
-def example_if():
+def test_if():
     N = dace.symbol('N')
 
     @dace.program
@@ -562,7 +562,7 @@ def map_in_loop():
     return np.allclose(A_exp, A)
 
 
-def example_polybench_trisolv():
+def test_polybench_trisolv():
     N = dace.symbol('N')
     datatype = dace.float64
 
@@ -631,7 +631,7 @@ def example_polybench_trisolv():
     return np.allclose(x_exp, x)
 
 
-def example_polybench_2mm():
+def test_polybench_2mm():
     NI = dace.symbol('NI')
     NJ = dace.symbol('NJ')
     NK = dace.symbol('NK')
@@ -907,7 +907,7 @@ def bug_example():
     return np.allclose(x_exp, x)
 
 
-def example_polybench_lu():
+def test_polybench_lu():
     N = dace.symbol('N')
     datatype = dace.float64
 
@@ -993,7 +993,7 @@ def example_polybench_lu():
     return np.allclose(A_exp, A)
 
 
-def example_polybench_nussinov():
+def test_polybench_nussinov():
     N = dace.symbol('N')
     datatype = dace.float64
 
@@ -1102,7 +1102,7 @@ def example_polybench_nussinov():
     return np.allclose(table_sdfg, table)
 
 
-def example_polybench_adi():
+def test_polybench_adi():
     N = dace.symbol('N')
     tsteps = dace.symbol('tsteps')
     datatype = dace.float64
@@ -1242,7 +1242,7 @@ def example_polybench_adi():
     return np.allclose(u, u2)
 
 
-def example_polybench_cholesky():
+def test_polybench_cholesky():
     N = dace.symbol('N')
     datatype = dace.float64
 
@@ -1317,7 +1317,7 @@ def example_polybench_cholesky():
     return np.allclose(A, A_exp)
 
 
-def example_polybench_seidel2d():
+def test_polybench_seidel2d():
     N = dace.symbol('N')
     tsteps = dace.symbol('tsteps')
 
@@ -1381,8 +1381,6 @@ def example_polybench_seidel2d():
 
     sdfg = seidel2d.to_sdfg(strict=False)
 
-    # propagate_memlets_sdfg(sdfg)
-    # sdfg.view()
     sdfg.apply_transformations(PolyLoopToMap,
                                options={
                                    "use_scheduler": True,
@@ -1392,11 +1390,7 @@ def example_polybench_seidel2d():
                                validate=True)
     sdfg.apply_strict_transformations()
 
-    # sdfg.view()
-    # ranges_to_polytopes(sdfg)
-    # sdfg.view()
     polytopes_to_ranges(sdfg)
-    # sdfg.view()
     sdfg.apply_strict_transformations()
 
     csdfg = sdfg.compile()
@@ -1408,7 +1402,7 @@ def example_polybench_seidel2d():
     return np.allclose(A, A_exp)
 
 
-def example_loop_triangle():
+def test_loop_triangle():
     N = dace.symbol('N')
 
     @dace.program
@@ -1482,7 +1476,7 @@ def simple_loop_triangle():
     return np.allclose(A_exp, A)
 
 
-def example_convert_0():
+def test_convert_0():
     N = dace.symbol('N')
 
     @dace.program
@@ -1537,7 +1531,7 @@ def example_convert_0():
     return np.allclose(A_exp, A)
 
 
-def example_convert_1():
+def test_convert_1():
     N = dace.symbol('N')
 
     @dace.program
@@ -1591,7 +1585,7 @@ def example_convert_1():
     return np.allclose(C_exp, C) and np.allclose(B_exp, B)
 
 
-def example_convert_2():
+def test_convert_2():
     N = dace.symbol('N')
 
     @dace.program
@@ -1642,7 +1636,7 @@ def example_convert_2():
     return np.allclose(C_exp, C)
 
 
-def example_convert_3():
+def test_convert_3():
     N = dace.symbol('N')
     """
     parameter: N
@@ -1717,7 +1711,7 @@ def example_convert_3():
     return np.allclose(C_exp, C)
 
 
-def example_convert_4():
+def test_convert_4():
     N = dace.symbol('N')
 
     @dace.program
@@ -1771,7 +1765,7 @@ def example_convert_4():
     return np.allclose(C_exp, C)
 
 
-def example_convert_5():
+def test_convert_5():
     N = dace.symbol('N')
 
     @dace.program
@@ -1819,7 +1813,7 @@ def example_convert_5():
     return np.allclose(C_exp, C)
 
 
-def example_convert_6():
+def test_convert_6():
     N = dace.symbol('N')
 
     @dace.program
@@ -1846,11 +1840,7 @@ def example_convert_6():
                                validate=True)
     sdfg.apply_strict_transformations()
 
-    # sdfg.view()
-    # ranges_to_polytopes(sdfg)
-    # sdfg.view()
     polytopes_to_ranges(sdfg)
-    # sdfg.view()
 
     N = 10
     A = np.random.rand(N, N).astype(np.float64)
@@ -1869,31 +1859,31 @@ def example_convert_6():
 
 
 def run_test():
-    assert example_0()
-    assert example_1()
-    assert example_2()
-    assert example_3()
-    assert example_4()
-    assert example_5()
-    assert example_6()
+    assert test_0()
+    assert test_1()
+    assert test_2()
+    assert test_3()
+    assert test_4()
+    assert test_5()
+    assert test_6()
     assert map_in_loop()
     assert reverse_loop()
     assert reverse_loop2()
-    assert example_if()
-    assert example_loop_skewing()
-    assert example_polybench_trisolv()
-    assert example_polybench_nussinov()
-    assert example_polybench_2mm()
-    assert example_polybench_lu()
-    assert example_polybench_adi()
-    assert example_polybench_cholesky()
-    assert example_polybench_seidel2d()
-    assert example_convert_1()
-    assert example_convert_2()
-    assert example_convert_3()
-    assert example_convert_4()
-    assert example_convert_5()
-    assert example_convert_6()
+    assert test_if()
+    assert test_loop_skewing()
+    assert test_polybench_trisolv()
+    assert test_polybench_nussinov()
+    assert test_polybench_2mm()
+    assert test_polybench_lu()
+    assert test_polybench_adi()
+    assert test_polybench_cholesky()
+    assert test_polybench_seidel2d()
+    assert test_convert_1()
+    assert test_convert_2()
+    assert test_convert_3()
+    assert test_convert_4()
+    assert test_convert_5()
+    assert test_convert_6()
 
 
 if __name__ == '__main__':
