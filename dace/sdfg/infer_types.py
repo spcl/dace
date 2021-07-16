@@ -107,7 +107,8 @@ def infer_connector_types(sdfg: SDFG):
 
 
 def set_default_schedule_storage_types_and_location(
-        sdfg: SDFG, toplevel_schedule: dtypes.ScheduleType,
+        sdfg: SDFG,
+        toplevel_schedule: dtypes.ScheduleType,
         toplevel_gpu_location: Union[None, SymbolicType, int] = None) -> None:
     """ 
     Sets default storage, schedule types and location throughout SDFG in-place.
@@ -282,13 +283,12 @@ def _set_default_gpu_location(sdfg: SDFG,
         scope_children_dict = state.scope_children()
 
         # Start with top-level nodes and call recursively
-        _set_default_gpu_location_in_scope(sdfg, state, None, scope_children_dict,
-                                           gpu_id)
+        _set_default_gpu_location_in_scope(sdfg, state, None,
+                                           scope_children_dict, gpu_id)
 
 
 def _set_default_gpu_location_in_scope(
-        sdfg: SDFG,
-        state: SDFGState, parent_node: nodes.Node,
+        sdfg: SDFG, state: SDFGState, parent_node: nodes.Node,
         scope_children_dict: Dict[nodes.Node, List[nodes.Node]],
         parent_gpu_id: Union[SymbolicType, str, int]) -> None:
     for child in scope_children_dict[parent_node]:
@@ -300,7 +300,7 @@ def _set_default_gpu_location_in_scope(
         # Annotate GPU location if it does not exist
         if parent_gpu_id != None and 'gpu' not in child.location:
             if isinstance(child, data.Data):
-                if (not isinstance(child, data.Scalar) and child.storage in [
+                if (child.storage in [
                         dtypes.StorageType.GPU_Global,
                         dtypes.StorageType.GPU_Shared
                 ]):
@@ -309,11 +309,13 @@ def _set_default_gpu_location_in_scope(
             elif isinstance(child, nodes.Tasklet):
                 for e in state.in_edges(child):
                     if e.data.data in sdfg.arrays:
-                        if sdfg.arrays[e.data.data].storage in dtypes.GPU_STORAGES:
+                        if sdfg.arrays[
+                                e.data.data].storage in dtypes.GPU_STORAGES:
                             child.location['gpu'] = parent_gpu_id
                 for e in state.out_edges(child):
                     if e.data.data in sdfg.arrays:
-                        if sdfg.arrays[e.data.data].storage in dtypes.GPU_STORAGES:
+                        if sdfg.arrays[
+                                e.data.data].storage in dtypes.GPU_STORAGES:
                             child.location['gpu'] = parent_gpu_id
 
             elif isinstance(child, nodes.LibraryNode):
@@ -323,8 +325,8 @@ def _set_default_gpu_location_in_scope(
         if isinstance(child, nodes.MapEntry):
             if child.map.schedule == dtypes.ScheduleType.GPU_Multidevice:
                 # Also traverse children (recursively)
-                _set_default_gpu_location_in_scope(sdfg,
-                    state, child, scope_children_dict,
+                _set_default_gpu_location_in_scope(
+                    sdfg, state, child, scope_children_dict,
                     pystr_to_symbolic(child.map.params[0]))
 
             # Annotate GPU location if it does not exist
@@ -339,8 +341,8 @@ def _set_default_gpu_location_in_scope(
 
         elif isinstance(child, nodes.ConsumeEntry):
             if child.consume.schedule == dtypes.ScheduleType.GPU_Multidevice:
-                _set_default_gpu_location_in_scope(sdfg,
-                    state, child, scope_children_dict,
+                _set_default_gpu_location_in_scope(
+                    sdfg, state, child, scope_children_dict,
                     pystr_to_symbolic(child.consume.pe_index))
 
             # Annotate GPU location if it does not exist
