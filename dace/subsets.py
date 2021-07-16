@@ -216,7 +216,7 @@ class Range(Subset):
 
     def num_elements(self):
         return reduce(sp.Mul, self.size(), 1)
-    
+
     def num_elements_exact(self):
         return reduce(sp.Mul, self.bounding_box_size(), 1)
 
@@ -753,11 +753,21 @@ class Range(Subset):
                     return False
             except TypeError:  # cannot determine truth value of Relational
                 type_error = True
-        
+
         if type_error:
             raise TypeError("cannot determine truth value of Relational")
 
         return True
+
+    def simplify(self, ignore_indices: List = None):
+        # simplifies range in place
+        if not isinstance(ignore_indices, list):
+            ignore_indices = [ignore_indices]
+
+        for i, (r, ts) in enumerate(zip(self.ranges, self.tile_sizes)):
+            if i not in ignore_indices:
+                self.ranges[i] = tuple(symbolic.simplify(expr) for expr in r)
+                self.tile_sizes[i] = symbolic.simplify(ts)
 
 
 @dace.serialize.serializable
@@ -801,7 +811,7 @@ class Indices(Subset):
 
     def num_elements(self):
         return 1
-    
+
     def num_elements_exact(self):
         return 1
 
@@ -955,7 +965,7 @@ class Indices(Subset):
             squeezed_indices = [0]
         self.indices = squeezed_indices
         return non_ones
-    
+
     def unsqueeze(self, axes: Sequence[int]) -> List[int]:
         """ Adds zeroes to the subset, in the indices contained in axes.
         
