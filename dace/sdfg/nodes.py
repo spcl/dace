@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes implementing the different types of nodes of the stateful
     dataflow multigraph representation. """
 
@@ -8,14 +8,14 @@ from collections.abc import KeysView
 import dace
 import itertools
 import dace.serialize
-from typing import Any, Dict, Set
+from typing import Any, Dict, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
-from dace.properties import (Property, CodeProperty, LambdaProperty,
-                             RangeProperty, DebugInfoProperty, SetProperty,
-                             make_properties, indirect_properties, DataProperty,
-                             SymbolicProperty, ListProperty,
+from dace.properties import (EnumProperty, Property, CodeProperty,
+                             LambdaProperty, RangeProperty, DebugInfoProperty,
+                             SetProperty, make_properties, indirect_properties,
+                             DataProperty, SymbolicProperty, ListProperty,
                              SDFGReferenceProperty, DictProperty,
                              LibraryImplementationProperty, CodeBlock)
 from dace.frontend.operations import detect_reduction_type
@@ -65,7 +65,7 @@ class Node(object):
 
         try:
             scope_entry_node = parent.entry_node(self)
-        except (RuntimeError, StopIteration):
+        except (RuntimeError, ValueError, StopIteration):
             scope_entry_node = None
 
         if scope_entry_node is not None:
@@ -80,7 +80,7 @@ class Node(object):
         if isinstance(self, EntryNode):
             try:
                 scope_exit_node = str(parent.node_id(parent.exit_node(self)))
-            except (RuntimeError, StopIteration):
+            except (RuntimeError, ValueError, StopIteration):
                 scope_exit_node = None
 
         retdict = {
@@ -222,9 +222,9 @@ class Node(object):
 class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
-    access = Property(choices=dtypes.AccessType,
-                      desc="Type of access to this array",
-                      default=dtypes.AccessType.ReadWrite)
+    access = EnumProperty(dtype=dtypes.AccessType,
+                          desc="Type of access to this array",
+                          default=dtypes.AccessType.ReadWrite)
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
     debuginfo = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
@@ -255,7 +255,7 @@ class AccessNode(Node):
         node._setzero = self._setzero
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
-        node.debuginfo = dcpy(self.debuginfo, memo=memo)
+        node._debuginfo = dcpy(self._debuginfo, memo=memo)
         return node
 
     @property
@@ -328,11 +328,23 @@ class Tasklet(CodeNode):
     """
 
     code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
+    state_fields = ListProperty(
+        element_type=str, desc="Fields that are added to the global state")
+    code_global = CodeProperty(
+        desc="Global scope code needed for tasklet execution",
+        default=CodeBlock("", dtypes.Language.CPP))
+    code_init = CodeProperty(
+        desc="Extra code that is called on DaCe runtime initialization",
+        default=CodeBlock("", dtypes.Language.CPP))
+    code_exit = CodeProperty(
+        desc="Extra code that is called on DaCe runtime cleanup",
+        default=CodeBlock("", dtypes.Language.CPP))
     debuginfo = DebugInfoProperty()
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -340,11 +352,20 @@ class Tasklet(CodeNode):
                  outputs=None,
                  code="",
                  language=dtypes.Language.Python,
+                 state_fields=None,
+                 code_global="",
+                 code_init="",
+                 code_exit="",
                  location=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
         self.code = CodeBlock(code, language)
+
+        self.state_fields = state_fields or []
+        self.code_global = CodeBlock(code_global, dtypes.Language.CPP)
+        self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
+        self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
         self.debuginfo = debuginfo
 
     @property
@@ -377,6 +398,45 @@ class Tasklet(CodeNode):
                                           | self.out_connectors.keys())
 
     def infer_connector_types(self, sdfg, state):
+        # If a MLIR tasklet, simply read out the types (it's explicit)
+        if self.code.language == dtypes.Language.MLIR:
+            # Inline import because mlir.utils depends on pyMLIR which may not be installed
+            # Doesn't cause crashes due to missing pyMLIR if a MLIR tasklet is not present
+            from dace.codegen.targets.mlir import utils
+
+            mlir_ast = utils.get_ast(self.code.code)
+            mlir_is_generic = utils.is_generic(mlir_ast)
+            mlir_entry_func = utils.get_entry_func(mlir_ast, mlir_is_generic)
+
+            mlir_result_type = utils.get_entry_result_type(
+                mlir_entry_func, mlir_is_generic)
+            mlir_out_name = next(iter(self.out_connectors.keys()))[0]
+
+            if self.out_connectors[mlir_out_name] is None or self.out_connectors[
+                    mlir_out_name].ctype == "void":
+                self.out_connectors[mlir_out_name] = utils.get_dace_type(
+                    mlir_result_type)
+            elif self.out_connectors[mlir_out_name] != utils.get_dace_type(
+                    mlir_result_type):
+                warnings.warn(
+                    "Type mismatch between MLIR tasklet out connector and MLIR code"
+                )
+
+            for mlir_arg in utils.get_entry_args(mlir_entry_func,
+                                                 mlir_is_generic):
+                if self.in_connectors[
+                        mlir_arg[0]] is None or self.in_connectors[
+                            mlir_arg[0]].ctype == "void":
+                    self.in_connectors[mlir_arg[0]] = utils.get_dace_type(
+                        mlir_arg[1])
+                elif self.in_connectors[mlir_arg[0]] != utils.get_dace_type(
+                        mlir_arg[1]):
+                    warnings.warn(
+                        "Type mismatch between MLIR tasklet in connector and MLIR code"
+                    )
+
+            return
+
         # If a Python tasklet, use type inference to figure out all None output
         # connectors
         if all(cval.type is not None for cval in self.out_connectors.values()):
@@ -411,6 +471,32 @@ class Tasklet(CodeNode):
             return self.label
 
 
+@make_properties
+class RTLTasklet(Tasklet):
+    """ A specialized tasklet, which is a functional computation procedure
+        that can only access external data specified using connectors.
+
+        This tasklet is specialized for tasklets implemented in System Verilog
+        in that it adds support for adding metadata about the IP cores in use.
+    """
+    # TODO to be replaced when enums have embedded properties
+    ip_cores = DictProperty(key_type=str,
+                            value_type=dict,
+                            desc="A set of IP cores used by the tasklet.")
+
+    @property
+    def __jsontype__(self):
+        return 'Tasklet'
+
+    def add_ip_core(self, module_name, name, vendor, version, params):
+        self.ip_cores[module_name] = {
+            'name': name,
+            'vendor': vendor,
+            'version': version,
+            'params': params
+        }
+
+
 # ------------------------------------------------------------------------------
 
 
@@ -427,12 +513,10 @@ class NestedSDFG(CodeNode):
 
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="SDFG schedule",
-                        allow_none=True,
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    schedule = EnumProperty(dtype=dtypes.ScheduleType,
+                            desc="SDFG schedule",
+                            allow_none=True,
+                            default=dtypes.ScheduleType.Default)
     symbol_mapping = DictProperty(
         key_type=str,
         value_type=dace.symbolic.pystr_to_symbolic,
@@ -443,15 +527,20 @@ class NestedSDFG(CodeNode):
                             desc="Show this node/scope/state as collapsed",
                             default=False)
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     no_inline = Property(
         dtype=bool,
         desc="If True, this nested SDFG will not be inlined in strict mode "
         "(in the InlineSDFG transformation)",
         default=False)
+
+    unique_name = Property(dtype=str,
+                           desc="Unique name of the SDFG",
+                           default="")
 
     def __init__(self,
                  label,
@@ -602,9 +691,12 @@ class MapEntry(EntryNode):
             except KeyError:
                 # Backwards compatibility
                 nid = int(json_obj['scope_exits'][0])
+            except TypeError:
+                nid = None
 
-            exit_node = context['sdfg_state'].node(nid)
-            exit_node.map = m
+            if nid is not None:
+                exit_node = context['sdfg_state'].node(nid)
+                exit_node.map = m
         except IndexError:  # Exit node has a higher node ID
             # Connection of the scope nodes handled in MapExit
             pass
@@ -675,7 +767,8 @@ class MapExit(ExitNode):
                 json_obj['scope_entry']))
 
             ret = cls(map=entry_node.map)
-        except IndexError:  # Entry node has a higher ID than exit node
+        except (IndexError, TypeError):
+            # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in MapEntry
             ret = cls(cls.map_type()('_', [], []))
 
@@ -723,11 +816,9 @@ class Map(object):
     params = ListProperty(element_type=str, desc="Mapped parameters")
     range = RangeProperty(desc="Ranges of map parameters",
                           default=sbs.Range([]))
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="Map schedule",
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    schedule = EnumProperty(dtype=dtypes.ScheduleType,
+                            desc="Map schedule",
+                            default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
     collapse = Property(dtype=int,
                         default=1,
@@ -738,9 +829,10 @@ class Map(object):
                             desc="Show this node/scope/state as collapsed",
                             default=False)
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -809,9 +901,12 @@ class ConsumeEntry(EntryNode):
             except KeyError:
                 # Backwards compatibility
                 nid = int(json_obj['scope_exits'][0])
+            except TypeError:
+                nid = None
 
-            exit_node = context['sdfg_state'].node(nid)
-            exit_node.consume = c
+            if nid is not None:
+                exit_node = context['sdfg_state'].node(nid)
+                exit_node.consume = c
         except IndexError:  # Exit node has a higher node ID
             # Connection of the scope nodes handled in ConsumeExit
             pass
@@ -881,7 +976,8 @@ class ConsumeExit(ExitNode):
             entry_node = context['sdfg_state'].node(int(
                 json_obj['scope_entry']))
             ret = ConsumeExit(consume=entry_node.consume)
-        except IndexError:  # Entry node has a higher ID than exit node
+        except (IndexError, TypeError):
+            # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in ConsumeEntry
             ret = ConsumeExit(Consume("", ['i', 1], None))
 
@@ -930,11 +1026,9 @@ class Consume(object):
     pe_index = Property(dtype=str, desc="Processing element identifier")
     num_pes = SymbolicProperty(desc="Number of processing elements", default=1)
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="Consume schedule",
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    schedule = EnumProperty(dtype=dtypes.ScheduleType,
+                            desc="Consume schedule",
+                            default=dtypes.ScheduleType.Default)
     chunksize = Property(dtype=int,
                          desc="Maximal size of elements to consume at a time",
                          default=1)
@@ -943,9 +1037,10 @@ class Consume(object):
                             desc="Show this node/scope/state as collapsed",
                             default=False)
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def as_map(self):
         """ Compatibility function that allows to view the consume as a map,
@@ -1114,6 +1209,19 @@ PipelineEntry = indirect_properties(Pipeline,
 # ------------------------------------------------------------------------------
 
 
+# Based on https://stackoverflow.com/a/2020083/6489142
+def full_class_path(cls_or_obj: Union[type, object]):
+    if isinstance(cls_or_obj, type):
+        cls = cls_or_obj
+    else:
+        cls = type(cls_or_obj)
+    module = cls.__module__
+    if module is None or module == str.__class__.__module__:
+        return cls.__name__  # Avoid reporting __builtin__
+    else:
+        return module + '.' + cls.__name__
+
+
 @make_properties
 class LibraryNode(CodeNode):
 
@@ -1123,12 +1231,10 @@ class LibraryNode(CodeNode):
         allow_none=True,
         desc=("Which implementation this library node will expand into."
               "Must match a key in the list of possible implementations."))
-    schedule = Property(
+    schedule = EnumProperty(
         dtype=dtypes.ScheduleType,
         desc="If set, determines the default device mapping of "
         "the node upon expansion, if expanded to a nested SDFG.",
-        choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x],
         default=dtypes.ScheduleType.Default)
     debuginfo = DebugInfoProperty()
 
@@ -1142,17 +1248,9 @@ class LibraryNode(CodeNode):
     def __jsontype__(self):
         return 'LibraryNode'
 
-    # Based on https://stackoverflow.com/a/2020083/6489142
-    def _fullclassname(self):
-        module = self.__class__.__module__
-        if module is None or module == str.__class__.__module__:
-            return self.__class__.__name__  # Avoid reporting __builtin__
-        else:
-            return module + '.' + self.__class__.__name__
-
     def to_json(self, parent):
         jsonobj = super().to_json(parent)
-        jsonobj['classpath'] = self._fullclassname()
+        jsonobj['classpath'] = full_class_path(self)
         return jsonobj
 
     @classmethod
@@ -1160,8 +1258,7 @@ class LibraryNode(CodeNode):
         if cls == LibraryNode:
             clazz = pydoc.locate(json_obj['classpath'])
             if clazz is None:
-                raise TypeError('Unrecognized library node type "%s"' %
-                                json_obj['classpath'])
+                return UnregisteredLibraryNode.from_json(json_obj, context)
             return clazz.from_json(json_obj, context)
         else:  # Subclasses are actual library nodes
             ret = cls(json_obj['attributes']['name'])
@@ -1176,10 +1273,13 @@ class LibraryNode(CodeNode):
             :return: the name of the expanded implementation
         """
         implementation = self.implementation
-        library_name = type(self)._dace_library_name
+        library_name = getattr(type(self), '_dace_library_name', '')
         try:
-            config_implementation = Config.get("library", library_name,
-                                               "default_implementation")
+            if library_name:
+                config_implementation = Config.get("library", library_name,
+                                                   "default_implementation")
+            else:
+                config_implementation = None
         except KeyError:
             # Non-standard libraries are not defined in the config schema, and
             # thus might not exist in the config.
@@ -1222,6 +1322,10 @@ class LibraryNode(CodeNode):
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation = transformation_type(sdfg_id, state_id, subgraph, 0)
+        if not transformation.can_be_applied(state, self, 0, sdfg):
+            raise RuntimeError("Library node "
+                               "expansion applicability check failed.")
+        sdfg.append_transformation(transformation)
         transformation.apply(sdfg, *args, **kwargs)
         return implementation
 
@@ -1230,3 +1334,20 @@ class LibraryNode(CodeNode):
         """Register an implementation to belong to this library node type."""
         cls.implementations[name] = transformation_type
         transformation_type._match_node = cls
+
+
+class UnregisteredLibraryNode(LibraryNode):
+
+    original_json = {}
+
+    def __init__(self, json_obj={}, label=None):
+        self.original_json = json_obj
+        super().__init__(label)
+
+    def to_json(self):
+        return self.original_json
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        return UnregisteredLibraryNode(json_obj=json_obj,
+                                       label=json_obj['attributes']['name'])

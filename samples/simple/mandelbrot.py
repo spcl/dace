@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import argparse
@@ -7,10 +7,9 @@ import math
 import numpy as np
 import sys
 
-W = dace.symbol()
-H = dace.symbol()
-MAXITER = dace.symbol('MAXITER')
-d = dace.symbol()
+W = dace.symbol("W")
+H = dace.symbol("H")
+MAXITER = dace.symbol("MAXITER")
 
 
 @dace.program
@@ -66,6 +65,10 @@ if __name__ == "__main__":
     parser.add_argument("W", type=int, nargs="?", default=64)
     parser.add_argument("H", type=int, nargs="?", default=64)
     parser.add_argument("MAXITER", type=int, nargs="?", default=1000)
+    parser.add_argument("--fpga",
+                        dest="fpga",
+                        action="store_true",
+                        default=False)
     args = vars(parser.parse_args())
 
     W.set(args["W"])
@@ -79,7 +82,11 @@ if __name__ == "__main__":
     out[:] = dace.uint32(0)
 
     # Run DaCe program
-    mandelbrot(out, MAXITER=MAXITER)
+    mandelbrot = mandelbrot.to_sdfg()
+    if args["fpga"]:
+        from dace.transformation.interstate import FPGATransformSDFG
+        mandelbrot.apply_transformations(FPGATransformSDFG)
+    mandelbrot(output=out, MAXITER=MAXITER, W=W, H=H)
 
     print('Result:')
     printmatrix(out)

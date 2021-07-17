@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import registry, symbolic, dtypes
 from dace.codegen.prettycode import CodeIOStream
@@ -28,7 +28,7 @@ class MPICodeGen(TargetCodeGenerator):
     def get_generated_codeobjects(self):
         fileheader = CodeIOStream()
         sdfg = self._global_sdfg
-        self._frame.generate_fileheader(sdfg, fileheader)
+        self._frame.generate_fileheader(sdfg, fileheader, 'mpi')
 
         params_comma = sdfg.signature(with_arrays=False)
         if params_comma:
@@ -128,16 +128,8 @@ void __dace_exit_mpi({sdfg.name}_t *__state) {{
                  cppunparse.pyexpr2cpp(symbolic.symstr(skip))), sdfg, state_id,
                 map_header)
 
-        to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, map_header)
-        allocated = set()
-        for child in dfg_scope.scope_children()[map_header]:
-            if not isinstance(child, nodes.AccessNode):
-                continue
-            if child.data not in to_allocate or child.data in allocated:
-                continue
-            allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id, child,
-                                               function_stream, callsite_stream)
+        self._frame.allocate_arrays_in_scope(sdfg, map_header, function_stream,
+                                             callsite_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            dfg_scope,

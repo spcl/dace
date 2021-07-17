@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import dace
@@ -11,14 +11,14 @@ def program_generator(size, factor):
                   dace.float64[size],
                   size=size,
                   factor=factor)
-    def program(input, output):
+    def reloadable_lib(input, output):
         @dace.map(_[0:size])
         def tasklet(i):
             a << input[i]
             b >> output[i]
             b = a * factor
 
-    return program
+    return reloadable_lib
 
 
 def test():

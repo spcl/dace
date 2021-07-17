@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import dace.transformation.subgraph.helpers as helpers
 import dace.sdfg.nodes as nodes
@@ -25,8 +25,9 @@ out3 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
 
 
 @dace.program
-def program(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O], \
-         out1: dace.float64[N,M], out2: dace.float64[1], out3: dace.float64[N,M,O]):
+def subgraph_fusion_complex(A: dace.float64[N], B: dace.float64[M],
+                            C: dace.float64[O], out1: dace.float64[N, M],
+                            out2: dace.float64[1], out3: dace.float64[N, M, O]):
 
     tmp1 = np.ndarray([N, M, O], dtype=dace.float64)
     tmp2 = np.ndarray([N, M, O], dtype=dace.float64)
@@ -122,7 +123,8 @@ def _test_quantitatively(sdfg, graph):
     expand_reduce(sdfg, graph)
     expand_maps(sdfg, graph)
     subgraph = SubgraphView(graph, [node for node in graph.nodes()])
-    assert SubgraphFusion.can_be_applied(sdfg, subgraph) == True
+    sf = SubgraphFusion(subgraph)
+    assert sf.can_be_applied(sdfg, subgraph) == True
     fusion(sdfg, graph)
     sdfg.validate()
     csdfg = sdfg.compile()
@@ -136,7 +138,7 @@ def _test_quantitatively(sdfg, graph):
 
 
 def test_complex():
-    sdfg = program.to_sdfg()
+    sdfg = subgraph_fusion_complex.to_sdfg()
     sdfg.apply_strict_transformations()
     _test_quantitatively(sdfg, sdfg.nodes()[0])
 

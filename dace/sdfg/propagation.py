@@ -1,10 +1,10 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Functionality relating to Memlet propagation (deducing external memlets
     from internal memory accesses and scope ranges). """
 
 from collections import deque
 import copy
-from dace.symbolic import issymbolic, pystr_to_symbolic
+from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
 import itertools
 import functools
 import sympy
@@ -292,8 +292,9 @@ class AffineSMemlet(SeparableMemletPattern):
                 candidate_skip = rs
                 candidate_tile = rt * node_rlen
                 candidate_lstart_pt = result_end - result_begin + 1 - candidate_tile
-                if (candidate_lstart_pt / (num_elements / candidate_tile - 1)
-                    ).simplify() == candidate_skip:
+                if simplify(
+                        candidate_lstart_pt /
+                    (num_elements / candidate_tile - 1)) == candidate_skip:
                     result_skip = rs
                     result_tile = rt * node_rlen
                 else:
@@ -304,10 +305,10 @@ class AffineSMemlet(SeparableMemletPattern):
                 result_skip = 1
                 result_tile = 1
 
-        result_begin = sympy.simplify(result_begin)
-        result_end = sympy.simplify(result_end)
-        result_skip = sympy.simplify(result_skip)
-        result_tile = sympy.simplify(result_tile)
+        result_begin = simplify(result_begin)
+        result_end = simplify(result_end)
+        result_skip = simplify(result_skip)
+        result_tile = simplify(result_tile)
 
         return (result_begin, result_end, result_skip, result_tile)
 
@@ -435,9 +436,9 @@ class GenericSMemlet(SeparableMemletPattern):
             if symbolic.issymbolic(dim):
                 used_symbols.update(dim.free_symbols)
 
-        if (used_symbols & set(self.params)
-                and any(s not in defined_vars
-                        for s in node_range.free_symbols)):
+        if (used_symbols & set(self.params) and any(
+                symbolic.pystr_to_symbolic(s) not in defined_vars
+                for s in node_range.free_symbols)):
             # Cannot propagate symbols that are undefined in the outer range
             # (e.g., dynamic map ranges).
             return False
@@ -461,14 +462,21 @@ class GenericSMemlet(SeparableMemletPattern):
             else:
                 raise NotImplementedError
 
+            if (node_rs < 0) == True:
+                node_rb, node_re, node_rs = node_re, node_rb, - node_rs
+
             # Get true range end
-            lastindex = node_re
+            pos_firstindex = node_rb
+            neg_firstindex = node_re
+            pos_lastindex = node_re
+            neg_lastindex = node_rb
             if node_rs != 1:
-                lastindex = symbolic.pystr_to_symbolic(
+                pos_lastindex = symbolic.pystr_to_symbolic(
                     '%s + int_floor(%s - %s, %s) * %s' %
                     (symbolic.symstr(node_rb), symbolic.symstr(node_re),
                      symbolic.symstr(node_rb), symbolic.symstr(node_rs),
                      symbolic.symstr(node_rs)))
+                neg_firstindex = pos_lastindex
 
             if isinstance(dim_exprs, list):
                 dim_exprs = dim_exprs[0]
@@ -489,10 +497,28 @@ class GenericSMemlet(SeparableMemletPattern):
             else:
                 rb, re = (dim_exprs, dim_exprs)
 
+            # Support for affine expressions with a negative multiplier
+            firstindex = pos_firstindex
+            lastindex = pos_lastindex
+            a = sympy.Wild('a', exclude=self.params)
+            b = sympy.Wild('b', exclude=self.params)
             if result_begin is None:
-                result_begin = rb.subs(self.params[idx], node_rb)
+                matches = rb.match(a * self.params[idx] + b)
             else:
-                result_begin = result_begin.subs(self.params[idx], node_rb)
+                matches = result_begin.match(a * self.params[idx] + b)
+            if matches and (matches[a] < 0) == True:
+                firstindex = neg_firstindex
+            if result_end is None:
+                matches = re.match(a * self.params[idx] + b)
+            else:
+                matches = result_end.match(a * self.params[idx] + b)
+            if matches and (matches[a] < 0) == True:
+                lastindex = neg_lastindex
+
+            if result_begin is None:
+                result_begin = rb.subs(self.params[idx], firstindex)
+            else:
+                result_begin = result_begin.subs(self.params[idx], firstindex)
             if result_end is None:
                 result_end = re.subs(self.params[idx], lastindex)
             else:
@@ -867,9 +893,8 @@ def propagate_states(sdfg) -> None:
                     loop_executions = loop_executions.doit()
 
                     loop_state = state.condition_edge.dst
-                    end_state = (out_edges[0].dst
-                                 if out_edges[1].dst == loop_state else
-                                 out_edges[1].dst)
+                    end_state = (out_edges[0].dst if out_edges[1].dst
+                                 == loop_state else out_edges[1].dst)
 
                     traversal_q.append((end_state, state.executions,
                                         proposed_dynamic, itvar_stack))
@@ -1128,10 +1153,26 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 oedge.data.dynamic = True
 
 
+def reset_state_annotations(sdfg):
+    """ Resets the state (loop-related) annotations of an SDFG.
+        :note: This operation is shallow (does not go into nested SDFGs).
+    """
+    for state in sdfg.nodes():
+        state.executions = 0
+        state.dynamic_executions = True
+        state.ranges = {}
+        state.condition_edge = None
+        state.is_loop_guard = False
+        state.itervar = None
+
+
 def propagate_memlets_sdfg(sdfg):
     """ Propagates memlets throughout an entire given SDFG. 
         :note: This is an in-place operation on the SDFG.
     """
+    # Reset previous annotations first
+    reset_state_annotations(sdfg)
+
     for state in sdfg.nodes():
         propagate_memlets_state(sdfg, state)
 
@@ -1407,10 +1448,18 @@ def propagate_subset(memlets: List[Memlet],
                 break
         else:
             # No patterns found. Emit a warning and propagate the entire
-            # array
+            # array whenever symbols are used
             warnings.warn('Cannot find appropriate memlet pattern to '
                           'propagate %s through %s' % (str(subset), str(rng)))
-            tmp_subset = subsets.Range.from_array(arr)
+            entire_array = subsets.Range.from_array(arr)
+            paramset = set(map(str, params))
+            # Fill in the entire array only if one of the parameters appears in the
+            # free symbols list of the subset dimension
+            tmp_subset = subsets.Range([
+                ea if any(set(map(str, _freesyms(sd))) & paramset
+                          for sd in s) else s
+                for s, ea in zip(subset, entire_array)
+            ])
 
         # Union edges as necessary
         if new_subset is None:
@@ -1436,8 +1485,9 @@ def propagate_subset(memlets: List[Memlet],
     # Propagate volume:
     # Number of accesses in the propagated memlet is the sum of the internal
     # number of accesses times the size of the map range set (unbounded dynamic)
-    new_memlet.volume = (sum(m.volume for m in memlets) *
-                         functools.reduce(lambda a, b: a * b, rng.size(), 1))
+    new_memlet.volume = simplify(
+        sum(m.volume for m in memlets) *
+        functools.reduce(lambda a, b: a * b, rng.size(), 1))
     if any(m.dynamic for m in memlets):
         new_memlet.dynamic = True
     elif symbolic.issymbolic(new_memlet.volume) and any(
@@ -1446,3 +1496,13 @@ def propagate_subset(memlets: List[Memlet],
         new_memlet.volume = 0
 
     return new_memlet
+
+
+def _freesyms(expr):
+    """ 
+    Helper function that either returns free symbols for sympy expressions
+    or an empty set if constant.
+    """
+    if isinstance(expr, sympy.Basic):
+        return expr.free_symbols
+    return {}

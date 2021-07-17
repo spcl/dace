@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
 from dace import dtypes, nodes, registry, Memlet
@@ -117,8 +117,6 @@ class GPUPersistentKernel(SubgraphTransformation):
 
     def apply(self, sdfg: SDFG):
         subgraph = self.subgraph_view(sdfg)
-        if not self.can_be_applied(sdfg, subgraph):
-            raise Exception('The given subgraph cannot be fused!')
 
         entry_states_in, entry_states_out = self.get_entry_states(
             sdfg, subgraph)

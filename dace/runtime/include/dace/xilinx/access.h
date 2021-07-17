@@ -1,17 +1,10 @@
-// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
-#include "dace/xilinx/array_interface.h"
 #include "dace/xilinx/vec.h"
 #include "dace/xilinx/stream.h"
 
 namespace dace {
-
-template <typename T, unsigned vector_length>
-vec<T, vector_length> Read(ArrayInterface<vec<T, vector_length>> const &interface) {
-  #pragma HLS INLINE
-  return *interface.ptr_in();
-}
 
 template <typename T, unsigned vector_length>
 vec<T, vector_length> Read(vec<T, vector_length> const *ptr) {
@@ -23,13 +16,6 @@ template <typename T, unsigned vector_length>
 vec<T, vector_length> Read(vec<T, vector_length> const &ref) {
   #pragma HLS INLINE
   return ref;
-}
-
-template <typename T, unsigned vector_length>
-void Write(ArrayInterface<vec<T, vector_length>> interface,
-           vec<T, vector_length> const &value) {
-  #pragma HLS INLINE
-  *interface.ptr_out() = value;
 }
 
 template <typename T, unsigned vector_length>

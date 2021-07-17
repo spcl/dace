@@ -1,7 +1,6 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-
 import numpy as np
-
 import dace
 
 
@@ -82,7 +81,8 @@ def test_call_multiple_sdfgs():
     ##################
     # put everything together as a program
     @dace.program
-    def prog(input: dace.float32[2, 2], output: dace.float32[2, 2]):
+    def multiple_nested_sdfgs(input: dace.float32[2, 2],
+                              output: dace.float32[2, 2]):
         tmp_max = np.max(input, axis=axis)
 
         out_tmp = dace.define_local(out_tmp_shape, out_tmp_dtype)
@@ -92,7 +92,7 @@ def test_call_multiple_sdfgs():
 
         out_tmp_div_sum(out_tmp=out_tmp, tmp_sum=tmp_sum, output=output)
 
-    sdfg = prog.to_sdfg(strict=False)
+    sdfg = multiple_nested_sdfgs.to_sdfg(strict=False)
     state = sdfg.nodes()[-1]
     for n in state.nodes():
         if isinstance(n, dace.sdfg.nodes.AccessNode):
@@ -104,5 +104,42 @@ def test_call_multiple_sdfgs():
                 assert (dst.data in {'output'})
 
 
+def test_nested_sdfg_with_return_value():
+    @dace.program
+    def nested(A: dace.float64[20]):
+        return A + 20
+
+    sdfg = nested.to_sdfg()
+
+    @dace.program
+    def mainprog(A: dace.float64[30], B: dace.float64[20]):
+        return sdfg(A[10:]) + B
+
+    A = np.random.rand(30)
+    B = np.random.rand(20)
+    expected = A[10:] + 20 + B
+    assert np.allclose(mainprog(A, B), expected)
+
+
+def test_nested_sdfg_with_return_value_assignment():
+    @dace.program
+    def nested(A: dace.float64[20]):
+        return A + 20
+
+    sdfg = nested.to_sdfg()
+
+    @dace.program
+    def mainprog(A: dace.float64[30], B: dace.float64[20]):
+        B[:] = sdfg(A[10:])
+
+    A = np.random.rand(30)
+    B = np.random.rand(20)
+    expected = A[10:] + 20
+    mainprog(A, B)
+    assert np.allclose(B, expected)
+
+
 if __name__ == "__main__":
     test_call_multiple_sdfgs()
+    test_nested_sdfg_with_return_value()
+    test_nested_sdfg_with_return_value_assignment()

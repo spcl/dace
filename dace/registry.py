@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains class decorators to ease creating classes and enumerations whose
     subclasses and values can be registered externally. """
 
@@ -54,6 +54,18 @@ def autoregister_params(**params):
     creation. Uses the arguments given to register the value of the subclass.
     """
     return lambda cls: autoregister(cls, **params)
+
+
+def undefined_safe_enum(cls: Type):
+    """
+    Decorator that adds a value ``Undefined`` to an enumeration.
+    """
+    if not issubclass(cls, Enum):
+        raise TypeError(
+            "Only aenum.Enum subclasses may be used with undefined values"
+        )
+    extend_enum(cls, 'Undefined')
+    return cls
 
 
 def extensible_enum(cls: Type):

@@ -1,7 +1,8 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
+import warnings
 
 
 def _get_matmul_operands(node,
@@ -93,12 +94,19 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
     from dace.codegen.targets.common import sym2cpp
     from dace.libraries.blas.blas_helpers import get_gemm_opts
 
-    (_, _, ashape,
-     astride), (_, _, bshape,
-                bstride), _ = _get_matmul_operands(node, state, sdfg)
-    opt = get_gemm_opts(astride, bstride, cdesc.strides)
-    bopt = _get_batchmm_opts(ashape, astride, bshape, bstride, cdesc.shape,
-                             cdesc.strides)
+    (_, _, ashape, astride), (_, _, bshape, bstride), (
+        _, _, cshape, cstride) = _get_matmul_operands(node, state, sdfg)
+
+    if getattr(node, 'transA', False):
+        ashape = list(reversed(ashape))
+        astride = list(reversed(astride))
+    if getattr(node, 'transB', False):
+        bshape = list(reversed(bshape))
+        bstride = list(reversed(bstride))
+
+    opt = get_gemm_opts(astride, bstride, cstride)
+    bopt = _get_batchmm_opts(ashape, astride, bshape, bstride, cshape, cstride)
+
     opt['x'] = '_a'
     opt['y'] = '_b'
     opt['M'] = sym2cpp(ashape[-2])
@@ -144,10 +152,22 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
         if len(size_a) == 2 and len(size_b) == 2:
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
+            beta = 0.0
+            cin = True
+            if c[0].data.wcr:
+                from dace.frontend import operations
+                redtype = operations.detect_reduction_type(c[0].data.wcr)
+                if redtype == dace.dtypes.ReductionType.Sum:
+                    beta = 1.0
+                    cin = False
+                else:
+                    warnings.warn("Unsupported WCR in output of MatMul "
+                                  "library node: {}".format(c[0].data.wcr))
             gemm = Gemm(node.name + 'gemm',
                         location=node.location,
                         alpha=1.0,
-                        beta=0.0)
+                        beta=beta,
+                        cin=cin)
             return gemm
         elif len(size_b) == 3 and (len(size_a) in [2, 3]):
             # Batched matrix and matrix -> batched matrix multiplication

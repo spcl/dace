@@ -1,7 +1,26 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import contextlib
 import os
 import platform
 import yaml
+
+
+@contextlib.contextmanager
+def set_temporary(*path, value):
+    """ Temporarily set configuration value at ``path`` to value, and reset it after the context manager exits.
+
+        :Example:
+
+            print(Config.get("compiler", "build_type")
+            with set_temporary("compiler", "build_type", value="Debug"):
+                print(Config.get("compiler", "build_type")
+            print(Config.get("compiler", "build_type")
+
+    """
+    old_value = Config.get(*path)
+    Config.set(*path, value=value)
+    yield
+    Config.set(*path, value=old_value)
 
 
 def _env2bool(envval):
@@ -80,8 +99,7 @@ class Config(object):
         Config._cfg_filename = cfg_filename
 
         dace_path = os.path.dirname(os.path.abspath(__file__))
-        Config._metadata_filename = os.path.join(dace_path,
-                                                 'config_schema.yml')
+        Config._metadata_filename = os.path.join(dace_path, 'config_schema.yml')
 
         # Load configuration schema (for validation and defaults)
         Config.load_schema()

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 # TODO: This code should undergo major refactoring
 
@@ -467,7 +467,6 @@ class TFSession:
             if name not in node_types and not isinstance(desc, Scalar):
                 del self.graph.arrays[name]
 
-        self.graph._arg_types.update(self.callbackTypeDict)
         self.graph.fill_scope_connectors()
         ############################
         # Set up arguments

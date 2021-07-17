@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import config, dtypes, registry
 from dace.sdfg import nodes, is_devicelevel_gpu
 from dace.codegen.instrumentation.provider import InstrumentationProvider
@@ -42,8 +42,14 @@ class GPUEventProvider(InstrumentationProvider):
             id=id, backend=self.backend)
 
     def _record_event(self, id, stream):
-        return '%sEventRecord(__dace_ev_%s, __state->gpu_context->streams[%d]);' % (
-            self.backend, id, stream)
+        concurrent_streams = int(
+            config.Config.get('compiler', 'cuda', 'max_concurrent_streams'))
+        if concurrent_streams < 0 or stream == -1:
+            streamstr = 'nullptr'
+        else:
+            streamstr = f'__state->gpu_context->streams[{stream}]'
+        return '%sEventRecord(__dace_ev_%s, %s);' % (self.backend, id,
+                                                     streamstr)
 
     def _report(self, timer_name: str, sdfg=None, state=None, node=None):
         idstr = self._idstr(sdfg, state, node)
@@ -62,8 +68,12 @@ int __dace_micros_{id} = (int) (__dace_ms_{id} * 1000.0);
 unsigned long int __dace_ts_end_{id} = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 unsigned long int __dace_ts_start_{id} = __dace_ts_end_{id} - __dace_micros_{id};
 __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __dace_ts_end_{id}, {sdfg_id}, {state_id}, {node_id});'''.format(
-            id=idstr, timer_name=timer_name, backend=self.backend,
-            sdfg_id=sdfg.sdfg_id, state_id=state_id, node_id=node_id)
+            id=idstr,
+            timer_name=timer_name,
+            backend=self.backend,
+            sdfg_id=sdfg.sdfg_id,
+            state_id=state_id,
+            node_id=node_id)
 
     # Code generation hooks
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
@@ -123,8 +133,9 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
                                 'GPU_Device map scopes')
 
             idstr = 'b' + self._idstr(sdfg, state, node)
-            outer_stream.write(self._record_event(idstr, node._cuda_stream),
-                               sdfg, state_id, node)
+            stream = getattr(node, '_cuda_stream', -1)
+            outer_stream.write(self._record_event(idstr, stream), sdfg,
+                               state_id, node)
 
     def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream,
                       global_stream):
@@ -133,8 +144,9 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         s = self._get_sobj(node)
         if s.instrument == dtypes.InstrumentationType.GPU_Events:
             idstr = 'e' + self._idstr(sdfg, state, entry_node)
-            outer_stream.write(self._record_event(idstr, node._cuda_stream),
-                               sdfg, state_id, node)
+            stream = getattr(node, '_cuda_stream', -1)
+            outer_stream.write(self._record_event(idstr, stream), sdfg,
+                               state_id, node)
             outer_stream.write(
                 self._report('%s %s' % (type(s).__name__, s.label), sdfg, state,
                              entry_node), sdfg, state_id, node)
@@ -149,8 +161,9 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         if node.instrument == dtypes.InstrumentationType.GPU_Events:
             state_id = sdfg.node_id(state)
             idstr = 'b' + self._idstr(sdfg, state, node)
-            outer_stream.write(self._record_event(idstr, node._cuda_stream),
-                               sdfg, state_id, node)
+            stream = getattr(node, '_cuda_stream', -1)
+            outer_stream.write(self._record_event(idstr, stream), sdfg,
+                               state_id, node)
 
     def on_node_end(self, sdfg, state, node, outer_stream, inner_stream,
                     global_stream):
@@ -162,8 +175,9 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         if node.instrument == dtypes.InstrumentationType.GPU_Events:
             state_id = sdfg.node_id(state)
             idstr = 'e' + self._idstr(sdfg, state, node)
-            outer_stream.write(self._record_event(idstr, node._cuda_stream),
-                               sdfg, state_id, node)
+            stream = getattr(node, '_cuda_stream', -1)
+            outer_stream.write(self._record_event(idstr, stream), sdfg,
+                               state_id, node)
             outer_stream.write(
                 self._report('%s %s' % (type(node).__name__, node.label), sdfg,
                              state, node), sdfg, state_id, node)

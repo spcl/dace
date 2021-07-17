@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import data, dtypes
 from dace.codegen.tools import type_inference
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -24,16 +24,25 @@ def infer_connector_types(sdfg: SDFG):
                 if cname is None:
                     continue
                 scalar = (e.data.subset and e.data.subset.num_elements() == 1)
+                if e.data.data is not None:
+                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is
+                                           not dtypes.StorageType.GPU_Global)
+                else:
+                    allocated_as_scalar = True
+
                 if node.in_connectors[cname].type is None:
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
-                        scalar = isinstance(node.sdfg.arrays[cname],
-                                            data.Scalar)
+                        scalar = (isinstance(node.sdfg.arrays[cname],
+                                             data.Scalar)
+                                  and allocated_as_scalar)
                         dtype = node.sdfg.arrays[cname].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     elif e.data.data is not None:  # Obtain type from memlet
                         scalar |= isinstance(sdfg.arrays[e.data.data],
                                              data.Scalar)
+                        if isinstance(node, nodes.LibraryNode):
+                            scalar &= allocated_as_scalar
                         dtype = sdfg.arrays[e.data.data].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     else:  # Code->Code
@@ -54,16 +63,25 @@ def infer_connector_types(sdfg: SDFG):
                 scalar = (e.data.subset and e.data.subset.num_elements() == 1
                           and (not e.data.dynamic or
                                (e.data.dynamic and e.data.wcr is not None)))
+                if e.data.data is not None:
+                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is
+                                           not dtypes.StorageType.GPU_Global)
+                else:
+                    allocated_as_scalar = True
+                    
                 if node.out_connectors[cname].type is None:
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
-                        scalar = isinstance(node.sdfg.arrays[cname],
-                                            data.Scalar)
+                        scalar = (isinstance(node.sdfg.arrays[cname],
+                                             data.Scalar)
+                                  and allocated_as_scalar)
                         dtype = node.sdfg.arrays[cname].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     elif e.data.data is not None:  # Obtain type from memlet
                         scalar |= isinstance(sdfg.arrays[e.data.data],
                                              data.Scalar)
+                        if isinstance(node, nodes.LibraryNode):
+                            scalar &= allocated_as_scalar
                         dtype = sdfg.arrays[e.data.data].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     else:
@@ -138,9 +156,16 @@ def _scopes_with_tbmaps(state: SDFGState, scopes: List[nodes.EntryNode]):
 def _set_default_schedule_in_scope(parent_node: nodes.Node,
                                    parent_schedule: dtypes.ScheduleType,
                                    reverse_scope_dict: Dict[nodes.Node,
-                                                            List[nodes.Node]]):
+                                                            List[nodes.Node]],
+                                   use_parent_schedule: bool = False):
     for node in reverse_scope_dict[parent_node]:
-        child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
+        if use_parent_schedule:
+            child_schedule = parent_schedule
+            if parent_schedule in (dtypes.ScheduleType.Default,
+                                   dtypes.ScheduleType.GPU_Default):
+                child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
+        else:
+            child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
         # Set default schedule type
         if isinstance(node, nodes.MapEntry):
             if node.map.schedule is dtypes.ScheduleType.Default:
@@ -157,24 +182,25 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
                                            reverse_scope_dict)
         elif isinstance(node, nodes.NestedSDFG):
             # Nested SDFGs retain same schedule as their parent scope
-            # TODO: and parent_schedule is not None?
             if node.schedule is dtypes.ScheduleType.Default:
                 node.schedule = parent_schedule
             _set_default_schedule_types(node.sdfg, node.schedule)
         elif getattr(node, 'schedule', False):
             if node.schedule is dtypes.ScheduleType.Default:
-                # TODO: and parent_schedule is not None?
-                node.schedule = child_schedule if isinstance(node, nodes.EntryNode) else parent_schedule
+                node.schedule = (
+                    child_schedule if isinstance(node, nodes.EntryNode)
+                    or parent_schedule is None else parent_schedule)
 
 
 def _set_default_schedule_types(sdfg: SDFG,
-                                toplevel_schedule: dtypes.ScheduleType):
+                                toplevel_schedule: dtypes.ScheduleType,
+                                use_parent_schedule: bool = False):
     for state in sdfg.nodes():
         reverse_scope_dict = state.scope_children()
 
         # Start with top-level nodes and call recursively
         _set_default_schedule_in_scope(None, toplevel_schedule,
-                                       reverse_scope_dict)
+                                       reverse_scope_dict, use_parent_schedule)
 
 
 def _set_default_storage_types(sdfg: SDFG,

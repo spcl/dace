@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -53,7 +53,6 @@ def test_call_if():
         else:
             ref[i] += 3 * i
     sdfg = call_if.to_sdfg()
-    sdfg.save("call_if.sdfg")
     call_if(A)
     assert(np.array_equal(A, ref))
 

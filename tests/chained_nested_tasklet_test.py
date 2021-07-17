@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 
 import dace as dp
@@ -19,7 +19,7 @@ def test_nested_map():
     output[:] = dp.int32(0)
 
     # Construct SDFG
-    mysdfg = SDFG('ctasklet')
+    mysdfg = SDFG('ctasklet_nested_map')
     state = mysdfg.add_state()
     A_ = state.add_array('A', [N], dp.int32)
     B_ = state.add_array('B', [N], dp.int32)
@@ -62,13 +62,13 @@ def test_nested_sdfg():
     output[:] = dp.int32(0)
 
     # Construct outer SDFG
-    mysdfg = SDFG('ctasklet')
+    mysdfg = SDFG('ctasklet_nested_sdfg')
     state = mysdfg.add_state()
     A_ = state.add_array('A', [N], dp.int32)
     B_ = state.add_array('B', [N], dp.int32)
 
     # Construct inner SDFG
-    nsdfg = dp.SDFG('ctasklet_inner')
+    nsdfg = dp.SDFG('ctasklet_nested_sdfg_inner')
     nstate = nsdfg.add_state()
     a = nstate.add_array('a', [N], dp.int32)
     b = nstate.add_array('b', [N], dp.int32)

@@ -1,10 +1,13 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import inspect
 from copy import deepcopy as dc
 from collections import OrderedDict
 
 import dace
 import numpy as np
+
+from numpy.random import default_rng
+rng = default_rng(42)
 
 
 def compare_numpy_output(non_zero=False,
@@ -45,17 +48,16 @@ def compare_numpy_output(non_zero=False,
                     ddesc = dace.data.Scalar(ddesc)
 
                 if ddesc.dtype in [dace.float16, dace.float32, dace.float64]:
-                    res = np.random.rand(*ddesc.shape).astype(
-                        getattr(np, ddesc.dtype.to_string()))
+                    res = rng.random(ddesc.shape, dtype=getattr(np, ddesc.dtype.to_string()))
                     b = 0 if positive else -max_value
                     a = max_value
                     res = (b - a) * res + a
                     if non_zero:
                         res[res == 0] = 1
                 elif ddesc.dtype in [dace.complex64, dace.complex128]:
-                    res = (np.random.rand(*ddesc.shape).astype(
+                    res = (rng.random(ddesc.shape).astype(
                         getattr(np, ddesc.dtype.to_string())) +
-                           1j * np.random.rand(*ddesc.shape).astype(
+                           1j * rng.random(ddesc.shape).astype(
                                getattr(np, ddesc.dtype.to_string())))
                     b = 0 if positive else -max_value
                     a = max_value
@@ -65,7 +67,7 @@ def compare_numpy_output(non_zero=False,
                 elif ddesc.dtype in [
                         dace.int8, dace.int16, dace.int32, dace.int64, dace.bool
                 ]:
-                    res = np.random.randint(0 if positive else -max_value,
+                    res = rng.integers(0 if positive else -max_value,
                                             max_value,
                                             size=ddesc.shape)
                     res = res.astype(getattr(np, ddesc.dtype.to_string()))
@@ -74,15 +76,15 @@ def compare_numpy_output(non_zero=False,
                 elif ddesc.dtype in [
                         dace.uint8, dace.uint16, dace.uint32, dace.uint64
                 ]:
-                    res = np.random.randint(0, max_value, size=ddesc.shape)
+                    res = rng.integers(0, max_value, size=ddesc.shape)
                     res = res.astype(getattr(np, ddesc.dtype.to_string()))
                     if non_zero:
                         res[res == 0] = 1
                 elif ddesc.dtype in [dace.complex64, dace.complex128]:
-                    res = np.random.rand(*ddesc.shape).astype(
-                        getattr(np, ddesc.dtype.to_string())
-                    ) + 1j * np.random.rand(*ddesc.shape).astype(
-                        getattr(np, ddesc.dtype.to_string()))
+                    res = (rng.random(ddesc.shape).astype(
+                        getattr(np, ddesc.dtype.to_string())) +
+                           1j * rng.random(ddesc.shape).astype(
+                               getattr(np, ddesc.dtype.to_string())))
                     b = 0 if positive else -10 - 10j
                     a = 10 + 10j
                     res = (b - a) * res + a
@@ -138,7 +140,10 @@ def compare_numpy_output(non_zero=False,
                     reference_result = [reference_result]
                     dace_result = [dace_result]
                     for ref, val in zip(reference_result, dace_result):
-                        assert np.allclose(ref, val, equal_nan=True)
+                        if ref.dtype == np.float32:
+                            assert np.allclose(ref, val, equal_nan=True, rtol=1e-3, atol=1e-5)
+                        else:
+                            assert np.allclose(ref, val, equal_nan=True)
                         if check_dtype and not validation_func:
                             assert (ref.dtype == val.dtype)
 

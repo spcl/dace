@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 # Schema file for DaCe Preferences
 
 # Metadata fields for elements:
@@ -29,6 +29,33 @@ required:
                 description: >
                     Automatically specialize every SDFG to the symbol values
                     at call-time. Requires all symbols to be set.
+
+            autooptimize:
+                type: bool
+                default: false
+                title: Run auto-optimization heuristics
+                description: >
+                    Automatically runs the set of optimizing transformation
+                    heuristics on any program called via the Python frontend.
+
+            autotile_size:
+                type: int
+                default: 128
+                title: Default tile size in auto-optimization
+                description: >
+                    Sets the default tile size for the optimization heuristics.
+
+            autotile_partial_parallelism:
+                type: bool
+                default: true
+                title: Prefer partial parallelism over write-conflict tiling
+                description: >
+                    If true, sets the auto-optimizer to prefer extracting map
+                    parallel dimensions over tiling for atomic write-conflict
+                    resolution edges. This may be slower in case of small
+                    parallel dimensions vs. conflicted dimensions. This
+                    preference only applies to symbolic ranges or ranges over
+                    the autotile_size parameter.
 
             transform_on_call:
                 type: bool
@@ -139,18 +166,27 @@ required:
                     RelWithDebInfo, or MinSizeRel).
 
             allow_shadowing:
-                type: str
+                type: bool
                 default: true
                 title: Allow variable shadowing
                 description: >
                    Allowing shadowing of variables in the code (reduces
                    exceptions to warnings when shadowing is encountered).
 
+            codegen_lineinfo:
+                type: bool
+                default: false
+                title: Annotate code generator lines
+                description: >
+                    Keep a source mapping between generated code and the file/line
+                    of the code generator that generated it. Used for debugging
+                    code generation.
+
             default_data_types:
                 type : str
                 default: Python
                 title : Default data types
-                descrition: >
+                description: >
                     Specify the default data types to use in generating code.
                     If "Python", Python's semantics will be followed (i.e., `float`  and `int`
                     are represented using 64 bits). If the property is set to "C", C's semantcs will be
@@ -178,12 +214,18 @@ required:
                     will crash if this is not the case.
 
             unique_functions:
-                type: bool
-                default: true
+                type: str
+                default: hash
                 title: Generate unique functions
                 description: >
-                    If set to true, if multiple nested SDFGs with equivalent contents exist,
-                    the code is generated only once.
+                    Determine if and how to generate the code for equivalent NestedSDFGs:
+                    "hash": hashing is used to determine if multiple NestedSDFGs with equivalent contents exist.
+                    If this is the case, the code is generated only once.
+                    "unique_name": the unique_name property of SDFG is used to determine if two NestedSDFGs are equal,
+                    generating the code only once.  This gives more control to the programmer, that can explicitly
+                    decide what NestedSDFG code can be replicated and what not.
+                    "none": a separate function is code generated for each NestedSDFG
+
 
             inline_sdfgs:
                 type: bool
@@ -192,6 +234,13 @@ required:
                 description: >
                     If set to true, inlines all nested SDFGs upon code generation by default.
 
+            max_stack_array_size:
+                type: int
+                default: 65536
+                title: Max stack-allocated array size (bytes)
+                description: >
+                    All stack allocated arrays (i.e. StorageType.Register) with
+                    size larger than this will be allocated on the heap.
 
             #############################################
             # CPU compiler
@@ -285,6 +334,7 @@ required:
                         description: >
                             Default thread-block size for GPU kernels when
                             explicit GPU block maps are not defined.
+                            Can be set to 'max' to maximize occupancy.
                         default: '32,1,1'
 
                     dynamic_map_block_size:
@@ -292,7 +342,7 @@ required:
                         title: Thread-Block size for GPU_ThreadBlock_Dynamic
                         description: >
                             Thread-Block size for maps using GPU_ThreadBlock_Dynamic
-                            scheduler.
+                            scheduler. Can be set to 'max' to maximize occupancy.
                         default: '128,1,1'
 
                     dynamic_map_fine_grained:
@@ -384,8 +434,8 @@ required:
                         description: Platform name of Vitis/SDx/SDAccel target.
 
                     frequency:
-                        type: str 
-                        default: '' 
+                        type: str
+                        default: ''
                         title: Target frequency for Xilinx kernels
                         description: >
                             Target frequency when compiling kernels for Xilinx.
@@ -691,6 +741,12 @@ required:
                         description: >
                             Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
 
+            print_fpga_runtime:
+                type: bool
+                default: false
+                title: Print FPGA runtime 
+                description: Prints the runtime of instrumented FPGA kernel states to standard output. 
+
     #############################################
     # General settings
     debugprint:
@@ -698,6 +754,31 @@ required:
         default: false
         title: Debug printing
         description: Enable verbose printouts.
+
+    cache:
+        type: str 
+        default: name 
+        title: Naming of cache entry 
+        description: >
+            Determine the name of the generated dacecache folder.
+            "name" uses the name of the SDFG directly, causing it to be
+            overridden by other programs using the same SDFG name.
+            "hash" uses a mangled name based on the hash of the SDFG, such that
+            any change to the SDFG will generate a different cache folder.
+            "unique" uses a name based on the currently running Python process 
+            at code generation time, such that no caching or clashes can happen
+            between different processes or subsequent invocations of Python.
+            "single" uses a single cache folder for all SDFGs, saving space and
+            potentially build time, but disallows executing SDFGs in parallel
+            and caching of more than one simultaneous SDFG.
+
+    default_build_folder:
+        type: str
+        default: .dacecache
+        title: Default SDFG build folder
+        description: >
+            Default folder in which compiled DaCe programs and SDFGs are stored.
+            Can either be a relative path (by default) or absolute.
 
     profiling:
         type: bool
@@ -751,14 +832,6 @@ required:
                     Before generating code, verify that a serialization/deserialization loop
                     generates the same SDFG.
 
-            single_cache:
-                type: bool
-                default: false
-                title: Use one build folder
-                description: >
-                    When generating code, use a single build folder as cache.
-                    Speeds up build time but disallows concurrent invocations.
-
     #############################################
     # DaCe library settings
 
@@ -784,8 +857,8 @@ required:
                             implementation has been explicitly set on a node.
                     fpga:
                         type: dict
-                        title: FPGA 
-                        description: FPGA-specific BLAS options. 
+                        title: FPGA
+                        description: FPGA-specific BLAS options.
                         required:
                             default_stream_depth:
                                 type: int
@@ -795,3 +868,33 @@ required:
                                     Default FPGA stream depth used in the BLAS
                                     library nodes and the corresponding
                                     streaming transformations
+            lapack:
+                type: dict
+                title: LAPACK
+                description: Built-in LAPACK DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: OpenBLAS
+                        description: Default implementation of LAPACK library nodes.
+                    override:
+                        type: bool
+                        default: false
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.
+            linalg:
+                type: dict
+                title: linalg
+                description: Built-in NumPy linalg DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: OpenBLAS
+                        description: Default implementation of linalg library nodes.
+                    override:
+                        type: bool
+                        default: false
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.

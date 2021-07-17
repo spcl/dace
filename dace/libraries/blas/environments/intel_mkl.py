@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 from dace.config import Config
 import dace.library
@@ -56,7 +56,7 @@ class IntelMKL:
             prefix = Config.get('compiler', 'library_prefix')
             suffix = Config.get('compiler', 'library_extension')
             libfile = os.path.join(os.environ['MKLROOT'], 'lib',
-                                   prefix + 'mkl_rt' + suffix)
+                                   prefix + 'mkl_rt.' + suffix)
             if os.path.isfile(libfile):
                 return [libfile]
 
@@ -82,3 +82,7 @@ class IntelMKL:
 
         # If all else fails, let CMake find the library
         return ['mkl_rt']
+
+    @staticmethod
+    def is_installed():
+        return IntelMKL.cmake_libraries() and IntelMKL.cmake_includes()

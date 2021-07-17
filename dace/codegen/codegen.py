@@ -1,8 +1,9 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import os
 from typing import List
 
+import dace
 from dace import dtypes
 from dace import data
 from dace.sdfg import SDFG
@@ -100,22 +101,36 @@ def generate_code(sdfg) -> List[CodeObject]:
     if Config.get_bool('testing', 'serialization'):
         from dace.sdfg import SDFG
         import filecmp
-        sdfg.save('test.sdfg')
-        sdfg2 = SDFG.from_file('test.sdfg')
-        sdfg2.save('test2.sdfg')
-        print('Testing SDFG serialization...')
-        if not filecmp.cmp('test.sdfg', 'test2.sdfg'):
-            raise RuntimeError('SDFG serialization failed - files do not match')
-        os.remove('test.sdfg')
-        os.remove('test2.sdfg')
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sdfg.save(f'{tmp_dir}/test.sdfg')
+            sdfg2 = SDFG.from_file(f'{tmp_dir}/test.sdfg')
+            sdfg2.save(f'{tmp_dir}/test2.sdfg')
+            print('Testing SDFG serialization...')
+            if not filecmp.cmp(f'{tmp_dir}/test.sdfg', f'{tmp_dir}/test2.sdfg'):
+                shutil.move(f"{tmp_dir}/test.sdfg", "test.sdfg")
+                shutil.move(f"{tmp_dir}/test2.sdfg", "test2.sdfg")
+                raise RuntimeError(
+                    'SDFG serialization failed - files do not match')
 
         # Run with the deserialized version
+        # NOTE: This means that all subsequent modifications to `sdfg`
+        # are not reflected outside of this function (e.g., library
+        # node expansion).
         sdfg = sdfg2
 
     # Before generating the code, run type inference on the SDFG connectors
     infer_types.infer_connector_types(sdfg)
 
     # Set default storage/schedule types in SDFG
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
+    # Recursively expand library nodes that have not yet been expanded
+    sdfg.expand_library_nodes()
+
+    # After expansion, run another pass of connector/type inference
+    infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     frame = framecode.DaCeCodeGenerator()
@@ -167,7 +182,8 @@ def generate_code(sdfg) -> List[CodeObject]:
                    'cpp',
                    cpu.CPUCodeGen,
                    'Frame',
-                   environments=used_environments)
+                   environments=used_environments,
+                   sdfg=sdfg)
     ]
 
     # Create code objects for each target
@@ -183,6 +199,11 @@ def generate_code(sdfg) -> List[CodeObject]:
                        target_type='../../include',
                        linkable=False)
     target_objects.append(dummy)
+
+    for env in dace.library.get_environments_and_dependencies(
+            used_environments):
+        if hasattr(env, "codeobjects"):
+            target_objects.extend(env.codeobjects)
 
     # add a dummy main function to show how to call the SDFG
     dummy = CodeObject(sdfg.name + "_main",

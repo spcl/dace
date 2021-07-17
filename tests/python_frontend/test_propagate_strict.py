@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Test that the strict argument to to_sdfg is propagated when parsing calls to other dace programs """
 
 import dace
@@ -15,15 +15,15 @@ def nested_prog2(X: dace.int32[2, 2]):
 
 
 @dace
-def prog(X: dace.int32[2, 2]):
+def propagate_strict(X: dace.int32[2, 2]):
     return nested_prog2(X + 1)
 
 
 def test_propagate_strict():
-    strict_sdfg = prog.to_sdfg(strict=True)
+    strict_sdfg = propagate_strict.to_sdfg(strict=True)
     assert len(list(strict_sdfg.all_sdfgs_recursive())) == 1
 
-    non_strict_sdfg = prog.to_sdfg(strict=False)
+    non_strict_sdfg = propagate_strict.to_sdfg(strict=False)
     assert len(list(non_strict_sdfg.all_sdfgs_recursive())) > 1
 
 
