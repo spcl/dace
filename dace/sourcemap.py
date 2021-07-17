@@ -172,10 +172,7 @@ def create_py_map(sdfg):
     made_with_api = py_mapper.mapper(sdfg)
     folder = sdfg.build_folder
     save("py", sdfg.name, py_mapper.map, folder)
-    # If the SDFG was made with the API we need to create tmp info
-    # as it doesn't have any
     sourceFiles = [src for src in get_src_files(sdfg, set())]
-    # If tmp is None, then the SDFG was created with the API
     return (folder, sourceFiles, made_with_api)
 
 
