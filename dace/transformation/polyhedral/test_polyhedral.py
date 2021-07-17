@@ -1288,17 +1288,8 @@ def test_polybench_cholesky():
     A_exp = np.copy(A)
 
     sdfg = cholesky.to_sdfg(strict=True)
-    # sdfg.view()
     sdfg.apply_transformations(PolyLoopToMap, validate=True)
-    # # sdfg.view()
-    # ranges_to_polytopes(sdfg)
-    # sdfg.view()
-    propagate_memlets_sdfg(sdfg)
-    polytopes_to_ranges(sdfg)
-
-    # sdfg.view()
     sdfg.apply_strict_transformations()
-    # sdfg.view()
     propagate_memlets_sdfg(sdfg)
     csdfg = sdfg.compile()
     csdfg(A=A, N=N)
@@ -1388,8 +1379,6 @@ def test_polybench_seidel2d():
                                    "use_polytopes": True
                                },
                                validate=True)
-    sdfg.apply_strict_transformations()
-
     polytopes_to_ranges(sdfg)
     sdfg.apply_strict_transformations()
 
@@ -1684,11 +1673,7 @@ def test_convert_3():
                                validate=True)
     sdfg.apply_strict_transformations()
 
-    # sdfg.view()
-    # ranges_to_polytopes(sdfg)
-    # sdfg.view()
     polytopes_to_ranges(sdfg)
-    # sdfg.view()
 
     N = np.int32(20)
     A = np.arange(0, N, dtype=np.float64)
@@ -1838,8 +1823,6 @@ def test_convert_6():
                                    "use_polytopes": True
                                },
                                validate=True)
-    sdfg.apply_strict_transformations()
-
     polytopes_to_ranges(sdfg)
 
     N = 10

@@ -1634,7 +1634,7 @@ class Polytope(Subset):
         raise NotImplementedError
 
     def offset_new(self, other, negative, indices=None):
-        raise NotImplementedError
+        self.to_ranges().offset_new(other, negative, indices)
 
     @staticmethod
     def dim_to_string(d, t=1):

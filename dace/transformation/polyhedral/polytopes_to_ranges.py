@@ -21,16 +21,16 @@ def polytopes_to_ranges(sdfg):
                         isinstance(node, nodes.EntryNode) or \
                         isinstance(node, nodes.ExitNode):
                     for e in state.out_edges(node):
-                        if isinstance(e.data.subset, Polytope):
-                            label = e.data.data
+                        label = e.data.data
+                        if label:
                             subset = e.data.subset
                             bounding_ranges = get_overapprox_range_list_from_set(subset.isl_set.polyhedral_hull())
                             new_range = subsets.Range(bounding_ranges)
                             # new_range = subset.to_ranges()
                             e.data = Memlet(data=label, subset=new_range)
                     for e in state.in_edges(node):
-                        if isinstance(e.data.subset, Polytope):
-                            label = e.data.data
+                        label = e.data.data
+                        if label:
                             subset = e.data.subset
                             bounding_ranges = get_overapprox_range_list_from_set(subset.isl_set.polyhedral_hull())
                             new_range = subsets.Range(bounding_ranges)
