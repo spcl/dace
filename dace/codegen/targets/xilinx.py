@@ -189,8 +189,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                    "were assigned to memory banks: {}".format(
                                        self._bank_assignments))
             # Emit mapping from kernel memory interfaces to DRAM banks
-            for (kernel_name, interface_name), (memory_type, memory_bank) in self._bank_assignments.items():
-                link_cfg.write(f"sp={kernel_name}_1.m_axi_{interface_name}:{memory_type}[{memory_bank}]")
+            for (kernel_name, interface_name), (
+                    memory_type, memory_bank) in self._bank_assignments.items():
+                link_cfg.write(
+                    f"sp={kernel_name}_1.m_axi_{interface_name}:{memory_type}[{memory_bank}]"
+                )
         # Emit mapping between inter-kernel streaming interfaces
         for _, (src, dst) in self._stream_connections.items():
             link_cfg.write(f"stream_connect={src}:{dst}")
