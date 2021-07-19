@@ -303,7 +303,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Cache key
         cachekey = self._cache.make_key(argtypes, self.closure_array_keys,
-                                        self.closure_constant_keys)
+                                        self.closure_constant_keys, constant_args)
 
         if self._cache.has(cachekey):
             entry = self._cache.get(cachekey)
