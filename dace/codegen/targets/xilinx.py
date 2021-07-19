@@ -117,7 +117,16 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         host_code.write("""\
 #include "dace/xilinx/host.h"
 #include "dace/dace.h"
-#include <iostream>\n\n""")
+""")
+        if len(self._dispatcher.instrumentation) > 1:
+            host_code.write("""\
+#include "dace/perf/reporting.h"
+#include <chrono>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+""")
+        host_code.write("\n\n")
 
         self._frame.generate_fileheader(self._global_sdfg, host_code,
                                         'xilinx_host')
@@ -169,49 +178,35 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             for (kernel_name, code) in self._kernel_codes
         ]
 
-        # Configuration file with interface assignments
+        # Memory bank and streaming interfaces connectivity configuration file
+        link_cfg = CodeIOStream()
+        self._other_codes["link.cfg"] = link_cfg
+        link_cfg.write("[connectivity]")
         are_assigned = [v is not None for v in self._bank_assignments.values()]
         if any(are_assigned):
             if not all(are_assigned):
                 raise RuntimeError("Some, but not all global memory arrays "
                                    "were assigned to memory banks: {}".format(
                                        self._bank_assignments))
-            are_assigned = True
-        else:
-            are_assigned = False
-        bank_assignment_code = []
-        for name, _ in self._host_codes:
-            # Only iterate over assignments if any exist
-            if are_assigned:
-                for (kernel_name, interface_name), (
-                        memory_type,
-                        memory_bank) in self._bank_assignments.items():
-                    if kernel_name != name:
-                        continue
-                    bank_assignment_code.append(
-                        f"{interface_name},{memory_type},{memory_bank}")
-            # Create file even if there are no assignments
-            kernel_code_objs.append(
-                CodeObject("{}_memory_interfaces".format(name),
-                           "\n".join(bank_assignment_code),
-                           "csv",
+            # Emit mapping from kernel memory interfaces to DRAM banks
+            for (kernel_name, interface_name), (memory_type, memory_bank) in self._bank_assignments.items():
+                link_cfg.write(f"sp={kernel_name}_1.m_axi_{interface_name}:{memory_type}[{memory_bank}]")
+        # Emit mapping between inter-kernel streaming interfaces
+        for _, (src, dst) in self._stream_connections.items():
+            link_cfg.write(f"stream_connect={src}:{dst}")
+
+        other_objs = []
+        for name, code in self._other_codes.items():
+            name = name.split(".")
+            other_objs.append(
+                CodeObject(name[0],
+                           code.getvalue(),
+                           ".".join(name[1:]),
                            XilinxCodeGen,
                            "Xilinx",
                            target_type="device"))
-            bank_assignment_code.clear()
 
-        # Emit the .ini file
-        others = [
-            CodeObject(''.join(name.split('.')[:-1]),
-                       other_code.getvalue(),
-                       name.split('.')[-1],
-                       XilinxCodeGen,
-                       "Xilinx",
-                       target_type="device")
-            for name, other_code in self._other_codes.items()
-        ]
-
-        return [host_code_obj] + kernel_code_objs + others
+        return [host_code_obj] + kernel_code_objs + other_objs
 
     @staticmethod
     def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
@@ -600,7 +595,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         if needs_synch:
             # Build a vector containing all the events associated with the kernels from which this one depends
             kernel_deps_name = f"deps_{kernel_name}"
-            kernel_stream.write(f"std::vector<cl::Event > {kernel_deps_name};")
+            kernel_stream.write(f"std::vector<cl::Event> {kernel_deps_name};")
             for pred in predecessors:
                 # concatenate events from predecessor kernel
                 kernel_stream.write(
@@ -610,7 +605,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_stream.write(
             f"""\
   auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});
-  cl::Event {kernel_name}_event =  {kernel_name}_kernel.ExecuteTaskFork({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''});
+  cl::Event {kernel_name}_event = {kernel_name}_kernel.ExecuteTaskFork({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''});
   all_events.push_back({kernel_name}_event);""", sdfg, sdfg.node_id(state))
 
         # Join RTL tasklets
@@ -904,8 +899,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                      node.ctype)
             if name not in self._stream_connections:
                 self._stream_connections[name] = [None, None]
-            self._stream_connections[name][
-                0 if is_output else 1] = '{}_1.{}'.format(kernel_name, name)
+            key = 0 if is_output else 1
+            val = '{}_1.{}'.format(kernel_name, name)
+            self._stream_connections[name][key] = val
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, module_stream, entry_stream,
