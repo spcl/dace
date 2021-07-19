@@ -3759,6 +3759,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 fcopy.signature = copy.deepcopy(func.signature)
                 fargs = (self._eval_arg(arg) for _, arg in args)
                 sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
+                # Try to promote args of kind `sym = scalar`
+                # TODO: This must be done for all type of calls
+                args = [(a, self._parse_subscript_slice(v))
+                        if a in sdfg.symbols and str(v) not in self.sdfg.symbols
+                        else (a, v) for a, v in args]
                 required_args = [k for k, _ in args if k in sdfg.arg_names]
                 # Filter out constant arguments
                 args = [(k, v) for k, v in args if k not in fcopy.constant_args]
@@ -4540,7 +4545,10 @@ class ProgramVisitor(ExtNodeVisitor):
             if node_str in self.indirections:
                 scalar, sym = self.indirections[node_str]
             else:
-                scalar = self.visit(node)
+                if isinstance(node, str):
+                    scalar = node_str
+                else:
+                    scalar = self.visit(node)
                 sym = None
             if isinstance(scalar, str) and scalar in self.sdfg.arrays:
                 desc = self.sdfg.arrays[scalar]
