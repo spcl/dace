@@ -308,6 +308,21 @@ def test_array_by_str_key():
     assert np.allclose(7.0, arr)
 
 
+def test_constant_folding():
+    @dace.program
+    def tofold(A: dace.float64[20], add: dace.constant):
+        if add:
+            A += 1
+        else:
+            A -= 1
+
+    A = np.random.rand(20)
+    expected = A + 1
+    tofold(A, True)
+
+    assert np.allclose(A, expected)
+
+
 if __name__ == '__main__':
     test_kwargs()
     test_kwargs_jit()
@@ -327,3 +342,4 @@ if __name__ == '__main__':
     test_constant_argument_object()
     test_none_field()
     test_array_by_str_key()
+    test_constant_folding()

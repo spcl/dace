@@ -87,22 +87,31 @@ class DaceProgramCache:
         """ Clears the program cache. """
         self.cache.clear()
 
-    def _evaluate_constants(self, constants: Set[str]) -> ConstantTypes:
+    def _evaluate_constants(
+            self,
+            constants: Set[str],
+            extra_constants: Dict[str, Any] = None) -> ConstantTypes:
         # Evaluate closure constants at call time
-        return {k: self.eval_callback(k) for k in constants}
+        return {k: self.eval_callback(k, extra_constants) for k in constants}
 
-    def _evaluate_descriptors(self, arrays: Set[str]) -> ConstantTypes:
+    def _evaluate_descriptors(
+            self,
+            arrays: Set[str],
+            extra_constants: Dict[str, Any] = None) -> ConstantTypes:
         # Evaluate closure array types at call time
         return {
-            k: dt.create_datadescriptor(self.eval_callback(k))
+            k: dt.create_datadescriptor(self.eval_callback(k, extra_constants))
             for k in arrays
         }
 
-    def make_key(self, argtypes: ArgTypes, closure_types: Set[str],
-                 closure_constants: Set[str]) -> ProgramCacheKey:
+    def make_key(self,
+                 argtypes: ArgTypes,
+                 closure_types: Set[str],
+                 closure_constants: Set[str],
+                 extra_constants: Dict[str, Any] = None) -> ProgramCacheKey:
         """ Creates a program cache key from the given arguments. """
-        adescs = self._evaluate_descriptors(closure_types)
-        cvals = self._evaluate_constants(closure_constants)
+        adescs = self._evaluate_descriptors(closure_types, extra_constants)
+        cvals = self._evaluate_constants(closure_constants, extra_constants)
         key = ProgramCacheKey(argtypes, adescs, cvals)
         return key
 

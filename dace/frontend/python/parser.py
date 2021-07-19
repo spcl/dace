@@ -260,10 +260,13 @@ class DaceProgram(pycommon.SDFGConvertible):
             for k, v in mapping.items()
         }
 
-    def _eval_closure(self, arg: str) -> Any:
+    def _eval_closure(self,
+                      arg: str,
+                      extra_constants: Optional[Dict[str, Any]] = None) -> Any:
+        extra_constants = extra_constants or {}
         if arg in self.closure_arg_mapping:
             return self.closure_arg_mapping[arg]
-        return eval(arg, self.global_vars)
+        return eval(arg, self.global_vars, extra_constants)
 
     def _create_sdfg_args(self, sdfg: SDFG, args: Tuple[Any],
                           kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -295,7 +298,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         if self.methodobj is not None:
             self.global_vars[self.objname] = self.methodobj
 
-        argtypes, arg_mapping, _ = self._get_type_annotations(args, kwargs)
+        argtypes, arg_mapping, constant_args = self._get_type_annotations(
+            args, kwargs)
 
         # Cache key
         cachekey = self._cache.make_key(argtypes, self.closure_array_keys,
@@ -332,7 +336,8 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Recreate key and add to cache
         cachekey = self._cache.make_key(argtypes, self.closure_array_keys,
-                                        self.closure_constant_keys)
+                                        self.closure_constant_keys,
+                                        constant_args)
         self._cache.add(cachekey, sdfg, binaryobj)
 
         # Call SDFG
