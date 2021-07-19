@@ -365,7 +365,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{""")
 
             if state.instrument == dtypes.InstrumentationType.FPGA:
                 kernel_host_stream.write("""\
-const unsigned long int _dace_fpga_begin_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+const unsigned long int _dace_fpga_begin_ms = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 """)
 
             kernel_host_stream.write(f"""\
@@ -412,16 +412,16 @@ std::cout << "FPGA OpenCL kernel \\"{module_name}\\" executed in " << elapsed <<
     if (event_end > last_end) {{
         last_end = event_end;
     }}
-    __state->report.add_completion("{module_name} [ns]", "FPGA", event_start, event_end, {sdfg.sdfg_id}, {state_id}, {state.node_id(sg.nodes()[0])});{print_str}
+    __state->report.add_completion("{module_name}", "FPGA", event_start, event_end, {sdfg.sdfg_id}, {state_id}, -1);{print_str}
 }}""")
                 kernel_host_stream.write(f"""\
-const unsigned long int _dace_fpga_end_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-__state->report.add_completion("Full FPGA kernel runtime for {state.label} [ns]", "FPGA", first_start, last_end, {sdfg.sdfg_id}, {state_id}, -1);
-__state->report.add_completion("Full FPGA state runtime for {state.label} [ns]", "FPGA", _dace_fpga_begin_ns, _dace_fpga_end_ns, {sdfg.sdfg_id}, {state_id}, -1);
+const unsigned long int _dace_fpga_end_ms = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+__state->report.add_completion("Full FPGA kernel runtime for {state.label}", "FPGA", first_start, last_end, {sdfg.sdfg_id}, {state_id}, -1);
+__state->report.add_completion("Full FPGA state runtime for {state.label}", "FPGA", _dace_fpga_begin_ms, _dace_fpga_end_ms, {sdfg.sdfg_id}, {state_id}, -1);
 """)
                 if Config.get_bool("instrumentation", "print_fpga_runtime"):
                     kernel_host_stream.write(f"""
-const double elapsed = 1e-9 * (_dace_fpga_end_ns - _dace_fpga_begin_ns);
+const double elapsed = 1e-9 * (_dace_fpga_end_ms - _dace_fpga_begin_ms);
 std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " seconds.\\n";\
 """)
 
