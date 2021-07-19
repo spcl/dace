@@ -3392,11 +3392,13 @@ class ProgramVisitor(ExtNodeVisitor):
                 true_target = copy.deepcopy(target)
                 if isinstance(target, ast.Name):
                     true_target.id = true_name
+                    nslice = None
                 elif isinstance(target, ast.Subscript):
                     true_target.value.id = true_name
 
                     # Visit slice contents
-                    true_target.slice = self.visit(true_target.slice)
+                    # true_target.slice = self.visit(true_target.slice)
+                    nslice = self._parse_subscript_slice(true_target.slice)
                     defined_arrays = {
                         **self.sdfg.arrays,
                         **self.scope_arrays,
@@ -3404,7 +3406,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     }
 
                 expr: MemletExpr = ParseMemlet(self, defined_arrays,
-                                               true_target)
+                                               true_target, nslice)
                 rng = expr.subset
 
                 # Figure out whether the target subcript is an array-index
@@ -3446,6 +3448,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
             if self.nested and not new_data:
                 new_name, new_rng = self._add_write_access(name, rng, target)
+                if _subset_is_local_symbol_dependent(rng, self):
+                    new_rng = rng
             else:
                 new_name, new_rng = true_name, rng
 
@@ -4527,8 +4531,7 @@ class ProgramVisitor(ExtNodeVisitor):
                               other_subset_str=other_subset))
             return tmp
 
-    ### Subscript (slicing) handling
-    def visit_Subscript(self, node: ast.Subscript):
+    def _parse_subscript_slice(self, s: ast.AST, multidim: bool = False):
 
         def _promote(node: ast.AST):
             node_str = astutils.unparse(node)
@@ -4549,32 +4552,36 @@ class ProgramVisitor(ExtNodeVisitor):
                     return sym
             return scalar
 
-        def _parse_slice(s: ast.AST, multidim: bool = False):
-            if isinstance(s, ast.Constant):  # 1D index (since Python 3.9)
-                res = self._visit_ast_or_value(s)
-            elif isinstance(s, ast.Index):
-                res = _parse_slice(s.value)
-            elif isinstance(s, ast.Slice):
-                lower = s.lower
-                if isinstance(lower, ast.AST):
-                    lower = _promote(lower)
-                upper = s.upper
-                if isinstance(upper, ast.AST):
-                    upper = _promote(upper)
-                step = s.step
-                if isinstance(step, ast.AST):
-                    step = _promote(step)
-                if multidim:
-                    res = (lower, upper, step)
-                else:
-                    res = ((lower, upper, step),)
-            elif isinstance(s, ast.Tuple):
-                res = tuple(_parse_slice(d, multidim=True) for d in s.elts)
-            elif isinstance(s, ast.ExtSlice):
-                res = tuple(_parse_slice(d, multidim=True) for d in s.dims)
+        if isinstance(s, ast.Constant):  # 1D index (since Python 3.9)
+            res = self._visit_ast_or_value(s)
+        elif isinstance(s, ast.Index):
+            res = self._parse_subscript_slice(s.value)
+        elif isinstance(s, ast.Slice):
+            lower = s.lower
+            if isinstance(lower, ast.AST):
+                lower = _promote(lower)
+            upper = s.upper
+            if isinstance(upper, ast.AST):
+                upper = _promote(upper)
+            step = s.step
+            if isinstance(step, ast.AST):
+                step = _promote(step)
+            if multidim:
+                res = (lower, upper, step)
             else:
-                res = _promote(s)
-            return res
+                res = ((lower, upper, step),)
+        elif isinstance(s, ast.Tuple):
+            res = tuple(self._parse_subscript_slice(d, multidim=True)
+                        for d in s.elts)
+        elif isinstance(s, ast.ExtSlice):
+            res = tuple(self._parse_subscript_slice(d, multidim=True)
+                        for d in s.dims)
+        else:
+            res = _promote(s)
+        return res
+
+    ### Subscript (slicing) handling
+    def visit_Subscript(self, node: ast.Subscript):
 
         if self.nested:
 
@@ -4598,7 +4605,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
 
                 # Visit slice contents
-                nslice = _parse_slice(node.slice)
+                nslice = self._parse_subscript_slice(node.slice)
 
                 # Try to construct memlet from subscript
                 expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node, nslice)
@@ -4638,7 +4645,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                   'Type "%s" cannot be sliced' % arrtype)
 
         # Visit slice contents
-        nslice = _parse_slice(node.slice)
+        nslice = self._parse_subscript_slice(node.slice)
 
         # Try to construct memlet from subscript
         node.value = ast.Name(id=array)
