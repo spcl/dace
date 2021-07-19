@@ -3455,14 +3455,16 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Strict independent access check for augmented assignments
             if op:
-                independent = True
-                waccess = inverse_dict_lookup(self.accesses,
-                                              (new_name, new_rng))
-                if self.map_symbols and waccess:
-                    for s in self.map_symbols:
-                        if s not in waccess[1].free_symbols:
-                            independent = False
-                            break
+                independent = False
+                if not _subset_is_local_symbol_dependent(new_rng, self):
+                    independent = True
+                    waccess = inverse_dict_lookup(self.accesses,
+                                                (new_name, new_rng))
+                    if self.map_symbols and waccess:
+                        for s in self.map_symbols:
+                            if s not in waccess[1].free_symbols:
+                                independent = False
+                                break
 
             # Handle output indirection
             output_indirection = None
