@@ -1,8 +1,9 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from typing import List, Union, Tuple
 from dace import data as dt, SDFG, dtypes, subsets, symbolic
 
-_FPGA_STORAGE_TYPES = {    
+_FPGA_STORAGE_TYPES = {
     dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
     dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister
 }
