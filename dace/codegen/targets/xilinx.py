@@ -644,8 +644,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     dsts = [e.dst for e in subgraph.out_edges(node)]
                     if len(dsts) > 1: # TODO Are there any problems with actually doing it?
                         raise Exception("Currently, only one memlet per access node direction is allowed")
-                    if isinstance(dsts[0], dace.nodes.MapEntry) and dsts[0].map.unroll:
-                        elements_to_add = [f'{node.data}_{i}' for i in range(dace.symbolic.evaluate(dsts[0].map.range[0][1]+1, sdfg.constants)) ]
+                    map_range = dace.symbolic.evaluate(dsts[0].map.range[0][1]+1, sdfg.constants) if (isinstance(dsts[0], dace.nodes.MapEntry) and dsts[0].map.unroll) else 1
+                    if map_range > 1:
+                        elements_to_add = [f'{node.data}_{i}' for i in range(map_range)]
                     else:
                         elements_to_add = [node.data]
                     for i in range(len(elements_to_add)):
@@ -660,8 +661,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     srcs = [e.src for e in subgraph.in_edges(node)]
                     if len(srcs) > 1: # TODO Are there any problems with actually doing it?
                         raise Exception("Currently, only one memlet per access node direction is allowed")
-                    if isinstance(srcs[0], dace.nodes.MapExit) and srcs[0].map.unroll:
-                        elements_to_add = [f'{node.data}_{i}' for i in range(dace.symbolic.evaluate(srcs[0].map.range[0][1]+1, sdfg.constants)) ]
+                    map_range = dace.symbolic.evaluate(srcs[0].map.range[0][1]+1, sdfg.constants) if (isinstance(srcs[0], dace.nodes.MapExit) and srcs[0].map.unroll) else 1
+                    if map_range > 1:
+                        elements_to_add = [f'{node.data}_{i}' for i in range(map_range)]
                     else:
                         elements_to_add = [node.data]
                     for i in range(len(elements_to_add)):
