@@ -59,7 +59,8 @@ class InstrumentationReport(object):
         return 'InstrumentationReport(name=%s)' % self.name
 
     def _get_runtimes_string(
-        self, label, runtimes, element, sdfg, state, string, row_format, colw
+        self, label, runtimes, element, sdfg, state, string, row_format, colw,
+        with_element_heading=True
     ):
         indent = ''
         if len(runtimes) > 0:
@@ -112,12 +113,13 @@ class InstrumentationReport(object):
             else:
                 element_label = 'N/A'
 
-            string += row_format.format(element_label,
-                                        '',
-                                        '',
-                                        '',
-                                        '',
-                                        width=colw)
+            if with_element_heading:
+                string += row_format.format(element_label,
+                                            '',
+                                            '',
+                                            '',
+                                            '',
+                                            width=colw)
 
             string += row_format.format(indent + label + ':',
                                         '', '', '', '', width=colw)
@@ -161,12 +163,15 @@ class InstrumentationReport(object):
             for element in element_list:
                 events = self.durations[element]
                 if len(events) > 0:
+                    with_element_heading = True
                     for event in events.keys():
                         runtimes = events[event]
                         string, sdfg, state = self._get_runtimes_string(
                             event, runtimes, element, sdfg, state, string,
-                            row_format, COLW
+                            row_format, COLW, with_element_heading
                         )
+                        with_element_heading = False
+
             string += ('-' * (COLW * 5)) + '\n'
 
         if len(self.counters) > 0:
