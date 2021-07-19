@@ -14,6 +14,34 @@ def test_indirection_scalar():
     res = indirection_scalar(A)[0]
     assert (res == A[0])
 
+
+@dc.program
+def indirection_scalar_assign(A: dc.float32[10]):
+    i = 2
+    A[i] = 5
+    return A[i]
+
+
+def test_indirection_scalar_assign():
+    A = np.random.randn(10).astype(np.float32)
+    res = indirection_scalar_assign(A)[0]
+    assert (res == 5)
+
+
+@dc.program
+def indirection_scalar_augassign(A: dc.float32[10]):
+    i = 2
+    j = 3
+    A[i] += A[j]
+    return A[i]
+
+
+def test_indirection_scalar_augassign():
+    A = np.random.randn(10).astype(np.float32)
+    res = indirection_scalar_augassign(np.copy(A))[0]
+    assert (np.allclose(res, A[2] + A[3]))
+
+
 @dc.program
 def indirection_scalar_nsdfg(A: dc.float32[10], x: dc.int32[10]):
     B = np.empty_like(A)
@@ -29,6 +57,40 @@ def test_indirection_scalar_nsdfg():
     x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
     res = indirection_scalar_nsdfg(A, x)
     assert (np.allclose(res, A[x]))
+
+
+@dc.program
+def indirection_scalar_assign_nsdfg(A: dc.float32[10], x: dc.int32[10]):
+    B = np.empty_like(A)
+    # TODO: This doesn't work with 0:A.shape[0]
+    for i in dc.map[0:10]:
+        a = x[i]
+        B[a] = A[a]
+    return B
+
+
+def test_indirection_scalar_assign_nsdfg():
+    A = np.random.randn(10).astype(np.float32)
+    x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
+    res = indirection_scalar_assign_nsdfg(A, x)
+    assert (np.allclose(res[x], A[x]))
+
+
+@dc.program
+def indirection_scalar_augassign_nsdfg(A: dc.float32[10], x: dc.int32[10]):
+    B = np.full_like(A, 5)
+    # TODO: This doesn't work with 0:A.shape[0]
+    for i in dc.map[0:10]:
+        a = x[i]
+        B[a] += A[a]
+    return B
+
+
+def test_indirection_scalar_augassign_nsdfg():
+    A = np.random.randn(10).astype(np.float32)
+    x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
+    res = indirection_scalar_augassign_nsdfg(A, x)
+    assert (np.allclose(res, indirection_scalar_augassign_nsdfg.f(A, x)))
 
 
 @dc.program
@@ -318,7 +380,11 @@ def test_spmv():
 
 if __name__ == "__main__":
     test_indirection_scalar()
+    test_indirection_scalar_assign()
+    test_indirection_scalar_augassign()
     test_indirection_scalar_nsdfg()
+    test_indirection_scalar_assign_nsdfg()
+    test_indirection_scalar_augassign_nsdfg()
     test_indirection_scalar_multi()
     test_indirection_scalar_multi_nsdfg()
     test_indirection_scalar_op()
