@@ -87,8 +87,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                         raise InvalidSDFGError(
                             "Memory bank specifier must at least define one bank to be used"
                             f" for array {name}", sdfg, None)
-                    if (high - low > 1 and
-                        (high - low != desc.shape[0] or len(desc.shape) < 2)):
+                    if (high - low != desc.shape[0] or len(desc.shape) < 2):
                         raise InvalidSDFGError(
                             "Arrays that use HBM must have the size of the first dimension equal"
                             f" the number of banks and have at least 2 dimensions for array {name}",
@@ -205,11 +204,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     for nid, node in enumerate(state.nodes()):
         # Node validation
         try:
-            if isinstance(node, nd.NestedSDFG):
-                # Temporarily add constants defined by unrolled maps as SDFG-level
-                # constants with a dummy value and remove the corresponding symbol-bindings
-                # on the nested SDFG
-                node.validate(sdfg, state)
+            node.validate(sdfg, state)
         except InvalidSDFGError:
             raise
         except Exception as ex:
@@ -332,8 +327,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if isinstance(node, nd.Tasklet):
             for attached in state.all_edges(node):
                 if attached.data.data in sdfg.arrays:
-                    if fpga_utils.is_hbm_array_with_distributed_index(
-                            sdfg.arrays[attached.data.data]):
+                    if fpga_utils.is_hbm_array(sdfg.arrays[attached.data.data]):
                         low, high, _ = attached.data.subset[0]
                         if (low != high):
                             raise InvalidSDFGNodeError(
