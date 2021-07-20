@@ -1396,7 +1396,7 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                         current_device = ed_gpu_id
                         sync_string += f'''\n{backend}SetDevice({current_device});\n'''
 
-                    stream = "__state->gpu_context->at({ed_gpu_id}).streams[{dstnode._cuda_stream[ed_gpu_id]}]"
+                    stream = f"__state->gpu_context->at({ed_gpu_id}).streams[{dstnode._cuda_stream[ed_gpu_id]}]"
                     sync_string += f'''{backend}StreamWaitEvent({stream}, {event}, 0);\n'''
                 callsite_stream.write(sync_string, sdfg, state_id,
                                       [edge.src, edge.dst])

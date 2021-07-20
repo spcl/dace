@@ -1619,6 +1619,9 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
                                                 input_node=src_node,
                                                 output_node=dst_node,
                                                 dtype=dst_dtype)
+                if atomic == '_atomic_system':
+                    cudastream = f'__state->gpu_context->at({src_gpuid}).streams[{src_node._cuda_stream[src_gpuid]}]'
+                    write_expr += f'\n{self.backend}StreamSynchronize({cudastream});\n'
                 callsite_stream.write(write_expr, sdfg, state_id,
                                       [src_node, dst_node])
                 return
@@ -1978,9 +1981,8 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
 
                 for stream in streams_to_sync:
                     callsite_stream.write(
-                        '%sStreamSynchronize(__state->gpu_context->at(%s).streams[%d]);'
-                        % (self.backend, stream[0], stream[1]), sdfg,
-                        sdfg.node_id(state))
+                        f'{self.backend}StreamSynchronize(__state->gpu_context->at({stream[0]}).streams[{stream[1]}]);',
+                        sdfg, sdfg.node_id(state))
 
             # After synchronizing streams, generate state footer normally
             callsite_stream.write('\n')
