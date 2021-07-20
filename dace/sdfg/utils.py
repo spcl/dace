@@ -1047,25 +1047,33 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
     return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(
         state.node_id(node))
 
-def update_path_subsets(state: SDFGState, 
+
+def update_path_subsets(
+    state: SDFGState,
     inner_edge_info: Union[MultiConnectorEdge, nd.AccessNode],
-    new_subset : sbs.Subset,):
+    new_subset: sbs.Subset,
+):
     """
     Will take the memlet path defined by :param inner_edge:, and recreate it with
+    :param inner_edge_info: This is either the inner edge defining the memlet path that
+        should be modified, or an AccessNode with exactly one attached ingoing or outgoing
+        memlet path
     :param new_subset:, where :param inner_edge: has to be the innermost edge.
     If 
     """
     if isinstance(inner_edge_info, nd.AccessNode):
         some_edge = list(state.all_edges(inner_edge_info))
         if len(some_edge) != 1:
-            raise ValueError("You may not specify an AccessNode in the update_access_list or in "
-                "update_hbm_access_list if it does not have exactly one attached memlet path")
+            raise ValueError(
+                "You may not specify an AccessNode in the update_access_list or in "
+                "update_hbm_access_list if it does not have exactly one attached memlet path"
+            )
         some_edge = some_edge[0]
         if some_edge.dst == inner_edge_info:
             inner_edge_info = state.memlet_path(some_edge)[0]
         else:
             inner_edge_info = state.memlet_path(some_edge)[-1]
-    mem : mm.Memlet = inner_edge_info.data
+    mem: mm.Memlet = inner_edge_info.data
     mem.subset = new_subset
 
     path = state.memlet_path(inner_edge_info)
@@ -1082,20 +1090,37 @@ def update_path_subsets(state: SDFGState,
     if dst_conn is not None:
         path[-1].dst.add_in_connector(dst_conn)
 
-    state.add_memlet_path(*path_nodes, memlet=mem,
-        src_conn=src_conn, dst_conn=dst_conn)
+    state.add_memlet_path(*path_nodes,
+                          memlet=mem,
+                          src_conn=src_conn,
+                          dst_conn=dst_conn)
 
-def update_array_shape(sdfg: SDFG, array_name: str, new_shape: Iterable, 
-    strides=None, offset=None, total_size=None):
+
+def update_array_shape(sdfg: SDFG,
+                       array_name: str,
+                       new_shape: Iterable,
+                       strides=None,
+                       offset=None,
+                       total_size=None,):
     """
-    Updates the shape of an array
+    Updates the shape of an array.
     """
     desc = sdfg.arrays[array_name]
     sdfg.remove_data(array_name, False)
-    updated = sdfg.add_array(array_name, new_shape, desc.dtype,
-                    desc.storage, 
-                    desc.transient, strides,
-                    offset, desc.lifetime, 
-                    desc.debuginfo, desc.allow_conflicts,
-                    total_size, False, desc.alignment, desc.may_alias, )
+    updated = sdfg.add_array(
+        array_name,
+        new_shape,
+        desc.dtype,
+        desc.storage,
+        desc.transient,
+        strides,
+        offset,
+        desc.lifetime,
+        desc.debuginfo,
+        desc.allow_conflicts,
+        total_size,
+        False,
+        desc.alignment,
+        desc.may_alias,
+    )
     return updated[1]

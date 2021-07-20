@@ -128,8 +128,7 @@ def fpga_hbm_graph(veclen, dtype, expansion):
     sdfg.arrays["x"].location["memorytype"] = "HBM"
     sdfg.arrays["y"].location["memorytype"] = "HBM"
     sdfg.arrays["x"].location["bank"] = f"0:{banks_per_array}"
-    sdfg.arrays["y"].location[
-        "bank"] = f"{banks_per_array}:{2*banks_per_array}"
+    sdfg.arrays["y"].location["bank"] = f"{banks_per_array}:{2*banks_per_array}"
     state = sdfg.states()[0]
     for node in state:
         if isinstance(node, nodes.AccessNode):
@@ -139,7 +138,7 @@ def fpga_hbm_graph(veclen, dtype, expansion):
                     f"0:{banks_per_array}, 0:{per_array_size}"))
     libnode = list(
         filter(lambda x: isinstance(x, nodes.LibraryNode), state.nodes()))[0]
-    libnode.n = dace.symbolic.pystr_to_symbolic("n/8")
+    libnode.n = dace.symbolic.pystr_to_symbolic(f"n/{banks_per_array}")
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
     sdfg.expand_library_nodes()
     utils.update_array_shape(sdfg, "x", [per_array_size * banks_per_array])
@@ -149,8 +148,8 @@ def fpga_hbm_graph(veclen, dtype, expansion):
     for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
             patterns=[hbm_copy_transform.HbmCopyTransform]):
         xform.apply(sdfg)
-    sdfg.sdfg_list[3].symbols["a"] = sdfg.sdfg_list[2].symbols["a"]  # Why does inference fail?
-    sdfg.view()
+    sdfg.sdfg_list[3].symbols["a"] = sdfg.sdfg_list[2].symbols[
+        "a"]  # Why does inference fail?
     return sdfg
 
 
@@ -170,9 +169,6 @@ def _test_fpga(target):
 
 
 if __name__ == "__main__":
-
-    _test_fpga("fpga_hbm")
-    exit(0)
 
     cmdParser = argparse.ArgumentParser(allow_abbrev=False)
 

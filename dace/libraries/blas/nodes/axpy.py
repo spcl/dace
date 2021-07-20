@@ -120,6 +120,10 @@ class ExpandAxpyFpga(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandAxpyFpgaHbm(ExpandTransformation):
+    """
+    An implementation of Axpy based on ExpandAxpyFpga that uses HBM. Expects attached
+    arrays to be on HBM and 2 dimensional inputs/outputs. 
+    """
     environments = []
 
     @staticmethod
@@ -128,9 +132,14 @@ class ExpandAxpyFpgaHbm(ExpandTransformation):
                   parent_sdfg: SDFG,
                   param="k",
                   **kwargs):
+        """
+        :param node: Node to expand.
+        :param parent_state: State that the node is in.
+        :param parent_sdfg: SDFG that the node is in.
+        :param param: The param symbol for the top-level map mapping over HBM-banks
+        """
         sdfg: SDFG = ExpandAxpyFpga.expansion(node, parent_state, parent_sdfg,
                                               **kwargs)
-        state: SDFGState = sdfg.states()[0]
 
         desc_x = parent_sdfg.arrays[parent_state.in_edges(node)[0].data.data]
         desc_y = parent_sdfg.arrays[parent_state.in_edges(node)[1].data.data]
@@ -138,7 +147,8 @@ class ExpandAxpyFpgaHbm(ExpandTransformation):
         banks_x = fpga_utils.parse_location_bank(desc_x)
         banks_y = fpga_utils.parse_location_bank(desc_y)
         banks_res = fpga_utils.parse_location_bank(desc_res)
-        tmp_bank_c = fpga_utils.get_multibank_ranges_from_subset(banks_x[1], sdfg)
+        tmp_bank_c = fpga_utils.get_multibank_ranges_from_subset(
+            banks_x[1], sdfg)
         bank_count = tmp_bank_c[1] - tmp_bank_c[
             0]  # We know this is equal for all arrays it's checked in validation
 
@@ -147,7 +157,8 @@ class ExpandAxpyFpgaHbm(ExpandTransformation):
         xform.outer_map_range = (param, f"0:{bank_count}")
         xform.update_array_access = ["_x", "_y", "_res"]
         xform.update_array_banks = [("_x", banks_x[0], banks_x[1]),
-            ("_y", banks_y[0], banks_y[1]), ("_res", banks_res[0], banks_res[1])]
+                                    ("_y", banks_y[0], banks_y[1]),
+                                    ("_res", banks_res[0], banks_res[1])]
         xform.apply(sdfg)
 
         return sdfg

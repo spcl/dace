@@ -11,11 +11,19 @@ import functools
 @registry.autoregister_params(singlestate=True)
 @properties.make_properties
 class HbmCopyTransform(transformation.Transformation):
+    """
+    A transformation that allows to split an array and distribute on
+    an array with one dimension more, or the reverse operation. Works in principle
+    with arbitrary arrays, but it's real use case is to distribute data on many HBM-banks.
+    Matches any 2 AccessNodes connected by any edge, if the dimensionality of the two accessed
+    arrays differ by exactly one. The sizes of the arrays have to be large enough with
+    respect to the split executed, but this is not verified.
+    """
 
     _src_node = nd.AccessNode("")
     _dst_node = nd.AccessNode("")
 
-    #dtype=List[int]
+    # dtype=List[int]
     split_array_info = properties.Property(
         dtype=List,
         default=None,

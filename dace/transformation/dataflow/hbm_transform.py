@@ -12,23 +12,28 @@ from dace import SDFG, SDFGState, memlet
 @registry.autoregister
 @properties.make_properties
 class HbmTransform(transformation.Transformation):
-    # dtype=List[Tuple[str, str, str]]
+    # type=List[Tuple[str, str, str]]
     update_array_banks = properties.Property(
         dtype=List,
         default=[],
         desc=
-        "List of (arrayname, value for location['memorytype'], value for location['bank']])." 
+        "List of (arrayname, value for location['memorytype'], value for location['bank']])."
         "Will move the array to FPGA_Global."
         "The shape of the array will be updated depending on it's previous placement."
         "DDR->HBM: Add a dimension, HBM->HBM: Scale first dimension, HBM->DDR: Remove first dimension."
     )
 
+    # type=List[str]
     update_array_access = properties.Property(
         dtype=List,
         default=[],
-        desc="TODO"
-    )
+        desc=
+        "For all source and sink nodes accessing arrays defined here the distributed subset"
+        " of the top-level map will be added. Additionally only the current bank will be passed to the"
+        " nested SDFG for those arrays. At the moment such accessnode may only have exactly one"
+        " ingoing/outgoing edge to have their accesses updated. ")
 
+    # type=Tuple[str, str]
     outer_map_range = properties.Property(
         dtype=Tuple,
         default=("k", "0"),
@@ -36,14 +41,16 @@ class HbmTransform(transformation.Transformation):
 
     def _multiply_sdfg_executions(self, sdfg: SDFG):
         """
-        Nests a whole SDFG and packs it into an unrolled map
+        Nests a whole SDFG and packs it into an unrolled map. 
+        Depending on the values in update_array_access the first
+        index of inputs/outputs is changed to the map param.
         """
         unrollparam = self.outer_map_range
         for state in sdfg.states():
             for outer_node in state.source_nodes() + state.sink_nodes():
-                if (isinstance(outer_node, nd.AccessNode) and 
-                    outer_node.data in self.update_array_access and
-                    len(state.all_edges(outer_node)) == 1):
+                if (isinstance(outer_node, nd.AccessNode)
+                        and outer_node.data in self.update_array_access
+                        and len(state.all_edges(outer_node)) == 1):
                     self._update_memlet_hbm(state, outer_node, unrollparam[0])
 
         nesting = interstate.NestSDFG(sdfg.sdfg_id, -1, {}, self.expr_index)
@@ -52,7 +59,8 @@ class HbmTransform(transformation.Transformation):
         nsdfg_node = list(
             filter(lambda x: isinstance(x, nd.NestedSDFG), state.nodes()))[0]
 
-        map_enter, map_exit = state.add_map("hbm_unrolled_map", {unrollparam[0]:unrollparam[1]},
+        map_enter, map_exit = state.add_map("hbm_unrolled_map",
+                                            {unrollparam[0]: unrollparam[1]},
                                             dtypes.ScheduleType.Unrolled)
 
         inputs = []
@@ -85,15 +93,20 @@ class HbmTransform(transformation.Transformation):
                            convertible_node: nd.AccessNode,
                            inner_subset_index: symbolic.symbol):
         """
-        Add the subset_index to the memlet path defined by inner_edge. If the end/start of
+        Add the subset_index to the memlet path defined by convertible_node. If the end/start of
         the path is also an AccessNode, it will insert a tasklet before the access to 
-        avoid validation failures due to dimensionality mismatch
+        avoid validation failures due to dimensionality mismatch.
+        :param convertible_node: An AccessNode with exactly one attached memlet path
+        :param inner_subset_index: The distributed subset for the innermost edge on
+            the memlet path defined by convertible_node
         """
         #get the inner edge:
         if len(state.out_edges(convertible_node)) == 1:
-            inner_edge = state.memlet_path(state.out_edges(convertible_node)[0])[-1]
+            inner_edge = state.memlet_path(
+                state.out_edges(convertible_node)[0])[-1]
         else:
-            inner_edge = state.memlet_path(state.in_edges(convertible_node)[0])[0]
+            inner_edge = state.memlet_path(
+                state.in_edges(convertible_node)[0])[0]
 
         mem: memlet.Memlet = inner_edge.data
         new_subset = subsets.Range(
@@ -132,10 +145,15 @@ class HbmTransform(transformation.Transformation):
 
         utils.update_path_subsets(state, inner_edge, new_subset)
 
-    def _update_array_hbm(self, array_name: str, new_memory: str, new_bank: str, sdfg: SDFG):
+    def _update_array_hbm(self, array_name: str, new_memory: str, new_bank: str,
+                          sdfg: SDFG):
+        """
+        Updates bank assignments for the array
+        """
         desc = sdfg.arrays[array_name]
         old_memory = None
-        if 'memorytype' in desc.location and desc.location["memorytype"] is not None:
+        if 'memorytype' in desc.location and desc.location[
+                "memorytype"] is not None:
             old_memory = desc.location["memorytype"]
         if new_memory == "HBM":
             low, high = fpga_utils.get_multibank_ranges_from_subset(
