@@ -1386,7 +1386,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     if offset_dst != "0":
                         ptr_str = f"{ptr_str} + {offset_dst}"
                     callsite_stream.write(
-                        f"{cpp.ptr(src_node.data, src_nodedesc)}.CopyToHost("
+                        f"{fpga_utils.ptr(src_node.data, src_nodedesc, sdfg, src_subset)}.CopyToHost("
                         f"{offset_src}, {copysize}, {apply_cast(ptr_str)});",
                         sdfg, state_id, [src_node, dst_node])
 
