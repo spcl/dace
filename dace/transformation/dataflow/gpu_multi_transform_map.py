@@ -11,7 +11,9 @@ from dace.transformation import transformation
 from dace.properties import make_properties
 from dace.config import Config
 from dace.symbolic import SymbolicType
+from dace.frontend import operations
 from typing import Dict, Any
+import warnings
 
 
 @registry.autoregister_params(singlestate=True)
@@ -89,10 +91,15 @@ class GPUMultiTransformMap(transformation.Transformation):
         if has_dynamic_map_inputs(graph, map_entry):
             return False
 
-        # # Only one WCR is currently supported, limited by AccumulateTransient
-        # map_exit = graph.exit_node(map_entry)
-        # if sum(1 for e in graph.out_edges(map_exit) if e.data.wcr) > 1:
-        #     return False
+        # Custom reductions can not have an accumulate transient, as the
+        # reduction would have to be split up for the ingoing memlet of the
+        # accumulate transient and the outgoing memlet. Not using GPU local
+        # accumulate transient only works for a small volume of data.
+        map_exit = graph.exit_node(map_entry)
+        for edge in graph.out_edges(map_exit):
+            if edge.data.wcr is not None and operations.detect_reduction_type(
+                    edge.data.wcr) == dtypes.ReductionType.Custom:
+                return False
 
         return True
 
@@ -120,7 +127,6 @@ class GPUMultiTransformMap(transformation.Transformation):
         from dace.transformation.dataflow import (StripMining, InLocalStorage,
                                                   OutLocalStorage,
                                                   AccumulateTransient)
-        from dace.frontend import operations
 
         # Tile map into number_of_gpus tiles
         outer_map: nodes.Map = StripMining.apply_to(
@@ -175,6 +181,15 @@ class GPUMultiTransformMap(transformation.Transformation):
                 if edge.data.wcr is not None:
                     dtype = sdfg.arrays[data_name].dtype
                     redtype = operations.detect_reduction_type(edge.data.wcr)
+                    # Custom reduction can not have an accumulate transient,
+                    # as the accumulation from the transient to the outer
+                    # storage is not defined.
+                    if redtype == dtypes.ReductionType.Custom:
+                        warnings.warn(
+                            'Using custom reductions in a GPUMultitransformed '
+                            'Map only works for a small data volume. For large '
+                            'volume there is no guarantee.')
+                        continue
                     identity = dtypes.reduction_identity(dtype, redtype)
                     wcr_data[data_name] = identity
                 elif not isinstance(node.desc(sdfg), Scalar):

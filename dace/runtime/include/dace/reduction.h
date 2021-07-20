@@ -233,7 +233,7 @@ namespace dace {
         }
 
 
-        static DACE_HFI T reduce_atomic_system(T *ptr, const T& value)
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value)
         {
             #ifdef DACE_USE_SYSTEM_ATOMICS
                 return atomicAdd_system(ptr, value);
@@ -303,7 +303,7 @@ namespace dace {
             #endif
         }
 
-        static DACE_HFI T reduce_atomic_system(T *ptr, const T& value){
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
             #ifdef DACE_USE_SYSTEM_ATOMICS
                 return wcr_custom<T>::reduce(
                     _wcr_fixed<ReductionType::Product, T>(), ptr, value);
@@ -328,7 +328,7 @@ namespace dace {
         }
 
 
-        static DACE_HFI T reduce_atomic_system(T *ptr, const T& value){
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
             #ifdef DACE_USE_SYSTEM_ATOMICS
                 return atomicMin_system(ptr, value);
             #else
@@ -353,7 +353,7 @@ namespace dace {
         }
 
 
-        static DACE_HFI T reduce_atomic_system(T *ptr, const T& value)
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value)
         {
             #ifdef DACE_USE_SYSTEM_ATOMICS
                 return atomicMax_system(ptr, value);
@@ -473,7 +473,7 @@ namespace dace {
         }
 
 
-        static DACE_HFI T reduce_atomic_system(T *ptr, const T& value){
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
             #ifdef DACE_USE_SYSTEM_ATOMICS
                 return atomicAnd_system(ptr, value ? T(1) : T(0));
             #else
@@ -507,7 +507,7 @@ namespace dace {
         }
 
 
-        static DACE_HFI T reduce_atomic_system(T *ptr, const T& value){
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
             #ifdef DACE_USE_SYSTEM_ATOMICS
                 return atomicAnd_system(ptr, value);
             #else
@@ -543,7 +543,7 @@ namespace dace {
         }
 
 
-        static DACE_HFI T reduce_atomic_system(T *ptr, const T& value){
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
             #ifdef DACE_USE_SYSTEM_ATOMICS
                 return atomicOr_system(ptr, value ? T(1) : T(0));
             #else
@@ -577,7 +577,7 @@ namespace dace {
         }
 
 
-        static DACE_HFI T reduce_atomic_system(T *ptr, const T& value){
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
             #ifdef DACE_USE_SYSTEM_ATOMICS
                 return atomicOr_system(ptr, value);
             #else
@@ -613,7 +613,7 @@ namespace dace {
         }
 
 
-        static DACE_HFI T reduce_atomic_system(T *ptr, const T& value){
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
             #ifdef DACE_USE_SYSTEM_ATOMICS
                 return atomicXor_system(ptr, value ? T(1) : T(0));
             #else
@@ -647,7 +647,7 @@ namespace dace {
         }
 
 
-        static DACE_HFI T reduce_atomic_system(T *ptr, const T& value){
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
             #ifdef DACE_USE_SYSTEM_ATOMICS
                 return atomicXor_system(ptr, value);
             #else
@@ -677,7 +677,7 @@ namespace dace {
         }
 
 
-        static DACE_HFI T reduce_atomic_system(T *ptr, const T& value){
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
             #ifdef DACE_USE_SYSTEM_ATOMICS
                 return atomicExch_system(ptr, value);
             #else

@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from numba import cuda
 from dace.transformation.dataflow import GPUMultiTransformMap
+from dace.dtypes import StorageType
 
 N = dace.symbol('N')
 n = 1200
@@ -43,12 +44,19 @@ def custom(A: dtype[N], customA: dtype[1]):
             customRed = aj
 
 
+def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
+    """ Finds the first map entry node by the given parameter name. """
+    return next(n for n, _ in sdfg.all_nodes_recursive()
+                if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
+
+
 @pytest.mark.multigpu
 def test_multi_gpu_reduction_sum():
     sdfg: dace.SDFG = sum.to_sdfg(strict=True)
     sdfg.name = 'mGPU_CPU_sum'
     sdfg.apply_transformations(
         GPUMultiTransformMap)  # options={'number_of_gpus':4})
+    sdfg.arrays['sumA'].storage = StorageType.CPU_Pinned
 
     np.random.seed(0)
     sumA = cuda.pinned_array(shape=1, dtype=np_dtype)
@@ -59,7 +67,8 @@ def test_multi_gpu_reduction_sum():
 
     sdfg(A=A, sumA=sumA, N=n)
     res = np.sum(A)
-    assert np.isclose(sumA[0], res, atol=0, rtol=1e-7)
+    assert np.isclose(sumA[0], res, atol=0,
+                      rtol=1e-7), f'\ngot: {sumA[0]}\nres: {res}'
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
@@ -74,6 +83,7 @@ def test_multi_gpu_reduction_prod():
     sdfg.name = 'mGPU_CPU_prod'
     sdfg.apply_transformations(
         GPUMultiTransformMap)  # options={'number_of_gpus':4})
+    sdfg.arrays['prodA'].storage = StorageType.CPU_Pinned
 
     np.random.seed(0)
     prodA = cuda.pinned_array(shape=1, dtype=np_dtype)
@@ -84,7 +94,8 @@ def test_multi_gpu_reduction_prod():
 
     sdfg(A=A, prodA=prodA, N=n)
     res = np.prod(A)
-    assert np.isclose(prodA[0], res, atol=0, rtol=1e-7)
+    assert np.isclose(prodA[0], res, atol=0,
+                      rtol=1e-7), f'\ngot: {prodA[0]}\nres: {res}'
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
@@ -99,6 +110,7 @@ def test_multi_gpu_reduction_max():
     sdfg.name = 'mGPU_CPU_max'
     sdfg.apply_transformations(
         GPUMultiTransformMap)  # options={'number_of_gpus':4})
+    sdfg.arrays['maxA'].storage = StorageType.CPU_Pinned
 
     np.random.seed(0)
     maxA = cuda.pinned_array(shape=1, dtype=np_dtype)
@@ -109,7 +121,8 @@ def test_multi_gpu_reduction_max():
 
     sdfg(A=A, maxA=maxA, N=n)
     res = np.max(A)
-    assert np.isclose(maxA[0], res, atol=0, rtol=1e-7)
+    assert np.isclose(maxA[0], res, atol=0,
+                      rtol=1e-7), f'\ngot: {maxA[0]}\nres: {res}'
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
@@ -122,19 +135,22 @@ def test_multi_gpu_reduction_max():
 def test_multi_gpu_reduction_custom():
     sdfg: dace.SDFG = custom.to_sdfg(strict=True)
     sdfg.name = 'mGPU_CPU_custom'
-    sdfg.apply_transformations(
-        GPUMultiTransformMap)  # options={'number_of_gpus':4})
+    map_entry = find_map_by_param(sdfg, 'j')
+    GPUMultiTransformMap.apply_to(sdfg, verify=False, _map_entry=map_entry)
+    sdfg.arrays['customA'].storage = StorageType.CPU_Pinned
 
+    m = 100
     np.random.seed(0)
     customA = cuda.pinned_array(shape=1, dtype=np_dtype)
     customA.fill(0)
-    A = cuda.pinned_array(shape=n, dtype=np_dtype)
-    Aa = np.random.rand(n)
+    A = cuda.pinned_array(shape=m, dtype=np_dtype)
+    Aa = np.random.rand(m)
     A[:] = Aa[:]
 
-    sdfg(A=A, customA=customA, N=n)
+    sdfg(A=A, customA=customA, N=m)
     res = np.sum(A) + np.sum(np.square(A))
-    assert np.isclose(customA[0], res, atol=0, rtol=1e-7)
+    assert np.isclose(customA[0], res, atol=0,
+                      rtol=1e-7), f'\ngot: {customA[0]}\nres: {res}'
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler

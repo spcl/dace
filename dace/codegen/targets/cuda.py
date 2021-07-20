@@ -480,14 +480,14 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             # Strides are left to the user's discretion
             alloc_code = f'{self.backend}Malloc((void**)&{allocname}, {arrsize_malloc})'
             if self._debug:
-                alloc_code = '''\nDACE_CUDA_CHECK(''' + alloc_code + ''');\n'''
+                alloc_code = '''DACE_CUDA_CHECK(''' + alloc_code + ''');\n'''
             else:
                 alloc_code = '''\n''' + alloc_code + ''';\n'''
             result_alloc.write(alloc_code)
             if node.setzero:
                 memset_code = f'{self.backend}Memset({allocname}, 0, {arrsize_malloc})'
                 if self._debug:
-                    memset_code = '''\nDACE_CUDA_CHECK(''' + memset_code + ''');\n'''
+                    memset_code = '''DACE_CUDA_CHECK(''' + memset_code + ''');\n'''
                 else:
                     memset_code = '''\n''' + memset_code + ''';\n'''
                 result_alloc.write(memset_code)
