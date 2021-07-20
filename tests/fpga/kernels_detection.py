@@ -22,7 +22,8 @@ def count_kernels(cachedir: str):
     with open(f".dacecache/{cachedir}/dace_files.csv") as csv_file:
         csv_reader = csv.reader(csv_file, delimiter=',')
         for row in csv_reader:
-            if row[1] == "device" and not row[-1].endswith("csv"):
+            if row[1] == "device" and (row[-1].endswith("cpp")
+                                       or row[-1].endswith("cl")):
                 kernels = kernels + 1
     return kernels
 
