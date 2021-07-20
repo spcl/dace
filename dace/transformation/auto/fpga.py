@@ -63,7 +63,8 @@ def fpga_rr_interleave_containers_to_banks(sdfg: SDFG, num_banks: int = 4):
     i = 0
     for sd, aname, desc in sdfg.arrays_recursive():
         if not isinstance(desc, dt.Stream) and desc.storage == dtypes.StorageType.FPGA_Global and desc.transient:
-            desc.location["bank"] = f"ddr.{i % num_banks}"
+            desc.location["memorytype"] = "ddr"
+            desc.location["bank"] = str(i % num_banks)
             num_allocated[i % num_banks] = num_allocated[i % num_banks] + 1
             i = i+1
 

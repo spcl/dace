@@ -106,11 +106,11 @@ def test_p2(in_transient, out_transient):
 
 
 if __name__ == "__main__":
-    test_p1()
-    test_p2()
+    test_p1(in_transient=False, out_transient=False)
+    test_p2(in_transient=False, out_transient=False)
 
-    test_p1(in_transient=True)
-    test_p2(in_transient=True)
+    test_p1(in_transient=True, out_transient=False)
+    test_p2(in_transient=True, out_transient=False)
 
-    test_p1(out_transient=True)
-    test_p2(out_transient=True)
+    test_p1(in_transient=True, out_transient=True)
+    test_p2(in_transient=True, out_transient=True)

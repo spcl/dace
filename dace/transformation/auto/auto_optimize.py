@@ -366,7 +366,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
         if openblas.OpenBLAS.is_installed():
             result.append('OpenBLAS')
 
-        return result + ['pure']
+        return result + ['OpenMP', 'pure']
 
     return ['pure']
 

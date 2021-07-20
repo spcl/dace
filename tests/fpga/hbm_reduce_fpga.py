@@ -17,9 +17,12 @@ def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
     in1 = sdfg.add_array("in1", [banks, N, M], dace.float32)
     in2 = sdfg.add_array("in2", [banks, N, M], dace.float32)
     out = sdfg.add_array("out", [banks, N], dace.float32)
-    in1[1].location["bank"] = f"hbm.0:{banks}"
-    in2[1].location["bank"] = f"hbm.{banks}:{2*banks}"
-    out[1].location["bank"] = f"hbm.{2*banks}:{3*banks}"
+    in1[1].location["memorytype"] = "hbm"
+    in2[1].location["memorytype"] = "hbm"
+    out[1].location["memorytype"] = "hbm"
+    in1[1].location["bank"] = f"0:{banks}"
+    in2[1].location["bank"] = f"{banks}:{2*banks}"
+    out[1].location["bank"] = f"{2*banks}:{3*banks}"
 
     read_in1 = state.add_read("in1")
     read_in2 = state.add_read("in2")
@@ -59,7 +62,7 @@ def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
     return sdfg
 
 
-def createTestSet(N, M, banks):
+def create_test_set(N, M, banks):
     in1 = np.random.rand(*[banks, N, M]).astype('f')
     in2 = np.random.rand(*[banks, N, M]).astype('f')
     expected = np.sum(in1 * in2, axis=2, dtype=np.float32)
@@ -68,7 +71,7 @@ def createTestSet(N, M, banks):
 
 
 def exec_test(N, M, banks, name):
-    in1, in2, expected, target = createTestSet(N, M, banks)
+    in1, in2, expected, target = create_test_set(N, M, banks)
     sdfg = create_hbm_reduce_sdfg(banks, name)
     sdfg(in1=in1, in2=in2, out=target, N=N, M=M)
     assert np.allclose(expected, target, rtol=1e-6)

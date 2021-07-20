@@ -934,9 +934,11 @@ def _array_array_where(visitor: 'ProgramVisitor',
     right_cast = casting[1]
 
     if left_cast is not None:
-        tasklet_args[0] = "{}(__in1)".format(str(left_cast).replace('::', '.'))
+        tasklet_args[
+            1] = f"{str(left_cast).replace('::', '.')}({tasklet_args[1]})"
     if right_cast is not None:
-        tasklet_args[1] = "{}(__in2)".format(str(right_cast).replace('::', '.'))
+        tasklet_args[
+            2] = f"{str(right_cast).replace('::', '.')}({tasklet_args[2]})"
 
     left_shape = left_arr.shape if left_arr else [1]
     right_shape = right_arr.shape if right_arr else [1]

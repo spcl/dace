@@ -374,7 +374,8 @@ def _Compare(t, symbols, inferred_symbols):
             if vec_len is not None and vec_len != inf_type.veclen:
                 raise SyntaxError('Inconsistent vector lengths in Compare')
             vec_len = inf_type.veclen
-    return dtypes.vector(dace.bool, vec_len) if vec_len is not None else dtypes.bool
+    return dtypes.vector(dace.bool,
+                         vec_len) if vec_len is not None else dtypes.bool
 
 
 def _BoolOp(t, symbols, inferred_symbols):
@@ -387,7 +388,8 @@ def _BoolOp(t, symbols, inferred_symbols):
             if vec_len is not None and vec_len != inf_type.veclen:
                 raise SyntaxError('Inconsistent vector lengths in BoolOp')
             vec_len = inf_type.veclen
-    return dtypes.vector(dace.bool, vec_len) if vec_len is not None else dtypes.bool
+    return dtypes.vector(dace.bool,
+                         vec_len) if vec_len is not None else dtypes.bool
 
 
 def _Attribute(t, symbols, inferred_symbols):
