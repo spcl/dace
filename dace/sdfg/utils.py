@@ -1047,23 +1047,6 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
     return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(
         state.node_id(node))
 
-
-def accessnode_to_innermost_edge(state : SDFGState, node : nd.AccessNode):
-    """
-    Takes a node that only has one out- or ingoing edge,
-    :return: the innermost_edge on the memlet path defined by that node
-    """
-    some_edge = list(state.all_edges(node))
-    if len(some_edge) != 1:
-        raise ValueError("You may not specify an AccessNode in the update_access_list or in "
-            "update_hbm_access_list if it does not have exactly one attached memlet path")
-    some_edge = some_edge[0]
-    if some_edge.dst == node:
-        edge = state.memlet_path(some_edge)[0]
-    else:
-        edge = state.memlet_path(some_edge)[-1]
-    return edge
-
 def update_path_subsets(state: SDFGState, 
     inner_edge_info: Union[MultiConnectorEdge, nd.AccessNode],
     new_subset : sbs.Subset,):
@@ -1073,7 +1056,15 @@ def update_path_subsets(state: SDFGState,
     If 
     """
     if isinstance(inner_edge_info, nd.AccessNode):
-        inner_edge_info = accessnode_to_innermost_edge(state, inner_edge_info)
+        some_edge = list(state.all_edges(inner_edge_info))
+        if len(some_edge) != 1:
+            raise ValueError("You may not specify an AccessNode in the update_access_list or in "
+                "update_hbm_access_list if it does not have exactly one attached memlet path")
+        some_edge = some_edge[0]
+        if some_edge.dst == inner_edge_info:
+            inner_edge_info = state.memlet_path(some_edge)[0]
+        else:
+            inner_edge_info = state.memlet_path(some_edge)[-1]
     mem : mm.Memlet = inner_edge_info.data
     mem.subset = new_subset
 

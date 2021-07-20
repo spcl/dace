@@ -12,19 +12,8 @@ from dace import SDFG, SDFGState, memlet
 @registry.autoregister
 @properties.make_properties
 class HbmTransform(transformation.Transformation):
-
-    # dtype=List[Tuple[SDFGState, Union[nd.AccessNode, graph.MultiConnectorEdge], str)]]
-    update_hbm_access_list = properties.Property(
-        dtype=List,
-        default=[],
-        desc=
-        ("List of (innermost) edges defining memlet paths that are now accessing the specified distributed subset "
-         "index, together with the state they are part of. If there is only one path associated "
-         "with an AccessNode, this may also be used to specify which path to modify. "
-         ))
-
     # dtype=List[Tuple[str, str, str]]
-    update_array_list = properties.Property(
+    update_array_banks = properties.Property(
         dtype=List,
         default=[],
         desc=
@@ -34,61 +23,78 @@ class HbmTransform(transformation.Transformation):
         "DDR->HBM: Add a dimension, HBM->HBM: Scale first dimension, HBM->DDR: Remove first dimension."
     )
 
+    update_array_access = properties.Property(
+        dtype=List,
+        default=[],
+        desc="TODO"
+    )
+
     outer_map_range = properties.Property(
-        dtype=Dict,
-        default={"k": "0"},
+        dtype=Tuple,
+        default=("k", "0"),
         desc="Stores the range for the outer HBM map. Defaults to k = 0.")
 
-    def _multiply_sdfg_executions(self, sdfg: SDFG,
-                                  unrollparams: Union[Dict[str, str],
-                                                      List[Tuple[str, str]]]):
+    def _multiply_sdfg_executions(self, sdfg: SDFG):
         """
         Nests a whole SDFG and packs it into an unrolled map
         """
+        unrollparam = self.outer_map_range
+        for state in sdfg.states():
+            for outer_node in state.source_nodes() + state.sink_nodes():
+                if (isinstance(outer_node, nd.AccessNode) and 
+                    outer_node.data in self.update_array_access and
+                    len(state.all_edges(outer_node)) == 1):
+                    self._update_memlet_hbm(state, outer_node, unrollparam[0])
+
         nesting = interstate.NestSDFG(sdfg.sdfg_id, -1, {}, self.expr_index)
         nesting.apply(sdfg)
         state = sdfg.states()[0]
         nsdfg_node = list(
             filter(lambda x: isinstance(x, nd.NestedSDFG), state.nodes()))[0]
 
-        #TODO: Remove
-        """
-        for e in sdfg.states()[0].edges():
-            if isinstance(e.src, nd.AccessNode):
-                if e.src.label == "_x" or e.src.label == "_y":
-                    k = symbolic.pystr_to_symbolic("k")
-                    e.data.subset[0] = (k, k, 1)
-        """
-
-        map_enter, map_exit = state.add_map("hbm_unrolled_map", unrollparams,
+        map_enter, map_exit = state.add_map("hbm_unrolled_map", {unrollparam[0]:unrollparam[1]},
                                             dtypes.ScheduleType.Unrolled)
 
-        for input in list(state.in_edges(nsdfg_node)):
-            state.remove_edge(input)
+        inputs = []
+        outputs = []
+        for attached in state.all_edges(nsdfg_node):
+            if attached.data.data in self.update_array_access:
+                para_sym = symbolic.pystr_to_symbolic(unrollparam[0])
+                attached.data.subset[0] = (para_sym, para_sym, 1)
+            if attached in state.in_edges(nsdfg_node):
+                inputs.append(attached)
+            else:
+                outputs.append(attached)
+            state.remove_edge(attached)
+        for input in inputs:
             state.add_memlet_path(input.src,
                                   map_enter,
                                   nsdfg_node,
                                   memlet=input.data,
                                   src_conn=input.src_conn,
                                   dst_conn=input.dst_conn)
-        for output in list(state.out_edges(nsdfg_node)):
-            state.remove_edge(output)
+        for output in outputs:
             state.add_memlet_path(nsdfg_node,
                                   map_exit,
                                   output.dst,
                                   memlet=output.data,
                                   src_conn=output.src_conn,
                                   dst_conn=output.dst_conn)
-        sdfg.apply_transformations(interstate.InlineSDFG)
 
     def _update_memlet_hbm(self, state: SDFGState,
-                           inner_edge: graph.MultiConnectorEdge,
+                           convertible_node: nd.AccessNode,
                            inner_subset_index: symbolic.symbol):
         """
         Add the subset_index to the memlet path defined by inner_edge. If the end/start of
         the path is also an AccessNode, it will insert a tasklet before the access to 
         avoid validation failures due to dimensionality mismatch
         """
+        #get the inner edge:
+        if len(state.out_edges(convertible_node)) == 1:
+            inner_edge = state.memlet_path(state.out_edges(convertible_node)[0])[-1]
+        else:
+            inner_edge = state.memlet_path(state.in_edges(convertible_node)[0])[0]
+
         mem: memlet.Memlet = inner_edge.data
         new_subset = subsets.Range(
             [[inner_subset_index, inner_subset_index, 1]] +
@@ -162,17 +168,9 @@ class HbmTransform(transformation.Transformation):
         return [networkx.DiGraph()]
 
     def apply(self, sdfg: SDFG) -> Union[Any, None]:
-        # update memlet subset to access hbm
-        for path_desc_state, path_description, subset_index in self.update_hbm_access_list:
-            if isinstance(path_description, nd.AccessNode):
-                path_description = utils.accessnode_to_innermost_edge(
-                    path_desc_state, path_description)
-            self._update_memlet_hbm(path_desc_state, path_description,
-                                    subset_index)
-
         # update array bank positions
-        for array_name, memory_type, bank in self.update_array_list:
+        for array_name, memory_type, bank in self.update_array_banks:
             self._update_array_hbm(array_name, memory_type, bank, sdfg)
 
         # nest the sdfg and execute in parallel
-        self._multiply_sdfg_executions(sdfg, self.outer_map_range)
+        self._multiply_sdfg_executions(sdfg)

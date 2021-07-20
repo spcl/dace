@@ -121,7 +121,7 @@ def fpga_graph(veclen, dtype, test_case, expansion):
 def fpga_hbm_graph(veclen, dtype, expansion):
     sdfg = pure_graph(veclen, dtype, "fpga_hbm", expansion, False)
 
-    banks_per_array = 8
+    banks_per_array = 2
     per_array_size = sdfg.arrays["x"].shape[0] / banks_per_array
     utils.update_array_shape(sdfg, "x", [banks_per_array, per_array_size])
     utils.update_array_shape(sdfg, "y", [banks_per_array, per_array_size])
@@ -149,7 +149,8 @@ def fpga_hbm_graph(veclen, dtype, expansion):
     for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
             patterns=[hbm_copy_transform.HbmCopyTransform]):
         xform.apply(sdfg)
-    #sdfg.sdfg_list[3].symbols["a"] = sdfg.sdfg_list[2].symbols["a"]  # Why does inference fail?
+    sdfg.sdfg_list[3].symbols["a"] = sdfg.sdfg_list[2].symbols["a"]  # Why does inference fail?
+    sdfg.view()
     return sdfg
 
 
