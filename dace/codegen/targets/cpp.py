@@ -1379,7 +1379,7 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                 # need to set device
                 if current_device != src_gpuid:
                     current_device = src_gpuid
-                    sync_string += '''{backend}SetDevice({gpu_id});
+                    sync_string += '''\n{backend}SetDevice({gpu_id});
                     '''.format(gpu_id=current_device, backend=backend)
                 event = '__state->gpu_context->at(%s).events[%d]' % (
                     src_gpuid,
@@ -1392,7 +1392,7 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                 # need to set device
                 if current_device != ed_gpu_id:
                     current_device = ed_gpu_id
-                    sync_string += '''{backend}SetDevice({gpu_id});
+                    sync_string += '''\n{backend}SetDevice({gpu_id});
                     '''.format(gpu_id=current_device, backend=backend)
 
                 stream = "__state->gpu_context->at(%s).streams[%d]" % (
@@ -1429,7 +1429,7 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                     # need to set device
                     if current_device != src_gpuid:
                         current_device = src_gpuid
-                        sync_string += '''{backend}SetDevice({gpu_id});
+                        sync_string += '''\n{backend}SetDevice({gpu_id});
                         '''.format(gpu_id=current_device, backend=backend)
 
                     event = '__state->gpu_context->at(%s).events[%d]' % (
@@ -1444,7 +1444,7 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                     # need to set device
                     if current_device != e_gpu_id:
                         current_device = e_gpu_id
-                        sync_string += '''{backend}SetDevice({gpu_id});
+                        sync_string += '''\n{backend}SetDevice({gpu_id});
                         '''.format(gpu_id=current_device, backend=backend)
 
                     stream = "__state->gpu_context->at(%s).streams[%d]" % (

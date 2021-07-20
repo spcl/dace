@@ -81,7 +81,7 @@ def batchnorm2d(x: dc_dtype[N, H, W, C]):
 @pytest.mark.multigpu
 def test_batchnorm2d_model_parallelism():
     sdfg: dace.SDFG = batchnorm2d_model_parallelism.to_sdfg(strict=True)
-    sdfg.name = sdfg.name + 'inline'
+    sdfg.name = sdfg.name + '_inline'
     state = sdfg.start_state
     source = state.source_nodes()[0]
     multi_gpu_map = state.successors(source)[0]

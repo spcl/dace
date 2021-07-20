@@ -28,13 +28,19 @@ def prod(A: dtype[N], prodA: dtype[1]):
 @dace.program
 def max_(A: dtype[N], maxA: dtype[1]):
     for j in dace.map[0:N]:
-        maxA = max(maxA, A[j])
+        with dace.tasklet:
+            aj << A[j]
+            mA >> maxA(1, lambda a, b: max(a, b))
+            mA = aj
 
 
 @dace.program
 def custom(A: dtype[N], customA: dtype[1]):
     for j in dace.map[0:N]:
-        customA += A[j] + A[j] * A[j]
+        with dace.tasklet:
+            aj << A[j]
+            customRed >> customA(1, lambda a, b: a + b + b * b)
+            customRed = aj
 
 
 @pytest.mark.multigpu
@@ -57,7 +63,7 @@ def test_multi_gpu_reduction_sum():
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
-    # out_path = '.dacecache/local/reductions/'+sdfg.name
+    # out_path = '.dacecache/local/reductions/' + sdfg.name
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
 
@@ -82,13 +88,12 @@ def test_multi_gpu_reduction_prod():
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
-    # out_path = '.dacecache/local/reductions/'+sdfg.name
+    # out_path = '.dacecache/local/reductions/' + sdfg.name
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
 
 
-# @pytest.mark.multigpu
-@pytest.mark.skip
+@pytest.mark.multigpu
 def test_multi_gpu_reduction_max():
     sdfg: dace.SDFG = max_.to_sdfg(strict=True)
     sdfg.name = 'mGPU_CPU_max'
@@ -108,7 +113,7 @@ def test_multi_gpu_reduction_max():
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
-    # out_path = '.dacecache/local/reductions/'+sdfg.name
+    # out_path = '.dacecache/local/reductions/' + sdfg.name
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
 
@@ -133,7 +138,7 @@ def test_multi_gpu_reduction_custom():
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
-    # out_path = '.dacecache/local/reductions/'+sdfg.name
+    # out_path = '.dacecache/local/reductions/' + sdfg.name
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
 
@@ -141,8 +146,5 @@ def test_multi_gpu_reduction_custom():
 if __name__ == "__main__":
     test_multi_gpu_reduction_sum()
     test_multi_gpu_reduction_prod()
-
-    # broken frontend
-    # test_multi_gpu_reduction_max()
-    
+    test_multi_gpu_reduction_max()
     test_multi_gpu_reduction_custom()
