@@ -15,12 +15,7 @@ from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from string import ascii_uppercase
-<<<<<<< HEAD
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple, Union, Any
-import dace.codegen.exceptions
-=======
 from typing import Callable, Dict, List, Optional, Set, Tuple, Union
->>>>>>> hbm_fpga_unroller
 
 
 def node_path_graph(*args):
@@ -1051,3 +1046,65 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
     state = graph if isinstance(graph, SDFGState) else graph._graph
     return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(
         state.node_id(node))
+
+
+def accessnode_to_innermost_edge(state : SDFGState, node : nd.AccessNode):
+    """
+    Takes a node that only has one out- or ingoing edge,
+    :return: the innermost_edge on the memlet path defined by that node
+    """
+    some_edge = list(state.all_edges(node))
+    if len(some_edge) != 1:
+        raise ValueError("You may not specify an AccessNode in the update_access_list or in "
+            "update_hbm_access_list if it does not have exactly one attached memlet path")
+    some_edge = some_edge[0]
+    if some_edge.dst == node:
+        edge = state.memlet_path(some_edge)[0]
+    else:
+        edge = state.memlet_path(some_edge)[-1]
+    return edge
+
+def update_path_subsets(state: SDFGState, 
+    inner_edge_info: Union[MultiConnectorEdge, nd.AccessNode],
+    new_subset : sbs.Subset,):
+    """
+    Will take the memlet path defined by :param inner_edge:, and recreate it with
+    :param new_subset:, where :param inner_edge: has to be the innermost edge.
+    If 
+    """
+    if isinstance(inner_edge_info, nd.AccessNode):
+        inner_edge_info = accessnode_to_innermost_edge(state, inner_edge_info)
+    mem : mm.Memlet = inner_edge_info.data
+    mem.subset = new_subset
+
+    path = state.memlet_path(inner_edge_info)
+    src_conn = path[0].src_conn
+    dst_conn = path[-1].dst_conn
+    path_nodes = []
+    for edge in path:
+        path_nodes.append(edge.src)
+        state.remove_edge_and_connectors(edge)
+    path_nodes.append(path[-1].dst)
+
+    if src_conn is not None:
+        path[0].src.add_out_connector(src_conn)
+    if dst_conn is not None:
+        path[-1].dst.add_in_connector(dst_conn)
+
+    state.add_memlet_path(*path_nodes, memlet=mem,
+        src_conn=src_conn, dst_conn=dst_conn)
+
+def update_array_shape(sdfg: SDFG, array_name: str, new_shape: Iterable, 
+    strides=None, offset=None, total_size=None):
+    """
+    Updates the shape of an array
+    """
+    desc = sdfg.arrays[array_name]
+    sdfg.remove_data(array_name, False)
+    updated = sdfg.add_array(array_name, new_shape, desc.dtype,
+                    desc.storage, 
+                    desc.transient, strides,
+                    offset, desc.lifetime, 
+                    desc.debuginfo, desc.allow_conflicts,
+                    total_size, False, desc.alignment, desc.may_alias, )
+    return updated[1]

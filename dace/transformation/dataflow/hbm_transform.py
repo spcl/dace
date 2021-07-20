@@ -3,6 +3,7 @@ from typing import Any, Dict, Iterable, List, Tuple, Union
 import networkx
 from dace import dtypes, properties, registry, subsets, symbolic
 from dace.sdfg import utils, graph
+from dace.codegen.targets.fpga_helper import fpga_utils
 from dace.transformation import transformation, interstate
 from dace.sdfg import nodes as nd
 from dace import SDFG, SDFGState, memlet
@@ -14,7 +15,7 @@ class HbmTransform(transformation.Transformation):
     ######################
     # Properties
 
-    # dtype=List[Tuple[SDFGState, Union[nd.AccessNode, graph.MultiConnectorEdge], symbolic.symbol)]]
+    # dtype=List[Tuple[SDFGState, Union[nd.AccessNode, graph.MultiConnectorEdge], str)]]
     update_hbm_access_list = properties.Property(
         dtype=List,
         default=[],
@@ -24,13 +25,15 @@ class HbmTransform(transformation.Transformation):
          "with an AccessNode, this may also be used to specify which path to modify. "
          ))
 
-    # dtype=List[Tuple[str, str]]
+    # dtype=List[Tuple[str, str, str]]
     update_array_list = properties.Property(
         dtype=List,
         default=[],
         desc=
-        "List of (arrayname, new value for location['bank']). For HBM arrays will update "
-        "the shape of the array, if not already on HBM. Will move the array to FPGA_Global."
+        "List of (arrayname, value for location['memorytype'], value for location['bank']])." 
+        "Will move the array to FPGA_Global."
+        "The shape of the array will be updated depending on it's previous placement."
+        "DDR->HBM: Add a dimension, HBM->HBM: Scale first dimension, HBM->DDR: Remove first dimension."
     )
 
     outer_map_range = properties.Property(
@@ -39,7 +42,7 @@ class HbmTransform(transformation.Transformation):
         desc="Stores the range for the outer HBM map. Defaults to k = 0.")
 
     ######################
-    # Helpers
+    # helpers
 
     def _multiply_sdfg_executions(self, sdfg: SDFG,
                                   unrollparams: Union[Dict[str, str],
@@ -53,11 +56,13 @@ class HbmTransform(transformation.Transformation):
         nsdfg_node = list(
             filter(lambda x: isinstance(x, nd.NestedSDFG), state.nodes()))[0]
 
+        """
         for e in sdfg.states()[0].edges():
             if isinstance(e.src, nd.AccessNode):
                 if e.src.label == "_x" or e.src.label == "_y":
                     k = symbolic.pystr_to_symbolic("k")
                     e.data.subset[0] = (k, k, 1)
+        """
 
         map_enter, map_exit = state.add_map("hbm_unrolled_map", unrollparams,
                                             dtypes.ScheduleType.Unrolled)
@@ -124,17 +129,16 @@ class HbmTransform(transformation.Transformation):
 
         utils.update_path_subsets(state, inner_edge, new_subset)
 
-    def _update_array_hbm(self, array_name: str, new_location: str, sdfg: SDFG):
+    def _update_array_hbm(self, array_name: str, new_memory: str, new_bank: str, sdfg: SDFG):
         desc = sdfg.arrays[array_name]
         old_memory = None
-        if 'bank' in desc.location and desc.location["bank"] is not None:
-            old_memory = utils.parse_location_bank(desc.location["bank"])[0]
-        new_memory, new_memory_banks = utils.parse_location_bank(new_location)
+        if 'memorytype' in desc.location and desc.location["memorytype"] is not None:
+            old_memory = desc.location["memorytype"]
         if new_memory == "HBM":
-            low, high = utils.get_multibank_ranges_from_subset(
-                new_memory_banks, sdfg)
+            low, high = fpga_utils.get_multibank_ranges_from_subset(
+                new_bank, sdfg)
         else:
-            low, high = int(new_memory_banks), int(new_memory_banks) + 1
+            low, high = int(new_bank), int(new_bank) + 1
         if (old_memory is None or old_memory == "DDR") and new_memory == "HBM":
             desc = utils.update_array_shape(array_name,
                                             (high - low, *desc.shape))
@@ -145,7 +149,8 @@ class HbmTransform(transformation.Transformation):
             new_shape = list(desc.shape)
             new_shape[0] = high - low
             desc = utils.update_array_shape(sdfg, array_name, new_shape)
-        desc.location['bank'] = new_location
+        desc.location["memorytype"] = new_memory
+        desc.location['bank'] = new_bank
         desc.storage = dtypes.StorageType.FPGA_Global
 
     ######################
@@ -172,8 +177,8 @@ class HbmTransform(transformation.Transformation):
                                     subset_index)
 
         # update array bank positions
-        for array_name, bankprop in self.update_array_list:
-            self._update_array_hbm(array_name, bankprop, sdfg)
+        for array_name, memory_type, bank in self.update_array_list:
+            self._update_array_hbm(array_name, memory_type, bank, sdfg)
 
         # nest the sdfg and execute in parallel
         self._multiply_sdfg_executions(sdfg, self.outer_map_range)

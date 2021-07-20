@@ -125,9 +125,11 @@ def fpga_hbm_graph(veclen, dtype, expansion):
     per_array_size = sdfg.arrays["x"].shape[0] / banks_per_array
     utils.update_array_shape(sdfg, "x", [banks_per_array, per_array_size])
     utils.update_array_shape(sdfg, "y", [banks_per_array, per_array_size])
-    sdfg.arrays["x"].location["bank"] = f"hbm.0:{banks_per_array}"
+    sdfg.arrays["x"].location["memorytype"] = "HBM"
+    sdfg.arrays["y"].location["memorytype"] = "HBM"
+    sdfg.arrays["x"].location["bank"] = f"0:{banks_per_array}"
     sdfg.arrays["y"].location[
-        "bank"] = f"hbm.{banks_per_array}:{2*banks_per_array}"
+        "bank"] = f"{banks_per_array}:{2*banks_per_array}"
     state = sdfg.states()[0]
     for node in state:
         if isinstance(node, nodes.AccessNode):

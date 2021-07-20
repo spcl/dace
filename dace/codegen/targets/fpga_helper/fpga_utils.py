@@ -116,7 +116,7 @@ def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
         memorytype: str = array.location["memorytype"]
         memorytype = memorytype.upper()
         if (memorytype == "DDR" or memorytype == "HBM"):
-            return (memorytype, array.location["bank"])
+            return (memorytype, val)
         else:
             raise ValueError(
                 f"{memorytype} is an invalid memorytype. Supported are HBM and DDR."

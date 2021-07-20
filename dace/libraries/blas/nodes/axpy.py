@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.sdfg import utils
+from dace.codegen.targets.fpga_helper import fpga_utils
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -134,11 +135,10 @@ class ExpandAxpyFpgaHbm(ExpandTransformation):
         desc_x = parent_sdfg.arrays[parent_state.in_edges(node)[0].data.data]
         desc_y = parent_sdfg.arrays[parent_state.in_edges(node)[1].data.data]
         desc_res = parent_sdfg.arrays[parent_state.out_edges(node)[0].data.data]
-        banks_x = desc_x.location["bank"]
-        banks_y = desc_y.location["bank"]
-        banks_res = desc_res.location["bank"]
-        tmp_bank_c = utils.get_multibank_ranges_from_subset(
-            utils.parse_location_bank(desc_x)[1], sdfg)
+        banks_x = fpga_utils.parse_location_bank(desc_x)
+        banks_y = fpga_utils.parse_location_bank(desc_y)
+        banks_res = fpga_utils.parse_location_bank(desc_res)
+        tmp_bank_c = fpga_utils.get_multibank_ranges_from_subset(banks_x[1], sdfg)
         bank_count = tmp_bank_c[1] - tmp_bank_c[
             0]  # We know this is equal for all arrays it's checked in validation
 
@@ -148,8 +148,8 @@ class ExpandAxpyFpgaHbm(ExpandTransformation):
         xform.update_hbm_access_list.extend([(state, node, "k")
                                              for node in state.source_nodes()])
         xform.update_hbm_access_list.append((state, state.sink_nodes()[0], "k"))
-        xform.update_array_list.extend([("_x", banks_x), ("_y", banks_y),
-                                        ("_res", banks_res)])
+        xform.update_array_list.extend([("_x", *banks_x), ("_y", *banks_y),
+                                        ("_res", *banks_res)])
         xform.apply(sdfg)
 
         return sdfg
@@ -218,18 +218,18 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
             desc_x = sdfg.arrays[in_memlets[0].data]
             desc_y = sdfg.arrays[in_memlets[1].data]
             desc_z = sdfg.arrays[out_memlet.data]
-            parse_x = utils.parse_location_bank(desc_x)
-            parse_y = utils.parse_location_bank(desc_y)
-            parse_z = utils.parse_location_bank(desc_z)
+            parse_x = fpga_utils.parse_location_bank(desc_x)
+            parse_y = fpga_utils.parse_location_bank(desc_y)
+            parse_z = fpga_utils.parse_location_bank(desc_z)
             if parse_x is None or parse_y is None or parse_z is None:
                 raise ValueError(
                     "All attached arrays must be placed explicitly in memory "
                     "for this axpy implementation")
-            low1, high1 = utils.get_multibank_ranges_from_subset(
+            low1, high1 = fpga_utils.get_multibank_ranges_from_subset(
                 parse_x[1], sdfg)
-            low2, high2 = utils.get_multibank_ranges_from_subset(
+            low2, high2 = fpga_utils.get_multibank_ranges_from_subset(
                 parse_y[1], sdfg)
-            low3, high3 = utils.get_multibank_ranges_from_subset(
+            low3, high3 = fpga_utils.get_multibank_ranges_from_subset(
                 parse_z[1], sdfg)
             if (high1 - low1) != (high2 - low2) or (high2 - low2) != (high3 -
                                                                       low3):
