@@ -279,13 +279,13 @@ class CompiledSDFG(object):
             compiledSdfg = self
 
             while mode != 'run':
-                argtuple, initargtuple = compiledSdfg._construct_args(kwargs)
-
                 # unload lib as the sdfg might change
                 if compiledSdfg._lib.is_loaded():
                     compiledSdfg._lib.unload()
 
                 if mode == 'profile':
+                    argtuple, initargtuple = compiledSdfg._construct_args(
+                        kwargs)
                     try:
                         compiledSdfg._lib.load()
                         if compiledSdfg._initialized is False:
@@ -306,7 +306,10 @@ class CompiledSDFG(object):
                     sdfg = vscode.stop_and_transform(compiledSdfg._sdfg)
                     compiledSdfg = sdfg.compile()
                 mode = vscode.send_bp_recv({'type': 'sdfgEditMode'})['mode']
+
             self = compiledSdfg
+            # make sure to load the library
+            # if the sdfg has already been initialized
             if self._initialized and not self._lib.is_loaded():
                 self._lib.load()
 
@@ -323,6 +326,13 @@ class CompiledSDFG(object):
                                     self._libhandle, *argtuple)
             else:
                 self._cfunc(self._libhandle, *argtuple)
+
+            print("argtuple: ", argtuple)
+            print("initargtuple: ", initargtuple)
+            for sdfg, name, array in self.sdfg.arrays_recursive():
+                print(f'{sdfg.name}:{name}\n{array.to_json()}')
+            print("fileds: ", self.get_state_struct()._fields_)
+            print("return: ", self._return_arrays)
 
             return self._return_arrays
         except (RuntimeError, TypeError, UnboundLocalError, KeyError,
