@@ -661,8 +661,13 @@ def _min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
                    identity=dtypes.max_value(sdfg.arrays[a].dtype))
 
 
-def _min2(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, b: str):
-    """ Implements the min function with 2 scalar arguments. """
+def _minmax2(pv: 'ProgramVisitor',
+             sdfg: SDFG,
+             state: SDFGState,
+             a: str,
+             b: str,
+             ismin=True):
+    """ Implements the min or max function with 2 scalar arguments. """
 
     in_conn = set()
     out_conn = {'__out'}
@@ -696,8 +701,9 @@ def _min2(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, b: str):
         arg_b = "{cb}({in2})".format(cb=str(cast_b).replace('::', '.'),
                                      in2=conn_b)
 
-    tasklet = nodes.Tasklet('__min2', in_conn, out_conn,
-                            "__out = min({a}, {b})".format(a=arg_a, b=arg_b))
+    func = 'min' if ismin else 'max'
+    tasklet = nodes.Tasklet(f'__{func}2', in_conn, out_conn,
+                            f'__out = {func}({arg_a}, {arg_b})')
 
     c = _define_local_scalar(pv, sdfg, state, dtype_c)
     desc_c = sdfg.arrays[c]
@@ -714,6 +720,22 @@ def _min2(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, b: str):
     return c
 
 
+# NOTE: We support only the version of Python max that takes scalar arguments.
+# For iterable arguments one must use the equivalent NumPy methods.
+@oprepo.replaces('max')
+def _pymax(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+           a: Union[str, Number, symbolic.symbol], *args):
+    left_arg = a
+    current_state = state
+    for i, b in enumerate(args):
+        if i > 0:
+            pv._add_state('__min2_%d' % i)
+            pv.last_state.set_default_lineinfo(pv.current_lineinfo)
+            current_state = pv.last_state
+        left_arg = _minmax2(pv, sdfg, current_state, left_arg, b, ismin=False)
+    return left_arg
+
+
 # NOTE: We support only the version of Python min that takes scalar arguments.
 # For iterable arguments one must use the equivalent NumPy methods.
 @oprepo.replaces('min')
@@ -726,7 +748,7 @@ def _pymin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
             pv._add_state('__min2_%d' % i)
             pv.last_state.set_default_lineinfo(pv.current_lineinfo)
             current_state = pv.last_state
-        left_arg = _min2(pv, sdfg, current_state, left_arg, b)
+        left_arg = _minmax2(pv, sdfg, current_state, left_arg, b)
     return left_arg
 
 
@@ -879,30 +901,44 @@ def _argminmax(pv: 'ProgramVisitor',
         nest(_elementwise)("lambda x: x.idx", reduced_structs, out_array=out)
         return nest, out
 
+
 @oprepo.replaces('numpy.where')
-def _array_array_where(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
-                       cond_operand: str, left_operand: str = None, right_operand: str = None):
+def _array_array_where(visitor: 'ProgramVisitor',
+                       sdfg: SDFG,
+                       state: SDFGState,
+                       cond_operand: str,
+                       left_operand: str = None,
+                       right_operand: str = None):
     if left_operand is None or right_operand is None:
-        raise ValueError('numpy.where is only supported for the case where x and y are given')
+        raise ValueError(
+            'numpy.where is only supported for the case where x and y are given'
+        )
 
     cond_arr = sdfg.arrays[cond_operand]
     left_arr = sdfg.arrays.get(left_operand, None)
     right_arr = sdfg.arrays.get(right_operand, None)
 
-    left_type = left_arr.dtype if left_arr else dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
-    right_type = right_arr.dtype if right_arr else dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+    left_type = left_arr.dtype if left_arr else dtypes.DTYPE_TO_TYPECLASS[type(
+        left_operand)]
+    right_type = right_arr.dtype if right_arr else dtypes.DTYPE_TO_TYPECLASS[
+        type(right_operand)]
 
     # Implicit Python coversion implemented as casting
     arguments = [cond_arr, left_arr or left_type, right_arr or right_type]
-    tasklet_args = ['__incond', '__in1' if left_arr else left_operand, '__in2' if right_arr else right_operand]
+    tasklet_args = [
+        '__incond', '__in1' if left_arr else left_operand,
+        '__in2' if right_arr else right_operand
+    ]
     result_type, casting = _result_type(arguments[1:])
     left_cast = casting[0]
     right_cast = casting[1]
 
     if left_cast is not None:
-        tasklet_args[0] = "{}(__in1)".format(str(left_cast).replace('::', '.'))
+        tasklet_args[
+            1] = f"{str(left_cast).replace('::', '.')}({tasklet_args[1]})"
     if right_cast is not None:
-        tasklet_args[1] = "{}(__in2)".format(str(right_cast).replace('::', '.'))
+        tasklet_args[
+            2] = f"{str(right_cast).replace('::', '.')}({tasklet_args[2]})"
 
     left_shape = left_arr.shape if left_arr else [1]
     right_shape = right_arr.shape if right_arr else [1]
@@ -944,18 +980,19 @@ def _array_array_where(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
                        dace.Memlet.from_array(out_operand, out_arr))
     else:
         inputs = {}
-        inputs['__incond'] = Memlet.simple(cond_operand, left_idx if left_arr else right_idx)
+        inputs['__incond'] = Memlet.simple(cond_operand,
+                                           left_idx if left_arr else right_idx)
         if left_arr:
             inputs['__in1'] = Memlet.simple(left_operand, left_idx)
         if right_arr:
             inputs['__in2'] = Memlet.simple(right_operand, right_idx)
-        state.add_mapped_tasklet(
-            "_where_",
-            all_idx_dict, inputs,
-            '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1],
-                                                        i2=tasklet_args[2]),
-            {'__out': Memlet.simple(out_operand, out_idx)},
-            external_edges=True)
+        state.add_mapped_tasklet("_where_",
+                                 all_idx_dict,
+                                 inputs,
+                                 '__out = {i1} if __incond else {i2}'.format(
+                                     i1=tasklet_args[1], i2=tasklet_args[2]),
+                                 {'__out': Memlet.simple(out_operand, out_idx)},
+                                 external_edges=True)
 
     return out_operand
 
@@ -997,7 +1034,20 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     return name
 
 
-def _broadcast_together(arr1_shape, arr2_shape):
+def _broadcast_to(target_shape, operand_shape):
+    # the difference to normal broadcasting is that the broadcasted shape is the same as the target
+    # I was unable to find documentation for this in numpy, so we follow the description from ONNX
+    results = _broadcast_together(target_shape,
+                                  operand_shape,
+                                  unidirectional=True)
+
+    # the output_shape should be equal to the target_shape
+    assert all(i == o for i, o in zip(target_shape, results[0]))
+
+    return results
+
+
+def _broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
 
     all_idx_dict, all_idx, a1_idx, a2_idx = {}, [], [], []
 
@@ -1016,7 +1066,9 @@ def _broadcast_together(arr1_shape, arr2_shape):
 
             all_idx_dict[get_idx(i)] = dim1
 
-        elif dim1 == 1 and dim2 is not None:
+        # if unidirectional, dim2 must also be 1
+        elif dim1 == 1 and dim2 is not None and not unidirectional:
+
             a1_idx.append("0")
             # dim2 != 1 must hold here
             a2_idx.append(get_idx(i))
@@ -1030,7 +1082,8 @@ def _broadcast_together(arr1_shape, arr2_shape):
 
             all_idx_dict[get_idx(i)] = dim1
 
-        elif dim1 == None:
+        # if unidirectional, this is not allowed
+        elif dim1 == None and not unidirectional:
             # dim2 != None must hold here
             a2_idx.append(get_idx(i))
 
@@ -1042,9 +1095,14 @@ def _broadcast_together(arr1_shape, arr2_shape):
 
             all_idx_dict[get_idx(i)] = dim1
         else:
-            raise SyntaxError(
-                "operands could not be broadcast together with shapes {}, {}".
-                format(arr1_shape, arr2_shape))
+            if unidirectional:
+                raise SyntaxError(
+                    f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}"
+                )
+            else:
+                raise SyntaxError(
+                    "operands could not be broadcast together with shapes {}, {}"
+                    .format(arr1_shape, arr2_shape))
 
     def to_string(idx):
         return ", ".join(reversed(idx))
@@ -2284,6 +2342,13 @@ ufuncs = dict(
                   code="__out = abs(__in1)",
                   reduce=None,
                   initial=np.absolute.identity),
+    abs=dict(name="_numpy_abs_",
+             operator="Abs",
+             inputs=["__in1"],
+             outputs=["__out"],
+             code="__out = abs(__in1)",
+             reduce=None,
+             initial=np.abs.identity),
     fabs=dict(name="_numpy_fabs_",
               operator="Fabs",
               inputs=["__in1"],
@@ -4542,7 +4607,7 @@ def dot(pv: 'ProgramVisitor',
     arr_a = sdfg.arrays[op_a]
     arr_b = sdfg.arrays[op_b]
 
-    if len(arr_a.shape) == 2 and len(arr_b.shape == 2):
+    if len(arr_a.shape) == 2 and len(arr_b.shape) == 2:
         # Matrix multiplication
         # TODO: `If op_out`, then this is not correct. We need np.matmult,
         # but it is not implemented yet

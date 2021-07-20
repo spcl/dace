@@ -7,7 +7,6 @@ import re
 
 
 class InstrumentationReport(object):
-
     @staticmethod
     def get_event_uuid(event):
         uuid = (-1, -1, -1)
@@ -73,11 +72,13 @@ class InstrumentationReport(object):
         if len(self.durations) > 0:
             string += ('-' * (COLW * 5)) + '\n'
             string += ('{:<{width}}' * 2).format(
-                'Element', 'Runtime (ms)', width=COLW
-            ) + '\n'
-            string += row_format.format(
-                '', 'Min', 'Mean', 'Median', 'Max', width=COLW
-            )
+                'Element', 'Runtime (ms)', width=COLW) + '\n'
+            string += row_format.format('',
+                                        'Min',
+                                        'Mean',
+                                        'Median',
+                                        'Max',
+                                        width=COLW)
             string += ('-' * (COLW * 5)) + '\n'
 
             sdfg = -1
@@ -91,27 +92,36 @@ class InstrumentationReport(object):
                         # This element is a node.
                         if sdfg != element[0]:
                             # No parent SDFG row present yet, print it.
-                            string += row_format.format(
-                                'SDFG (' + str(element[0]) + ')',
-                                '', '', '', '', width=COLW
-                            )
+                            string += row_format.format('SDFG (' +
+                                                        str(element[0]) + ')',
+                                                        '',
+                                                        '',
+                                                        '',
+                                                        '',
+                                                        width=COLW)
                         sdfg = element[0]
                         if state != element[1]:
                             # No parent state row present yet, print it.
-                            string += row_format.format(
-                                '| State (' + str(element[1]) + ')',
-                                '', '', '', '', width=COLW
-                            )
+                            string += row_format.format('| State (' +
+                                                        str(element[1]) + ')',
+                                                        '',
+                                                        '',
+                                                        '',
+                                                        '',
+                                                        width=COLW)
                         state = element[1]
                         element_label = '| | Node (' + str(element[2]) + ')'
                     elif element[0] > -1 and element[1] > -1:
                         # This element is a state.
                         if sdfg != element[0]:
                             # No parent SDFG row present yet, print it.
-                            string += row_format.format(
-                                'SDFG (' + str(element[0]) + ')',
-                                '', '', '', '', width=COLW
-                            )
+                            string += row_format.format('SDFG (' +
+                                                        str(element[0]) + ')',
+                                                        '',
+                                                        '',
+                                                        '',
+                                                        '',
+                                                        width=COLW)
                         sdfg = element[0]
                         state = element[1]
                         element_label = '| State (' + str(element[1]) + ')'
@@ -134,15 +144,12 @@ class InstrumentationReport(object):
         if len(self.counters) > 0:
             string += ('-' * (COUNTER_COLW * 2)) + '\n'
             string += ('{:<{width}}' * 2).format(
-                'Counter', 'Value', width=COUNTER_COLW
-            ) + '\n'
+                'Counter', 'Value', width=COUNTER_COLW) + '\n'
             string += ('-' * (COUNTER_COLW * 2)) + '\n'
             for counter in self.counters:
-                string += counter_format.format(
-                    counter,
-                    self.counters[counter],
-                    width=COUNTER_COLW
-                )
+                string += counter_format.format(counter,
+                                                self.counters[counter],
+                                                width=COUNTER_COLW)
             string += ('-' * (COUNTER_COLW * 2)) + '\n'
 
         return string

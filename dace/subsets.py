@@ -5,7 +5,7 @@ import re
 import sympy as sp
 from functools import reduce
 import sympy.core.sympify
-from typing import List, Optional, Set, Union
+from typing import List, Optional, Sequence, Set, Union
 import warnings
 from dace.config import Config
 
@@ -509,10 +509,6 @@ class Range(Subset):
                     begin = symbolic.SymExpr(tokens[0][0], tokens[0][1])
                 else:
                     begin = symbolic.pystr_to_symbolic(tokens[0])
-                if isinstance(tokens[1], tuple):
-                    end = symbolic.SymExpr(tokens[1][0], tokens[1][1]) - 1
-                else:
-                    end = symbolic.pystr_to_symbolic(tokens[1]) - 1
                 if len(tokens) >= 3:
                     if isinstance(tokens[2], tuple):
                         step = symbolic.SymExpr(tokens[2][0], tokens[2][1])
@@ -520,6 +516,13 @@ class Range(Subset):
                         step = symbolic.SymExpr(tokens[2])
                 else:
                     step = 1
+                eoff = -1
+                if (step < 0) == True:
+                    eoff = 1
+                if isinstance(tokens[1], tuple):
+                    end = symbolic.SymExpr(tokens[1][0], tokens[1][1]) + eoff
+                else:
+                    end = symbolic.pystr_to_symbolic(tokens[1]) + eoff
                 if len(tokens) >= 4:
                     if isinstance(tokens[3], tuple):
                         tsize = tokens[3][0]
@@ -641,7 +644,7 @@ class Range(Subset):
         else:
             raise NotImplementedError
 
-    def squeeze(self, ignore_indices=None):
+    def squeeze(self, ignore_indices=None, offset=True):
         ignore_indices = ignore_indices or []
         shape = self.size()
         non_ones = []
@@ -664,10 +667,28 @@ class Range(Subset):
             squeezed_tsizes = [1]
         self.ranges = squeezed_ranges
         self.tile_sizes = squeezed_tsizes
-        self.offset(self, True, indices=offset_indices)
+        if offset:
+            self.offset(self, True, indices=offset_indices)
         return non_ones
 
-    def unsqueeze(self, axes):
+    def unsqueeze(self, axes: Sequence[int]) -> List[int]:
+        """ Adds 0:1 ranges to the subset, in the indices contained in axes.
+        
+        The method is mostly used to restore subsets that had their length-1
+        ranges removed (i.e., squeezed subsets). Hence, the method is
+        called 'unsqueeze'.
+
+        Examples (initial subset, axes -> result subset, output):
+        - [i:i+10], [0] -> [0:1, i], [0]
+        - [i:i+10], [0, 1] -> [0:1, 0:1, i:i+10], [0, 1]
+        - [i:i+10], [0, 2] -> [0:1, i:i+10, 0:1], [0, 2]
+        - [i:i+10], [0, 1, 2, 3] -> [0:1, 0:1, 0:1, 0:1, i:i+10], [0, 1, 2, 3]
+        - [i:i+10], [0, 2, 3, 4] -> [0:1, i:i+10, 0:1, 0:1, 0:1], [0, 2, 3, 4]
+        - [i:i+10], [0, 1, 1] -> [0:1, 0:1, 0:1, i:i+10], [0:1, 1, 2]
+
+        :param axes: The axes where the 0:1 ranges should be added.
+        :return: A list of the actual axes where the 0:1 ranges were added.
+        """
         result = []
         for axis in sorted(axes):
             self.ranges.insert(axis, (0, 0, 1))
@@ -934,8 +955,25 @@ class Indices(Subset):
             squeezed_indices = [0]
         self.indices = squeezed_indices
         return non_ones
+    
+    def unsqueeze(self, axes: Sequence[int]) -> List[int]:
+        """ Adds zeroes to the subset, in the indices contained in axes.
+        
+        The method is mostly used to restore subsets that had their
+        zero-indices removed (i.e., squeezed subsets). Hence, the method is
+        called 'unsqueeze'.
 
-    def unsqueeze(self, axes):
+        Examples (initial subset, axes -> result subset, output):
+        - [i], [0] -> [0, i], [0]
+        - [i], [0, 1] -> [0, 0, i], [0, 1]
+        - [i], [0, 2] -> [0, i, 0], [0, 2]
+        - [i], [0, 1, 2, 3] -> [0, 0, 0, 0, i], [0, 1, 2, 3]
+        - [i], [0, 2, 3, 4] -> [0, i, 0, 0, 0], [0, 2, 3, 4]
+        - [i], [0, 1, 1] -> [0, 0, 0, i], [0, 1, 2]
+
+        :param axes: The axes where the zero-indices should be added.
+        :return: A list of the actual axes where the zero-indices were added.
+        """
         result = []
         for axis in sorted(axes):
             self.indices.insert(axis, 0)

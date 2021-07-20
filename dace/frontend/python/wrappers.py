@@ -4,8 +4,10 @@ from __future__ import print_function
 import numpy
 import itertools
 from collections import deque
+from typing import Deque, Generic, Type, TypeVar
 
 from dace import dtypes, symbolic
+T = TypeVar('T')
 
 
 def ndarray(shape, dtype=numpy.float64, *args, **kwargs):
@@ -18,10 +20,10 @@ def ndarray(shape, dtype=numpy.float64, *args, **kwargs):
     new_dtype = dtype.type if isinstance(dtype, dtypes.typeclass) else dtype
     return numpy.ndarray(shape=new_shape, dtype=new_dtype, *args, **kwargs)
 
+stream: Type[Deque[T]] = deque
 
-class stream(object):
-    """ Stream array object in Python. Mostly used in the Python SDFG
-        simulator. """
+class stream_array(Generic[T]):
+    """ Stream array object in Python. """
     def __init__(self, dtype, shape):
         from dace import data
 
@@ -30,17 +32,18 @@ class stream(object):
         self.descriptor = data.Stream(dtype, 0, shape, True)
         self.queue_array = numpy.ndarray(shape, dtype=deque)
         for i in itertools.product(*(range(s) for s in shape)):
-            self.queue_array[i] = deque()
+            self.queue_array[i] = stream()
 
     @property
     def shape(self):
         return self.shape
 
-    def __getitem__(self, key):
+    def __getitem__(self, key) -> Deque[T]:
         return self.queue_array.__getitem__(key)
 
-    def __getslice__(self, *args):
+    def __getslice__(self, *args) -> Deque[T]:
         return self.queue_array.__getslice__(*args)
+
 
 
 def scalar(dtype=dtypes.float32):
@@ -65,4 +68,4 @@ def define_stream(dtype=dtypes.float32, buffer_size=1):
 
 def define_streamarray(dimensions, dtype=dtypes.float32, buffer_size=1):
     """ Defines a local stream array in a DaCe program. """
-    return stream(dtype, dimensions)
+    return stream_array(dtype, dimensions)

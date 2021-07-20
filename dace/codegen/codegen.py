@@ -182,7 +182,8 @@ def generate_code(sdfg) -> List[CodeObject]:
                    'cpp',
                    cpu.CPUCodeGen,
                    'Frame',
-                   environments=used_environments)
+                   environments=used_environments,
+                   sdfg=sdfg)
     ]
 
     # Create code objects for each target
@@ -199,7 +200,8 @@ def generate_code(sdfg) -> List[CodeObject]:
                        linkable=False)
     target_objects.append(dummy)
 
-    for env in dace.library.get_environments_and_dependencies(used_environments):
+    for env in dace.library.get_environments_and_dependencies(
+            used_environments):
         if hasattr(env, "codeobjects"):
             target_objects.extend(env.codeobjects)
 

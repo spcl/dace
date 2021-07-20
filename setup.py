@@ -15,6 +15,10 @@ library_files = [
     f[len(dace_path):]
     for f in glob.glob(dace_path + 'libraries/**/include/**/*', recursive=True)
 ]
+cmake_files = [
+    f[len(dace_path):]
+    for f in glob.glob(dace_path + 'codegen/**/*.cmake', recursive=True)
+]
 diode_files = [
     f[len(diode_path):]
     for f in (glob.glob(diode_path + 'webclient/**/*', recursive=True) +
@@ -70,11 +74,11 @@ setup(name='dace',
               'external/moodycamel/*.h', 'external/moodycamel/LICENSE.md',
               'codegen/Xilinx_HLS.tcl.in'
           ] + runtime_files + cub_files + diode_files + hlslib_files +
-          library_files + rtllib_files
+          library_files + rtllib_files + cmake_files
       },
       include_package_data=True,
       install_requires=[
-          'numpy', 'networkx >= 2.2', 'astunparse', 'sympy', 'pyyaml', 'ply',
+          'numpy', 'networkx >= 2.5', 'astunparse', 'sympy', 'pyyaml', 'ply',
           'websockets', 'requests', 'flask', 'scikit-build', 'cmake', 'aenum',
           'dataclasses; python_version < "3.7"', 'dill', 'pyreadline;platform_system=="Windows"'
       ],

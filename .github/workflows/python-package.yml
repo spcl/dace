@@ -71,7 +71,22 @@ jobs:
         else
             export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
         fi
-        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir"
+        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack"
+        codecov
+    - name: Test OpenBLAS LAPACK
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_cache=unique
+        export DACE_optimizer_interface=" "
+        if [ "${{ matrix.strict-xforms }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_strict_transformations=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
+        fi
+        pytest -n 1 --cov-report=xml --cov=dace --tb=short -m "lapack"
         codecov
     - name: Run other tests
       run: |
@@ -93,7 +108,7 @@ jobs:
         submodules: 'recursive'
     - name: Install dependencies
       run: |
-        rm ~/.dace.conf
+        rm -f ~/.dace.conf
         rm -rf .dacecache tests/.dacecache
         . /opt/setupenv
         python -m pip install --upgrade pip
@@ -138,7 +153,7 @@ jobs:
         submodules: 'recursive'
     - name: Install dependencies
       run: |
-        rm ~/.dace.conf
+        rm -f ~/.dace.conf
         rm -rf .dacecache tests/.dacecache
         . /opt/setupenv
         python -m pip install --upgrade pip
@@ -183,7 +198,7 @@ jobs:
         submodules: 'recursive'
     - name: Install dependencies
       run: |
-        rm ~/.dace.conf
+        rm -f ~/.dace.conf
         rm -rf .dacecache tests/.dacecache
         . /opt/setupenv
         python -m pip install --upgrade pip
@@ -195,16 +210,21 @@ jobs:
       run: |
         export NOSTATUSBAR=1
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode --timid"
         . /opt/setupenv
-        python tests/fpga/intel_fpga_test.py
-        codecov
+        $PYTHON_BINARY tests/fpga/intel_fpga_test.py
 
     - name: Run Xilinx tests
       run: |
         export NOSTATUSBAR=1
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode --timid"
         . /opt/setupenv
-        python tests/fpga/xilinx_test.py
+        $PYTHON_BINARY tests/fpga/xilinx_test.py
+
+    - name: Report overall coverage
+      run: |
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        . /opt/setupenv
+        coverage combine . */; coverage report; coverage xml
         codecov

@@ -76,28 +76,33 @@ class PruneConnectors(pm.Transformation):
                             iter(state.in_edges_by_connector(
                                 nsdfg, e.src_conn))).src) > 0):
                     prune_in.remove(e.src_conn)
-
+        do_not_prune = set()
         for conn in prune_in:
             if any(
                     state.in_degree(state.memlet_path(e)[0].src) > 0
                     for e in state.in_edges(nsdfg) if e.dst_conn == conn):
+                do_not_prune.add(conn)
                 continue
             for e in state.in_edges_by_connector(nsdfg, conn):
                 state.remove_memlet_path(e, remove_orphans=True)
-                if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
-                    # If the data is now unused, we can purge it from the SDFG
-                    nsdfg.sdfg.remove_data(conn)
 
         for conn in prune_out:
             if any(
                     state.out_degree(state.memlet_path(e)[-1].dst) > 0
                     for e in state.out_edges(nsdfg) if e.src_conn == conn):
+                do_not_prune.add(conn)
                 continue
             for e in state.out_edges_by_connector(nsdfg, conn):
                 state.remove_memlet_path(e, remove_orphans=True)
-                if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
-                    # If the data is now unused, we can purge it from the SDFG
-                    nsdfg.sdfg.remove_data(conn)
+
+        for conn in prune_in:
+            if conn in nsdfg.sdfg.arrays and conn not in all_data_used and conn not in do_not_prune:
+                # If the data is now unused, we can purge it from the SDFG
+                nsdfg.sdfg.remove_data(conn)
+        for conn in prune_out:
+            if conn in nsdfg.sdfg.arrays and conn not in all_data_used and conn not in do_not_prune:
+                # If the data is now unused, we can purge it from the SDFG
+                nsdfg.sdfg.remove_data(conn)
 
 
 @registry.autoregister_params(singlestate=True, strict=True)

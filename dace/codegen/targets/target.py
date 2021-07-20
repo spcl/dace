@@ -4,7 +4,7 @@ import shutil  # which
 from typing import Dict, List, Tuple
 import warnings
 
-from dace import dtypes, memlet as mm
+from dace import dtypes, memlet as mm, data as dt
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from dace.sdfg.utils import dfs_topological_sort
 from dace.codegen.instrumentation.provider import InstrumentationProvider
@@ -99,8 +99,28 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
+    def declare_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
+                      node: nodes.Node, nodedesc: dt.Data,
+                      global_stream: CodeIOStream,
+                      declaration_stream: CodeIOStream) -> None:
+        """ Generates code for declaring an array without allocating it,
+            outputting to the given code streams.
+            :param sdfg: The SDFG to generate code from.
+            :param dfg: The SDFG state to generate code from.
+            :param state_id: The node ID of the state in the given SDFG.
+            :param node: The data node to generate allocation for.
+            :param nodedesc: The data descriptor to allocate.
+            :param global_stream: A `CodeIOStream` object that will be
+                                    generated outside the calling code, for
+                                    use when generating global functions.
+            :param declaration_stream: A `CodeIOStream` object that points
+                                       to the point of array declaration.
+        """
+        raise NotImplementedError('Abstract class')
+
     def allocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
-                       node: nodes.Node, global_stream: CodeIOStream,
+                       node: nodes.Node, nodedesc: dt.Data,
+                       global_stream: CodeIOStream,
                        declaration_stream: CodeIOStream,
                        allocation_stream: CodeIOStream) -> None:
         """ Generates code for allocating an array, outputting to the given
@@ -109,6 +129,7 @@ class TargetCodeGenerator(object):
             :param dfg: The SDFG state to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
             :param node: The data node to generate allocation for.
+            :param nodedesc: The data descriptor to allocate.
             :param global_stream: A `CodeIOStream` object that will be
                                     generated outside the calling code, for
                                     use when generating global functions.
@@ -120,7 +141,8 @@ class TargetCodeGenerator(object):
         raise NotImplementedError('Abstract class')
 
     def deallocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
-                         node: nodes.Node, function_stream: CodeIOStream,
+                         node: nodes.Node, nodedesc: dt.Data,
+                         function_stream: CodeIOStream,
                          callsite_stream: CodeIOStream) -> None:
         """ Generates code for deallocating an array, outputting to the given
             code streams.
@@ -128,6 +150,7 @@ class TargetCodeGenerator(object):
             :param dfg: The SDFG state to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
             :param node: The data node to generate deallocation for.
+            :param nodedesc: The data descriptor to deallocate.
             :param function_stream: A `CodeIOStream` object that will be
                                     generated outside the calling code, for
                                     use when generating global functions.
