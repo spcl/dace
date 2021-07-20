@@ -1364,47 +1364,64 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
 
     if max_streams >= 0:
         src_gpuid = sdutils.get_gpu_location(sdfg, node)
-        sync_stream = "__state->gpu_context->at(%s).streams[%d]" % (
-            src_gpuid, node._cuda_stream[src_gpuid])
+        sync_stream = f"__state->gpu_context->at({src_gpuid}).streams[{node._cuda_stream[src_gpuid]}]"
         current_device = src_gpuid
         for edge in dfg.out_edges(scope_exit):
             # Synchronize end of kernel with output data (multiple kernels
             # lead to same data node)
-            ed_gpu_id = sdutils.get_gpu_location(sdfg, edge.dst)
-            if (isinstance(edge.dst, nodes.AccessNode)
-                    and edge.dst._cuda_stream != node._cuda_stream):
-
-                sync_string = '''\n'''
-
+            memlet_path = dfg.memlet_path(edge)
+            dstnode = memlet_path[-1].dst
+            if isinstance(dstnode, nodes.AccessNode):
+                ed_gpu_id = sdutils.get_gpu_location(sdfg, dstnode)
+                sync_string = ''''''
                 # need to set device
                 if current_device != src_gpuid:
                     current_device = src_gpuid
-                    sync_string += '''\n{backend}SetDevice({gpu_id});
-                    '''.format(gpu_id=current_device, backend=backend)
-                event = '__state->gpu_context->at(%s).events[%d]' % (
-                    src_gpuid,
-                    edge._cuda_event if hasattr(edge, "_cuda_event") else 0)
+                    sync_string += f'''{backend}SetDevice({current_device});\n'''
 
-                sync_string += '''{backend}EventRecord({event}, {event_record_stream});\n'''.format(
-                    event=event,
-                    event_record_stream=sync_stream,
-                    backend=backend)
-                # need to set device
-                if current_device != ed_gpu_id:
-                    current_device = ed_gpu_id
-                    sync_string += '''\n{backend}SetDevice({gpu_id});
-                    '''.format(gpu_id=current_device, backend=backend)
+                if dstnode.desc(sdfg).storage not in [
+                        dtypes.StorageType.GPU_Global,
+                        dtypes.StorageType.GPU_Shared
+                ]:
+                    sync_string += f'''{backend}StreamSynchronize({sync_stream});\n'''
 
-                stream = "__state->gpu_context->at(%s).streams[%d]" % (
-                    ed_gpu_id, edge.dst._cuda_stream[ed_gpu_id])
-                sync_string += '''{backend}StreamWaitEvent({stream}, {event}, 0);\n'''.format(
-                    stream=stream, event=event, backend=backend)
+                if (ed_gpu_id is not None and node._cuda_stream != getattr(
+                        dstnode, '_cuda_stream', None)):
+                    event_number = edge._cuda_event if hasattr(
+                        edge, "_cuda_event") else 0
+                    event = f'__state->gpu_context->at({src_gpuid}).events[{event_number}]'
+                    sync_string += f'''{backend}EventRecord({event}, {sync_stream});\n'''
+                    # need to set device
+                    if current_device != ed_gpu_id:
+                        current_device = ed_gpu_id
+                        sync_string += f'''\n{backend}SetDevice({current_device});\n'''
+
+                    stream = "__state->gpu_context->at({ed_gpu_id}).streams[{dstnode._cuda_stream[ed_gpu_id]}]"
+                    sync_string += f'''{backend}StreamWaitEvent({stream}, {event}, 0);\n'''
                 callsite_stream.write(sync_string, sdfg, state_id,
                                       [edge.src, edge.dst])
-                continue
+
+            # if (isinstance(edge.dst, nodes.AccessNode)
+            #     and edge.dst._cuda_stream != node._cuda_stream):
+            # sync_string = '''\n'''
+
+            # # need to set device
+            # if current_device != src_gpuid:
+            #     current_device = src_gpuid
+            #     sync_string += f'''\n{backend}SetDevice({current_device});\n'''
+            # event = f'__state->gpu_context->at({src_gpuid}).events[{edge._cuda_event if hasattr(edge, "_cuda_event") else 0}]'
+            # sync_string += f'''{backend}EventRecord({event}, {sync_stream});\n'''
+            # # need to set device
+            # if current_device != ed_gpu_id:
+            #     current_device = ed_gpu_id
+            #     sync_string += f'''\n{backend}SetDevice({current_device});\n'''
+
+            # stream = "__state->gpu_context->at({ed_gpu_id}).streams[{edge.dst._cuda_stream[ed_gpu_id]}]"
+            # sync_string += f'''{backend}StreamWaitEvent({stream}, {event}, 0);\n'''
+            # callsite_stream.write(sync_string, sdfg, state_id,
+            #                       [edge.src, edge.dst])
 
             # If a view, get the relevant access node
-            dstnode = edge.dst
             if not isinstance(dstnode, nodes.ExitNode):
                 while isinstance(sdfg.arrays[dstnode.data], data.View):
                     dstnode = dfg.out_edges(dstnode)[0].dst

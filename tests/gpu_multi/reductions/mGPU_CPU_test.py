@@ -139,7 +139,7 @@ def test_multi_gpu_reduction_custom():
     GPUMultiTransformMap.apply_to(sdfg, verify=False, _map_entry=map_entry)
     sdfg.arrays['customA'].storage = StorageType.CPU_Pinned
 
-    m = 100
+    m = n
     np.random.seed(0)
     customA = cuda.pinned_array(shape=1, dtype=np_dtype)
     customA.fill(0)
