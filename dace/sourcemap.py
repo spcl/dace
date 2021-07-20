@@ -141,25 +141,29 @@ def save(language: str, name: str, map: dict, build_folder: str) -> str:
     return os.path.abspath(folder)
 
 
-def get_src_files(sdfg, fileSet):
-    """ Search all nodes for debuginfo to find the spurce filenames
-        :param graph: An SDFG or SDFGState to check for the sourcefilename
+def get_src_files(sdfg):
+    """ Search all nodes for debuginfo to find the source filenames
+        :param sdfg: An SDFG to check for source files
         :return: list of unique source filenames
     """
+    sourcefiles = []
     for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(
-                node,
-            (nodes.AccessNode, nodes.Tasklet, nodes.LibraryNode, nodes.Map,
-             nodes.NestedSDFG)) and node.debuginfo is not None:
+        if (isinstance(node, (nodes.AccessNode, nodes.Tasklet,
+                              nodes.LibraryNode, nodes.Map, nodes.NestedSDFG))
+                and node.debuginfo is not None):
 
-            fileSet.add(node.debuginfo.filename)
+            filename = node.debuginfo.filename
+            if not filename in sourcefiles:
+                sourcefiles.append(filename)
 
-        elif isinstance(
-                node,
-            (nodes.MapEntry, nodes.MapExit)) and node.map.debuginfo is not None:
-            fileSet.add(node.map.debuginfo.filename)
+        elif (isinstance(node, (nodes.MapEntry, nodes.MapExit))
+              and node.map.debuginfo is not None):
 
-    return fileSet
+            filename = node.map.debuginfo.filename
+            if not filename in sourcefiles:
+                sourcefiles.append(filename)
+
+    return sourcefiles
 
 
 def create_py_map(sdfg):
@@ -172,10 +176,7 @@ def create_py_map(sdfg):
     made_with_api = py_mapper.mapper(sdfg)
     folder = sdfg.build_folder
     save("py", sdfg.name, py_mapper.map, folder)
-    # If the SDFG was made with the API we need to create tmp info
-    # as it doesn't have any
-    sourceFiles = [src for src in get_src_files(sdfg, set())]
-    # If tmp is None, then the SDFG was created with the API
+    sourceFiles = get_src_files(sdfg)
     return (folder, sourceFiles, made_with_api)
 
 

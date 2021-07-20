@@ -129,9 +129,16 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                 "Unknown Intel FPGA execution mode: {}".format(execution_mode))
 
         host_code = CodeIOStream()
-        host_code.write("""\
-#include "dace/intel_fpga/host.h"
-#include <iostream>\n\n""")
+        host_code.write('#include "dace/intel_fpga/host.h"')
+        if len(self._dispatcher.instrumentation) > 1:
+            host_code.write("""\
+#include "dace/perf/reporting.h"
+#include <chrono>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+""")
+        host_code.write("\n\n")
 
         self._frame.generate_fileheader(self._global_sdfg, host_code,
                                         'intelfpga_host')
