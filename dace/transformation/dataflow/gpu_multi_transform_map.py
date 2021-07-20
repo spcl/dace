@@ -34,6 +34,12 @@ class GPUMultiTransformMap(transformation.Transformation):
                                     default="gpu_multi_",
                                     allow_none=True,
                                     desc="Prefix for the transient name")
+    skip_scalar = Property(
+        dtype=bool,
+        default=True,
+        allow_none=True,
+        desc="If True: skips the scalar data nodes. "
+        "If False: creates localstorage for scalar transients.")
     number_of_gpus = SymbolicProperty(
         default=None,
         allow_none=True,
@@ -112,10 +118,11 @@ class GPUMultiTransformMap(transformation.Transformation):
 
         # Avoiding import loops
         from dace.transformation.dataflow import (StripMining, InLocalStorage,
-                                     OutLocalStorage, AccumulateTransient)
+                                                  OutLocalStorage,
+                                                  AccumulateTransient)
         from dace.frontend import operations
 
-        # tile map into number_of_gpus tiles
+        # Tile map into number_of_gpus tiles
         outer_map: nodes.Map = StripMining.apply_to(
             sdfg,
             dict(dim_idx=-1,
@@ -135,9 +142,10 @@ class GPUMultiTransformMap(transformation.Transformation):
         # Add transient Data leading to the inner map
         prefix = self.new_transient_prefix
         for node in graph.predecessors(outer_map_entry):
-            # skip scalar data
-            if isinstance(node, nodes.AccessNode) and not isinstance(
-                    node.desc(sdfg), Scalar):
+            # Skip scalar data
+            if isinstance(node, nodes.AccessNode):
+                if self.skip_scalar and isinstance(node.desc(sdfg), Scalar):
+                    continue
                 in_data_node = InLocalStorage.apply_to(sdfg,
                                                        dict(array=node.data,
                                                             prefix=prefix),
@@ -162,19 +170,15 @@ class GPUMultiTransformMap(transformation.Transformation):
             # skip scalar data
             if isinstance(node, nodes.AccessNode):
                 data_name = node.data
-                # transients with write-conflict resolution need to be
+                # Transients with write-conflict resolution need to be
                 # collected first as AccumulateTransient creates a nestedSDFG
                 if edge.data.wcr is not None:
-                    # if len(wcr_data) >= 1:
-                    #     raise NotImplementedError(
-                    # "Only one WCR is currently supported,"
-                    #  "limited by AccumulateTransient")
                     dtype = sdfg.arrays[data_name].dtype
                     redtype = operations.detect_reduction_type(edge.data.wcr)
                     identity = dtypes.reduction_identity(dtype, redtype)
                     wcr_data[data_name] = identity
                 elif not isinstance(node.desc(sdfg), Scalar):
-                    # transients without write-conflict resolution
+                    # Transients without write-conflict resolution
                     if prefix + data_name in sdfg.arrays:
                         create_array = False
                     else:
@@ -192,18 +196,14 @@ class GPUMultiTransformMap(transformation.Transformation):
         if len(wcr_data) != 0:
             nsdfg = AccumulateTransient.apply_to(
                 sdfg,
-                options=dict(
-                    array_identity_dict=wcr_data,
-                    # identity=identity,
-                    # array=data_name,
-                    prefix=prefix),
+                options=dict(array_identity_dict=wcr_data, prefix=prefix),
                 map_exit=inner_map_exit,
                 outer_map_exit=outer_map_exit)
 
-        # propagate schedule, storage and location
+        # Propagate schedule, storage and location
         infer_types.set_default_schedule_storage_types_and_location(sdfg, None)
 
-        # remove the parameter of the outer_map from the sdfg symbols,
+        # Remove the parameter of the outer_map from the sdfg symbols,
         # as it got added as a symbol in StripMining.
         if outer_map.params[0] in sdfg.free_symbols:
             sdfg.remove_symbol(outer_map.params[0])
