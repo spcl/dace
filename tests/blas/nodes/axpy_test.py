@@ -149,9 +149,7 @@ def fpga_hbm_graph(veclen, dtype, expansion):
     for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
             patterns=[hbm_copy_transform.HbmCopyTransform]):
         xform.apply(sdfg)
-    sdfg.sdfg_list[3].symbols["a"] = sdfg.sdfg_list[2].symbols[
-        "a"]  # Why does inference fail?
-
+    #sdfg.sdfg_list[3].symbols["a"] = sdfg.sdfg_list[2].symbols["a"]  # Why does inference fail?
     return sdfg
 
 
@@ -171,6 +169,9 @@ def _test_fpga(target):
 
 
 if __name__ == "__main__":
+
+    _test_fpga("fpga_hbm")
+    exit(0)
 
     cmdParser = argparse.ArgumentParser(allow_abbrev=False)
 

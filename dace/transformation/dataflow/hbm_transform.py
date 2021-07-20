@@ -12,8 +12,6 @@ from dace import SDFG, SDFGState, memlet
 @registry.autoregister
 @properties.make_properties
 class HbmTransform(transformation.Transformation):
-    ######################
-    # Properties
 
     # dtype=List[Tuple[SDFGState, Union[nd.AccessNode, graph.MultiConnectorEdge], str)]]
     update_hbm_access_list = properties.Property(
@@ -41,9 +39,6 @@ class HbmTransform(transformation.Transformation):
         default={"k": "0"},
         desc="Stores the range for the outer HBM map. Defaults to k = 0.")
 
-    ######################
-    # helpers
-
     def _multiply_sdfg_executions(self, sdfg: SDFG,
                                   unrollparams: Union[Dict[str, str],
                                                       List[Tuple[str, str]]]):
@@ -56,6 +51,7 @@ class HbmTransform(transformation.Transformation):
         nsdfg_node = list(
             filter(lambda x: isinstance(x, nd.NestedSDFG), state.nodes()))[0]
 
+        #TODO: Remove
         """
         for e in sdfg.states()[0].edges():
             if isinstance(e.src, nd.AccessNode):
@@ -83,6 +79,7 @@ class HbmTransform(transformation.Transformation):
                                   memlet=output.data,
                                   src_conn=output.src_conn,
                                   dst_conn=output.dst_conn)
+        sdfg.apply_transformations(interstate.InlineSDFG)
 
     def _update_memlet_hbm(self, state: SDFGState,
                            inner_edge: graph.MultiConnectorEdge,
@@ -152,9 +149,6 @@ class HbmTransform(transformation.Transformation):
         desc.location["memorytype"] = new_memory
         desc.location['bank'] = new_bank
         desc.storage = dtypes.StorageType.FPGA_Global
-
-    ######################
-    # public
 
     @staticmethod
     def can_be_applied(self, graph: Union[SDFG, SDFGState],
