@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace import registry
+from dace import dtypes, registry
 from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.state import StateSubgraphView
 from dace.symbolic import evaluate
@@ -74,6 +74,18 @@ class MapUnroll(transformation.Transformation):
                 to_search.append(succ)
         subgraph = StateSubgraphView(state, seen)
 
+        # Check for local memories that need to be replicated
+        shared_transients = set(sdfg.shared_transients())
+        # Extend this list with transients that are used outside this subgraph
+        for node in state.nodes():
+            if isinstance(node, nodes.AccessNode) and node not in seen:
+                shared_transients.add(node.data)
+        local_memories = []
+        for name, desc in sdfg.arrays.items():
+            if (desc.transient and name not in shared_transients
+                    and desc.lifetime == dtypes.AllocationLifetime.Scope):
+                local_memories.append(name)
+
         params = map_entry.map.params
         ranges = map_entry.map.range.ranges
         constant_ranges = []
@@ -85,6 +97,7 @@ class MapUnroll(transformation.Transformation):
             constant_ranges.append(range(begin, end, step))
         index_tuples = itertools.product(*constant_ranges)
         for t in index_tuples:
+            suffix = "_" + "_".join(map(str, t))
             node_to_unrolled = {}
             # Copy all nodes
             for node in subgraph:
@@ -97,6 +110,15 @@ class MapUnroll(transformation.Transformation):
                 if node == map_entry:
                     # Fix the map bounds to only this iteration
                     unrolled_node.map.range = [(i, i, 1) for i in t]
+                if (isinstance(node, nodes.AccessNode)
+                        and node.data in local_memories):
+                    # If this is a local memory only used in this subgraph,
+                    # we need to replicate it for each new subgraph
+                    unrolled_name = node.data + suffix
+                    if unrolled_name not in sdfg.arrays:
+                        unrolled_desc = copy.deepcopy(sdfg.arrays[node.data])
+                        sdfg.add_datadesc(unrolled_name, unrolled_desc)
+                    unrolled_node.data = unrolled_name
                 if isinstance(node, nodes.NestedSDFG):
                     # Reinstate the nested SDFG
                     node.sdfg = nsdfg
@@ -110,6 +132,8 @@ class MapUnroll(transformation.Transformation):
                 src = node_to_unrolled[src]
                 dst = node_to_unrolled[dst]
                 memlet = copy.deepcopy(memlet)
+                if memlet.data in local_memories:
+                    memlet.data = memlet.data + suffix
                 state.add_edge(src, src_conn, dst, dst_conn, memlet)
             # Eliminate the now trivial map
             TrivialMapElimination.apply_to(
@@ -121,3 +145,7 @@ class MapUnroll(transformation.Transformation):
         # Now we can delete the original subgraph. This implicitly also remove
         # memlets between nodes
         state.remove_nodes_from(subgraph)
+
+        # Remove local memories that were replicated
+        for mem in local_memories:
+            sdfg.remove_data(mem)
