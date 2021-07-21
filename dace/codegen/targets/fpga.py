@@ -8,7 +8,7 @@ import re
 import warnings
 import sympy as sp
 import numpy as np
-from typing import Dict, List, Tuple, Union
+from typing import Dict, Iterable, List, Tuple, Union
 import copy
 
 import dace
@@ -106,7 +106,7 @@ def iterate_hbm_multibank_arrays(array_name: str, array: dt.Array, sdfg: SDFG):
         yield 0
 
 
-def modify_distributed_subset(subset: Union[subsets.Subset, list, tuple],
+def modify_distributed_subset(subset: Union[subsets.Subset, Iterable],
                               change: int):
     """
     Modifies the first index of :param subset: (the one used for distributed subsets).
@@ -120,15 +120,12 @@ def modify_distributed_subset(subset: Union[subsets.Subset, list, tuple],
             cps.pop([0])
         else:
             cps[0] = (change, change, 1)
-    elif isinstance(subset, list) or isinstance(subset, tuple):
-        if isinstance(subset, tuple):
-            cps = list(cps)
+    elif isinstance(subset, Iterable):
+        cps = list(cps)  # Works for any iterable type
         if change == -1:
-            cps.pop(0)
+            cps = cps[1:]
         else:
             cps[0] = change
-        if isinstance(subset, tuple):
-            cps = tuple(cps)
     else:
         raise ValueError("unsupported type passed to modify_distributed_subset")
 
