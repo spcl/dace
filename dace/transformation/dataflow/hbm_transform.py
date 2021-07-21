@@ -18,7 +18,6 @@ class HbmTransform(transformation.Transformation):
         default=[],
         desc=
         "List of (arrayname, value for location['memorytype'], value for location['bank']])."
-        "Will move the array to FPGA_Global."
         "The shape of the array will be updated depending on it's previous placement."
         "DDR->HBM: Add a dimension, HBM->HBM: Scale first dimension, HBM->DDR: Remove first dimension."
     )
@@ -161,7 +160,7 @@ class HbmTransform(transformation.Transformation):
         else:
             low, high = int(new_bank), int(new_bank) + 1
         if (old_memory is None or old_memory == "DDR") and new_memory == "HBM":
-            desc = utils.update_array_shape(array_name,
+            desc = utils.update_array_shape(sdfg, array_name,
                                             (high - low, *desc.shape))
         elif old_memory == "HBM" and (new_memory == "DDR"
                                       or new_memory is None):
@@ -192,3 +191,8 @@ class HbmTransform(transformation.Transformation):
 
         # nest the sdfg and execute in parallel
         self._multiply_sdfg_executions(sdfg)
+
+        #Set default on all outer arrays, such that FPGA_transformation can be used
+        for desc in sdfg.arrays.items():
+            desc[1].storage = dtypes.StorageType.Default
+        

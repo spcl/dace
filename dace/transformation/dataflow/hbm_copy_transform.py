@@ -33,6 +33,13 @@ class HbmCopyTransform(transformation.Transformation):
         "If None, then the transform will try to split equally in each dimension."
     )
 
+    default_to_cpu_storage = properties.Property(
+        dtype=bool,
+        default=True,
+        allow_none=False,
+        desc="If set storage types will be set to CPU Heap if on Default"
+    )
+
     def _get_split_size(self, virtual_shape: Iterable,
                         split_count: List[int]) -> List[int]:
         """
@@ -94,6 +101,13 @@ class HbmCopyTransform(transformation.Transformation):
             bank_count = int(dst_array.shape[0])
             true_size = src_array.shape
         ndim = len(true_size)
+
+        #Initialize array defaults
+        if self.default_to_cpu_storage:
+            if sdfg.arrays[src.data].storage == dtypes.StorageType.Default:
+                sdfg.arrays[src.data].storage = dtypes.StorageType.CPU_Heap
+            if sdfg.arrays[dst.data].storage == dtypes.StorageType.Default:
+                sdfg.arrays[dst.data].storage = dtypes.StorageType.CPU_Heap
 
         # Figure out how to split
         if self.split_array_info is None:
