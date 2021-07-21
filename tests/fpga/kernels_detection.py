@@ -71,10 +71,7 @@ def test_kernels_inside_component_0():
     res = program(x=x, y=y, v=v, w=w, z=z)
     assert np.allclose(res, x + y + v + w + z)
     report = sdfg.get_latest_report()
-    assert (len(
-        re.findall(
-            r"Node \([0-9]+\)\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+",
-            str(report))) == 3)
+    assert len(re.findall(r"_Add__[0-9]+(:|__Add__[0-9]+:)", str(report))) == 3
 
 
 def test_kernels_inside_component_1():
