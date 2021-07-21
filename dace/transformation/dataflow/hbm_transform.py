@@ -3,7 +3,7 @@ from typing import Any, Dict, Iterable, List, Tuple, Union
 import networkx
 from dace import dtypes, properties, registry, subsets, symbolic
 from dace.sdfg import utils, graph
-from dace.codegen.targets.fpga_helper import fpga_utils
+from dace.codegen.targets import fpga
 from dace.transformation import transformation, interstate
 from dace.sdfg import nodes as nd
 from dace import SDFG, SDFGState, memlet
@@ -156,7 +156,7 @@ class HbmTransform(transformation.Transformation):
                 "memorytype"] is not None:
             old_memory = desc.location["memorytype"]
         if new_memory == "HBM":
-            low, high = fpga_utils.get_multibank_ranges_from_subset(
+            low, high = fpga.get_multibank_ranges_from_subset(
                 new_bank, sdfg)
         else:
             low, high = int(new_bank), int(new_bank) + 1
