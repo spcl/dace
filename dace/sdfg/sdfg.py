@@ -1029,18 +1029,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             and isinstance(v, dt.Scalar) and not k.startswith('__dace')
         }
 
-        if self.parent:
-            # Add ALL nested SDFG symbols to scalar arguments
-            scalar_args.update({
-                k: dt.Scalar(self.symbols[k])
-                for k in self.symbols if not k.startswith('__dace')
-            })
-        else:
-            # Add global free symbols to scalar arguments
-            scalar_args.update({
-                k: dt.Scalar(self.symbols[k])
-                for k in self.free_symbols if not k.startswith('__dace')
-            })
+        # Add global free symbols to scalar arguments
+        scalar_args.update({
+            k: dt.Scalar(self.symbols[k])
+            for k in self.free_symbols if not k.startswith('__dace')
+        })
 
         # Fill up ordered dictionary
         result = collections.OrderedDict()

@@ -325,6 +325,11 @@ class LoopToMap(DetectLoop):
             
             # Add NestedSDFG node
             cnode = new_body.add_nested_sdfg(nsdfg, None, read_set, write_set)
+            if sdfg.parent:
+                for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
+                    if s not in cnode.symbol_mapping:
+                        cnode.symbol_mapping[s] = m
+                        nsdfg.add_symbol(s, sdfg.symbols[s])
             for name in read_set:
                 r = new_body.add_read(name)
                 new_body.add_edge(
