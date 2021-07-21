@@ -29,7 +29,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
         on failure.
     """
     # Avoid import loop
-    from dace.codegen.targets.fpga_helper import fpga_utils
+    from dace.codegen.targets import fpga
 
     try:
         # SDFG-level checks
@@ -59,7 +59,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
 
             # Check for valid bank assignments
             try:
-                bank_assignment = fpga_utils.parse_location_bank(desc)
+                bank_assignment = fpga.parse_location_bank(desc)
             except ValueError as e:
                 raise InvalidSDFGError(str(e), sdfg, None)
             if bank_assignment is not None:
@@ -79,7 +79,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                             "Memory bank specifier must be convertible to subsets.Range"
                             f" for array {name} since it uses HBM", sdfg, None)
                     try:
-                        low, high = fpga_utils.get_multibank_ranges_from_subset(
+                        low, high = fpga.get_multibank_ranges_from_subset(
                             bank_assignment[1], sdfg)
                     except ValueError as e:
                         raise InvalidSDFGError(str(e), sdfg, None)
@@ -180,30 +180,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     from dace import data as dt
     from dace import subsets as sbs
     from dace.sdfg import utils as sdutil
-    from dace.codegen.targets.fpga_helper import fpga_utils
+    from dace.codegen.targets import fpga
 
     sdfg = sdfg or state.parent
     state_id = state_id or sdfg.node_id(state)
     symbols = symbols or {}
     scope_local_constants: dict[nd.MapEntry, list[str]] = dict()
     scope = state.scope_dict()
-
-    # Build a dict linking each MapEntry to constants defined within that scope
-    last_visited_map_entry = []
-    for node in sdutil.dfs_topological_sort(state, state.source_nodes()):
-        if isinstance(node, nd.EntryNode):
-            other_list = []
-            if len(last_visited_map_entry) > 0:
-                other_list = scope_local_constants[last_visited_map_entry[-1]]
-            if (isinstance(node, nd.MapEntry)
-                    and node.map.schedule == dtypes.ScheduleType.Unrolled):
-                scope_local_constants[node] = list(node.map.params) + other_list
-                last_visited_map_entry.append(node)
-            else:
-                scope_local_constants[node] = other_list
-        elif (isinstance(node, nd.MapExit)
-              and node.map.schedule == dtypes.ScheduleType.Unrolled):
-            last_visited_map_entry.pop()
 
     if not dtypes.validate_name(state._label):
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
@@ -221,29 +204,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     for nid, node in enumerate(state.nodes()):
         # Node validation
         try:
-            if isinstance(node, nd.NestedSDFG):
-                # Temporarily add constants defined by unrolled maps as SDFG-level
-                # constants with a dummy value and remove the corresponding symbol-bindings
-                # on the nested SDFG
-                ndscope = scope[node]
-                remove_consts = []
-                add_symmaps = []
-                if ndscope is not None:
-                    for const in scope_local_constants[ndscope]:
-                        if const in sdfg.constants:
-                            continue
-                        sdfg.add_constant(const, 0)
-                        remove_consts.append(const)
-                        if const in node.symbol_mapping:
-                            add_symmaps.append(
-                                (const, node.symbol_mapping[const]))
-                            node.symbol_mapping.pop(const)
-                node.validate(sdfg, state)
-                for rm in remove_consts:
-                    sdfg.constants_prop.pop(rm)
-                node.symbol_mapping.update(add_symmaps)
-            else:
-                node.validate(sdfg, state)
+            node.validate(sdfg, state)
         except InvalidSDFGError:
             raise
         except Exception as ex:
@@ -366,7 +327,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if isinstance(node, nd.Tasklet):
             for attached in state.all_edges(node):
                 if attached.data.data in sdfg.arrays:
-                    if fpga_utils.is_hbm_array(sdfg.arrays[attached.data.data]):
+                    if fpga.is_hbm_array(sdfg.arrays[attached.data.data]):
                         low, high, _ = attached.data.subset[0]
                         if (low != high):
                             raise InvalidSDFGNodeError(
@@ -463,30 +424,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     nid,
                 )
         ########################################
-
-        def validate_hbm_subset(distributed_subset: subsets.Subset, sdfg,
-                                state_id, eid):
-            """
-            Check if first index is evaluatable to constant
-            """
-            if len(distributed_subset) <= 1:
-                return False
-            low, high, stride = distributed_subset[0]
-            if (stride != 1):
-                return False
-            consts = set(sdfg.constants.keys())
-            current_scope = scope[e.src]
-            if (e.src == scope[e.dst]):
-                current_scope = e.src
-            if current_scope is not None:
-                consts = set.union(set(scope_local_constants[current_scope]),
-                                   consts)
-            low_set = set([str(x) for x in low.free_symbols]) - consts
-            high_set = set([str(x) for x in high.free_symbols]) - consts
-            if len(low_set) != 0 or len(high_set) != 0:
-                raise InvalidSDFGEdgeError(
-                    "The first index accessing HBM-arrays must be constant evaluatable "
-                    " and have stride==1", sdfg, state_id, eid)
 
     # Memlet checks
     for eid, e in enumerate(state.edges()):
@@ -649,18 +586,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 raise InvalidSDFGEdgeError(
                     'Dimensionality mismatch between src/dst subsets', sdfg,
                     state_id, eid)
-
-        # Check if first index is evaluatable for HBM arrays
-        if (isinstance(src_node, nd.AccessNode)
-                and fpga_utils.is_hbm_array(src_node.desc(state))
-                and e.data.data is not None):
-            validate_hbm_subset(e.data.src_subset or e.data.subset, sdfg,
-                                state_id, eid)
-        if (isinstance(dst_node, nd.AccessNode)
-                and fpga_utils.is_hbm_array(dst_node.desc(state))
-                and e.data.data is not None):
-            validate_hbm_subset(e.data.dst_subset or e.data.subset, sdfg,
-                                state_id, eid)
 
     ########################################
 
