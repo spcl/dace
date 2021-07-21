@@ -8,12 +8,12 @@ import numpy as np
 
 def test_even_split_3d():
     sdfg = dace.SDFG("hbm_copy_transform_even_split_3d")
-    s, a, b = mkc(sdfg, None, "a", "b", StorageType.CPU_Heap,
-                  StorageType.CPU_Heap, [100, 100, 100], [8, 50, 50, 50], "a")
+    s, b, a = mkc(sdfg, None, "b", "a", StorageType.CPU_Heap,
+                  StorageType.CPU_Heap, [8, 50, 50, 50], [100, 100, 100], "b")
     for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
             patterns=hbm_copy_transform.HbmCopyTransform):
         xform.apply(sdfg)
-    a = np.random.uniform(0, 100, [100, 100, 100]).astype(np.int32)
+    b = np.random.uniform(0, 100, [8, 50, 50, 50]).astype(np.int32)
     sdfg(a=a, b=b)
     assert np.allclose(a[0:50, 0:50, 0:50], b[0, :, :, :])
     assert np.allclose(a[50:100, 50:100, 50:100], b[7, :, :, :])
