@@ -14,7 +14,6 @@ from dace.codegen.targets import cpp
 from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
-from dace.codegen.targets.fpga_helper import fpga_utils
 from dace.frontend import operations
 from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
@@ -22,6 +21,7 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
                        dynamic_map_inputs, local_transients)
 from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga
 from typing import Union
+from dace.codegen.targets import fpga
 
 
 @registry.autoregister_params(name='cpu')
@@ -1028,7 +1028,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             array_expr = cpp.cpp_array_expr(sdfg,
                                                             memlet,
                                                             with_brackets=False)
-                            ptr_str = fpga_utils.ptr( # we are on fpga, since this is array interface
+                            ptr_str = fpga.fpga_ptr( # we are on fpga, since this is array interface
                                 memlet.data,
                                 desc,
                                 sdfg,
@@ -1220,8 +1220,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if not types:
             types = self._dispatcher.defined_vars.get(memlet.data)
         var_type, ctypedef = types
-        if fpga_utils.is_fpga_array(desc):
-            ptr = fpga_utils.ptr(
+        if fpga.is_fpga_array(desc):
+            ptr = fpga.fpga_ptr(
                 memlet.data, desc, sdfg, memlet.subset, output,
                 self._dispatcher, 0, var_type == DefinedType.ArrayInterface
                 and not isinstance(desc, data.View))
@@ -1612,7 +1612,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         for _, _, _, vconn, memlet in state.all_edges(node):
             if (memlet.data in sdfg.arrays
-                    and fpga_utils.is_hbm_array(sdfg.arrays[memlet.data])):
+                    and fpga.is_hbm_array(sdfg.arrays[memlet.data])):
                 raise NotImplementedError(
                     "HBM in nested SDFGs not supported in non-FPGA code.")
 
