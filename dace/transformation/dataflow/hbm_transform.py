@@ -57,6 +57,7 @@ class HbmTransform(transformation.Transformation):
         state = sdfg.states()[0]
         nsdfg_node = list(
             filter(lambda x: isinstance(x, nd.NestedSDFG), state.nodes()))[0]
+        nsdfg_node.no_inline = True
 
         map_enter, map_exit = state.add_map("hbm_unrolled_map",
                                             {unrollparam[0]: unrollparam[1]},
