@@ -18,7 +18,6 @@ from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
 from dace.codegen import cppunparse
 from dace.codegen.targets.common import (sym2cpp, find_incoming_edges,
                                          codeblock_to_cpp)
-from dace.codegen.targets.fpga_helper import fpga_utils
 from dace.codegen.dispatcher import DefinedType
 from dace.config import Config
 from dace.frontend import operations
@@ -26,6 +25,7 @@ from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.sdfg import nodes, graph as gr, utils
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
+from dace.codegen.targets import fpga
 
 
 def copy_expr(
@@ -72,8 +72,8 @@ def copy_expr(
         defined_types = dispatcher.defined_vars.get(data_name,
                                                     is_global=is_global)
     def_type, _ = defined_types
-    if fpga_utils.is_fpga_array(data_desc):
-        expr = fpga_utils.ptr(
+    if fpga.is_fpga_array(data_desc):
+        expr = fpga.fpga_ptr(
             data_name,
             data_desc,
             sdfg,
@@ -291,8 +291,8 @@ def emit_memlet_reference(dispatcher,
         defined_types = dispatcher.defined_vars.get(memlet.data, ancestor)
     defined_type, defined_ctype = defined_types
 
-    if fpga_utils.is_fpga_array(desc):
-        datadef = fpga_utils.ptr(memlet.data, desc, sdfg, memlet.subset,
+    if fpga.is_fpga_array(desc):
+        datadef = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset,
                                  is_write, dispatcher, ancestor,
                                  defined_type == DefinedType.ArrayInterface)
     else:
@@ -528,8 +528,8 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    if fpga_utils.is_hbm_array(d):
-        subset_in = fpga_utils.modify_distributed_subset(subset_in, 0)
+    if fpga.is_hbm_array(d):
+        subset_in = fpga.modify_distributed_subset(subset_in, 0)
 
     # Offset according to parameters, then offset according to array
     if offset is not None:
@@ -566,8 +566,8 @@ def cpp_array_expr(sdfg,
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     if with_brackets:
-        if fpga_utils.is_fpga_array(desc):
-            ptrname = fpga_utils.ptr(memlet.data, desc, sdfg, subset)
+        if fpga.is_fpga_array(desc):
+            ptrname = fpga.fpga_ptr(memlet.data, desc, sdfg, subset)
         else:
             ptrname = ptr(memlet.data, desc, sdfg)
         return "%s[%s]" % (ptrname, offset_cppstr)
@@ -609,8 +609,8 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = indices
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
-    if fpga_utils.is_fpga_array(desc):
-        dname = fpga_utils.ptr(memlet.data, desc, sdfg, s, is_write, None, None,
+    if fpga.is_fpga_array(desc):
+        dname = fpga.fpga_ptr(memlet.data, desc, sdfg, s, is_write, None, None,
                                defined_type == DefinedType.ArrayInterface)
     else:
         dname = ptr(memlet.data, desc, sdfg)
@@ -1180,7 +1180,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                                       expr_semicolon=False),
                             ))
                         else:
-                            array_interface_name = fpga_utils.ptr(
+                            array_interface_name = fpga.fpga_ptr(
                                 memlet.data,
                                 desc,
                                 self.sdfg,
