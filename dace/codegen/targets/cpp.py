@@ -1361,7 +1361,10 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     backend = Config.get('compiler', 'cuda', 'backend')
-
+    debug = 1 if Config.get('compiler', 'build_type') == 'Debug' else 0
+    if debug:
+        callsite_stream.write(f'// sync_streams: {node}   start', sdfg,
+                              state_id, node)
     if max_streams >= 0:
         src_gpuid = sdutils.get_gpu_location(sdfg, node)
         sync_stream = f"__state->gpu_context->at({src_gpuid}).streams[{node._cuda_stream[src_gpuid]}]"
@@ -1399,8 +1402,17 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
 
                     stream = f"__state->gpu_context->at({ed_gpu_id}).streams[{dstnode._cuda_stream[ed_gpu_id]}]"
                     sync_string += f'''{backend}StreamWaitEvent({stream}, {event}, 0);\n'''
-                callsite_stream.write(sync_string, sdfg, state_id,
-                                      [edge.src, edge.dst])
+                if sync_string:
+                    if debug:
+                        callsite_stream.write(
+                            f'\n// Memlet sync_streams: {node} -> {dstnode} start',
+                            sdfg, state_id, node)
+                    callsite_stream.write(sync_string, sdfg, state_id,
+                                          [edge.src, edge.dst])
+                    if debug:
+                        callsite_stream.write(
+                            f'// Memlet sync_streams: {node} -> {dstnode} end\n',
+                            sdfg, state_id, node)
 
             # if (isinstance(edge.dst, nodes.AccessNode)
             #     and edge.dst._cuda_stream != node._cuda_stream):
@@ -1441,9 +1453,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
 
                 # If different stream at destination: record event and wait
                 # for it in target stream.
-                elif e.dst._cuda_stream != node._cuda_stream:
-
-                    sync_string = '''\n'''
+                elif e.dst._cuda_stream != node._cuda_stream and e.src._cuda_stream != e.dst._cuda_stream:
+                    sync_string = ''''''
 
                     # need to set device
                     if current_device != src_gpuid:
@@ -1471,6 +1482,17 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
 
                     sync_string += '''{backend}StreamWaitEvent({stream}, {event}, 0);\n'''.format(
                         stream=stream, event=event, backend=backend)
+                    if debug:
+                        callsite_stream.write(
+                            f'\n// Out sync_streams: {node} -> {e.dst} start',
+                            sdfg, state_id, node)
                     callsite_stream.write(sync_string, sdfg, state_id,
                                           [e.src, e.dst])
+                    if debug:
+                        callsite_stream.write(
+                            f'// Out sync_streams: {node} -> {e.dst} end\n\n',
+                            sdfg, state_id, node)
                 # Otherwise, no synchronization necessary
+    if debug:
+        callsite_stream.write(f'// sync_streams: {node}   end', sdfg, state_id,
+                              node)
