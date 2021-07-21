@@ -1955,8 +1955,9 @@ class CPUCodeGen(TargetCodeGenerator):
         self.generate_scope_postamble(sdfg, dfg, state_id, function_stream,
                                       outer_stream, callsite_stream)
 
+        code = f'printf("{node}\\n");\n' if node.schedule == dtypes.ScheduleType.GPU_Multidevice else ''
         for _ in map_node.map.range:
-            result.write("}", sdfg, state_id, node)
+            result.write("}" + code, sdfg, state_id, node)
 
         result.write(outer_stream.getvalue())
 

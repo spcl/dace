@@ -1384,6 +1384,7 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                         dtypes.StorageType.GPU_Shared
                 ]:
                     sync_string += f'''{backend}StreamSynchronize({sync_stream});\n'''
+                    sync_string += f'''printf("synced: {sync_stream}\\n");\n'''
 
                 if (ed_gpu_id is not None and node._cuda_stream != getattr(
                         dstnode, '_cuda_stream', None)):

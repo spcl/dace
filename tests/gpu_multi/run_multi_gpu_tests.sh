@@ -45,7 +45,7 @@ deselect_tests_string=""
 for test in ${deselect_tests[*]} ; do
     deselect_tests_string+="--deselect=$test "
 done
-pystr="pytest ${ignore_directories_string} ${ignore_files_string} ${deselect_tests_string}"
+pystr="pytest -o log_cli=1 ${ignore_directories_string} ${ignore_files_string} ${deselect_tests_string}"
 echo $pystr
 $pystr
 
