@@ -37,7 +37,7 @@ class HbmCopyTransform(transformation.Transformation):
         dtype=bool,
         default=True,
         allow_none=False,
-        desc="If set storage types will be set to CPU Heap if on Default")
+        desc="If set storage types will be set to CPU Heap if it is Default for the two involved arrays")
 
     def _get_split_size(self, virtual_shape: Iterable,
                         split_count: List[int]) -> List[int]:
@@ -101,7 +101,7 @@ class HbmCopyTransform(transformation.Transformation):
             true_size = src_array.shape
         ndim = len(true_size)
 
-        #Initialize array defaults
+        # Move Default to CPU_Heap
         if self.default_to_cpu_storage:
             if sdfg.arrays[src.data].storage == dtypes.StorageType.Default:
                 sdfg.arrays[src.data].storage = dtypes.StorageType.CPU_Heap
