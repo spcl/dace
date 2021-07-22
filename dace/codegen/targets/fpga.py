@@ -105,9 +105,7 @@ def iterate_hbm_multibank_arrays(array_name: str, array: dt.Array, sdfg: SDFG):
     else:
         yield 0
 
-
-def modify_distributed_subset(subset: Union[subsets.Subset, Iterable],
-                              change: int):
+def modify_distributed_subset(subset: subsets.Subset, change: int):
     """
     Modifies the first index of :param subset: (the one used for distributed subsets).
     :param subset: is deepcopied before any modification to it is done.
@@ -115,20 +113,10 @@ def modify_distributed_subset(subset: Union[subsets.Subset, Iterable],
         the first index is completly removed
     """
     cps = copy.deepcopy(subset)
-    if isinstance(subset, subsets.Subset):
-        if change == -1:
-            cps.pop([0])
-        else:
-            cps[0] = (change, change, 1)
-    elif isinstance(subset, Iterable):
-        cps = list(cps)  # Works for any iterable type
-        if change == -1:
-            cps = cps[1:]
-        else:
-            cps[0] = change
+    if change == -1:
+        cps.pop([0])
     else:
-        raise ValueError("unsupported type passed to modify_distributed_subset")
-
+        cps[0] = (change, change, 1)
     return cps
 
 
@@ -1386,8 +1374,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             is_dst_using_hbm = not src_is_subset and is_hbm_array(
                 dst_nodedesc)
             if is_src_using_hbm or is_dst_using_hbm:
-                copy_shape = modify_distributed_subset(
-                    copy_shape, -1)
+                copy_shape = copy_shape[1:]
 
             offset_src, offset_dst = "0", "0"
             if memlet.src_subset is not None:
