@@ -8,11 +8,12 @@ import re
 import warnings
 import sympy as sp
 import numpy as np
-from typing import Dict, Union
+from typing import Dict, Iterable, List, Tuple, Union
+import copy
 
 import dace
 from dace.codegen.targets import cpp
-from dace import subsets, data as dt, dtypes
+from dace import subsets, data as dt, dtypes, memlet, symbolic
 from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import SDFG, nodes, utils, dynamic_map_inputs
@@ -67,6 +68,174 @@ def is_fpga_kernel(sdfg, state):
             return False
     return True
 
+def is_hbm_array(array: dt.Data):
+    """
+    :return: True if this array is placed on HBM
+    """
+    if (isinstance(array, dt.Array)
+            and array.storage == dtypes.StorageType.FPGA_Global):
+        res = parse_location_bank(array)
+        return res is not None and res[0] == "HBM"
+    else:
+        return False
+
+
+def is_fpga_array(array: dt.Data):
+    """
+    :return: True if this array is placed on FPGA memory
+    """
+    return isinstance(array, dt.Array) and array.storage in _FPGA_STORAGE_TYPES
+
+
+def iterate_hbm_multibank_arrays(array_name: str, array: dt.Array, sdfg: SDFG):
+    """
+    Small helper function that iterates over the bank indices
+    if the provided array is spanned across multiple HBM banks.
+    Otherwise just returns 0 once.
+    """
+    res = parse_location_bank(array)
+    if res is not None:
+        bank_type, bank_place = res
+        if (bank_type == "HBM"):
+            low, high = get_multibank_ranges_from_subset(bank_place, sdfg)
+            for i in range(high - low):
+                yield i
+        else:
+            yield 0
+    else:
+        yield 0
+
+def modify_distributed_subset(subset: subsets.Subset, change: int):
+    """
+    Modifies the first index of :param subset: (the one used for distributed subsets).
+    :param subset: is deepcopied before any modification to it is done.
+    :param change: the first index is set to this value, unless it's (-1) in which case
+        the first index is completly removed
+    """
+    cps = copy.deepcopy(subset)
+    if change == -1:
+        cps.pop([0])
+    else:
+        cps[0] = (change, change, 1)
+    return cps
+
+
+def get_multibank_ranges_from_subset(subset: Union[subsets.Subset, str],
+                                     sdfg: SDFG) -> Tuple[int, int]:
+    """
+    Returns the upper and lower end of the accessed HBM-range, evaluated using the
+    constants on the SDFG.
+    :returns: (low, high) where low = the lowest accessed bank and high the 
+        highest accessed bank + 1.
+    """
+    if isinstance(subset, str):
+        subset = subsets.Range.from_string(subset)
+    low, high, stride = subset[0]
+    if stride != 1:
+        raise NotImplementedError(f"Strided HBM subsets not supported.")
+    try:
+        low = int(symbolic.resolve_symbol_to_constant(low, sdfg))
+        high = int(symbolic.resolve_symbol_to_constant(high, sdfg))
+    except:
+        raise ValueError(
+            f"Only constant evaluatable indices allowed for HBM-memlets on the bank index."
+        )
+    return (low, high + 1)
+
+
+def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
+    """
+    :param array: an array on FPGA global memory
+    :return: None if an array is given which does not have a location['memorytype'] value. 
+        Otherwise it will return a tuple (bank_type, bank_assignment), where bank_type
+        is one of 'DDR', 'HBM' and bank_assignment a string that describes which banks are 
+        used.
+    """
+    if "memorytype" in array.location:
+        if "bank" not in array.location:
+            raise ValueError(
+                "If 'memorytype' is specified for an array 'bank' must also be specified"
+            )
+        val: str = array.location["bank"]
+        memorytype: str = array.location["memorytype"]
+        memorytype = memorytype.upper()
+        if (memorytype == "DDR" or memorytype == "HBM"):
+            return (memorytype, array.location["bank"])
+        else:
+            raise ValueError(
+                f"{memorytype} is an invalid memorytype. Supported are HBM and DDR."
+            )
+    else:
+        return None
+
+
+def fpga_ptr(name: str,
+        desc: dt.Data = None,
+        sdfg: SDFG = None,
+        subset_info_hbm: Union[subsets.Subset, int] = None,
+        is_write: bool = None,
+        dispatcher=None,
+        ancestor: int = 0,
+        is_array_interface: bool = False,
+        interface_id: Union[int, List[int]] = None):
+    """
+    Returns a string that points to the data based on its name, and various other conditions
+    that may apply for that data field.
+    :param name: Data name.
+    :param desc: Data descriptor.
+    :param subset_info_hbm: Any additional information about the accessed subset. 
+    :param ancestor: The ancestor level where the variable should be searched for if
+        is_array_interface is True when dispatcher is not None
+    :param is_array_interface: Data is pointing to an interface in FPGA-Kernel compilation
+    :param interface_id: An optional interface id that will be added to the name (only for array interfaces)
+    :return: C-compatible name that can be used to access the data.
+    """
+    if (desc is not None and is_hbm_array(desc)):
+        if (subset_info_hbm == None):
+            raise ValueError(
+                "Cannot generate name for HBM bank without subset info")
+        elif (isinstance(subset_info_hbm, int)):
+            name = f"hbm{subset_info_hbm}_{name}"
+        elif (isinstance(subset_info_hbm, subsets.Subset)):
+            if (sdfg == None):
+                raise ValueError(
+                    "Cannot generate name for HBM bank using subset if sdfg not provided"
+                )
+            low, high = get_multibank_ranges_from_subset(subset_info_hbm, sdfg)
+            if (low + 1 != high):
+                raise ValueError(
+                    "ptr cannot generate HBM names for subsets accessing more than one HBM bank"
+                )
+            name = f"hbm{low}_{name}"
+            subset_info_hbm = low  #used for arrayinterface name where it must be int
+    if is_array_interface:
+        if is_write is None:
+            raise ValueError("is_write must be set for ArrayInterface.")
+        ptr_in = f"__{name}_in"
+        ptr_out = f"__{name}_out"
+        if dispatcher is not None:
+            # DaCe allows reading from an output connector, even though it
+            # is not an input connector. If this occurs, panic and read
+            # from the output interface instead
+            if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
+                # Throw a KeyError if this pointer also doesn't exist
+                dispatcher.defined_vars.get(ptr_out, ancestor)
+                # Otherwise use it
+                name = ptr_out
+            else:
+                name = ptr_in
+        else:
+            # We might call this before the variable is even defined (e.g., because
+            # we are about to define it), so if the dispatcher is not passed, just
+            # return the appropriate string
+            name = ptr_out if is_write else ptr_in
+        # Append the interface id, if provided
+        if interface_id is not None:
+            if isinstance(interface_id, tuple):
+                name = f"{name}_{interface_id[subset_info_hbm]}"
+            else:
+                name = f"{name}_{interface_id}"
+    return name
 
 class FPGACodeGen(TargetCodeGenerator):
     # Set by deriving class
@@ -337,14 +506,23 @@ class FPGACodeGen(TargetCodeGenerator):
             kernel_args_opencl.append(f"{self._global_sdfg.name}_t *__state")
             kernel_args_call_host.append(f"__state")
 
-            for is_output, argname, arg, _ in state_parameters:
+            for is_output, arg_name, arg, _ in state_parameters:
                 # Streams and Views are not passed as arguments
-                if not isinstance(arg, dt.Stream) and not isinstance(
-                        arg, dt.View):
-                    kernel_args_call_host.append(arg.as_arg(False,
-                                                            name=argname))
+                if (isinstance(arg, dt.Array)):
+                    for bank in iterate_hbm_multibank_arrays(
+                            arg_name, arg, sdfg):
+                        current_name = fpga_ptr(arg_name, arg, sdfg, bank)
+                        kernel_args_call_host.append(
+                            arg.as_arg(False, name=current_name))
+                        kernel_args_opencl.append(
+                            FPGACodeGen.make_opencl_parameter(
+                                current_name, arg))
+                elif (not isinstance(arg, dt.Stream)
+                      and not isinstance(arg, dt.View)):
+                    kernel_args_call_host.append(
+                        arg.as_arg(False, name=arg_name))
                     kernel_args_opencl.append(
-                        FPGACodeGen.make_opencl_parameter(argname, arg))
+                        FPGACodeGen.make_opencl_parameter(arg_name, arg))
 
             kernel_args_call_host = dtypes.deduplicate(kernel_args_call_host)
             kernel_args_opencl = dtypes.deduplicate(kernel_args_opencl)
@@ -518,7 +696,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         external_streams: Set[tuple[bool, str, dt, dict[str, int]]] = set()
 
         # Mapping from global arrays to memory interfaces
-        bank_assignments: Dict[str, str] = {}
+        bank_assignments: Dict[str, Tuple[str, Union[int, subsets.Range]]] = {}
 
         # Mapping from symbol to a unique parameter tuple
         all_symbols = {
@@ -608,7 +786,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             # Differentiate global and local arrays. The former are allocated
             # from the host and passed to the device code, while the latter are
             # (statically) allocated on the device side.
-            for is_output, dataname, desc in candidates:
+            for is_output, data_name, desc in candidates:
                 # Ignore views, as these never need to be explicitly passed
                 if isinstance(desc, dt.View):
                     continue
@@ -619,60 +797,85 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # memory interface (e.g., DDR or HBM bank)
                 if (isinstance(desc, dt.Array)
                         and desc.storage == dtypes.StorageType.FPGA_Global):
-                    if dataname in data_to_interface:
-                        interface_id = data_to_interface[dataname]
+                    if data_name in data_to_interface:
+                        interface_id = data_to_interface[data_name]
                     else:
                         # Get and update global memory interface ID
-                        interface_id = global_interfaces[dataname]
-                        global_interfaces[dataname] += 1
-                        data_to_interface[dataname] = interface_id
+                        if is_hbm_array(desc):
+                            tmp_interface_ids = []
+                            for bank in iterate_hbm_multibank_arrays(
+                                    data_name, desc, sdfg):
+                                ptr_str = fpga_ptr(
+                                    data_name, desc, sdfg, bank)
+                                tmp_interface_id = global_interfaces[ptr_str]
+                                global_interfaces[ptr_str] += 1
+                                tmp_interface_ids.append(tmp_interface_id)
+                            interface_id = tuple(tmp_interface_ids)
+                            data_to_interface[data_name] = interface_id
+                        else:
+                            interface_id = global_interfaces[data_name]
+                            global_interfaces[data_name] += 1
+                            data_to_interface[data_name] = interface_id
                     # Collect the memory bank specification, if present, by
                     # traversing outwards to where the data container is
                     # actually allocated
-                    inner_node = data_to_node[dataname]
+                    inner_node = data_to_node[data_name]
                     trace = utils.trace_nested_access(inner_node, subgraph,
                                                       sdfg)
                     bank = None
+                    bank_type = None
                     for (trace_in, trace_out), _, _, trace_sdfg in trace:
                         trace_node = trace_in or trace_out
                         trace_name = trace_node.data
                         trace_desc = trace_node.desc(trace_sdfg)
                         if "bank" in trace_desc.location:
-                            trace_bank = trace_desc.location["bank"]
-                            if (bank is not None and bank != trace_bank):
+                            trace_type, trace_bank = parse_location_bank(
+                                trace_desc)
+                            if (bank is not None and bank_type is not None
+                                    and (bank != trace_bank
+                                         or bank_type != trace_type)):
                                 raise cgx.CodegenError(
                                     "Found inconsistent memory bank "
                                     f"specifier for {trace_name}.")
                             bank = trace_bank
+                            bank_type = trace_type
+
                     # Make sure the array has been allocated on this bank in the
                     # outermost scope
-                    if bank is not None:
+                    if bank_type is not None:
                         outer_node = trace[0][0][0] or trace[0][0][1]
                         outer_desc = outer_node.desc(trace[0][2])
-                        if ("bank" not in outer_desc.location or
-                                str(outer_desc.location["bank"]) != str(bank)):
+                        okbank = False
+                        if ("bank" in outer_desc.location):
+                            trace_type, trace_bank = parse_location_bank(
+                                outer_desc)
+                            okbank = (trace_type == bank_type
+                                      and trace_bank == bank)
+                        if not okbank:
                             raise cgx.CodegenError(
                                 "Memory bank allocation must be present on "
                                 f"outermost data descriptor {outer_node.data} "
                                 "to be allocated correctly.")
-                    bank_assignments[dataname] = bank
+                        bank_assignments[data_name] = (bank_type, bank)
+                    else:
+                        bank_assignments[data_name] = None
                 else:
                     interface_id = None
                 if (not desc.transient
                         or desc.storage == dtypes.StorageType.FPGA_Global
-                        or dataname in used_outside):
+                        or data_name in used_outside):
                     # Add the data as a parameter to this PE
                     subgraph_parameters[subgraph].add(
-                        (is_output, dataname, desc, interface_id))
+                        (is_output, data_name, desc, interface_id))
                     # Global data is passed from outside the kernel
                     global_data_parameters.add(
-                        (is_output, dataname, desc, interface_id))
-                elif dataname in shared_data:
+                        (is_output, data_name, desc, interface_id))
+                elif data_name in shared_data:
                     # Add the data as a parameter to this PE
                     subgraph_parameters[subgraph].add(
-                        (is_output, dataname, desc, interface_id))
+                        (is_output, data_name, desc, interface_id))
                     # Must be allocated outside PEs and passed to them
-                    top_level_local_data.add(dataname)
+                    top_level_local_data.add(data_name)
             # Order by name
             subgraph_parameters[subgraph] = list(
                 sorted(subgraph_parameters[subgraph], key=sort_func))
@@ -755,8 +958,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         if self._dispatcher.declared_arrays.has(dataname):
             return
 
-        allocname = cpp.ptr(dataname, nodedesc, sdfg)
-
         if nodedesc.storage == dtypes.StorageType.FPGA_Global:
 
             if self._in_device_code:
@@ -809,8 +1010,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         # Check if array is already declared
         declared = self._dispatcher.declared_arrays.has(dataname)
 
-        allocname = cpp.ptr(dataname, nodedesc, sdfg)
-
         if isinstance(nodedesc, dt.View):
             return self.allocate_view(sdfg, dfg, state_id, node,
                                       function_stream, declaration_stream,
@@ -861,37 +1060,47 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                                node.label, sdfg.name))
 
                 else:
-                    if isinstance(nodedesc, dt.Array):
+                    # TODO: Distinguish between read, write, and read+write
+                    self._allocated_global_arrays.add(node.data)
+                    memory_bank_arg_count = 1
+                    bank_offset = -1
+                    storage_type_str = "hlslib::ocl::StorageType::DDR"  # DDR to use unspecified memory
 
-                        # TODO: Distinguish between read, write, and read+write
-                        self._allocated_global_arrays.add(node.data)
-                        memory_bank_arg = ""
-                        if "bank" in nodedesc.location:
-                            try:
-                                bank = int(nodedesc.location["bank"])
-                            except ValueError:
-                                raise ValueError(
-                                    "FPGA memory bank specifier "
-                                    "must be an integer: {}".format(
-                                        nodedesc.location["bank"]))
-                            memory_bank_arg = (
-                                f"hlslib::ocl::MemoryBank::bank{bank}, ")
+                    # Fix bankassignments if present
+                    bank_info = parse_location_bank(nodedesc)
+                    if bank_info is not None:
+                        bank_type, bank = bank_info
+                        if bank_type == "HBM":
+                            bank_low, bank_high = get_multibank_ranges_from_subset(
+                                bank, sdfg)
+                            memory_bank_arg_count = bank_high - bank_low
+                            arrsize = dace.symbolic.pystr_to_symbolic(
+                                f"({str(arrsize)}) / {str(bank_high - bank_low)}"
+                            )
+                            bank_offset = bank_low
+                            storage_type_str = "hlslib::ocl::StorageType::HBM"
+                        else:
+                            bank_offset = int(bank)
+                            storage_type_str = "hlslib::ocl::StorageType::DDR"
 
-                        # Define buffer, using proper type
+                    # Define buffer, using proper type
+                    for bank_index in range(memory_bank_arg_count):
+                        alloc_name = fpga_ptr(dataname, nodedesc, sdfg,
+                                                    bank_index)
                         if not declared:
                             result_decl.write(
-                                "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};"
-                                .format(nodedesc.dtype.ctype, dataname))
+                                "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n"
+                                .format(nodedesc.dtype.ctype, alloc_name))
                         result_alloc.write(
-                            "{} = __state->fpga_context->Get()."
-                            "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                            "({}{});".format(allocname, nodedesc.dtype.ctype,
-                                             memory_bank_arg,
-                                             cpp.sym2cpp(arrsize)))
+                            f"{alloc_name} = __state->fpga_context->Get()."
+                            f"MakeBuffer<{nodedesc.dtype.ctype}, hlslib::ocl::Access::readWrite>"
+                            f"({storage_type_str}, {bank_offset + bank_index}, "
+                            f"{cpp.sym2cpp(arrsize)});\n")
                         self._dispatcher.defined_vars.add(
-                            dataname, DefinedType.Pointer,
+                            alloc_name, DefinedType.Pointer,
                             'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
                             .format(nodedesc.dtype.ctype))
+
             elif (nodedesc.storage in (dtypes.StorageType.FPGA_Local,
                                        dtypes.StorageType.FPGA_Registers,
                                        dtypes.StorageType.FPGA_ShiftRegister)):
@@ -1155,8 +1364,35 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 or (device_to_device and not self._in_device_code)):
 
             dims = memlet.subset.dims()
+            src_nodedesc = src_node.desc(sdfg)
+            dst_nodedesc = dst_node.desc(sdfg)
+            src_is_subset = memlet._is_data_src is None or memlet._is_data_src
+
             copy_shape = memlet.subset.bounding_box_size()
-            offset = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
+            is_src_using_hbm = src_is_subset and is_hbm_array(
+                src_nodedesc)
+            is_dst_using_hbm = not src_is_subset and is_hbm_array(
+                dst_nodedesc)
+            if is_src_using_hbm or is_dst_using_hbm:
+                copy_shape = copy_shape[1:]
+
+            offset_src, offset_dst = "0", "0"
+            if memlet.src_subset is not None:
+                offset_src = cpp.cpp_array_expr(
+                    sdfg,
+                    memlet,
+                    with_brackets=False,
+                    referenced_array=src_nodedesc,
+                    use_other_subset=(not src_is_subset
+                                      and memlet.other_subset is not None))
+            if memlet.dst_subset is not None:
+                offset_dst = cpp.cpp_array_expr(
+                    sdfg,
+                    memlet,
+                    with_brackets=False,
+                    referenced_array=dst_nodedesc,
+                    use_other_subset=(src_is_subset
+                                      and memlet.other_subset is not None))
 
             if (not sum(copy_shape) == 1
                     and (not isinstance(memlet.subset, subsets.Range)
@@ -1194,48 +1430,53 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 for s in copy_shape
             ])
 
-            src_nodedesc = src_node.desc(sdfg)
-            dst_nodedesc = dst_node.desc(sdfg)
-
+            src_subset = memlet.src_subset or memlet.subset
+            dst_subset = memlet.dst_subset or memlet.subset
             if host_to_device:
 
-                ptr_str = (cpp.ptr(src_node.data, src_nodedesc, sdfg) +
-                           (" + {}".format(offset)
-                            if outgoing_memlet and str(offset) != "0" else ""))
+                ptr_str = (fpga_ptr(src_node.data, src_nodedesc, sdfg,
+                                          src_subset) +
+                           (" + {}".format(offset_src) if outgoing_memlet
+                            and str(offset_src) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} const *>({})".format(
                         device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
                     "{}.CopyFromHost({}, {}, {});".format(
-                        cpp.ptr(dst_node.data, dst_nodedesc, sdfg),
-                        (offset if not outgoing_memlet else 0), copysize,
+                        fpga_ptr(dst_node.data, dst_nodedesc, sdfg,
+                                       dst_subset),
+                        (offset_dst if not outgoing_memlet else 0), copysize,
                         ptr_str), sdfg, state_id, [src_node, dst_node])
 
             elif device_to_host:
 
-                ptr_str = (cpp.ptr(dst_node.data, dst_nodedesc, sdfg) +
-                           (" + {}".format(offset)
-                            if outgoing_memlet and str(offset) != "0" else ""))
+                ptr_str = (fpga_ptr(dst_node.data, dst_nodedesc, sdfg,
+                                          dst_subset) +
+                           (" + {}".format(offset_dst) if outgoing_memlet
+                            and str(offset_dst) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} *>({})".format(
                         device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
                     "{}.CopyToHost({}, {}, {});".format(
-                        cpp.ptr(src_node.data, src_nodedesc, sdfg),
-                        (offset if outgoing_memlet else 0), copysize, ptr_str),
-                    sdfg, state_id, [src_node, dst_node])
+                        fpga_ptr(src_node.data, src_nodedesc, sdfg,
+                                       src_subset),
+                        (offset_src if outgoing_memlet else 0), copysize,
+                        ptr_str), sdfg, state_id, [src_node, dst_node])
 
             elif device_to_device:
 
                 callsite_stream.write(
                     "{}.CopyToDevice({}, {}, {}, {});".format(
-                        cpp.ptr(src_node.data, src_nodedesc, sdfg),
-                        (offset if outgoing_memlet else 0), copysize,
-                        cpp.ptr(dst_node.data, dst_nodedesc,
-                                sdfg), (offset if not outgoing_memlet else 0)),
-                    sdfg, state_id, [src_node, dst_node])
+                        fpga_ptr(src_node.data, src_nodedesc, sdfg,
+                                       src_subset),
+                        (offset_src if outgoing_memlet else 0), copysize,
+                        fpga_ptr(dst_node.data, dst_nodedesc, sdfg,
+                                       dst_subset),
+                        (offset_dst if not outgoing_memlet else 0)), sdfg,
+                    state_id, [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data
@@ -1363,7 +1604,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     if ignore_dependencies:
                         self.generate_no_dependence_post(
                             callsite_stream, sdfg, state_id, dst_node,
-                            node.data)
+                            dst_node.data, memlet.dst_subset)
 
                     if register_to_register:
                         # Language-specific
@@ -1511,10 +1752,50 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         dst_schedule = None if dst_parent is None else dst_parent.map.schedule
         state_dfg = sdfg.nodes()[state_id]
 
+        # Check if this is a copy memlet using at least one HBM array
+        edge_list = []
+        if (isinstance(src_node, dace.sdfg.nodes.AccessNode)
+                and isinstance(dst_node, dace.sdfg.nodes.AccessNode)):
+            src_array = src_node.desc(sdfg)
+            dst_array = dst_node.desc(sdfg)
+            src_is_hbm = is_hbm_array(src_array)
+            dst_is_hbm = is_hbm_array(dst_array)
+            if src_is_hbm or dst_is_hbm:
+                modedge = copy.deepcopy(edge)
+                mem: memlet.Memlet = modedge.data
+                if mem.src_subset is None:
+                    mem.src_subset = subsets.Range.from_array(src_array)
+                if mem.dst_subset is None:
+                    mem.dst_subset = subsets.Range.from_array(dst_array)
+                if src_is_hbm:
+                    bankbeg, bankend = get_multibank_ranges_from_subset(
+                        mem.src_subset, sdfg)
+                if dst_is_hbm:
+                    bankbeg, bankend = get_multibank_ranges_from_subset(
+                        mem.dst_subset, sdfg)
+                num_accessed_banks = bankend - bankbeg
+                oldmem = copy.deepcopy(mem)
+                for i in range(num_accessed_banks):
+                    src_index = oldmem.src_subset[0][0] + i
+                    dst_index = oldmem.dst_subset[0][0] + i
+                    # Support for ignoring the distributed index if it's not required, e.g. on the host
+                    if src_is_hbm or num_accessed_banks > 1:
+                        mem.src_subset = modify_distributed_subset(
+                            mem.src_subset, src_index)
+                    if dst_is_hbm or num_accessed_banks > 1:
+                        mem.dst_subset = modify_distributed_subset(
+                            mem.dst_subset, dst_index)
+                    edge_list.append(copy.deepcopy(modedge))
+            else:
+                edge_list.append(edge)
+        else:
+            edge_list.append(edge)
+
         # Emit actual copy
-        self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
-                        dst_storage, dst_schedule, edge, state_dfg,
-                        function_stream, callsite_stream)
+        for current_edge in edge_list:
+            self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
+                            dst_storage, dst_schedule, current_edge, state_dfg,
+                            function_stream, callsite_stream)
 
     def _generate_PipelineEntry(self, *args, **kwargs):
         self._generate_MapEntry(*args, **kwargs)
@@ -1997,9 +2278,15 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)
                     and self._dispatcher.defined_vars.has(edge.src_conn)):
+                if is_hbm_array(datadesc):
+                    accessed_subset, _ = get_multibank_ranges_from_subset(
+                        edge.data.dst_subset or edge.data.subset, sdfg)
+                else:
+                    accessed_subset = 0
 
                 self.generate_no_dependence_post(after_memlets_stream, sdfg,
-                                                 state_id, node, edge.src_conn)
+                                                 state_id, node, edge.src_conn,
+                                                 accessed_subset)
 
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)
