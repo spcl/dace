@@ -100,7 +100,7 @@ class HbmTransform(transformation.Transformation):
         :param inner_subset_index: The distributed subset for the innermost edge on
             the memlet path defined by convertible_node
         """
-        #get the inner edge:
+        # get the inner edge:
         if len(state.out_edges(convertible_node)) == 1:
             inner_edge = state.memlet_path(
                 state.out_edges(convertible_node)[0])[-1]
@@ -192,6 +192,6 @@ class HbmTransform(transformation.Transformation):
         # nest the sdfg and execute in parallel
         self._multiply_sdfg_executions(sdfg)
 
-        #Set default on all outer arrays, such that FPGA_transformation can be used
+        # set default on all outer arrays, such that FPGA_transformation can be used
         for desc in sdfg.arrays.items():
             desc[1].storage = dtypes.StorageType.Default
