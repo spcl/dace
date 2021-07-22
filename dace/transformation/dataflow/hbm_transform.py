@@ -156,8 +156,7 @@ class HbmTransform(transformation.Transformation):
                 "memorytype"] is not None:
             old_memory = desc.location["memorytype"]
         if new_memory == "HBM":
-            low, high = fpga.get_multibank_ranges_from_subset(
-                new_bank, sdfg)
+            low, high = fpga.get_multibank_ranges_from_subset(new_bank, sdfg)
         else:
             low, high = int(new_bank), int(new_bank) + 1
         if (old_memory is None or old_memory == "DDR") and new_memory == "HBM":
@@ -196,4 +195,3 @@ class HbmTransform(transformation.Transformation):
         #Set default on all outer arrays, such that FPGA_transformation can be used
         for desc in sdfg.arrays.items():
             desc[1].storage = dtypes.StorageType.Default
-        

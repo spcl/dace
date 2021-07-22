@@ -1096,12 +1096,14 @@ def update_path_subsets(
                           dst_conn=dst_conn)
 
 
-def update_array_shape(sdfg: SDFG,
-                       array_name: str,
-                       new_shape: Iterable,
-                       strides=None,
-                       offset=None,
-                       total_size=None,):
+def update_array_shape(
+    sdfg: SDFG,
+    array_name: str,
+    new_shape: Iterable,
+    strides=None,
+    offset=None,
+    total_size=None,
+):
     """
     Updates the shape of an array.
     """

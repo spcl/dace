@@ -37,8 +37,7 @@ class HbmCopyTransform(transformation.Transformation):
         dtype=bool,
         default=True,
         allow_none=False,
-        desc="If set storage types will be set to CPU Heap if on Default"
-    )
+        desc="If set storage types will be set to CPU Heap if on Default")
 
     def _get_split_size(self, virtual_shape: Iterable,
                         split_count: List[int]) -> List[int]:

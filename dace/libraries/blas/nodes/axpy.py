@@ -147,8 +147,7 @@ class ExpandAxpyFpgaHbm(ExpandTransformation):
         banks_x = fpga.parse_location_bank(desc_x)
         banks_y = fpga.parse_location_bank(desc_y)
         banks_res = fpga.parse_location_bank(desc_res)
-        tmp_bank_c = fpga.get_multibank_ranges_from_subset(
-            banks_x[1], sdfg)
+        tmp_bank_c = fpga.get_multibank_ranges_from_subset(banks_x[1], sdfg)
         bank_count = tmp_bank_c[1] - tmp_bank_c[
             0]  # We know this is equal for all arrays it's checked in validation
 
