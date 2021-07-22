@@ -1058,7 +1058,7 @@ def update_path_subsets(
     :param inner_edge_info: This is either the inner edge defining the memlet path that
         should be modified, or an AccessNode with exactly one attached ingoing or outgoing
         memlet path 
-    :param new_subset:, The new subset set on the innermost edge
+    :param new_subset: The new subset set on the innermost edge
     """
     if isinstance(inner_edge_info, nd.AccessNode):
         some_edge = list(state.all_edges(inner_edge_info))
