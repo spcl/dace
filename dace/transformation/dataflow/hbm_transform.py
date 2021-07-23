@@ -190,7 +190,8 @@ class HbmTransform(transformation.Transformation):
             self._update_array_hbm(array_name, memory_type, bank, sdfg)
 
         # nest the sdfg and execute in parallel
-        self._multiply_sdfg_executions(sdfg)
+        if (0, 0, 1) != subsets.Range.from_string(self.outer_map_range[1])[0]:
+            self._multiply_sdfg_executions(sdfg)
 
         # set default on all outer arrays, such that FPGA_transformation can be used
         for desc in sdfg.arrays.items():
