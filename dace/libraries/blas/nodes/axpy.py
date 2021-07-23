@@ -127,6 +127,39 @@ class ExpandAxpyFpgaHbm(ExpandTransformation):
     environments = []
 
     @staticmethod
+    def validate(node, sdfg: SDFG, state: SDFGState):
+        in_edges = state.in_edges(node)
+        out_edges = state.out_edges(node)
+        in_memlets = [in_edges[0].data, in_edges[1].data]
+        out_memlet = out_edges[0].data
+        size = in_memlets[0].subset.size()
+
+        if len(size) != 2:
+            raise ValueError("axpy for hbm only supports 2-dimensional arrays")
+
+        desc_x = sdfg.arrays[in_memlets[0].data]
+        desc_y = sdfg.arrays[in_memlets[1].data]
+        desc_z = sdfg.arrays[out_memlet.data]
+        parse_x = fpga.parse_location_bank(desc_x)
+        parse_y = fpga.parse_location_bank(desc_y)
+        parse_z = fpga.parse_location_bank(desc_z)
+        if parse_x is None or parse_y is None or parse_z is None:
+            raise ValueError(
+                "All attached arrays must be placed explicitly in memory "
+                "for this axpy implementation")
+        low1, high1 = fpga.get_multibank_ranges_from_subset(
+            parse_x[1], sdfg)
+        low2, high2 = fpga.get_multibank_ranges_from_subset(
+            parse_y[1], sdfg)
+        low3, high3 = fpga.get_multibank_ranges_from_subset(
+            parse_z[1], sdfg)
+        if (high1 - low1) != (high2 - low2) or (high2 - low2) != (high3 -
+                                                                    low3):
+            raise ValueError(
+                "All attached arrays should be distributed among "
+                "the same number of banks")
+
+    @staticmethod
     def expansion(node,
                   parent_state: SDFGState,
                   parent_sdfg: SDFG,
@@ -138,6 +171,7 @@ class ExpandAxpyFpgaHbm(ExpandTransformation):
         :param parent_sdfg: SDFG that the node is in.
         :param param: The param symbol for the top-level map mapping over HBM-banks
         """
+        ExpandAxpyFpgaHbm.validate(node, parent_sdfg, parent_state)
         sdfg: SDFG = ExpandAxpyFpga.expansion(node, parent_state, parent_sdfg,
                                               **kwargs)
 
@@ -219,31 +253,6 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
         if len(size) != 1 and self.implementation != "fpga_hbm":
             raise ValueError("axpy only supported on 1-dimensional arrays")
-        elif len(size) != 2 and self.implementation == "fpga_hbm":
-            raise ValueError("axpy for hbm only supports 2-dimensional arrays")
-
-        if self.implementation == "fpga_hbm":
-            desc_x = sdfg.arrays[in_memlets[0].data]
-            desc_y = sdfg.arrays[in_memlets[1].data]
-            desc_z = sdfg.arrays[out_memlet.data]
-            parse_x = fpga.parse_location_bank(desc_x)
-            parse_y = fpga.parse_location_bank(desc_y)
-            parse_z = fpga.parse_location_bank(desc_z)
-            if parse_x is None or parse_y is None or parse_z is None:
-                raise ValueError(
-                    "All attached arrays must be placed explicitly in memory "
-                    "for this axpy implementation")
-            low1, high1 = fpga.get_multibank_ranges_from_subset(
-                parse_x[1], sdfg)
-            low2, high2 = fpga.get_multibank_ranges_from_subset(
-                parse_y[1], sdfg)
-            low3, high3 = fpga.get_multibank_ranges_from_subset(
-                parse_z[1], sdfg)
-            if (high1 - low1) != (high2 - low2) or (high2 - low2) != (high3 -
-                                                                      low3):
-                raise ValueError(
-                    "All attached arrays should be distributed among "
-                    "the same number of banks")
 
         if size != in_memlets[1].subset.size():
             raise ValueError("Inputs to axpy must have equal size")
