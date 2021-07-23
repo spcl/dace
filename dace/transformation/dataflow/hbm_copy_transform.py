@@ -1,6 +1,6 @@
 from typing import Any, Dict, Iterable, List, Tuple, Union
 
-from dace import dtypes, properties, registry
+from dace import data, dtypes, properties, registry
 from dace.sdfg import utils
 from dace.transformation import transformation
 from dace.sdfg import nodes as nd
@@ -60,6 +60,13 @@ class HbmCopyTransform(transformation.Transformation):
         dst = graph.nodes()[candidate[HbmCopyTransform._dst_node]]
         src_array = sdfg.arrays[src.data]
         dst_array = sdfg.arrays[dst.data]
+
+        plain_array = lambda array: isinstance(array, data.Array) and not isinstance(array, data.View)
+
+        if not plain_array(src_array):
+            raise ValueError(f"{src.data} must be of type array and mustn't be a view")
+        if not plain_array(dst_array):
+            raise ValueError(f"{dst.data} must be of type array and mustn't be a view")
 
         # same dimensions means HBM-array needs 1 dimension more
         collect_src = len(src_array.shape) - 1 == len(dst_array.shape)
