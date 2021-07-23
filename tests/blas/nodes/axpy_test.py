@@ -15,7 +15,7 @@ from dace.memlet import Memlet
 import dace.libraries.blas as blas
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory
-from dace.transformation.dataflow import hbm_copy_transform
+from dace.transformation.dataflow import HbmBankSplit
 from dace.transformation import optimizer
 
 from dace.libraries.standard.memory import aligned_ndarray
@@ -146,7 +146,7 @@ def fpga_hbm_graph(veclen, dtype, expansion):
     sdfg.arrays["x"].storage = dtypes.StorageType.CPU_Heap
     sdfg.arrays["y"].storage = dtypes.StorageType.CPU_Heap
     for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
-            patterns=[hbm_copy_transform.HbmCopyTransform]):
+            patterns=[HbmBankSplit]):
         xform.apply(sdfg)
     sdfg.sdfg_list[3].symbols["a"] = sdfg.sdfg_list[2].symbols[
         "a"]  # Why does inference fail?
