@@ -14,8 +14,13 @@ import itertools
 @make_properties
 class MapUnroll(transformation.Transformation):
     """
-    Unrolls a map with constant ranges directly in the SDFG by replicating its
-    subgraph for each iteration.
+    Unrolls a map with constant ranges in the top-level scope of an SDFG by
+    replicating its subgraph for each iteration. If there are local data
+    containers only used in this map, they will also be replicated, as will
+    nested SDFGs found within.
+
+    This transformation can be useful for forming weakly connected components
+    that will be inferred as processing elements in an FPGA kernel.
     """
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
@@ -111,16 +116,14 @@ class MapUnroll(transformation.Transformation):
                 if isinstance(node, nodes.NestedSDFG):
                     # Avoid deep-copying the nested SDFG
                     nsdfg = node.sdfg
+                    # Don't copy the nested SDFG, as we will do this separately
                     node.sdfg = None
                     unrolled_node = copy.deepcopy(node)
-                    # Reinstate the nested SDFG
                     node.sdfg = nsdfg
                     # Deserialize into a new SDFG specific to this copy
                     nsdfg_json = nested_sdfgs[nsdfg]
                     name = nsdfg_json["attributes"]["name"]
                     nsdfg_json["attributes"]["name"] += suffix
-                    nsdfg.parent_sdfg = None
-                    nsdfg.parent_sdfg_node = None
                     unrolled_nsdfg = SDFG.from_json(nsdfg_json)
                     nsdfg_json["attributes"]["name"] = name  # Reinstate
                     # Set all the references
@@ -166,6 +169,7 @@ class MapUnroll(transformation.Transformation):
         # memlets between nodes
         state.remove_nodes_from(subgraph)
 
+        # If we added a bunch of new nested SDFGs, reset the internal list
         if len(nested_sdfgs) > 0:
             sdfg.reset_sdfg_list()
 
