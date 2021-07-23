@@ -12,12 +12,31 @@ import functools
 @properties.make_properties
 class HbmCopyTransform(transformation.Transformation):
     """
+    Description:
     A transformation that allows to split an array and distribute on
     an array with one dimension more, or the reverse operation. Works in principle
     with arbitrary arrays, but it's real use case is to distribute data on many HBM-banks.
     Matches any 2 AccessNodes connected by any edge, if the dimensionality of the two accessed
     arrays differ by exactly one. The sizes of the arrays have to be large enough with
-    respect to the split executed, but this is not verified.
+    respect to the split executed, but this is not verified. While it is allowed to use symbolics 
+    for the shapes of the array, it is expected that each dimension is divisable by the number
+    of splits specified.
+
+    Examples:
+    Distribute: Suppose for example we copy from A to B, where A has shape [100, 100] and B shape
+    [10, 100, 10]. We can distribute A in that case to B using the transformation by setting
+    split_array_info=[1, 10]. A will then be divided along it's second dimension into 10 parts
+    of size [100, 10] and distributed on B.
+    Gather: Suppose A has shape [4, 50, 50] and B has shape [100, 100]. If one leaves 
+    split_array_info set to None and applies the transformation, it will try to split 
+    equally in all dimensions. In this case this works by setting split_array_info=[2, 2]
+    since 2**2 = 4.
+    Therefore A[0] will be copied to B[0:50, 0:50], A[1] to B[0:50, 50:100], A[2] to B[50:100, 0:50] and
+    A[3] to B[50:100, 50:100].
+
+    Note that simply turning the AccessNodes for the arrays in the above examples would
+    have lead to the inverse operation, i.e. the gather would become a distribute and 
+    the other way around.
     """
 
     _src_node = nd.AccessNode("")
