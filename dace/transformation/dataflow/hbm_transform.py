@@ -1,3 +1,4 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Any, Dict, Iterable, List, Tuple, Union
 
 import networkx
