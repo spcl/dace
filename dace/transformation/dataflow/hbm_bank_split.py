@@ -154,7 +154,9 @@ class HbmBankSplit(transformation.Transformation):
 
         # create the copy-subgraph
         ndrange = dict()
-        usable_params = ["i", "j", "k"]
+        usable_params = []
+        for i in range(ndim):
+            usable_params.append(f"i{i}")
         for i in range(ndim):
             ndrange[usable_params[i]] = f"0:{split_info[i]}"
         graph.remove_edge_and_connectors(graph.edges_between(src, dst)[0])
