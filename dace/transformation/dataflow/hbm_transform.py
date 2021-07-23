@@ -13,6 +13,23 @@ from dace import SDFG, SDFGState, memlet
 @registry.autoregister
 @properties.make_properties
 class HbmTransform(transformation.Transformation):
+    """
+    This transformation is a tool which allows to quickly rewrite SDFGs to use many HBM-banks. 
+    Essentially all it does is nest the whole SDFG and pack it into a top-level unrolled map. 
+    Additionally it contains options to change the bank assignment of arrays and to modify accesses 
+    such that they contain the top-level unrolled map variable as a distributed subset (i.e. as 
+    an additional first index). If the transformation is called with a value of (_, 0) for 
+    outer_map_range then no top-level map is added, since it would be degenerate anyway. 
+    This makes it also usefull to quickly switch bank assignments of existing arrays and have
+    stuff like dimensionality change be handled automatically.
+    Note that this expects to be applied on an SDFG which will run on the FPGA.
+
+    For example to rewrite an implementation of vector addition that computes
+    z = x + y, one could call it with update_array_banks=[("x", "HBM", "0:10"), ("y", "HBM", "10:20"),
+    ("z", "HBM", "20:30")], update_array_access=("x", "y", "z") and outer_map_range = ("k", "0:10"). 
+    In this case this is already enough to have an implementation of vector addition that uses 30 HBM banks.
+    """
+
     # type=List[Tuple[str, str, str]]
     update_array_banks = properties.Property(
         dtype=List,

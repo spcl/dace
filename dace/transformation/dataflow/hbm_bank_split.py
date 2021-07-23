@@ -13,7 +13,6 @@ import functools
 @properties.make_properties
 class HbmBankSplit(transformation.Transformation):
     """
-    Description:
     A transformation that allows to split an array and distribute on
     an array with one dimension more, or the reverse operation. Works in principle
     with arbitrary arrays, but it's real use case is to distribute data on many HBM-banks.
