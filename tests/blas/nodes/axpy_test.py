@@ -179,7 +179,8 @@ if __name__ == "__main__":
     if args.target == "fpga":
         _test_fpga("fpga_array")
         _test_fpga("fpga_stream")
-        _test_fpga("fpga_hbm")
+        if dace.Config.get("compiler", "fpga_vendor") == "xilinx": # Only supported by xilinx
+            _test_fpga("fpga_hbm")
     elif args.target == "pure":
         test_pure()
     else:
