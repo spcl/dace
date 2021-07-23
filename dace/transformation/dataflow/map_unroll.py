@@ -1,9 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace import dtypes, registry, SDFG
+from dace import dtypes, registry, symbolic, SDFG
 from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.state import StateSubgraphView
-from dace.symbolic import evaluate
 from dace.transformation import transformation
 from dace.properties import make_properties
 import copy
@@ -38,9 +37,9 @@ class MapUnroll(transformation.Transformation):
         # All map ranges must be constant
         try:
             for begin, end, step in map_entry.map.range:
-                evaluate(begin, sdfg.constants)
-                evaluate(end, sdfg.constants)
-                evaluate(step, sdfg.constants)
+                symbolic.evaluate(begin, sdfg.constants)
+                symbolic.evaluate(end, sdfg.constants)
+                symbolic.evaluate(step, sdfg.constants)
         except TypeError:
             return False
         return True
@@ -59,25 +58,7 @@ class MapUnroll(transformation.Transformation):
         map_exit = state.exit_node(map_entry)
 
         # Collect all nodes in this weakly connected component
-        seen = set()
-        to_search = [map_entry]
-        while to_search:
-            node = to_search.pop()
-            if node in seen:
-                continue
-            seen.add(node)
-            for succ in state.successors(node):
-                to_search.append(succ)
-        to_search = [map_entry]
-        seen.remove(map_entry)
-        while to_search:
-            node = to_search.pop()
-            if node in seen:
-                continue
-            seen.add(node)
-            for succ in state.predecessors(node):
-                to_search.append(succ)
-        subgraph = StateSubgraphView(state, seen)
+        subgraph = sdutil.weakly_connected_component(state, map_entry)
 
         # Save nested SDFGs to JSON, then deserialize them for every copy we
         # need to make
@@ -87,24 +68,18 @@ class MapUnroll(transformation.Transformation):
                 nested_sdfgs[node.sdfg] = node.sdfg.to_json()
 
         # Check for local memories that need to be replicated
-        shared_transients = set(sdfg.shared_transients())
-        # Extend this list with transients that are used outside this subgraph
-        for node in state.nodes():
-            if isinstance(node, nodes.AccessNode) and node not in seen:
-                shared_transients.add(node.data)
-        local_memories = []
-        for name, desc in sdfg.arrays.items():
-            if (desc.transient and name not in shared_transients
-                    and desc.lifetime == dtypes.AllocationLifetime.Scope):
-                local_memories.append(name)
+        local_memories = sdutil.local_transients(sdfg,
+                                                 subgraph,
+                                                 entry_node=None,
+                                                 include_nested=True)
 
         params = map_entry.map.params
         ranges = map_entry.map.range.ranges
         constant_ranges = []
         for r in ranges:
-            begin = evaluate(r[0], sdfg.constants)
-            end = evaluate(r[1], sdfg.constants)
-            step = evaluate(r[2], sdfg.constants)
+            begin = symbolic.evaluate(r[0], sdfg.constants)
+            end = symbolic.evaluate(r[1], sdfg.constants)
+            step = symbolic.evaluate(r[2], sdfg.constants)
             end += step  # Make non-inclusive
             constant_ranges.append(range(begin, end, step))
         index_tuples = itertools.product(*constant_ranges)
