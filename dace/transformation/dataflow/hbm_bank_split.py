@@ -54,11 +54,12 @@ class HbmBankSplit(transformation.Transformation):
         "If None, then the transform will try to split equally in each dimension."
     )
 
-    default_to_cpu_storage = properties.Property(
-        dtype=bool,
-        default=True,
+    default_to_storage = properties.Property(
+        dtype=dtypes.StorageType,
+        default=dtypes.StorageType.CPU_Heap,
         allow_none=False,
-        desc="If set storage types will be set to CPU Heap if it is Default for the two involved arrays")
+        desc="The storage type of involved arrays will be set to the value of this property if "
+            "they have Default storage type. ")
 
     def _get_split_size(self, virtual_shape: Iterable,
                         split_count: List[int]) -> List[int]:
@@ -129,12 +130,11 @@ class HbmBankSplit(transformation.Transformation):
             true_size = src_array.shape
         ndim = len(true_size)
 
-        # Move Default to CPU_Heap
-        if self.default_to_cpu_storage:
-            if sdfg.arrays[src.data].storage == dtypes.StorageType.Default:
-                sdfg.arrays[src.data].storage = dtypes.StorageType.CPU_Heap
-            if sdfg.arrays[dst.data].storage == dtypes.StorageType.Default:
-                sdfg.arrays[dst.data].storage = dtypes.StorageType.CPU_Heap
+        # Move Default storage
+        if sdfg.arrays[src.data].storage == dtypes.StorageType.Default:
+            sdfg.arrays[src.data].storage = self.default_to_storage
+        if sdfg.arrays[dst.data].storage == dtypes.StorageType.Default:
+            sdfg.arrays[dst.data].storage = self.default_to_storage
 
         # Figure out how to split
         if self.split_array_info is None:
