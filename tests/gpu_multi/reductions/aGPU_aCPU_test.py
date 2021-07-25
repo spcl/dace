@@ -15,7 +15,7 @@ def aGPU_aCPU(a: dtype[1]):
     a += 10
 
 
-@pytest.mark.multigpu
+@pytest.mark.skip
 def test_aGPU_aCPU():
     sdfg: dace.SDFG = aGPU_aCPU.to_sdfg(strict=True)
     sdfg.name = 'aGPU_aCPU'

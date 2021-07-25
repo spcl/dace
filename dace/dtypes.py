@@ -190,20 +190,21 @@ class InstrumentationType(aenum.AutoNumberEnum):
 
 @undefined_safe_enum
 @extensible_enum
+class InstrumentationReportPrintType(aenum.AutoNumberEnum):
+    """ Available instrumentation report printing types. """
+
+    SDFG = ()
+    Location = ()
+
+
+@undefined_safe_enum
+@extensible_enum
 class TilingType(aenum.AutoNumberEnum):
     """ Available tiling types in a `StripMining` transformation. """
 
     Normal = ()
     CeilRange = ()
     NumberOfTiles = ()
-
-
-@extensible_enum
-class ReductionLibType(aenum.AutoNumberEnum):
-    """ Available Reduction Library types in a `GPUMultiTransformMap` transformation. """
-
-    Normal = ()
-    NCCL = ()
 
 
 # Maps from ScheduleType to default StorageType

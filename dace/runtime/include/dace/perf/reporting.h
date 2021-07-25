@@ -37,6 +37,7 @@ namespace perf {
             int sdfg_id;
             int state_id;
             int el_id;
+            int loc_id = -1;
         } element_id;
         struct _counter {
             char name[DACE_REPORT_EVENT_NAME_LEN];
@@ -102,6 +103,7 @@ namespace perf {
          * @param sdfg_id:  SDFG ID of the element associated with this event.
          * @param state_id: State ID of the element associated with this event.
          * @param el_id:    ID of the element associated with this event.
+         * @param loc_id:   ID of the location associated with this event.
          */
         void add_completion(
             const char *name,
@@ -110,7 +112,8 @@ namespace perf {
             unsigned long int tend,
             int sdfg_id,
             int state_id,
-            int el_id
+            int el_id,
+            int loc_id = -1
         ) {
             std::thread::id tid = std::this_thread::get_id();
             std::lock_guard<std::mutex> guard (this->_mutex);
@@ -121,7 +124,7 @@ namespace perf {
                 tstart,
                 tend,
                 tid,
-                { sdfg_id, state_id, el_id },
+                { sdfg_id, state_id, el_id, loc_id },
                 { "", 0 }
             };
             strncpy(event.name, name, DACE_REPORT_EVENT_NAME_LEN);
@@ -174,7 +177,7 @@ namespace perf {
                         ofs << "\"dur\": " << event.tend - event.tstart << ", ";
 
                     ofs << "\"pid\": " << pid << ", ";
-                    ofs << "\"tid\": " << event.tid << ", ";
+                    ofs << "\"tid\": \"" << event.tid << "\", ";
 
                     ofs << "\"args\": {";
 
@@ -189,6 +192,11 @@ namespace perf {
                         if (event.element_id.el_id > -1) {
                             ofs << ", \"id\": " << event.element_id.el_id;
                         }
+
+                        if (event.element_id.loc_id > -1) {
+                            ofs << ", \"loc_id\": " << event.element_id.loc_id;
+                        }
+
                     } else if (event.ph == 'C') {
                         ofs << "\"" << event.counter.name << "\": ";
                         ofs << event.counter.val;

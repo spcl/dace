@@ -4,7 +4,8 @@ from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import SDFGState
 
 from dace.sdfg.scope import (scope_contains_scope, is_devicelevel_gpu,
-                             devicelevel_block_size, ScopeSubgraphView)
+                             devicelevel_block_size, ScopeSubgraphView,
+                             get_gpulevel_node_location)
 
 from dace.sdfg.replace import replace, replace_properties
 

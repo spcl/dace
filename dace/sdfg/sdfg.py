@@ -667,7 +667,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 continue
             os.unlink(os.path.join(path, fname))
 
-    def get_latest_report(self) -> \
+    def get_latest_report(self, print_type: dace.InstrumentationReportPrintType = dace.
+            InstrumentationReportPrintType.SDFG) -> \
             Optional['dace.codegen.instrumentation.InstrumentationReport']:
         """
         Returns an instrumentation report from the latest run of this SDFG, or
@@ -685,7 +686,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return InstrumentationReport(
             os.path.join(path,
-                         sorted(files, reverse=True)[0]))
+                         sorted(files, reverse=True)[0]), print_type)
 
     ##########################################
 
