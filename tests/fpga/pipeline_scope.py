@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
+import pytest
+from dace.fpga_testing import fpga_test
 
 
 def make_sdfg(dtype, name="pipeline_test"):
@@ -82,7 +84,7 @@ _out = _in + (0 if user_var==M-1 else (1 if {} else (3 if {} else 2)))
 if user_var == M-1:
     user_var = 0
 else:
-    user_var = user_var + 1 
+    user_var = user_var + 1
 """.format(entry.pipeline.init_condition(), entry.pipeline.drain_condition()))
 
     # Container-to-container copies between arrays and streams
@@ -114,7 +116,9 @@ else:
     return sdfg
 
 
-if __name__ == "__main__":
+@fpga_test("pipeline_test", True, True)
+@pytest.mark.fpga
+def test_pipeline_scope():
 
     import numpy as np
 
@@ -140,3 +144,7 @@ if __name__ == "__main__":
         print(b)
         print(ref)
         raise ValueError("Unexpected output.")
+
+
+if __name__ == "__main__":
+    test_pipeline_scope()
