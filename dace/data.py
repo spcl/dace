@@ -289,12 +289,30 @@ class Array(Data):
         super(Array, self).__init__(dtype, shape, transient, storage, location,
                                     lifetime, debuginfo)
 
-        if shape is None:
-            raise IndexError('Shape must not be None')
-
         self.allow_conflicts = allow_conflicts
         self.may_alias = may_alias
         self.alignment = alignment
+
+        """
+        if strides is not None:
+            self.strides = cp.copy(strides)
+        else:
+            self.strides = [_prod(shape[i + 1:]) for i in range(len(shape))]
+
+        self.total_size = total_size or _prod(shape)
+
+        if offset is not None:
+            self.offset = cp.copy(offset)
+        else:
+            self.offset = [0] * len(shape)
+        """
+        self._set_shape_dependent_properties(shape, strides, total_size, offset)
+
+        self.validate()
+
+    def _set_shape_dependent_properties(self, shape, strides, total_size, offset):
+        if shape is None:
+            raise IndexError('Shape must not be None')
 
         if strides is not None:
             self.strides = cp.copy(strides)
@@ -307,8 +325,6 @@ class Array(Data):
             self.offset = cp.copy(offset)
         else:
             self.offset = [0] * len(shape)
-
-        self.validate()
 
     def __repr__(self):
         return '%s (dtype=%s, shape=%s)' % (type(self).__name__, self.dtype,
@@ -440,6 +456,22 @@ class Array(Data):
                 result |= set(o.free_symbols)
 
         return result
+
+    def set_shape(
+        self,
+        new_shape,
+        strides=None,
+        total_size=None,
+        offset=None,
+    ):
+        """
+        Updates the shape of an array.
+        """
+        self.shape = new_shape
+        self._set_shape_dependent_properties(new_shape,
+            strides, total_size, offset)
+        self.validate()
+
 
 
 @make_properties

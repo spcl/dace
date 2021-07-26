@@ -178,15 +178,17 @@ class HbmTransform(transformation.Transformation):
         else:
             low, high = int(new_bank), int(new_bank) + 1
         if (old_memory is None or old_memory == "DDR") and new_memory == "HBM":
-            desc = utils.update_array_shape(sdfg, array_name,
-                                            (high - low, *desc.shape))
+            desc = sdfg.arrays[array_name]
+            desc.set_shape((high - low, *desc.shape))
         elif old_memory == "HBM" and (new_memory == "DDR"
                                       or new_memory is None):
-            desc = utils.update_array_shape(array_name, *(list(desc.shape)[1:]))
+            desc = sdfg.arrays[array_name]
+            desc.set_shape(list(desc.shape)[1:])
         elif old_memory == "HBM" and new_memory == "HBM":
             new_shape = list(desc.shape)
             new_shape[0] = high - low
-            desc = utils.update_array_shape(sdfg, array_name, new_shape)
+            desc = sdfg.arrays[array_name]
+            desc.set_shape(new_shape)
         desc.location["memorytype"] = new_memory
         desc.location['bank'] = new_bank
         desc.storage = dtypes.StorageType.FPGA_Global

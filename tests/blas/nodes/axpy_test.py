@@ -123,8 +123,8 @@ def fpga_hbm_graph(veclen, dtype, expansion):
 
     banks_per_array = 2
     per_array_size = sdfg.arrays["x"].shape[0] / banks_per_array
-    utils.update_array_shape(sdfg, "x", [banks_per_array, per_array_size])
-    utils.update_array_shape(sdfg, "y", [banks_per_array, per_array_size])
+    sdfg.arrays["x"].set_shape([banks_per_array, per_array_size])
+    sdfg.arrays["y"].set_shape([banks_per_array, per_array_size])
     sdfg.arrays["x"].location["memorytype"] = "HBM"
     sdfg.arrays["y"].location["memorytype"] = "HBM"
     sdfg.arrays["x"].location["bank"] = f"0:{banks_per_array}"
@@ -141,8 +141,8 @@ def fpga_hbm_graph(veclen, dtype, expansion):
     libnode.n = dace.symbolic.pystr_to_symbolic(f"n/{banks_per_array}")
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
     sdfg.expand_library_nodes()
-    utils.update_array_shape(sdfg, "x", [per_array_size * banks_per_array])
-    utils.update_array_shape(sdfg, "y", [per_array_size * banks_per_array])
+    sdfg.arrays["x"].set_shape([per_array_size * banks_per_array])
+    sdfg.arrays["y"].set_shape([per_array_size * banks_per_array])
     sdfg.arrays["x"].storage = dtypes.StorageType.CPU_Heap
     sdfg.arrays["y"].storage = dtypes.StorageType.CPU_Heap
     for xform in optimizer.Optimizer(sdfg).get_pattern_matches(

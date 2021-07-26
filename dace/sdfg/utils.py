@@ -1093,35 +1093,3 @@ def update_path_subsets(
                           memlet=mem,
                           src_conn=src_conn,
                           dst_conn=dst_conn)
-
-
-def update_array_shape(
-    sdfg: SDFG,
-    array_name: str,
-    new_shape: Iterable,
-    strides=None,
-    offset=None,
-    total_size=None,
-):
-    """
-    Updates the shape of an array.
-    """
-    desc = sdfg.arrays[array_name]
-    sdfg.remove_data(array_name, False)
-    updated = sdfg.add_array(
-        array_name,
-        new_shape,
-        desc.dtype,
-        desc.storage,
-        desc.transient,
-        strides,
-        offset,
-        desc.lifetime,
-        desc.debuginfo,
-        desc.allow_conflicts,
-        total_size,
-        False,
-        desc.alignment,
-        desc.may_alias,
-    )
-    return updated[1]
