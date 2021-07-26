@@ -115,7 +115,7 @@ else:
     return sdfg
 
 
-@fpga_test("pipeline_test")
+@fpga_test()
 def test_pipeline_scope():
 
     import numpy as np
@@ -143,6 +143,8 @@ def test_pipeline_scope():
         print(ref)
         raise ValueError("Unexpected output.")
 
+    return jacobi
+
 
 if __name__ == "__main__":
-    test_pipeline_scope()
+    test_pipeline_scope(None)

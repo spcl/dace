@@ -17,7 +17,6 @@ from fpga_testing import (Colors, DACE_DIR, TEST_DIR, cli, dump_logs,
 TESTS = [
     ("tests/fpga/veclen_copy_conversion.py", "veclen_copy_conversion", True,
      True, []),
-    ("samples/fpga/axpy_transformed.py", "axpy_fpga_24", True, True, [24]),
     ("samples/fpga/spmv_fpga_stream.py", "spmv_fpga_stream", True, False,
      [64, 64, 640]),
     ("samples/fpga/matrix_multiplication_systolic.py",

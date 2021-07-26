@@ -49,7 +49,6 @@ TESTS = [
     ("samples/fpga/matrix_multiplication_stream.py", "mm_fpga_stream_NxKx128",
      [128, 128, 128]),
     ("samples/fpga/spmv_fpga_stream.py", "spmv_fpga_stream", [128, 128, 64]),
-    ("samples/fpga/axpy_transformed.py", ["axpy_fpga_24"], [24]),
     ("tests/fpga/multiple_kernels.py", "multiple_kernels", []),
     ("tests/fpga/unique_nested_sdfg_fpga.py", "two_vecAdd", []),
     ### BLAS ###
