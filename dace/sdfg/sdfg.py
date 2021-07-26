@@ -733,9 +733,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             for state in self.nodes():
                 for node in state.nodes():
                     if isinstance(node, nd.AccessNode) and node.data == name:
-                        raise ValueError("Data descriptor %s is already used"
-                                         "in node %s, state %s" %
-                                         (name, node, state))
+                        raise ValueError(f"Cannot remove data descriptor "
+                                         f"{name}: it is accessed by node "
+                                         f"{node} in state {state}.")
 
         del self._arrays[name]
 
@@ -1769,12 +1769,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
 
+        # Serialize SDFG before generating code, since the codegen is allowed
+        # to mutate the SDFG internally
+        sdfg_json = sdfg.to_json(hash=True)
+
         # Generate code for the program by traversing the SDFG state by state
         program_objects = codegen.generate_code(sdfg)
 
         # Generate the program folder and write the source files
         program_folder = compiler.generate_program_folder(
-            sdfg, program_objects, sdfg.build_folder)
+            sdfg_json, program_objects, sdfg.build_folder)
 
         # Compile the code and get the shared library path
         shared_library = compiler.configure_and_compile(program_folder,
