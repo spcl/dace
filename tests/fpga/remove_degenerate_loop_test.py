@@ -2,8 +2,11 @@
 import numpy as np
 import re
 import fpga_transpose
+from dace.fpga_testing import fpga_test
 
-if __name__ == "__main__":
+
+@fpga_test("remove_degenerate_loop_test")
+def test_remove_degenerate_loop():
 
     sdfg = fpga_transpose.make_sdfg("remove_degenerate_loop_test")
 
@@ -33,3 +36,7 @@ if __name__ == "__main__":
 
     if any(a_input.ravel() != a_output.ravel()):
         raise ValueError("Unexpected output.")
+
+
+if __name__ == "__main__":
+    test_remove_degenerate_loop(None)

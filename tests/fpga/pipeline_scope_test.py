@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
-import pytest
 from dace.fpga_testing import fpga_test
 
 
@@ -116,8 +115,7 @@ else:
     return sdfg
 
 
-@fpga_test("pipeline_test", True, True)
-@pytest.mark.fpga
+@fpga_test("pipeline_test")
 def test_pipeline_scope():
 
     import numpy as np

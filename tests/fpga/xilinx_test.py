@@ -15,8 +15,6 @@ from fpga_testing import (Colors, DACE_DIR, TEST_DIR, cli, dump_logs,
 
 # (relative path, sdfg name(s), run synthesis, assert II=1, args to executable)
 TESTS = [
-    ("tests/fpga/remove_degenerate_loop.py", "remove_degenerate_loop_test",
-     True, True, []),
     ("tests/fpga/veclen_copy_conversion.py", "veclen_copy_conversion", True,
      True, []),
     ("samples/fpga/axpy_transformed.py", "axpy_fpga_24", True, True, [24]),

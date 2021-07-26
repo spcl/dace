@@ -17,8 +17,6 @@ from fpga_testing import (Colors, DACE_DIR, TEST_DIR, cli, dump_logs,
 TESTS = [
     ("tests/fpga/veclen_conversion.py", "veclen_conversion", []),
     ("tests/fpga/veclen_copy_conversion.py", "veclen_copy_conversion", []),
-    # Test removing degenerate loops that only have a single iteration
-    ("tests/fpga/remove_degenerate_loop.py", "remove_degenerate_loop_test", []),
     # Test shift register abstraction with stencil code
     ("tests/fpga/fpga_stencil.py", "fpga_stcl_test", []),
     ### Map tiling and WCR ####
