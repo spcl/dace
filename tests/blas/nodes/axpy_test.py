@@ -169,8 +169,6 @@ def _test_fpga(target):
 
 
 if __name__ == "__main__":
-    _test_fpga("fpga_hbm")
-    exit(0)
 
     cmdParser = argparse.ArgumentParser(allow_abbrev=False)
 
@@ -181,7 +179,9 @@ if __name__ == "__main__":
     if args.target == "fpga":
         _test_fpga("fpga_array")
         _test_fpga("fpga_stream")
-        if dace.Config.get("compiler", "fpga_vendor") == "xilinx": # Only supported by xilinx
+        if dace.Config.get(
+                "compiler",
+                "fpga_vendor") == "xilinx":  # Only supported by xilinx
             _test_fpga("fpga_hbm")
     elif args.target == "pure":
         test_pure()

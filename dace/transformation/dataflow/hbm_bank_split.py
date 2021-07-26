@@ -58,8 +58,9 @@ class HbmBankSplit(transformation.Transformation):
         dtype=dtypes.StorageType,
         default=dtypes.StorageType.CPU_Heap,
         allow_none=False,
-        desc="The storage type of involved arrays will be set to the value of this property if "
-            "they have Default storage type. ")
+        desc=
+        "The storage type of involved arrays will be set to the value of this property if "
+        "they have Default storage type. ")
 
     def _get_split_size(self, virtual_shape: Iterable,
                         split_count: List[int]) -> List[int]:
@@ -83,12 +84,15 @@ class HbmBankSplit(transformation.Transformation):
         src_array = sdfg.arrays[src.data]
         dst_array = sdfg.arrays[dst.data]
 
-        plain_array = lambda array: isinstance(array, data.Array) and not isinstance(array, data.View)
+        plain_array = lambda array: isinstance(
+            array, data.Array) and not isinstance(array, data.View)
 
         if not plain_array(src_array):
-            raise ValueError(f"{src.data} must be of type array and mustn't be a view")
+            raise ValueError(
+                f"{src.data} must be of type array and mustn't be a view")
         if not plain_array(dst_array):
-            raise ValueError(f"{dst.data} must be of type array and mustn't be a view")
+            raise ValueError(
+                f"{dst.data} must be of type array and mustn't be a view")
 
         # same dimensions means HBM-array needs 1 dimension more
         collect_src = len(src_array.shape) - 1 == len(dst_array.shape)
