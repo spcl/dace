@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
+import copy
 import dace
 from dace import data, memlet, dtypes, registry, sdfg as sd, subsets
 from dace.sdfg import nodes
@@ -125,11 +126,13 @@ class FPGATransformState(transformation.Transformation):
         shared_transients = set(sdfg.shared_transients())
         input_nodes = [
             n for n in sdutil.find_source_nodes(state)
-            if isinstance(n, nodes.AccessNode) and (not sdfg.arrays[n.data].transient or n.data in shared_transients)
+            if isinstance(n, nodes.AccessNode) and
+            (not sdfg.arrays[n.data].transient or n.data in shared_transients)
         ]
         output_nodes = [
             n for n in sdutil.find_sink_nodes(state)
-            if isinstance(n, nodes.AccessNode) and (not sdfg.arrays[n.data].transient or n.data in shared_transients)
+            if isinstance(n, nodes.AccessNode) and
+            (not sdfg.arrays[n.data].transient or n.data in shared_transients)
         ]
 
         fpga_data = {}
@@ -185,12 +188,14 @@ class FPGATransformState(transformation.Transformation):
                         allow_conflicts=desc.allow_conflicts,
                         strides=desc.strides,
                         offset=desc.offset)
+                    fpga_array[1].location = copy.copy(desc.location)
+                    desc.location.clear()
                     fpga_data[node.data] = fpga_array
 
                 pre_node = pre_state.add_read(node.data)
                 pre_fpga_node = pre_state.add_write('fpga_' + node.data)
-                full_range = subsets.Range([(0, s - 1, 1) for s in desc.shape])
-                mem = memlet.Memlet.simple(node.data, full_range)
+                mem = memlet.Memlet(data=node.data,
+                                    subset=subsets.Range.from_array(desc))
                 pre_state.add_edge(pre_node, None, pre_fpga_node, None, mem)
 
                 if node not in wcr_input_nodes:
@@ -227,13 +232,15 @@ class FPGATransformState(transformation.Transformation):
                         allow_conflicts=desc.allow_conflicts,
                         strides=desc.strides,
                         offset=desc.offset)
+                    fpga_array[1].location = copy.copy(desc.location)
+                    desc.location.clear()
                     fpga_data[node.data] = fpga_array
                 # fpga_node = type(node)(fpga_array)
 
                 post_node = post_state.add_write(node.data)
                 post_fpga_node = post_state.add_read('fpga_' + node.data)
-                full_range = subsets.Range([(0, s - 1, 1) for s in desc.shape])
-                mem = memlet.Memlet.simple('fpga_' + node.data, full_range)
+                mem = memlet.Memlet(f"fpga_{node.data}", None,
+                                    subsets.Range.from_array(desc))
                 post_state.add_edge(post_fpga_node, None, post_node, None, mem)
 
                 fpga_node = state.add_write('fpga_' + node.data)

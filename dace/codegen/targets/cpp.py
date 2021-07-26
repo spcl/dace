@@ -11,7 +11,7 @@ import warnings
 
 import sympy as sp
 from six import StringIO
-from typing import IO, Optional, Tuple, Union
+from typing import IO, List, Optional, Tuple, Union
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
@@ -22,22 +22,23 @@ from dace.codegen.dispatcher import DefinedType
 from dace.config import Config
 from dace.frontend import operations
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.sdfg import nodes, graph as gr
+from dace.sdfg import nodes, graph as gr, utils
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
+from dace.codegen.targets import fpga
 
 
 def copy_expr(
     dispatcher,
     sdfg,
-    dataname,
+    data_name,
     memlet,
     is_write=None,  # Otherwise it's a read
     offset=None,
     relative_offset=True,
     packed_types=False,
 ):
-    datadesc = sdfg.arrays[dataname]
+    data_desc = sdfg.arrays[data_name]
     if relative_offset:
         s = memlet.subset
         o = offset
@@ -50,39 +51,45 @@ def copy_expr(
             s = offset
         o = None
     if s is not None:
-        offset_cppstr = cpp_offset_expr(datadesc, s, o)
+        offset_cppstr = cpp_offset_expr(data_desc, s, o)
     else:
         offset_cppstr = "0"
     dt = ""
 
-    expr = ptr(dataname, datadesc, sdfg)
-
-    is_global = datadesc.lifetime in (dtypes.AllocationLifetime.Global,
-                                      dtypes.AllocationLifetime.Persistent)
+    is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
+                                       dtypes.AllocationLifetime.Persistent)
     defined_types = None
     try:
-        if (isinstance(datadesc, data.Array)
-                and not isinstance(datadesc, data.View) and any(
+        if (isinstance(data_desc, data.Array)
+                and not isinstance(data_desc, data.View) and any(
                     str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in datadesc.free_symbols)):
-            defined_types = dispatcher.declared_arrays.get(dataname,
+                    for s in data_desc.free_symbols)):
+            defined_types = dispatcher.declared_arrays.get(data_name,
                                                            is_global=is_global)
     except KeyError:
         pass
     if not defined_types:
-        defined_types = dispatcher.defined_vars.get(dataname,
+        defined_types = dispatcher.defined_vars.get(data_name,
                                                     is_global=is_global)
     def_type, _ = defined_types
+    if fpga.is_fpga_array(data_desc):
+        expr = fpga.fpga_ptr(
+            data_name,
+            data_desc,
+            sdfg,
+            s,
+            is_write,
+            dispatcher,
+            0,
+            def_type == DefinedType.ArrayInterface
+            # If this is a view, it has already been renamed
+            and not isinstance(data_desc, data.View))
+    else:
+        expr = ptr(data_name, data_desc, sdfg)
 
     add_offset = offset_cppstr != "0"
 
     if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
-        if def_type == DefinedType.ArrayInterface:
-            # If this is a view, it has already been renamed
-            if not isinstance(datadesc, data.View):
-                if is_write is None:
-                    raise ValueError("is_write must be set for ArrayInterface.")
-                expr = array_interface_variable(expr, is_write, dispatcher)
         return "{}{}{}".format(
             dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
 
@@ -96,12 +103,12 @@ def copy_expr(
 
         if add_offset:
             raise TypeError("Tried to offset address of scalar {}: {}".format(
-                dataname, offset_cppstr))
+                data_name, offset_cppstr))
 
         if def_type == DefinedType.Scalar:
             return "{}&{}".format(dt, expr)
         else:
-            return dataname
+            return data_name
     else:
         raise NotImplementedError("copy_expr not implemented "
                                   "for connector type: {}".format(def_type))
@@ -126,39 +133,29 @@ def memlet_copy_to_absolute_strides(dispatcher,
                              memlet,
                              is_write=False,
                              packed_types=packed_types)
-        dst_expr = copy_expr(dispatcher,
-                             sdfg,
-                             dst_node.data,
-                             memlet,
-                             is_write=True,
-                             offset=None,
-                             relative_offset=False,
-                             packed_types=packed_types)
         if memlet.other_subset is not None:
-            dst_expr = copy_expr(
-                dispatcher,
-                sdfg,
-                dst_node.data,
-                memlet,
-                is_write=True,
-                offset=memlet.other_subset,
-                relative_offset=False,
-                packed_types=packed_types,
-            )
+            dst_expr = copy_expr(dispatcher,
+                                 sdfg,
+                                 dst_node.data,
+                                 memlet,
+                                 is_write=True,
+                                 offset=memlet.other_subset,
+                                 relative_offset=False,
+                                 packed_types=packed_types)
             dst_subset = memlet.other_subset
         else:
+            dst_expr = copy_expr(dispatcher,
+                                 sdfg,
+                                 dst_node.data,
+                                 memlet,
+                                 is_write=True,
+                                 offset=None,
+                                 relative_offset=False,
+                                 packed_types=packed_types)
             dst_subset = subsets.Range.from_array(dst_nodedesc)
         src_subset = memlet.subset
 
     else:
-        src_expr = copy_expr(dispatcher,
-                             sdfg,
-                             src_node.data,
-                             memlet,
-                             is_write=False,
-                             offset=None,
-                             relative_offset=False,
-                             packed_types=packed_types)
         dst_expr = copy_expr(dispatcher,
                              sdfg,
                              dst_node.data,
@@ -166,18 +163,24 @@ def memlet_copy_to_absolute_strides(dispatcher,
                              is_write=True,
                              packed_types=packed_types)
         if memlet.other_subset is not None:
-            src_expr = copy_expr(
-                dispatcher,
-                sdfg,
-                src_node.data,
-                memlet,
-                is_write=False,
-                offset=memlet.other_subset,
-                relative_offset=False,
-                packed_types=packed_types,
-            )
+            src_expr = copy_expr(dispatcher,
+                                 sdfg,
+                                 src_node.data,
+                                 memlet,
+                                 is_write=False,
+                                 offset=memlet.other_subset,
+                                 relative_offset=False,
+                                 packed_types=packed_types)
             src_subset = memlet.other_subset
         else:
+            src_expr = copy_expr(dispatcher,
+                                 sdfg,
+                                 src_node.data,
+                                 memlet,
+                                 is_write=False,
+                                 offset=None,
+                                 relative_offset=False,
+                                 packed_types=packed_types)
             src_subset = subsets.Range.from_array(src_nodedesc)
         dst_subset = memlet.subset
 
@@ -257,8 +260,8 @@ def emit_memlet_reference(dispatcher,
                           pointer_name: str,
                           conntype: dtypes.typeclass,
                           ancestor: int = 1,
-                          is_write=None,
-                          device_code=False) -> Tuple[str, str, str]:
+                          is_write: bool = None,
+                          device_code: bool = False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -267,7 +270,6 @@ def emit_memlet_reference(dispatcher,
     """
     desc = sdfg.arrays[memlet.data]
     typedef = conntype.ctype
-    datadef = ptr(memlet.data, desc, sdfg)
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
@@ -288,6 +290,14 @@ def emit_memlet_reference(dispatcher,
     if not defined_types:
         defined_types = dispatcher.defined_vars.get(memlet.data, ancestor)
     defined_type, defined_ctype = defined_types
+
+    if fpga.is_fpga_array(desc):
+        datadef = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset,
+                                 is_write, dispatcher, ancestor,
+                                 defined_type == DefinedType.ArrayInterface)
+    else:
+        datadef = ptr(memlet.data, desc, sdfg)
+
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface
                 and isinstance(desc, data.View))):
@@ -298,13 +308,8 @@ def emit_memlet_reference(dispatcher,
             defined_type = DefinedType.Scalar
             ref = '&'
     elif defined_type == DefinedType.ArrayInterface:
-        if is_write is None:
-            raise ValueError("is_write must be defined for ArrayInterface.")
-        else:
-            base_ctype = conntype.base_type.ctype
-            typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
-            datadef = array_interface_variable(datadef, is_write, dispatcher,
-                                               ancestor)
+        base_ctype = conntype.base_type.ctype
+        typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
@@ -523,6 +528,9 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
+    if fpga.is_hbm_array(d):
+        subset_in = fpga.modify_distributed_subset(subset_in, 0)
+
     # Offset according to parameters, then offset according to array
     if offset is not None:
         subset = subset_in.offset_new(offset, False)
@@ -547,16 +555,21 @@ def cpp_array_expr(sdfg,
                    relative_offset=True,
                    packed_veclen=1,
                    use_other_subset=False,
-                   indices=None):
+                   indices=None,
+                   referenced_array=None):
     """ Converts an Indices/Range object to a C++ array access string. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
-    desc = sdfg.arrays[memlet.data]
+    desc = (sdfg.arrays[memlet.data]
+            if referenced_array is None else referenced_array)
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     if with_brackets:
-        ptrname = ptr(memlet.data, desc, sdfg)
+        if fpga.is_fpga_array(desc):
+            ptrname = fpga.fpga_ptr(memlet.data, desc, sdfg, subset)
+        else:
+            ptrname = ptr(memlet.data, desc, sdfg)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
@@ -596,12 +609,11 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = indices
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
-    dname = ptr(memlet.data, desc, sdfg)
-
-    if defined_type == DefinedType.ArrayInterface:
-        if is_write is None:
-            raise ValueError("is_write must be set for ArrayInterface.")
-        dname = array_interface_variable(dname, is_write, None)
+    if fpga.is_fpga_array(desc):
+        dname = fpga.fpga_ptr(memlet.data, desc, sdfg, s, is_write, None, None,
+                               defined_type == DefinedType.ArrayInterface)
+    else:
+        dname = ptr(memlet.data, desc, sdfg)
 
     if defined_type == DefinedType.Scalar:
         dname = '&' + dname
@@ -1168,13 +1180,21 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                                       expr_semicolon=False),
                             ))
                         else:
-                            newnode = ast.Name(id="__%s_out[%s] = %s;" % (
+                            array_interface_name = fpga.fpga_ptr(
                                 memlet.data,
-                                cpp_array_expr(
-                                    self.sdfg, memlet, with_brackets=False),
-                                cppunparse.cppunparse(value,
-                                                      expr_semicolon=False),
-                            ))
+                                desc,
+                                self.sdfg,
+                                memlet.dst_subset,
+                                True,
+                                None,
+                                None,
+                                True,
+                            )
+                            newnode = ast.Name(
+                                id=f"{array_interface_name}"
+                                f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False)}]"
+                                f" = {cppunparse.cppunparse(value, expr_semicolon=False)};"
+                            )
 
                     return self._replace_assignment(newnode, node)
             except TypeError:  # cannot determine truth value of Relational
@@ -1383,30 +1403,3 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                         [e.src, e.dst],
                     )
                 # Otherwise, no synchronization necessary
-
-
-def array_interface_variable(var_name: str,
-                             is_write: bool,
-                             dispatcher: Optional["TargetDispatcher"],
-                             ancestor: int = 0):
-    """
-    Generates the variable name of an ArrayInterface variable.
-    """
-    ptr_in = f"__{var_name}_in"
-    ptr_out = f"__{var_name}_out"
-    if dispatcher is not None:
-        # DaCe allows reading from an output connector, even though it
-        # is not an input connector. If this occurs, panic and read
-        # from the output interface instead
-        if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
-            # Throw a KeyError if this pointer also doesn't exist
-            dispatcher.defined_vars.get(ptr_out, ancestor)
-            # Otherwise use it
-            return ptr_out
-        else:
-            return ptr_in
-    else:
-        # We might call this before the variable is even defined (e.g., because
-        # we are about to define it), so if the dispatcher is not passed, just
-        # return the appropriate string
-        return ptr_out if is_write else ptr_in
