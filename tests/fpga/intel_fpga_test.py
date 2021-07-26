@@ -95,6 +95,8 @@ TESTS = [
         "kernels_inside_component_2_1", "kernels_inside_components_0_1",
         "kernels_lns_inside_component_1", "multiple_kernels_multiple_states"
     ], []),
+    ("tests/fpga/map_unroll_processing_elements.py",
+     "map_unroll_processing_elements", []),
 ]
 
 
