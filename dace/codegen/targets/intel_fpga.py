@@ -474,7 +474,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                                     sdfg,
                                     state_id,
                                     node,
-                                    var_name=None):
+                                    var_name=None,
+                                    accessed_subset=None):
         pass
 
     def generate_kernel_internal(

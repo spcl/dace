@@ -10,7 +10,7 @@ import dace.sdfg.nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
@@ -589,7 +589,7 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
 
 def get_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
     """
-    Given a view access node, returns the viewed access node 
+    Given a view access node, returns the viewed access node
     if existent, else None
     """
     view_edge = get_view_edge(state, view)
@@ -604,7 +604,7 @@ def get_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
 def get_view_edge(state: SDFGState,
                   view: nd.AccessNode) -> gr.MultiConnectorEdge[mm.Memlet]:
     """
-    Given a view access node, returns the 
+    Given a view access node, returns the
     incoming/outgoing edge which points to the viewed access node.
     See the ruleset in the documentation of ``dace.data.View``.
 
@@ -738,6 +738,34 @@ def find_output_arraynode(graph, edge):
     return result.dst
 
 
+def weakly_connected_component(dfg,
+                               node_in_component: Node) -> StateSubgraphView:
+    """
+    Returns a subgraph of all nodes that form the weakly connected component in
+    `dfg` that contains `node_in_component`.
+    """
+    seen = set()
+    to_search = [node_in_component]
+    while to_search:
+        node = to_search.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        for succ in dfg.successors(node):
+            to_search.append(succ)
+    to_search = [node_in_component]
+    seen.remove(node_in_component)
+    while to_search:
+        node = to_search.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        for succ in dfg.predecessors(node):
+            to_search.append(succ)
+    subgraph = StateSubgraphView(dfg, seen)
+    return subgraph
+
+
 def concurrent_subgraphs(graph):
     """ Finds subgraphs of an SDFGState or ScopeSubgraphView that can
         run concurrently. """
@@ -845,15 +873,33 @@ def separate_maps(state, dfg, schedule):
     return result
 
 
-def _transients_in_scope(sdfg, scope, scope_dict):
-    return set(
-        node.data for node in scope_dict[scope.entry if scope else scope]
-        if isinstance(node, nd.AccessNode) and sdfg.arrays[node.data].transient)
+def _transients_in_scope(sdfg, outer_scope, scope_dict, include_nested):
+    scopes = [outer_scope.entry]
+    transients = set()
+    while scopes:
+        scope = scopes.pop()
+        for node in scope_dict[scope]:
+            if (isinstance(node, nd.AccessNode)
+                    and sdfg.arrays[node.data].transient):
+                transients.add(node.data)
+            if (isinstance(node, nd.EntryNode) and node is not scope
+                    and include_nested):
+                # "Recurse" into nested scopes
+                scopes.append(node)
+        if not include_nested:
+            # Only run the first iteration of the while loop
+            break
+    return transients
 
 
-def local_transients(sdfg, dfg, entry_node):
-    """ Returns transients local to the scope defined by the specified entry
-        node in the dataflow graph. """
+def local_transients(sdfg, dfg, entry_node, include_nested=False):
+    """
+    Returns transients local to the scope defined by the specified entry node in
+    the dataflow graph.
+    :param entry_node: The entry node that opens the scope. If `None`, the
+                       top-level scope is used.
+    :param include_nested: Include transients defined in nested scopes.
+    """
     state: SDFGState = dfg._graph
     scope_children = state.scope_children()
     scope_tree = state.scope_tree()
@@ -863,13 +909,14 @@ def local_transients(sdfg, dfg, entry_node):
     defined_transients = set(sdfg.shared_transients())
 
     # Get access nodes in current scope
-    transients = _transients_in_scope(sdfg, current_scope, scope_children)
+    transients = _transients_in_scope(sdfg, current_scope, scope_children,
+                                      include_nested)
 
     # Add transients defined in parent scopes
     while current_scope.parent is not None:
         current_scope = current_scope.parent
         defined_transients.update(
-            _transients_in_scope(sdfg, current_scope, scope_children))
+            _transients_in_scope(sdfg, current_scope, scope_children, False))
 
     return sorted(list(transients - defined_transients))
 
@@ -1007,7 +1054,7 @@ def load_precompiled_sdfg(folder: str):
 def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
     """
     From the given state, return the next set of states that are reachable
-    in the SDFG, skipping empty states. Traversal stops at the non-empty 
+    in the SDFG, skipping empty states. Traversal stops at the non-empty
     state.
     This function is used to determine whether synchronization should happen
     at the end of a GPU state.

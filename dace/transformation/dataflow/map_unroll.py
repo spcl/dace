@@ -1,9 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace import dtypes, registry
+from dace import dtypes, registry, symbolic, SDFG
 from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.state import StateSubgraphView
-from dace.symbolic import evaluate
 from dace.transformation import transformation
 from dace.properties import make_properties
 import copy
@@ -14,8 +13,13 @@ import itertools
 @make_properties
 class MapUnroll(transformation.Transformation):
     """
-    Unrolls a map with constant ranges directly in the SDFG by replicating its
-    subgraph for each iteration.
+    Unrolls a map with constant ranges in the top-level scope of an SDFG by
+    replicating its subgraph for each iteration. If there are local data
+    containers only used in this map, they will also be replicated, as will
+    nested SDFGs found within.
+
+    This transformation can be useful for forming weakly connected components
+    that will be inferred as processing elements in an FPGA kernel.
     """
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
@@ -33,9 +37,9 @@ class MapUnroll(transformation.Transformation):
         # All map ranges must be constant
         try:
             for begin, end, step in map_entry.map.range:
-                evaluate(begin, sdfg.constants)
-                evaluate(end, sdfg.constants)
-                evaluate(step, sdfg.constants)
+                symbolic.evaluate(begin, sdfg.constants)
+                symbolic.evaluate(end, sdfg.constants)
+                symbolic.evaluate(step, sdfg.constants)
         except TypeError:
             return False
         return True
@@ -54,45 +58,28 @@ class MapUnroll(transformation.Transformation):
         map_exit = state.exit_node(map_entry)
 
         # Collect all nodes in this weakly connected component
-        seen = set()
-        to_search = [map_entry]
-        while to_search:
-            node = to_search.pop()
-            if node in seen:
-                continue
-            seen.add(node)
-            for succ in state.successors(node):
-                to_search.append(succ)
-        to_search = [map_entry]
-        seen.remove(map_entry)
-        while to_search:
-            node = to_search.pop()
-            if node in seen:
-                continue
-            seen.add(node)
-            for succ in state.predecessors(node):
-                to_search.append(succ)
-        subgraph = StateSubgraphView(state, seen)
+        subgraph = sdutil.weakly_connected_component(state, map_entry)
+
+        # Save nested SDFGs to JSON, then deserialize them for every copy we
+        # need to make
+        nested_sdfgs = {}
+        for node in subgraph:
+            if isinstance(node, nodes.NestedSDFG):
+                nested_sdfgs[node.sdfg] = node.sdfg.to_json()
 
         # Check for local memories that need to be replicated
-        shared_transients = set(sdfg.shared_transients())
-        # Extend this list with transients that are used outside this subgraph
-        for node in state.nodes():
-            if isinstance(node, nodes.AccessNode) and node not in seen:
-                shared_transients.add(node.data)
-        local_memories = []
-        for name, desc in sdfg.arrays.items():
-            if (desc.transient and name not in shared_transients
-                    and desc.lifetime == dtypes.AllocationLifetime.Scope):
-                local_memories.append(name)
+        local_memories = sdutil.local_transients(sdfg,
+                                                 subgraph,
+                                                 entry_node=None,
+                                                 include_nested=True)
 
         params = map_entry.map.params
         ranges = map_entry.map.range.ranges
         constant_ranges = []
         for r in ranges:
-            begin = evaluate(r[0], sdfg.constants)
-            end = evaluate(r[1], sdfg.constants)
-            step = evaluate(r[2], sdfg.constants)
+            begin = symbolic.evaluate(r[0], sdfg.constants)
+            end = symbolic.evaluate(r[1], sdfg.constants)
+            step = symbolic.evaluate(r[2], sdfg.constants)
             end += step  # Make non-inclusive
             constant_ranges.append(range(begin, end, step))
         index_tuples = itertools.product(*constant_ranges)
@@ -104,29 +91,39 @@ class MapUnroll(transformation.Transformation):
                 if isinstance(node, nodes.NestedSDFG):
                     # Avoid deep-copying the nested SDFG
                     nsdfg = node.sdfg
+                    # Don't copy the nested SDFG, as we will do this separately
                     node.sdfg = None
-                unrolled_node = copy.deepcopy(node)
-                node_to_unrolled[node] = unrolled_node  # Remember mapping
-                if node == map_entry:
-                    # Fix the map bounds to only this iteration
-                    unrolled_node.map.range = [(i, i, 1) for i in t]
-                if (isinstance(node, nodes.AccessNode)
-                        and node.data in local_memories):
-                    # If this is a local memory only used in this subgraph,
-                    # we need to replicate it for each new subgraph
-                    unrolled_name = node.data + suffix
-                    if unrolled_name not in sdfg.arrays:
-                        unrolled_desc = copy.deepcopy(sdfg.arrays[node.data])
-                        sdfg.add_datadesc(unrolled_name, unrolled_desc)
-                    unrolled_node.data = unrolled_name
-                if isinstance(node, nodes.NestedSDFG):
-                    # Reinstate the nested SDFG
+                    unrolled_node = copy.deepcopy(node)
                     node.sdfg = nsdfg
-                    unrolled_node.sdfg = nsdfg
-                    unrolled_node.sdfg.parent = None
-                    unrolled_node.sdfg.parent_sdfg = None
-                    unrolled_node.sdfg.parent_nsdfg_node = None
+                    # Deserialize into a new SDFG specific to this copy
+                    nsdfg_json = nested_sdfgs[nsdfg]
+                    name = nsdfg_json["attributes"]["name"]
+                    nsdfg_json["attributes"]["name"] += suffix
+                    unrolled_nsdfg = SDFG.from_json(nsdfg_json)
+                    nsdfg_json["attributes"]["name"] = name  # Reinstate
+                    # Set all the references
+                    unrolled_nsdfg.parent = state
+                    unrolled_nsdfg.parent_sdfg = sdfg
+                    unrolled_nsdfg.update_sdfg_list([])
+                    unrolled_node.sdfg = unrolled_nsdfg
+                    unrolled_nsdfg.parent_nsdfg_node = unrolled_node
+                else:
+                    unrolled_node = copy.deepcopy(node)
+                    if node == map_entry:
+                        # Fix the map bounds to only this iteration
+                        unrolled_node.map.range = [(i, i, 1) for i in t]
+                    if (isinstance(node, nodes.AccessNode)
+                            and node.data in local_memories):
+                        # If this is a local memory only used in this subgraph,
+                        # we need to replicate it for each new subgraph
+                        unrolled_name = node.data + suffix
+                        if unrolled_name not in sdfg.arrays:
+                            unrolled_desc = copy.deepcopy(
+                                sdfg.arrays[node.data])
+                            sdfg.add_datadesc(unrolled_name, unrolled_desc)
+                        unrolled_node.data = unrolled_name
                 state.add_node(unrolled_node)
+                node_to_unrolled[node] = unrolled_node  # Remember mapping
             # Copy all edges
             for src, src_conn, dst, dst_conn, memlet in subgraph.edges():
                 src = node_to_unrolled[src]
@@ -146,6 +143,10 @@ class MapUnroll(transformation.Transformation):
         # Now we can delete the original subgraph. This implicitly also remove
         # memlets between nodes
         state.remove_nodes_from(subgraph)
+
+        # If we added a bunch of new nested SDFGs, reset the internal list
+        if len(nested_sdfgs) > 0:
+            sdfg.reset_sdfg_list()
 
         # Remove local memories that were replicated
         for mem in local_memories:
