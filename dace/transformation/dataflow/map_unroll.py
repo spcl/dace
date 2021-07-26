@@ -71,7 +71,7 @@ class MapUnroll(transformation.Transformation):
         local_memories = [
             name for name in sdutil.local_transients(
                 sdfg, subgraph, entry_node=None, include_nested=True)
-            if isinstance(sdfg.arrays[name], dt.Array)
+            if not isinstance(sdfg.arrays[name], dt.Stream)
             and not isinstance(sdfg.arrays[name], dt.View)
         ]
 
