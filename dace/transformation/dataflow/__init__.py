@@ -10,6 +10,7 @@ from .map_interchange import MapInterchange
 from .map_dim_shuffle import MapDimShuffle
 from .map_fusion import MapFusion
 from .map_fission import MapFission
+from .map_unroll import MapUnroll
 from .trivial_map_elimination import TrivialMapElimination
 from .trivial_map_range_elimination import TrivialMapRangeElimination
 
