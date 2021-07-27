@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from datetime import datetime
+import importlib.util
 import inspect
 import os
 import multiprocessing as mp
@@ -85,7 +86,7 @@ def _run_fpga_test(vendor: str,
                 env["LIBRARY_PATH"] += ":/usr/lib/x86_64-linux-gnu"
             sdfgs = test_function()
             if sdfgs is None:
-                sdfgs = []
+                raise RuntimeError("No SDFG(s) returned by FPGA test.")
             elif isinstance(sdfgs, SDFG):
                 sdfgs = [sdfgs]
             print_success(f"{base_name} [Xilinx]: " "Simulation successful.")
@@ -195,7 +196,6 @@ def fpga_test(run_synthesis: bool = True,
         pytest_params.append("intel_fpga")
 
     def decorator(test_function: Callable):
-
         @pytest.mark.fpga
         @pytest.mark.parametrize("vendor", pytest_params)
         def wrapper(vendor: Optional[str]):
@@ -210,3 +210,28 @@ def fpga_test(run_synthesis: bool = True,
         return wrapper
 
     return decorator
+
+
+def xilinx_test(*args, **kwargs):
+    return fpga_test(*args, xilinx=True, intel=False, **kwargs)
+
+
+def intel_fpga_test(*args, **kwargs):
+    return fpga_test(*args, xilinx=False, intel=True, **kwargs)
+
+
+def import_sample(path: Union[Path, str]):
+    """
+    Import a Python file from the samples directory as a module so it can be
+    used in a test.
+
+    :param path: Path relative to the DaCe samples directory.
+    """
+    path = Path(__file__).parent.parent / "samples" / Path(path)
+    if not path.exists():
+        raise ValueError(f"Sample {path} not found.")
+    name = path.stem
+    spec = importlib.util.spec_from_file_location(name, path)
+    loaded_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loaded_module)
+    return loaded_module

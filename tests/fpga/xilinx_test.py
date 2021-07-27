@@ -15,10 +15,6 @@ from fpga_testing import (Colors, DACE_DIR, TEST_DIR, cli, dump_logs,
 
 # (relative path, sdfg name(s), run synthesis, assert II=1, args to executable)
 TESTS = [
-    ("tests/fpga/veclen_copy_conversion.py", "veclen_copy_conversion", True,
-     True, []),
-    ("samples/fpga/spmv_fpga_stream.py", "spmv_fpga_stream", True, False,
-     [64, 64, 640]),
     ("samples/fpga/matrix_multiplication_systolic.py",
      "mm_fpga_systolic_4_64x64x64", True, True, [64, 64, 64, 4, "-specialize"]),
     ("samples/fpga/filter_fpga_vectorized.py", "filter_fpga_vectorized_4", True,
@@ -31,8 +27,6 @@ TESTS = [
     ("tests/fpga/nested_sdfg_as_kernel.py", "nested_sdfg_kernels", True, False,
      []),
     ("tests/fpga/streaming_memory.py", "streamingcomp_1", True, True, []),
-    ("tests/fpga/conflict_resolution.py", "fpga_conflict_resolution", True,
-     False, []),
     # This doesn't pipeline with Vitis 2020.1 for whatever reason (it pipelines
     # with both 2019.2 and 2020.2), so just switch this back on once CI starts
     # running 2020.2 or newer.

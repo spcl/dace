@@ -2,6 +2,7 @@
 import argparse
 import dace
 import numpy as np
+from dace.fpga_testing import fpga_test
 
 SIZE = dace.symbol("N")
 VECTOR_LENGTH = dace.symbol("W")
@@ -84,10 +85,8 @@ def make_fpga_state(sdfg, vectorize_connector):
         outputs = {"a_unpacked": dace.vector(DTYPE, VECTOR_LENGTH.get())}
     else:
         outputs = {"a_unpacked"}  # Infers an array
-    unpack_tasklet = state.add_tasklet(
-        "unpack_tasklet", {"a"},
-        outputs,
-        "a_unpacked = a")
+    unpack_tasklet = state.add_tasklet("unpack_tasklet", {"a"}, outputs,
+                                       "a_unpacked = a")
     state.add_memlet_path(read_input,
                           outer_entry,
                           unpack_tasklet,
@@ -164,12 +163,8 @@ def make_sdfg(name=None, vectorize_connector=False):
     return sdfg
 
 
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-size", type=int, default=128)
-    parser.add_argument("-vector_length", type=int, default=4)
-    args = parser.parse_args()
+@fpga_test()
+def test_veclen_conversion():
 
     SIZE.set(args.size)
     VECTOR_LENGTH.set(args.vector_length)
@@ -197,3 +192,9 @@ if __name__ == "__main__":
                  args.vector_length] != expected):
             raise ValueError("Shuffle failed: {} (should be {})".format(
                 B, expected))
+
+    return sdfg
+
+
+if __name__ == "__main__":
+    test_veclen_conversion(None)

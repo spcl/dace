@@ -15,17 +15,6 @@ from fpga_testing import (Colors, DACE_DIR, TEST_DIR, cli, dump_logs,
 
 # (relative path, sdfg name(s), run synthesis, assert II=1, args to executable)
 TESTS = [
-    ("tests/fpga/veclen_conversion.py", "veclen_conversion", []),
-    ("tests/fpga/veclen_copy_conversion.py", "veclen_copy_conversion", []),
-    # Test shift register abstraction with stencil code
-    ("tests/fpga/fpga_stencil.py", "fpga_stcl_test", []),
-    ### Map tiling and WCR ####
-    # First tile then transform
-    ("tests/fpga/intel_fpga/dot.py", "dot_1", ["--tile-first"]),
-    # Other way around
-    ("tests/fpga/intel_fpga/dot.py", "dot_1", ["--no-tile-first"]),
-    # simple WCR (accumulates on scalar)
-    ("tests/fpga/conflict_resolution.py", "fpga_conflict_resolution", []),
     # Simple reduce
     ("tests/fpga/intel_fpga/vector_reduce.py", "vector_reduce", []),
     # Matrix multiplication sample
@@ -48,7 +37,6 @@ TESTS = [
     ("samples/fpga/filter_fpga.py", "filter_fpga", [1000, 0.2]),
     ("samples/fpga/matrix_multiplication_stream.py", "mm_fpga_stream_NxKx128",
      [128, 128, 128]),
-    ("samples/fpga/spmv_fpga_stream.py", "spmv_fpga_stream", [128, 128, 64]),
     ("tests/fpga/multiple_kernels.py", "multiple_kernels", []),
     ("tests/fpga/unique_nested_sdfg_fpga.py", "two_vecAdd", []),
     ### BLAS ###

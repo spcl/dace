@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
+from dace.fpga_testing import fpga_test
 
 
 def make_sdfg(tasklet_code=None,
@@ -144,7 +145,8 @@ def make_sdfg(tasklet_code=None,
     return sdfg
 
 
-if __name__ == "__main__":
+@fpga_test()
+def test_veclen_copy_conversion():
 
     import numpy as np
 
@@ -160,3 +162,9 @@ if __name__ == "__main__":
 
     if any(b != a + 1):
         raise ValueError("Unexpected output.")
+
+    return gearbox
+
+
+if __name__ == "__main__":
+    test_veclen_copy_conversion(None)

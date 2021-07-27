@@ -833,26 +833,15 @@ def make_sdfg(specialize):
     return sdfg
 
 
-if __name__ == "__main__":
+def run_spmv(size_w, size_h, num_nonzero, specialize):
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("W", type=int)
-    parser.add_argument("H", type=int)
-    parser.add_argument("nnz", type=int)
-    parser.add_argument("-specialize",
-                        default=False,
-                        action="store_true",
-                        help="Fix all symbols at compile time/in hardware")
-    args = vars(parser.parse_args())
-
-    W.set(args["W"])
-    H.set(args["H"])
-    nnz.set(args["nnz"])
+    W.set(size_w)
+    H.set(size_h)
+    nnz.set(num_nonzero)
 
     print("Sparse Matrix-Vector Multiplication {}x{} "
           "({} non-zero elements, {}specialized)".format(
-              W.get(), H.get(), nnz.get(),
-              "not " if not args["specialize"] else ""))
+              W.get(), H.get(), nnz.get(), "not " if not specialize else ""))
 
     A_row = dace.ndarray([H + 1], dtype=itype)
     A_col = dace.ndarray([nnz], dtype=itype)
@@ -892,8 +881,8 @@ if __name__ == "__main__":
     A_sparse = scipy.sparse.csr_matrix((A_val, A_col, A_row),
                                        shape=(H.get(), W.get()))
 
-    spmv = make_sdfg(args["specialize"])
-    if args["specialize"]:
+    spmv = make_sdfg(specialize)
+    if specialize:
         spmv.specialize(dict(H=H, W=W, nnz=nnz))
     spmv(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=H, W=W, nnz=nnz)
 
@@ -917,4 +906,22 @@ if __name__ == "__main__":
         else:
             print("Exiting...")
     print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    if diff > 1e-5:
+        raise RuntimeError("Validation failed.")
+
+    return spmv
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("W", type=int)
+    parser.add_argument("H", type=int)
+    parser.add_argument("nnz", type=int)
+    parser.add_argument("-specialize",
+                        default=False,
+                        action="store_true",
+                        help="Fix all symbols at compile time/in hardware")
+    args = parser.parse_args()
+
+    run_spmv(args.W, args.H, args.nnz, args.specialize)

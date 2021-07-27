@@ -7,6 +7,7 @@
 import click
 import dace
 import numpy as np
+from dace.fpga_testing import intel_fpga_test
 
 from dace.transformation.dataflow import MapTiling
 from dace.transformation.interstate import FPGATransformSDFG
@@ -24,16 +25,11 @@ def dot(A: dace.float32[N], B: dace.float32[N], out: dace.float32[1]):
         o = a * b
 
 
-@click.command()
-@click.option("--n", type=int, default=64)
-@click.option("--tile-first/--no-tile-first", default=False)
-def cli(n, tile_first):
+def run_dot(n, tile_first):
     N.set(n)
     A = dace.ndarray([N], dtype=dace.float32)
     B = dace.ndarray([N], dtype=dace.float32)
     out_AB = dace.scalar(dace.float32)
-
-    print('Dot product %d' % (N.get()))
 
     A[:] = np.random.rand(N.get()).astype(dace.float32.type)
     B[:] = np.random.rand(N.get()).astype(dace.float32.type)
@@ -50,9 +46,21 @@ def cli(n, tile_first):
     sdfg(A=A, B=B, out=out_AB, N=N)
 
     diff_ab = np.linalg.norm(np.dot(A, B) - out_AB) / float(N.get())
-    print("Difference (A*B):", diff_ab)
-    exit(0 if (diff_ab <= 1e-5) else 1)
+    assert diff_ab <= 1e-5
+
+    return sdfg
+
+
+@intel_fpga_test()
+def test_dot_tile_first():
+    run_dot(64, True)
+
+
+@intel_fpga_test()
+def test_dot_fpga_transform_first():
+    run_dot(64, False)
 
 
 if __name__ == "__main__":
-    cli()
+    test_dot_tile_first(None)
+    test_dot_fpga_transform_first(None)

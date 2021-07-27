@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
+from dace.fpga_testing import fpga_test
 
 
 def make_sdfg(name="fpga_stcl_test", dtype=dace.float32, veclen=8):
@@ -209,7 +210,8 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
     return sdfg
 
 
-if __name__ == "__main__":
+@fpga_test(xilinx=False)
+def test_fpga_stencil():
 
     import numpy as np
 
@@ -232,3 +234,9 @@ if __name__ == "__main__":
     if (b != ref).any():
         raise ValueError("Unexpected output:\nGot: {}\nExpected: {}".format(
             b, ref))
+
+    return jacobi
+
+
+if __name__ == "__main__":
+    test_fpga_stencil(None)

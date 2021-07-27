@@ -5,6 +5,7 @@
 
 import dace
 import numpy as np
+from dace.fpga_testing import fpga_test
 
 
 def make_sdfg():
@@ -94,6 +95,7 @@ def make_sdfg():
     return sdfg
 
 
+@fpga_test()
 def test_fpga_wcr():
     sdfg = make_sdfg()
     size = 128
@@ -101,7 +103,8 @@ def test_fpga_wcr():
     reference = host_memory.copy()
     sdfg(host_memory=host_memory, N=size)
     assert all(np.sum(reference) + reference == host_memory)
+    return sdfg
 
 
 if __name__ == "__main__":
-    test_fpga_wcr()
+    test_fpga_wcr(None)
