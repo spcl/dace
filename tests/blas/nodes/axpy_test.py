@@ -136,9 +136,6 @@ def fpga_hbm_graph(veclen, dtype, expansion):
                 state, node,
                 subsets.Range.from_string(
                     f"0:{banks_per_array}, 0:{per_array_size}"))
-    libnode = list(
-        filter(lambda x: isinstance(x, nodes.LibraryNode), state.nodes()))[0]
-    libnode.n = dace.symbolic.pystr_to_symbolic(f"n/{banks_per_array}")
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
     sdfg.expand_library_nodes()
     sdfg.arrays["x"].set_shape([per_array_size * banks_per_array])
@@ -169,6 +166,8 @@ def _test_fpga(target):
 
 
 if __name__ == "__main__":
+    _test_fpga("fpga_hbm")
+    exit(0)
 
     cmdParser = argparse.ArgumentParser(allow_abbrev=False)
 

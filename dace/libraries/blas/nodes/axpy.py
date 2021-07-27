@@ -185,14 +185,12 @@ class ExpandAxpyFpgaHbm(ExpandTransformation):
         bank_count = tmp_bank_c[1] - tmp_bank_c[
             0]  # We know this is equal for all arrays it's checked in validation
 
-        from dace.transformation.dataflow import hbm_transform  # Avoid import loop
-        xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
-        xform.outer_map_range = (param, f"0:{bank_count}")
-        xform.update_array_access = ["_x", "_y", "_res"]
-        xform.update_array_banks = [("_x", banks_x[0], banks_x[1]),
-                                    ("_y", banks_y[0], banks_y[1]),
-                                    ("_res", banks_res[0], banks_res[1])]
-        xform.apply(sdfg)
+        from dace.transformation.dataflow.hbm_transform import transform_sdfg_for_hbm  # Avoid import loop
+        transform_sdfg_for_hbm(sdfg, (param, bank_count), 
+                {"_x":(banks_x[0], banks_x[1]),
+                "_y":(banks_y[0], banks_y[1]),
+                "_res":(banks_res[0], banks_res[1])},
+                {"n":2}, True)
 
         return sdfg
 
