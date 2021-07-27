@@ -1,8 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-
 from dace import data as dt, dtypes, registry, symbolic, SDFG
 from dace.sdfg import nodes, utils as sdutil
-from dace.sdfg.state import StateSubgraphView
 from dace.transformation import transformation
 from dace.properties import make_properties
 import copy
