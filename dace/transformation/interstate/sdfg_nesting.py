@@ -71,10 +71,12 @@ class InlineSDFG(transformation.Transformation):
         """
         # Replace all inner symbols based on symbol mapping
         istrides = list(inner_strides)
+
         def replfunc(mapping):
             for i, s in enumerate(istrides):
                 if symbolic.issymbolic(s):
                     istrides[i] = s.subs(mapping)
+
         symbolic.safe_replace(nested_sdfg.symbol_mapping, replfunc)
 
         if istrides == list(outer_strides):
@@ -409,11 +411,12 @@ class InlineSDFG(transformation.Transformation):
                 edge.data.data = repldict[edge.data.data]
 
         # Add extra access nodes for out/in view nodes
+        inv_reshapes = {repldict[r]: r for r in reshapes}
         for node in nstate.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data in reshapes:
+            if isinstance(node, nodes.AccessNode) and node.data in inv_reshapes:
                 if nstate.in_degree(node) > 0 and nstate.out_degree(node) > 0:
                     # Such a node has to be in the output set
-                    edge = outputs[node.data]
+                    edge = outputs[inv_reshapes[node.data]]
 
                     # Redirect outgoing edges through access node
                     out_edges = list(nstate.out_edges(node))
