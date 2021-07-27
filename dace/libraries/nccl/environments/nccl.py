@@ -24,7 +24,7 @@ class NCCL:
             gpu_ids[i] = i;
         }
         ncclComm_t comms[nGPUs];
-        dace::nccl::CheckNcclError(ncclCommInitAll(comms, nGPUs, gpu_ids));
+        DACE_NCCL_CHECK(ncclCommInitAll(comms, nGPUs, gpu_ids));
         for (int i = 0; i< nGPUs; i++){
             __state->ncclCommunicators->insert({gpu_ids[i], comms[i]});
         }
@@ -33,7 +33,7 @@ class NCCL:
     finalize_code = """
         const int nGPUs = __state->ncclCommunicators->size();
         for (int i = 0; i < nGPUs; i++){
-                dace::nccl::CheckNcclError(ncclCommDestroy(__state->ncclCommunicators->at(i)));
+                DACE_NCCL_CHECK(ncclCommDestroy(__state->ncclCommunicators->at(i)));
             }
         delete __state->ncclCommunicators;
     """

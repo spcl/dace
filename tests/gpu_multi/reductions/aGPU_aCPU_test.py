@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 import pytest
-from numba import cuda
+
 from dace.transformation.interstate import GPUTransformSDFG
 
 # Define data type to use
@@ -28,7 +28,7 @@ def test_aGPU_aCPU():
     mem.wcr = 'lambda old, new: new'
 
     np.random.seed(0)
-    a = cuda.pinned_array(shape=1, dtype=np_dtype)
+    a = np.ndarray(shape=1, dtype=np_dtype)
     a.fill(0)
 
     sdfg(a=a)

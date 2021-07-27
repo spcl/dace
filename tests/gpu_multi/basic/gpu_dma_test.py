@@ -2,7 +2,6 @@
 import dace
 import numpy as np
 import pytest
-from numba import cuda
 from dace.dtypes import StorageType
 from dace.sdfg import nodes
 from dace.data import Scalar
@@ -18,7 +17,9 @@ np_dtype = np.float64
 
 @dace.program
 def gpu_dma(X: dtype[N], alpha: dtype):
-    return alpha * X
+    out = dace.ndarray([N], dtype, storage=dace.StorageType.CPU_Pinned)
+    out[:] = (alpha * X)[:]
+    return out
 
 
 def add_gpu_location(sdfg: dace.SDFG, mapEntry, gpu):
@@ -87,21 +88,21 @@ def test_gpu_dma():
 
     np.random.seed(0)
     n = 16
-    X = cuda.pinned_array(shape=n, dtype=np_dtype)
-    alpha = cuda.pinned_array(shape=1, dtype=np_dtype)
+    X = np.ndarray(shape=n, dtype=np_dtype)
+    alpha = np.ndarray(shape=1, dtype=np_dtype)
     alpha.fill(np.random.rand())
 
     a_times_X = sdfg(X=X, alpha=alpha[0], N=n)
     res = X * alpha
     idx = zip(*np.where(~np.isclose(res, a_times_X, atol=0, rtol=1e-7)))
     for i in idx:
-        print(i, res[i], X[i] * alpha, X[i], alpha)
+        print(i, res[i], a_times_X, X[i] * alpha, X[i], alpha)
     assert np.allclose(res, a_times_X)
     print('PASS')
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
-    # out_path = '.dacecache/local/basic/'+sdfg.name
+    # out_path = '.dacecache/local/basic/' + sdfg.name
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
 

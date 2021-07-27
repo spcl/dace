@@ -2,7 +2,6 @@
 import numpy as np
 import dace
 import dace.libraries.nccl as nccl
-from numba import cuda
 from dace.transformation.interstate import GPUTransformSDFG
 import pytest
 
@@ -95,7 +94,7 @@ def test_batchnorm2d_model_parallelism():
     sdfg.specialize(dict(number_of_gpus=ng, N=n, H=h, W=w, C=c, C_gpu=c // ng))
 
     np.random.seed(0)
-    X = cuda.pinned_array(shape=[n, h, w, c], dtype=np_dtype)
+    X = np.ndarray(shape=[n, h, w, c], dtype=np_dtype)
     # X = np.empty(shape=[n, h, w, c], dtype=np_dtype)
     X[:] = np.random.rand(n, h, w, c)[:]
     Z = np.copy(X)

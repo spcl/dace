@@ -2,7 +2,6 @@
 import dace
 import numpy as np
 import pytest
-from numba import cuda
 from dace.dtypes import ScheduleType, StorageType
 from dace.sdfg import nodes, SDFG, SDFGState
 from dace.data import Scalar
@@ -84,10 +83,10 @@ def test_three_matmul():
     n = 3000
     l = 900
     o = 7777
-    A = cuda.pinned_array(shape=[m, k], dtype=np_dtype)
-    B = cuda.pinned_array(shape=[k, n], dtype=np_dtype)
-    C = cuda.pinned_array(shape=[n, l], dtype=np_dtype)
-    D = cuda.pinned_array(shape=[l, o], dtype=np_dtype)
+    A = np.ndarray(shape=[m, k], dtype=np_dtype)
+    B = np.ndarray(shape=[k, n], dtype=np_dtype)
+    C = np.ndarray(shape=[n, l], dtype=np_dtype)
+    D = np.ndarray(shape=[l, o], dtype=np_dtype)
     A[:] = np.random.rand(m, k)[:]
     B[:] = np.random.rand(k, n)[:]
     C[:] = np.random.rand(n, l)[:]

@@ -3,7 +3,7 @@ import dace
 from dace.sdfg import nodes
 from dace import dtypes
 import numpy as np
-from numba import cuda
+
 import pytest
 
 # Define data type to use
@@ -55,9 +55,9 @@ def test_aCPU_aGPU():
     sdfg = create_sdfg()
 
     np.random.seed(0)
-    a = cuda.pinned_array(shape=1, dtype=np_dtype)
+    a = np.ndarray(shape=1, dtype=np_dtype)
     a.fill(1)
-    b = cuda.pinned_array(shape=1, dtype=np_dtype)
+    b = np.ndarray(shape=1, dtype=np_dtype)
     b.fill(10)
 
     sdfg(a=a, b=b)

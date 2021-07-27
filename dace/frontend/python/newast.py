@@ -2917,6 +2917,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 out_memlet.wcr = LambdaProperty.from_string(
                     'lambda x, y: x {} y'.format(op))
 
+            # Propagate WCR
+            if out_memlet.wcr is not None:
+                try:
+                    target_memlet = self.outputs[target_name][0]
+                    target_memlet.wcr = out_memlet.wcr
+                except TypeError:
+                    warnings.warn('WCR might not get propagated.')
+
             state.add_edge(tasklet, '__out', op2, None, out_memlet)
 
     def _add_aug_assignment(self,

@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 import pytest
-from numba import cuda
+
 from dace.transformation.dataflow import GPUMultiTransformMap
 
 N = dace.symbol('N')
@@ -39,9 +39,9 @@ def test_gpu_multi():
 
     size = 256
     np.random.seed(0)
-    A = cuda.pinned_array(shape=1, dtype=np_dtype)
-    X = cuda.pinned_array(shape=size, dtype=np_dtype)
-    Y = cuda.pinned_array(shape=size, dtype=np_dtype)
+    A = np.ndarray(shape=1, dtype=np_dtype)
+    X = np.ndarray(shape=size, dtype=np_dtype)
+    Y = np.ndarray(shape=size, dtype=np_dtype)
     A.fill(np.random.rand())
     X[:] = np.random.rand(size)[:]
     Y[:] = np.random.rand(size)[:]
@@ -55,7 +55,7 @@ def test_gpu_multi():
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
-    # out_path = '.dacecache/local/multi_transform_map/'+sdfg.name
+    # out_path = '.dacecache/local/multi_transform_map/' + sdfg.name
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
 

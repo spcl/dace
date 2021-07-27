@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 import pytest
-from numba import cuda
+
 from dace.sdfg import nodes
 from dace import dtypes
 from dace.transformation.dataflow import GPUMultiTransformMap, GPUTransformMap
@@ -11,43 +11,113 @@ N = dace.symbol('N')
 n = 1200
 
 # Define data type to use
-dtype = dace.float64
-np_dtype = np.float64
+dtype = dace.float32
+np_dtype = np.float32
 
 
 @dace.program
-def sum(A: dtype[N], sumA: dtype[1]):
-    gpu_sumA = dace.ndarray([1], dtype=dtype)
-
-    for i in dace.map[0:1]:
-        gpu_sumA[i] = 0
-
+def sum(A: dtype[N]):
+    redA = dace.ndarray(1, dtype, storage=dace.StorageType.GPU_Global)
+    out = dace.ndarray([1], dtype, storage=dace.StorageType.CPU_Pinned)
     for j in dace.map[0:N]:
-        gpu_sumA += A[j]
+        redA += A[j]
+    out[:] = redA[:]
+    return out
 
-    sumA[0] = gpu_sumA[0]
+
+@dace.program
+def prod(A: dtype[N]):
+    redA = dace.ndarray(1, dtype, storage=dace.StorageType.GPU_Global)
+    out = dace.ndarray([1], dtype, storage=dace.StorageType.CPU_Pinned)
+    for j in dace.map[0:N]:
+        redA *= A[j]
+    out[:] = redA[:]
+    return out
 
 
-@pytest.mark.multigpu
-def test_reduction_mGPU_GPU0_sum():
-    sdfg: dace.SDFG = sum.to_sdfg(strict=True)
-    sdfg.name = 'mGPU_GPU0_sum'
-    sdfg.arrays['gpu_sumA'].location = {'gpu': 0}
-    sdfg.arrays['gpu_sumA'].storage = dtypes.StorageType.GPU_Global
-    sdfg.apply_transformations(GPUTransformMap, options={'gpu_id': 0})
-    sdfg.apply_transformations(
-        GPUMultiTransformMap)  # options={'number_of_gpus':4})
+@dace.program
+def max(A: dtype[N]):
+    redA = dace.ndarray(1, dtype, storage=dace.StorageType.GPU_Global)
+    out = dace.ndarray([1], dtype, storage=dace.StorageType.CPU_Pinned)
+    for j in dace.map[0:N]:
+        with dace.tasklet:
+            aj << A[j]
+            mA >> redA(1, lambda a, b: max(a, b))
+            mA = aj
+    out[:] = redA[:]
+    return out
+
+
+@dace.program
+def custom(A: dtype[N]):
+    redA = dace.ndarray(1, dtype, storage=dace.StorageType.GPU_Global)
+    out = dace.ndarray([1], dtype, storage=dace.StorageType.CPU_Pinned)
+    for j in dace.map[0:N]:
+        with dace.tasklet:
+            aj << A[j]
+            customRed >> redA(1, lambda a, b: a + b + b * b)
+            customRed = aj
+    out[:] = redA[:]
+    return out
+
+
+def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
+    """ Finds the first map entry node by the given parameter name. """
+    return next(n for n, _ in sdfg.all_nodes_recursive()
+                if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
+
+
+def find_access_node(sdfg: dace.SDFG, name: str) -> dace.nodes.MapEntry:
+    """ Finds the first access node by the given data name. """
+    return next(n for n, _ in sdfg.all_nodes_recursive()
+                if isinstance(n, dace.nodes.AccessNode) and n.data == name)
+
+
+def infer_result_function(reduction_type):
+    res_func_dict = {sum: np.sum, prod: np.prod, max: np.max, custom: np_custom}
+    return res_func_dict[reduction_type]
+
+
+def wrapper_test_mGPU_GPU0_reduction(reduction_type=None):
+    if reduction_type is None:
+        reduction_type = sum
+    test_mGPU_GPU0_reduction(reduction_type)
+
+
+def np_custom(arr):
+    return np.sum(arr) + np.sum(np.square(arr))
+
+
+@pytest.mark.parametrize("reduction_type", [
+    pytest.param(sum, marks=pytest.mark.multigpu),
+    pytest.param(prod, marks=pytest.mark.multigpu),
+    pytest.param(max, marks=pytest.mark.multigpu),
+    pytest.param(custom, marks=pytest.mark.multigpu),
+])
+def test_mGPU_GPU0_reduction(reduction_type):
+    sdfg: dace.SDFG = reduction_type.to_sdfg(strict=True)
+    sdfg.name = f'mGPU_GPU0_{reduction_type.name}'
+    tmp1 = find_access_node(sdfg, '__tmp2')
+    tmp1.desc(sdfg).storage = dtypes.StorageType.CPU_Pinned
+    map_entry = find_map_by_param(sdfg, 'j')
+    GPUMultiTransformMap.apply_to(
+        sdfg,
+        verify=False if reduction_type == custom else True,
+        _map_entry=map_entry)
+    sdfg.arrays['redA'].location['gpu'] = 0
 
     np.random.seed(0)
-    sumA = cuda.pinned_array(shape=1, dtype=np_dtype)
-    sumA.fill(0)
-    A = cuda.pinned_array(shape=n, dtype=np_dtype)
+    redA = np.ndarray(shape=1, dtype=np_dtype)
+    redA.fill(0)
+    A = np.ndarray(shape=n, dtype=np_dtype)
     Aa = np.random.rand(n)
     A[:] = Aa[:]
 
-    sdfg(A=A, sumA=sumA, N=n)
-    res = np.sum(A)
-    assert np.isclose(sumA[0], res, atol=0, rtol=1e-7)
+    sdfg(A=A, redA=redA, N=n)
+    result_function = infer_result_function(reduction_type)
+    res = result_function(A)
+    assert np.isclose(redA[0], res, atol=0,
+                      rtol=1e-7), f'\ngot: {redA[0]}\nres: {res}'
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
@@ -57,4 +127,7 @@ def test_reduction_mGPU_GPU0_sum():
 
 
 if __name__ == "__main__":
-    test_reduction_mGPU_GPU0_sum()
+    wrapper_test_mGPU_GPU0_reduction(sum)
+    wrapper_test_mGPU_GPU0_reduction(prod)
+    wrapper_test_mGPU_GPU0_reduction(max)
+    wrapper_test_mGPU_GPU0_reduction(custom)

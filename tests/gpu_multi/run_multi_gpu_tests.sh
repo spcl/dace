@@ -7,21 +7,25 @@ ignore_directories=("batchnorm")
 ignore_files=("${red}/aCPU_aGPU_test.py" "${red}/aGPU_aCPU_test.py")
 # deselect_tests=("reductions/mGPU_CPU_test.py::test_multi_gpu_reduction_max")
 
-# Cleanup in gpu_multi
-for f in ".dacecache" "__pycache__"; do
-    if [[ -d "$f" && ! -L "$f" ]]; then
-        rm -rf $f
-    fi
-done
+# Cleanup
+find . -name *.dacecache -type d -exec rm -rf {} +
+find . -name *__pycache__ -type d -exec rm -rf {} +
 
-# Cleanup in subfolders of gpu_multi
-for d in */ ; do
-    for f in ".dacecache" "__pycache__"; do
-        if [[ -d "$d$f" && ! -L "$d$f" ]]; then
-            rm -rf $d$f
-        fi
-    done
-done
+# # Cleanup in gpu_multi
+# for f in ".dacecache" "__pycache__"; do
+#     if [[ -d "$f" && ! -L "$f" ]]; then
+#         rm -rf $f
+#     fi
+# done
+
+# # Cleanup in subfolders of gpu_multi
+# for d in */ ; do
+#     for f in ".dacecache" "__pycache__"; do
+#         if [[ -d "$d$f" && ! -L "$d$f" ]]; then
+#             rm -rf $d$f
+#         fi
+#     done
+# done
 
 # Compute ignore directories string
 ignore_directories_string=""
@@ -47,5 +51,4 @@ for test in ${deselect_tests[*]} ; do
 done
 pystr="pytest -o log_cli=1 ${ignore_directories_string} ${ignore_files_string} ${deselect_tests_string}"
 echo $pystr
-$pystr
-
+$pystr | tee mgpu_tests.log

@@ -169,6 +169,7 @@ class GPUMultiTransformMap(transformation.Transformation):
                         node.symbol_mapping[symname] = sym
                         node.sdfg.symbols[symname] = graph.symbols_defined_at(
                             node)[symname]
+
         wcr_data: Dict[str, Any] = {}
         # Add transient Data leading to the outer map
         for edge in graph.out_edges(outer_map_exit):
@@ -214,9 +215,6 @@ class GPUMultiTransformMap(transformation.Transformation):
                 options=dict(array_identity_dict=wcr_data, prefix=prefix),
                 map_exit=inner_map_exit,
                 outer_map_exit=outer_map_exit)
-
-        # Propagate schedule, storage and location
-        infer_types.set_default_schedule_storage_types_and_location(sdfg, None)
 
         # Remove the parameter of the outer_map from the sdfg symbols,
         # as it got added as a symbol in StripMining.

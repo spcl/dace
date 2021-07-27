@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 import pytest
-from numba import cuda
+
 from dace.transformation.interstate import GPUTransformSDFG
 from dace import nodes
 from dace.libraries.standard import Reduce
@@ -31,9 +31,9 @@ def test_sGPU_CPU_library():
 
     np.random.seed(0)
     n = 1200
-    sumA = cuda.pinned_array(shape=1, dtype=np_dtype)
+    sumA = np.ndarray(shape=1, dtype=np_dtype)
     sumA.fill(0)
-    A = cuda.pinned_array(shape=n, dtype=np_dtype)
+    A = np.ndarray(shape=n, dtype=np_dtype)
     Aa = np.random.rand(n)
     A[:] = Aa[:]
 

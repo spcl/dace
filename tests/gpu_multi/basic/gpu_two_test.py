@@ -2,7 +2,6 @@
 import dace
 import numpy as np
 import pytest
-from numba import cuda
 from dace.sdfg.sdfg import SDFG
 from dace.transformation.dataflow import GPUTransformMap
 from dace.sdfg import nodes
@@ -44,9 +43,9 @@ def test_two_gpus():
 
     size = 256
     np.random.seed(0)
-    A = cuda.pinned_array(shape=1, dtype=np_dtype)
-    X = cuda.pinned_array(shape=size, dtype=np_dtype)
-    Y = cuda.pinned_array(shape=size, dtype=np_dtype)
+    A = np.ndarray(shape=1, dtype=np_dtype)
+    X = np.ndarray(shape=size, dtype=np_dtype)
+    Y = np.ndarray(shape=size, dtype=np_dtype)
     A.fill(np.random.rand())
     X[:] = np.random.rand(size)[:]
     Y[:] = np.random.rand(size)[:]

@@ -1343,22 +1343,24 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return name + ('_%d' % index)
 
-    def add_array(self,
-                  name: str,
-                  shape,
-                  dtype,
-                  storage=dtypes.StorageType.Default,
-                  transient=False,
-                  strides=None,
-                  offset=None,
-                  lifetime=dace.dtypes.AllocationLifetime.Scope,
-                  debuginfo=None,
-                  allow_conflicts=False,
-                  total_size=None,
-                  find_new_name=False,
-                  alignment=0,
-                  may_alias=False,
-                  location={},) -> Tuple[str, dt.Array]:
+    def add_array(
+        self,
+        name: str,
+        shape,
+        dtype,
+        storage=dtypes.StorageType.Default,
+        transient=False,
+        strides=None,
+        offset=None,
+        lifetime=dace.dtypes.AllocationLifetime.Scope,
+        debuginfo=None,
+        allow_conflicts=False,
+        total_size=None,
+        find_new_name=False,
+        alignment=0,
+        may_alias=False,
+        location={},
+    ) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1663,6 +1665,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     # SDFG queries
     ##############################
+
+    def find_parent_state(self, node: nd.Node) -> SDFGState:
+        """ Finds the state in which the node resides in.
+            Usefull for finding the parent state of a nestedSDFG.
+            :param node: node
+            :return: SDFGState
+        """
+        for state in self.nodes():
+            if node in state.nodes():
+                return state
 
     def find_state(self, state_id_or_label):
         """ Finds a state according to its ID (if integer is provided) or

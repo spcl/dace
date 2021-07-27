@@ -19,7 +19,6 @@ from dace.libraries.nccl import environments, utils as nutil
 from dace.frontend.python.replacements import _define_local_scalar
 
 
-
 @dace.library.expansion
 class ExpandReduceNCCL(ExpandTransformation):
 
@@ -61,13 +60,11 @@ class ExpandReduceNCCL(ExpandTransformation):
         if input_data.dtype.veclen > 1:
             raise (NotImplementedError)
 
-        
-        
         code = f"""ncclReduce(_inbuffer, _outbuffer, {count_str}, {nccl_dtype_str}, {wcr_str}, {root}, __state->ncclCommunicators->at(__dace_cuda_device),  __dace_current_stream)"""
         if Config.get('compiler', 'build_type') == 'Debug':
-            code = '''\ndace::nccl::CheckNcclError('''+code+''');\n'''
+            code = '''DACE_NCCL_CHECK(''' + code + ''');\n'''
         else:
-            code = '''\n''' + code + ''';\n'''
+            code = code + ''';\n'''
 
         if node.use_group_calls:
             code = """
@@ -115,12 +112,13 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
                  *args,
                  **kwargs):
 
-        super().__init__(name='nccl_Reduce',
-                         *args,
-                        #  inputs={"_inbuffer", "_root"},
-                         inputs={"_inbuffer"},
-                         outputs={"_outbuffer"},
-                         **kwargs)
+        super().__init__(
+            name='nccl_Reduce',
+            *args,
+            #  inputs={"_inbuffer", "_root"},
+            inputs={"_inbuffer"},
+            outputs={"_outbuffer"},
+            **kwargs)
         self.wcr = wcr
         self.root = root
         self.use_group_calls = use_group_calls
@@ -157,7 +155,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
         redtype = self.reduction_type
 
         in_edges = state.in_edges(self)
-        if len(in_edges) not in [1,2]:
+        if len(in_edges) not in [1, 2]:
             raise ValueError("NCCL Reduce must have two inputs.")
 
         out_edges = state.out_edges(self)

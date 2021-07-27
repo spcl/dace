@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 import pytest
-from numba import cuda
+
 from dace.sdfg import nodes, infer_types
 from dace import dtypes
 import dace.libraries.nccl as nccl
@@ -49,7 +49,7 @@ def test_nccl_reduce_inplace():
 
     sdfg.name = 'nccl_reduce_inplace'
 
-    out = cuda.pinned_array(shape=n, dtype=np_dtype)
+    out = np.ndarray(shape=n, dtype=np_dtype)
     out.fill(0)
 
     sdfg(out=out, N=n)

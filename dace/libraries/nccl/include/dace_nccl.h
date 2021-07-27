@@ -1,5 +1,6 @@
 // Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-#pragma once
+#ifndef  __DACE_NCCL_H
+#define  __DACE_NCCL_H
 
 #include <cuda_runtime.h>
 
@@ -10,16 +11,12 @@
 
 #include "nccl.h"
 
-namespace dace {
-namespace nccl {
+#define DACE_NCCL_CHECK(err) do {                                            \
+    ncclResult_t errr = (err);                                                \
+    if(errr != (ncclResult_t)0)                                               \
+    {                                                                        \
+        printf("NCCL ERROR at %s:%d, code: %d\n", __FILE__, __LINE__, errr); \
+    }                                                                        \
+} while(0)
 
-static void CheckNcclError(ncclResult_t const& status) {
-  if (status != ncclSuccess) {
-    throw std::runtime_error("nccl failed with error code: " +
-                             std::to_string(status));
-  }
-}
-
-}  // namespace nccl
-
-}  // namespace dace
+#endif  // __DACE_NCCL_H

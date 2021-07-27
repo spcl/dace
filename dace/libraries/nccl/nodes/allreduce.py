@@ -46,7 +46,7 @@ class ExpandAllreduceNCCL(ExpandTransformation):
                              ' in global GPU memory or pinned CPU memory')
 
         redtype = node.reduction_type
-        
+
         redtype = dtypes.NCCL_SUPPORTED_OPERATIONS[redtype]
         wcrstr = str(redtype)
         wcrstr = wcrstr[wcrstr.find('.') + 1:]  # Skip "NcclReductionType."
@@ -58,11 +58,11 @@ class ExpandAllreduceNCCL(ExpandTransformation):
             raise (NotImplementedError)
 
         code = f"""ncclAllReduce(_inbuffer, _outbuffer, {count_str}, {nccl_dtype_str}, {wcrstr},  __state->ncclCommunicators->at(__dace_cuda_device),  __dace_current_stream)"""
-        
+
         if Config.get('compiler', 'build_type') == 'Debug':
-            code = '''\ndace::nccl::CheckNcclError('''+code+''');\n'''
+            code = '''DACE_NCCL_CHECK(''' + code + ''');\n'''
         else:
-            code = '''\n''' + code + ''';\n'''
+            code = code + ''';\n'''
         if node.use_group_calls:
             code = """
             ncclGroupStart();""" + code
@@ -127,6 +127,7 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
 
     def __label__(self, sdfg, state):
         return str(self).replace(' Axes', '\nAxes')
+
     @property
     def reduction_type(self):
         # Autodetect reduction type
@@ -163,13 +164,12 @@ def nccl_allreduce(pv: 'ProgramVisitor',
     # If out_array is not specified, the operation will be in-place.
     if out_array is None:
         out_array = in_array
-        
+
     # Add nodes
     in_node = state.add_read(in_array)
     out_node = state.add_write(out_array)
 
     libnode = Allreduce(redfunction, use_group_calls=use_group_calls)
-
 
     # Connect nodes
     state.add_edge(in_node, None, libnode, '_inbuffer', Memlet(in_array))

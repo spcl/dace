@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 import pytest
-from numba import cuda
+
 from dace.sdfg import nodes, infer_types
 from dace import dtypes
 import dace.libraries.nccl as nccl
@@ -53,7 +53,7 @@ def test_nccl_reduce_symbolic():
     sdfg.specialize(dict(num_gpus=ng))
     sdfg.name = 'nccl_reduce_symbolic'
 
-    out = cuda.pinned_array(shape=[ng, n], dtype=np_dtype)
+    out = np.ndarray(shape=[ng, n], dtype=np_dtype)
     out.fill(0)
 
     sdfg(out=out, N=n)
