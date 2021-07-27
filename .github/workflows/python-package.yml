@@ -210,10 +210,3 @@ jobs:
       run: |
         pytest -n auto --cov-report=xml --cov=dace --tb=short -m "fpga"
         codecov
-
-    - name: Report overall coverage
-      run: |
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
-        . /opt/setupenv
-        coverage combine . */; coverage report; coverage xml
-        codecov
