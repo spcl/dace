@@ -2419,9 +2419,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 cpp.ptr(aname, arg, sdfg) for aname, arg in kernel_args.items()
             ])), sdfg, state_id, scope_entry)
 
-        # Instrumentation (post-kernel)
-        if instr is not None:
-            callsite_stream.write(outer_stream.getvalue())
         synchronize_streams(sdfg, state, state_id, scope_entry, scope_exit,
                             callsite_stream)
 
