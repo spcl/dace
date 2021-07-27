@@ -1758,6 +1758,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Clone SDFG as the other modules may modify its contents
         sdfg = copy.deepcopy(self)
+        # Fix the build folder name on the copied SDFG to avoid it changing
+        # if the codegen modifies the SDFG (thereby changing its hash)
+        sdfg.build_folder = build_folder
 
         # Rename SDFG to avoid runtime issues with clashing names
         index = 0
