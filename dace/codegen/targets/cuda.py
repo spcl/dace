@@ -2393,7 +2393,9 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 scope_entry)
 
         self._set_gpu_device(sdfg, state_id, scope_entry, self._localcode)
-        kernel_launch_code = f'''void  *{kernel_name}_args[] = {{ {', '.join(['(void *)&' + arg for arg in kernel_args])} }};'''
+        kernel_args_string = ', '.join(
+            ['(void *)&' + arg for arg in kernel_args] + extra_kernel_args)
+        kernel_launch_code = f'''void  *{kernel_name}_args[] = {{ {kernel_args_string} }};'''
         if self._debugprint:
             kernel_launch_code += '\nDACE_CUDA_CHECK('
         kernel_launch_code += f'''{self.backend}LaunchKernel((void*){kernel_name}, dim3({'dace_number_blocks, 1, 1'
