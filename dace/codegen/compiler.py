@@ -24,15 +24,14 @@ from dace.codegen.targets.target import make_absolute
 T = TypeVar('T')
 
 
-def generate_program_folder(sdfg_json,
+def generate_program_folder(sdfg,
                             code_objects: List[CodeObject],
                             out_path: str,
                             config=None):
     """ Writes all files required to configure and compile the DaCe program
         into the specified folder.
 
-        :param sdfg_json: The previously serialized JSON of the SDFG to generate
-                          the program folder for.
+        :param sdfg: The SDFG to generate the program folder for.
         :param code_objects: List of generated code objects.
         :param out_path: The folder in which the build files should be written.
         :return: Path to the program folder.
@@ -89,16 +88,13 @@ def generate_program_folder(sdfg_json,
     else:
         Config.save(os.path.join(out_path, "dace.conf"))
 
-    if sdfg_json is not None:
+    if sdfg is not None:
         # Save the SDFG itself and its hash
-        with open(os.path.join(out_path, "program.sdfg"), "w") as fp:
-            fp.write(dace.serialize.dumps(sdfg_json))
-        hash = sdfg_json["attributes"]["hash"]
-        filepath = os.path.join(out_path, "include", "hash.h")
-        contents = (
-            f'#define __HASH_{sdfg_json["attributes"]["name"]} "{hash}"\n')
+        hash = sdfg.save(os.path.join(out_path, "program.sdfg"), hash=True)
+        filepath = os.path.join(out_path, 'include', 'hash.h')
+        contents = f'#define __HASH_{sdfg.name} "{hash}"\n'
         if not identical_file_exists(filepath, contents):
-            with open(filepath, "w") as hfile:
+            with open(filepath, 'w') as hfile:
                 hfile.write(contents)
 
     return out_path
