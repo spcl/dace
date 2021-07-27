@@ -95,6 +95,8 @@ class CUDACodeGen(TargetCodeGenerator):
         self._gpus, self._gpu_values, self._default_gpu_id = self._get_gpus_and_default_gpu(
             sdfg)
 
+        self._peer_to_peer_accesses = self._get_peer_to_peer_accesses(sdfg)
+
         # Keep track of current "scope entry/exit" code streams for extra
         # code generation
         self.scope_entry_stream = self._initcode
@@ -779,6 +781,31 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             break
 
         return gpus, gpu_vals, default_gpu
+
+    def _get_peer_to_peer_accesses(self, sdfg: SDFG):
+        peer_to_peer_access: Dict[
+            symbolic.SymbolicType,
+            Set[symbolic.SymbolicType]] = collections.defaultdict(set)
+        for sdfg in sdfg.sdfg_list:
+            for state in sdfg.nodes():
+                for edge in state.dfs_edges():
+                    src = edge.src
+                    dst = edge.dst
+                    src_gpu = sdutil.get_gpu_location(sdfg, src)
+                    if src_gpu is not None:
+                        dst_gpu = sdutil.get_gpu_location(sdfg, dst)
+                        if dst_gpu is None and isinstance(
+                                dst, (nodes.EntryNode, nodes.ExitNode)):
+                            for mpe in state.memlet_path(edge):
+                                if not isinstance(
+                                        mpe.dst,
+                                    (nodes.EntryNode, nodes.ExitNode)):
+                                    break
+                                dst_gpu = sdutil.get_gpu_location(sdfg, dst)
+                        if dst_gpu is not None:
+                            peer_to_peer_access[src_gpu].add(dst_gpu)
+
+        return peer_to_peer_access
 
     def _set_gpu_device(self,
                         sdfg: SDFG,
