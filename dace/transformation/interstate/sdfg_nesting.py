@@ -294,6 +294,10 @@ class InlineSDFG(transformation.Transformation):
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
 
+        # Replace symbols using invocation symbol mapping
+        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
+        symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
+
         # Access nodes that need to be reshaped
         reshapes: Set(str) = set()
         for aname, array in nsdfg.arrays.items():
@@ -314,10 +318,6 @@ class InlineSDFG(transformation.Transformation):
                     array.strides, sdfg.arrays[edge.data.data].strides,
                     edge.data, nsdfg_node):
                 reshapes.add(aname)
-
-        # Replace symbols using invocation symbol mapping
-        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
