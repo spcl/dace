@@ -1207,19 +1207,25 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if hasattr(e.src, '_cuda_stream') and not isinstance(
                         e.src, nodes.EntryNode):
                     # If there are two or more CUDA streams involved in this
-                    # edge.
+                    # edge or the memlet_path leads to a node that has a
+                    # different CUDA stream
                     src_gpu = sdutil.get_gpu_location(state, e.src)
-                    if (hasattr(e.dst, '_cuda_stream')
-                            and e.src._cuda_stream != e.dst._cuda_stream):
-                        # Edges of the memlet path need to be annotated.
+                    memlet_path = state.memlet_path(e)
 
+                    if ((hasattr(e.dst, '_cuda_stream')
+                         and e.src._cuda_stream != e.dst._cuda_stream)
+                            or (e.dst != memlet_path[-1].dst
+                                and hasattr(memlet_path[-1].dst, '_cuda_stream')
+                                and e.src._cuda_stream !=
+                                memlet_path[-1].dst._cuda_stream)):
+                        # Edges of the memlet path need to be annotated.
                         # Get the next event:
                         # If the GPU id is symbolic, we set the event to
                         # the max event of all the GPUs that are represented
                         # by the symbolic GPU id.
                         event = max(events[gpu_id]
                                     for gpu_id in gpu_ids[src_gpu])
-                        for mpe in state.memlet_path(e):
+                        for mpe in memlet_path:
                             # Annotate every memlet path edge with the event
                             mpe._cuda_event = event
 
