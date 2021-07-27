@@ -57,6 +57,37 @@ def dump_logs(proc_or_logs: Union[sp.CompletedProcess, Tuple[str, str]]):
     return log_out, log_err
 
 
+# https://stackoverflow.com/a/33599967/2949968
+class FPGATestProcess(mp.Process):
+    def __init__(self, *args, **kwargs):
+        mp.Process.__init__(self, *args, **kwargs)
+        self._pconn, self._cconn = mp.Pipe()
+        self._exception = None
+
+    def run(self):
+        try:
+            ret = mp.Process.run(self)
+            self._cconn.send(ret)
+        except Exception as e:
+            self._cconn.send(e)
+            raise e
+
+    @property
+    def exception(self):
+        if self._pconn.poll():
+            self._exception = self._pconn.recv()
+        return self._exception
+
+
+class TestFailed(Exception):
+    pass
+
+
+def raise_error(message):
+    print_error(message)
+    raise TestFailed(message)
+
+
 def _run_fpga_test(vendor: str,
                    test_function: Callable,
                    run_synthesis: bool = True,
@@ -65,7 +96,7 @@ def _run_fpga_test(vendor: str,
     base_name = f"{Colors.UNDERLINE}{path.stem}{Colors.END}"
     with temporary_config():
         Config.set("compiler", "use_cache", value=False)
-        Config.set("cache", value="hash")
+        Config.set("cache", value="unique")
         Config.set("optimizer", "transform_on_call", value=False)
         Config.set("optimizer", "interface", value=None)
         Config.set("optimizer", "autooptimize", value=False)
@@ -86,7 +117,7 @@ def _run_fpga_test(vendor: str,
                 env["LIBRARY_PATH"] += ":/usr/lib/x86_64-linux-gnu"
             sdfgs = test_function()
             if sdfgs is None:
-                raise RuntimeError("No SDFG(s) returned by FPGA test.")
+                raise_error("No SDFG(s) returned by FPGA test.")
             elif isinstance(sdfgs, SDFG):
                 sdfgs = [sdfgs]
             print_success(f"{base_name} [Xilinx]: " "Simulation successful.")
@@ -94,9 +125,8 @@ def _run_fpga_test(vendor: str,
             for sdfg in sdfgs:
                 build_folder = Path(sdfg.build_folder) / "build"
                 if not build_folder.exists():
-                    print_error(f"Build folder {build_folder} "
+                    raise_error(f"Build folder {build_folder} "
                                 f"not found for {base_name}.")
-                    return False
 
                 # High-level synthesis
                 if run_synthesis:
@@ -113,15 +143,13 @@ def _run_fpga_test(vendor: str,
                             timeout=TEST_TIMEOUT)
                     except sp.TimeoutExpired:
                         dump_logs(proc)
-                        print_error(f"{base_name} [Xilinx]: High-level "
+                        raise_error(f"{base_name} [Xilinx]: High-level "
                                     f"synthesis timed out after "
                                     f"{TEST_TIMEOUT} seconds.")
-                        return False
                     if proc.returncode != 0:
                         dump_logs(proc)
-                        print_error(f"{base_name} [Xilinx]: High-level "
+                        raise_error(f"{base_name} [Xilinx]: High-level "
                                     f"synthesis failed.")
-                        return False
                     print_success(f"{base_name} [Xilinx]: High-level "
                                   f"synthesis successful for "
                                   f"{sdfg.name}.")
@@ -136,22 +164,19 @@ def _run_fpga_test(vendor: str,
                                 hls_log = f
                                 break
                         else:
-                            print_error(f"{base_name} [Xilinx]: HLS "
+                            raise_error(f"{base_name} [Xilinx]: HLS "
                                         f"log file not found.")
-                            return False
                         hls_log = open(hls_log, "r").read()
                         for m in re.finditer(r"Final II = ([0-9]+)", hls_log):
                             loops_found = True
                             if int(m.group(1)) != 1:
                                 dump_logs((syn_out, syn_err))
-                                print_error(f"{base_name} [Xilinx]: Failed "
-                                            f"to achieve II=1.")
-                                return False
+                                raise_error(f"{base_name} [Xilinx]: "
+                                            f"Failed to achieve II=1.")
                         if not loops_found:
                             dump_logs((syn_out, syn_err))
-                            print_error(f"{base_name} [Xilinx]: No "
+                            raise_error(f"{base_name} [Xilinx]: No "
                                         f"pipelined loops found.")
-                            return False
                         print_success(f"{base_name} [Xilinx]: II=1 "
                                       f"achieved.")
 
@@ -201,11 +226,13 @@ def fpga_test(run_synthesis: bool = True,
         def wrapper(vendor: Optional[str]):
             if vendor == None:
                 vendor = Config.get("compiler", "fpga_vendor")
-            p = mp.Process(target=_run_fpga_test,
-                           args=(vendor, test_function, run_synthesis,
-                                 assert_ii_1))
+            p = FPGATestProcess(target=_run_fpga_test,
+                                args=(vendor, test_function, run_synthesis,
+                                      assert_ii_1))
             p.start()
             p.join()
+            if p.exception:
+                raise p.exception
 
         return wrapper
 

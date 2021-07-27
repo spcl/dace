@@ -2,7 +2,7 @@
 import argparse
 import dace
 import numpy as np
-from dace.fpga_testing import fpga_test
+from dace.fpga_testing import intel_fpga_test
 
 SIZE = dace.symbol("N")
 VECTOR_LENGTH = dace.symbol("W")
@@ -163,33 +163,35 @@ def make_sdfg(name=None, vectorize_connector=False):
     return sdfg
 
 
-@fpga_test()
+@intel_fpga_test()
 def test_veclen_conversion():
 
-    SIZE.set(args.size)
-    VECTOR_LENGTH.set(args.vector_length)
+    size = 128
+    vector_length = 4
 
-    if args.size % args.vector_length != 0:
+    SIZE.set(size)
+    VECTOR_LENGTH.set(vector_length)
+
+    if size % vector_length != 0:
         raise ValueError(
             "Size {} must be divisible by vector length {}.".format(
-                args.size, args.vector_length))
+                size, vector_length))
 
     sdfg = make_sdfg(vectorize_connector=False)
-    sdfg.specialize({"W": args.vector_length})
+    sdfg.specialize({"W": vector_length})
 
-    A = np.arange(args.size, dtype=np.float64)
-    B = np.zeros((args.size, ), dtype=np.float64)
+    A = np.arange(size, dtype=np.float64)
+    B = np.zeros((size, ), dtype=np.float64)
 
     sdfg(A=A, B=B, N=SIZE)
 
-    mid = args.vector_length // 2
+    mid = vector_length // 2
 
-    for i in range(args.size // args.vector_length):
+    for i in range(size // vector_length):
         expected = np.concatenate(
-            (A[i * args.vector_length + mid:(i + 1) * args.vector_length],
-             A[i * args.vector_length:i * args.vector_length + mid]))
-        if any(B[i * args.vector_length:(i + 1) *
-                 args.vector_length] != expected):
+            (A[i * vector_length + mid:(i + 1) * vector_length],
+             A[i * vector_length:i * vector_length + mid]))
+        if any(B[i * vector_length:(i + 1) * vector_length] != expected):
             raise ValueError("Shuffle failed: {} (should be {})".format(
                 B, expected))
 

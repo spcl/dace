@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
 import numpy as np
-from veclen_conversion_test import *
+from veclen_conversion_test import SIZE, VECTOR_LENGTH, make_sdfg
+from dace.fpga_testing import fpga_test
 
 
 @fpga_test()
@@ -36,6 +37,8 @@ def test_veclen_conversion_connector():
         if any(B[i * vector_length:(i + 1) * vector_length] != expected):
             raise ValueError("Shuffle failed: {} (should be {})".format(
                 B, expected))
+
+    return sdfg
 
 
 if __name__ == "__main__":
