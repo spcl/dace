@@ -6,7 +6,7 @@ from dace.transformation.dataflow import GPUMultiTransformMap, GPUTransformMap
 from dace import dtypes
 
 N = dace.symbol('N')
-n = 1200
+n = 12
 
 gpu_helper = 1
 
@@ -55,12 +55,12 @@ def test_post_mgpu_map_sync():
     B = np.ndarray(shape=n, dtype=np_dtype)
     C = np.ndarray(shape=n, dtype=np_dtype)
     x = np.ndarray(shape=1, dtype=np_dtype)
-    x[:] = np.random.rand()
+    x = np.random.rand()
     A[:] = np.random.rand(n)[:]
 
     sdfg(A=A, B=B, C=C, x=x, N=n)
-    assert np.allclose(B, A + x)
-    assert np.allclose(B, x)
+    assert np.allclose(B, A + x), f'\ngot B: {B}\nres B: {A + x}'
+    assert np.allclose(C, x), f'\ngot C: {C}\n res C: {x}'
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler

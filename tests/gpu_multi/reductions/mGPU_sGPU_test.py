@@ -107,17 +107,15 @@ def test_mGPU_GPU0_reduction(reduction_type):
     sdfg.arrays['redA'].location['gpu'] = 0
 
     np.random.seed(0)
-    redA = np.ndarray(shape=1, dtype=np_dtype)
-    redA.fill(0)
     A = np.ndarray(shape=n, dtype=np_dtype)
     Aa = np.random.rand(n)
     A[:] = Aa[:]
 
-    sdfg(A=A, redA=redA, N=n)
+    out = sdfg(A=A, N=n)
     result_function = infer_result_function(reduction_type)
     res = result_function(A)
-    assert np.isclose(redA[0], res, atol=0,
-                      rtol=1e-7), f'\ngot: {redA[0]}\nres: {res}'
+    assert np.isclose(out[0], res, atol=0,
+                      rtol=1e-7), f'\ngot: {out[0]}\nres: {res}'
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
