@@ -294,8 +294,8 @@ def emit_memlet_reference(dispatcher,
 
     if fpga.is_fpga_array(desc):
         datadef = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset,
-                                 is_write, dispatcher, ancestor,
-                                 defined_type == DefinedType.ArrayInterface)
+                                is_write, dispatcher, ancestor,
+                                defined_type == DefinedType.ArrayInterface)
     else:
         datadef = ptr(memlet.data, desc, sdfg)
 
@@ -612,7 +612,7 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     if fpga.is_fpga_array(desc):
         dname = fpga.fpga_ptr(memlet.data, desc, sdfg, s, is_write, None, None,
-                               defined_type == DefinedType.ArrayInterface)
+                              defined_type == DefinedType.ArrayInterface)
     else:
         dname = ptr(memlet.data, desc, sdfg)
 
@@ -1385,7 +1385,7 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                 if current_device != src_gpuid:
                     current_device = src_gpuid
                     sync_string += f'''\n{backend}SetDevice({current_device});\n'''
-                event = f'__state->gpu_context->at({src_gpuid}).events[{edge._cuda_event if hasattr(edge, "_cuda_event") else 0}]'
+                event = f'__state->gpu_context->at({src_gpuid}).events[{edge._cuda_event}]'
                 sync_string += f'''{backend}EventRecord({event}, {sync_stream});\n'''
                 ed_gpu_id = sdutils.get_gpu_location(sdfg, edge.dst)
                 # need to set device
@@ -1393,7 +1393,7 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                     current_device = ed_gpu_id
                     sync_string += f'''\n{backend}SetDevice({current_device});\n'''
 
-                stream = "__state->gpu_context->at({ed_gpu_id}).streams[{edge.dst._cuda_stream[ed_gpu_id]}]"
+                stream = f"__state->gpu_context->at({ed_gpu_id}).streams[{edge.dst._cuda_stream[ed_gpu_id]}]"
                 sync_string += f'''{backend}StreamWaitEvent({stream}, {event}, 0);\n'''
                 callsite_stream.write(sync_string, sdfg, state_id,
                                       [edge.src, edge.dst])
