@@ -59,11 +59,11 @@ class InstrumentationReport(object):
                     name = event['name']
                     if phase == 'X':
                         uuid = self.get_event_uuid(event)
-                        if uuid not in self.durations:
-                            self.durations[uuid] = {}
-                        if name not in self.durations[uuid]:
-                            self.durations[uuid][name] = []
-                        self.durations[uuid][name].append(event['dur'] / 1000)
+                        if uuid not in self._durations:
+                            self._durations[uuid] = {}
+                        if name not in self._durations[uuid]:
+                            self._durations[uuid][name] = []
+                        self._durations[uuid][name].append(event['dur'] / 1000)
                     if phase == 'C':
                         if name not in self.counters:
                             self.counters[name] = 0
@@ -72,34 +72,39 @@ class InstrumentationReport(object):
     def __repr__(self):
         return 'InstrumentationReport(name=%s)' % self._name
 
-    def _get_runtimes_string(
-        self, label, runtimes, element, sdfg, state, string, row_format, colw,
-        with_element_heading=True
-    ):
+    def _get_runtimes_string(self,
+                             label,
+                             runtimes,
+                             element,
+                             sdfg,
+                             state,
+                             string,
+                             row_format,
+                             format_dict,
+                             with_element_heading=True):
+        location_label = f'Device: {element[3]}' if element[3] != -1 else 'CPU'
         indent = ''
         if len(runtimes) > 0:
             element_label = ''
+            format_dict['loc'] = ''
+            format_dict['min'] = ''
+            format_dict['mean'] = ''
+            format_dict['median'] = ''
+            format_dict['max'] = ''
             if element[0] > -1 and element[1] > -1 and element[2] > -1:
+
                 # This element is a node.
                 if sdfg != element[0]:
-                    # No parent SDFG row present yet, print it.
-                    string += row_format.format('SDFG (' +
-                                                str(element[0]) + ')',
-                                                '',
-                                                '',
-                                                '',
-                                                '',
-                                                width=colw)
+                    # No parent SDFG row present yet.
+                    format_dict['elem'] = 'SDFG (' + str(element[0]) + ')'
                 sdfg = element[0]
+
                 if state != element[1]:
-                    # No parent state row present yet, print it.
-                    string += row_format.format('|-State (' +
-                                                str(element[1]) + ')',
-                                                '',
-                                                '',
-                                                '',
-                                                '',
-                                                width=colw)
+                    # No parent state row present yet.
+                    format_dict['elem'] = '|-State (' + str(element[1]) + ')'
+
+                # Print
+                string += row_format.format(**format_dict)
                 state = element[1]
                 element_label = '| |-Node (' + str(element[2]) + ')'
                 indent = '| | |'
@@ -107,13 +112,9 @@ class InstrumentationReport(object):
                 # This element is a state.
                 if sdfg != element[0]:
                     # No parent SDFG row present yet, print it.
-                    string += row_format.format('SDFG (' +
-                                                str(element[0]) + ')',
-                                                '',
-                                                '',
-                                                '',
-                                                '',
-                                                width=colw)
+                    format_dict['elem'] = 'SDFG (' + str(element[0]) + ')'
+                    string += row_format.format(**format_dict)
+
                 sdfg = element[0]
                 state = element[1]
                 element_label = '|-State (' + str(element[1]) + ')'
@@ -128,239 +129,113 @@ class InstrumentationReport(object):
                 element_label = 'N/A'
 
             if with_element_heading:
-                string += row_format.format(element_label,
-                                            '',
-                                            '',
-                                            '',
-                                            '',
-                                            width=colw)
+                format_dict['elem'] = element_label
+                string += row_format.format(**format_dict)
 
-            string += row_format.format(indent + label + ':',
-                                        '', '', '', '', width=colw)
-            string += row_format.format(indent,
-                                        '%.3f' % np.min(runtimes),
-                                        '%.3f' % np.mean(runtimes),
-                                        '%.3f' % np.median(runtimes),
-                                        '%.3f' % np.max(runtimes),
-                                        width=colw)
+            format_dict['elem'] = indent + label + ':'
+            string += row_format.format(**format_dict)
+
+            format_dict['elem'] = indent
+            format_dict['loc'] = location_label
+            format_dict['min'] = '%.3f' % np.min(runtimes)
+            format_dict['mean'] = '%.3f' % np.mean(runtimes)
+            format_dict['median'] = '%.3f' % np.median(runtimes)
+            format_dict['max'] = '%.3f' % np.max(runtimes)
+            string += row_format.format(**format_dict)
 
         return string, sdfg, state
 
     def __str__(self):
-        if self.sortingType == dtypes.InstrumentationReportPrintType.Location:
-            return self._LocationGroup()
-        return self._SDFGGroup()
-
-    def _LocationGroup(self):
-        COLW = 15
-        COUNTER_COLW = 39
-        NUM_COLS = 6
-
         element_list = list(self._durations.keys())
         element_list.sort()
-
-        row_format = ('{:<{width}}' * NUM_COLS) + '\n'
-        counter_format = ('{:<{width}}' * 2) + '\n'
 
         string = 'Instrumentation report\n'
         string += 'SDFG Hash: ' + self._sdfg_hash + '\n'
 
-        location_elements = defaultdict(list)
-
-        for element in element_list:
-            location_elements[element[3]].append(element)
-
         if len(self._durations) > 0:
-            string += ('-' * (COLW * NUM_COLS)) + '\n'
-            string += ('{:<{width}}' * 3).format(
-                'Location', 'Element', 'Runtime (ms)', width=COLW) + '\n'
-            string += row_format.format('',
-                                        '',
-                                        'Min',
-                                        'Mean',
-                                        'Median',
-                                        'Max',
-                                        width=COLW)
-            string += ('-' * (COLW * 5)) + '\n'
-            for location, elements_list in location_elements.items():
+            COLW_ELEM = 30
+            COLW_LOC = 15
+            COLW_RUNTIME = 15
+            NUM_RUNTIME_COLS = 4
 
+            line_string = (
+                '-' *
+                (COLW_RUNTIME * NUM_RUNTIME_COLS + COLW_ELEM + COLW_LOC)) + '\n'
+
+            string += line_string
+
+            if self.sortingType == dtypes.InstrumentationReportPrintType.Location:
+                row_format = ('{loc:<{loc_width}}') + (
+                    '{elem:<{elem_width}}') + ('{min:<{width}}') + (
+                        '{mean:<{width}}') + ('{median:<{width}}') + (
+                            '{max:<{width}}') + '\n'
+                string += ('{:<{width}}').format('Location', width=COLW_LOC)
+                string += ('{:<{width}}').format('Element', width=COLW_ELEM)
+            else:
+                row_format = ('{elem:<{elem_width}}') + (
+                    '{loc:<{loc_width}}') + ('{min:<{width}}') + (
+                        '{mean:<{width}}') + ('{median:<{width}}') + (
+                            '{max:<{width}}') + '\n'
+                string += ('{:<{width}}').format('Element', width=COLW_ELEM)
+                string += ('{:<{width}}').format('Location', width=COLW_LOC)
+
+            string += ('{:<{width}}').format('Runtime (ms)', width=COLW_RUNTIME)
+            string += '\n'
+            format_dict = {
+                'elem_width': COLW_ELEM,
+                'loc_width': COLW_LOC,
+                'width': COLW_RUNTIME,
+                'loc': '',
+                'elem': '',
+                'min': 'Min',
+                'mean': 'Mean',
+                'median': 'Median',
+                'max': 'Max'
+            }
+            string += row_format.format(**format_dict)
+            string += line_string
+
+            if self.sortingType == dtypes.InstrumentationReportPrintType.Location:
+                location_elements = defaultdict(list)
+                for element in element_list:
+                    location_elements[element[3]].append(element)
+                for location in sorted(location_elements):
+                    elements_list = location_elements[location]
+                    sdfg = -1
+                    state = -1
+                    for element in elements_list:
+                        events = self._durations[element]
+                        if len(events) > 0:
+                            with_element_heading = True
+                            for event in events.keys():
+                                runtimes = events[event]
+                                string, sdfg, state = self._get_runtimes_string(
+                                    event, runtimes, element, sdfg, state,
+                                    string, row_format, format_dict,
+                                    with_element_heading)
+                                with_element_heading = False
+
+            else:
                 sdfg = -1
                 state = -1
-
-                for element in elements_list:
+                for element in element_list:
+                    events = self._durations[element]
+                    if len(events) > 0:
+                        with_element_heading = True
+                        for event in events.keys():
+                            runtimes = events[event]
+                            string, sdfg, state = self._get_runtimes_string(
+                                event, runtimes, element, sdfg, state, string,
+                                row_format, format_dict, with_element_heading)
+                            with_element_heading = False
                     runtimes = self._durations[element]
-                    location_label = f'Device: {location}' if location != -1 else 'CPU'
-                    if len(runtimes) > 0:
-                        element_label = ''
-                        if element[0] > -1 and element[1] > -1 and element[
-                                2] > -1:
-                            # This element is a node.
-                            if sdfg != element[0]:
-                                # No parent SDFG row present yet, print it.
-                                string += row_format.format(
-                                    '',
-                                    'SDFG (' + str(element[0]) + ')',
-                                    '',
-                                    '',
-                                    '',
-                                    '',
-                                    width=COLW)
-                            sdfg = element[0]
-                            if state != element[1]:
-                                # No parent state row present yet, print it.
-                                string += row_format.format(
-                                    '',
-                                    '| State (' + str(element[1]) + ')',
-                                    '',
-                                    '',
-                                    '',
-                                    '',
-                                    width=COLW)
-                            state = element[1]
-                            element_label = '| | Node (' + str(element[2]) + ')'
-                        elif element[0] > -1 and element[1] > -1:
-                            # This element is a state.
-                            if sdfg != element[0]:
-                                # No parent SDFG row present yet, print it.
-                                string += row_format.format(
-                                    '',
-                                    'SDFG (' + str(element[0]) + ')',
-                                    '',
-                                    '',
-                                    '',
-                                    '',
-                                    width=COLW)
-                            sdfg = element[0]
-                            state = element[1]
-                            element_label = '| State (' + str(element[1]) + ')'
-                        elif element[0] > -1:
-                            # This element is an SDFG.
-                            sdfg = element[0]
-                            state = -1
-                            element_label = 'SDFG (' + str(element[0]) + ')'
-                        else:
-                            element_label = 'N/A'
 
-                        string += row_format.format(location_label,
-                                                    element_label,
-                                                    '%.3f' % np.min(runtimes),
-                                                    '%.3f' % np.mean(runtimes),
-                                                    '%.3f' %
-                                                    np.median(runtimes),
-                                                    '%.3f' % np.max(runtimes),
-                                                    width=COLW)
-                string += ('-' * (COLW * NUM_COLS)) + '\n'
+            string += line_string
 
         if len(self._counters) > 0:
-            string += ('-' * (COUNTER_COLW * 2)) + '\n'
-            string += ('{:<{width}}' * 2).format(
-                'Counter', 'Value', width=COUNTER_COLW) + '\n'
-            string += ('-' * (COUNTER_COLW * 2)) + '\n'
-            for counter in self._counters:
-                string += counter_format.format(counter,
-                                                self._counters[counter],
-                                                width=COUNTER_COLW)
-            string += ('-' * (COUNTER_COLW * 2)) + '\n'
+            COUNTER_COLW = 39
+            counter_format = ('{:<{width}}' * 2) + '\n'
 
-        return string
-
-    def _SDFGGroup(self):
-        COLW = 15
-        COUNTER_COLW = 39
-        NUM_COLS = 6
-
-        element_list = list(self._durations.keys())
-        element_list.sort()
-
-        row_format = ('{:<{width}}' * NUM_COLS) + '\n'
-        counter_format = ('{:<{width}}' * 2) + '\n'
-
-        string = 'Instrumentation report\n'
-        string += 'SDFG Hash: ' + self._sdfg_hash + '\n'
-
-        if len(self._durations) > 0:
-            string += ('-' * (COLW * NUM_COLS)) + '\n'
-            string += ('{:<{width}}' * 3).format(
-                'Element', 'Location', 'Runtime (ms)', width=COLW) + '\n'
-            string += row_format.format('',
-                                        '',
-                                        'Min',
-                                        'Mean',
-                                        'Median',
-                                        'Max',
-                                        width=COLW)
-            string += ('-' * (COLW * 5)) + '\n'
-
-            sdfg = -1
-            state = -1
-
-            for element in element_list:
-                events = self.durations[element]
-                if len(events) > 0:
-                    with_element_heading = True
-                    for event in events.keys():
-                        runtimes = events[event]
-                        string, sdfg, state = self._get_runtimes_string(
-                            event, runtimes, element, sdfg, state, string,
-                            row_format, COLW, with_element_heading
-                        )
-                        with_element_heading = False
-                runtimes = self._durations[element]
-                location_label = f'Device: {element[3]}' if element[
-                    3] != -1 else 'CPU'
-                if len(runtimes) > 0:
-                    element_label = ''
-                    if element[0] > -1 and element[1] > -1 and element[2] > -1:
-                        # This element is a node.
-                        if sdfg != element[0]:
-                            # No parent SDFG row present yet, print it.
-                            string += row_format.format('SDFG (' +
-                                                        str(element[0]) + ')',
-                                                        '',
-                                                        '',
-                                                        '',
-                                                        '',
-                                                        '',
-                                                        width=COLW)
-                        sdfg = element[0]
-                        if state != element[1]:
-                            # No parent state row present yet, print it.
-                            string += row_format.format('| State (' +
-                                                        str(element[1]) + ')',
-                                                        '',
-                                                        '',
-                                                        '',
-                                                        '',
-                                                        '',
-                                                        width=COLW)
-                        state = element[1]
-                        element_label = '| | Node (' + str(element[2]) + ')'
-                    elif element[0] > -1 and element[1] > -1:
-                        # This element is a state.
-                        if sdfg != element[0]:
-                            # No parent SDFG row present yet, print it.
-                            string += row_format.format('SDFG (' +
-                                                        str(element[0]) + ')',
-                                                        '',
-                                                        '',
-                                                        '',
-                                                        '',
-                                                        '',
-                                                        width=COLW)
-                        sdfg = element[0]
-                        state = element[1]
-                        element_label = '| State (' + str(element[1]) + ')'
-                    elif element[0] > -1:
-                        # This element is an SDFG.
-                        sdfg = element[0]
-                        state = -1
-                        element_label = 'SDFG (' + str(element[0]) + ')'
-                    else:
-                        element_label = 'N/A'
-
-            string += ('-' * (COLW * 5)) + '\n'
-
-        if len(self._counters) > 0:
             string += ('-' * (COUNTER_COLW * 2)) + '\n'
             string += ('{:<{width}}' * 2).format(
                 'Counter', 'Value', width=COUNTER_COLW) + '\n'
