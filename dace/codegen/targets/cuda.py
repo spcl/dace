@@ -935,9 +935,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             if node in visited:
                 # Only visit every node once
                 continue
-            stack = [iter([node])]
+            stack = [(None, iter([node]))]
             while stack:
-                children = stack[-1]
+                parent, children = stack[-1]
                 try:
                     child = next(children)
                 except StopIteration:
@@ -975,7 +975,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                         # Add exit node to the stack
                         exit_node = graph.exit_node(child)
-                        stack.append(graph.successors(exit_node).__iter__())
+                        stack.append(
+                            (exit_node, graph.successors(exit_node).__iter__()))
 
                         if child.schedule == dtypes.ScheduleType.GPU_Multidevice:
                             # Scope is distributed over multiple GPUs.
@@ -1035,12 +1036,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             continue
                     else:
                         # Add the successors of the current child to the stack.
-                        stack.append(graph.successors(child).__iter__())
+                        stack.append(
+                            (child, graph.successors(child).__iter__()))
 
                     # Annotate the child with a CUDA stream.
                     max_streams, current_streams, unused_streams, max_events = self._compute_cudastreams_node(
                         graph,
                         child,
+                        parent,
                         current_path,
                         gpu_id_last_path,
                         gpu_ids_used,
@@ -1056,6 +1059,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         self,
         graph: Union[SDFGState, ScopeSubgraphView],
         node: nodes.Node,
+        parent: nodes.Node,
         current_path: int,
         gpu_id_last_path: Dict[symbolic.SymbolicType, int],
         gpu_ids_used: Set[symbolic.SymbolicType],
@@ -1145,29 +1149,45 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         if node_gpu_id in gpu_ids:
             # This node needs to be annotated
 
-            # If this has been used in the past paths and the GPU's last path
-            # is not the current path we need to update the CUDA stream.
-            if (node_gpu_id in gpu_ids_used
-                    and gpu_id_last_path[node_gpu_id] != current_path):
-                # The streams of this node need to be updated.
-                update_streams(max_streams, current_streams, unused_streams,
-                               node_gpu_id)
-
-            # Annotate the node with a CUDA stream
-            node._cuda_stream = {node_gpu_id: current_streams[node_gpu_id]}
-
-            # Also add CUDA stream to Exit Nodes
-            if isinstance(node, nodes.EntryNode):
-                graph.exit_node(node)._cuda_stream = {
-                    node_gpu_id: current_streams[node_gpu_id]
+            # If the parent is a CUDA kernel or a CodeNode with a CUDA stream
+            # located on same GPU, the node must have the parent's CUDA stream.
+            parent_gpu_id = sdutil.get_gpu_location(graph, parent)
+            if (hasattr(parent, '_cuda_stream')
+                    and ((isinstance(parent, nodes.ExitNode)
+                          and graph.entry_node(parent).schedule in [
+                              dtypes.ScheduleType.GPU_Device,
+                              dtypes.ScheduleType.GPU_Persistent
+                          ]) or isinstance(parent, nodes.CodeNode))
+                    and parent_gpu_id == node_gpu_id):
+                node._cuda_stream = {
+                    node_gpu_id: parent._cuda_stream[node_gpu_id]
                 }
+
+            else:
+                # If this GPU has been used in the past paths and the GPU's last
+                # path is not the current path we need to update the CUDA stream.
+                if (node_gpu_id in gpu_ids_used
+                        and gpu_id_last_path[node_gpu_id] != current_path):
+                    # The streams of this node need to be updated.
+                    update_streams(max_streams, current_streams, unused_streams,
+                                   node_gpu_id)
+
+                # Annotate the node with a CUDA stream
+                node._cuda_stream = {node_gpu_id: current_streams[node_gpu_id]}
+
+                # Also add CUDA stream to Exit Nodes
+                if isinstance(node, nodes.EntryNode):
+                    graph.exit_node(node)._cuda_stream = {
+                        node_gpu_id: current_streams[node_gpu_id]
+                    }
+
+                gpu_ids_used.add(node_gpu_id)
+                # Keep track of the last path number.
+                gpu_id_last_path[node_gpu_id] = current_path
 
             # Add CUDA stream to location (usefull for debugging)
             if self._debugprint:
                 add_cs_to_location(node, graph, node_gpu_id)
-            gpu_ids_used.add(node_gpu_id)
-            # Keep track of the last path number.
-            gpu_id_last_path[node_gpu_id] = current_path
 
         # Recursive call for NestedSDFGs that are not already on a GPU device.
         if isinstance(node, nodes.NestedSDFG
