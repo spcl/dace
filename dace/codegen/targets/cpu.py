@@ -375,7 +375,8 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.defined_vars.add(name, DefinedType.Stream,
                                               ctypedef)
 
-        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap or
+        elif (
+                nodedesc.storage == dtypes.StorageType.CPU_Heap or
             (nodedesc.storage == dtypes.StorageType.Register and
              ((symbolic.issymbolic(arrsize, sdfg.constants)) or
               ((arrsize_bytes > Config.get("compiler", "max_stack_array_size"))
@@ -1038,15 +1039,10 @@ class CPUCodeGen(TargetCodeGenerator):
                             array_expr = cpp.cpp_array_expr(sdfg,
                                                             memlet,
                                                             with_brackets=False)
-                            ptr_str = fpga.fpga_ptr( # we are on fpga, since this is array interface
-                                memlet.data,
-                                desc,
-                                sdfg,
-                                memlet.subset,
-                                True,
-                                None,
-                                None,
-                                True)
+                            # we are on fpga, since this is array interface
+                            ptr_str = fpga.fpga_ptr(memlet.data, desc, sdfg,
+                                                    memlet.subset, True, None,
+                                                    None, True)
                             write_expr = (f"*({ptr_str} + {array_expr}) "
                                           f"= {in_local_name};")
                         else:
@@ -1954,10 +1950,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self.generate_scope_postamble(sdfg, dfg, state_id, function_stream,
                                       outer_stream, callsite_stream)
-        if Config.get_bool('debugprint'):
-            code = f'\nprintf("{node} end\\n");\n' if node.schedule == dtypes.ScheduleType.GPU_Multidevice else ''
         for _ in map_node.map.range:
-            result.write("}" + code, sdfg, state_id, node)
+            code = "}"
+            if Config.get_bool('debugprint'):
+                code += f'\nprintf("{node} end\\n");\n' if node.schedule == dtypes.ScheduleType.GPU_Multidevice else ''
+            result.write(code, sdfg, state_id, node)
 
         result.write(outer_stream.getvalue())
 
