@@ -824,7 +824,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
     def _print_Float(self, expr):
         nf = sympy_numeric_fix(expr)
-        if nf != expr:
+        if isinstance(nf, int) or nf != expr:
             return self._print(nf)
         return super()._print_Float(expr)
 

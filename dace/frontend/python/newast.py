@@ -2043,7 +2043,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 self, node,
                 "Iterator of ast.For must be a function or a subscript")
 
-        iterator = rname(node)
+        iter_name = ModuleResolver(self.modules,
+                                   True).visit(copy.deepcopy(node))
+        iterator = rname(iter_name)
 
         ast_ranges = []
 
@@ -3499,7 +3501,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if not (symbolic.issymbolic(result) or isinstance(
                     result, dtype_keys) or result in self.sdfg.arrays):
                 raise DaceSyntaxError(
-                    self, result, "In assignments, the rhs may only be "
+                    self, node, "In assignments, the rhs may only be "
                     "data, numerical/boolean constants "
                     "and symbols")
             if not true_name:
