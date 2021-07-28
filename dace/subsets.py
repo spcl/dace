@@ -509,10 +509,6 @@ class Range(Subset):
                     begin = symbolic.SymExpr(tokens[0][0], tokens[0][1])
                 else:
                     begin = symbolic.pystr_to_symbolic(tokens[0])
-                if isinstance(tokens[1], tuple):
-                    end = symbolic.SymExpr(tokens[1][0], tokens[1][1]) - 1
-                else:
-                    end = symbolic.pystr_to_symbolic(tokens[1]) - 1
                 if len(tokens) >= 3:
                     if isinstance(tokens[2], tuple):
                         step = symbolic.SymExpr(tokens[2][0], tokens[2][1])
@@ -520,6 +516,13 @@ class Range(Subset):
                         step = symbolic.SymExpr(tokens[2])
                 else:
                     step = 1
+                eoff = -1
+                if (step < 0) == True:
+                    eoff = 1
+                if isinstance(tokens[1], tuple):
+                    end = symbolic.SymExpr(tokens[1][0], tokens[1][1]) + eoff
+                else:
+                    end = symbolic.pystr_to_symbolic(tokens[1]) + eoff
                 if len(tokens) >= 4:
                     if isinstance(tokens[3], tuple):
                         tsize = tokens[3][0]
