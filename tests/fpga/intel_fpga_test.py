@@ -55,9 +55,6 @@ TESTS = [
     ("tests/fpga/nested_sdfg_as_kernel.py", "nested_sdfg_kernels", []),
     # Generating autorun kernels
     ("tests/fpga/intel_fpga/autorun.py", "autorun_test", []),
-    # Multiple gearboxing
-    ("tests/fpga/multiple_veclen_conversions.py", "multiple_veclen_conversions",
-     []),
     # Channels mangling
     ("tests/fpga/intel_fpga/channels_mangling.py", "channels_mangling", []),
     # Views

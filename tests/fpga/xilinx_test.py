@@ -49,9 +49,6 @@ TESTS = [
         "reduction_sum_one_axis", "reduction_sum_all_axis", "reduction_sum_4D",
         "reduction_max"
     ], True, False, []),
-    # Multiple gearboxing
-    ("tests/fpga/multiple_veclen_conversions.py", "multiple_veclen_conversions",
-     True, False, []),
     # Views
     ("tests/fpga/reshape_view_fpga.py",
      ["view_fpga", "reshp_np_1", "reshapedst_1"], True, False, []),
