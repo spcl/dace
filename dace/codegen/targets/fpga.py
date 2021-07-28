@@ -27,6 +27,7 @@ from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.symbolic import evaluate
+from dace.transformation.dataflow import MapUnroll
 from collections import defaultdict
 
 _CPU_STORAGE_TYPES = {
@@ -417,6 +418,17 @@ class FPGACodeGen(TargetCodeGenerator):
         state_id = sdfg.node_id(state)
 
         if not self._in_device_code:
+
+            # Unroll maps directly in the SDFG so the subgraphs can be
+            # recognized as independent processing elements
+            top_level_unrolled = [
+                n for n in state.scope_children()[None]
+                if isinstance(n, dace.sdfg.nodes.MapEntry)
+                and n.schedule == dtypes.ScheduleType.Unrolled
+            ]
+            for map_entry in top_level_unrolled:
+                MapUnroll.apply_to(sdfg, _map_entry=map_entry)
+
             kernels = []  # List of tuples (subgraph, kernel_id)
 
             # Start a new state code generation: reset previous dependencies if any
