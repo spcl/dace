@@ -91,11 +91,11 @@ int main(int argc, char **argv) {{
 '''
 
 
-def generate_code(sdfg) -> [List[CodeObject], SDFG]:
+def generate_code(sdfg) -> List[CodeObject]:
     """ Generates code as a list of code objects for a given SDFG.
         :param sdfg: The SDFG to use
         :return: a tuple with List of code objects that correspond to files
-        to compile and the modified SDFG.
+        to compile.
     """
     # Before compiling, validate SDFG correctness
     sdfg.validate()
@@ -134,6 +134,10 @@ def generate_code(sdfg) -> [List[CodeObject], SDFG]:
     # After expansion, run another pass of connector/type inference
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
+    if vscode.is_available():  #and more checks
+        for _, _, array in sdfg.arrays_recursive():
+            array.lifetime = dtypes.AllocationLifetime.Persistent
 
     frame = framecode.DaCeCodeGenerator()
 
@@ -217,7 +221,7 @@ def generate_code(sdfg) -> [List[CodeObject], SDFG]:
                        linkable=False)
     target_objects.append(dummy)
 
-    return (target_objects, sdfg)
+    return target_objects
 
 
 ##################################################################

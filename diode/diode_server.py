@@ -840,7 +840,7 @@ def compileProgram(request, language, perfopts=None):
                                        'library_autoexpand'):
                         s.expand_library_nodes()
 
-                    code_tuple_dict[n], _ = codegen.generate_code(s)
+                    code_tuple_dict[n] = codegen.generate_code(s)
                 except dace.sdfg.NodeNotExpandedError as ex:
                     code_tuple_dict[n] = [str(ex)]
                 except Exception:  # Forward exception to output code
