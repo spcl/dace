@@ -26,7 +26,6 @@ TESTS = [
     ("tests/fpga/unique_nested_sdfg_fpga.py", "two_vecAdd", True, False, []),
     ("tests/fpga/nested_sdfg_as_kernel.py", "nested_sdfg_kernels", True, False,
      []),
-    ("tests/fpga/streaming_memory.py", "streamingcomp_1", True, True, []),
     # This doesn't pipeline with Vitis 2020.1 for whatever reason (it pipelines
     # with both 2019.2 and 2020.2), so just switch this back on once CI starts
     # running 2020.2 or newer.

@@ -8,6 +8,7 @@ import numpy as np
 
 from dace.transformation.dataflow import streaming_memory as sm, MapExpansion
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.fpga_testing import xilinx_test
 
 M, N, K = 64, 64, 64
 
@@ -55,6 +56,7 @@ def streaming_not_composable(A: dace.float32[M, N], B: dace.float32[M, N]):
             b = (a1 + a2) / 2
 
 
+@xilinx_test()
 def test_streaming_mem():
     # Make SDFG
     sdfg: dace.SDFG = matadd_streaming.to_sdfg()
@@ -71,10 +73,12 @@ def test_streaming_mem():
     sdfg(A=A, B=B, C=C)
 
     diff = np.linalg.norm(C - (A + B))
-    print('Difference:', diff)
     assert diff <= 1e-5
 
+    return sdfg
 
+
+@xilinx_test()
 def test_multistream():
     # Make SDFG
     sdfg: dace.SDFG = matadd_multistream.to_sdfg()
@@ -97,10 +101,12 @@ def test_multistream():
 
     diff1 = np.linalg.norm(C - (A + B))
     diff2 = np.linalg.norm(D - (A - B))
-    print('Differences:', diff1, diff2)
     assert diff1 <= 1e-5 and diff2 <= 1e-5
 
+    return sdfg
 
+
+@xilinx_test()
 def test_multistream_with_deps():
     # Make SDFG
     sdfg: dace.SDFG = streamingcomp.to_sdfg()
@@ -120,10 +126,12 @@ def test_multistream_with_deps():
     C = sdfg(A=A, B=B)
 
     diff = np.linalg.norm(C - ((A + B) * B)) / (M * N)
-    print('Difference:', diff)
     assert diff <= 1e-5
 
+    return sdfg
 
+
+@xilinx_test()
 def test_streaming_mem_mapnests():
     # Make SDFG
     sdfg: dace.SDFG = matadd_streaming.to_sdfg()
@@ -140,15 +148,19 @@ def test_streaming_mem_mapnests():
     sdfg(A=A, B=B, C=C)
 
     diff = np.linalg.norm(C - (A + B))
-    print('Difference:', diff)
     assert diff <= 1e-5
 
+    return sdfg
 
+
+@xilinx_test()
 def test_streaming_composition_matching():
     sdfg: dace.SDFG = streaming_not_composable.to_sdfg()
     assert sdfg.apply_transformations_repeated(sm.StreamingComposition) == 0
+    return []  # SDFG was not compiled, so we can't run HLS on it
 
 
+@xilinx_test()
 def test_streaming_composition():
     # Make SDFG
     sdfg: dace.SDFG = streamingcomp.to_sdfg()
@@ -164,10 +176,12 @@ def test_streaming_composition():
     C = sdfg(A=A, B=B)
 
     diff = np.linalg.norm(C - ((A + B) * B)) / (M * N)
-    print('Difference:', diff)
     assert diff <= 1e-5
 
+    return sdfg
 
+
+@xilinx_test()
 def test_streaming_composition_mapnests():
     # Make SDFG
     sdfg: dace.SDFG = streamingcomp.to_sdfg()
@@ -193,10 +207,12 @@ def test_streaming_composition_mapnests():
     C = sdfg(A=A, B=B)
 
     diff = np.linalg.norm(C - ((A + B) * B)) / (M * N)
-    print('Difference:', diff)
     assert diff <= 1e-5
 
+    return sdfg
 
+
+@xilinx_test()
 def test_streaming_and_composition():
     # Make SDFG
     sdfg: dace.SDFG = streamingcomp.to_sdfg()
@@ -216,8 +232,9 @@ def test_streaming_and_composition():
     C = sdfg(A=A, B=B)
 
     diff = np.linalg.norm(C - ((A + B) * B)) / (M * N)
-    print('Difference:', diff)
     assert diff <= 1e-5
+
+    return sdfg
 
 
 if __name__ == "__main__":
