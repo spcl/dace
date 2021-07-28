@@ -29,6 +29,12 @@ class LimitedSizeDict(OrderedDict):
             while len(self) > self.size_limit:
                 self.popitem(last=False)
 
+def _make_hashable(obj):
+    try:
+        hash(obj)
+        return obj
+    except TypeError:
+        return repr(obj)
 
 @dataclass
 class ProgramCacheKey:
@@ -47,7 +53,7 @@ class ProgramCacheKey:
             tuple((k, str(v.to_json())) for k, v in sorted(arg_types.items())),
             tuple((k, str(v.to_json()))
                   for k, v in sorted(closure_types.items())),
-            tuple((k, v) for k, v in sorted(closure_constants.items())),
+            tuple((k, _make_hashable(v)) for k, v in sorted(closure_constants.items())),
         )
 
     def __hash__(self) -> int:

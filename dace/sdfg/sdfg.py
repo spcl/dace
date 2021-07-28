@@ -320,15 +320,15 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """ Serializes this object to JSON format.
             :return: A string representing the JSON-serialized SDFG.
         """
+        # Location in the SDFG list (only for root SDFG)
+        if self.parent_sdfg is None:
+            self.reset_sdfg_list()
+
         tmp = super().to_json()
 
         # Ensure properties are serialized correctly
         tmp['attributes']['constants_prop'] = json.loads(
             dace.serialize.dumps(tmp['attributes']['constants_prop']))
-
-        # Location in the SDFG list (only for root SDFG)
-        if self.parent_sdfg is None:
-            self.reset_sdfg_list()
 
         tmp['sdfg_list_id'] = int(self.sdfg_id)
         tmp['start_state'] = self._start_state
@@ -753,9 +753,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def reset_sdfg_list(self):
         if self.parent_sdfg is not None:
-            self._sdfg_list = self.parent_sdfg.reset_sdfg_list()
+            return self.parent_sdfg.reset_sdfg_list()
         else:
-            self._sdfg_list = list(self.all_sdfgs_recursive())
+            # Propagate new SDFG list to all children
+            all_sdfgs = list(self.all_sdfgs_recursive())
+            for sd in all_sdfgs:
+                sd._sdfg_list = all_sdfgs
         return self._sdfg_list
 
     def update_sdfg_list(self, sdfg_list):
