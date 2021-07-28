@@ -354,14 +354,9 @@ def make_fpga_state(sdfg, vec_width=1):
     return state
 
 
-def make_sdfg(specialized, vec_width):
+def make_sdfg(name, vec_width):
 
-    if specialized:
-        sdfg = dace.SDFG("gemm_fpga_systolic_vectorized_d{}_w{}_{}x{}x{}".format(
-            P.get(), vec_width, N.get(), K.get(), M.get()))
-    else:
-        sdfg = dace.SDFG("gemm_fpga_systolic_vectorized_d{}_w{}_NxKx{}".format(
-            P.get(), vec_width, M.get()))
+    sdfg = dace.SDFG(name)
 
     pre_state = make_copy_to_fpga_state(sdfg, vec_width)
     compute_state = make_fpga_state(sdfg, vec_width)
@@ -387,11 +382,15 @@ if __name__ == "__main__":
                         help="Fix all loop bounds at compile time/in hardware")
     args = vars(parser.parse_args())
     vec_width = args["W"]
+    if specialized:
+        name = f"gemm_fpga_systolic_vectorized_d{P.get()}_w{vec_width}_{N.get()}x{K.get()}x{M.get()}"
+    else:
+        name = f"gemm_fpga_systolic_vectorized_d{P.get()}_w{vec_width}_NxKx{M.get()}"
+    sdfg = make_sdfg(name, vec_width)
     if not args["specialize"]:
         P.set(args["P"])
         M.set(args["M"])
         # M must always be specialized, as it's used for the static buffer size
-        sdfg = make_sdfg(False, vec_width)
         sdfg.specialize(dict(P=P, M=M))
         N.set(args["N"])
         K.set(args["K"])
@@ -400,7 +399,6 @@ if __name__ == "__main__":
         M.set(args["M"])
         N.set(args["N"])
         K.set(args["K"])
-        sdfg = make_sdfg(True, vec_width)
         sdfg.specialize(dict(P=P, M=M, N=N, K=K))
 
     print("Matrix multiplication {}x{}x{} with {} PEs and vectorization width {} ({}specialized)".format(

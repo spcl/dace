@@ -733,9 +733,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             for state in self.nodes():
                 for node in state.nodes():
                     if isinstance(node, nd.AccessNode) and node.data == name:
-                        raise ValueError("Data descriptor %s is already used"
-                                         "in node %s, state %s" %
-                                         (name, node, state))
+                        raise ValueError(f"Cannot remove data descriptor "
+                                         f"{name}: it is accessed by node "
+                                         f"{node} in state {state}.")
 
         del self._arrays[name]
 
@@ -1744,10 +1744,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
 
+        # Compute build folder path before running codegen
+        build_folder = self.build_folder
+
         if Config.get_bool('compiler', 'use_cache'):
             # Try to see if a cached version of the binary exists
-            binary_filename = compiler.get_binary_name(self.build_folder,
-                                                       self.name)
+            binary_filename = compiler.get_binary_name(build_folder, self.name)
             if os.path.isfile(binary_filename):
                 return compiler.load_from_file(self, binary_filename)
 
@@ -1756,6 +1758,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Clone SDFG as the other modules may modify its contents
         sdfg = copy.deepcopy(self)
+        # Fix the build folder name on the copied SDFG to avoid it changing
+        # if the codegen modifies the SDFG (thereby changing its hash)
+        sdfg.build_folder = build_folder
 
         # Rename SDFG to avoid runtime issues with clashing names
         index = 0
@@ -1774,7 +1779,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Generate the program folder and write the source files
         program_folder = compiler.generate_program_folder(
-            sdfg, program_objects, sdfg.build_folder)
+            sdfg, program_objects, build_folder)
 
         # Compile the code and get the shared library path
         shared_library = compiler.configure_and_compile(program_folder,
@@ -1791,8 +1796,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # it to the generating code and storing command line arguments that
         # were provided.
         if sys.argv is not None and len(sys.argv) > 0:
-            os.makedirs(sdfg.build_folder, exist_ok=True)
-            with open(os.path.join(sdfg.build_folder, 'program.sdfgl'),
+            os.makedirs(build_folder, exist_ok=True)
+            with open(os.path.join(build_folder, 'program.sdfgl'),
                       'w') as launchfiles_file:
                 launchfiles_file.write(
                     'name,SDFG_intermediate,SDFG,source,' +
@@ -1800,7 +1805,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                               for i in range(len(sys.argv))]) + '\n')
                 launchfiles_file.write(
                     sdfg.name + ',' + os.path.abspath(
-                        os.path.join(sdfg.build_folder, 'program.sdfg')) + ',' +
+                        os.path.join(build_folder, 'program.sdfg')) + ',' +
                     os.path.abspath(os.path.join('_dacegraphs', 'program.sdfg'))
                     + ',' + os.path.abspath(sys.argv[0]) + ',' +
                     ','.join([str(el) for el in sys.argv]))
