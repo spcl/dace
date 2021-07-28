@@ -264,9 +264,10 @@ class StructTransformer(ast.NodeTransformer):
 
 # Replaces instances of modules Y imported with "import X as Y" by X
 class ModuleResolver(ast.NodeTransformer):
-    def __init__(self, modules: Dict[str, str]):
+    def __init__(self, modules: Dict[str, str], always_replace=False):
         self.modules = modules
         self.should_replace = False
+        self.always_replace = always_replace
 
     def visit_Call(self, node) -> Any:
         self.should_replace = True
@@ -275,7 +276,7 @@ class ModuleResolver(ast.NodeTransformer):
         return self.generic_visit(node)
 
     def visit_Attribute(self, node):
-        if not self.should_replace:
+        if not self.should_replace and not self.always_replace:
             return self.generic_visit(node)
         # Traverse AST until reaching the top-level value (could be a name
         # or a function)
@@ -1483,6 +1484,11 @@ class ProgramVisitor(ExtNodeVisitor):
                                                  line_offset, col_offset,
                                                  filename)
 
+        self.modules = {
+            k: v.__name__
+            for k, v in self.globals.items() if dtypes.ismodule(v)
+        }
+
         # Add constants
         for cstname, cstval in constants.items():
             self.sdfg.add_constant(cstname, cstval)
@@ -1792,7 +1798,9 @@ class ProgramVisitor(ExtNodeVisitor):
         if len(node.decorator_list) == 0:
             dec = 'dace.tasklet'
         else:
-            dec = rname(node.decorator_list[0])
+            dec_ast = node.decorator_list[0]
+            dec_ast = ModuleResolver(self.modules, True).visit(dec_ast)
+            dec = rname(dec_ast)
 
         # Create a new state for the statement
         state = self._add_state("s{l}_{c}".format(l=node.lineno,
