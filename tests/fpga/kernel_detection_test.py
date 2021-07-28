@@ -4,22 +4,24 @@
 
 import dace
 import numpy as np
+from pathlib import Path
 import pytest
 import re
 from dace.codegen.targets.fpga import is_fpga_kernel
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.fpga_testing import fpga_test
 
 
-def count_kernels(cachedir: str):
+def count_kernels(sdfg: dace.SDFG):
     '''
     Test utility functions: Counts the number of generated device kernels
-    :param cachedir: program cache directory
+    :param sdfg: Already compiled SDFG to count kernels for.
     :return: number of kernels
     '''
 
     import csv
     kernels = 0
-    with open(f".dacecache/{cachedir}/dace_files.csv") as csv_file:
+    with open(Path(sdfg.build_folder) / "dace_files.csv", "r") as csv_file:
         csv_reader = csv.reader(csv_file, delimiter=',')
         for row in csv_reader:
             if row[1] == "device" and (row[-1].endswith("cpp")
@@ -28,6 +30,7 @@ def count_kernels(cachedir: str):
     return kernels
 
 
+@fpga_test()
 def test_kernels_inside_component_0():
     '''
     Tests for kernels detection inside a single connected component.
@@ -67,13 +70,16 @@ def test_kernels_inside_component_0():
             state.instrument = dace.InstrumentationType.FPGA
     program = sdfg.compile()
 
-    assert count_kernels("kernels_inside_component_0_1") == 3
+    assert count_kernels(sdfg) == 3
     res = program(x=x, y=y, v=v, w=w, z=z)
     assert np.allclose(res, x + y + v + w + z)
     report = sdfg.get_latest_report()
     assert len(re.findall(r"_Add__[0-9]+(:|__Add__[0-9]+:)", str(report))) == 3
 
+    return sdfg
 
+
+@fpga_test()
 def test_kernels_inside_component_1():
     '''
     Tests for kernels detection inside a single connected component.
@@ -119,14 +125,17 @@ def test_kernels_inside_component_1():
     sdfg = kernels_inside_component_1.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
     program = sdfg.compile()
-    assert count_kernels("kernels_inside_component_1_1") == 5
+    assert count_kernels(sdfg) == 5
     program(x=x, y=y, v=v, w=w, z=z, t=t, alpha=alpha, beta=beta)
     ref_z = alpha * (x + y + v + w)
     ref_t = beta * (x + y + v + w)
     assert np.allclose(z, ref_z)
     assert np.allclose(t, ref_t)
 
+    return sdfg
 
+
+@fpga_test()
 def test_kernels_inside_component_2():
     '''
     Tests for PEs detection inside a single Component.
@@ -164,12 +173,15 @@ def test_kernels_inside_component_2():
 
     # NOTE: here we have only one kernel since subgraph detection already
     # detects two PEs
-    assert count_kernels("kernels_inside_component_2_1") == 1
+    assert count_kernels(sdfg) == 1
     program(x=x, y=y, v=v, t=t, z=z)
     assert np.allclose(z, x + y)
     assert np.allclose(t, v + y)
 
+    return sdfg
 
+
+@fpga_test()
 def test_kernels_lns_inside_component():
     '''
     Tests for kernels detection inside a single connected component where we
@@ -207,7 +219,7 @@ def test_kernels_lns_inside_component():
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
     program = sdfg.compile()
 
-    assert count_kernels("kernels_lns_inside_component_1") == 3
+    assert count_kernels(sdfg) == 3
     z = program(A=A, x=x, B=B, y=y)
     ref = np.dot(A @ x, B @ y)
     assert np.allclose(z, ref)
@@ -215,7 +227,10 @@ def test_kernels_lns_inside_component():
                            'unique_functions',
                            value=unique_functions_conf)
 
+    return sdfg
 
+
+@fpga_test()
 def test_kernels_inside_components_0():
     '''
     Tests for kernels detection in two distinct connected components.
@@ -256,12 +271,15 @@ def test_kernels_inside_components_0():
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
     program = sdfg.compile()
 
-    assert count_kernels("kernels_inside_components_0_1") == 6
+    assert count_kernels(sdfg) == 6
     z, zz = program(x=x, y=y, v=v, w=w, xx=xx, yy=yy, vv=vv, ww=ww)
     assert np.allclose(z, x + y + v + w)
     assert np.allclose(zz, xx + yy + vv + ww)
 
+    return sdfg
 
+
+@fpga_test()
 def test_kernels_inside_components_multiple_states():
     '''
     Tests for kernels detection in two distinct states.
@@ -560,16 +578,18 @@ def test_kernels_inside_components_multiple_states():
 
     sdfg = make_sdfg()
     program = sdfg.compile()
-    assert count_kernels("multiple_kernels_multiple_states") == 6
+    assert count_kernels(sdfg) == 6
     program(z=z, zz=zz, x=x, y=y, v=v, w=w, xx=xx, yy=yy, vv=vv, ww=ww, size=8)
     assert np.allclose(z, x + y + v + w)
     assert np.allclose(zz, xx + yy + vv + ww)
 
+    return sdfg
+
 
 if __name__ == "__main__":
-    test_kernels_inside_component_0()
-    test_kernels_inside_component_1()
-    test_kernels_inside_component_2()
-    test_kernels_lns_inside_component()
-    test_kernels_inside_components_0()
-    test_kernels_inside_components_multiple_states()
+    test_kernels_inside_component_0(None)
+    test_kernels_inside_component_1(None)
+    test_kernels_inside_component_2(None)
+    test_kernels_lns_inside_component(None)
+    test_kernels_inside_components_0(None)
+    test_kernels_inside_components_multiple_states(None)

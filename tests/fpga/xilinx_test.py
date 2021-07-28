@@ -58,12 +58,6 @@ TESTS = [
     # Over approx Shapes
     ("tests/fpga/overapprox_transient_shapes.py", ["overapprox_1"], True, False,
      []),
-    # Kernel_detection
-    ("tests/fpga/kernels_detection.py", [
-        "kernels_inside_component_0_1", "kernels_inside_component_1_1",
-        "kernels_inside_component_2_1", "kernels_inside_components_0_1",
-        "kernels_lns_inside_component_1", "multiple_kernels_multiple_states"
-    ], True, False, []),
     ("tests/fpga/hbm_vadd_fpga.py",
      ["vadd_2b1d_1", "vadd_2b2d_1", "vadd_2b3d_1",
       "vadd_8b1d_1"], True, False, []),
