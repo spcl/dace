@@ -85,9 +85,16 @@ TESTS = [
     ("tests/transformations/mapfusion_fpga.py",
      ["multiple_fusions_1", "fusion_with_transient_1"], []),
     # Auto-opt for FPGA
-    ("tests/fpga/auto_opt_fpga.py", ["global_to_local_1", "rr_interleave_1"], []),
+    ("tests/fpga/auto_opt_fpga.py", ["global_to_local_1",
+                                     "rr_interleave_1"], []),
     # Over approximated shapes
     ("tests/fpga/overapprox_transient_shapes.py", ["overapprox_1"], []),
+    # Kernel_detection
+    ("tests/fpga/kernels_detection.py", [
+        "kernels_inside_component_0_1", "kernels_inside_component_1_1",
+        "kernels_inside_component_2_1", "kernels_inside_components_0_1",
+        "kernels_lns_inside_component_1", "multiple_kernels_multiple_states"
+    ], []),
 ]
 
 

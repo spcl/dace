@@ -35,12 +35,17 @@ class ExpandGetrsOpenBLAS(ExpandTransformation):
             parent_sdfg, parent_state)
         dtype = desc_a.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
+        cast = ""
+        if lapack_dtype == 'c':
+            cast = "(lapack_complex_float*)"
+        elif lapack_dtype == 'z':
+            cast = "(lapack_complex_double*)"
         if desc_a.dtype.veclen > 1:
             raise(NotImplementedError)
 
 
         n = n or node.n
-        code = f"_res = LAPACKE_{lapack_dtype}getrs(LAPACK_ROW_MAJOR, 'N', {rows_a}, {cols_rhs}, _a, {stride_a}, _ipiv, _rhs_in, {stride_rhs});"
+        code = f"_res = LAPACKE_{lapack_dtype}getrs(LAPACK_ROW_MAJOR, 'N', {rows_a}, {cols_rhs}, {cast}_a, {stride_a}, _ipiv, {cast}_rhs_in, {stride_rhs});"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,

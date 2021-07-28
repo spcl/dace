@@ -53,7 +53,6 @@ def test_call_if():
         else:
             ref[i] += 3 * i
     sdfg = call_if.to_sdfg()
-    sdfg.save("call_if.sdfg")
     call_if(A)
     assert(np.array_equal(A, ref))
 

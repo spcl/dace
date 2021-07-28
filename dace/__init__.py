@@ -4,7 +4,7 @@ from .version import __version__
 from .dtypes import *
 
 # Python frontend
-from .frontend.python.decorators import *
+from .frontend.python.interface import *
 from .frontend.python.wrappers import *
 from .frontend.python.ndloop import ndrange
 from .frontend.operations import *

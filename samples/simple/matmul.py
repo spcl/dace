@@ -4,7 +4,7 @@ from __future__ import print_function
 import argparse
 import dace
 import numpy as np
-from typing import List
+from typing import List, Tuple
 
 # For optimizations
 from dace.transformation.dataflow import (DoubleBuffering, MapCollapse,
@@ -64,11 +64,17 @@ def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
                 if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
 
 
+def find_map_and_state_by_param(
+        sdfg: dace.SDFG,
+        pname: str) -> Tuple[dace.nodes.MapEntry, dace.SDFGState]:
+    """ Finds the first map entry node by the given parameter name. """
+    return next((n, p) for n, p in sdfg.all_nodes_recursive()
+                if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
+
+
 def find_mapexit_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapExit:
     """ Finds the first map exit node by the given parameter name. """
-    state, entry = next(
-        (p, n) for n, p in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
+    entry, state = find_map_and_state_by_param(sdfg, pname)
     return state.exit_node(entry)
 
 
@@ -115,9 +121,12 @@ def optimize_for_cpu(sdfg: dace.SDFG, m: int, n: int, k: int):
 
         # Vectorize microkernel map
         postamble = n % 4 != 0
-        sdfg.apply_transformations(
-            Vectorization,
-            dict(vector_len=4, preamble=False, postamble=postamble))
+        entry_inner, inner_state = find_map_and_state_by_param(sdfg, 'k')
+        Vectorization.apply_to(inner_state.parent,
+                               dict(vector_len=4,
+                                    preamble=False,
+                                    postamble=postamble),
+                               _map_entry=entry_inner)
 
     # Mark outer tile map as sequential to remove atomics
     find_map_by_param(sdfg,

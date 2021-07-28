@@ -13,16 +13,15 @@ TW = dace.symbol('TW')
 TH = dace.symbol('TH')
 
 
-@dace.program(dace.float32[H, W], dace.float32[H, W], dace.int32, dace.int32)
-def transpose_tiled(A, B, TW, TH):
-    @dace.mapscope(_[0:H:TH, 0:W:TW])
-    def compute(tile_i, tile_j):
-        @dace.map(_[0:TH, 0:TW])
-        def compute_tile(i, j):
-            a << A[tile_j + j, tile_i + i]
-            b >> B[tile_i + i, tile_j + j]
+@dace.program
+def transpose_tiled(A: dace.float32[H, W], B: dace.float32[H, W]):
+    for tile_i, tile_j in dace.map[0:H:TH, 0:W:TW]:
+        for i, j in dace.map[0:TH, 0:TW]:
+            with dace.tasklet:
+                a << A[tile_j + j, tile_i + i]
+                b >> B[tile_i + i, tile_j + j]
 
-            b = a
+                b = a
 
 
 def test():
@@ -39,7 +38,7 @@ def test():
     A[:] = np.random.rand(H.get(), W.get()).astype(dace.float32.type)
     B[:] = dace.float32(0)
 
-    transpose_tiled(A, B, TW, TH)
+    transpose_tiled(A, B, TW=TW, TH=TH)
 
     diff = np.linalg.norm(np.transpose(A) - B) / (H.get() * W.get())
     print("Difference:", diff)

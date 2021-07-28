@@ -10,9 +10,9 @@ from .map_interchange import MapInterchange
 from .map_dim_shuffle import MapDimShuffle
 from .map_fusion import MapFusion
 from .map_fission import MapFission
+from .map_unroll import MapUnroll
 from .trivial_map_elimination import TrivialMapElimination
 from .trivial_map_range_elimination import TrivialMapRangeElimination
-
 
 # Data movement
 from .strip_mining import StripMining
@@ -29,7 +29,8 @@ from .streaming_memory import StreamingMemory, StreamingComposition
 
 # Complexity reduction
 from .dedup_access import DeduplicateAccess
-from .redundant_array import RedundantArray, RedundantSecondArray
+from .redundant_array import (RedundantArray, RedundantSecondArray,
+                              SqueezeViewRemove, UnsqueezeViewRemove)
 from .redundant_array_copying import (RedundantArrayCopyingIn,
                                       RedundantArrayCopying,
                                       RedundantArrayCopying2,
@@ -43,11 +44,11 @@ from .copy_to_device import CopyToDevice
 from .gpu_transform import GPUTransformMap
 from .gpu_transform_local_storage import GPUTransformLocalStorage
 from .mpi import MPITransformMap
+from .warp_tiling import WarpTiling
 
 # Algorithmic
 from .matrix_product_transpose import MatrixProductTranspose
 
 # Distributions
 from .map_distribution import (ElementWiseArrayOperation,
-                               ElementWiseArrayOperation2D,
-                               RedundantComm2D)
+                               ElementWiseArrayOperation2D, RedundantComm2D)

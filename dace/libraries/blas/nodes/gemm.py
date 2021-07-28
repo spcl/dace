@@ -1054,6 +1054,10 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         allow_none=False,
         default=0,
         desc="A scalar which will be multiplied with C before adding C")
+    cin = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Whether to have a _cin connector when beta != 0")
 
     def __init__(self,
                  name,
@@ -1061,16 +1065,18 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                  transA=False,
                  transB=False,
                  alpha=1,
-                 beta=0):
+                 beta=0,
+                 cin=True):
         super().__init__(
             name,
             location=location,
-            inputs=({"_a", "_b", "_cin"} if beta != 0 else {"_a", "_b"}),
+            inputs=({"_a", "_b", "_cin"} if beta!=0 and cin else {"_a", "_b"}),
             outputs={"_c"})
         self.transA = transA
         self.transB = transB
         self.alpha = alpha
         self.beta = beta
+        self.cin = cin
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)

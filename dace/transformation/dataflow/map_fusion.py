@@ -138,8 +138,8 @@ class MapFusion(transformation.Transformation):
         # Create a dict that maps parameters of the first map to those of the
         # second map.
         params_dict = {}
-        for _index, _param in enumerate(first_map_entry.map.params):
-            params_dict[_param] = second_map_entry.map.params[perm[_index]]
+        for _index, _param in enumerate(second_map_entry.map.params):
+            params_dict[_param] = first_map_entry.map.params[perm[_index]]
         # Create intermediate dicts to avoid conflicts, such as {i:j, j:i}
         repldict = {
             symbolic.pystr_to_symbolic(k):
@@ -194,9 +194,11 @@ class MapFusion(transformation.Transformation):
 
         # Checking for stencil pattern and common input/output data
         # (after fusing the maps)
-        first_map_inputnodes = {e.src: e.src.data
-                                for e in graph.in_edges(first_map_entry)
-                                if isinstance(e.src, nodes.AccessNode)}
+        first_map_inputnodes = {
+            e.src: e.src.data
+            for e in graph.in_edges(first_map_entry)
+            if isinstance(e.src, nodes.AccessNode)
+        }
         input_views = set()
         viewed_inputnodes = dict()
         for n in first_map_inputnodes.keys():
@@ -208,9 +210,11 @@ class MapFusion(transformation.Transformation):
             if e:
                 first_map_inputnodes[e.src] = e.src.data
                 viewed_inputnodes[e.src.data] = v
-        second_map_outputnodes = {e.dst: e.dst.data
-                                  for e in graph.out_edges(second_map_exit)
-                                  if isinstance(e.dst, nodes.AccessNode)}
+        second_map_outputnodes = {
+            e.dst: e.dst.data
+            for e in graph.out_edges(second_map_exit)
+            if isinstance(e.dst, nodes.AccessNode)
+        }
         output_views = set()
         viewed_outputnodes = dict()
         for n in second_map_outputnodes:
@@ -225,12 +229,15 @@ class MapFusion(transformation.Transformation):
         common_data = set(first_map_inputnodes.values()).intersection(
             set(second_map_outputnodes.values()))
         if common_data:
-            input_data = [viewed_inputnodes[d].data
-                          if d in viewed_inputnodes.keys() else d
-                          for d in common_data]
-            input_accesses = [graph.memlet_path(e)[-1].data.src_subset
-                              for e in graph.out_edges(first_map_entry)
-                              if e.data.data in input_data]
+            input_data = [
+                viewed_inputnodes[d].data
+                if d in viewed_inputnodes.keys() else d for d in common_data
+            ]
+            input_accesses = [
+                graph.memlet_path(e)[-1].data.src_subset
+                for e in graph.out_edges(first_map_entry)
+                if e.data.data in input_data
+            ]
             if len(input_accesses) > 1:
                 for i, a in enumerate(input_accesses[:-1]):
                     for b in input_accesses[i + 1:]:
@@ -243,19 +250,22 @@ class MapFusion(transformation.Transformation):
                             if r != (0, 0, 1):
                                 return False
 
-            output_data = [viewed_outputnodes[d].data
-                           if d in viewed_outputnodes.keys() else d
-                           for d in common_data]
-            output_accesses = [graph.memlet_path(e)[0].data.dst_subset
-                               for e in graph.in_edges(second_map_exit)
-                               if e.data.data in output_data]
+            output_data = [
+                viewed_outputnodes[d].data
+                if d in viewed_outputnodes.keys() else d for d in common_data
+            ]
+            output_accesses = [
+                graph.memlet_path(e)[0].data.dst_subset
+                for e in graph.in_edges(second_map_exit)
+                if e.data.data in output_data
+            ]
 
             # Compute output accesses with respect to first map's symbols
             oacc_permuted = [dcpy(a) for a in output_accesses]
             for a in oacc_permuted:
                 a.replace(repldict)
                 a.replace(repldict_inv)
-            
+
             a = input_accesses[0]
             for b in oacc_permuted:
                 if isinstance(a, subsets.Indices):
@@ -507,7 +517,8 @@ class MapFusion(transformation.Transformation):
 
             # If source of edge leads to multiple destinations,
             # redirect all through an access node
-            out_edges = list(graph.out_edges_by_connector(edge.src, edge.src_conn))
+            out_edges = list(
+                graph.out_edges_by_connector(edge.src, edge.src_conn))
             if len(out_edges) > 1:
                 local_node = graph.add_access(local_name)
                 src_connector = None

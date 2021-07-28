@@ -92,8 +92,8 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 @pytest.mark.parametrize("implementation, dtype", [
     pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
     pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param("OpenBLAS", dace.float32),
-    pytest.param("OpenBLAS", dace.float64)
+    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack)
 ])
 def test_getri(implementation, dtype):
     sdfg = make_sdfg(implementation, dtype)

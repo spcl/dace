@@ -8,6 +8,7 @@ Running the sample requires an NVIDIA GPU with Tensor Cores.
 
 # General DaCe imports
 import dace
+from dace import data as dt
 from dace.sdfg import nodes
 
 # Code generator imports and helpers
@@ -77,11 +78,10 @@ class TensorCoreCodegen(TargetCodeGenerator):
 
     def allocate_array(self, sdfg: dace.SDFG, dfg: StateSubgraphView,
                        state_id: int, node: nodes.AccessNode,
-                       function_stream: CodeIOStream,
+                       nodedesc: dt.Array, function_stream: CodeIOStream,
                        declaration_stream: CodeIOStream,
                        allocation_stream: CodeIOStream):
         name = node.data
-        nodedesc = node.desc(sdfg)
 
         # Based on the hardware, the total size must be 16^2
         assert nodedesc.total_size == 16 * 16
@@ -102,15 +102,9 @@ class TensorCoreCodegen(TargetCodeGenerator):
                     maj=maj,
                     name=name), sdfg, state_id, node)
 
-    def initialize_array(self, sdfg: dace.SDFG, dfg: StateSubgraphView,
-                         state_id: int, node: nodes.AccessNode,
-                         function_stream: CodeIOStream,
-                         callsite_stream: CodeIOStream):
-        pass  # Nothing to initialize (wmma::fragment is a C++ object)
-
     def deallocate_array(self, sdfg: dace.SDFG, dfg: StateSubgraphView,
                          state_id: int, node: nodes.AccessNode,
-                         function_stream: CodeIOStream,
+                         nodedesc: dt.Array, function_stream: CodeIOStream,
                          callsite_stream: CodeIOStream):
         pass  # Nothing to deallocate (wmma::fragment is a C++ object)
 

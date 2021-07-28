@@ -87,6 +87,36 @@ static DACE_CONSTEXPR DACE_HDFI int sgn(T val) {
     return (T(0) < val) - (val < T(0));
 }
 
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_and(const T& left_operand, const T2& right_operand) {
+    return left_operand & right_operand;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_or(const T& left_operand, const T2& right_operand) {
+    return left_operand | right_operand;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_xor(const T& left_operand, const T2& right_operand) {
+    return left_operand ^ right_operand;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_invert(const T& value) {
+    return ~value;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T right_shift(const T& left_operand, const T2& right_operand) {
+    return left_operand >> right_operand;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T left_shift(const T& left_operand, const T2& right_operand) {
+    return left_operand << right_operand;
+}
+
 
 // Workarounds for float16 in CUDA
 // NOTES: * Half precision types are not trivially convertible, so other types

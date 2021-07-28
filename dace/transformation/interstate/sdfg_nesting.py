@@ -107,22 +107,33 @@ class InlineSDFG(transformation.Transformation):
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph: SDFGState,
+                       candidate,
+                       expr_index,
+                       sdfg,
+                       strict=False):
         nested_sdfg = graph.nodes()[candidate[InlineSDFG._nested_sdfg]]
         if nested_sdfg.no_inline:
             return False
         if len(nested_sdfg.sdfg.nodes()) != 1:
             return False
 
-        # Ensure every connector has one incoming/outgoing edge
+        # Ensure every connector has one incoming/outgoing edge and that it
+        # is not empty
         in_connectors = set()
         out_connectors = set()
         for edge in graph.in_edges(nested_sdfg):
             if edge.dst_conn in in_connectors:
                 return False
+            if (edge.data.is_empty()
+                    and not isinstance(edge.src, nodes.EntryNode)):
+                return False
             in_connectors.add(edge.dst_conn)
         for edge in graph.out_edges(nested_sdfg):
             if edge.src_conn in out_connectors:
+                return False
+            if (edge.data.is_empty()
+                    and not isinstance(edge.dst, nodes.ExitNode)):
                 return False
             out_connectors.add(edge.src_conn)
 
@@ -143,6 +154,40 @@ class InlineSDFG(transformation.Transformation):
                                     for e in nstate.out_edges(node)
                                     if isinstance(e.dst, nodes.AccessNode))):
                         return False
+
+        # Ensure that every connector has at least one corresponding access
+        # node in the (nested) SDFG. Otherwise, inlining is not possible.
+        # NOTE: FPGA-compatible SDFGs can have input connectors for data that
+        # are only written.
+        inp_data = {conn: set() for conn in in_connectors}
+        for e in graph.in_edges(nested_sdfg):
+            src = graph.memlet_path(e)[0].src
+            if isinstance(src, nodes.AccessNode):
+                inp_data[e.dst_conn].add(src.data)
+        out_data = dict()
+        for e in graph.out_edges(nested_sdfg):
+            dst = graph.memlet_path(e)[-1].dst
+            if isinstance(dst, nodes.AccessNode):
+                out_data[dst.data] = e.src_conn
+        rem_inpconns = dc(in_connectors)
+        rem_outconns = dc(out_connectors)
+        nstate = nested_sdfg.sdfg.node(0)
+        for node in nstate.nodes():
+            if isinstance(node, nodes.AccessNode):
+                if node.data in rem_inpconns:
+                    rem_inpconns.remove(node.data)
+                if node.data in rem_outconns:
+                    rem_outconns.remove(node.data)
+        if len(rem_outconns) > 0:
+            return False
+        if len(rem_inpconns) > 0:
+            for inpconn in list(rem_inpconns):
+                for access in inp_data[inpconn]:
+                    if access in out_data.keys():
+                        rem_inpconns.remove(inpconn)
+                        break
+        if len(rem_inpconns) > 0:
+            return False
 
         return True
 
@@ -323,8 +368,11 @@ class InlineSDFG(transformation.Transformation):
             if (isinstance(node, nodes.AccessNode)
                     and node.data not in transients
                     and node.data not in reshapes):
-                new_incoming_edges[node] = inputs[node.data]
-                source_accesses.add(node)
+                try:
+                    new_incoming_edges[node] = inputs[node.data]
+                    source_accesses.add(node)
+                except KeyError:
+                    pass
         for node in nstate.sink_nodes():
             if (isinstance(node, nodes.AccessNode)
                     and node.data not in transients
@@ -495,9 +543,10 @@ class InlineSDFG(transformation.Transformation):
             try:
                 node = next(n for n in order if n.data == edge.data.data)
             except StopIteration:
-                raise NameError(f'Access node with data "{n.data}" not found in'
-                                f' nested SDFG "{nsdfg.name}" while inlining '
-                                '(reconnecting inputs)')
+                raise NameError(
+                    f'Access node with data "{edge.data.data}" not found in'
+                    f' nested SDFG "{nsdfg.name}" while inlining '
+                    '(reconnecting inputs)')
             state.add_edge(edge.src, edge.src_conn, node, edge.dst_conn,
                            edge.data)
         for edge in removed_out_edges:
@@ -506,9 +555,10 @@ class InlineSDFG(transformation.Transformation):
                 node = next(n for n in reversed(order)
                             if n.data == edge.data.data)
             except StopIteration:
-                raise NameError(f'Access node with data "{n.data}" not found in'
-                                f' nested SDFG "{nsdfg.name}" while inlining '
-                                '(reconnecting outputs)')
+                raise NameError(
+                    f'Access node with data "{edge.data.data}" not found in'
+                    f' nested SDFG "{nsdfg.name}" while inlining '
+                    '(reconnecting outputs)')
             state.add_edge(node, edge.src_conn, edge.dst, edge.dst_conn,
                            edge.data)
 

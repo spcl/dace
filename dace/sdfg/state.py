@@ -11,8 +11,9 @@ from dace.sdfg.graph import (OrderedMultiDiConnectorGraph, MultiConnectorEdge,
                              SubgraphView)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
-from dace.properties import (Property, DictProperty, SubsetProperty,
-                             SymbolicProperty, CodeBlock, make_properties)
+from dace.properties import (EnumProperty, Property, DictProperty,
+                             SubsetProperty, SymbolicProperty, CodeBlock,
+                             make_properties)
 from inspect import getframeinfo, stack
 import itertools
 from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple,
@@ -709,9 +710,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                       default=False,
                       desc="Do not synchronize at the end of the state")
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "
@@ -806,7 +808,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
 
     def add_node(self, node):
         if not isinstance(node, nd.Node):
-            raise TypeError("Expected Node, got " + str(type(node)) + " (" +
+            raise TypeError("Expected Node, got " + type(node).__name__ + " (" +
                             str(node) + ")")
         self._clear_scopedict_cache()
         return super(SDFGState, self).add_node(node)
@@ -858,7 +860,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                 for k, v in sorted(
                     self.scope_children(return_ids=True).items())
             }
-        except RuntimeError:
+        except (RuntimeError, ValueError):
             scope_dict = {}
 
         # Try to initialize edges before serialization
@@ -1049,6 +1051,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         code: str,
         language: dtypes.Language = dtypes.Language.Python,
+        state_fields: Optional[List[str]] = None,
+        code_global: str = "",
+        code_init: str = "",
+        code_exit: str = "",
         location: dict = None,
         debuginfo=None,
     ):
@@ -1067,6 +1073,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             outputs,
             code,
             language,
+            state_fields=state_fields,
+            code_global=code_global,
+            code_init=code_init,
+            code_exit=code_exit,
             location=location,
             debuginfo=debuginfo,
         ) if language != dtypes.Language.SystemVerilog else nd.RTLTasklet(
@@ -1075,6 +1085,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             outputs,
             code,
             language,
+            state_fields=state_fields,
+            code_global=code_global,
+            code_init=code_init,
+            code_exit=code_exit,
             location=location,
             debuginfo=debuginfo,
         )
@@ -1311,8 +1325,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         if external_edges:
             input_nodes = input_nodes or {}
             output_nodes = output_nodes or {}
-            input_data = set(memlet.data for memlet in inputs.values())
-            output_data = set(memlet.data for memlet in outputs.values())
+            input_data = dtypes.deduplicate(
+                [memlet.data for memlet in inputs.values()])
+            output_data = dtypes.deduplicate(
+                [memlet.data for memlet in outputs.values()])
             for inp in input_data:
                 if inp in input_nodes:
                     inpdict[inp] = input_nodes[inp]
@@ -1324,13 +1340,15 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                 else:
                     outdict[out] = self.add_write(out)
 
+        edges = []
+
         # Connect inputs from map to tasklet
         tomemlet = {}
         for name, memlet in inputs.items():
             # Set memlet local name
             memlet.name = name
             # Add internal memlet edge
-            self.add_edge(map_entry, None, tasklet, name, memlet)
+            edges.append(self.add_edge(map_entry, None, tasklet, name, memlet))
             tomemlet[memlet.data] = memlet
 
         # If there are no inputs, add empty memlet
@@ -1345,8 +1363,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                                                     map_entry, True)
                 else:
                     outer_memlet = tomemlet[inp]
-                self.add_edge(inpnode, None, map_entry, "IN_" + inp,
-                              outer_memlet)
+                edges.append(
+                    self.add_edge(inpnode, None, map_entry, "IN_" + inp,
+                                  outer_memlet))
 
                 # Add connectors to internal edges
                 for e in self.out_edges(map_entry):
@@ -1363,7 +1382,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             # Set memlet local name
             memlet.name = name
             # Add internal memlet edge
-            self.add_edge(tasklet, name, map_exit, None, memlet)
+            edges.append(self.add_edge(tasklet, name, map_exit, None, memlet))
             tomemlet[memlet.data] = memlet
 
         # If there are no outputs, add empty memlet
@@ -1378,8 +1397,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                                                     map_exit, True)
                 else:
                     outer_memlet = tomemlet[out]
-                self.add_edge(map_exit, "OUT_" + out, outnode, None,
-                              outer_memlet)
+                edges.append(
+                    self.add_edge(map_exit, "OUT_" + out, outnode, None,
+                                  outer_memlet))
 
                 # Add connectors to internal edges
                 for e in self.in_edges(map_exit):
@@ -1389,6 +1409,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                 # Add connectors to map entry
                 map_exit.add_in_connector("IN_" + out)
                 map_exit.add_out_connector("OUT_" + out)
+
+        # Try to initialize memlets
+        for edge in edges:
+            edge.data.try_initialize(self.parent, self, edge)
 
         return tasklet, map_entry, map_exit
 
@@ -1574,6 +1598,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                 external_memlet,
             )
 
+        # Try to initialize memlets
+        iedge.data.try_initialize(self.parent, self, iedge)
+        eedge.data.try_initialize(self.parent, self, eedge)
+
         return (iedge, eedge)
 
     def add_memlet_path(self,
@@ -1707,7 +1735,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
 
         path = self.memlet_path(edge)
 
-        is_read = isinstance(path[0], nd.AccessNode)
+        is_read = isinstance(path[0].src, nd.AccessNode)
         if is_read:
             # Traverse from connector to access node, so we can check if it's
             # safe to delete edges going out of a scope

@@ -332,17 +332,61 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
         return options
 
-    def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                       declaration_stream, allocation_stream):
+    def declare_array(self, sdfg, dfg, state_id, node, nodedesc,
+                      function_stream, declaration_stream):
+
+        if not (isinstance(nodedesc, dt.Array)
+                and not isinstance(nodedesc, dt.View) and any(
+                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                    for s in nodedesc.free_symbols)):
+            raise NotImplementedError(
+                "The declare_array method should only be used for variables "
+                "that must have their declaration and allocation separate. "
+                "Currently, we support only Arrays (not Views) depedent on "
+                "non-free SDFG symbols.")
+
+        # Check if array is already declared
+        if self._dispatcher.declared_arrays.has(node.data):
+            return
+
+        result_decl = StringIO()
+        ctypedef = '%s *' % nodedesc.dtype.ctype
+        dataname = node.data
+
+        # Different types of GPU arrays
+        if (nodedesc.storage == dtypes.StorageType.GPU_Global
+                or nodedesc.storage == dtypes.StorageType.CPU_Pinned):
+            result_decl.write('%s %s;\n' % (ctypedef, dataname))
+            self._dispatcher.declared_arrays.add(dataname, DefinedType.Pointer,
+                                                 ctypedef)
+        elif nodedesc.storage == dtypes.StorageType.GPU_Shared:
+            raise NotImplementedError('Dynamic shared memory unsupported')
+        elif nodedesc.storage == dtypes.StorageType.Register:
+            raise ValueError('Dynamic allocation of registers not allowed')
+        else:
+            raise NotImplementedError("CUDA: Unimplemented storage type " +
+                                      str(nodedesc.storage))
+
+        declaration_stream.write(result_decl.getvalue(), sdfg, state_id, node)
+
+    def allocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                       function_stream, declaration_stream, allocation_stream):
         try:
             self._dispatcher.defined_vars.get(node.data)
             return
         except KeyError:
             pass  # The variable was not defined, we can continue
 
-        nodedesc = node.desc(sdfg)
+        # Check if array is already declared
+        declared = False
+        try:
+            self._dispatcher.declared_arrays.get(node.data)
+            declared = True  # Array was already declared in this or upper scopes
+        except KeyError:  # Array not declared yet
+            pass
+
         if isinstance(nodedesc, dace.data.Stream):
-            return self.allocate_stream(sdfg, dfg, state_id, node,
+            return self.allocate_stream(sdfg, dfg, state_id, node, nodedesc,
                                         function_stream, declaration_stream,
                                         allocation_stream)
         elif isinstance(nodedesc, dace.data.View):
@@ -360,23 +404,25 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         ctypedef = '%s *' % nodedesc.dtype.ctype
 
         dataname = node.data
-        allocname = cpp.ptr(dataname, nodedesc)
+        allocname = cpp.ptr(dataname, nodedesc, sdfg)
 
         # Different types of GPU arrays
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            result_decl.write('%s %s;\n' % (ctypedef, dataname))
+            if not declared:
+                result_decl.write('%s %s;\n' % (ctypedef, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer,
                                               ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('%sMalloc(&%s, %s);\n' %
+            result_alloc.write('%sMalloc((void**)&%s, %s);\n' %
                                (self.backend, allocname, arrsize_malloc))
             if node.setzero:
                 result_alloc.write('%sMemset(%s, 0, %s);\n' %
                                    (self.backend, allocname, arrsize_malloc))
 
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
-            result_decl.write('%s %s;\n' % (ctypedef, dataname))
+            if not declared:
+                result_decl.write('%s %s;\n' % (ctypedef, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer,
                                               ctypedef)
 
@@ -418,11 +464,10 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         declaration_stream.write(result_decl.getvalue(), sdfg, state_id, node)
         allocation_stream.write(result_alloc.getvalue(), sdfg, state_id, node)
 
-    def allocate_stream(self, sdfg, dfg, state_id, node, function_stream,
-                        declaration_stream, allocation_stream):
-        nodedesc = node.desc(sdfg)
+    def allocate_stream(self, sdfg, dfg, state_id, node, nodedesc,
+                        function_stream, declaration_stream, allocation_stream):
         dataname = node.data
-        allocname = cpp.ptr(dataname, nodedesc)
+        allocname = cpp.ptr(dataname, nodedesc, sdfg)
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             fmtargs = {
                 'name': dataname,
@@ -453,8 +498,10 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
                 # (important) Ensure GPU array is allocated before the stream
                 datanode = dfg.out_edges(node)[0].dst
+                sinkdesc = sdfg.arrays[datanode.data]
                 self._dispatcher.dispatch_allocate(sdfg, dfg, state_id,
-                                                   datanode, function_stream,
+                                                   datanode, sinkdesc,
+                                                   function_stream,
                                                    allocation_stream)
 
                 function_stream.write(
@@ -491,10 +538,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     '__dace_alloc_{location}({size}, {allocname});'.format(
                         **fmtargs), sdfg, state_id, node)
 
-    def deallocate_stream(self, sdfg, dfg, state_id, node, function_stream,
-                          callsite_stream):
-        nodedesc = node.desc(sdfg)
-        dataname = cpp.ptr(node.data, nodedesc)
+    def deallocate_stream(self, sdfg, dfg, state_id, node, nodedesc,
+                          function_stream, callsite_stream):
+        dataname = cpp.ptr(node.data, nodedesc, sdfg)
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if is_array_stream_view(sdfg, dfg, node):
                 callsite_stream.write(
@@ -504,13 +550,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 callsite_stream.write('dace::FreeGPUStream(%s);' % dataname,
                                       sdfg, state_id, node)
 
-    def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
-        nodedesc = node.desc(sdfg)
-        dataname = cpp.ptr(node.data, nodedesc)
+    def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                         function_stream, callsite_stream):
+        dataname = cpp.ptr(node.data, nodedesc, sdfg)
 
         if isinstance(nodedesc, dace.data.Stream):
-            return self.deallocate_stream(sdfg, dfg, state_id, node,
+            return self.deallocate_stream(sdfg, dfg, state_id, node, nodedesc,
                                           function_stream, callsite_stream)
         elif isinstance(nodedesc, dace.data.View):
             return
@@ -1102,48 +1147,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # After synchronizing streams, generate state footer normally
             callsite_stream.write('\n')
 
-            # Emit internal transient array deallocation for nested SDFGs
-            # TODO: Replace with global allocation management
-            gpu_persistent_subgraphs = [
-                state.scope_subgraph(node) for node in state.nodes()
-                if isinstance(node, dace.nodes.MapEntry)
-                and node.map.schedule == dace.ScheduleType.GPU_Persistent
-            ]
-            nested_deallocated = set()
-            for sub_graph in gpu_persistent_subgraphs:
-                for nested_sdfg in [
-                        n.sdfg for n in sub_graph.nodes()
-                        if isinstance(n, nodes.NestedSDFG)
-                ]:
-                    for nested_state in nested_sdfg:
-                        nested_sid = nested_sdfg.node_id(nested_state)
-                        nested_to_allocate = (
-                            set(nested_state.top_level_transients()) -
-                            set(nested_sdfg.shared_transients()))
-                        nodes_to_deallocate = [
-                            n for n in nested_state.data_nodes()
-                            if n.data in nested_to_allocate
-                            and n.data not in nested_deallocated
-                        ]
-                        for nested_node in nodes_to_deallocate:
-                            nested_deallocated.add(nested_node.data)
-                            self._dispatcher.dispatch_deallocate(
-                                nested_sdfg, nested_state, nested_sid,
-                                nested_node, function_stream, callsite_stream)
-
-            callsite_stream.write('\n')
-
             # Emit internal transient array deallocation
-            sid = sdfg.node_id(state)
-            data_to_allocate = (set(state.top_level_transients()) -
-                                set(sdfg.shared_transients()))
-            deallocated = set()
-            for node in state.data_nodes():
-                if node.data not in data_to_allocate or node.data in deallocated:
-                    continue
-                deallocated.add(node.data)
-                self._frame._dispatcher.dispatch_deallocate(
-                    sdfg, state, sid, node, function_stream, callsite_stream)
+            self._frame.deallocate_arrays_in_scope(sdfg, state, function_stream,
+                                                   callsite_stream)
 
             # Invoke all instrumentation providers
             for instr in self._frame._dispatcher.instrumentation.values():
@@ -1494,10 +1500,10 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         # Invoke kernel call
         callsite_stream.write(
-            '__dace_runkernel_%s(%s);\n' % (kernel_name, ', '.join(
-                ['__state'] +
-                [cpp.ptr(aname, arg) for aname, arg in kernel_args.items()])),
-            sdfg, state_id, scope_entry)
+            '__dace_runkernel_%s(%s);\n' %
+            (kernel_name, ', '.join(['__state'] + [
+                cpp.ptr(aname, arg, sdfg) for aname, arg in kernel_args.items()
+            ])), sdfg, state_id, scope_entry)
 
         synchronize_streams(sdfg, state, state_id, scope_entry, scope_exit,
                             callsite_stream)
@@ -1749,17 +1755,10 @@ void  *{kname}_args[] = {{ {kargs} }};
         self._grid_dims = grid_dims
 
         # Emit internal array allocation (deallocation handled at MapExit)
+        self._frame.allocate_arrays_in_scope(sdfg, node, function_stream,
+                                             kernel_stream)
+
         scope_entry = dfg_scope.source_nodes()[0]
-        to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, scope_entry)
-        allocated = set()
-        for child in dfg_scope.scope_children()[node]:
-            if not isinstance(child, nodes.AccessNode):
-                continue
-            if child.data not in to_allocate or child.data in allocated:
-                continue
-            allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id, child,
-                                               function_stream, kernel_stream)
 
         # Generate conditions for this block's execution using min and max
         # element, e.g., skipping out-of-bounds threads in trailing block
@@ -2051,16 +2050,8 @@ void  *{kname}_args[] = {{ {kargs} }};
                 callsite_stream.write('{', sdfg, state_id, scope_entry)
 
         # Emit internal array allocation (deallocation handled at MapExit)
-        to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, scope_entry)
-        allocated = set()
-        for child in dfg_scope.scope_children()[scope_entry]:
-            if not isinstance(child, nodes.AccessNode):
-                continue
-            if child.data not in to_allocate or child.data in allocated:
-                continue
-            allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id, child,
-                                               function_stream, callsite_stream)
+        self._frame.allocate_arrays_in_scope(sdfg, scope_entry, function_stream,
+                                             callsite_stream)
 
         # Generate all index arguments for block
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:

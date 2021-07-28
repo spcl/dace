@@ -230,7 +230,7 @@ class CompiledSDFG(object):
             field_str = field_str.strip()
 
             match_name = re.match(
-                '(?:const)?\s*(.*)(?:\s+\*\s*|\s*\*\s+)([a-zA-Z_][a-zA-Z_0-9]*)$',
+                r'(?:const)?\s*(.*)(?:\s+\*\s*|\s*\*\s+\_\_restrict\_\_\s+)([a-zA-Z_][a-zA-Z_0-9]*)$',
                 field_str)
             if match_name is None:
                 # reached a non-ptr field or something unparsable, we have to abort here
@@ -342,14 +342,19 @@ class CompiledSDFG(object):
             if not dtypes.is_array(arg) and isinstance(atype, dt.Array):
                 if isinstance(arg, list):
                     print('WARNING: Casting list argument "%s" to ndarray' % a)
+                elif arg is None:
+                    # None values are passed as null pointers
+                    pass
                 else:
                     raise TypeError(
                         'Passing an object (type %s) to an array in argument "%s"'
                         % (type(arg).__name__, a))
             elif dtypes.is_array(arg) and not isinstance(atype, dt.Array):
-                raise TypeError(
-                    'Passing an array to a scalar (type %s) in argument "%s"' %
-                    (atype.dtype.ctype, a))
+                # GPU scalars are pointers, so this is fine
+                if atype.storage != dtypes.StorageType.GPU_Global:
+                    raise TypeError(
+                        'Passing an array to a scalar (type %s) in argument "%s"'
+                        % (atype.dtype.ctype, a))
             elif not isinstance(atype, dt.Array) and not isinstance(
                     atype.dtype, dtypes.callback) and not isinstance(
                         arg, (atype.dtype.type, sp.Basic)) and not (isinstance(
@@ -387,6 +392,9 @@ class CompiledSDFG(object):
             # List to array
             elif isinstance(arg, list) and isinstance(argtype, dt.Array):
                 arglist[index] = np.array(arg, dtype=argtype.dtype.type)
+            # Null pointer
+            elif arg is None and isinstance(argtype, dt.Array):
+                arglist[index] = ctypes.c_void_p(0)
 
         # Retain only the element datatype for upcoming checks and casts
         arg_ctypes = [t.dtype.as_ctypes() for t in argtypes]
@@ -503,7 +511,7 @@ class CompiledSDFG(object):
             if arrname.startswith('__return') and not arr.transient:
                 if arrname in kwargs:
                     self._return_arrays.append(kwargs[arrname])
-                    self._retarray_shapes.append((arrname,))
+                    self._retarray_shapes.append((arrname, ))
                     continue
 
                 if isinstance(arr, dt.Stream):
