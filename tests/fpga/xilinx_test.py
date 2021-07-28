@@ -68,6 +68,8 @@ TESTS = [
     ("tests/fpga/hbm_deeply_nested_fpga.py", ["deepnest_test_1"], True, False,
      []),
     ("tests/fpga/hbm_copy_fpga.py", ["hbm2hbm1", "hbm2ddr1"], True, False, []),
+    ("tests/fpga/map_unroll_processing_elements.py",
+     ["map_unroll_processing_elements"], True, True, []),
 ]
 
 

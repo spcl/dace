@@ -65,6 +65,8 @@ TESTS = [
                                      "rr_interleave_1"], []),
     # Over approximated shapes
     ("tests/fpga/overapprox_transient_shapes.py", ["overapprox_1"], []),
+    ("tests/fpga/map_unroll_processing_elements.py",
+     "map_unroll_processing_elements", []),
 ]
 
 

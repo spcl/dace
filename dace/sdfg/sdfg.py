@@ -733,9 +733,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             for state in self.nodes():
                 for node in state.nodes():
                     if isinstance(node, nd.AccessNode) and node.data == name:
-                        raise ValueError("Data descriptor %s is already used"
-                                         "in node %s, state %s" %
-                                         (name, node, state))
+                        raise ValueError(f"Cannot remove data descriptor "
+                                         f"{name}: it is accessed by node "
+                                         f"{node} in state {state}.")
 
         del self._arrays[name]
 
@@ -1758,6 +1758,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Clone SDFG as the other modules may modify its contents
         sdfg = copy.deepcopy(self)
+        # Fix the build folder name on the copied SDFG to avoid it changing
+        # if the codegen modifies the SDFG (thereby changing its hash)
+        sdfg.build_folder = build_folder
 
         # Rename SDFG to avoid runtime issues with clashing names
         index = 0
