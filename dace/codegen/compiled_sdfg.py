@@ -3,6 +3,7 @@
 import ctypes
 import os
 import re
+import copy
 import shutil
 import subprocess
 from typing import Any, Dict, List, Tuple, Optional, Type
@@ -13,6 +14,7 @@ import sympy as sp
 
 from dace import data as dt, dtypes, symbolic
 from dace.codegen import exceptions as cgx
+from dace.codegen import codegen, compiler
 from dace.config import Config
 from dace.frontend import operations
 from dace.frontend.vscode import vscode
@@ -290,16 +292,42 @@ class CompiledSDFG(object):
                         compiledSdfg._lib.load()
                         if compiledSdfg._initialized is False:
                             compiledSdfg.initialize(*initargtuple)
+
+                        hasInstr = vscode.sdfg_has_instrumentation(
+                            compiledSdfg._sdfg)
+
+                        if hasInstr:
+                            # Create a deep copy as we dont want to
+                            # modify the real sdfg
+                            sdfg = copy.deepcopy(compiledSdfg._sdfg)
+                            vscode.sdfg_remove_instrumentations(sdfg)
+
+                            # Create the code without instrumenation
+                            program_objects = codegen.generate_code(sdfg)
+                            compiler.generate_program_folder(
+                                sdfg, program_objects, sdfg.build_folder)
+
                         operations.timethis(compiledSdfg._sdfg, 'DaCe', 0,
                                             compiledSdfg._cfunc,
                                             compiledSdfg._libhandle, *argtuple)
+
+                        if hasInstr:
+                            # Change back to the code without instrumentation
+                            program_objects = codegen.generate_code(
+                                compiledSdfg._sdfg)
+                            compiler.generate_program_folder(
+                                compiledSdfg._sdfg, program_objects,
+                                compiledSdfg._sdfg.build_folder)
+
                     except (RuntimeError, TypeError, UnboundLocalError,
                             KeyError, cgx.DuplicateDLLError, ReferenceError):
                         compiledSdfg._lib.unload()
                         raise
                 elif mode == 'load':
-                    sdfg = vscode.stop_and_load(compiledSdfg._sdfg)
-                    compiledSdfg = sdfg.compile()
+                    sdfg = vscode.stop_and_load()
+                    if (sdfg and
+                            sdfg.hash_sdfg() != compiledSdfg._sdfg.hash_sdfg()):
+                        compiledSdfg = sdfg.compile()
                 elif mode == 'save':
                     vscode.stop_and_save(compiledSdfg._sdfg)
                 elif mode == 'transform':
@@ -326,13 +354,14 @@ class CompiledSDFG(object):
                                     self._libhandle, *argtuple)
             else:
                 self._cfunc(self._libhandle, *argtuple)
-
-            print("argtuple: ", argtuple)
+            """ print("argtuple: ", argtuple)
             print("initargtuple: ", initargtuple)
-            for sdfg, name, array in self.sdfg.arrays_recursive():
-                print(f'{sdfg.name}:{name}\n{array.to_json()}')
-            print("fileds: ", self.get_state_struct()._fields_)
-            print("return: ", self._return_arrays)
+            for sdfg, name, _ in self.sdfg.arrays_recursive():
+                print(f'{sdfg.name}:{name}')
+            struct = self.get_state_struct()
+            for name, _ in struct._fields_:
+                print(f'{name}:{getattr(struct, name)}')
+            print("return: ", self._return_arrays) """
 
             return self._return_arrays
         except (RuntimeError, TypeError, UnboundLocalError, KeyError,
