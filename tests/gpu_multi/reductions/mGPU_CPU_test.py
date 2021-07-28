@@ -13,13 +13,34 @@ n = 1200
 dtype = dace.float64
 np_dtype = np.float64
 
+# @dace.program
+# def sum(A: dtype[N]):
+#     redA = dace.ndarray([1], dtype, storage=dace.StorageType.CPU_Pinned)
+#     out = dace.ndarray([1], dtype)
+#     for j in dace.map[0:N]:
+#         redA += A[j]
+#     out[:] = redA[:]
+#     return out
+
+# @dace.program
+# def prod(A: dtype[N]):
+#     redA = dace.ndarray([1], dtype, storage=dace.StorageType.CPU_Pinned)
+#     out = dace.ndarray([1], dtype)
+#     for j in dace.map[0:N]:
+#         redA *= A[j]
+#     out[:] = redA[:]
+#     return out
+
 
 @dace.program
 def sum(A: dtype[N]):
     redA = dace.ndarray([1], dtype, storage=dace.StorageType.CPU_Pinned)
     out = dace.ndarray([1], dtype)
     for j in dace.map[0:N]:
-        redA += A[j]
+        with dace.tasklet:
+            aj << A[j]
+            sA >> redA(1, lambda a, b: a + b)
+            sA = aj
     out[:] = redA[:]
     return out
 
@@ -29,7 +50,10 @@ def prod(A: dtype[N]):
     redA = dace.ndarray([1], dtype, storage=dace.StorageType.CPU_Pinned)
     out = dace.ndarray([1], dtype)
     for j in dace.map[0:N]:
-        redA *= A[j]
+        with dace.tasklet:
+            aj << A[j]
+            pA >> redA(1, lambda a, b: a * b)
+            pA = aj
     out[:] = redA[:]
     return out
 
@@ -66,6 +90,12 @@ def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
                 if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
 
 
+def find_access_node(sdfg: dace.SDFG, name: str) -> dace.nodes.MapEntry:
+    """ Finds the first access node by the given data name. """
+    return next(n for n, _ in sdfg.all_nodes_recursive()
+                if isinstance(n, dace.nodes.AccessNode) and n.data == name)
+
+
 def infer_result_function(reduction_type):
     res_func_dict = {sum: np.sum, prod: np.prod, max: np.max, custom: np_custom}
     return res_func_dict[reduction_type]
@@ -95,6 +125,9 @@ def test_multi_gpu_reduction(reduction_type):
         sdfg,
         verify=False if reduction_type == custom else True,
         _map_entry=map_entry)
+    if reduction_type == custom:
+        redA = find_access_node(sdfg, 'redA')
+        redA.setzero = True
 
     np.random.seed(0)
     A = np.ndarray(shape=n, dtype=np_dtype)

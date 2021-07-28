@@ -56,6 +56,7 @@ def batchnorm2d_data_parallelism(x: dc_dtype[N, H, W, C]):
         x[N_gpu * gpu_id:N_gpu * (gpu_id + 1)] = x_gpu[:]
 
 
+@pytest.mark.skip
 def test_batchnorm2d_dp_gpu():
     bngpusdfg: dace.SDFG = batchnorm2d_data_parallelism_gpu.to_sdfg(strict=True)
     bngpusdfg.apply_transformations(GPUTransformSDFG)
