@@ -21,15 +21,14 @@ def sdfg_edit() -> bool:
             and os.environ["DACE_sdfg_edit"] != "none")
 
 
-def stop_and_load(sdfg):
+def stop_and_load():
     """ Stops and loads an SDFG file to create the code with
-        :param sdfg: The current SDFG
-        :return: The loaded SDFG
+        :return: The loaded SDFG or None in the case that no SDFG was picked
     """
     reply = send_bp_recv({'type': 'loadSDFG'})
     if reply and 'filename' in reply:
         return dace.SDFG.from_file(reply['filename'])
-    return sdfg
+    return None
 
 
 def stop_and_save(sdfg):
@@ -48,7 +47,12 @@ def stop_and_transform(sdfg):
     """
     filename = os.path.abspath(os.path.join(sdfg.build_folder, 'program.sdfg'))
     sdfg.save(filename)
-    send_bp_recv({'type': 'stopAndTransform', 'filename': filename})
+    send_bp_recv({
+        'type': 'stopAndTransform',
+        'filename': filename,
+        'sdfgName': sdfg.name
+    })
+    # Continues as soon as vscode sends an answer
     sdfg = dace.SDFG.from_file(filename)
     sdfg.name = sdfg.name + '_t'
     return sdfg
@@ -116,3 +120,28 @@ def send_bp_recv(data: json) -> json:
         result = s.recv(1024)
         return json.loads(result)
     return None
+
+
+def sdfg_remove_instrumentations(sdfg: dace.sdfg.SDFG):
+    sdfg.instrument = dace.dtypes.InstrumentationType.No_Instrumentation
+    for state in sdfg.nodes():
+        state.instrument = dace.dtypes.InstrumentationType.No_Instrumentation
+        for node in state.nodes():
+            node.instrument = dace.dtypes.InstrumentationType.No_Instrumentation
+            if isinstance(node, dace.sdfg.nodes.NestedSDFG):
+                sdfg_remove_instrumentations(node.sdfg)
+
+
+def sdfg_has_instrumentation(sdfg: dace.sdfg.SDFG) -> bool:
+    if sdfg.instrument != dace.dtypes.InstrumentationType.No_Instrumentation:
+        return True
+    for state in sdfg.nodes():
+        if state.instrument != dace.dtypes.InstrumentationType.No_Instrumentation:
+            return True
+        for node in state.nodes():
+            if (hasattr(node, 'instrument') and node.instrument !=
+                    dace.dtypes.InstrumentationType.No_Instrumentation):
+                return True
+            if isinstance(node, dace.sdfg.nodes.NestedSDFG):
+                return sdfg_has_instrumentation(node.sdfg)
+    return False
