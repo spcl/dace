@@ -254,16 +254,13 @@ class HbmTransform(transformation.Transformation):
         """
         total_number_of_banks = 32
 
-        sdfg: SDFG = copy.deepcopy(sdfg)
-        #sdfg = nestsdfg
         propagation.propagate_memlet(sdfg)
-        #nestsdfg.apply_transformations(interstate.NestSDFG, validate=True)
-        #state = nestsdfg.states()[0]
 
         update_array_banks = {}
-        global_memory_array = set()
         division_info = {}
         split_dimensions = {}
+        global_memory_array = set()
+        no_split_arrays = set()
         
         # Find present bank assignemnts and allowed splits for all arrays based on shape
         for name, desc in sdfg.arrays.items():
@@ -275,6 +272,12 @@ class HbmTransform(transformation.Transformation):
             assigned = fpga.parse_location_bank(desc)
             if assigned is not None:
                 update_array_banks[name] = assigned
+                if assigned[0] == "HBM":
+                    low, high = fpga.get_multibank_ranges_from_subset(assigned[1], sdfg)
+                    if high - low == 1:
+                        no_split_arrays.add(name)
+                else:
+                    no_split_arrays.add(name)
 
             # Find largest possible number of divisions in each dimension for each array, 
             # assuming symbolic expressions are divisable by any number
@@ -285,16 +288,18 @@ class HbmTransform(transformation.Transformation):
             division_info[name] = tmp_divison_array
             global_memory_array.add(name)
 
+        for name in global_memory_array:
+            split_dimensions[name] = []
         
-        def dim_of_map(edge: graph.MultiConnectorEdge, map: nd.Map):
+        def dim_of_map(edge: graph.MultiConnectorEdge, map: nd.Map, number: int):
             # Helper to figure out which dimensions are accessed by a map
             # TODO: Check that all accesses go to distinct data
-            result = set()
+            result = []
             symbols = map.params
-            for symbol in symbols:
+            for num, symbol in enumerate(symbols):
                 for i, what in enumerate(edge.subset):
-                    if symbol in what.free_symbols():
-                        result.add(i)
+                    if symbol in what[0].free_symbols():
+                        result.append(i, number+num, map)
             return result
 
         # Find if and along which dimension we can split
@@ -302,52 +307,75 @@ class HbmTransform(transformation.Transformation):
             seen = set()
             for node in state.sink_nodes() + state.source_nodes():
                 if isinstance(node, nd.AccessNode):
-                    if node.data in global_memory_array:
+                    if node.data in global_memory_array and node.data not in no_split_arrays:
                         seen.add(node)
                         for edge in state.all_edges(node):
-
                             path = state.memlet_path(edge)
                             result = None
                             if path[0] == edge:
                                 for i in range(len(path)):
                                     current_edge: graph.MultiConnectorEdge = path[i]
                                     current_node = current_edge.dst
+                                    if isinstance(current_node, nd.PipelineEntry):
+                                        break
                                     if isinstance(current_node, nd.MapEntry):
-                                        result = dim_of_map(path[i+1], current_node.map)
-                                        if len(result) > 0:
-                                            break
+                                        result = dim_of_map(path[i+1], current_node.map, i)
+                                        split_dimensions[node.data].append(result)
                             else:
                                 for i in range(len(path)):
                                     index = len(path) - i - 1
                                     current_edge: graph.MultiConnectorEdge = path[index]
                                     current_node = current_edge.src
+                                    if isinstance(current_node, nd.PipelineExit):
+                                        break
                                     if isinstance(current_node, nd.MapExit):
-                                        result = dim_of_map(path[index - 1], current_node.map)
-                                        if len(result) > 0:
-                                            break
-                            if node.data in split_dimensions:
-                                current = split_dimensions[node.data]
-                                next = result.intersection(current)
-                                split_dimensions[node.data] = next
-                            else:
-                                split_dimensions[node.data] = result
-            for node in state.nodes(): # Check that this is only used as source or sink
+                                        result = dim_of_map(path[index - 1], current_node.map, i)
+                                        split_dimensions[node.data].append(result)
+
+            # Check that arrays are only used as source or sink
+            for node in state.nodes(): 
                 if (isinstance(node, nd.AccessNode) and node.data in global_memory_array and 
                     node not in seen):
-                    split_dimensions[node.data] = set()
-        for name in split_dimensions: # Only split along one dimension. Prefer 0.
-            dims = split_dimensions[name]
-            if len(dims) > 1:
-                if 0 in dims:
-                    save = 0
-                else:
-                    save = next(iter(dims))
-                split_dimensions[name] = save
+                    no_split_arrays.add(node.data)
+
+        # Only split along one dimension. Prefer the lower rated (farther outside defined), then dimension 0
+        for name in split_dimensions: 
+            if name in no_split_arrays:
+                del split_dimensions[name]
+                continue
             
-        
+            arr_dim_list = split_dimensions[name]
 
-
-
+            #Find common possible dimensions
+            rates = {}
+            map_list = {}
+            possible = set()
+            for i, res in enumerate(arr_dim_list):
+                tmp_possible = set()
+                tmp_meta = {}
+                for dim, rate, acc_map in res:
+                    if i == 0:
+                        possible.add(dim)
+                        rates[dim] = rate
+                        map_list[dim] = [acc_map]
+                    else:
+                        tmp_possible.add(dim)
+                        tmp_meta[dim] = rate
+                    possible = possible.intersection(tmp_possible)
+                    for dim in possible:
+                        rates[dim] = rates[dim] + tmp_meta[dim]
+                        map_list[dim].append(acc_map)
+            # Select "best"
+            best_rate = None
+            best_dim = -1
+            for dim in possible:
+                if (best_rate is None or best_rate < rates[dim]
+                    or (best_rate == rates[dim] and dim == 0)):
+                    best_rate = rates[dim]
+                    best_dim = dim
+            if best_dim != -1:
+                split_dimensions[name] = (best_dim, map_list[best_dim])
+                
     
         if len(div_info) > 0:
             # Find free HBM banks
