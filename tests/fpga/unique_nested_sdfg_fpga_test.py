@@ -9,6 +9,7 @@ import argparse
 import subprocess
 
 from dace.memlet import Memlet
+from dace.fpga_testing import fpga_test
 
 
 def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
@@ -214,7 +215,8 @@ def make_nested_sdfg_fpga(unique_names):
     return sdfg
 
 
-if __name__ == "__main__":
+@fpga_test()
+def test_unique_nested_sdfg_fpga():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int, nargs="?", default=32)
@@ -273,7 +275,10 @@ if __name__ == "__main__":
 
     diff1 = np.linalg.norm(ref1 - z_u_name) / size_n
     diff2 = np.linalg.norm(ref2 - u_u_name) / size_m
-    if diff1 <= 1e-5 and diff2 <= 1e-5:
-        print("==== Program end ====")
-    else:
-        raise Exception("==== Program Error! ====")
+    assert diff1 <= 1e-5 and diff2 <= 1e-5
+
+    return [two_axpy_hash, two_axpy_u_name]
+
+
+if __name__ == "__main__":
+    test_unique_nested_sdfg_fpga(None)

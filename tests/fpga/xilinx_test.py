@@ -22,8 +22,6 @@ TESTS = [
     # ("jacobi_fpga_systolic.py", "jacobi_fpga_systolic_4_Hx128xT", True, True, [1, 128, 128, 8, 4]),
     ("samples/fpga/gemv_transposed_fpga.py", "gemv_transposed_1024xM", True,
      False, [1024, 1024]),
-    ("tests/fpga/multiple_kernels.py", "multiple_kernels", True, False, []),
-    ("tests/fpga/unique_nested_sdfg_fpga.py", "two_vecAdd", True, False, []),
     ("tests/fpga/nested_sdfg_as_kernel.py", "nested_sdfg_kernels", True, False,
      []),
     # This doesn't pipeline with Vitis 2020.1 for whatever reason (it pipelines

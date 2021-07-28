@@ -37,8 +37,6 @@ TESTS = [
     ("samples/fpga/filter_fpga.py", "filter_fpga", [1000, 0.2]),
     ("samples/fpga/matrix_multiplication_stream.py", "mm_fpga_stream_NxKx128",
      [128, 128, 128]),
-    ("tests/fpga/multiple_kernels.py", "multiple_kernels", []),
-    ("tests/fpga/unique_nested_sdfg_fpga.py", "two_vecAdd", []),
     ### BLAS ###
     ("tests/blas/nodes/axpy_test.py",
      ["axpy_test_fpga_0_w1_1", "axpy_test_fpga_1_w4_1"], ["--target", "fpga"]),
