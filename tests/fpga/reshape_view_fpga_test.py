@@ -5,10 +5,12 @@ import dace
 import numpy as np
 import pytest
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG, GPUTransformSDFG, NestSDFG
+from dace.fpga_testing import fpga_test
 
 N = dace.symbol('N')
 
 
+@fpga_test()
 def test_view_fpga_sdfg():
     '''
     Manually built FPGA-SDFG with a view: Array -> view -> Array
@@ -84,7 +86,10 @@ def test_view_fpga_sdfg():
     sdfg(A=A, B=B)
     assert np.allclose(A, np.reshape(B, [2, 3, 4]))
 
+    return sdfg
 
+
+@fpga_test()
 def test_reshape_np():
     '''
     Dace program with numpy reshape, transformed for FPGA
@@ -102,7 +107,10 @@ def test_reshape_np():
     sdfg(A=A, B=B)
     assert np.allclose(np.reshape(A, [2, 6]), B)
 
+    return sdfg
 
+
+@fpga_test()
 def test_reshape_dst_explicit():
     """ Tasklet->View->Array """
     sdfg = dace.SDFG('reshapedst')
@@ -133,7 +141,10 @@ def test_reshape_dst_explicit():
     sdfg(A=A, B=B)
     assert np.allclose(A + 1, np.reshape(B, [2, 3, 4]))
 
+    return sdfg
 
+
+@fpga_test(assert_ii_1=False)
 def test_view_slice():
     """
         In this test we use slice. In this case a view is used to access
@@ -144,7 +155,8 @@ def test_view_slice():
     M = dace.symbol('M', dace.int32)
 
     @dace.program
-    def view_slice(alpha: dace.float32, beta: dace.float32, C: dace.float32[M,N],
+    def view_slice(alpha: dace.float32, beta: dace.float32, C: dace.float32[M,
+                                                                            N],
                    A: dace.float32[M, M], B: dace.float32[M, N]):
 
         C *= beta
@@ -171,9 +183,11 @@ def test_view_slice():
     sdfg(A=A, B=B, C=C, alpha=alpha, beta=beta, M=M, N=N)
     assert np.allclose(C, np_C, atol=1e-06)
 
+    return sdfg
+
 
 if __name__ == "__main__":
-    test_reshape_np()
-    test_view_fpga_sdfg()
-    test_reshape_dst_explicit()
-    test_view_slice()
+    test_reshape_np(None)
+    test_view_fpga_sdfg(None)
+    test_reshape_dst_explicit(None)
+    test_view_slice(None)

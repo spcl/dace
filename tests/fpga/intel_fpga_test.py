@@ -57,9 +57,6 @@ TESTS = [
     ("tests/fpga/intel_fpga/autorun.py", "autorun_test", []),
     # Channels mangling
     ("tests/fpga/intel_fpga/channels_mangling.py", "channels_mangling", []),
-    # Views
-    ("tests/fpga/reshape_view_fpga.py",
-     ["reshapedst_1", "reshp_np_1", "view_fpga"], []),
     # Test map fusion resulting in Tasklet -> Tasklet memlets
     ("tests/transformations/mapfusion_fpga.py",
      ["multiple_fusions_1", "fusion_with_transient_1"], []),
