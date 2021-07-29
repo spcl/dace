@@ -3874,10 +3874,22 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # If the function is a callable object
             elif funcname in self.globals and callable(self.globals[funcname]):
-                fcall = getattr(self.globals[funcname], '__call__', False)
+                fobj = self.globals[funcname]
+                fcall = getattr(fobj, '__call__', False)
                 if self._has_sdfg(fcall):
                     func = fcall
                     funcname = fcall.name
+                elif isinstance(fobj, numpy.ufunc):
+                    modname = 'numpy'
+                    funcname = f'numpy.{fobj.__name__}'
+                # Try to evaluate function directly
+                elif (callable(fobj) and hasattr(fobj, '__module__')
+                      and hasattr(fobj, '__name__')):
+                    module = fobj.__module__
+                    if module is None or module == str.__class__.__module__:
+                        funcname = fobj.__name__
+                    else:
+                        funcname = fobj.__module__ + '.' + fobj.__name__
 
         # If the function exists as a global SDFG or @dace.program, use it
         if func or funcname in self.other_sdfgs:
