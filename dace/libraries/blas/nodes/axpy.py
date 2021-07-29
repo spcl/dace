@@ -186,12 +186,13 @@ class ExpandAxpyFpgaHbm(ExpandTransformation):
             0]  # We know this is equal for all arrays it's checked in validation
 
         from dace.transformation.dataflow.hbm_transform import transform_sdfg_for_hbm  # Avoid import loop
+        map = list(filter(lambda x : isinstance(x, dace.sdfg.nodes.MapEntry), sdfg.nodes()[0].nodes()))[0].map
         transform_sdfg_for_hbm(sdfg, (param, bank_count), 
-                {"_x":(banks_x[0], banks_x[1]),
-                "_y":(banks_y[0], banks_y[1]),
-                "_res":(banks_res[0], banks_res[1])},
-                {"n":2}, True)
-
+                {"_x":(banks_x[0], banks_x[1], [bank_count]),
+                "_y":(banks_y[0], banks_y[1], [bank_count]),
+                "_res":(banks_res[0], banks_res[1], [bank_count])},
+                {(map, 0):bank_count}, True)
+        
         return sdfg
 
 

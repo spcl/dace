@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from copy import copy
-from typing import Any, Dict, Iterable, List, Tuple, Union
+import copy
+from typing import Any, Dict, Iterable, List, Set, Tuple, Union
 
 import networkx
 from dace import dtypes, properties, registry, subsets, symbolic
@@ -145,6 +145,7 @@ def _update_new_hbm_accesses(sdfg: SDFG, update_access: Dict[str, List[int]],
         for node in state.nodes():
             if isinstance(node, nd.NestedSDFG) and recursive:
                 pass_update = set()
+                node.symbol_mapping[str(inner_subset_index)] = inner_subset_index
                 def add_pass_update(inner_name, outer_name):
                     if outer_name in update_access:
                         pass_update.add(inner_name)
@@ -165,7 +166,7 @@ def _update_new_hbm_accesses(sdfg: SDFG, update_access: Dict[str, List[int]],
 
 def transform_sdfg_for_hbm(sdfg: SDFG, outer_map_range: Tuple[str, int], 
     update_array_banks: Dict[str, Tuple[str, str, List[int]]],
-    update_map_range: Dict[(nd.Map, int), int], recursive=False):
+    update_map_range: Dict[Tuple[nd.Map, int], int], recursive=False):
     update_access = set() # Store which arrays need updates for later
 
     # update array bank positions
@@ -177,7 +178,10 @@ def transform_sdfg_for_hbm(sdfg: SDFG, outer_map_range: Tuple[str, int],
 
     for map_info, division in update_map_range.items():
         target, param_index = map_info
-        target.range[param_index] = symbolic.pystr_to_symbolic(f"{target.range[param_index]}//{division}")
+        current = target.range[param_index]
+        new_value = (current[0], symbolic.pystr_to_symbolic(f"{current[1] + 1}//{division} - 1"), 
+            current[2])
+        target.range[param_index] = new_value
 
     # We need to update on the inner part as well - if recursive is false one needs to do so explicit
     if not recursive:
@@ -250,7 +254,7 @@ class HbmTransform(transformation.Transformation):
         """
         total_number_of_banks = 32
 
-        propagation.propagate_memlet(sdfg)
+        propagation.propagate_memlets_sdfg(sdfg)
 
         update_array_banks = {}
         division_info = {}
@@ -261,10 +265,10 @@ class HbmTransform(transformation.Transformation):
         unroll_factor = None
         array_dimensions = {}
         
-        # Find present bank assignemnts and allowed splits for all arrays based on shape
+        # Find present bank assignemnts and allowed unroll factor for all arrays based on shape
         for name, desc in sdfg.arrays.items():
 
-            if desc.storage != dtypes.StorageType.FPGA_Global or dtypes.StorageType.Default:
+            if desc.storage != dtypes.StorageType.FPGA_Global and desc.storage != dtypes.StorageType.Default:
                 continue
 
             # When assignment present on array, use it
@@ -289,28 +293,31 @@ class HbmTransform(transformation.Transformation):
             for dim in desc.shape:
                 sub_f = symbolic.resolve_symbol_to_constant(dim, sdfg) # sub_f = None if dim symbolic
                 tmp_divison_array.append(sub_f)
-            division_info[name] = [tmp_divison_array]
+            division_info[name] = tmp_divison_array
             global_memory_array.add(name)
 
-        for name in global_memory_array:
-            split_dimensions[name] = []
-        
         def dim_of_map(edge: graph.MultiConnectorEdge, map: nd.Map, number: int):
             # Helper to figure out which dimensions are accessed by a map
             # TODO: Check that all accesses go to distinct data
             # TODO: Check which value this has to divide
-            result = None
+            result = []
             symbols = map.params
             for num, symbol in enumerate(symbols):
-                for i, what in enumerate(edge.subset):
-                    if symbol in what[0].free_symbols():
-                        if result is None:
-                            result = (i, number+num, (map, num))
+                tmp = None
+                for i, what in enumerate(edge.data.subset):
+                    if symbol in [str(x) for x in what[0].free_symbols]:
+                        if tmp is None:
+                            tmp = (i, number+num, (map, num))
                         else:
-                            return None # only one dimension may be bound to the map symbol
+                            tmp = None # only one dimension may be bound to the map symbol
+                            break
+                if tmp is not None:
+                    result.append(tmp)
             return result
 
-        # Find if and along which dimension we can split
+        # Find maps that could be used to define the split behaviour
+        for name in global_memory_array:
+            split_dimensions[name] = []
         for state in sdfg.states():
             seen = set()
             for node in state.sink_nodes() + state.source_nodes():
@@ -320,7 +327,7 @@ class HbmTransform(transformation.Transformation):
                         for edge in state.all_edges(node):
                             path = state.memlet_path(edge)
                             current_split_dimensions = []
-                            if path[0] == edge:
+                            if path[0] == edge: # This is a read
                                 for i in range(len(path)):
                                     current_edge: graph.MultiConnectorEdge = path[i]
                                     current_node = current_edge.dst
@@ -328,7 +335,7 @@ class HbmTransform(transformation.Transformation):
                                         break
                                     if isinstance(current_node, nd.MapEntry):
                                         result = dim_of_map(path[i+1], current_node.map, i)
-                                        current_split_dimensions.append(result)
+                                        current_split_dimensions.extend(result)
                             else:
                                 for i in range(len(path)):
                                     index = len(path) - i - 1
@@ -338,7 +345,7 @@ class HbmTransform(transformation.Transformation):
                                         break
                                     if isinstance(current_node, nd.MapExit):
                                         result = dim_of_map(path[index - 1], current_node.map, i)
-                                        current_split_dimensions.append(result)
+                                        current_split_dimensions.extend(result)
                             if len(current_split_dimensions) == 0:
                                 no_split_arrays.add(node.data)
                                 break
@@ -351,45 +358,107 @@ class HbmTransform(transformation.Transformation):
                     node not in seen):
                     no_split_arrays.add(node.data)
 
-        # Only split along one dimension. Prefer the lower rated (farther outside defined), then dimension 0
-        for name in split_dimensions: 
-            if name in no_split_arrays:
+        for name in no_split_arrays:
+            if name in split_dimensions:
                 del split_dimensions[name]
-                continue
-            arr_dim_list = split_dimensions[name]
 
-            #Find common possible dimensions
-            rates = {}
-            map_list = {}
+        # Find out which array has accesses that are dependent from which map
+        modifiable_map = set()
+        modifiable_map_ranges = {}
+        modifiable_map_to_dependent = {}
+        for _, _, acc_map in split_dimensions.values():
+            modifiable_map.add(acc_map[0])
+            if modifiable_map not in modifiable_map_ranges:
+                modifiable_map_ranges[acc_map[0]] = set()
+            modifiable_map_ranges[acc_map[0]].add(acc_map[1])
+        for name, _ in sdfg.arrays:
+            modifiable_map_to_dependent[name] = set()
+        symbol_stack = {}
+        symbol_to_map = {}
+        for state in sdfg.states():
+            for node in utils.dfs_topological_sort(state, state.source_nodes()):
+                if isinstance(node, nd.MapEntry) and node.map in modifiable_map:
+                    for index in modifiable_map_ranges[node.map]:
+                        current_symbol = node.map.params[index]
+                        symbol_stack[current_symbol] = index
+                        symbol_to_map[current_symbol] = node.map
+                elif isinstance(node, nd.MapExit) and node.map in modifiable_map:
+                    for index in modifiable_map_ranges[node.map]:
+                        symbol_stack.pop(node.map.params[index])
+                for edge in state.out_edges(node):
+                    mem : memlet.Memlet = edge.data
+                    if mem is not None:
+                        for access in [mem.subset, mem.other_subset]:
+                            if access is not None:
+                                tmp = set([str(x) for x in access.free_symbols]).intersection(symbol_stack) # symbol_stack is a Dict
+                                for symbol in tmp:
+                                    modifiable_map_to_dependent[mem.data].add(symbol_stack[symbol], symbol_to_map[symbol])
+        
+        multibank_arrays = global_memory_array.difference(no_split_arrays)
+
+        # exclude all maps that have dependent arrays which are single bank
+        exclude_maps = set()
+        for map, arrays in modifiable_map_to_dependent.items():
+            for array in arrays:
+                if array not in multibank_arrays:
+                    exclude_maps.add(map)
+        for array in split_dimensions:
+            arr_dim_list = split_dimensions[name]
+            new_arr_dim_list = []
+            for res in arr_dim_list:
+                new_res = []
+                for e in res:
+                    if e[2] not in exclude_maps:
+                        new_res.append(e)
+                if len(res) > 0:
+                    new_arr_dim_list.append(res)
+            split_dimensions[name] = new_arr_dim_list
+
+        # Find common possible dimensions for different accesses
+        for name in split_dimensions: 
+            if name not in multibank_arrays:
+                continue
+
+            arr_dim_list = split_dimensions[name]
+            new_arr_dim_list = []
             possible = set()
             for i, res in enumerate(arr_dim_list):
                 tmp_possible = set()
-                tmp_meta = {}
-                for dim, rate, acc_map in res:
+                for dim, _, acc_map in res:
                     if i == 0:
                         possible.add(dim)
-                        rates[dim] = rate
-                        map_list[dim] = [acc_map]
                     else:
                         tmp_possible.add(dim)
-                        tmp_meta[dim] = rate
                 possible = possible.intersection(tmp_possible)
-                for dim in possible:
-                    rates[dim] = rates[dim] + tmp_meta[dim]
-                    map_list[dim].append(acc_map)
+            for res in arr_dim_list:
+                if res[0][0] in possible:
+                    new_arr_dim_list.append(res)
+            if len(new_arr_dim_list) == 0:
+                no_split_arrays.add(name)
+                del split_dimensions[name]
+            else:
+                split_dimensions[name] = new_arr_dim_list
 
-            # Select "best"
-            best_rate = None
-            best_dim = -1
-            for dim in possible:
-                if (best_rate is None or best_rate < rates[dim]
-                    or (best_rate == rates[dim] and dim == 0)):
-                    best_rate = rates[dim]
-                    best_dim = dim
-            if best_dim != -1:
-                split_dimensions[name] = (best_dim, map_list[best_dim])
+        multibank_arrays = global_memory_array.difference(no_split_arrays)
+
+        # Find selection of maps to modify
+        update_map_range = {}
+        split_dimensions_name_list = list(split_dimensions.keys())
+        # TODO: Slow. 
+        def find_maps_to_modify(selected: Set = set(), index: int = 0,
+            max_paths = 100, current_paths = 0):
+            if index >= len(split_dimensions_name_list):
+                return ([], 0, current_paths)
+            if current_paths > max_paths:
+                return ([], 0, current_paths)
+            current = split_dimensions[split_dimensions_name_list[index]]
+            for access in current:
                 
-        #Reduce divison info to only contain one number or None
+
+
+
+
+        # Reduce divison info to only contain one number or None
         for array in division_info:
             values = division_info[array]
             tmp_size = None
@@ -479,7 +548,6 @@ class HbmTransform(transformation.Transformation):
         # Fill update_array_banks and which maps need to be updated
         consumed_single = 0
         consumed_splitable = 0
-        update_map_range = {}
         for array in global_memory_array:
             if array in placed_arrays:
                 continue
@@ -502,7 +570,31 @@ class HbmTransform(transformation.Transformation):
     def can_be_applied(graph: Union[SDFG, SDFGState],
                        candidate: Dict['PatternNode', int], expr_index: int,
                        sdfg: SDFG, strict: bool) -> bool:
-        raise NotImplementedError()
+
+        # Nested SDFGs not supported at the moment 
+        # It would probably not be to hard to support them though
+        for node, _ in sdfg.all_nodes_recursive():
+            if isinstance(node, nd.NestedSDFG) or isinstance(node, nd.LibraryNode):
+                return False
+
+        # Check if this graph is valid or invalid in the allowed way mentioned above
+        backup = {}
+        ok = True
+        for array, desc in sdfg.arrays.items():
+            if len(desc.location) > 0:
+                backup[array] =  copy.copy(desc.location)
+                desc.location.clear()
+        try:
+            sdfg.validate()
+        except:
+            ok = False
+        for array, location in backup:
+            sdfg.arrays[array].location = location
+        if not ok:
+            return False
+
+        # Check if this actually does something TODO
+        return True
 
     @staticmethod
     def expressions():
@@ -510,6 +602,6 @@ class HbmTransform(transformation.Transformation):
         return [networkx.DiGraph()]
 
     def apply(self, sdfg: SDFG) -> Union[Any, None]:
-        raise NotImplementedError()
-
-        
+        update_array_banks, outer_map_range, update_map_range = HbmTransform._find_suitable_settings(sdfg)
+        transform_sdfg_for_hbm(sdfg, outer_map_range, update_array_banks,
+            update_array_banks, False)
