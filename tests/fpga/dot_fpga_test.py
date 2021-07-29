@@ -7,7 +7,7 @@
 import click
 import dace
 import numpy as np
-from dace.fpga_testing import intel_fpga_test
+from dace.fpga_testing import fpga_test
 
 from dace.transformation.dataflow import MapTiling
 from dace.transformation.interstate import FPGATransformSDFG
@@ -51,14 +51,14 @@ def run_dot(n, tile_first):
     return sdfg
 
 
-@intel_fpga_test()
+@fpga_test(assert_ii_1=False)
 def test_dot_tile_first():
-    run_dot(64, True)
+    return run_dot(64, True)
 
 
-@intel_fpga_test()
+@fpga_test(assert_ii_1=False)
 def test_dot_fpga_transform_first():
-    run_dot(64, False)
+    return run_dot(64, False)
 
 
 if __name__ == "__main__":

@@ -6,37 +6,37 @@
 
 # Note: to generate the code for both NSDFG, we set Dace config for compiler->unique_functions to False
 
-
 import dace
 import numpy as np
 import argparse
 import subprocess
 from dace.config import Config
 
+from dace.fpga_testing import intel_fpga_test
 from dace.memlet import Memlet
 
 N = dace.symbol("N")
 
-def make_increment_sdfg(sdfg_name: str,  dtype=dace.float32):
-    inc_sdfg = dace.SDFG(sdfg_name)
 
+def make_increment_sdfg(sdfg_name: str, dtype=dace.float32):
+    inc_sdfg = dace.SDFG(sdfg_name)
 
     # FPGA State
 
     fpga_state = inc_sdfg.add_state("fpga_state")
 
     inc_sdfg.add_array("x",
-                   shape=[N],
-                   dtype=dtype,
-                   storage=dace.dtypes.StorageType.FPGA_Global)
+                       shape=[N],
+                       dtype=dtype,
+                       storage=dace.dtypes.StorageType.FPGA_Global)
     inc_sdfg.add_array("y",
                        shape=[N],
                        dtype=dtype,
                        storage=dace.dtypes.StorageType.FPGA_Global)
     inc_sdfg.add_stream("what_a_nice_pipe",
-                    dtype,
-                    transient=True,
-                    storage=dace.dtypes.StorageType.FPGA_Local)
+                        dtype,
+                        transient=True,
+                        storage=dace.dtypes.StorageType.FPGA_Local)
 
     data_in = fpga_state.add_read("x")
     data_out = fpga_state.add_write("y")
@@ -49,8 +49,8 @@ def make_increment_sdfg(sdfg_name: str,  dtype=dace.float32):
         dict(i='0:N'),
         schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
-    incr_tasklet = fpga_state.add_tasklet('incr_task', ['in_con'],['out_con'],
-                                             'out_con = in_con + 1')
+    incr_tasklet = fpga_state.add_tasklet('incr_task', ['in_con'], ['out_con'],
+                                          'out_con = in_con + 1')
 
     # From memory to increment
     fpga_state.add_memlet_path(data_in,
@@ -85,7 +85,6 @@ def make_increment_sdfg(sdfg_name: str,  dtype=dace.float32):
                                src_conn='out_con',
                                memlet=dace.Memlet("y[i]"))
 
-
     #########
     # Validate
     inc_sdfg.fill_scope_connectors()
@@ -98,9 +97,7 @@ def make_nested_sdfg_fpga(dtype=dace.float32):
     Build an SDFG with two nested SDFGs, each one a different state
     '''
 
-
     sdfg = dace.SDFG("channels_mangling")
-
 
     ###########################################################################
     # Copy data to FPGA
@@ -109,27 +106,24 @@ def make_nested_sdfg_fpga(dtype=dace.float32):
 
     sdfg.add_array("X", shape=[N], dtype=dtype)
 
-
     in_host_x = copy_in_state.add_read("X")
 
     sdfg.add_array("device_X",
-                  shape=[N],
-                  dtype=dtype,
-                  storage=dace.dtypes.StorageType.FPGA_Global,
-                  transient=True)
+                   shape=[N],
+                   dtype=dtype,
+                   storage=dace.dtypes.StorageType.FPGA_Global,
+                   transient=True)
     sdfg.add_array("device_tmp",
                    shape=[N],
                    dtype=dtype,
                    storage=dace.dtypes.StorageType.FPGA_Global,
                    transient=True)
 
-
     in_device_x = copy_in_state.add_write("device_X")
 
     copy_in_state.add_memlet_path(in_host_x,
                                   in_device_x,
-                                  memlet=Memlet.simple(
-                                      in_host_x, "0:N"))
+                                  memlet=Memlet.simple(in_host_x, "0:N"))
 
     ###########################################################################
     # Copy data from FPGA
@@ -142,21 +136,19 @@ def make_nested_sdfg_fpga(dtype=dace.float32):
                    storage=dace.dtypes.StorageType.FPGA_Global,
                    transient=True)
 
-
     out_device = copy_out_state.add_read("device_Y")
     out_host = copy_out_state.add_write("Y")
 
     copy_out_state.add_memlet_path(out_device,
                                    out_host,
-                                   memlet=Memlet.simple(
-                                       out_host, "0:N"))
+                                   memlet=Memlet.simple(out_host, "0:N"))
 
     ########################################################################
     # First state
     state = sdfg.add_state("state")
     state.location["is_FPGA_kernel"] = False
 
-    to_nest = make_increment_sdfg("nest_1",  dtype)
+    to_nest = make_increment_sdfg("nest_1", dtype)
     x = state.add_read("device_X")
     tmp = state.add_write("device_tmp")
 
@@ -183,30 +175,28 @@ def make_nested_sdfg_fpga(dtype=dace.float32):
     # add nested sdfg with symbol mapping
     nested_sdfg = state2.add_nested_sdfg(to_nest, sdfg, {"x"}, {"y"})
     state2.add_memlet_path(tmp_read,
-                          nested_sdfg,
-                          dst_conn="x",
-                          memlet=Memlet("device_tmp[0:N]"))
+                           nested_sdfg,
+                           dst_conn="x",
+                           memlet=Memlet("device_tmp[0:N]"))
     state2.add_memlet_path(nested_sdfg,
-                          y,
-                          src_conn="y",
-                          memlet=Memlet("device_Y[0:N]"))
-
+                           y,
+                           src_conn="y",
+                           memlet=Memlet("device_Y[0:N]"))
 
     ######################################
     # Interstate edges
     sdfg.add_edge(state, state2, dace.sdfg.sdfg.InterstateEdge())
 
     # Interstate edges
-    sdfg.add_edge(copy_in_state, state,
-                         dace.sdfg.sdfg.InterstateEdge())
-    sdfg.add_edge(state2, copy_out_state,
-                         dace.sdfg.sdfg.InterstateEdge())
+    sdfg.add_edge(copy_in_state, state, dace.sdfg.sdfg.InterstateEdge())
+    sdfg.add_edge(state2, copy_out_state, dace.sdfg.sdfg.InterstateEdge())
     sdfg.validate()
 
     return sdfg
 
 
-if __name__ == "__main__":
+@intel_fpga_test()
+def test_channel_mangling():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int, nargs="?", default=32)
@@ -222,10 +212,12 @@ if __name__ == "__main__":
     X = np.random.rand(size_n).astype(np.float32)
     Y = np.random.rand(size_n).astype(np.float32)
     sdfg(X=X, Y=Y, N=size_n)
-    ref = X+2
+    ref = X + 2
     diff = np.linalg.norm(ref - Y) / size_n
-    if diff <= 1e-5 :
-        print("==== Program end ====")
-    else:
-        raise Exception("==== Program Error! ====")
+    assert diff <= 1e-5
 
+    return sdfg
+
+
+if __name__ == "__main__":
+    test_channel_mangling(None)
