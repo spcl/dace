@@ -2490,8 +2490,8 @@ class ProgramVisitor(ExtNodeVisitor):
         for mv in nsdfg_node.symbol_mapping.values():
             for sym in mv.free_symbols:
                 if (sym.name not in self.sdfg.symbols
-                        and sym.name in self.globals
-                        and isinstance(sym, symbolic.symbol)):
+                        and sym.name in self.globals and isinstance(
+                            self.globals[sym.name], symbolic.symbol)):
                     self.sdfg.add_symbol(sym.name, self.globals[sym.name].dtype)
 
     def _recursive_visit(self,
