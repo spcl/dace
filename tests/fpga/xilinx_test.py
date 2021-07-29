@@ -46,8 +46,6 @@ TESTS = [
     # Over approx Shapes
     ("tests/fpga/overapprox_transient_shapes.py", ["overapprox_1"], True, False,
      []),
-    ("tests/fpga/map_unroll_processing_elements.py",
-     ["map_unroll_processing_elements"], True, True, []),
 ]
 
 

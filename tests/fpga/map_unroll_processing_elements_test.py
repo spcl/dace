@@ -1,11 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import dace.sdfg.nodes as nodes
+from dace.fpga_testing import fpga_test
 import importlib.util
 import numpy as np
 from pathlib import Path
 
-if __name__ == "__main__":
+
+@fpga_test()
+def test_map_unroll_processing_elements():
 
     # Grab the systolic GEMM implementation the samples directory
     spec = importlib.util.spec_from_file_location(
@@ -38,3 +41,9 @@ if __name__ == "__main__":
     sdfg(A=A, B=B, C=C, N=32, K=32)
     diff = np.linalg.norm(C_regression - C) / float(32 * 32)
     assert diff < 1e-6
+
+    return sdfg
+
+
+if __name__ == "__main__":
+    test_map_unroll_processing_elements(None)
