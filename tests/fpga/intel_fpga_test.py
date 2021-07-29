@@ -26,8 +26,6 @@ TESTS = [
     ("samples/fpga/matrix_multiplication_stream.py", "mm_fpga_stream_NxKx128",
      [128, 128, 128]),
     ### BLAS ###
-    ("tests/blas/nodes/dot_test.py", "dot_FPGA_Accumulate_float_w16_1",
-     ["--target", "intel_fpga"]),
     ("tests/blas/nodes/gemv_test.py", "gemv_FPGA_TilesByColumn_float_True_w4_1",
      ["--target", "tiles_by_column", "--transpose", "--vectorize", 4]),
     ("tests/blas/nodes/gemv_test.py", "gemv_FPGA_Accumulate_float_False_w4_1",
