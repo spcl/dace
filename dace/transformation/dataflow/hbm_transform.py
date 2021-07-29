@@ -165,23 +165,19 @@ def _update_new_hbm_accesses(sdfg: SDFG, update_access: Dict[str, List[int]],
 
 def transform_sdfg_for_hbm(sdfg: SDFG, outer_map_range: Tuple[str, int], 
     update_array_banks: Dict[str, Tuple[str, str, List[int]]],
-    update_symbols_division: Dict[str, int], recursive=False):
+    update_map_range: Dict[(nd.Map, int), int], recursive=False):
     update_access = set() # Store which arrays need updates for later
 
     # update array bank positions
     for array_name, infos in update_array_banks.items():
-        memory_type, bank = infos
-        modify_bank_assignment(array_name, sdfg, memory_type, bank)
+        memory_type, bank, divide_shape = infos
+        modify_bank_assignment(array_name, sdfg, memory_type, bank, divide_shape)
         if memory_type == "HBM":
             update_access.add(array_name)
 
-    for symbol, divide in update_symbols_division.items():
-        new_symbol = f"{symbol}//{divide}"
-        if recursive:
-            for tmp_sdfg in sdfg.sdfg_list:
-                tmp_sdfg.replace(symbol, new_symbol)
-        else:
-            sdfg.replace(symbol, new_symbol)
+    for map_info, division in update_map_range.items():
+        target, param_index = map_info
+        target.range[param_index] = symbolic.pystr_to_symbolic(f"{target.range[param_index]}//{division}")
 
     # We need to update on the inner part as well - if recursive is false one needs to do so explicit
     if not recursive:
@@ -192,7 +188,7 @@ def transform_sdfg_for_hbm(sdfg: SDFG, outer_map_range: Tuple[str, int],
 
     _update_new_hbm_accesses(sdfg, update_access, outer_map_range[0], recursive)
 
-    # set default on all outer arrays, such that FPGA_transformation can be used
+    # set default on all outer arrays, such that FPGATransformSDFG can be used
     for desc in sdfg.arrays.items():
         desc[1].storage = dtypes.StorageType.Default
 
@@ -261,6 +257,9 @@ class HbmTransform(transformation.Transformation):
         split_dimensions = {}
         global_memory_array = set()
         no_split_arrays = set()
+        placed_arrays = set()
+        unroll_factor = None
+        array_dimensions = {}
         
         # Find present bank assignemnts and allowed splits for all arrays based on shape
         for name, desc in sdfg.arrays.items():
@@ -276,8 +275,13 @@ class HbmTransform(transformation.Transformation):
                     low, high = fpga.get_multibank_ranges_from_subset(assigned[1], sdfg)
                     if high - low == 1:
                         no_split_arrays.add(name)
+                    else:
+                        unroll_factor = high - low
                 else:
                     no_split_arrays.add(name)
+                placed_arrays.add(name)
+
+            array_dimensions[name] = len(desc.shape)
 
             # Find largest possible number of divisions in each dimension for each array, 
             # assuming symbolic expressions are divisable by any number
@@ -285,7 +289,7 @@ class HbmTransform(transformation.Transformation):
             for dim in desc.shape:
                 sub_f = symbolic.resolve_symbol_to_constant(dim, sdfg) # sub_f = None if dim symbolic
                 tmp_divison_array.append(sub_f)
-            division_info[name] = tmp_divison_array
+            division_info[name] = [tmp_divison_array]
             global_memory_array.add(name)
 
         for name in global_memory_array:
@@ -294,12 +298,16 @@ class HbmTransform(transformation.Transformation):
         def dim_of_map(edge: graph.MultiConnectorEdge, map: nd.Map, number: int):
             # Helper to figure out which dimensions are accessed by a map
             # TODO: Check that all accesses go to distinct data
-            result = []
+            # TODO: Check which value this has to divide
+            result = None
             symbols = map.params
             for num, symbol in enumerate(symbols):
                 for i, what in enumerate(edge.subset):
                     if symbol in what[0].free_symbols():
-                        result.append(i, number+num, map)
+                        if result is None:
+                            result = (i, number+num, (map, num))
+                        else:
+                            return None # only one dimension may be bound to the map symbol
             return result
 
         # Find if and along which dimension we can split
@@ -311,7 +319,7 @@ class HbmTransform(transformation.Transformation):
                         seen.add(node)
                         for edge in state.all_edges(node):
                             path = state.memlet_path(edge)
-                            result = None
+                            current_split_dimensions = []
                             if path[0] == edge:
                                 for i in range(len(path)):
                                     current_edge: graph.MultiConnectorEdge = path[i]
@@ -320,7 +328,7 @@ class HbmTransform(transformation.Transformation):
                                         break
                                     if isinstance(current_node, nd.MapEntry):
                                         result = dim_of_map(path[i+1], current_node.map, i)
-                                        split_dimensions[node.data].append(result)
+                                        current_split_dimensions.append(result)
                             else:
                                 for i in range(len(path)):
                                     index = len(path) - i - 1
@@ -330,7 +338,12 @@ class HbmTransform(transformation.Transformation):
                                         break
                                     if isinstance(current_node, nd.MapExit):
                                         result = dim_of_map(path[index - 1], current_node.map, i)
-                                        split_dimensions[node.data].append(result)
+                                        current_split_dimensions.append(result)
+                            if len(current_split_dimensions) == 0:
+                                no_split_arrays.add(node.data)
+                                break
+                            else:
+                                split_dimensions[node.data].append(current_split_dimensions)
 
             # Check that arrays are only used as source or sink
             for node in state.nodes(): 
@@ -343,7 +356,6 @@ class HbmTransform(transformation.Transformation):
             if name in no_split_arrays:
                 del split_dimensions[name]
                 continue
-            
             arr_dim_list = split_dimensions[name]
 
             #Find common possible dimensions
@@ -361,10 +373,11 @@ class HbmTransform(transformation.Transformation):
                     else:
                         tmp_possible.add(dim)
                         tmp_meta[dim] = rate
-                    possible = possible.intersection(tmp_possible)
-                    for dim in possible:
-                        rates[dim] = rates[dim] + tmp_meta[dim]
-                        map_list[dim].append(acc_map)
+                possible = possible.intersection(tmp_possible)
+                for dim in possible:
+                    rates[dim] = rates[dim] + tmp_meta[dim]
+                    map_list[dim].append(acc_map)
+
             # Select "best"
             best_rate = None
             best_dim = -1
@@ -376,107 +389,114 @@ class HbmTransform(transformation.Transformation):
             if best_dim != -1:
                 split_dimensions[name] = (best_dim, map_list[best_dim])
                 
-    
-        if len(div_info) > 0:
-            # Find free HBM banks
-            free_blocks = []
-            countfree = 0
-            bitfreelist = [0]*total_number_of_banks
-            for _, memtype, bank in update_array_banks:
-                if memtype == "HBM":
-                    low, high = fpga.get_multibank_ranges_from_subset(bank, csdfg)
-                    for i in range(low, high):
-                        bitfreelist[i] = 1
-            lastlow = 0
-            for i in range(total_number_of_banks):
-                if bitfreelist[i] != 0:
-                    if lastlow < i:
-                        free_blocks.append((lastlow, i))
-                    lastlow = i+1
+        #Reduce divison info to only contain one number or None
+        for array in division_info:
+            values = division_info[array]
+            tmp_size = None
+            for v in values:
+                if v is not None and tmp_size is None:
+                    tmp_size = v
+                elif v is not None and tmp_size is not None:
+                    tmp_size = math.gcd(tmp_size, v)
+            division_info[array] = tmp_size
+
+        # Find free HBM banks
+        free_blocks = []
+        countfree = 0
+        bitfreelist = [False]*total_number_of_banks
+        for _, memtype, bank in update_array_banks:
+            if memtype == "HBM":
+                low, high = fpga.get_multibank_ranges_from_subset(bank, sdfg)
+                for i in range(low, high):
+                    bitfreelist[i] = True
+        lastlow = 0
+        for i in range(total_number_of_banks):
+            if not bitfreelist[i]:
+                if lastlow < i:
+                    free_blocks.append((lastlow, i))
+                lastlow = i+1
+            else:
+                countfree += 1
+        if lastlow < total_number_of_banks:
+            free_blocks.append((lastlow, total_number_of_banks))
+
+        # Find "possible" unroll factors, i.e a size along which all split arrays are divided
+        # TODO: This could be improved by considering the total acceses to an array and deciding
+        # that it is not split, even if possible when there are other arrays with far more accesses
+        possible_unroll_factors = set()
+        for i in range(1, total_number_of_banks):
+            possible_unroll_factors.add(i)
+        if unroll_factor is not None:
+            possible_unroll_factors = set(unroll_factor)
+        for array in global_memory_array:
+            if array not in no_split_arrays:
+                # If splitsize must divide a number compute all divisors.
+                # Otherwise take all from 2 to the total number of banks.
+                possible = set()
+                tmp_div_info = division_info[array]
+                if tmp_div_info is None:
+                    for i in range(1, total_number_of_banks):
+                        possible.add(i)
                 else:
-                    countfree += 1
-            if lastlow < total_number_of_banks:
-                free_blocks.append((lastlow, total_number_of_banks))
+                    for i in range(1, total_number_of_banks+1): # total_number of banks since it could be that size >> total_number of banks
+                        if tmp_div_info % i == 0:
+                            possible.add(i)
+                tmp_intersect = possible_unroll_factors.intersection(possible)
+                if 1 in tmp_intersect and len(tmp_intersect) == 1:
+                    no_split_arrays.add(array)
+                else:
+                    possible_unroll_factors = tmp_intersect
             
-            # assign greedy, all arrays are split among the same number of banks (splitsize)
-
-            # If we have info about the unroll parameter use it
-            if tmp_outer_map_range is not None:
-                size = tmp_outer_map_range
+        # Given possible unroll factors find one that actually fits on banks
+        # TODO: Could be improved by placing no_split_arrays on DDR as well
+        possible_unroll_factors = list(possible_unroll_factors).sort(reverse=True)
+        num_splitable = len(global_memory_array) - len(placed_arrays.difference(no_split_arrays))
+        num_singlebank = len(no_split_arrays) - len(placed_arrays.intersection(no_split_arrays))
+        single_block_starts = []
+        multi_block_starts = []
+        for possible_uf in possible_unroll_factors:
+            splitable_place = num_splitable
+            singlebank_place = num_singlebank
+            single_block_starts.clear()
+            multi_block_starts.clear()
+            for low, high in free_blocks:
+                while True:
+                    if high - low >= possible_uf and splitable_place > 0:
+                        splitable_place -= 1
+                        multi_block_starts.append(low)
+                        low += possible_uf
+                    elif high - low >= 1 and singlebank_place > 0:
+                        singlebank_place -= 1
+                        single_block_starts.append(low)
+                        low += 1
+                    else:
+                        break
+            if splitable_place == 0 and singlebank_place == 0:
+                unroll_factor = possible_uf
             else:
-                size = 0
-            # If splitsize must divide a fixed number compute as gcd
-            for v in div_info.values():
-                if v is not None:
-                    size = math.gcd(size, v)
-            possible = []
-            # If splitsize must divide a number compute all divisors.
-            # Otherwise take all from 1 to the number of free banks divided by 
-            # the number of arrays as possibilities for splitsize
-            if size == 0:
-                size = countfree // len(div_info)
-                for i in range(1, size):
-                    possible.append(i)
-            else:
-                for i in range(1, total_number_of_banks+1): # total_number of banks since it could be that size >> total_number of banks
-                    if size % i == 0:
-                        possible.append(i)
-            #Check all computed possibilites
-            try_assignment = []
-            while True:
-                if len(possible) == 0:
-                    return None
-                current_size = possible[-1]
-                try_assignment.clear()
-                possible.pop()
-                for i, block in enumerate(free_blocks):
-                    low, high = block
-                    while True:
-                        if current_size <= high - low:
-                            try_assignment.append(f"{low}:{low + current_size}")
-                            low += current_size
-                        else:
-                            break
-                if len(try_assignment) >= len(div_info):
-                    break
-            for i, key in enumerate(div_info):
-                update_array_banks.append((key, 'HBM', try_assignment[i]))
-
-        # Find an outer_map_range and check if it will work (also if it was set by user)
-        tmp_outer_map_range_val = None
-        for _, memory_type, bank in update_array_banks:
-            if memory_type == 'HBM':
-                low, high = fpga.get_multibank_ranges_from_subset(bank, csdfg)
-                if high - low > 1 and tmp_outer_map_range_val is None:
-                    tmp_outer_map_range_val = high - low
-        tmp_outer_map_range = tmp_outer_map_range or 1
-        outer_map_range = ('k', tmp_outer_map_range_val)
+                raise NotImplementedError("Failed to place the arrays. Do you have more arrays than banks?")
         
-        """
-        # Compute split_array_info
-        #generate a set of arrays for which we know how to split
-        split_array_info = []
-        seen_arrays = set()
-        for array, _, _ in split_array_info:
-            seen_arrays.add(array)
-        for array, memory_type, bank in update_array_banks:
-            if array in seen_arrays:
+        # Fill update_array_banks and which maps need to be updated
+        consumed_single = 0
+        consumed_splitable = 0
+        update_map_range = {}
+        for array in global_memory_array:
+            if array in placed_arrays:
                 continue
+            elif array in no_split_arrays:
+                update_array_banks[array] = ('HBM', str(single_block_starts[consumed_single]), None)
+                consumed_single += 1
             else:
-                seen_arrays.add(array)
-            if memory_type == 'HBM':
-                low, high = fpga.get_multibank_ranges_from_subset(bank, csdfg)
-                if high - low > 1:
-                    desc = csdfg.arrays[array]
-                    true_dim = len(desc.shape)
-                    if 'memorytype' in desc.location and desc.location['memorytype'] == 'HBM':
-                        true_dim -= 1
-                    split = [1] * true_dim
-                    split[0] = tmp_outer_map_range_val
-                    split_array_info.append((array, split))
-        """
-        
-        return (update_array_banks,  outer_map_range)
+                dim, map_list = split_dimensions[array]
+                for map_to_change in map_list:
+                    update_map_range[map_to_change] = unroll_factor
+                split_list = [1] * array_dimensions[array]
+                split_list[dim] = unroll_factor
+                low = multi_block_starts[consumed_splitable]
+                update_array_banks[array] = ('HBM', f"{low}:{low + unroll_factor}", split_list) # How to do the split?
+                consumed_splitable += 1
+
+        return (update_array_banks, ('k', unroll_factor), update_map_range)
 
     @staticmethod
     def can_be_applied(graph: Union[SDFG, SDFGState],
