@@ -304,7 +304,7 @@ def test_same_field_different_classes():
     obj.mymethod(param)
 
     # Ensure only one array was created
-    assert len(obj.mymethod._cache[1].arrays) == 2
+    assert len(next(iter(obj.mymethod._cache.cache.keys())).closure_types) == 1
 
     assert np.allclose(obj.arr, param)
 

@@ -303,7 +303,8 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Cache key
         cachekey = self._cache.make_key(argtypes, self.closure_array_keys,
-                                        self.closure_constant_keys, constant_args)
+                                        self.closure_constant_keys,
+                                        constant_args)
 
         if self._cache.has(cachekey):
             entry = self._cache.get(cachekey)
@@ -601,9 +602,11 @@ class DaceProgram(pycommon.SDFGConvertible):
         global_vars = copy.copy(self.global_vars)
 
         # Remove None arguments and make into globals that can be folded
+        removed_args = set()
         for k, v in argtypes.items():
             if v.dtype.type is None:
                 global_vars[k] = None
+                removed_args.add(k)
         argtypes = {
             k: v
             for k, v in argtypes.items() if v.dtype.type is not None
@@ -653,7 +656,9 @@ class DaceProgram(pycommon.SDFGConvertible):
             if not isinstance(v, str)
         })
         self.closure_arg_mapping = arg_mapping
-        self.closure_array_keys = set(closure.closure_arrays.keys())
-        self.closure_constant_keys = set(closure.closure_constants.keys())
+        self.closure_array_keys = set(
+            closure.closure_arrays.keys()) - removed_args
+        self.closure_constant_keys = set(
+            closure.closure_constants.keys()) - removed_args
 
         return sdfg, arg_mapping
