@@ -3,6 +3,7 @@
 
 import dace
 import numpy as np
+from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG
 from dace.transformation.auto import auto_optimize as aopt
 from dace.transformation.auto import fpga as fpga_aopt
@@ -10,7 +11,8 @@ from dace.transformation.auto import fpga as fpga_aopt
 N = dace.symbol('N')
 
 
-def test_global_to_local(size: int):
+@fpga_test()
+def test_global_to_local():
     '''
     Tests global_to_local optimization
     :return:
@@ -19,6 +21,8 @@ def test_global_to_local(size: int):
     def global_to_local(alpha: dace.float32, B: dace.float32[N]):
         tmp = alpha / 2
         return tmp * B
+
+    size = 8
 
     alpha = 0.5
     B = np.random.rand(size).astype(np.float32)
@@ -53,7 +57,10 @@ def test_global_to_local(size: int):
     ref = alpha / 2 * B
     assert np.allclose(ref, C)
 
+    return sdfg
 
+
+@fpga_test()
 def test_rr_interleave():
     '''
         Tests RR interleaving of containers to memory banks
@@ -78,6 +85,8 @@ def test_rr_interleave():
 
     R = sdfg(A=A, B=B, C=C)
     assert np.allclose(A + B + C, R)
+
+    return sdfg
 
 
 if __name__ == "__main__":
