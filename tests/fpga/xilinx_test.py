@@ -39,12 +39,6 @@ TESTS = [
      True, True, ["--target", "accumulate", "--vectorize", "4"]),
     ("tests/blas/nodes/ger_test.py", "ger_test_1", True, True,
      ["--target", "fpga"]),
-    # STL library nodes
-    # TODO: Reduce should achieve II=1, but currently does not.
-    ("tests/fpga/reduce_fpga.py", [
-        "reduction_sum_one_axis", "reduction_sum_all_axis", "reduction_sum_4D",
-        "reduction_max"
-    ], True, False, []),
     # RTL cores
     ("tests/rtl/hardware_test.py", "floating_point_vector_plus_scalar", True,
      False, [1]),

@@ -3,6 +3,7 @@
 # Tests reduce expansions for FPGA
 import dace
 import numpy as np
+from dace.fpga_testing import fpga_test
 
 
 def create_reduce_sdfg(wcr_str, reduction_axis, sdfg_name, input_data,
@@ -41,7 +42,7 @@ def create_reduce_sdfg(wcr_str, reduction_axis, sdfg_name, input_data,
         [f"0:{i}" for i in input_data_shape])))
 
     copy_in_state.add_memlet_path(in_host_A, in_device_A, memlet=copy_in_memlet)
-    
+
     ###########################################################################
     # Copy data from FPGA
 
@@ -83,6 +84,7 @@ def create_reduce_sdfg(wcr_str, reduction_axis, sdfg_name, input_data,
     return sdfg
 
 
+@fpga_test(assert_ii_1=False)
 def test_reduce_sum_one_axis():
     A = np.random.rand(8, 8).astype(np.float32)
     B = np.random.rand(8).astype(np.float32)
@@ -93,8 +95,10 @@ def test_reduce_sum_one_axis():
     sdfg.expand_library_nodes()
     sdfg(A=A, B=B)
     assert np.allclose(B, np.sum(A, axis=0))
+    return sdfg
 
 
+@fpga_test()
 def test_reduce_sum_all_axis():
     A = np.random.rand(4, 4).astype(np.float32)
     B = np.random.rand(1).astype(np.float32)
@@ -105,8 +109,10 @@ def test_reduce_sum_all_axis():
     sdfg.expand_library_nodes()
     sdfg(A=A, B=B)
     assert np.allclose(B, np.sum(A, axis=(0, 1)))
+    return sdfg
 
 
+@fpga_test()
 def test_reduce_sum_4D():
     A = np.random.rand(4, 4, 4, 12).astype(np.float64)
     B = np.random.rand(4, 4).astype(np.float64)
@@ -117,8 +123,10 @@ def test_reduce_sum_4D():
     sdfg.expand_library_nodes()
     sdfg(A=A, B=B)
     assert np.allclose(B, np.sum(A, axis=(2, 3)))
+    return sdfg
 
 
+@fpga_test(assert_ii_1=False)
 def test_reduce_max():
     A = np.random.rand(4, 4).astype(np.float32)
     B = np.random.rand(4).astype(np.float32)
@@ -129,10 +137,11 @@ def test_reduce_max():
     sdfg.expand_library_nodes()
     sdfg(A=A, B=B)
     assert np.allclose(B, np.max(A, axis=1))
+    return sdfg
 
 
 if __name__ == "__main__":
-    test_reduce_sum_one_axis()
-    test_reduce_sum_all_axis()
-    test_reduce_sum_4D()
-    test_reduce_max()
+    test_reduce_sum_one_axis(None)
+    test_reduce_sum_all_axis(None)
+    test_reduce_sum_4D(None)
+    test_reduce_max(None)
