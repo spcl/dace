@@ -17,9 +17,6 @@ from fpga_testing import (Colors, DACE_DIR, TEST_DIR, cli, dump_logs,
 TESTS = [
     ### Type inference ###
     ("samples/simple/mandelbrot.py", "mandelbrot_1", ["--fpga"]),
-    ("tests/fpga/intel_fpga/type_inference.py", "type_inference_1", []),
-    ("tests/fpga/intel_fpga/constant_type_inference.py",
-     "constant_type_inference", []),
     ### Systolic array ###
     ("samples/fpga/jacobi_fpga_systolic.py", "jacobi_fpga_systolic_8_Hx8192xT",
      []),
