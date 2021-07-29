@@ -20,8 +20,6 @@ TESTS = [
     # ("jacobi_fpga_systolic.py", "jacobi_fpga_systolic_4_Hx128xT", True, True, [1, 128, 128, 8, 4]),
     ("samples/fpga/gemv_transposed_fpga.py", "gemv_transposed_1024xM", True,
      False, [1024, 1024]),
-    ("tests/fpga/nested_sdfg_as_kernel.py", "nested_sdfg_kernels", True, False,
-     []),
     # This doesn't pipeline with Vitis 2020.1 for whatever reason (it pipelines
     # with both 2019.2 and 2020.2), so just switch this back on once CI starts
     # running 2020.2 or newer.

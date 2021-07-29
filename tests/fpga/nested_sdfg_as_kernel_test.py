@@ -13,6 +13,7 @@ import numpy as np
 import argparse
 import subprocess
 
+from dace.fpga_testing import fpga_test
 from dace.memlet import Memlet
 
 
@@ -472,7 +473,8 @@ def make_fpga_sdfg_independent():
     return sdfg
 
 
-if __name__ == "__main__":
+@fpga_test()
+def test_nested_sdfg_as_kernel():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int, nargs="?", default=32)
@@ -528,3 +530,9 @@ if __name__ == "__main__":
 
     # There is no need to check that the Nested SDFG has been generated only once. If this is not the case
     # the test will fail while compiling
+
+    return sdfg
+
+
+if __name__ == "__main__":
+    test_nested_sdfg_as_kernel(None)

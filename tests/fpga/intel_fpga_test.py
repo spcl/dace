@@ -34,8 +34,6 @@ TESTS = [
     ("tests/blas/nodes/gemv_test.py", "gemv_FPGA_Accumulate_float_False_w4_1",
      ["--target", "accumulate", "--vectorize", 4]),
     ("tests/blas/nodes/ger_test.py", "ger_test_1", ["--target", "fpga"]),
-    # Nested SDFGs generated as FPGA kernels
-    ("tests/fpga/nested_sdfg_as_kernel.py", "nested_sdfg_kernels", []),
     # Channels mangling
     ("tests/fpga/intel_fpga/channels_mangling.py", "channels_mangling", []),
     # Test map fusion resulting in Tasklet -> Tasklet memlets
