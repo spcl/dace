@@ -93,7 +93,7 @@ def _run_fpga_test(vendor: str,
                    run_synthesis: bool = True,
                    assert_ii_1: bool = True):
     path = Path(inspect.getfile(test_function))
-    base_name = f"{Colors.UNDERLINE}{path.stem}{Colors.END}"
+    base_name = f"{path.stem}::{Colors.UNDERLINE}{test_function.__name__}{Colors.END}"
     with temporary_config():
         Config.set("compiler", "use_cache", value=False)
         Config.set("cache", value="unique")
