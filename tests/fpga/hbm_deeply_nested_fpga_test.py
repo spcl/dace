@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import subsets as sbs, dtypes, memlet as mem
 import dace
-import numpy as np
+from dace.fpga_testing import xilinx_test
+from dace import subsets as sbs, dtypes, memlet as mem
 from dace import subsets
+import numpy as np
 
 # A test checking HBM in the context of nested maps and nested sdfgs
 
@@ -67,7 +68,8 @@ def create_deeply_nested_sdfg():
     return sdfg
 
 
-def exec_deeply_nested_test():
+@xilinx_test()
+def test_hbm_deeply_nested_sdfg():
     sdfg = create_deeply_nested_sdfg()
     a = np.zeros((4, 10), np.float32)
     a[2, 4:9] += 1
@@ -76,7 +78,8 @@ def exec_deeply_nested_test():
     c = np.ones((4, 10), np.float32)
     sdfg(x=a, y=c)
     assert np.allclose(a, c, 10e-6)
+    return sdfg
 
 
 if __name__ == "__main__":
-    exec_deeply_nested_test()
+    test_hbm_deeply_nested_sdfg(None)

@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace import subsets
-from dace.fpga_testing import fpga_test
+from dace.fpga_testing import xilinx_test
 import dace
 import numpy as np
 

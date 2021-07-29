@@ -2,8 +2,9 @@
 from dace import subsets as sbs, dtypes, memlet as mem
 import dace
 import numpy as np
-from dace.dtypes import StorageType
 from dace.codegen.targets.fpga import _FPGA_STORAGE_TYPES
+from dace.dtypes import StorageType
+from dace.fpga_testing import xilinx_test
 
 # A test checking copies involving HBM-arrays in some way
 
@@ -69,6 +70,7 @@ def mkc(sdfg: dace.SDFG,
     return (state, a_np_arr, b_np_arr)
 
 
+@xilinx_test()
 def check_hbm2hbm1():
     sdfg = dace.SDFG("hbm2hbm1")
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
@@ -94,8 +96,10 @@ def check_hbm2hbm1():
     expect[0, 1, 1:5, 1] += 2
     sdfg(a=a, c=c)
     assert np.allclose(c[0, 1:4, 1:4, 1], expect[0, 1:4, 1:4, 1])
+    return sdfg
 
 
+@xilinx_test()
 def check_hbm2ddr1():
     sdfg = dace.SDFG("hbm2ddr1")
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
@@ -116,8 +120,9 @@ def check_hbm2ddr1():
     expect[0, 4:6, 4:6] += 3
     sdfg(a=a, c=c)
     assert np.allclose(c[2:7], expect[2:7])
+    return sdfg
 
 
 if __name__ == "__main__":
-    check_hbm2hbm1()
-    check_hbm2ddr1()
+    check_hbm2hbm1(None)
+    check_hbm2ddr1(None)

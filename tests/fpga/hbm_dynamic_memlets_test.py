@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace import subsets as sbs, dtypes, memlet as mem
 import dace
+from dace import subsets as sbs, dtypes, memlet as mem
+from dace.fpga_testing import xilinx_test
 import numpy as np
 
 # Checks dynamic access and dynamic loop bounds from HBM
@@ -47,7 +48,8 @@ def create_dynamic_memlet_sdfg():
     return sdfg
 
 
-def exec_dynamic_memlet_test():
+@xilinx_test()
+def test_hbm_dynamic_memlet():
     sdfg = create_dynamic_memlet_sdfg()
     x = np.zeros((4, 10), dtype=np.int32)
     y = np.ones((4, 10), dtype=np.int32)  # has to be copied to sdfg
@@ -58,7 +60,8 @@ def exec_dynamic_memlet_test():
     expected[0:4, 8] = 1
     sdfg(x=x, y=y)
     assert np.allclose(y, expected)
+    return sdfg
 
 
 if __name__ == "__main__":
-    exec_dynamic_memlet_test()
+    test_hbm_dynamic_memlet(None)
