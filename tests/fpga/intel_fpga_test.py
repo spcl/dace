@@ -30,8 +30,6 @@ TESTS = [
     ("samples/fpga/matrix_multiplication_stream.py", "mm_fpga_stream_NxKx128",
      [128, 128, 128]),
     ### BLAS ###
-    ("tests/blas/nodes/axpy_test.py",
-     ["axpy_test_fpga_0_w1_1", "axpy_test_fpga_1_w4_1"], ["--target", "fpga"]),
     ("tests/blas/nodes/dot_test.py", "dot_FPGA_Accumulate_float_w16_1",
      ["--target", "intel_fpga"]),
     ("tests/blas/nodes/gemv_test.py", "gemv_FPGA_TilesByColumn_float_True_w4_1",
