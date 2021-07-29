@@ -38,9 +38,6 @@ TESTS = [
     # RTL cores
     ("tests/rtl/hardware_test.py", "floating_point_vector_plus_scalar", True,
      False, [1]),
-    # Over approx Shapes
-    ("tests/fpga/overapprox_transient_shapes.py", ["overapprox_1"], True, False,
-     []),
 ]
 
 

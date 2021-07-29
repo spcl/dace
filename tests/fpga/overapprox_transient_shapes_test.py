@@ -7,13 +7,15 @@
 
 import numpy as np
 import dace
+from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG
 
 M, N = (dace.symbol(s, dtype=dace.int32) for s in ('M', 'N'))
 
 
 @dace.program
-def overapprox(alpha: dace.float32, C: dace.float32[N, N], A: dace.float32[N, M]):
+def overapprox(alpha: dace.float32, C: dace.float32[N, N], A: dace.float32[N,
+                                                                           M]):
 
     for i in range(N):
         tmp = np.zeros((N, ), dtype=np.float32)
@@ -31,7 +33,8 @@ def reference(alpha, A, C, N, M):
         C[i, :i + 1] = tmp[:i + 1]
 
 
-if __name__ == "__main__":
+@fpga_test()
+def test_overapprox_transient_shapes():
     size_n = 4
     size_m = 8
     alpha = 1.1
@@ -43,3 +46,8 @@ if __name__ == "__main__":
     sdfg(N=size_n, M=size_m, A=A, C=C, alpha=alpha)
     reference(alpha, A, C_np, size_n, size_m)
     assert np.allclose(C_np, C)
+    return sdfg
+
+
+if __name__ == "__main__":
+    test_overapprox_transient_shapes(None)

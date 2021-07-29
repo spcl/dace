@@ -36,8 +36,6 @@ TESTS = [
     # Test map fusion resulting in Tasklet -> Tasklet memlets
     ("tests/transformations/mapfusion_fpga.py",
      ["multiple_fusions_1", "fusion_with_transient_1"], []),
-    # Over approximated shapes
-    ("tests/fpga/overapprox_transient_shapes.py", ["overapprox_1"], []),
 ]
 
 
