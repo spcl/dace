@@ -3,6 +3,10 @@ import numpy as np
 import dace
 import dace.libraries.nccl as nccl
 from dace.transformation.interstate import GPUTransformSDFG
+from dace.transformation.dataflow import RedundantSecondArray, RedundantArray
+from dace.sdfg.infer_types import (
+    set_default_schedule_storage_types_and_location, infer_connector_types)
+from dace.libraries.standard import Reduce
 import pytest
 
 N, H, W, C, N_gpu, H_gpu, W_gpu, C_gpu = (dace.symbol(s, dtype=dace.int64)
@@ -38,19 +42,24 @@ def batchnorm2d_model_parallelism_gpu(x_gpu: dc_dtype[N, H, W, C_gpu]):
 
 @dace.program
 def batchnorm2d_model_parallelism(x: dc_dtype[N, H, W, C]):
+    x_pinned = dace.ndarray([N, H, W, C],
+                            dc_dtype,
+                            storage=dace.StorageType.CPU_Pinned)
+    x_pinned[:] = x[:]
     for gpu_id in dace.map[0:number_of_gpus]:
         x_gpu = dace.ndarray([N, H, W, C_gpu],
                              dtype=dc_dtype,
                              storage=dace.StorageType.GPU_Global)
-        x_gpu[:, :, :, :] = x[:, :, :, C_gpu * gpu_id:C_gpu * (gpu_id + 1)]
+        x_gpu[:, :, :, :] = x_pinned[:, :, :,
+                                     C_gpu * gpu_id:C_gpu * (gpu_id + 1)]
         # batchnorm2d_model_parallelism_gpu(x_gpu)
         x_tmp = dace.ndarray([N, H, W, C_gpu],
                              dtype=dc_dtype,
                              storage=dace.StorageType.GPU_Global)
-        x_mean = dace.ndarray([1, H, W, C_gpu],
+        x_mean = dace.ndarray([H, W, C_gpu],
                               dtype=dc_dtype,
                               storage=dace.StorageType.GPU_Global)
-        x_std = dace.ndarray([1, H, W, C_gpu],
+        x_std = dace.ndarray([H, W, C_gpu],
                              dtype=dc_dtype,
                              storage=dace.StorageType.GPU_Global)
         dace.reduce(lambda a, b: a + b, x_gpu, x_mean, axis=(0), identity=0)
@@ -61,7 +70,9 @@ def batchnorm2d_model_parallelism(x: dc_dtype[N, H, W, C]):
         dace.reduce(lambda a, b: a + b, x_tmp, x_std, axis=(0), identity=0)
         x_std[:] = np.sqrt(x_std / fn)
         x_gpu[:] = (x_gpu - x_mean) / np.sqrt(x_std + 1e-5)
-        x[:, :, :, C_gpu * gpu_id:C_gpu * (gpu_id + 1)] = x_gpu[:, :, :, :]
+        x_pinned[:, :, :,
+                 C_gpu * gpu_id:C_gpu * (gpu_id + 1)] = x_gpu[:, :, :, :]
+    x[:] = x_pinned[:]
 
 
 @dace.program
@@ -77,21 +88,32 @@ def batchnorm2d(x: dc_dtype[N, H, W, C]):
     return (x - mean) / np.sqrt(std + 1e-5)
 
 
+def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
+    """ Finds the first map entry node by the given parameter name. """
+    return next(n for n, _ in sdfg.all_nodes_recursive()
+                if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
+
+
 @pytest.mark.multigpu
 def test_batchnorm2d_model_parallelism():
-    sdfg: dace.SDFG = batchnorm2d_model_parallelism.to_sdfg(strict=True)
-    sdfg.name = sdfg.name + '_inline'
-    state = sdfg.start_state
-    source = state.source_nodes()[0]
-    multi_gpu_map = state.successors(source)[0]
-    multi_gpu_map.schedule = dace.ScheduleType.GPU_Multidevice
-    # sdfg.apply_transformations(GPUTransformSDFG)
     n = 16
     h = 128
     w = 128
     c = 64
     ng = 4
+
+    sdfg: dace.SDFG = batchnorm2d_model_parallelism.to_sdfg(strict=True)
+    sdfg.name = sdfg.name + '_inline'
+    state = sdfg.start_state
+    multi_gpu_map = find_map_by_param(sdfg, 'gpu_id')
+    multi_gpu_map.schedule = dace.ScheduleType.GPU_Multidevice
+
+    Reduce.implementation = 'CUDA (device)'
     sdfg.specialize(dict(number_of_gpus=ng, N=n, H=h, W=w, C=c, C_gpu=c // ng))
+    set_default_schedule_storage_types_and_location(sdfg, None)
+    sdfg.expand_library_nodes()
+    sdfg.apply_transformations_repeated([RedundantSecondArray, RedundantArray])
+    sdfg.apply_strict_transformations()
 
     np.random.seed(0)
     X = np.ndarray(shape=[n, h, w, c], dtype=np_dtype)
