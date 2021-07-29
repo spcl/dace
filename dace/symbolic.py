@@ -776,8 +776,6 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         return expr
     if isinstance(expr, str) and dtypes.validate_name(expr):
         return symbol(expr)
-    if expr in ('False', 'True'):
-        return pystr_to_symbolic(bool(expr))
 
     symbol_map = symbol_map or {}
     locals = {
