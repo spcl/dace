@@ -152,6 +152,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
     PAPI_Counters = ()
     GPU_Events = ()
     FPGA = ()
+    Accuracy = ()
 
 
 @undefined_safe_enum
