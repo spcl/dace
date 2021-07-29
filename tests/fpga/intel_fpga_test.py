@@ -39,8 +39,6 @@ TESTS = [
     ("tests/blas/nodes/gemv_test.py", "gemv_FPGA_Accumulate_float_False_w4_1",
      ["--target", "accumulate", "--vectorize", 4]),
     ("tests/blas/nodes/ger_test.py", "ger_test_1", ["--target", "fpga"]),
-    ("tests/fpga/gemm_fpga.py",
-     ["gemm_not_multiple_of", "gemm_vectorized", "matmul_np_1"], []),
     # STL
     ("tests/fpga/reduce_fpga.py", "reduction_sum_one_axis", []),
     # Nested SDFGs generated as FPGA kernels

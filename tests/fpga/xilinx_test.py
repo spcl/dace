@@ -39,8 +39,6 @@ TESTS = [
      True, True, ["--target", "accumulate", "--vectorize", "4"]),
     ("tests/blas/nodes/ger_test.py", "ger_test_1", True, True,
      ["--target", "fpga"]),
-    # This test contains three SDFGs: full check only the first one for the sake of testing time
-    ("tests/fpga/gemm_fpga.py", "gemm_vectorized", True, True, []),
     # STL library nodes
     # TODO: Reduce should achieve II=1, but currently does not.
     ("tests/fpga/reduce_fpga.py", [
