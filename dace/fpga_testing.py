@@ -13,7 +13,7 @@ from typing import Callable, Iterable, Optional, Tuple, Union
 from dace import SDFG
 from dace.config import Config, temporary_config
 
-TEST_TIMEOUT = 600  # Seconds
+TEST_TIMEOUT = 600  # Timeout tests after 10 minutes
 
 
 class Colors:
@@ -230,7 +230,11 @@ def fpga_test(run_synthesis: bool = True,
                                 args=(vendor, test_function, run_synthesis,
                                       assert_ii_1))
             p.start()
-            p.join()
+            p.join(timeout=TEST_TIMEOUT)
+            if p.is_alive():
+                p.kill()
+                raise_error(f"Test {Colors.UNDERLINE}{test_function.__name__}"
+                            f"{Colors.END} timed out.")
             if p.exception:
                 raise p.exception
 
