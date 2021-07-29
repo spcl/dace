@@ -513,6 +513,8 @@ def contains_sympy_functions(expr):
         if str(expr.func) in _builtin_userfunctions:
             return False
         return True
+    if not isinstance(expr, sympy.Basic):
+        return False
     for arg in expr.args:
         if contains_sympy_functions(arg):
             return True
@@ -520,12 +522,12 @@ def contains_sympy_functions(expr):
 
 
 def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
-    if not isinstance(expr, (sympy.Basic, str)):
-        return set()
     if isinstance(expr, str):
         if dtypes.validate_name(expr):
             return {expr}
         expr = pystr_to_symbolic(expr)
+    if not isinstance(expr, sympy.Basic):
+        return set()
 
     result = {str(k) for k in expr.free_symbols}
     for atom in swalk(expr):
@@ -774,6 +776,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         return expr
     if isinstance(expr, str) and dtypes.validate_name(expr):
         return symbol(expr)
+    if expr in ('False', 'True'):
+        return pystr_to_symbolic(bool(expr))
 
     symbol_map = symbol_map or {}
     locals = {
@@ -787,6 +791,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         # Convert and/or to special sympy functions to avoid boolean evaluation
         'And': sympy.Function('AND'),
         'Or': sympy.Function('OR'),
+        'var': sympy.Symbol('var'),
+        'root': sympy.Symbol('root'),
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters

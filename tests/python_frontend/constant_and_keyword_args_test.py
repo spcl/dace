@@ -323,6 +323,38 @@ def test_constant_folding():
     assert np.allclose(A, expected)
 
 
+def test_boolglobal():
+    some_glob = 124
+
+    @dace.program
+    def func(A):
+        boolvar = 123 == some_glob
+        if boolvar:
+            tmp = 0
+        else:
+            tmp = 1
+        A[...] = tmp
+
+    a = np.empty((10, ))
+    func(a)
+    assert np.allclose(a, 1)
+
+
+def test_intglobal():
+    some_glob = 124
+
+    @dace.program
+    def func(A):
+        var = some_glob
+        tmp = 1
+        for it in range(100):
+            if 123 == it or (it == var - 1):
+                tmp = 0
+        A[...] = tmp
+
+    func(np.empty((10, )))
+
+
 if __name__ == '__main__':
     test_kwargs()
     test_kwargs_jit()
@@ -343,3 +375,5 @@ if __name__ == '__main__':
     test_none_field()
     test_array_by_str_key()
     test_constant_folding()
+    test_boolglobal()
+    test_intglobal()
