@@ -209,4 +209,6 @@ jobs:
     - name: Run FPGA Tests
       run: |
         pytest -n auto --cov-report=xml --cov=dace --tb=short -m "fpga"
+        coverage report
+        coverage xml
         codecov
