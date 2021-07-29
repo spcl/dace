@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" 
+"""
 Vector addition with explicit dataflow. Computes Z += X + Y
 Can be used for simple vectorization test
 """
 
 import dace
+from dace.fpga_testing import fpga_test
 import numpy as np
 import argparse
 
@@ -23,18 +24,9 @@ def vec_sum(x: dace.float32[N], y: dace.float32[N], z: dace.float32[N]):
         out = in_x + in_y + in_z
 
 
-if __name__ == "__main__":
-    print("==== Program start ====")
+def run_vec_sum(vectorize_first: bool):
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("vectorize_first", choices=["true", "false"])
-    parser.add_argument("N", type=int, nargs="?", default=24)
-    args = parser.parse_args()
-    dace.config.Config.set("compiler", "intel_fpga", "mode", value="emulator")
-
-    N.set(args.N)
-
-    print('Vectors addition %d' % (N.get()))
+    N.set(24)
 
     # Initialize arrays: X, Y and Z
     X = np.random.rand(N.get()).astype(dace.float32.type)
@@ -45,16 +37,16 @@ if __name__ == "__main__":
 
     sdfg = vec_sum.to_sdfg()
 
-    if args.vectorize_first == "true":
+    if vectorize_first:
         transformations = [
             dace.transformation.dataflow.vectorization.Vectorization,
             dace.transformation.interstate.fpga_transform_sdfg.FPGATransformSDFG
         ]
-        transformation_options = [{}, {
+        transformation_options = [{
             "propagate_parent": True,
             "postamble": False
-        }]
-    elif args.vectorize_first == "false":
+        }, {}]
+    else:
         transformations = [
             dace.transformation.interstate.fpga_transform_sdfg.
             FPGATransformSDFG,
@@ -65,10 +57,28 @@ if __name__ == "__main__":
             "postamble": False
         }]
 
-    sdfg.apply_transformations(transformations, transformation_options)
+    assert sdfg.apply_transformations(transformations,
+                                      transformation_options) == 2
 
     sdfg(x=X, y=Y, z=Z, N=N)
 
     diff = np.linalg.norm(Z_exp - Z) / N.get()
     if diff > 1e-5:
         raise ValueError("Difference: {}".format(diff))
+
+    return sdfg
+
+
+@fpga_test()
+def test_vec_sum_vectorize_first():
+    return run_vec_sum(True)
+
+
+@fpga_test()
+def test_vec_sum_fpga_transform_first():
+    return run_vec_sum(False)
+
+
+if __name__ == "__main__":
+    test_vec_sum_vectorize_first(None)
+    test_vec_sum_fpga_transform_first(None)
