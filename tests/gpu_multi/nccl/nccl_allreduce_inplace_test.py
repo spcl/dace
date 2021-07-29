@@ -20,12 +20,14 @@ def allreduce(inbuff: dtype[N], outbuff: dtype[N]):
     dace.nccl.AllReduce(lambda a, b: a + b,
                         inbuff,
                         outbuff,
-                        use_group_calls=False)
+                        group_calls=dtypes.NcclGroupCalls.NoGroupCalls)
 
 
 @dace.program
 def allreduce_inplace(inbuff: dtype[N]):
-    dace.nccl.AllReduce(lambda a, b: a + b, inbuff, use_group_calls=False)
+    dace.nccl.AllReduce(lambda a, b: a + b,
+                        inbuff,
+                        group_calls=dtypes.NcclGroupCalls.NoGroupCalls)
 
 
 @dace.program

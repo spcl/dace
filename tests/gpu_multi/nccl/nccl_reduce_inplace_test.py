@@ -26,7 +26,7 @@ def reduction_test(out: dtype[N]):
         dace.nccl.Reduce(lambda a, b: a + b,
                          gpu_A,
                          root=root_device,
-                         use_group_calls=False)
+                         group_calls=dtypes.NcclGroupCalls.NoGroupCalls)
         if gpu == root_device:
             out[:] = gpu_A[:]
 

@@ -124,6 +124,8 @@ class ReductionType(aenum.AutoNumberEnum):
     Div = ()  #: Division (only supported in OpenMP)
 
 
+@undefined_safe_enum
+@extensible_enum
 class NcclReductionType(aenum.AutoNumberEnum):
     """ Reduction types supported by NCCL. """
     ncclSum = ()  #: Sum
@@ -139,6 +141,16 @@ NCCL_SUPPORTED_OPERATIONS = {
     ReductionType.Min: NcclReductionType.ncclMin,
     ReductionType.Max: NcclReductionType.ncclMax
 }
+
+
+@undefined_safe_enum
+@extensible_enum
+class NcclGroupCalls(aenum.AutoNumberEnum):
+    """ Available tiling types in a `StripMining` transformation. """
+    Start = ()
+    End = ()
+    Both = ()
+    NoGroupCalls = ()
 
 
 @undefined_safe_enum

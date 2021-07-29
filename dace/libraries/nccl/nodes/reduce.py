@@ -8,15 +8,14 @@ import dace.library
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import graph, nodes
 
-from dace.frontend.python.astutils import unparse
 from dace.properties import Property, LambdaProperty, SymbolicProperty
 from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.transformation.transformation import ExpandTransformation
 from dace.frontend.common import op_repository as oprepo
 from dace import dtypes, symbolic
+from dace.dtypes import NcclGroupCalls
 from dace.libraries.nccl import environments, utils as nutil
-from dace.frontend.python.replacements import _define_local_scalar
 
 
 @dace.library.expansion
@@ -66,23 +65,24 @@ class ExpandReduceNCCL(ExpandTransformation):
         else:
             code = code + ''';\n'''
 
-        if node.use_group_calls:
+        if node.group_calls in [NcclGroupCalls.Start, NcclGroupCalls.Both]:
             code = """
             ncclGroupStart();""" + code
+        if node.group_calls in [NcclGroupCalls.End, NcclGroupCalls.Both]:
             code += """
             ncclGroupEnd();"""
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          location=node.location,
-                                          language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(node.name,
+                                node.in_connectors,
+                                node.out_connectors,
+                                code,
+                                location=node.location,
+                                language=dtypes.Language.CPP)
         return tasklet
 
 
 @dace.library.node
-class Reduce(dace.sdfg.nodes.LibraryNode):
+class Reduce(nodes.LibraryNode):
 
     # Global properties
     implementations = {
@@ -92,36 +92,35 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     wcr = LambdaProperty(default='lambda a, b: a + b')
-    # root = Property(default=0,
-    #                 dtype=dace.int32,
-    #                         allow_none=True,
-    #                         desc="The gpu on which the receive buffer resides")
     root = SymbolicProperty(default=0,
                             allow_none=True,
                             desc="The gpu on which the receive buffer resides")
 
-    use_group_calls = Property(dtype=bool,
-                               default=False,
-                               desc='True: use NCCL group calls.')
+    group_calls = Property(
+        dtype=NcclGroupCalls,
+        default=NcclGroupCalls.NoGroupCalls,
+        desc='For the aggregation of multiple NCCL collective operations.'
+        'Start: First of the aggregated collectives.'
+        'End:  Last of the aggregated collectives.'
+        'Both: Use group calls for just this collective.'
+        'NoGroupCalls: Do not use group calls.')
 
     def __init__(self,
                  wcr="lambda a, b: a + b",
                  root: symbolic.SymbolicType = 0,
-                 use_group_calls: bool = False,
+                 group_calls: NcclGroupCalls = NcclGroupCalls.NoGroupCalls,
                  debuginfo=None,
                  *args,
                  **kwargs):
 
-        super().__init__(
-            name='nccl_Reduce',
-            *args,
-            #  inputs={"_inbuffer", "_root"},
-            inputs={"_inbuffer"},
-            outputs={"_outbuffer"},
-            **kwargs)
+        super().__init__(name='nccl_Reduce',
+                         *args,
+                         inputs={"_inbuffer"},
+                         outputs={"_outbuffer"},
+                         **kwargs)
         self.wcr = wcr
         self.root = root
-        self.use_group_calls = use_group_calls
+        self.group_calls = group_calls
         self.schedule = dtypes.ScheduleType.GPU_Multidevice
         self.debuginfo = debuginfo
 
@@ -155,8 +154,8 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
         redtype = self.reduction_type
 
         in_edges = state.in_edges(self)
-        if len(in_edges) not in [1, 2]:
-            raise ValueError("NCCL Reduce must have two inputs.")
+        if len(in_edges) != 1:
+            raise ValueError("NCCL Reduce must have one input.")
 
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
@@ -172,29 +171,19 @@ def nccl_reduce(pv: 'ProgramVisitor',
                 in_array: str,
                 out_array: Union[str, None] = None,
                 root: str = None,
-                use_group_calls: bool = False):
+                group_calls: NcclGroupCalls = NcclGroupCalls.NoGroupCalls):
 
     # If out_array is not specified, the operation will be in-place.
     if out_array is None:
         out_array = in_array
 
-    # if isinstance(root, str) and root in sdfg.arrays.keys():
-    #     root_node = state.add_read(root)
-    # else:
-    # root_name = _define_local_scalar(pv, sdfg, state, dace.int32, dtypes.StorageType.GPU_Global)
-    # root_node = state.add_access(root_name)
-    # root_tasklet = state.add_tasklet('_set_root_', {}, {'__out'},
-    #                                     '__out = {}'.format(root))
-    # state.add_edge(root_tasklet, '__out', root_node, None,
-    #                 Memlet.simple(root_name, '0'))
-
     # Add nodes
     in_node = state.add_read(in_array)
     out_node = state.add_write(out_array)
-    libnode = Reduce(redfunction, root=root, use_group_calls=use_group_calls)
+    libnode = Reduce(redfunction, root=root, group_calls=group_calls)
 
     # Connect nodes
     state.add_edge(in_node, None, libnode, '_inbuffer', Memlet(in_array))
     state.add_edge(libnode, '_outbuffer', out_node, None, Memlet(out_array))
-    # state.add_edge(root_node, None, libnode, '_root', Memlet(root_node.data))
+
     return []

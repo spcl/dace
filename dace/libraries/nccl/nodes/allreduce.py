@@ -7,13 +7,13 @@ import dace.library
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import graph, nodes
 
-from dace.frontend.python.astutils import unparse
 from dace.properties import Property, ListProperty, LambdaProperty
 from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.transformation.transformation import ExpandTransformation
 from dace.frontend.common import op_repository as oprepo
 from dace import dtypes, symbolic, Config
+from dace.dtypes import NcclGroupCalls
 from dace.libraries.nccl import environments, utils as nutil
 
 
@@ -63,23 +63,25 @@ class ExpandAllreduceNCCL(ExpandTransformation):
             code = '''DACE_NCCL_CHECK(''' + code + ''');\n'''
         else:
             code = code + ''';\n'''
-        if node.use_group_calls:
+
+        if node.group_calls in [NcclGroupCalls.Start, NcclGroupCalls.Both]:
             code = """
             ncclGroupStart();""" + code
+        if node.group_calls in [NcclGroupCalls.End, NcclGroupCalls.Both]:
             code += """
             ncclGroupEnd();"""
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          location=node.location,
-                                          language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(node.name,
+                                node.in_connectors,
+                                node.out_connectors,
+                                code,
+                                location=node.location,
+                                language=dtypes.Language.CPP)
         return tasklet
 
 
 @dace.library.node
-class Allreduce(dace.sdfg.nodes.LibraryNode):
+class Allreduce(nodes.LibraryNode):
 
     # Global properties
     implementations = {
@@ -90,13 +92,18 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
     # Object fields
     wcr = LambdaProperty(default='lambda a, b: a + b')
 
-    use_group_calls = Property(dtype=bool,
-                               default=False,
-                               desc='True: use NCCL group calls.')
+    group_calls = Property(
+        dtype=NcclGroupCalls,
+        default=NcclGroupCalls.NoGroupCalls,
+        desc='For the aggregation of multiple NCCL collective operations.'
+        'Start: First of the aggregated collectives.'
+        'End:  Last of the aggregated collectives.'
+        'Both: Use group calls for just this collective.'
+        'NoGroupCalls: Do not use group calls.')
 
     def __init__(self,
                  wcr: str = "lambda a, b: a + b",
-                 use_group_calls: bool = False,
+                 group_calls: NcclGroupCalls = NcclGroupCalls.NoGroupCalls,
                  debuginfo=None,
                  *args,
                  **kwargs):
@@ -107,7 +114,7 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
                          outputs={"_outbuffer"},
                          **kwargs)
         self.wcr = wcr
-        self.use_group_calls = use_group_calls
+        self.group_calls = group_calls
         self.schedule = dtypes.ScheduleType.GPU_Multidevice
         self.debuginfo = debuginfo
 
@@ -123,7 +130,7 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
         wcrstr = str(redtype)
         wcrstr = wcrstr[wcrstr.find('.') + 1:]  # Skip "ReductionType."
 
-        return 'nccl_AllReduce ({op})'.format(op=wcrstr)
+        return f'nccl_AllReduce ({wcrstr})'
 
     def __label__(self, sdfg, state):
         return str(self).replace(' Axes', '\nAxes')
@@ -153,13 +160,15 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
 @oprepo.replaces('dace.nccl.Allreduce')
 @oprepo.replaces('dace.nccl.AllReduce')
 @oprepo.replaces('dace.nccl.allReduce')
-def nccl_allreduce(pv: 'ProgramVisitor',
-                   sdfg: SDFG,
-                   state: SDFGState,
-                   redfunction: Callable[[Any, Any], Any],
-                   in_array: str,
-                   out_array: Union[str, None] = None,
-                   use_group_calls: bool = False):
+def nccl_allreduce(
+    pv: 'ProgramVisitor',
+    sdfg: SDFG,
+    state: SDFGState,
+    redfunction: Callable[[Any, Any], Any],
+    in_array: str,
+    out_array: Union[str, None] = None,
+    group_calls: NcclGroupCalls = NcclGroupCalls.NoGroupCalls,
+):
 
     # If out_array is not specified, the operation will be in-place.
     if out_array is None:
@@ -169,7 +178,7 @@ def nccl_allreduce(pv: 'ProgramVisitor',
     in_node = state.add_read(in_array)
     out_node = state.add_write(out_array)
 
-    libnode = Allreduce(redfunction, use_group_calls=use_group_calls)
+    libnode = Allreduce(redfunction, group_calls=group_calls)
 
     # Connect nodes
     state.add_edge(in_node, None, libnode, '_inbuffer', Memlet(in_array))

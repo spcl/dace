@@ -28,7 +28,7 @@ def reduction_test(out: dtype[num_gpus, N]):
                              gpu_A,
                              reduction_output,
                              root_gpu,
-                             use_group_calls=False)
+                             group_calls=dtypes.NcclGroupCalls.NoGroupCalls)
             if gpu == root_gpu:
                 out[root_gpu, :] = reduction_output[:]
 
