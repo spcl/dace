@@ -15,8 +15,6 @@ from fpga_testing import (Colors, DACE_DIR, TEST_DIR, cli, dump_logs,
 
 # (relative path, sdfg name(s), run synthesis, assert II=1, args to executable)
 TESTS = [
-    # Matrix multiplication sample
-    ("samples/simple/matmul.py", "matmul_1", ["--version", "fpga_naive"]),
     ### Type inference ###
     ("samples/simple/mandelbrot.py", "mandelbrot_1", ["--fpga"]),
     ("tests/fpga/intel_fpga/type_inference.py", "type_inference_1", []),
