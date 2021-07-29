@@ -22,7 +22,6 @@ TESTS = [
      []),
     # Execute some of the compatible tests in samples/fpga (some of them have C++ code in tasklet)
     # They contain streams
-    ("tests/fpga/intel_fpga/async.py", "async_test", []),
     ("samples/fpga/filter_fpga.py", "filter_fpga", [1000, 0.2]),
     ("samples/fpga/matrix_multiplication_stream.py", "mm_fpga_stream_NxKx128",
      [128, 128, 128]),
