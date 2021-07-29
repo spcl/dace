@@ -2,6 +2,7 @@ import argparse
 import dace
 import numpy as np
 import re
+from dace.fpga_testing import intel_fpga_test
 
 DTYPE = dace.float32
 
@@ -110,17 +111,16 @@ def make_sdfg():
     return sdfg
 
 
-if __name__ == "__main__":
+@intel_fpga_test()
+def test_autorun():
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--N", default=128, type=int)
-    parser.add_argument("--P", default=4, type=int)
-    args = parser.parse_args()
+    n = 128
+    p = 4
 
     sdfg = make_sdfg()
-    sdfg.specialize({"N": args.N, "P": args.P})
+    sdfg.specialize({"N": 128, "P": 4})
 
-    arr = np.ones((args.N, ), dtype=DTYPE.type)
+    arr = np.ones((128, ), dtype=DTYPE.type)
 
     for c in (c for c in sdfg.generate_code() if c.language == "cl"):
         if len(re.findall(r"__attribute__\(\(autorun\)\)", c.code)) != 2:
@@ -128,5 +128,11 @@ if __name__ == "__main__":
 
     sdfg(arr_host=arr)
 
-    if any(arr != 2**args.P * 10):
+    if any(arr != 2**4 * 10):
         raise ValueError("Verification failed.")
+
+    return sdfg
+
+
+if __name__ == "__main__":
+    test_autorun(None)

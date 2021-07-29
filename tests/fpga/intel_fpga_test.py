@@ -41,8 +41,6 @@ TESTS = [
     ("tests/blas/nodes/ger_test.py", "ger_test_1", ["--target", "fpga"]),
     # Nested SDFGs generated as FPGA kernels
     ("tests/fpga/nested_sdfg_as_kernel.py", "nested_sdfg_kernels", []),
-    # Generating autorun kernels
-    ("tests/fpga/intel_fpga/autorun.py", "autorun_test", []),
     # Channels mangling
     ("tests/fpga/intel_fpga/channels_mangling.py", "channels_mangling", []),
     # Test map fusion resulting in Tasklet -> Tasklet memlets
