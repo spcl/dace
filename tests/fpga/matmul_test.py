@@ -27,5 +27,12 @@ def test_naive_matmul_fpga():
     return sdfg
 
 
+@fpga_test()
+def test_systolic_matmul_fpga():
+    matmul = import_sample(Path("fpga") / "matrix_multiplication_systolic.py")
+    return matmul.run_matmul_systolic(128, 32, 64, 4, False)
+
+
 if __name__ == "__main__":
-    test_matmul_fpga(None)
+    # test_matmul_fpga(None)
+    test_systolic_matmul_fpga(None)

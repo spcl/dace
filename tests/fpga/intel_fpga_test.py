@@ -21,8 +21,6 @@ TESTS = [
     ("tests/fpga/intel_fpga/constant_type_inference.py",
      "constant_type_inference", []),
     ### Systolic array ###
-    ("samples/fpga/matrix_multiplication_systolic.py",
-     "mm_fpga_systolic_4_NxKx256", [256, 256, 256, 4]),
     ("samples/fpga/jacobi_fpga_systolic.py", "jacobi_fpga_systolic_8_Hx8192xT",
      []),
     # Execute some of the compatible tests in samples/fpga (some of them have C++ code in tasklet)
