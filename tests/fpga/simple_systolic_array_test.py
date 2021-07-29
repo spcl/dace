@@ -9,6 +9,7 @@ import dace
 import numpy as np
 import select
 import sys
+from dace.fpga_testing import fpga_test
 
 N = dace.symbol("N")
 P = dace.symbol("P")
@@ -308,21 +309,14 @@ def make_sdfg(name=None):
     return sdfg
 
 
-if __name__ == "__main__":
-    print("==== Program start ====")
+@fpga_test()
+def test_simple_systolic_array():
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int)
-    parser.add_argument("P", type=int)
+    P.set(4)
+    N.set(128)
 
-    args = vars(parser.parse_args())
-
-    P.set(args["P"])
-    N.set(args["N"])
     sdfg = make_sdfg()
     sdfg.specialize(dict(P=P, N=N))
-
-    print("Simple Systolic array")
 
     # Initialize arrays: Randomize A and B, zero C
     A = np.ndarray([N.get()], dtype=dace.int32.type)
@@ -338,11 +332,10 @@ if __name__ == "__main__":
     highest_diff = np.max(diff)
     wrong_elements = np.transpose(np.nonzero(diff >= 0.01))
 
-    print("==== Program end ====")
+    assert diff_total < 0.01
 
-    if diff_total >= 0.01:
-        print("Verification failed!")
-        exit(1)
-    else:
-        print("Results verified successfully.")
-    exit(0)
+    return sdfg
+
+
+if __name__ == "__main__":
+    test_simple_systolic_array(None)
