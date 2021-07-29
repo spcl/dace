@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace import subsets
+from dace.fpga_testing import fpga_test
 import dace
 import numpy as np
 
@@ -123,11 +124,31 @@ def exec_test(dim, size1D, banks, test_name, unroll_map_inside=False):
     else:
         sdfg(in1=in1, in2=in2, out=target, N=size1D, M=size1D, S=size1D)
     assert np.allclose(expected, target, rtol=1e-6)
-    del sdfg
+    return sdfg
+
+
+@xilinx_test()
+def test_vadd_2b1d():
+    return exec_test(1, 50, 2, "vadd_2b1d")
+
+
+@xilinx_test()
+def test_vadd_2b2d():
+    return exec_test(2, 50, 2, "vadd_2b2d")
+
+
+@xilinx_test()
+def test_vadd_2b3d():
+    return exec_test(3, 10, 2, "vadd_2b3d")
+
+
+@xilinx_test()
+def test_vadd_8b1d():
+    return exec_test(1, 50, 8, "vadd_8b1d", True)
 
 
 if __name__ == '__main__':
-    exec_test(1, 50, 2, "vadd_2b1d")  #2 banks, 1 dimensional
-    exec_test(2, 50, 2, "vadd_2b2d")  #2 banks 2 dimensional
-    exec_test(3, 10, 2, "vadd_2b3d")  #2 banks 3 dimensional
-    exec_test(1, 50, 8, "vadd_8b1d", True)  #8 banks 1d, 1 pipeline
+    test_vadd_2b1d(None)
+    test_vadd_2b2d(None)
+    test_vadd_2b3d(None)
+    test_vadd_8b1d(None)
