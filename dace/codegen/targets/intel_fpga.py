@@ -58,10 +58,6 @@ REDUCTION_TYPE_TO_PYEXPR = {
 }
 
 
-class NameTooLongError(ValueError):
-    pass
-
-
 @registry.autoregister_params(name='intel_fpga')
 class IntelFPGACodeGen(fpga.FPGACodeGen):
     target_name = 'intel_fpga'
