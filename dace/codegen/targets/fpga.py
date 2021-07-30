@@ -69,6 +69,7 @@ def is_fpga_kernel(sdfg, state):
             return False
     return True
 
+
 def is_hbm_array(array: dt.Data):
     """
     :return: True if this array is placed on HBM
@@ -106,6 +107,7 @@ def iterate_hbm_multibank_arrays(array_name: str, array: dt.Array, sdfg: SDFG):
     else:
         yield 0
 
+
 def modify_distributed_subset(subset: subsets.Subset, change: int):
     """
     Modifies the first index of :param subset: (the one used for distributed subsets).
@@ -126,7 +128,7 @@ def get_multibank_ranges_from_subset(subset: Union[subsets.Subset, str],
     """
     Returns the upper and lower end of the accessed HBM-range, evaluated using the
     constants on the SDFG.
-    :returns: (low, high) where low = the lowest accessed bank and high the 
+    :returns: (low, high) where low = the lowest accessed bank and high the
         highest accessed bank + 1.
     """
     if isinstance(subset, str):
@@ -147,9 +149,9 @@ def get_multibank_ranges_from_subset(subset: Union[subsets.Subset, str],
 def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
     """
     :param array: an array on FPGA global memory
-    :return: None if an array is given which does not have a location['memorytype'] value. 
+    :return: None if an array is given which does not have a location['memorytype'] value.
         Otherwise it will return a tuple (bank_type, bank_assignment), where bank_type
-        is one of 'DDR', 'HBM' and bank_assignment a string that describes which banks are 
+        is one of 'DDR', 'HBM' and bank_assignment a string that describes which banks are
         used.
     """
     if "memorytype" in array.location:
@@ -171,20 +173,20 @@ def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
 
 
 def fpga_ptr(name: str,
-        desc: dt.Data = None,
-        sdfg: SDFG = None,
-        subset_info_hbm: Union[subsets.Subset, int] = None,
-        is_write: bool = None,
-        dispatcher=None,
-        ancestor: int = 0,
-        is_array_interface: bool = False,
-        interface_id: Union[int, List[int]] = None):
+             desc: dt.Data = None,
+             sdfg: SDFG = None,
+             subset_info_hbm: Union[subsets.Subset, int] = None,
+             is_write: bool = None,
+             dispatcher=None,
+             ancestor: int = 0,
+             is_array_interface: bool = False,
+             interface_id: Union[int, List[int]] = None):
     """
     Returns a string that points to the data based on its name, and various other conditions
     that may apply for that data field.
     :param name: Data name.
     :param desc: Data descriptor.
-    :param subset_info_hbm: Any additional information about the accessed subset. 
+    :param subset_info_hbm: Any additional information about the accessed subset.
     :param ancestor: The ancestor level where the variable should be searched for if
         is_array_interface is True when dispatcher is not None
     :param is_array_interface: Data is pointing to an interface in FPGA-Kernel compilation
@@ -237,6 +239,7 @@ def fpga_ptr(name: str,
             else:
                 name = f"{name}_{interface_id}"
     return name
+
 
 class FPGACodeGen(TargetCodeGenerator):
     # Set by deriving class
@@ -817,8 +820,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             tmp_interface_ids = []
                             for bank in iterate_hbm_multibank_arrays(
                                     data_name, desc, sdfg):
-                                ptr_str = fpga_ptr(
-                                    data_name, desc, sdfg, bank)
+                                ptr_str = fpga_ptr(data_name, desc, sdfg, bank)
                                 tmp_interface_id = global_interfaces[ptr_str]
                                 global_interfaces[ptr_str] += 1
                                 tmp_interface_ids.append(tmp_interface_id)
@@ -1098,7 +1100,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     # Define buffer, using proper type
                     for bank_index in range(memory_bank_arg_count):
                         alloc_name = fpga_ptr(dataname, nodedesc, sdfg,
-                                                    bank_index)
+                                              bank_index)
                         if not declared:
                             result_decl.write(
                                 "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n"
@@ -1381,10 +1383,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
 
             copy_shape = memlet.subset.bounding_box_size()
-            is_src_using_hbm = src_is_subset and is_hbm_array(
-                src_nodedesc)
-            is_dst_using_hbm = not src_is_subset and is_hbm_array(
-                dst_nodedesc)
+            is_src_using_hbm = src_is_subset and is_hbm_array(src_nodedesc)
+            is_dst_using_hbm = not src_is_subset and is_hbm_array(dst_nodedesc)
             if is_src_using_hbm or is_dst_using_hbm:
                 copy_shape = copy_shape[1:]
 
@@ -1420,17 +1420,31 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 host_dtype = sdfg.data(dst_node.data).dtype
             cast = False
             if not device_to_device and host_dtype != device_dtype:
+                host_dtype_base = host_dtype
+                while True:
+                    updated = host_dtype_base.base_type
+                    if updated != host_dtype_base:
+                        host_dtype_base = updated
+                        continue
+                    break
+                device_dtype_base = device_dtype
+                while True:
+                    updated = device_dtype_base.base_type
+                    if updated != device_dtype_base:
+                        device_dtype_base = updated
+                        continue
+                    break
                 if ((isinstance(host_dtype, dace.vector)
                      or isinstance(device_dtype, dace.vector))
-                        and host_dtype.base_type == device_dtype.base_type):
+                        and host_dtype_base == device_dtype_base):
                     if ((host_to_device and memlet.data == src_node.data) or
                         (device_to_host and memlet.data == dst_node.data)):
-                        if host_dtype.veclen > device_dtype.veclen:
-                            copy_shape[-1] *= (host_dtype.veclen //
-                                               device_dtype.veclen)
+                        if host_dtype.bytes > device_dtype.bytes:
+                            copy_shape[-1] *= (host_dtype.bytes //
+                                               device_dtype.bytes)
                         else:
-                            copy_shape[-1] //= (device_dtype.veclen //
-                                                host_dtype.veclen)
+                            copy_shape[-1] //= (device_dtype.bytes //
+                                                host_dtype.bytes)
                     cast = True
                 else:
                     raise TypeError(
@@ -1446,35 +1460,33 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             dst_subset = memlet.dst_subset or memlet.subset
             if host_to_device:
 
-                ptr_str = (fpga_ptr(src_node.data, src_nodedesc, sdfg,
-                                          src_subset) +
-                           (" + {}".format(offset_src) if outgoing_memlet
-                            and str(offset_src) != "0" else ""))
+                ptr_str = (
+                    fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset) +
+                    (" + {}".format(offset_src)
+                     if outgoing_memlet and str(offset_src) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} const *>({})".format(
                         device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
                     "{}.CopyFromHost({}, {}, {});".format(
-                        fpga_ptr(dst_node.data, dst_nodedesc, sdfg,
-                                       dst_subset),
+                        fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset),
                         (offset_dst if not outgoing_memlet else 0), copysize,
                         ptr_str), sdfg, state_id, [src_node, dst_node])
 
             elif device_to_host:
 
-                ptr_str = (fpga_ptr(dst_node.data, dst_nodedesc, sdfg,
-                                          dst_subset) +
-                           (" + {}".format(offset_dst) if outgoing_memlet
-                            and str(offset_dst) != "0" else ""))
+                ptr_str = (
+                    fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset) +
+                    (" + {}".format(offset_dst)
+                     if outgoing_memlet and str(offset_dst) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} *>({})".format(
                         device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
                     "{}.CopyToHost({}, {}, {});".format(
-                        fpga_ptr(src_node.data, src_nodedesc, sdfg,
-                                       src_subset),
+                        fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset),
                         (offset_src if outgoing_memlet else 0), copysize,
                         ptr_str), sdfg, state_id, [src_node, dst_node])
 
@@ -1482,11 +1494,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
                 callsite_stream.write(
                     "{}.CopyToDevice({}, {}, {}, {});".format(
-                        fpga_ptr(src_node.data, src_nodedesc, sdfg,
-                                       src_subset),
+                        fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset),
                         (offset_src if outgoing_memlet else 0), copysize,
-                        fpga_ptr(dst_node.data, dst_nodedesc, sdfg,
-                                       dst_subset),
+                        fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset),
                         (offset_dst if not outgoing_memlet else 0)), sdfg,
                     state_id, [src_node, dst_node])
 
