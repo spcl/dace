@@ -141,7 +141,6 @@ def _run_fpga_test(vendor: str,
                                  f"synthesis for {sdfg.name}.")
                     try:
                         proc = sp.Popen(["make", "xilinx_synthesis"],
-                                        env=env,
                                         cwd=build_folder,
                                         stdout=sp.PIPE,
                                         stderr=sp.PIPE,
