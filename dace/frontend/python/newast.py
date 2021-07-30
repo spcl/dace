@@ -3886,10 +3886,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 elif (callable(fobj) and hasattr(fobj, '__module__')
                       and hasattr(fobj, '__name__')):
                     module = fobj.__module__
-                    if module is None or module == str.__class__.__module__:
-                        funcname = fobj.__name__
+                    if (module is None or module == str.__class__.__module__
+                            or module == '__main__'):
+                        candidate = fobj.__name__
                     else:
-                        funcname = fobj.__module__ + '.' + fobj.__name__
+                        candidate = fobj.__module__ + '.' + fobj.__name__
+
+                    if oprepo.Replacements.get(candidate) is not None:
+                        funcname = candidate
 
         # If the function exists as a global SDFG or @dace.program, use it
         if func or funcname in self.other_sdfgs:
