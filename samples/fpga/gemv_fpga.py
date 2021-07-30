@@ -1,6 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
 import argparse
 import dace
 import numpy as np
@@ -11,8 +9,8 @@ N = dace.symbol("N")
 M = dace.symbol("M")
 dtype = dace.float64
 
-# This implementation of transposed DGEMV assumes that the two vectors (x and y) fit into
-# FPGA fast memory
+# This implementation of transposed DGEMV assumes that the two vectors (x and y)
+# fit into FPGA on-chip memory
 
 
 def make_init_state(sdfg):
@@ -121,9 +119,10 @@ def make_compute_state(sdfg):
                                transient=True,
                                storage=dace.dtypes.StorageType.FPGA_Local)
 
-    cols_entry, cols_exit = state.add_map("cols", {"m": "0:M"},
-                                          schedule=dace.ScheduleType.Sequential)
-    rows_entry, rows_exit = state.add_map("rows", {"n": "0:N"})
+    cols_entry, cols_exit = state.add_map(
+        "cols", {"m": "0:M"}, schedule=dace.ScheduleType.FPGA_Device)
+    rows_entry, rows_exit = state.add_map(
+        "rows", {"n": "0:N"}, schedule=dace.ScheduleType.FPGA_Device)
 
     tasklet = state.add_tasklet("update", {"a", "x_in"}, {"update"},
                                 "update = a * x_in")
@@ -226,33 +225,25 @@ def make_sdfg(specialize):
     return sdfg
 
 
-if __name__ == "__main__":
+def run_gemv(n: int, m: int, specialize: bool):
+
     print("==== Program start ====")
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int)
-    parser.add_argument("M", type=int)
-    parser.add_argument("-specialize",
-                        default=False,
-                        action="store_true",
-                        help="Also fix M in hardware")
-    args = vars(parser.parse_args())
-
-    N.set(args["N"])
-    if args["specialize"]:
+    N.set(n)
+    if specialize:
         print("Specializing M...")
-        M.set(args["M"])
+        M.set(m)
 
-    gemv = make_sdfg(args["specialize"])
+    gemv = make_sdfg(specialize)
     gemv.specialize(dict(N=N))
 
-    if not args["specialize"]:
-        M.set(args["M"])
+    if not specialize:
+        M.set(m)
     else:
         gemv.specialize(dict(M=M))
 
     print("Running GEMV {}x{} ({}specialized)".format(
-        N.get(), M.get(), ("" if args["specialize"] else "not ")))
+        N.get(), M.get(), ("" if specialize else "not ")))
 
     A = dace.ndarray([M, N], dtype=dtype)
     x = dace.ndarray([M], dtype=dtype)
@@ -272,7 +263,7 @@ if __name__ == "__main__":
     #############################################
     # Run DaCe program
 
-    if args["specialize"]:
+    if specialize:
         gemv(A=A, x=x, y=x)
     else:
         gemv(A=A, M=M, x=x, y=y)
@@ -292,14 +283,20 @@ if __name__ == "__main__":
         print("Highest difference: {}".format(highest_diff))
         print("** Result:\n", y)
         print("** Reference:\n", regression)
-        print("Type \"debug\" to enter debugger, "
-              "or any other string to quit (timeout in 10 seconds)")
-        read, _, _ = select.select([sys.stdin], [], [], 10)
-        if len(read) > 0 and sys.stdin.readline().strip().lower() == "debug":
-            print("Entering debugger...")
-            import pdb
-            pdb.set_trace()
-        else:
-            print("Exiting...")
-        exit(1)
-    exit(0)
+        raise RuntimeError("Validation failed/")
+
+    return gemv
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("N", type=int)
+    parser.add_argument("M", type=int)
+    parser.add_argument("-specialize",
+                        default=False,
+                        action="store_true",
+                        help="Also fix M in hardware")
+    args = parser.parse_args()
+
+    run_gemv(args.n, args.m, args.specialize)
