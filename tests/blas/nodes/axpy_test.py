@@ -167,8 +167,6 @@ def _test_fpga(target):
 
 
 if __name__ == "__main__":
-    _test_fpga("fpga_hbm")
-    exit(0)
 
     cmdParser = argparse.ArgumentParser(allow_abbrev=False)
 
