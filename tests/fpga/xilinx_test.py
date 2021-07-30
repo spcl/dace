@@ -19,11 +19,6 @@ TESTS = [
     # BLAS
     ("tests/blas/nodes/dot_test.py", "dot_FPGA_PartialSums_float_w16_1", True,
      True, ["--target", "xilinx"]),
-    ("tests/blas/nodes/gemv_test.py", "gemv_FPGA_TilesByColumn_float_True_w4_1",
-     True, True,
-     ["--target", "tiles_by_column", "--transpose", "--vectorize", "4"]),
-    ("tests/blas/nodes/gemv_test.py", "gemv_FPGA_Accumulate_float_False_w4_1",
-     True, True, ["--target", "accumulate", "--vectorize", "4"]),
     ("tests/blas/nodes/ger_test.py", "ger_test_1", True, True,
      ["--target", "fpga"]),
     # RTL cores
