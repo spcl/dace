@@ -15,8 +15,6 @@ from fpga_testing import (Colors, DACE_DIR, TEST_DIR, cli, dump_logs,
 
 # (relative path, sdfg name(s), run synthesis, assert II=1, args to executable)
 TESTS = [
-    ### Type inference ###
-    ("samples/simple/mandelbrot.py", "mandelbrot_1", ["--fpga"]),
     ### Systolic array ###
     ("samples/fpga/jacobi_fpga_systolic.py", "jacobi_fpga_systolic_8_Hx8192xT",
      []),
