@@ -15,8 +15,6 @@ from fpga_testing import (Colors, DACE_DIR, TEST_DIR, cli, dump_logs,
 
 # (relative path, sdfg name(s), run synthesis, assert II=1, args to executable)
 TESTS = [
-    ("samples/fpga/filter_fpga_vectorized.py", "filter_fpga_vectorized_4", True,
-     True, [8192, 4, 0.25]),
     # ("jacobi_fpga_systolic.py", "jacobi_fpga_systolic_4_Hx128xT", True, True, [1, 128, 128, 8, 4]),
     ("samples/fpga/gemv_transposed_fpga.py", "gemv_transposed_1024xM", True,
      False, [1024, 1024]),
