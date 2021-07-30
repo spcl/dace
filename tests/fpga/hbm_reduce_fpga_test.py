@@ -79,26 +79,26 @@ def exec_test(N, M, banks, name):
     return sdfg
 
 
-@xilinx_test()
-def test_hbm_reduce_2x3_2b():
+@xilinx_test(assert_ii_1=False)
+def test_hbm_reduce_2x3_2b(assert_ii_1=False):
     return exec_test(2, 3, 2, "red_2x3_2b")
 
 
-@xilinx_test()
+@xilinx_test(assert_ii_1=False)
 def test_hbm_reduce_10x50_4b():
     return exec_test(10, 50, 4, "red_10x50_4b")
 
 
-@xilinx_test()
+@xilinx_test(assert_ii_1=False)
 def test_hbm_reduce_red_1x50_1b():
     return exec_test(1, 50, 1, "red_1x50_1b")
 
 
-@xilinx_test()
+@xilinx_test(assert_ii_1=False)
 def test_hbm_reduce_red_1x40_8b():
     return exec_test(1, 40, 8, "red_1x40_8b")
 
 
-@xilinx_test()
+@xilinx_test(assert_ii_1=False)
 def test_hbm_reduce_red_2x40_6b():
     return exec_test(2, 40, 6, "red_2x40_6b")

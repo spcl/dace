@@ -6,7 +6,7 @@ from mapfusion_test import multiple_fusions, fusion_with_transient
 import numpy as np
 
 
-@fpga_test()
+@fpga_test(assert_ii_1=False)
 def test_multiple_fusions_fpga():
     sdfg = multiple_fusions.to_sdfg()
     sdfg.apply_strict_transformations()
