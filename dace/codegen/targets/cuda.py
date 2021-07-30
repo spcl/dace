@@ -2242,15 +2242,25 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
 
         # Multi GPU scope
         if scope_entry.map.schedule == dtypes.ScheduleType.GPU_Multidevice:
-            callsite_stream.write(
-                '''{{ {debug_print}
-#pragma omp parallel for num_threads({scopeEnd})
-for(int {scope} = {scopebeginning}; {scope} < {scopeEnd}; {scope}++){{
-'''.format(scope=scope_entry.params[0],
-            scopebeginning=scope_entry.map.range.ranges[0][0],
-            scopeEnd=scope_entry.map.range.ranges[0][1] + 1,
-            debug_print=f'\nprintf("{scope_entry} start\\n");'
-            if self._debugprint else ''), sdfg, state_id, scope_entry)
+            if self._debugprint:
+                debug_print = f'\nprintf("{scope_entry} start\\n");'
+            else:
+                debug_print = ''
+            new = f'''{{ {debug_print}
+#pragma omp parallel num_threads({scope_entry.map.range.ranges[0][1] + 1})
+{{
+    int {scope_entry.params[0]} = omp_get_thread_num();
+            '''
+            #             old = '''{{ {debug_print}
+            # #pragma omp parallel for num_threads({scopeEnd})
+            # for(int {scope} = {scopebeginning}; {scope} < {scopeEnd}; {scope}++){{
+            # '''.format(scope=scope_entry.params[0],
+            #             scopebeginning=scope_entry.map.range.ranges[0][0],
+            #             scopeEnd=scope_entry.map.range.ranges[0][1] + 1,
+            #             debug_print=f'\nprintf("{scope_entry} start\\n");'
+            #             if self._debugprint else '')
+
+            callsite_stream.write(new, sdfg, state_id, scope_entry)
 
             # Emit internal array allocation (deallocation handled at MapExit)
             self._frame.allocate_arrays_in_scope(sdfg, scope_entry,

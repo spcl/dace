@@ -11,6 +11,7 @@
     #define gpuFree hipFree
   #else
     #include <cuda_runtime.h>
+    #include <omp.h>
     #define gpuLaunchKernel cudaLaunchKernel
     #define gpuMalloc cudaMalloc
     #define gpuMemset cudaMemset
