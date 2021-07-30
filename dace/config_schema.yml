@@ -380,7 +380,26 @@ required:
                             number of thread blocks can run efficiently on the
                             GPU.
                         default: 2
-
+                        
+                    default_gpu:
+                        type: int
+                        title: Default GPU to use if no GPU is specified.
+                        description: >
+                            Default GPU to use if no GPU is specified but GPUs are
+                            used. Special values: -1 uses the lowest GPU specified
+                            in the SDFG if none are specified in the SDFG the 
+                            default will be set to GPU 0.
+                        default: -1
+                    
+                    max_number_gpus:
+                        type: int
+                        title: Maximal number available GPUs
+                        description: >
+                            Maximal number of GPUs that are available, needed
+                            for the GPUMultiTransformMap. Special values: -1
+                            uses all available GPUs. 0 uses no GPUs.
+                        default: 1
+                    
                     max_concurrent_streams:
                         type: int
                         title: Concurrent execution streams

@@ -206,7 +206,7 @@ class Property:
                     type(obj).__name__))
 
         # Accept all DaCe/numpy typeclasses as Python native types
-        if isinstance(val, np.number):
+        if isinstance(val, (np.number, np.bool_)):
             val = val.item()
 
         # Edge cases for integer and float types
@@ -586,7 +586,7 @@ class TransformationHistProperty(Property):
             raise TypeError(
                 'TransformationHistProperty expects a list input, got %s' %
                 data)
-        return [dace.serialize.from_json(elem) for elem in data]
+        return [dace.serialize.from_json(elem) if elem else None for elem in data]
 
 
 class DictProperty(Property):

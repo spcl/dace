@@ -25,7 +25,10 @@ def slowmm(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
             c = a * b
 
 
-def onetest(instrumentation: dace.InstrumentationType, size=128):
+def onetest(instrumentation: dace.InstrumentationType,
+            instr_print_type: dace.InstrumentationReportPrintType = dace.
+            InstrumentationReportPrintType.SDFG,
+            size=128):
     N.set(size)
     A = np.random.rand(size, size)
     B = np.random.rand(size, size)
@@ -40,6 +43,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
         if isinstance(node, nodes.MapEntry) and node.map.label == 'mult':
             node.map.instrument = instrumentation
             state.instrument = instrumentation
+
     # Set Timer instrumentation on the whole SDFG
     if instrumentation == dace.InstrumentationType.Timer:
         sdfg.instrument = instrumentation
@@ -54,8 +58,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
 
     # Print instrumentation report
     if sdfg.is_instrumented():
-        print('Instrumentation report')
-        report = sdfg.get_latest_report()
+        report = sdfg.get_latest_report(instr_print_type)
         print(report)
 
 
@@ -66,7 +69,7 @@ def test_timer():
 @pytest.mark.papi
 def test_papi():
     # Run a lighter load for the sake of performance
-    onetest(dace.InstrumentationType.PAPI_Counters, 4)
+    onetest(dace.InstrumentationType.PAPI_Counters, size=4)
 
 
 @pytest.mark.gpu
@@ -74,8 +77,15 @@ def test_gpu_events():
     onetest(dace.InstrumentationType.GPU_Events)
 
 
+@pytest.mark.gpu
+def test_gpu_events_location():
+    onetest(dace.InstrumentationType.GPU_Events,
+            dace.InstrumentationReportPrintType.Location)
+
+
 if __name__ == '__main__':
     test_timer()
     test_papi()
     if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
         test_gpu_events()
+        test_gpu_events_location()

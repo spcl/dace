@@ -354,6 +354,7 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
             node.out_connectors,
             code,
             language=dace.dtypes.Language.CPP,
+            location=node.location
         )
 
         # If buffers are not on the GPU, copy them
@@ -370,6 +371,8 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
                 dcopy_gpu = dc(dcopy)
                 dcopy.transient = False
                 nsdfg.add_datadesc(name, dcopy)
+                dcopy_gpu = dc(desc)
+                dcopy_gpu.location = node.location
                 dcopy_gpu.transient = True
                 dcopy_gpu.storage = dace.StorageType.GPU_Global
                 nsdfg.add_datadesc(name + '_gpu', dcopy_gpu)

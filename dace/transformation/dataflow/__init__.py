@@ -44,6 +44,7 @@ from .copy_to_device import CopyToDevice
 from .gpu_transform import GPUTransformMap
 from .gpu_transform_local_storage import GPUTransformLocalStorage
 from .mpi import MPITransformMap
+from .gpu_multi_transform_map import GPUMultiTransformMap
 from .warp_tiling import WarpTiling
 
 # Algorithmic

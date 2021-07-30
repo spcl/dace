@@ -24,6 +24,7 @@
     #define DACE_USE_GPU_ATOMICS
     #if __CUDA_ARCH__ >= 600
         #define DACE_USE_GPU_DOUBLE_ATOMICS
+        #define DACE_USE_SYSTEM_ATOMICS
     #endif
 #endif
 
@@ -38,9 +39,10 @@ namespace dace {
     {
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value);
 
+        static DACE_HDFI T reduce_atomic_system (T *ptr, const T& value);
+        
         DACE_HDFI T operator()(const T &a, const T &b) const;
     };
-
 
     // Custom reduction with a lambda function
     template <typename T>
@@ -67,6 +69,23 @@ namespace dace {
             #endif
 
             return old;
+        }
+        template <typename WCR>
+        static DACE_HDFI T reduce_atomic_system(WCR wcr, T *ptr, const T& value) {
+            // Adapted from CUDA's pre-v8.0 double atomicAdd implementation
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                T old;
+                T assumed;
+                old = *ptr;
+                do {
+                    assumed = old;
+                    old = atomicCAS_system(ptr, assumed, wcr(assumed, value));
+                } while (assumed != old);
+                return old;
+            #else
+                return T(0); // Unsupported
+            #endif
+
         }
 
         // Non-conflicting version --> no critical section
@@ -103,6 +122,23 @@ namespace dace {
                     *ptr = wcr(old, value);
                 }
                 return old;
+            #endif
+        }
+
+        template <typename WCR>
+        static DACE_HDFI float reduce_atomic_system(WCR wcr, float *ptr, const float& value) {
+            // Adapted from CUDA's pre-v8.0 double atomicAdd implementation
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                int *iptr = (int *)ptr;
+                int old = *iptr, assumed;
+                do {
+                    assumed = old;
+                    old = atomicCAS_system(iptr, assumed, 
+                        __float_as_int(wcr(__int_as_float(assumed), value)));
+                } while (assumed != old);
+                return __int_as_float(old);
+            #else
+                return float(0); // Unsupported
             #endif
         }
 
@@ -145,6 +181,26 @@ namespace dace {
             #endif
         }
 
+        template <typename WCR>
+        static DACE_HDFI double reduce_atomic_system(WCR wcr, double *ptr, const double& value) {
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                // Adapted from CUDA's pre-v8.0 double atomicAdd implementation
+                unsigned long long *iptr = (unsigned long long *)ptr;
+                unsigned long long old = *ptr, assumed;
+                do {
+                    assumed = old;
+                    old = atomicCAS_system(
+                        iptr, assumed,
+                        __double_as_longlong(
+                                wcr(__longlong_as_double(assumed),
+                                    value)));
+                } while (assumed != old);
+                return __longlong_as_double(old);
+            #else
+                return double(0); // Unsupported
+            #endif
+        }
+
         // Non-conflicting version --> no critical section
         template <typename WCR>
         static DACE_HDFI double reduce(WCR wcr, double *ptr, const double& value) {
@@ -176,8 +232,20 @@ namespace dace {
             #endif
         }
 
+
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value)
+        {
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return atomicAdd_system(ptr, value);
+            #else
+                return T(0); // Unsupported
+            #endif
+        }
+
         DACE_HDFI T operator()(const T &a, const T &b) const { return a + b; }
     };
+
+
 
 // Implementation of double atomicAdd for CUDA architectures prior to 6.0
 #if defined(DACE_USE_GPU_ATOMICS) && !defined(DACE_USE_GPU_DOUBLE_ATOMICS)
@@ -235,6 +303,14 @@ namespace dace {
             #endif
         }
 
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return wcr_custom<T>::reduce(
+                    _wcr_fixed<ReductionType::Product, T>(), ptr, value);
+            #else
+                return T(0); // Unsupported
+            #endif
+        }
 
         DACE_HDFI T operator()(const T &a, const T &b) const { return a * b; }
     };
@@ -248,6 +324,15 @@ namespace dace {
             #else
                 return wcr_custom<T>::reduce_atomic(
                     _wcr_fixed<ReductionType::Min, T>(), ptr, value);
+            #endif
+        }
+
+
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return atomicMin_system(ptr, value);
+            #else
+                return T(0); // Unsupported
             #endif
         }
 
@@ -268,6 +353,16 @@ namespace dace {
         }
 
 
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value)
+        {
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return atomicMax_system(ptr, value);
+            #else
+                return T(0); // Unsupported
+            #endif
+        }
+
+
         DACE_HDFI T operator()(const T &a, const T &b) const { return ::max(a, b); }
     };
 
@@ -279,7 +374,16 @@ namespace dace {
             return wcr_custom<float>::reduce_atomic(
                 _wcr_fixed<ReductionType::Min, float>(), ptr, value);
         }
-
+        
+        static DACE_HDFI float reduce_atomic_system(float *ptr, const float& value)
+        { 
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return wcr_custom<float>::reduce_atomic_system(
+                    _wcr_fixed<ReductionType::Min, float>(), ptr, value);
+            #else
+                return float(0); // Unsupported
+            #endif
+        }
 
         DACE_HDFI float operator()(const float &a, const float &b) const { return ::min(a, b); }
     };
@@ -290,6 +394,15 @@ namespace dace {
         static DACE_HDFI float reduce_atomic(float *ptr, const float& value) { 
             return wcr_custom<float>::reduce_atomic(
                 _wcr_fixed<ReductionType::Max, float>(), ptr, value);
+        }
+
+        static DACE_HDFI float reduce_atomic_system(float *ptr, const float& value) { 
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return wcr_custom<float>::reduce_atomic_system(
+                    _wcr_fixed<ReductionType::Max, float>(), ptr, value);
+            #else
+                return float(0); // Unsupported
+            #endif
         }
 
         DACE_HDFI float operator()(const float &a, const float &b) const { return ::max(a, b); }
@@ -303,6 +416,14 @@ namespace dace {
                 _wcr_fixed<ReductionType::Min, double>(), ptr, value);
         }
 
+        static DACE_HDFI double reduce_atomic_system(double *ptr, const double& value) { 
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return wcr_custom<double>::reduce_atomic_system(
+                    _wcr_fixed<ReductionType::Min, double>(), ptr, value);
+            #else
+                return double(0); // Unsupported
+            #endif
+        }
 
         DACE_HDFI double operator()(const double &a, const double &b) const { return ::min(a, b); }
     };
@@ -313,6 +434,15 @@ namespace dace {
         static DACE_HDFI double reduce_atomic(double *ptr, const double& value) { 
             return wcr_custom<double>::reduce_atomic(
                 _wcr_fixed<ReductionType::Max, double>(), ptr, value);
+        }
+            
+        static DACE_HDFI double reduce_atomic_system(double *ptr, const double& value) { 
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return wcr_custom<double>::reduce_atomic_system(
+                    _wcr_fixed<ReductionType::Max, double>(), ptr, value);
+            #else
+                return double(0); // Unsupported
+            #endif
         }
 
         DACE_HDFI double operator()(const double &a, const double &b) const { return ::max(a, b); }
@@ -343,6 +473,15 @@ namespace dace {
         }
 
 
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return atomicAnd_system(ptr, value ? T(1) : T(0));
+            #else
+                return T(0); // Unsupported
+            #endif
+        }
+
+
         DACE_HDFI T operator()(const T &a, const T &b) const { return a && b; }
     };
 
@@ -363,6 +502,15 @@ namespace dace {
             #else
                 #pragma omp atomic
                 *ptr &= value;
+                return T(0); // Unsupported
+            #endif
+        }
+
+
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return atomicAnd_system(ptr, value);
+            #else
                 return T(0); // Unsupported
             #endif
         }
@@ -395,6 +543,15 @@ namespace dace {
         }
 
 
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return atomicOr_system(ptr, value ? T(1) : T(0));
+            #else
+                return T(0); // Unsupported
+            #endif
+        }
+
+
         DACE_HDFI T operator()(const T &a, const T &b) const { return a || b; }
     };
 
@@ -415,6 +572,15 @@ namespace dace {
             #else
                 #pragma omp atomic
                 *ptr |= value;
+                return T(0); // Unsupported
+            #endif
+        }
+
+
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return atomicOr_system(ptr, value);
+            #else
                 return T(0); // Unsupported
             #endif
         }
@@ -447,6 +613,15 @@ namespace dace {
         }
 
 
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return atomicXor_system(ptr, value ? T(1) : T(0));
+            #else
+                return T(0); // Unsupported
+            #endif
+        }
+
+
         DACE_HDFI T operator()(const T &a, const T &b) const { return a != b; }
     };
 
@@ -472,6 +647,15 @@ namespace dace {
         }
 
 
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return atomicXor_system(ptr, value);
+            #else
+                return T(0); // Unsupported
+            #endif
+        }
+
+
         DACE_HDFI T operator()(const T &a, const T &b) const { return a ^ b; }
     };
 
@@ -491,6 +675,16 @@ namespace dace {
                 return old;
             #endif
         }
+
+
+        static DACE_DFI T reduce_atomic_system(T *ptr, const T& value){
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return atomicExch_system(ptr, value);
+            #else
+                return T(0); // Unsupported
+            #endif
+        }
+
 
         DACE_HDFI T operator()(const T &a, const T &b) const { return b; }
     };
@@ -519,6 +713,16 @@ namespace dace {
             return wcr_custom<T>::template reduce_atomic(
                 _wcr_fixed<REDTYPE, T>(), ptr, value);
         }
+
+        static DACE_HDFI T reduce_atomic_system(T *ptr, const T& value)
+        {
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return wcr_custom<T>::template reduce_atomic_system(
+                    _wcr_fixed<REDTYPE, T>(), ptr, value);
+            #else
+                return T(0); // Unsupported
+            #endif
+        }
     };
 
     // When atomics are supported, use _wcr_fixed normally
@@ -535,6 +739,14 @@ namespace dace {
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value)
         {
             return _wcr_fixed<REDTYPE, T>::reduce_atomic(ptr, value);
+        }
+        static DACE_HDFI T reduce_atomic_system(T *ptr, const T& value)
+        {
+            #ifdef DACE_USE_SYSTEM_ATOMICS
+                return _wcr_fixed<REDTYPE, T>::reduce_atomic_system(ptr, value);
+            #else
+                return T(0); // Unsupported
+            #endif
         }
 
         DACE_HDFI T operator()(const T &a, const T &b) const
@@ -568,7 +780,6 @@ namespace dace {
             return _wcr_fixed<REDTYPE, T>::reduce_atomic(ptr, scal);
         }
     };
-
 
 #ifdef __CUDACC__
     struct StridedIteratorHelper {

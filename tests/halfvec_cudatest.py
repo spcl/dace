@@ -27,6 +27,7 @@ def _test_half(veclen):
     A = np.random.rand(24).astype(np.float16)
     B = np.random.rand(24).astype(np.float16)
     sdfg = halftest.to_sdfg()
+    sdfg.name=sdfg.name+str(veclen)
     sdfg.apply_strict_transformations()
     sdfg.apply_gpu_transformations()
 
@@ -61,7 +62,7 @@ def test_exp_vec():
     _config()
 
     @dace.program
-    def halftest(A: dace.float16[N]):
+    def halftest_exp_vec(A: dace.float16[N]):
         out = np.ndarray([N], dace.float16)
         for i in dace.map[0:N]:
             with dace.tasklet:
@@ -71,7 +72,7 @@ def test_exp_vec():
         return out
 
     A = np.random.rand(24).astype(np.float16)
-    sdfg = halftest.to_sdfg()
+    sdfg = halftest_exp_vec.to_sdfg()
     sdfg.apply_gpu_transformations()
     assert sdfg.apply_transformations(Vectorization, dict(vector_len=8)) == 1
     out = sdfg(A=A, N=24)
@@ -84,7 +85,7 @@ def test_relu_vec():
     _config()
 
     @dace.program
-    def halftest(A: dace.float16[N]):
+    def halftest_relu_vec(A: dace.float16[N]):
         out = np.ndarray([N], dace.float16)
         for i in dace.map[0:N]:
             with dace.tasklet:
@@ -94,7 +95,7 @@ def test_relu_vec():
         return out
 
     A = np.random.rand(24).astype(np.float16)
-    sdfg = halftest.to_sdfg()
+    sdfg = halftest_relu_vec.to_sdfg()
     sdfg.apply_gpu_transformations()
     assert sdfg.apply_transformations(Vectorization, dict(vector_len=8)) == 1
     out = sdfg(A=A, N=24)
@@ -107,7 +108,7 @@ def test_dropout_vec():
     _config()
 
     @dace.program
-    def halftest(A: dace.float16[N], mask: dace.float16[N]):
+    def halftest_dropout_vec(A: dace.float16[N], mask: dace.float16[N]):
         out = np.ndarray([N], dace.float16)
         for i in dace.map[0:N]:
             with dace.tasklet:
@@ -119,7 +120,7 @@ def test_dropout_vec():
 
     A = np.random.rand(24).astype(np.float16)
     mask = np.random.randint(0, 2, size=[24]).astype(np.float16)
-    sdfg: dace.SDFG = halftest.to_sdfg()
+    sdfg: dace.SDFG = halftest_dropout_vec.to_sdfg()
     sdfg.apply_gpu_transformations()
     assert sdfg.apply_transformations(Vectorization, dict(vector_len=8)) == 1
     out = sdfg(A=A, mask=mask, N=24)
@@ -133,7 +134,7 @@ def test_gelu_vec():
     s2pi = math.sqrt(2.0 / math.pi)
 
     @dace.program
-    def halftest(A: dace.float16[N]):
+    def halftest_gelu_vec(A: dace.float16[N]):
         out = np.ndarray([N], dace.float16)
         for i in dace.map[0:N]:
             with dace.tasklet:
@@ -144,7 +145,7 @@ def test_gelu_vec():
         return out
 
     A = np.random.rand(24).astype(np.float16)
-    sdfg = halftest.to_sdfg()
+    sdfg = halftest_gelu_vec.to_sdfg()
     sdfg.apply_gpu_transformations()
     assert sdfg.apply_transformations(Vectorization, dict(vector_len=4)) == 1
     out = sdfg(A=A, N=24)

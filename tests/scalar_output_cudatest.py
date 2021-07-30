@@ -67,7 +67,7 @@ def test_scalar_output_ptr_access():
         """
         double a = 5;
         cudaMemcpyAsync(outp, &a, 1 * sizeof(double), cudaMemcpyHostToDevice,
-                        __state->gpu_context->streams[0]);
+                        __dace_current_stream);
         """,
         language=dace.dtypes.Language.CPP,
     )

@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.sdfg.infer_types import set_default_schedule_and_storage_types
+from dace.sdfg.infer_types import set_default_schedule_storage_types_and_location
 
 
 def test_notbmap():
@@ -27,7 +27,7 @@ def test_notbmap():
                           src_conn='b',
                           memlet=dace.Memlet.simple('A', 'i'))
 
-    set_default_schedule_and_storage_types(sdfg, None)
+    set_default_schedule_storage_types_and_location(sdfg, None)
     assert sdfg.arrays['tmp'].storage == dace.StorageType.Register
 
 
@@ -64,7 +64,7 @@ def test_tbmap_sequential():
                           w,
                           src_conn='b',
                           memlet=dace.Memlet.simple('A', 'i+j, ti'))
-    set_default_schedule_and_storage_types(sdfg, None)
+    set_default_schedule_storage_types_and_location(sdfg, None)
     assert sdfg.arrays['tmp'].storage == dace.StorageType.GPU_Shared
 
 

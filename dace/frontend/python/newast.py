@@ -586,7 +586,8 @@ def add_indirection_subgraph(sdfg: SDFG,
                                     rng.bounding_box_size(),
                                     array.dtype,
                                     storage=dtypes.StorageType.Default,
-                                    transient=True)
+                                    transient=True,
+                                    find_new_name=True)
         # Force creation of transients for range indirection
         if output:
             if src:
@@ -2772,8 +2773,10 @@ class ProgramVisitor(ExtNodeVisitor):
             if op_subset.num_elements() != 1:
                 squeezed = copy.deepcopy(target_subset)
                 squeezed.squeeze(offset=False)
+                squeezed.simplify()
                 squeezed_op = copy.deepcopy(op_subset)
                 squeezed_op.squeeze(offset=False)
+                squeezed_op.simplify()
                 if squeezed.size() != squeezed_op.size() or op:
 
                     _, all_idx_tuples, _, _, inp_idx = _broadcast_to(
@@ -2913,6 +2916,14 @@ class ProgramVisitor(ExtNodeVisitor):
             if op:
                 out_memlet.wcr = LambdaProperty.from_string(
                     'lambda x, y: x {} y'.format(op))
+
+            # Propagate WCR
+            if out_memlet.wcr is not None:
+                try:
+                    target_memlet = self.outputs[target_name][0]
+                    target_memlet.wcr = out_memlet.wcr
+                except TypeError:
+                    warnings.warn('WCR might not get propagated.')
 
             state.add_edge(tasklet, '__out', op2, None, out_memlet)
 

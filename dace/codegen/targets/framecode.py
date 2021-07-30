@@ -15,7 +15,7 @@ from dace.codegen.targets.cpp import unparse_interstate_edge
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg import nodes
-from dace.sdfg.infer_types import set_default_schedule_and_storage_types
+from dace.sdfg.infer_types import set_default_schedule_storage_types_and_location
 from dace.sdfg import scope as sdscope
 from dace import dtypes, data, config
 from typing import Any, DefaultDict, Dict, List, Tuple, Union
@@ -424,7 +424,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
         if desc.storage in dtypes.FPGA_STORAGES:
             return sdscope.is_devicelevel_fpga(csdfg, cstate, node)
-        elif desc.storage in dtypes.GPU_STORAGES:
+        elif desc.storage in dtypes.GPU_LOCAL_STORAGES:
             return sdscope.is_devicelevel_gpu(csdfg, cstate, node)
 
         return False

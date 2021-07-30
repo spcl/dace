@@ -5,7 +5,7 @@ from dace import data, memlet, dtypes, registry, sdfg as sd
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation, helpers as xfh
-from dace.properties import Property, make_properties
+from dace.properties import Property, make_properties, SymbolicProperty
 from collections import defaultdict
 from typing import Dict
 
@@ -69,6 +69,10 @@ class GPUTransformSDFG(transformation.Transformation):
         "(comma-separated)",
         dtype=str,
         default='')
+
+    gpu_id = SymbolicProperty(default=None,
+                              allow_none=True,
+                              desc="Selects which gpu the map should run on")
 
     @staticmethod
     def annotates_memlets():
@@ -147,6 +151,7 @@ class GPUTransformSDFG(transformation.Transformation):
 
         #######################################################
         # Step 1: Create cloned GPU arrays and replace originals
+        gpu_id = self.gpu_id
 
         cloned_arrays = {}
         for inodename, inode in set(input_nodes):
@@ -157,6 +162,8 @@ class GPUTransformSDFG(transformation.Transformation):
             newdesc = inode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
+            if gpu_id != None:
+                newdesc.location = {'gpu': gpu_id}
             name = sdfg.add_datadesc('gpu_' + inodename,
                                      newdesc,
                                      find_new_name=True)
@@ -170,6 +177,8 @@ class GPUTransformSDFG(transformation.Transformation):
             newdesc = onode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
+            if gpu_id != None:
+                newdesc.location = {'gpu': gpu_id}
             name = sdfg.add_datadesc('gpu_' + onodename,
                                      newdesc,
                                      find_new_name=True)
@@ -257,7 +266,8 @@ class GPUTransformSDFG(transformation.Transformation):
                         # NOTE: the cloned arrays match too but it's the same
                         # storage so we don't care
                         nodedesc.storage = dtypes.StorageType.GPU_Global
-
+                        if gpu_id != None:
+                            nodedesc.location = {'gpu': gpu_id}
                         # Try to move allocation/deallocation out of loops
                         dsyms = set(map(str, nodedesc.free_symbols))
                         if (self.toplevel_trans
@@ -279,8 +289,12 @@ class GPUTransformSDFG(transformation.Transformation):
                 if sdict[node] is None:
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
                         node.schedule = dtypes.ScheduleType.GPU_Default
+                        if gpu_id != None:
+                            node.location = {'gpu': gpu_id}
                     elif isinstance(node, nodes.EntryNode):
                         node.schedule = dtypes.ScheduleType.GPU_Device
+                        if gpu_id != None:
+                            node.location = {'gpu': gpu_id}
                 elif self.sequential_innermaps:
                     if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
                         node.schedule = dtypes.ScheduleType.Sequential
@@ -309,6 +323,8 @@ class GPUTransformSDFG(transformation.Transformation):
                 me, mx = state.add_map(gcode.label + '_gmap',
                                        {gcode.label + '__gmapi': '0:1'},
                                        schedule=dtypes.ScheduleType.GPU_Device)
+                if gpu_id != None:
+                    me.map.location = {'gpu': gpu_id}
                 # Store in/out edges in lists so that they don't get corrupted
                 # when they are removed from the graph
                 in_edges = list(state.in_edges(gcode))

@@ -30,21 +30,40 @@ typedef cudaEvent_t gpuEvent_t;
 
 namespace dace {
 namespace cuda {
-struct Context {
-    int num_streams;
-    int num_events;
-    gpuStream_t *streams;
-    gpuEvent_t *events;
-    Context(int nstreams, int nevents) : num_streams(nstreams), 
-        num_events(nevents) {
-        streams = new gpuStream_t[nstreams];
-        events = new gpuEvent_t[nevents];
-    }
-    ~Context() {
-        delete[] streams;
-        delete[] events;
-    }
-};
+    struct Context {
+        int num_streams;
+        int num_events;
+        gpuStream_t *streams;
+        gpuEvent_t *events;
+        
+        Context(): num_streams{0}, num_events{0}, streams{nullptr}, events{nullptr}{}
+
+        Context(int nstreams, int nevents) : num_streams(nstreams), 
+            num_events(nevents) {
+            streams = new gpuStream_t[nstreams];
+            events = new gpuEvent_t[nevents];
+        }
+
+        Context(const Context& c) : num_streams{c.num_streams},
+            num_events{c.num_events}{
+                streams = new gpuStream_t[c.num_streams];
+                events = new gpuEvent_t[c.num_events];
+                std::copy(c.streams, c.streams+c.num_streams, streams);
+                std::copy(c.events, c.events+c.num_events, events);
+        }
+    
+        Context& operator=(const Context &c){
+            Context copy {c};
+            std::swap(streams, copy.streams);
+            std::swap(events, copy.events);
+            return *this;
+        }
+    
+        ~Context() {
+            delete[] streams;
+            delete[] events;
+        }
+    };
     
 }  // namespace cuda
 }  // namespace dace

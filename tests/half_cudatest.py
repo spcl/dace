@@ -18,7 +18,7 @@ def test_relu():
     _config()
 
     @dace.program
-    def halftest(A: dace.float16[N]):
+    def halftest_relu(A: dace.float16[N]):
         out = np.ndarray([N], dace.float16)
         for i in dace.map[0:N]:
             with dace.tasklet:
@@ -28,7 +28,7 @@ def test_relu():
         return out
 
     A = np.random.rand(20).astype(np.float16)
-    sdfg = halftest.to_sdfg()
+    sdfg = halftest_relu.to_sdfg()
     sdfg.apply_gpu_transformations()
     out = sdfg(A=A, N=20)
     assert np.allclose(out, np.maximum(A, 0))
@@ -39,7 +39,7 @@ def test_relu_2():
     _config()
 
     @dace.program
-    def halftest(A: dace.float16[N]):
+    def halftest_relu_2(A: dace.float16[N]):
         out = np.ndarray([N], dace.float16)
         for i in dace.map[0:N]:
             with dace.tasklet:
@@ -49,7 +49,7 @@ def test_relu_2():
         return out
 
     A = np.random.rand(20).astype(np.float16)
-    sdfg = halftest.to_sdfg()
+    sdfg = halftest_relu_2.to_sdfg()
     sdfg.apply_gpu_transformations()
     out = sdfg(A=A, N=20)
     assert np.allclose(out, np.maximum(A, 0))
@@ -60,7 +60,7 @@ def test_dropout():
     _config()
 
     @dace.program
-    def halftest(A: dace.float16[N], mask: dace.int32[N]):
+    def halftest_dropout(A: dace.float16[N], mask: dace.int32[N]):
         out = np.ndarray([N], dace.float16)
         for i in dace.map[0:N]:
             with dace.tasklet:
@@ -73,7 +73,7 @@ def test_dropout():
 
     A = np.random.rand(20).astype(np.float16)
     mask = np.random.randint(0, 2, size=[20]).astype(np.int32)
-    sdfg = halftest.to_sdfg()
+    sdfg = halftest_dropout.to_sdfg()
     sdfg.apply_gpu_transformations()
     out = sdfg(A=A, mask=mask, N=20)
     assert np.allclose(out, A * mask)

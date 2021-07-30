@@ -59,6 +59,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     GPU_ThreadBlock = ()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
+    GPU_Multidevice = ()  #: Multiple GPUs
     FPGA_Device = ()
 
 
@@ -68,10 +69,26 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
     ScheduleType.GPU_Persistent,
+    ScheduleType.GPU_Multidevice,
+]
+
+# GPU schedule types that only involve 1 GPU
+GPU_DEVICE_SCHEDULES = [
+    ScheduleType.GPU_Device,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_ThreadBlock_Dynamic,
+    ScheduleType.GPU_Persistent,
+]
+
+# Storage that can be accessed by a GPU
+GPU_STORAGES = [
+    StorageType.GPU_Global,
+    StorageType.GPU_Shared,
+    StorageType.CPU_Pinned,
 ]
 
 # A subset of on-GPU storage types
-GPU_STORAGES = [
+GPU_LOCAL_STORAGES = [
     StorageType.GPU_Shared,
 ]
 
@@ -105,6 +122,23 @@ class ReductionType(aenum.AutoNumberEnum):
     # Only supported in OpenMP
     Sub = ()  #: Subtraction (only supported in OpenMP)
     Div = ()  #: Division (only supported in OpenMP)
+
+
+class NcclReductionType(aenum.AutoNumberEnum):
+    """ Reduction types supported by NCCL. """
+    ncclSum = ()  #: Sum
+    ncclProd = ()  #: Product
+    ncclMin = ()  #: Minimum value
+    ncclMax = ()  #: Maximum value
+
+
+NCCL_SUPPORTED_OPERATIONS = {
+    None: NcclReductionType.ncclSum,
+    ReductionType.Sum: NcclReductionType.ncclSum,
+    ReductionType.Product: NcclReductionType.ncclProd,
+    ReductionType.Min: NcclReductionType.ncclMin,
+    ReductionType.Max: NcclReductionType.ncclMax
+}
 
 
 @undefined_safe_enum
@@ -156,6 +190,15 @@ class InstrumentationType(aenum.AutoNumberEnum):
 
 @undefined_safe_enum
 @extensible_enum
+class InstrumentationReportPrintType(aenum.AutoNumberEnum):
+    """ Available instrumentation report printing types. """
+
+    SDFG = ()
+    Location = ()
+
+
+@undefined_safe_enum
+@extensible_enum
 class TilingType(aenum.AutoNumberEnum):
     """ Available tiling types in a `StripMining` transformation. """
 
@@ -176,6 +219,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
+    ScheduleType.GPU_Multidevice: StorageType.GPU_Global,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
     ScheduleType.SVE_Map: StorageType.CPU_Heap
 }
@@ -193,6 +237,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
+    ScheduleType.GPU_Multidevice: ScheduleType.GPU_Device,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential
 }
@@ -1284,7 +1329,8 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     if storage is StorageType.GPU_Global:
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
-            ScheduleType.MPI, ScheduleType.GPU_Default
+            ScheduleType.MPI, ScheduleType.GPU_Default,
+            ScheduleType.GPU_Multidevice
         ]
 
     # FPGA-global memory

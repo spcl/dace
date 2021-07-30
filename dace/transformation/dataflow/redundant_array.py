@@ -286,6 +286,8 @@ class RedundantArray(pm.Transformation):
         # and are of the same type (e.g., Stream->Stream)
         if in_desc.storage != out_desc.storage:
             return False
+        if in_desc.location != out_desc.location:
+            return False
         if type(in_desc) != type(out_desc):
             if isinstance(in_desc, data.View):
                 # Case View -> Access
@@ -692,6 +694,8 @@ class RedundantSecondArray(pm.Transformation):
         # Make sure that both arrays are using the same storage location
         # and are of the same type (e.g., Stream->Stream)
         if in_desc.storage != out_desc.storage:
+            return False
+        if in_desc.location != out_desc.location:
             return False
         if type(in_desc) != type(out_desc):
             if isinstance(in_desc, data.View):

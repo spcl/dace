@@ -1093,3 +1093,22 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
     state = graph if isinstance(graph, SDFGState) else graph._graph
     return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(
         state.node_id(node))
+
+def get_gpu_location(sdfg: Union[SDFG, SDFGState, ScopeSubgraphView],
+                     node_or_array: Union[dt.Data, nd.Node]): 
+    """ 
+    Returns the symbolic GPU location of the node or array. If the 
+    node or array is not located on a GPU it returns None.
+
+    :param sdfg: the sdfg, state or subgraphview
+    :param node_or_array: the node or array
+    :return: symbolic gpu_id or None
+    """
+    gpu_location = None
+    if isinstance(node_or_array, nd.AccessNode):
+        node_or_array = node_or_array.desc(sdfg)
+    elif isinstance(node_or_array, (nd.MapEntry, nd.MapExit)):
+        node_or_array = node_or_array.map
+    if hasattr(node_or_array, 'location') and 'gpu' in node_or_array.location:
+        gpu_location = symbolic.pystr_to_symbolic(node_or_array.location['gpu'])
+    return gpu_location

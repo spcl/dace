@@ -667,7 +667,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 continue
             os.unlink(os.path.join(path, fname))
 
-    def get_latest_report(self) -> \
+    def get_latest_report(self, print_type: dace.InstrumentationReportPrintType = dace.
+            InstrumentationReportPrintType.SDFG) -> \
             Optional['dace.codegen.instrumentation.InstrumentationReport']:
         """
         Returns an instrumentation report from the latest run of this SDFG, or
@@ -685,7 +686,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return InstrumentationReport(
             os.path.join(path,
-                         sorted(files, reverse=True)[0]))
+                         sorted(files, reverse=True)[0]), print_type)
 
     ##########################################
 
@@ -1343,21 +1344,24 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return name + ('_%d' % index)
 
-    def add_array(self,
-                  name: str,
-                  shape,
-                  dtype,
-                  storage=dtypes.StorageType.Default,
-                  transient=False,
-                  strides=None,
-                  offset=None,
-                  lifetime=dace.dtypes.AllocationLifetime.Scope,
-                  debuginfo=None,
-                  allow_conflicts=False,
-                  total_size=None,
-                  find_new_name=False,
-                  alignment=0,
-                  may_alias=False) -> Tuple[str, dt.Array]:
+    def add_array(
+        self,
+        name: str,
+        shape,
+        dtype,
+        storage=dtypes.StorageType.Default,
+        transient=False,
+        strides=None,
+        offset=None,
+        lifetime=dace.dtypes.AllocationLifetime.Scope,
+        debuginfo=None,
+        allow_conflicts=False,
+        total_size=None,
+        find_new_name=False,
+        alignment=0,
+        may_alias=False,
+        location={},
+    ) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1383,7 +1387,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                         alignment=alignment,
                         debuginfo=debuginfo,
                         total_size=total_size,
-                        may_alias=may_alias)
+                        may_alias=may_alias,
+                        location=location)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1494,7 +1499,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                       total_size=None,
                       find_new_name=False,
                       alignment=0,
-                      may_alias=False) -> Tuple[str, dt.Array]:
+                      may_alias=False,
+                      location={}) -> Tuple[str, dt.Array]:
         """ Convenience function to add a transient array to the data
             descriptor store. """
         return self.add_array(name,
@@ -1510,7 +1516,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                               total_size=total_size,
                               alignment=alignment,
                               may_alias=may_alias,
-                              find_new_name=find_new_name)
+                              find_new_name=find_new_name,
+                              location=location)
 
     def temp_data_name(self):
         """ Returns a temporary data descriptor name that can be used in this SDFG. """
@@ -1659,6 +1666,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     # SDFG queries
     ##############################
+
+    def find_parent_state(self, node: nd.Node) -> SDFGState:
+        """ Finds the state in which the node resides in.
+            Usefull for finding the parent state of a nestedSDFG.
+            :param node: node
+            :return: SDFGState
+        """
+        for state in self.nodes():
+            if node in state.nodes():
+                return state
 
     def find_state(self, state_id_or_label):
         """ Finds a state according to its ID (if integer is provided) or

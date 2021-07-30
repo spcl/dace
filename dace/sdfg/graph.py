@@ -363,6 +363,34 @@ class Graph(Generic[NodeT, EdgeT]):
                 except StopIteration:
                     stack.pop()
 
+    def dfs_nodes(
+        self,
+        source: Union[NodeT, Sequence[NodeT]],
+        condition: Callable[[NodeT, NodeT, Any],
+                            bool] = None) -> Iterable[NodeT]:
+        """Traverse a graph (DFS) with an optional condition to filter out nodes
+        """
+        if isinstance(source, list): nodes = source
+        else: nodes = [source]
+        visited = set()
+        for start in nodes:
+            if start in visited:
+                continue
+            visited.add(start)
+            stack = [(start, self.out_edges(start).__iter__())]
+            while stack:
+                parent, children = stack[-1]
+                try:
+                    e = next(children)
+                    if e.dst not in visited:
+                        visited.add(e.dst)
+                        if condition is None or condition(e.src, e.dst, e.data):
+                            yield e.dst
+                            stack.append(
+                                (e.dst, self.out_edges(e.dst).__iter__()))
+                except StopIteration:
+                    stack.pop()
+
     def source_nodes(self) -> List[NodeT]:
         """Returns nodes with no incoming edges."""
         return [n for n in self.nodes() if self.in_degree(n) == 0]
@@ -396,12 +424,11 @@ class Graph(Generic[NodeT, EdgeT]):
                     queue.append(succ)
         return seen.keys()
 
-    def all_simple_paths(
-        self,
-        source_node: NodeT,
-        dest_node: NodeT,
-        as_edges: bool = False
-    ) -> Iterable[Sequence[Union[Edge[EdgeT], NodeT]]]:
+    def all_simple_paths(self,
+                         source_node: NodeT,
+                         dest_node: NodeT,
+                         as_edges: bool = False
+                         ) -> Iterable[Sequence[Union[Edge[EdgeT], NodeT]]]:
         """ 
         Finds all simple paths (with no repeating nodes) from source_node
         to dest_node.

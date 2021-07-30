@@ -61,7 +61,7 @@ def _test_determine_alloc(lifetime: dace.AllocationLifetime,
                           memlet=dace.Memlet('B[0:N]'))
 
     # Set default storage/schedule types in SDFG
-    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+    infer_types.set_default_schedule_storage_types_and_location(sdfg, None)
 
     return sdfg, (sdfg, state, me, nsdfg, nstate, ime)
 

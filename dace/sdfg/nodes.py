@@ -315,7 +315,9 @@ class CodeNode(Node):
 
     @property
     def free_symbols(self) -> Set[str]:
-        return set().union(*[v.free_symbols for v in self.location.values()])
+        return set().union(*(map(str,
+                  pystr_to_symbolic(v).free_symbols)
+              for v in self.location.values()))
 
 
 @make_properties
@@ -394,8 +396,10 @@ class Tasklet(CodeNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        return self.code.get_free_symbols(self.in_connectors.keys()
+        result = super().free_symbols
+        result |= self.code.get_free_symbols(self.in_connectors.keys()
                                           | self.out_connectors.keys())
+        return result
 
     def infer_connector_types(self, sdfg, state):
         # If a MLIR tasklet, simply read out the types (it's explicit)
@@ -582,13 +586,11 @@ class NestedSDFG(CodeNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        return set().union(
-            *(map(str,
+        result = super().free_symbols
+        result.update(*(map(str,
                   pystr_to_symbolic(v).free_symbols)
-              for v in self.symbol_mapping.values()),
-            *(map(str,
-                  pystr_to_symbolic(v).free_symbols)
-              for v in self.location.values()))
+              for v in self.symbol_mapping.values()))
+        return result
 
     def infer_connector_types(self, sdfg, state):
         # Avoid import loop
@@ -717,10 +719,14 @@ class MapEntry(EntryNode):
 
     @property
     def free_symbols(self) -> Set[str]:
+        result = set().union(*(map(str,
+                  pystr_to_symbolic(v).free_symbols)
+              for v in self.location.values()))
         dyn_inputs = set(c for c in self.in_connectors
                          if not c.startswith('IN_'))
-        return set(k for k in self._map.range.free_symbols
-                   if k not in dyn_inputs)
+        result.update(k for k in self._map.range.free_symbols
+                    if k not in dyn_inputs)
+        return result
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         from dace.codegen.tools.type_inference import infer_expr_type
@@ -834,6 +840,10 @@ class Map(object):
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation)
 
+    location = DictProperty(key_type=str,
+                            value_type=dace.symbolic.pystr_to_symbolic,
+                            desc='Full storage location identifier (e.g., rank, GPU ID)')
+
     def __init__(self,
                  label,
                  params,
@@ -842,7 +852,8 @@ class Map(object):
                  unroll=False,
                  collapse=1,
                  fence_instrumentation=False,
-                 debuginfo=None):
+                 debuginfo=None,
+                 location=None):
         super(Map, self).__init__()
 
         # Assign properties
@@ -853,6 +864,7 @@ class Map(object):
         self.params = params
         self.range = ndrange
         self.debuginfo = debuginfo
+        self.location = location if location is not None else {}
         self._fence_instrumentation = fence_instrumentation
 
     def __str__(self):
@@ -931,11 +943,14 @@ class ConsumeEntry(EntryNode):
 
     @property
     def free_symbols(self) -> Set[str]:
+        result = set().union(*(map(str,
+                  pystr_to_symbolic(v).free_symbols)
+              for v in self.location.values()))
         dyn_inputs = set(c for c in self.in_connectors
                          if not c.startswith('IN_'))
-        return ((set(self._consume.num_pes.free_symbols)
-                 | set(self._consume.condition.get_free_symbols())) -
-                dyn_inputs)
+        result |= (set(self._consume.num_pes.free_symbols)
+                 | set(self._consume.condition.get_free_symbols()))
+        return result - dyn_inputs
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         from dace.codegen.tools.type_inference import infer_expr_type
@@ -1042,6 +1057,11 @@ class Consume(object):
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation)
 
+    location = DictProperty(key_type=str,
+                            value_type=dace.symbolic.pystr_to_symbolic,
+                            desc='Full storage location identifier'
+                                '(e.g., rank, GPU ID)')
+
     def as_map(self):
         """ Compatibility function that allows to view the consume as a map,
             mainly in memlet propagation. """
@@ -1054,7 +1074,8 @@ class Consume(object):
                  condition,
                  schedule=dtypes.ScheduleType.Default,
                  chunksize=1,
-                 debuginfo=None):
+                 debuginfo=None,
+                 location=None):
         super(Consume, self).__init__()
 
         # Properties
@@ -1064,6 +1085,7 @@ class Consume(object):
         self.schedule = schedule
         self.chunksize = chunksize
         self.debuginfo = debuginfo
+        self.location = location if location is not None else {}
 
     def __str__(self):
         if self.condition is not None:

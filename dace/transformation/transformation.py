@@ -385,8 +385,11 @@ class Transformation(TransformationBase):
     @staticmethod
     def from_json(json_obj: Dict[str, Any],
                   context: Dict[str, Any] = None) -> 'Transformation':
-        xform = next(ext for ext in Transformation.extensions().keys()
-                     if ext.__name__ == json_obj['transformation'])
+        try:
+            xform = next(ext for ext in Transformation.extensions().keys()
+                         if ext.__name__ == json_obj['transformation'])
+        except StopIteration:
+            return None
 
         # Recreate subgraph
         expr = xform.expressions()[json_obj['expr_index']]
@@ -507,7 +510,8 @@ class ExpandTransformation(Transformation):
                                               node.out_connectors,
                                               name=node.name,
                                               schedule=node.schedule,
-                                              debuginfo=node.debuginfo)
+                                              debuginfo=node.debuginfo,
+                                              location=node.location)
         elif isinstance(expansion, nd.CodeNode):
             expansion.debuginfo = node.debuginfo
             if isinstance(expansion, nd.NestedSDFG):

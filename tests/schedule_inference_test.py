@@ -16,7 +16,7 @@ def test_schedule_inference_simple():
 
     infer_types.infer_connector_types(sdfg)
 
-    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+    infer_types.set_default_schedule_storage_types_and_location(sdfg, None)
     sdfg.apply_transformations_repeated(StateFusion)
 
     entry = [

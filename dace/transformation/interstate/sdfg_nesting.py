@@ -186,7 +186,8 @@ class InlineSDFG(transformation.Transformation):
                     if access in out_data.keys():
                         rem_inpconns.remove(inpconn)
                         break
-        if len(rem_inpconns) > 0:
+        if (len(rem_inpconns) > 0 and
+                not (len(rem_inpconns) == 1 and list(rem_inpconns)[0] is None)):
             return False
 
         return True
@@ -256,8 +257,10 @@ class InlineSDFG(transformation.Transformation):
         nstate: SDFGState = nsdfg.nodes()[0]
 
         if nsdfg_node.schedule is not dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(
-                nsdfg, nsdfg_node.schedule)
+            nsdfg_gpu_location = nsdfg_node.location[
+                'gpu'] if 'gpu' in nsdfg_node.location else None
+            infer_types.set_default_schedule_storage_types_and_location(
+                nsdfg, nsdfg_node.schedule, nsdfg_gpu_location)
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
         nsdfg_scope_exit = (state.exit_node(nsdfg_scope_entry)

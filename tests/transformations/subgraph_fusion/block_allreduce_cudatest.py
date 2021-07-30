@@ -44,10 +44,12 @@ def test_blockallreduce():
     result2 = csdfg(A=A, M=M, N=N)
     del csdfg
 
-    print(np.linalg.norm(result1))
-    print(np.linalg.norm(result2))
+    res = np.max(A, axis=1)
+    print('res', np.linalg.norm(res))
+    print('Device', np.linalg.norm(result1))
+    print('Block', np.linalg.norm(result2))
     assert np.allclose(result1, result2)
-
+    assert np.allclose(res, result1)
     print("PASS")
 
 
