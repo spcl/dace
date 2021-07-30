@@ -106,16 +106,23 @@ def _run_fpga_test(vendor: str,
 
             # Simulation in software
             print_status(f"{base_name} [Xilinx]: Running simulation.")
-            env = os.environ.copy()
             if "rtl" in path.parts:
                 Config.set("compiler",
                            "xilinx",
                            "mode",
                            value="hardware_emulation")
-                if "LIBRARY_PATH" not in env:
-                    env["LIBRARY_PATH"] = ""
-                env["LIBRARY_PATH"] += ":/usr/lib/x86_64-linux-gnu"
+                if "LIBRARY_PATH" not in os.environ:
+                    os.environ["LIBRARY_PATH"] = ""
+                    library_path_backup = None
+                else:
+                    library_path_backup = os.environ["LIBRARY_PATH"]
+                os.environ["LIBRARY_PATH"] += ":/usr/lib/x86_64-linux-gnu"
             sdfgs = test_function()
+            if "rtl" in path.parts:
+                if library_path_backup is None:
+                    del os.environ["LIBRARY_PATH"]
+                else:
+                    os.environ["LIBRARY_PATH"] = library_path_backup
             if sdfgs is None:
                 raise_error("No SDFG(s) returned by FPGA test.")
             elif isinstance(sdfgs, SDFG):
