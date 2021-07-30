@@ -25,8 +25,6 @@ TESTS = [
     ("samples/fpga/filter_fpga.py", "filter_fpga", [1000, 0.2]),
     ("samples/fpga/matrix_multiplication_stream.py", "mm_fpga_stream_NxKx128",
      [128, 128, 128]),
-    ### BLAS ###
-    ("tests/blas/nodes/ger_test.py", "ger_test_1", ["--target", "fpga"]),
 ]
 
 
