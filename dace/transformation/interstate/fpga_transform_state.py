@@ -62,7 +62,8 @@ class FPGATransformState(transformation.Transformation):
                     return False
 
                 # Cannot allocate FIFO from CPU code
-                if sdict[node] is None:
+                if sdict[node] is None and (not nodedesc.transient or node.data
+                                            in sdfg.shared_transients()):
                     return False
 
                 # Arrays of streams cannot have symbolic size on FPGA
