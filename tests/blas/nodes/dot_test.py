@@ -9,6 +9,7 @@ import scipy
 import dace
 from dace.memlet import Memlet
 
+from dace.fpga_testing import xilinx_test, intel_fpga_test
 import dace.libraries.blas as blas
 
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
@@ -66,25 +67,17 @@ def fpga_graph(implementation, dtype, veclen):
     return sdfg
 
 
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=64)
-    parser.add_argument("--target", dest="target", default="pure")
-    parser.add_argument("--vector-length", type=int, default=16)
-    args = parser.parse_args()
-    size = args.N
-
-    if args.target == "pure":
-        sdfg = pure_graph("pure", dace.float32, args.vector_length)
-    elif args.target == "intel_fpga":
+def run_test(target, size, vector_length):
+    if target == "pure":
+        sdfg = pure_graph("pure", dace.float32, vector_length)
+    elif target == "intel_fpga":
         dace.Config.set("compiler", "fpga_vendor", value="intel_fpga")
-        sdfg = fpga_graph("FPGA_Accumulate", dace.float32, args.vector_length)
-    elif args.target == "xilinx":
+        sdfg = fpga_graph("FPGA_Accumulate", dace.float32, vector_length)
+    elif target == "xilinx":
         dace.Config.set("compiler", "fpga_vendor", value="xilinx")
-        sdfg = fpga_graph("FPGA_PartialSums", dace.float32, args.vector_length)
+        sdfg = fpga_graph("FPGA_PartialSums", dace.float32, vector_length)
     else:
-        print(f"Unsupported target: {args.target}")
+        print(f"Unsupported target: {target}")
         exit(-1)
 
     dot = sdfg.compile()
@@ -105,4 +98,32 @@ if __name__ == "__main__":
     diff = abs(result[0] - ref)
     if diff >= 1e-6 * ref:
         raise ValueError("Unexpected result returned from dot product: "
-              "got {}, expected {}".format(result[0], ref))
+                         "got {}, expected {}".format(result[0], ref))
+
+    return sdfg
+
+
+def test_dot_pure():
+    return run_test("pure", 64, 1)
+
+
+@xilinx_test()
+def test_dot_xilinx():
+    return run_test("xilinx", 64, 16)
+
+
+@intel_fpga_test()
+def test_dot_intel_fpga():
+    return run_test("intel_fpga", 64, 16)
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("N", type=int, nargs="?", default=64)
+    parser.add_argument("--target", dest="target", default="pure")
+    parser.add_argument("--vector-length", type=int, default=16)
+    args = parser.parse_args()
+    size = args.N
+
+    run_test(target, size, vector_length)
