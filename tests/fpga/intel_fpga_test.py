@@ -15,9 +15,6 @@ from fpga_testing import (Colors, DACE_DIR, TEST_DIR, cli, dump_logs,
 
 # (relative path, sdfg name(s), run synthesis, assert II=1, args to executable)
 TESTS = [
-    ### Systolic array ###
-    ("samples/fpga/jacobi_fpga_systolic.py", "jacobi_fpga_systolic_8_Hx8192xT",
-     []),
     # Execute some of the compatible tests in samples/fpga (some of them have C++ code in tasklet)
     # They contain streams
     ("samples/fpga/filter_fpga.py", "filter_fpga", [1000, 0.2]),

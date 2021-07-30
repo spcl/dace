@@ -15,7 +15,6 @@ from fpga_testing import (Colors, DACE_DIR, TEST_DIR, cli, dump_logs,
 
 # (relative path, sdfg name(s), run synthesis, assert II=1, args to executable)
 TESTS = [
-    # ("jacobi_fpga_systolic.py", "jacobi_fpga_systolic_4_Hx128xT", True, True, [1, 128, 128, 8, 4]),
     # RTL cores
     ("tests/rtl/hardware_test.py", "floating_point_vector_plus_scalar", True,
      False, [1]),

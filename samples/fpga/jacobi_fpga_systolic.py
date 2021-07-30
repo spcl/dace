@@ -1,6 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
 import argparse
 import dace
 import numpy as np
@@ -527,35 +525,24 @@ def make_sdfg(specialize_all):
     return sdfg
 
 
-if __name__ == "__main__":
+def run_jacobi(w: int, h: int, t: int, p: int, specialize_all: bool = False):
     print("==== Program start ====")
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("H", type=int, nargs="?", default=64)
-    parser.add_argument("W", type=int, nargs="?", default=8192)
-    parser.add_argument("T", type=int, nargs="?", default=16)
-    parser.add_argument("P", type=int, nargs="?", default=8)
-    parser.add_argument("-specialize_all",
-                        default=False,
-                        action="store_true",
-                        help="Fix all loop bounds at compile time/in hardware")
-    args = vars(parser.parse_args())
 
     # Width and number of PEs must be known at compile time, as it will
     # influence the hardware layout
-    W.set(args["W"])
-    P.set(args["P"])
-    if args["specialize_all"]:
+    W.set(w)
+    P.set(p)
+    if specialize_all:
         print("Specializing H and T...")
-        H.set(args["H"])
-        T.set(args["T"])
+        H.set(h)
+        T.set(t)
 
-    jacobi = make_sdfg(args["specialize_all"])
+    jacobi = make_sdfg(specialize_all)
     jacobi.specialize(dict(W=W, P=P))
 
-    if not args["specialize_all"]:
-        H.set(args["H"])
-        T.set(args["T"])
+    if not specialize_all:
+        H.set(h)
+        T.set(t)
     else:
         jacobi.specialize(dict(H=H, T=T))
 
@@ -565,7 +552,7 @@ if __name__ == "__main__":
 
     print("Jacobi Stencil {}x{} ({} steps) with {} PEs{}".format(
         H.get(), W.get(), T.get(), P.get(),
-        (" (fully specialized)" if args["specialize_all"] else "")))
+        (" (fully specialized)" if specialize_all else "")))
 
     A = dace.ndarray([H, W], dtype=dace.float32)
 
@@ -578,7 +565,7 @@ if __name__ == "__main__":
     #############################################
     # Run DaCe program
 
-    if args["specialize_all"]:
+    if specialize_all:
         jacobi(A=A)
     else:
         jacobi(A=A, H=H, T=T)
@@ -608,15 +595,22 @@ if __name__ == "__main__":
         print("Highest difference: {}".format(highest_diff))
         print("** Result:\n", A[:min(6, H.get()), :min(6, W.get())])
         print("** Reference:\n", regression[:min(4, H.get()), :min(4, W.get())])
-        print("Type \"debug\" to enter debugger, "
-              "or any other string to quit (timeout in 10 seconds)")
-        read, _, _ = select.select([sys.stdin], [], [], 10)
-        if len(read) > 0 and sys.stdin.readline().strip().lower() == "debug":
-            print("Entering debugger...")
-            import pdb
+        raise RuntimeError("Validation failed.")
 
-            pdb.set_trace()
-        else:
-            print("Exiting...")
-        exit(1)
-    exit(0)
+    return jacobi
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("H", type=int, nargs="?", default=64)
+    parser.add_argument("W", type=int, nargs="?", default=8192)
+    parser.add_argument("T", type=int, nargs="?", default=16)
+    parser.add_argument("P", type=int, nargs="?", default=8)
+    parser.add_argument("-specialize_all",
+                        default=False,
+                        action="store_true",
+                        help="Fix all loop bounds at compile time/in hardware")
+    args = parser.parse_args()
+
+    run_jacobi(args.H, args.W, args.T, args.P, args.specialize_all)
