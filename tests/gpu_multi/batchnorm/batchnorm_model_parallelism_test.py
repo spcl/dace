@@ -21,8 +21,10 @@ cpu_storage = dace.StorageType.CPU_Pinned
 
 outer_dim = [N, H, W, C]
 inner_dim = [N, H, W, C_gpu]
-outer_red_dim = [1, H, W, C]
-inner_red_dim = [1, H, W, C_gpu]
+outer_red_dim = [H, W, C]
+inner_red_dim = [H, W, C_gpu]
+size = n * h * w * c
+shape = [n, h, w, c]
 
 
 @dace.program
@@ -43,7 +45,7 @@ def batchnorm2d_model_parallelism(x: dc_dtype[N, H, W, C]):
         x_gpu[:, :, :, :] = x_pinned[:, :, :,
                                      C_gpu * gpu_id:C_gpu * (gpu_id + 1)]
         dace.reduce(lambda a, b: a + b, x_gpu, x_mean, axis=(0), identity=0)
-        red[:, :, :, C_gpu * gpu_id:C_gpu * (gpu_id + 1)] = x_mean[:]
+        red[:, :, C_gpu * gpu_id:C_gpu * (gpu_id + 1)] = x_mean[:]
 
         x_mean[:] = x_mean[:] / NN
         x_gpu[:] = x_gpu - x_mean
@@ -53,8 +55,8 @@ def batchnorm2d_model_parallelism(x: dc_dtype[N, H, W, C]):
         x_std[:] = np.sqrt(x_std / NN)
         x_gpu[:] = x_gpu / np.sqrt(x_std + 1e-5)
 
-        mean[:, :, :, C_gpu * gpu_id:C_gpu * (gpu_id + 1)] = x_mean[:]
-        std[:, :, :, C_gpu * gpu_id:C_gpu * (gpu_id + 1)] = x_std[:]
+        mean[:, :, C_gpu * gpu_id:C_gpu * (gpu_id + 1)] = x_mean[:]
+        std[:, :, C_gpu * gpu_id:C_gpu * (gpu_id + 1)] = x_std[:]
         x_pinned[:, :, :, C_gpu * gpu_id:C_gpu * (gpu_id + 1)] = x_gpu[:]
 
     x[:] = x_pinned[:]
@@ -130,7 +132,7 @@ def test_batchnorm2d_model_parallelism():
     np.random.seed(0)
     # X = np.ndarray(shape=[n, h, w, c], dtype=np_dtype)
     # X[:] = np.random.rand(n, h, w, c)[:]
-    X = np.arange(n * h * w * c, dtype=np_dtype).reshape([n, h, w, c])
+    X = np.arange(size, dtype=np_dtype).reshape(shape)
     Z = np.copy(X)
 
     print('GPU')
