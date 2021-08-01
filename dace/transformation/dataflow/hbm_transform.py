@@ -61,7 +61,6 @@ def _multiply_sdfg_executions(sdfg: SDFG, outer_map_range: Tuple[str, int]):
         state = sdfg.states()[0]
         nsdfg_node = list(
             filter(lambda x: isinstance(x, nd.NestedSDFG), state.nodes()))[0]
-        nsdfg_node.no_inline = True
 
         map_enter, map_exit = state.add_map("hbm_unrolled_map",
                                             {outer_map_range[0]: f"0:{outer_map_range[1]}"},
@@ -278,7 +277,7 @@ class HbmTransform(transformation.Transformation):
             possible = set()
             for i, access in enumerate(arr_dim_list):
                 tmp_possible = set()
-                for dim, _, acc_map in access:
+                for dim, _, acc_map, _ in access:
                     if i == 0:
                         possible.add(dim)
                     else:
@@ -286,9 +285,9 @@ class HbmTransform(transformation.Transformation):
                         possible = possible.intersection(tmp_possible)
             for access in arr_dim_list:
                 new_access_list = []
-                for dim, rate, acc_map in access:
+                for dim, rate, acc_map, divide in access:
                     if dim in possible:
-                        new_access_list.append((dim, rate, acc_map))
+                        new_access_list.append((dim, rate, acc_map, divide))
                 new_arr_dim_list.append(new_access_list)
             if len(new_arr_dim_list) == 0:
                 no_split_arrays.add(name)
@@ -306,7 +305,6 @@ class HbmTransform(transformation.Transformation):
 
         def dim_of_map(edge: graph.MultiConnectorEdge, map: nd.Map, number: int):
             # Helper to figure out which dimensions are accessed by a map
-            # TODO: Check that all accesses go to distinct data
             result = []
             symbols = map.params
             ranges = map.range
@@ -317,10 +315,11 @@ class HbmTransform(transformation.Transformation):
                 if low is None or low != 0:
                     continue
                 high = symbolic.resolve_symbol_to_constant(range[1], sdfg)
+                # TODO: Check that all accesses go to distinct data
                 for i, what in enumerate(edge.data.subset):
                     if symbol in [str(x) for x in what[0].free_symbols]:
                         if tmp is None:
-                            tmp = (i, number+num, (map, num))
+                            tmp = (i, number+num, (map, num), high)
                         else:
                             tmp = None # only one dimension may be bound to the map symbol
                             break
@@ -394,7 +393,7 @@ class HbmTransform(transformation.Transformation):
         modifiable_map_to_dependent = {}
         for array_accesses in split_dimensions.values():
             for access in array_accesses:
-                for _, _, acc_map in access:
+                for _, _, acc_map, _ in access:
                     modifiable_map.add(acc_map[0])
                     if acc_map[0] not in modifiable_map_ranges:
                         modifiable_map_ranges[acc_map[0]] = set()
@@ -425,7 +424,7 @@ class HbmTransform(transformation.Transformation):
         return modifiable_map_to_dependent
 
     @staticmethod
-    def _greedy_find_splits(sdfg, global_memory_array, no_split_arrays, placed_arrays, update_array_banks):
+    def _greedy_find_splits(sdfg, global_memory_array, no_split_arrays, placed_arrays, division_info):
         """
         Find a valid selection of maps to modify, such that many arrays can be split
         Works in the order of arrays such that arrays which are 'important' to split are considered
@@ -442,8 +441,14 @@ class HbmTransform(transformation.Transformation):
         modifiable_map_to_dependent = HbmTransform._scan_maps_for_dependent_arrays(sdfg, split_dimensions)
         multibank_arrays = global_memory_array.difference(no_split_arrays)
 
-        access_plans = {} # Reduced, restructured view of split_dimensions
+        access_plans = {} # Reduced, restructured view of split_dimensions: array -> Tuple[array, dimension, frozenset of maps to modify, cost of access_plan, which value must be divided]
         modifiable_map_to_array_with_acp = {} # Mapping from maps to arrays that have an access_plan using them
+
+        def map_modification_cost(dim, rate, acc_map, divide):
+            cost = rate
+            if divide is not None:
+                cost += 2
+            return cost
 
         # Fill access_plans
         for array, accesses in split_dimensions.items():
@@ -451,30 +456,31 @@ class HbmTransform(transformation.Transformation):
             for access in accesses: 
                 selected_by_dim = {}
                 # There could be multiple maps for the same dimension. Take only the lowest rated one.
-                for dim, rate, acc_map in access: 
+                for dim, rate, acc_map, divide in access: 
                     if dim in selected_by_dim:
                         current = selected_by_dim[dim]
-                        if current[1] > rate:
-                            selected_by_dim[dim] = (rate, acc_map)
+                        if current[1] > map_modification_cost(dim, rate, acc_map, divide):
+                            selected_by_dim[dim] = (rate, acc_map, divide)
                     else:
-                        selected_by_dim[dim] = (rate, acc_map)
+                        selected_by_dim[dim] = (rate, acc_map, divide)
                 # Append the selected maps for the dimensions of the current access
                 for dim, tmp_tuple in selected_by_dim.items(): 
-                    rate, acc_map = tmp_tuple
+                    rate, acc_map, divide = tmp_tuple
                     if dim not in dim_to_acp:
-                        dim_to_acp[dim] = (set(), 0)
-                    acc_set, cost = dim_to_acp[dim]
+                        dim_to_acp[dim] = (set(), 0, None)
+                    acc_set, cost, current_divide = dim_to_acp[dim]
                     acc_set.add(acc_map)
                     cost += rate
-                    dim_to_acp[dim] = (acc_set, cost)
+                    current_divide = HbmTransform._custom_gcd([current_divide, divide])
+                    dim_to_acp[dim] = (acc_set, cost, current_divide)
             sorted_acps = []
             for x in dim_to_acp.items():
-                sorted_acps.append((array, x[0], frozenset(x[1][0]), x[1][1]))
+                sorted_acps.append((array, x[0], frozenset(x[1][0]), x[1][1], x[1][2]))
             sorted_acps.sort(key=lambda x : x[3])
             access_plans[array] = tuple(sorted_acps)
         # Fill modifiable_map_to_array_with_acp
         for array, acp in access_plans.items():
-            for _, _, acc_list, _ in acp:
+            for _, _, acc_list, _, _ in acp:
                 for acc_map in acc_list:
                     if acc_map not in modifiable_map_to_array_with_acp:
                         modifiable_map_to_array_with_acp[acc_map] = set()
@@ -491,7 +497,7 @@ class HbmTransform(transformation.Transformation):
         mod_graph = networkx.Graph()
         for array, acps in access_plans.items():
             for acp in acps:
-                _, _, maps, _ = acp
+                _, _, maps, _, _ = acp
                 for map in maps:
                     mod_graph.add_edge(map, acp)
 
@@ -525,37 +531,36 @@ class HbmTransform(transformation.Transformation):
 
                 if can_take:
                     selected_access_plans = selected_access_plans.union(visited_acps)
-                    selected_split_arrays = selected_split_arrays.union(set([array for array, _, _, _ in visited_acps]))
+                    selected_split_arrays = selected_split_arrays.union(set([array for array, _, _, _, _ in visited_acps]))
                 once_visited_acps.union(visited_acps)
 
         maps_to_change = set()
         split_dimensions = {} # Overwrite with the final result
-        for array, dim, acc_list, _ in selected_access_plans:
+        for array, dim, acc_list, _, divide in selected_access_plans:
             for single_map in acc_list:
                 maps_to_change.add(single_map)
             split_dimensions[array] = dim
+            division_info[array].append(divide)
         for array in global_memory_array:
             if array not in split_dimensions:
                 no_split_arrays.add(array)
             
-        return (maps_to_change, split_dimensions, no_split_arrays)
+        return (maps_to_change, split_dimensions, no_split_arrays, division_info)
 
     @staticmethod
-    def _reduce_division_info(division_info):
+    def _custom_gcd(should_divide: List[int]):
         """
-        Reduce divison_info to only contain one number or None
+        returns the gcd of the passed list. None elements
+        are ignored (assumed to be divisable by everything).
+        If all elements are none, this returns None.
         """
-
-        for array in division_info:
-            values = division_info[array]
-            tmp_size = None
-            for v in values:
-                if v is not None and tmp_size is None:
-                    tmp_size = v
-                elif v is not None and tmp_size is not None:
-                    tmp_size = math.gcd(tmp_size, v)
-            division_info[array] = tmp_size
-        return division_info
+        current = None
+        for v in should_divide:
+            if v is not None and current is None:
+                current = v
+            elif v is not None and current is not None:
+                current = math.gcd(current, v)
+        return current
 
     @staticmethod
     def _find_free_banks(sdfg, update_array_banks, total_number_of_banks):
@@ -602,7 +607,7 @@ class HbmTransform(transformation.Transformation):
                 # If splitsize must divide a number compute all divisors.
                 # Otherwise take all from 2 to the total number of banks.
                 possible = set()
-                tmp_div_info = division_info[array]
+                tmp_div_info = HbmTransform._custom_gcd(division_info[array])
                 if tmp_div_info is None:
                     for i in range(1, total_number_of_banks+1):
                         possible.add(i)
@@ -711,11 +716,11 @@ class HbmTransform(transformation.Transformation):
         
         # Scan the arrays and collect initial inputs
         (global_memory_array, no_split_arrays, placed_arrays, unroll_factor, update_array_banks, division_info, array_dimensions,) = HbmTransform._scan_arrays(sdfg)
-        division_info = HbmTransform._reduce_division_info(division_info)
+        """division_info = HbmTransform._reduce_division_info(division_info)"""
 
         # Try to find possibilities for spliting arrays
-        maps_to_change, split_dimensions, no_split_arrays = HbmTransform._greedy_find_splits(sdfg, global_memory_array, 
-            no_split_arrays, placed_arrays, update_array_banks,)
+        maps_to_change, split_dimensions, no_split_arrays, division_info = HbmTransform._greedy_find_splits(sdfg, global_memory_array, 
+            no_split_arrays, placed_arrays, division_info,)
         
         # Find a placement for the arrays on HBM and an unroll factor that works
         unroll_factor, single_block_starts, multi_block_starts = HbmTransform._place_arrays(sdfg, update_array_banks, unroll_factor, 
