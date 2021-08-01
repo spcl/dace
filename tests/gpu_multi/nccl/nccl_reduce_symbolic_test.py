@@ -17,7 +17,7 @@ np_dtype = np.float64
 
 
 @dace.program
-def reduction_test(out: dtype[num_gpus, N]):
+def nccl_reduce_symbolic(out: dtype[num_gpus, N]):
     for root_gpu in dace.map[0:num_gpus]:
         for gpu in dace.map[0:num_gpus]:
             reduction_output = dace.ndarray([N], dtype=dtype)
@@ -43,7 +43,7 @@ def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
 def test_nccl_reduce_symbolic():
     ng = Config.get('compiler', 'cuda', 'max_number_gpus')
     n = 2
-    sdfg: dace.SDFG = reduction_test.to_sdfg(strict=True)
+    sdfg: dace.SDFG = nccl_reduce_symbolic.to_sdfg(strict=True)
     outer_map = find_map_by_param(sdfg, 'root_gpu')
     if outer_map:
         outer_map.schedule = dtypes.ScheduleType.Sequential
@@ -51,7 +51,6 @@ def test_nccl_reduce_symbolic():
     gpu_map.schedule = dtypes.ScheduleType.GPU_Multidevice
     infer_types.set_default_schedule_storage_types_and_location(sdfg, None)
     sdfg.specialize(dict(num_gpus=ng))
-    sdfg.name = 'nccl_reduce_symbolic'
 
     out = np.ndarray(shape=[ng, n], dtype=np_dtype)
     out.fill(0)

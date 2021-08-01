@@ -34,16 +34,12 @@ class ExpandAllreduceNCCL(ExpandTransformation):
         output_data = sdfg.arrays[output_edge.data.data]
 
         # Verify that data is on the GPU
-        if input_data.storage not in [
-                dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned
-        ]:
-            raise ValueError('Input of NCCL allreduce must either reside '
-                             ' in global GPU memory or pinned CPU memory')
-        if output_data.storage not in [
-                dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned
-        ]:
-            raise ValueError('Output of NCCL allreduce must either reside '
-                             ' in global GPU memory or pinned CPU memory')
+        if input_data.storage is not dtypes.StorageType.GPU_Global:
+            raise ValueError('Input of NCCL Send must reside '
+                             ' in global GPU memory.')
+        if output_data.storage is not dtypes.StorageType.GPU_Global:
+            raise ValueError('Output of NCCL Recv must reside '
+                             ' in global GPU memory.')
 
         redtype = node.reduction_type
 
@@ -66,10 +62,9 @@ class ExpandAllreduceNCCL(ExpandTransformation):
 
         if node.group_calls in [NcclGroupCalls.Start, NcclGroupCalls.Both]:
             code = """
-            ncclGroupStart();""" + code
+            ncclGroupStart();\n""" + code
         if node.group_calls in [NcclGroupCalls.End, NcclGroupCalls.Both]:
-            code += """
-            ncclGroupEnd();"""
+            code += """ncclGroupEnd();"""
 
         tasklet = nodes.Tasklet(node.name,
                                 node.in_connectors,

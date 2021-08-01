@@ -16,27 +16,14 @@ np_dtype = np.float64
 
 
 @dace.program
-def allreduce(inbuff: dtype[N], outbuff: dtype[N]):
-    dace.nccl.AllReduce(lambda a, b: a + b,
-                        inbuff,
-                        outbuff,
-                        group_calls=dtypes.NcclGroupCalls.NoGroupCalls)
-
-
-@dace.program
-def allreduce_inplace(inbuff: dtype[N]):
-    dace.nccl.AllReduce(lambda a, b: a + b,
-                        inbuff,
-                        group_calls=dtypes.NcclGroupCalls.NoGroupCalls)
-
-
-@dace.program
 def reduction_test(out: dtype[N]):
     for gpu in dace.map[0:num_gpus]:
         gpu_A = dace.ndarray([N], dtype=dtype)
         for i in dace.map[0:N]:
             gpu_A[i] = gpu
-        allreduce_inplace(gpu_A)
+        dace.nccl.AllReduce(lambda a, b: a + b,
+                            gpu_A,
+                            group_calls=dtypes.NcclGroupCalls.NoGroupCalls)
         if gpu == 0:
             out[:] = gpu_A[:]
 

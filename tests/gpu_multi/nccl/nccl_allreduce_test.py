@@ -21,11 +21,11 @@ def allreduce(inbuff: dtype[N], outbuff: dtype[N]):
     dace.nccl.AllReduce(lambda a, b: a + b,
                         inbuff,
                         outbuff,
-                        use_group_calls=dtypes.NcclGroupCalls.NoGroupCalls)
+                        group_calls=dtypes.NcclGroupCalls.NoGroupCalls)
 
 
 @dace.program
-def reduction_test(out: dtype[N]):
+def nccl_allreduce(out: dtype[N]):
     for gpu in dace.map[0:num_gpus]:
         reduction_output = dace.ndarray([N], dtype=dtype)
         gpu_A = dace.ndarray([N], dtype=dtype)
@@ -40,13 +40,12 @@ def reduction_test(out: dtype[N]):
 def test_nccl_allreduce():
     ng = Config.get('compiler', 'cuda', 'max_number_gpus')
     n = 15
-    sdfg: dace.SDFG = reduction_test.to_sdfg(strict=True)
+    sdfg: dace.SDFG = nccl_allreduce.to_sdfg(strict=True)
     state = sdfg.start_state
     gpu_map = state.nodes()[0]
     gpu_map.schedule = dtypes.ScheduleType.GPU_Multidevice
     infer_types.set_default_schedule_storage_types_and_location(sdfg, None)
     sdfg.specialize(dict(num_gpus=ng))
-    sdfg.name = 'nccl_allreduce'
 
     out = np.ndarray(shape=n, dtype=np_dtype)
     out.fill(0)
