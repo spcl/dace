@@ -79,6 +79,7 @@ def test_none_arg():
     assert np.allclose(field, 1.0)
 
 
+@pytest.mark.skip
 def test_maybe_none_scalar_arg():
     @dace.program
     def some_func(field, a_scalar):
