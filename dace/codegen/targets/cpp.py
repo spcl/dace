@@ -1400,7 +1400,7 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
 
             # If a view, get the relevant access node
             dstnode = edge.dst
-            if not isinstance(dstnode, nodes.ExitNode):
+            if not isinstance(dstnode, (nodes.ExitNode, nodes.Tasklet)):
                 while isinstance(sdfg.arrays[dstnode.data], data.View):
                     dstnode = dfg.out_edges(dstnode)[0].dst
 
