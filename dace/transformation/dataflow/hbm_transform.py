@@ -8,7 +8,7 @@ from dace.sdfg import propagation, utils, graph
 from dace.codegen.targets import fpga
 from dace.transformation import transformation, interstate
 from dace.sdfg import nodes as nd
-from dace import SDFG, SDFGState, memlet
+from dace import SDFG, SDFGState, memlet, data
 import sympy
 import math
 
@@ -222,15 +222,16 @@ class HbmTransform(transformation.Transformation):
 
         global_memory_array = set()
         no_split_arrays = set()
-        placed_arrays = set()
         unroll_factor = None
-        update_array_banks = {}
+        fixed_array_banks = {}
         division_info = {}
         array_dimensions = {}
 
         for name, desc in sdfg.arrays.items():
 
-            if desc.storage != dtypes.StorageType.FPGA_Global and desc.storage != dtypes.StorageType.Default:
+            if not isinstance(desc, data.Array) or isinstance(desc, data.View):
+                continue
+            if desc.storage != dtypes.StorageType.FPGA_Global and desc.storage != dtypes.StorageType.Default: # If not in global memory ignore
                 continue
 
             # When assignment present on array, use it
@@ -244,8 +245,7 @@ class HbmTransform(transformation.Transformation):
                         unroll_factor = high - low
                 else:
                     no_split_arrays.add(name)
-                update_array_banks[name] = assigned
-                placed_arrays.add(name)
+                fixed_array_banks[name] = assigned
             array_dimensions[name] = len(desc.shape)
 
             # Find largest possible number of divisions in each dimension for each array, 
@@ -253,12 +253,12 @@ class HbmTransform(transformation.Transformation):
             tmp_divison_array = []
             for dim in desc.shape:
                 sub_f = symbolic.resolve_symbol_to_constant(dim, sdfg) # sub_f = None if dim symbolic
-                tmp_divison_array.append(sub_f)
+                tmp_divison_array.append([sub_f])
             division_info[name] = tmp_divison_array
             global_memory_array.add(name)
 
-        return (global_memory_array, no_split_arrays, placed_arrays, unroll_factor,
-                update_array_banks, division_info, array_dimensions)
+        return (global_memory_array, no_split_arrays, unroll_factor,
+                fixed_array_banks, division_info, array_dimensions)
     
     @staticmethod
     def _cleanup_incomplete_dimensions_from_split_dimensions(global_memory_array, no_split_arrays,split_dimensions):
@@ -315,7 +315,10 @@ class HbmTransform(transformation.Transformation):
                 if low is None or low != 0:
                     continue
                 high = symbolic.resolve_symbol_to_constant(range[1], sdfg)
-                # TODO: Check that all accesses go to distinct data
+                if high is not None:
+                    high += 1
+                # TODO: Check that accesses are truly equivalent. Will generate valid SDFGs
+                # even if they are not, but the semantics of the program may change in an unexpected fashion
                 for i, what in enumerate(edge.data.subset):
                     if symbol in [str(x) for x in what[0].free_symbols]:
                         if tmp is None:
@@ -424,7 +427,7 @@ class HbmTransform(transformation.Transformation):
         return modifiable_map_to_dependent
 
     @staticmethod
-    def _greedy_find_splits(sdfg, global_memory_array, no_split_arrays, placed_arrays, division_info):
+    def _greedy_find_splits(sdfg, global_memory_array, no_split_arrays, fixed_arrays, division_info):
         """
         Find a valid selection of maps to modify, such that many arrays can be split
         Works in the order of arrays such that arrays which are 'important' to split are considered
@@ -487,7 +490,7 @@ class HbmTransform(transformation.Transformation):
                     modifiable_map_to_array_with_acp[acc_map].add(array)
         
         def array_importance_fun(array):
-            if array in placed_arrays:
+            if array in fixed_arrays:
                 return 30
             else:
                 return 0
@@ -540,7 +543,7 @@ class HbmTransform(transformation.Transformation):
             for single_map in acc_list:
                 maps_to_change.add(single_map)
             split_dimensions[array] = dim
-            division_info[array].append(divide)
+            division_info[array][dim].append(divide)
         for array in global_memory_array:
             if array not in split_dimensions:
                 no_split_arrays.add(array)
@@ -563,25 +566,24 @@ class HbmTransform(transformation.Transformation):
         return current
 
     @staticmethod
-    def _find_free_banks(sdfg, update_array_banks, total_number_of_banks):
+    def _find_free_banks(sdfg, fixed_arrays, total_number_of_banks):
         """
         Find free HBM banks
         """
-
         free_blocks = []
         countfree = 0
-        bitfreelist = [False]*total_number_of_banks
-        for _, memtype, bank in update_array_banks:
+        bitfreelist = [True]*total_number_of_banks
+        for memtype, bank in fixed_arrays.values():
             if memtype == "HBM":
                 low, high = fpga.get_multibank_ranges_from_subset(bank, sdfg)
                 for i in range(low, high):
-                    bitfreelist[i] = True
+                    bitfreelist[i] = False
         lastlow = 0
         for i in range(total_number_of_banks):
-            if bitfreelist[i]:
+            if not bitfreelist[i]:
                 if lastlow < i:
                     free_blocks.append((lastlow, i))
-                lastlow = i+1
+                lastlow = i + 1
             else:
                 countfree += 1
         if lastlow < total_number_of_banks:
@@ -589,7 +591,7 @@ class HbmTransform(transformation.Transformation):
         return free_blocks
 
     def _generate_possible_unroll_factors(unroll_factor, global_memory_array, no_split_arrays,
-            division_info, total_number_of_banks):
+            division_info, total_number_of_banks, split_dimensions):
         """
         Find "possible" unroll factors, i.e a size along which all split arrays are divided
         TODO: This could be improved by considering the total acceses to an array and deciding
@@ -601,13 +603,15 @@ class HbmTransform(transformation.Transformation):
             for i in range(1, total_number_of_banks+1):
                 possible_unroll_factors.add(i)
         else:
-            possible_unroll_factors = set(unroll_factor)
+            possible_unroll_factors = set([unroll_factor])
+        has_multi_bank_arrays=False
         for array in global_memory_array:
             if array not in no_split_arrays:
                 # If splitsize must divide a number compute all divisors.
                 # Otherwise take all from 2 to the total number of banks.
                 possible = set()
-                tmp_div_info = HbmTransform._custom_gcd(division_info[array])
+                has_multi_bank_arrays = True
+                tmp_div_info = HbmTransform._custom_gcd(division_info[array][split_dimensions[array]])
                 if tmp_div_info is None:
                     for i in range(1, total_number_of_banks+1):
                         possible.add(i)
@@ -620,12 +624,15 @@ class HbmTransform(transformation.Transformation):
                     no_split_arrays.add(array)
                 else:
                     possible_unroll_factors = tmp_intersect
-        return possible_unroll_factors
+        if has_multi_bank_arrays:
+            return possible_unroll_factors
+        else:
+            return set([1])
 
     @staticmethod
-    def _place_arrays(sdfg, update_array_banks, unroll_factor, 
-        global_memory_array, no_split_arrays, placed_arrays,
-        division_info, total_number_of_banks):
+    def _try_place_arrays(sdfg, fixed_arrays, unroll_factor, 
+        global_memory_array, no_split_arrays,
+        division_info, total_number_of_banks, split_dimensions):
         """
         Given information about which arrays can be split in which dimension (or cannot be split)
         generate a valid assignment of arrays to HBM. Never uses DDR by itself, but if set already
@@ -633,16 +640,16 @@ class HbmTransform(transformation.Transformation):
         The assignment also defines the unroll factor, since this decides how much we split.
         """
 
-        free_blocks = HbmTransform._find_free_banks(sdfg, update_array_banks, total_number_of_banks)
+        free_blocks = HbmTransform._find_free_banks(sdfg, fixed_arrays, total_number_of_banks)
         possible_unroll_factors = HbmTransform._generate_possible_unroll_factors(unroll_factor, global_memory_array, no_split_arrays,
-            division_info, total_number_of_banks,)
+            division_info, total_number_of_banks, split_dimensions)
         
         # Given possible unroll factors find one that actually fits on banks
         # TODO: Could be improved by placing no_split_arrays on DDR as well
         possible_unroll_factors = list(possible_unroll_factors)
         possible_unroll_factors.sort(reverse=True)
-        num_splitable = len(global_memory_array) - len(placed_arrays.difference(no_split_arrays))
-        num_singlebank = len(no_split_arrays) - len(placed_arrays.intersection(no_split_arrays))
+        num_splitable = len(global_memory_array) - len(no_split_arrays) - len(set(fixed_arrays.keys()).difference(no_split_arrays))
+        num_singlebank = len(no_split_arrays) - len(set(fixed_arrays.keys()).intersection(no_split_arrays))
         single_block_starts = []
         multi_block_starts = []
         for possible_uf in possible_unroll_factors:
@@ -666,14 +673,27 @@ class HbmTransform(transformation.Transformation):
                 unroll_factor = possible_uf
                 break
         if splitable_place != 0 or singlebank_place != 0:
-            raise NotImplementedError("Failed to place the arrays. Do you have more arrays than banks or an"
-                                    "invalid assignment")
-        
+            return None # Can also happen when there are more arrays than banks. Not implemented.
+
+        # Check if placement is valid. Relies on the knowledge that a placement has been found in principle
+        for array, tmpval in fixed_arrays.items():
+            memorytype, bank = tmpval
+            if memorytype == "DDR":
+                low, high = (0, 1)
+            else:
+                low, high = fpga.get_multibank_ranges_from_subset(bank, sdfg)
+            if high - low == 1:
+                ok = array in no_split_arrays
+            else:
+                ok = array not in no_split_arrays and unroll_factor == high - low
+            if not ok:
+                return None
+
         return (unroll_factor, single_block_starts, multi_block_starts)
 
 
     @staticmethod
-    def _find_suitable_settings(sdfg: SDFG):
+    def _try_find_suitable_settings(sdfg: SDFG):
         """
         This method tries to find suitable settings for the transformation. 
         Acts only based on heuristics and will assume that all array shapes are
@@ -715,34 +735,43 @@ class HbmTransform(transformation.Transformation):
         propagation.propagate_memlets_sdfg(sdfg)
         
         # Scan the arrays and collect initial inputs
-        (global_memory_array, no_split_arrays, placed_arrays, unroll_factor, update_array_banks, division_info, array_dimensions,) = HbmTransform._scan_arrays(sdfg)
-        """division_info = HbmTransform._reduce_division_info(division_info)"""
+        (global_memory_array, no_split_arrays, unroll_factor, fixed_arrays, division_info, array_dimensions,) = HbmTransform._scan_arrays(sdfg)
 
         # Try to find possibilities for spliting arrays
         maps_to_change, split_dimensions, no_split_arrays, division_info = HbmTransform._greedy_find_splits(sdfg, global_memory_array, 
-            no_split_arrays, placed_arrays, division_info,)
+            no_split_arrays, fixed_arrays, division_info,)
         
         # Find a placement for the arrays on HBM and an unroll factor that works
-        unroll_factor, single_block_starts, multi_block_starts = HbmTransform._place_arrays(sdfg, update_array_banks, unroll_factor, 
-            global_memory_array, no_split_arrays, placed_arrays,
-            division_info, total_number_of_banks,)
-        
+        place_result = HbmTransform._try_place_arrays(sdfg, fixed_arrays, unroll_factor, 
+            global_memory_array, no_split_arrays,
+            division_info, total_number_of_banks, split_dimensions)
+
+        if place_result is None:
+            return None
+        else:
+            unroll_factor, single_block_starts, multi_block_starts = place_result
+
         # Fill update_array_banks and which maps need to be updated
         consumed_single = 0
         consumed_splitable = 0
+        update_array_banks = {}
         for array in global_memory_array:
-            if array in placed_arrays:
-                continue
-            elif array in no_split_arrays:
-                update_array_banks[array] = ('HBM', str(single_block_starts[consumed_single]), None)
-                consumed_single += 1
+            if array in no_split_arrays:
+                if array in fixed_arrays: 
+                    update_array_banks[array] = (*fixed_arrays[array], None)
+                else:
+                    update_array_banks[array] = ('HBM', str(single_block_starts[consumed_single]), None)
+                    consumed_single += 1
             else:
                 dim = split_dimensions[array]
                 split_list = [1] * array_dimensions[array]
                 split_list[dim] = unroll_factor
-                low = multi_block_starts[consumed_splitable]
-                update_array_banks[array] = ('HBM', f"{low}:{low + unroll_factor}", split_list)
-                consumed_splitable += 1
+                if array in fixed_arrays:
+                    update_array_banks[array] = (*fixed_arrays[array], split_list)
+                else:
+                    low = multi_block_starts[consumed_splitable]
+                    update_array_banks[array] = ('HBM', f"{low}:{low + unroll_factor}", split_list)
+                    consumed_splitable += 1
         update_map_range = {}
         for update_map in maps_to_change:
             update_map_range[update_map] = unroll_factor
@@ -753,9 +782,12 @@ class HbmTransform(transformation.Transformation):
     def can_be_applied(graph: Union[SDFG, SDFGState],
                        candidate: Dict['PatternNode', int], expr_index: int,
                        sdfg: SDFG, strict: bool) -> bool:
+        if strict:
+            return False
 
-        # Nested SDFGs not supported at the moment 
-        # It would probably not be to hard to support them though
+        # Nested SDFGs are not supported at the moment.
+        # A nice side effect of this is that the transformation cannot be
+        # called twice, because it nests the input-SDFG.
         for node, _ in sdfg.all_nodes_recursive():
             if isinstance(node, nd.NestedSDFG) or isinstance(node, nd.LibraryNode):
                 return False
@@ -771,23 +803,15 @@ class HbmTransform(transformation.Transformation):
             sdfg.validate()
         except:
             ok = False
-        for array, location in backup:
+        for array, location in backup.items():
             sdfg.arrays[array].location = location
         if not ok:
             return False
-        fix_count = None
-        for _, location in backup:
-            if 'memorytype' in location and 'bank' in location:
-                if location['memorytype'] == 'HBM':
-                    low, high = fpga.get_multibank_ranges_from_subset(location['bank'], sdfg)
-                    if high - low > 1:
-                        if fix_count is None:
-                            fix_count = high - low
-                        else:
-                            if fix_count != high - low:
-                                return False
 
-        # Check if this actually does something TODO
+        settings = HbmTransform._try_find_suitable_settings(sdfg)
+        if settings is None:
+            return False
+
         return True
 
     @staticmethod
@@ -796,6 +820,9 @@ class HbmTransform(transformation.Transformation):
         return [networkx.DiGraph()]
 
     def apply(self, sdfg: SDFG) -> Union[Any, None]:
-        update_array_banks, outer_map_range, update_map_range = HbmTransform._find_suitable_settings(sdfg)
+        update_array_banks, outer_map_range, update_map_range = HbmTransform._try_find_suitable_settings(sdfg)
+        _, _, _, fixed_arrays, _, _ = HbmTransform._scan_arrays(sdfg)
+        for array in fixed_arrays:
+            sdfg.arrays[array].location.clear()
         transform_sdfg_for_hbm(sdfg, outer_map_range, update_array_banks,
             update_map_range, False)
