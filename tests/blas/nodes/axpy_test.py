@@ -7,7 +7,6 @@ import numpy as np
 
 import argparse
 import scipy
-import random
 
 import dace
 from dace.fpga_testing import fpga_test

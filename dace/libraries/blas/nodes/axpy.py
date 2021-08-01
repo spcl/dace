@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.sdfg import utils
-from dace.codegen.targets import fpga
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -137,6 +136,8 @@ class ExpandAxpyFpgaHbm(ExpandTransformation):
         if len(size) != 2:
             raise ValueError("axpy for hbm only supports 2-dimensional arrays")
 
+        from dace.codegen.targets import fpga # avoid import loop
+
         desc_x = sdfg.arrays[in_memlets[0].data]
         desc_y = sdfg.arrays[in_memlets[1].data]
         desc_z = sdfg.arrays[out_memlet.data]
@@ -174,6 +175,8 @@ class ExpandAxpyFpgaHbm(ExpandTransformation):
         ExpandAxpyFpgaHbm.validate(node, parent_sdfg, parent_state)
         sdfg: SDFG = ExpandAxpyFpga.expansion(node, parent_state, parent_sdfg,
                                               **kwargs)
+
+        from dace.codegen.targets import fpga # avoid import loop
 
         desc_x = parent_sdfg.arrays[parent_state.in_edges(node)[0].data.data]
         desc_y = parent_sdfg.arrays[parent_state.in_edges(node)[1].data.data]
