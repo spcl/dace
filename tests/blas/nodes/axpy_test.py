@@ -10,6 +10,7 @@ import scipy
 import random
 
 import dace
+from dace.fpga_testing import fpga_test
 from dace.memlet import Memlet
 
 import dace.libraries.blas as blas
@@ -58,6 +59,8 @@ def run_test(configs, target):
 
         if ref_norm >= 1e-5:
             raise ValueError(f"Failed validation for target {target}.")
+
+    return sdfg
 
 
 def reference_result(x_in, y_in, alpha):
@@ -161,10 +164,21 @@ def stream_fpga_graph(veclen, precision, test_case, expansion):
     return sdfg
 
 
-def _test_fpga(target):
+@fpga_test()
+def test_axpy_fpga_array():
     configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
-    run_test(configs, target)
+    return run_test(configs, "fpga_array")
 
+
+@fpga_test()
+def test_axpy_fpga_stream():
+    configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
+    return run_test(configs, "fpga_stream")
+
+@fpga_test()
+def _test_axpy_fpga_hbm():
+    configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
+    return run_test(configs, "fpga_hbm")
 
 if __name__ == "__main__":
     cmdParser = argparse.ArgumentParser(allow_abbrev=False)
@@ -174,12 +188,12 @@ if __name__ == "__main__":
     args = cmdParser.parse_args()
 
     if args.target == "fpga":
-        _test_fpga("fpga_array")
-        _test_fpga("fpga_stream")
+        test_axpy_fpga_array(None)
+        test_axpy_fpga_stream(None)
         if dace.Config.get(
                 "compiler",
                 "fpga_vendor") == "xilinx":  # Only supported by xilinx
-            _test_fpga("fpga_hbm")
+            _test_axpy_fpga_hbm(None)
     elif args.target == "pure":
         test_pure()
     else:
