@@ -192,6 +192,8 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
             # Nested SDFGs retain same schedule as their parent scope
             if node.schedule is dtypes.ScheduleType.Default:
                 node.schedule = parent_schedule
+            if node.schedule is dtypes.ScheduleType.GPU_Multidevice:
+                node.sdfg.openmp_sections = False
             _set_default_schedule_types(node.sdfg, node.schedule)
         elif getattr(node, 'schedule', False):
             if node.schedule is dtypes.ScheduleType.Default:

@@ -3204,7 +3204,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     if self._debugprint:
                         write_expr = f'\nDACE_CUDA_CHECK({self.backend}StreamSynchronize({cudastream}));\n'
                     else:
-                        write_expr = f'\{self.backend}StreamSynchronize({cudastream});\n'
+                        write_expr = f'{self.backend}StreamSynchronize({cudastream});\n'
                     callsite_stream.write(write_expr, sdfg, state_id, node)
         self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node,
                                             function_stream, callsite_stream)
