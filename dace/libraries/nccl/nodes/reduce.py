@@ -41,6 +41,10 @@ class ExpandReduceNCCL(ExpandTransformation):
         if output_data.storage is not dtypes.StorageType.GPU_Global:
             raise ValueError('Output of NCCL Recv must reside '
                              ' in global GPU memory.')
+        if node.next_group_call:
+            next_group_node = next(n for n in state.nodes()
+                                   if str(n) == node.next_group_call)
+            state.add_edge(next_group_node, None, node, None, Memlet())
 
         root = node.root
 
@@ -104,6 +108,7 @@ class Reduce(nodes.LibraryNode):
                  wcr="lambda a, b: a + b",
                  root: symbolic.SymbolicType = 0,
                  group_calls: NcclGroupCalls = NcclGroupCalls.NoGroupCalls,
+                 next_group_call: str = '',
                  debuginfo=None,
                  *args,
                  **kwargs):
@@ -116,6 +121,7 @@ class Reduce(nodes.LibraryNode):
         self.wcr = wcr
         self.root = root
         self.group_calls = group_calls
+        self.next_group_call = next_group_call
         self.schedule = dtypes.ScheduleType.GPU_Multidevice
         self.debuginfo = debuginfo
 
@@ -131,7 +137,7 @@ class Reduce(nodes.LibraryNode):
         wcrstr = str(redtype)
         wcrstr = wcrstr[wcrstr.find('.') + 1:]  # Skip "ReductionType."
 
-        return 'nccl_Reduce ({op})'.format(op=wcrstr)
+        return 'nccl_Reduce({op})'.format(op=wcrstr)
 
     def __label__(self, sdfg, state):
         return str(self).replace(' Axes', '\nAxes')
@@ -149,12 +155,12 @@ class Reduce(nodes.LibraryNode):
         redtype = self.reduction_type
 
         in_edges = state.in_edges(self)
-        if len(in_edges) != 1:
-            raise ValueError("NCCL Reduce must have one input.")
+        if len(in_edges) not in [1, 2]:
+            raise ValueError("NCCL Reduce must have one or two inputs.")
 
         out_edges = state.out_edges(self)
-        if len(out_edges) != 1:
-            raise ValueError("NCCL Reduce must have one output.")
+        if len(out_edges) not in [1, 2]:
+            raise ValueError("NCCL Reduce must have one or two outputs.")
 
 
 @oprepo.replaces('dace.nccl.reduce')
@@ -166,7 +172,8 @@ def nccl_reduce(pv: 'ProgramVisitor',
                 in_array: str,
                 out_array: Union[str, None] = None,
                 root: str = None,
-                group_calls: NcclGroupCalls = NcclGroupCalls.NoGroupCalls):
+                group_calls: NcclGroupCalls = NcclGroupCalls.NoGroupCalls,
+                next_group_call: str = ''):
 
     # If out_array is not specified, the operation will be in-place.
     if out_array is None:
@@ -175,7 +182,10 @@ def nccl_reduce(pv: 'ProgramVisitor',
     # Add nodes
     in_node = state.add_read(in_array)
     out_node = state.add_write(out_array)
-    libnode = Reduce(redfunction, root=root, group_calls=group_calls)
+    libnode = Reduce(redfunction,
+                     root=root,
+                     group_calls=group_calls,
+                     next_group_call=next_group_call)
 
     # Connect nodes
     state.add_edge(in_node, None, libnode, '_inbuffer', Memlet(in_array))

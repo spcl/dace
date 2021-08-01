@@ -37,6 +37,11 @@ class ExpandRecvNCCL(ExpandTransformation):
 
         peer = node.peer
 
+        if node.next_group_call:
+            next_group_node = next(n for n in state.nodes()
+                                   if str(n) == node.next_group_call)
+            state.add_edge(next_group_node, None, node, None, Memlet())
+
         nccl_dtype_str = nutil.Nccl_dtypes(output_data.dtype.base_type)
         count_str = "*".join(str(e) for e in output_dims)
 
@@ -77,7 +82,10 @@ class Recv(nodes.LibraryNode):
     peer = SymbolicProperty(default=0,
                             allow_none=True,
                             desc="The gpu on which the receive buffer resides")
-
+    next_group_call = Property(
+        dtype=str,
+        default='',
+        desc='For aggregation of multiple NCCL collective operations.')
     group_calls = Property(
         dtype=NcclGroupCalls,
         default=NcclGroupCalls.NoGroupCalls,
@@ -90,6 +98,7 @@ class Recv(nodes.LibraryNode):
     def __init__(self,
                  peer: symbolic.SymbolicType = 0,
                  group_calls: NcclGroupCalls = NcclGroupCalls.NoGroupCalls,
+                 next_group_call: str = '',
                  debuginfo=None,
                  *args,
                  **kwargs):
@@ -100,6 +109,7 @@ class Recv(nodes.LibraryNode):
                          **kwargs)
         self.peer = peer
         self.group_calls = group_calls
+        self.next_group_call = next_group_call
         self.schedule = dtypes.ScheduleType.GPU_Multidevice
         self.debuginfo = debuginfo
 
@@ -110,15 +120,18 @@ class Recv(nodes.LibraryNode):
         return ret
 
     def __str__(self):
-        return f'nccl_Recv (peer={self.peer})'
+        return f'nccl_Recv(peer={self.peer})'
 
     def __label__(self, sdfg, state):
         return str(self).replace(' Axes', '\nAxes')
 
     def validate(self, sdfg: SDFG, state: SDFGState):
+        in_edges = state.in_edges(self)
+        if len(in_edges) not in [0, 1]:
+            raise ValueError("NCCL Recv must have one or two input.")
         out_edges = state.out_edges(self)
-        if len(out_edges) != 1:
-            raise ValueError("NCCL Recv must have one output.")
+        if len(out_edges) not in [1, 2]:
+            raise ValueError("NCCL Recv must have zero or one output.")
 
 
 @oprepo.replaces('dace.nccl.recv')
@@ -128,11 +141,14 @@ def nccl_recv(pv: 'ProgramVisitor',
               state: SDFGState,
               out_array: str,
               peer: symbolic.SymbolicType = 0,
-              group_calls: NcclGroupCalls = NcclGroupCalls.NoGroupCalls):
+              group_calls: NcclGroupCalls = NcclGroupCalls.NoGroupCalls,
+              next_group_call: str = ''):
 
     # Add nodes
     out_node = state.add_write(out_array)
-    libnode = Recv(peer=peer, group_calls=group_calls)
+    libnode = Recv(peer=peer,
+                   group_calls=group_calls,
+                   next_group_call=next_group_call)
 
     # Connect nodes
     state.add_edge(libnode, '_outbuffer', out_node, None, Memlet(out_array))

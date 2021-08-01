@@ -25,7 +25,7 @@ def nccl_send_recv():
         # Transients
         send_buffer = dace.ndarray([1], dtype)
         recv_buffer = dace.ndarray([1], dtype)
-        ring_sum = dace.ndarray([1], dtype)
+        ring_sum = dace.define_local_scalar(dtype)
 
         # Init transients
         for i in dace.map[0:1]:
@@ -37,6 +37,7 @@ def nccl_send_recv():
             if gpu_id == 0:
                 dace.nccl.Send(send_buffer,
                                gpu_id + 1,
+                               next_group_call='nccl_Recv(peer=num_gpus - 1)',
                                group_calls=dtypes.NcclGroupCalls.Start)
                 dace.nccl.Recv(recv_buffer,
                                num_gpus - 1,
@@ -44,6 +45,7 @@ def nccl_send_recv():
             elif gpu_id == num_gpus - 1:
                 dace.nccl.Send(send_buffer,
                                0,
+                               next_group_call='nccl_Recv(peer=gpu_id - 1)',
                                group_calls=dtypes.NcclGroupCalls.Start)
                 dace.nccl.Recv(recv_buffer,
                                gpu_id - 1,
@@ -51,6 +53,7 @@ def nccl_send_recv():
             else:
                 dace.nccl.Send(send_buffer,
                                gpu_id + 1,
+                               next_group_call='nccl_Recv(peer=gpu_id - 1)',
                                group_calls=dtypes.NcclGroupCalls.Start)
                 dace.nccl.Recv(recv_buffer,
                                gpu_id - 1,
@@ -70,6 +73,11 @@ def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
                 if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
 
 
+def find_data_desc(sdfg: dace.SDFG, name: str) -> dace.nodes.MapEntry:
+    """ Finds the first access node by the given data name. """
+    return next(d for s, n, d in sdfg.arrays_recursive() if n == name)
+
+
 @pytest.mark.multigpu
 def test_nccl_send_recv():
     ng = Config.get('compiler', 'cuda', 'max_number_gpus')
@@ -79,6 +87,8 @@ def test_nccl_send_recv():
     gpu_map = find_map_by_param(sdfg, 'gpu_id')
     gpu_map.schedule = dtypes.ScheduleType.GPU_Multidevice
     infer_types.set_default_schedule_storage_types_and_location(sdfg, None)
+    data_desc = find_data_desc(sdfg, 'ring_sum')
+    data_desc.storage = dtypes.StorageType.GPU_Global
     sdfg.specialize(dict(num_gpus=ng))
 
     out = sdfg()

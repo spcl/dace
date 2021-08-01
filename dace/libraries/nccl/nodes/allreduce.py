@@ -41,6 +41,11 @@ class ExpandAllreduceNCCL(ExpandTransformation):
             raise ValueError('Output of NCCL Recv must reside '
                              ' in global GPU memory.')
 
+        if node.next_group_call:
+            next_group_node = next(n for n in state.nodes()
+                                   if str(n) == node.next_group_call)
+            state.add_edge(node, None, next_group_node, None, Memlet())
+
         redtype = node.reduction_type
 
         redtype = dtypes.NCCL_SUPPORTED_OPERATIONS[redtype]
@@ -99,6 +104,7 @@ class Allreduce(nodes.LibraryNode):
     def __init__(self,
                  wcr: str = "lambda a, b: a + b",
                  group_calls: NcclGroupCalls = NcclGroupCalls.NoGroupCalls,
+                 next_group_call: str = '',
                  debuginfo=None,
                  *args,
                  **kwargs):
@@ -110,6 +116,7 @@ class Allreduce(nodes.LibraryNode):
                          **kwargs)
         self.wcr = wcr
         self.group_calls = group_calls
+        self.next_group_call = next_group_call
         self.schedule = dtypes.ScheduleType.GPU_Multidevice
         self.debuginfo = debuginfo
 
@@ -143,27 +150,26 @@ class Allreduce(nodes.LibraryNode):
         redtype = self.reduction_type
 
         in_edges = state.in_edges(self)
-        if len(in_edges) != 1:
-            raise ValueError("NCCL Allreduce must have one input.")
+        if len(in_edges) not in [1, 2]:
+            raise ValueError("NCCL Allreduce must have one or two inputs.")
 
         out_edges = state.out_edges(self)
-        if len(out_edges) != 1:
-            raise ValueError("NCCL Allreduce must have one output.")
+        if len(out_edges) not in [1, 2]:
+            raise ValueError("NCCL Allreduce must have one or two outputs.")
 
 
 @oprepo.replaces('dace.nccl.allreduce')
 @oprepo.replaces('dace.nccl.Allreduce')
 @oprepo.replaces('dace.nccl.AllReduce')
 @oprepo.replaces('dace.nccl.allReduce')
-def nccl_allreduce(
-    pv: 'ProgramVisitor',
-    sdfg: SDFG,
-    state: SDFGState,
-    redfunction: Callable[[Any, Any], Any],
-    in_array: str,
-    out_array: Union[str, None] = None,
-    group_calls: NcclGroupCalls = NcclGroupCalls.NoGroupCalls,
-):
+def nccl_allreduce(pv: 'ProgramVisitor',
+                   sdfg: SDFG,
+                   state: SDFGState,
+                   redfunction: Callable[[Any, Any], Any],
+                   in_array: str,
+                   out_array: Union[str, None] = None,
+                   group_calls: NcclGroupCalls = NcclGroupCalls.NoGroupCalls,
+                   next_group_call: str = ''):
 
     # If out_array is not specified, the operation will be in-place.
     if out_array is None:
@@ -173,7 +179,9 @@ def nccl_allreduce(
     in_node = state.add_read(in_array)
     out_node = state.add_write(out_array)
 
-    libnode = Allreduce(redfunction, group_calls=group_calls)
+    libnode = Allreduce(redfunction,
+                        group_calls=group_calls,
+                        next_group_call=next_group_call)
 
     # Connect nodes
     state.add_edge(in_node, None, libnode, '_inbuffer', Memlet(in_array))
