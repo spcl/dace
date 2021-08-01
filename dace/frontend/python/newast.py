@@ -3914,6 +3914,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     a for a in sdfg.arglist().keys()
                     if a not in sdfg.symbols and not a.startswith('__return')
                 ]
+                all_args = required_args
             elif isinstance(func, SDFGConvertible) or self._has_sdfg(func):
                 argnames, constant_args = func.__sdfg_signature__()
                 args = [(aname, self._parse_function_arg(arg))
@@ -3932,6 +3933,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     sdfg = fcopy.__sdfg__(*fargs)
 
                 funcname = sdfg.name
+                all_args = required_args
                 required_args = [k for k, _ in args if k in sdfg.arg_names]
                 # Filter out constant and None-constant arguments
                 req = sdfg.arglist().keys()
@@ -3989,7 +3991,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if arg.arg.startswith('__return'):
                     required_args.append(arg.arg)
                     continue
-                if arg.arg not in required_args:
+                if arg.arg not in required_args and arg.arg not in all_args:
                     raise DaceSyntaxError(
                         self, node, 'Invalid keyword argument "%s" in call to '
                         '"%s"' % (arg.arg, funcname))
