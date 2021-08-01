@@ -767,20 +767,45 @@ class ExpandGemvCuBLAS(ExpandTransformation):
 
         func, ctype, runtimetype = blas_helpers.cublas_type_metadata(dtype)
         func += 'gemv'
+        call_prefix = environments.cublas.cuBLAS.handle_setup_code(node)
+        call_suffix = ''
 
-        # TODO: (alpha,beta) != (1,0)
-        if node.alpha != 1.0 or node.beta != 0.0:
-            raise NotImplementedError
-        alpha = (
-            '__state->cublas_handle.Constants(__dace_cuda_device).%sPone()' %
-            runtimetype)
-        beta = (
-            '__state->cublas_handle.Constants(__dace_cuda_device).%sZero()' %
-            runtimetype)
+        # Handle alpha / beta
+        constants = {
+            1.0:
+            f"__state->cublas_handle.Constants(__dace_cuda_device).{runtimetype}Pone()",
+            0.0:
+            f"__state->cublas_handle.Constants(__dace_cuda_device).{runtimetype}Zero()",
+        }
+        if node.alpha not in constants or node.beta not in constants:
+            # Deal with complex input constants
+            if isinstance(node.alpha, complex):
+                alpha = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
+            else:
+                alpha = f'{dtype.ctype}({node.alpha})'
+            if isinstance(node.beta, complex):
+                beta = f'{dtype.ctype}({node.beta.real}, {node.beta.imag})'
+            else:
+                beta = f'{dtype.ctype}({node.beta})'
 
-        code = (environments.cublas.cuBLAS.handle_setup_code(node) + f"""
+            # Set pointer mode to host
+            call_prefix += f'''cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST);
+            {dtype.ctype} alpha = {alpha};
+            {dtype.ctype} beta = {beta};
+            '''
+            call_suffix += '''
+cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
+            '''
+            alpha = f'({ctype} *)&alpha'
+            beta = f'({ctype} *)&beta'
+        else:
+            alpha = constants[node.alpha]
+            beta = constants[node.beta]
+
+        code = (call_prefix + f"""
 cublas{func}(__dace_cublas_handle, {trans}, {m}, {n}, {alpha}, _A, {lda},
-             _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});""")
+             _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});
+                """ + call_suffix)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -917,20 +942,20 @@ class ExpandGemvPBLAS(ExpandTransformation):
         @dace.program
         def _gemNv_pblas(_A: dtype[m, n], _x: dtype[n], _y: dtype[m]):
             lA = np.empty((m // Px, n // Py), dtype=_A.dtype)
-            lx = np.empty((n // Px,), dtype=_x.dtype)
-            dace.comm.BCScatter(_A, lA, (m//Px, n//Py))
-            dace.comm.BCScatter(_x, lx, (n//Px, 1))
-            ly = distr.MatMult(_A, _x, lA, lx, (m//Px, n//Py), (n//Px, 1))
-            dace.comm.BCGather(ly, _y, (m//Px, 1))
-        
+            lx = np.empty((n // Px, ), dtype=_x.dtype)
+            dace.comm.BCScatter(_A, lA, (m // Px, n // Py))
+            dace.comm.BCScatter(_x, lx, (n // Px, 1))
+            ly = distr.MatMult(_A, _x, lA, lx, (m // Px, n // Py), (n // Px, 1))
+            dace.comm.BCGather(ly, _y, (m // Px, 1))
+
         @dace.program
         def _gemTv_pblas(_A: dtype[m, n], _x: dtype[m], _y: dtype[n]):
             lA = np.empty((m // Px, n // Py), dtype=_A.dtype)
-            lx = np.empty((m // Px,), dtype=_x.dtype)
-            dace.comm.BCScatter(_A, lA, (m//Px, n//Py))
-            dace.comm.BCScatter(_x, lx, (m//Px, 1))
-            ly = distr.MatMult(_x, _A, lx, lA, (m//Px, 1), (m//Px, n//Py))
-            dace.comm.BCGather(ly, _y, (n//Px, 1))
+            lx = np.empty((m // Px, ), dtype=_x.dtype)
+            dace.comm.BCScatter(_A, lA, (m // Px, n // Py))
+            dace.comm.BCScatter(_x, lx, (m // Px, 1))
+            ly = distr.MatMult(_x, _A, lx, lA, (m // Px, 1), (m // Px, n // Py))
+            dace.comm.BCGather(ly, _y, (n // Px, 1))
 
         # NOTE: The following is done to avoid scalar promotion, which results
         # in ValueError: Node type "BlockCyclicScatter" not supported for
