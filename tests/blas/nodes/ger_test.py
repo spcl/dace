@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace.transformation.dataflow.streaming_memory import StreamingMemory
-from dace.transformation.interstate.sdfg_nesting import InlineSDFG
-from dace.transformation.interstate.fpga_transform_sdfg import FPGATransformSDFG
 import numpy as np
 
 import argparse
 import scipy
 
 import dace
-from dace.memlet import Memlet
-
 import dace.libraries.blas as blas
-
+from dace.fpga_testing import fpga_test
 from dace.libraries.standard.memory import aligned_ndarray
+from dace.memlet import Memlet
+from dace.transformation.dataflow.streaming_memory import StreamingMemory
+from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+from dace.transformation.interstate.fpga_transform_sdfg import FPGATransformSDFG
 
 
 def pure_graph(implementation, dtype, veclen):
@@ -99,34 +98,23 @@ def run_test(ger, target):
         print("Ok")
 
 
-if __name__ == "__main__":
+def run_ger(target: str,
+            n: int,
+            m: int,
+            tile_size_x: int,
+            tile_size_y: int,
+            alpha: float = 1,
+            veclen: int = 1,
+            eps: float = 1e-6):
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=256)
-    parser.add_argument("M", type=int, nargs="?", default=512)
-    parser.add_argument("tile_size_x", type=int, nargs="?", default=16)
-    parser.add_argument("tile_size_y", type=int, nargs="?", default=32)
-    parser.add_argument("alpha", type=np.float32, nargs="?", default=1.0)
-    parser.add_argument("--target", dest="target", default="pure")
-    parser.add_argument("--eps", type=float, default=1e-6)
-    parser.add_argument("--veclen", type=int, default=8)
-    args = parser.parse_args()
-    n = args.N
-    m = args.M
-    tile_size_x = args.tile_size_x
-    tile_size_y = args.tile_size_y
-    alpha = args.alpha
-    veclen = args.veclen
-
-    if args.target == "pure":
+    if target == "pure":
         ger_node, state, sdfg = pure_graph("pure", dace.float32, veclen)
         ger_node.expand(sdfg, state)
         sdfg.apply_transformations_repeated([InlineSDFG])
-    elif args.target == "fpga":
+    elif target == "fpga":
         sdfg = fpga_graph(dace.float32, veclen, tile_size_x, tile_size_y)
     else:
-        print("Unsupported target")
-        exit(-1)
+        raise ValueError("Unsupported target")
 
     x = aligned_ndarray(np.random.rand(m).astype(np.float32),
                         alignment=4 * veclen)
@@ -155,7 +143,35 @@ if __name__ == "__main__":
     ref = scipy.linalg.blas.sger(alpha=alpha, x=x, y=y, a=ref)
 
     diff = np.linalg.norm(res - ref)
-    if diff >= args.eps * n * m:
+    if diff >= eps * n * m:
         raise RuntimeError(f"Validation failed: {diff}")
     else:
         print("Validation successful.")
+
+    return sdfg
+
+
+def test_ger_pure():
+    run_ger("pure", 256, 512, 16, 32)
+
+
+@fpga_test()
+def test_ger_fpga():
+    return run_ger("fpga", 256, 512, 16, 32)
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("N", type=int, nargs="?", default=256)
+    parser.add_argument("M", type=int, nargs="?", default=512)
+    parser.add_argument("tile_size_x", type=int, nargs="?", default=16)
+    parser.add_argument("tile_size_y", type=int, nargs="?", default=32)
+    parser.add_argument("alpha", type=np.float32, nargs="?", default=1.0)
+    parser.add_argument("--target", dest="target", default="pure")
+    parser.add_argument("--veclen", type=int, default=8)
+    parser.add_argument("--eps", type=float, default=1e-6)
+    args = parser.parse_args()
+
+    run_ger(args.target, args.N, args.M, args.tile_size_x, args.tile_size_y,
+            args.alpha, args.veclen, args.eps)
