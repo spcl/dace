@@ -13,6 +13,7 @@ import numpy as np
 import sympy as sp
 
 from dace import data as dt, dtypes, symbolic
+from dace.sdfg import state
 from dace.codegen import exceptions as cgx
 from dace.codegen import codegen, compiler
 from dace.config import Config
@@ -285,9 +286,9 @@ class CompiledSDFG(object):
                 if compiledSdfg._lib.is_loaded():
                     compiledSdfg._lib.unload()
 
+                argtuple, initargtuple = compiledSdfg._construct_args(kwargs)
+
                 if mode == 'profile':
-                    argtuple, initargtuple = compiledSdfg._construct_args(
-                        kwargs)
                     try:
                         compiledSdfg._lib.load()
                         if compiledSdfg._initialized is False:
@@ -306,6 +307,10 @@ class CompiledSDFG(object):
                             program_objects = codegen.generate_code(sdfg)
                             compiler.generate_program_folder(
                                 sdfg, program_objects, sdfg.build_folder)
+                            compiler.configure_and_compile(
+                                sdfg.build_folder,
+                                program_name=sdfg.name,
+                                cmake_target=True)
 
                         operations.timethis(compiledSdfg._sdfg, 'DaCe', 0,
                                             compiledSdfg._cfunc,
@@ -333,6 +338,41 @@ class CompiledSDFG(object):
                 elif mode == 'transform':
                     sdfg = vscode.stop_and_transform(compiledSdfg._sdfg)
                     compiledSdfg = sdfg.compile()
+                elif mode == 'report':
+                    # Create a deep copy as we dont want to
+                    # modify the real sdfg
+                    sdfg = copy.deepcopy(compiledSdfg._sdfg)
+
+                    hasInstr = vscode.sdfg_has_instrumentation(sdfg)
+                    if hasInstr:
+                        vscode.sdfg_remove_instrumentations(sdfg)
+
+                    for _, _, array in sdfg.arrays_recursive():
+                        array.lifetime = dtypes.AllocationLifetime.Persistent
+                    for node, _ in sdfg.all_nodes_recursive():
+                        if isinstance(node, state.SDFGState):
+                            node.instrument = dtypes.InstrumentationType.Accuracy
+
+                    newCompiledSdfg = sdfg.compile(cmake_target=False)
+
+                    try:
+                        if not newCompiledSdfg._lib.is_loaded():
+                            newCompiledSdfg._lib.load()
+                        if newCompiledSdfg._initialized is False:
+                            newCompiledSdfg.initialize(*initargtuple)
+
+                        newCompiledSdfg._cfunc(newCompiledSdfg._libhandle,
+                                               *argtuple)
+
+                        #return_array = newCompiledSdfg._return_arrays
+                    except (RuntimeError, TypeError, UnboundLocalError,
+                            KeyError, cgx.DuplicateDLLError, ReferenceError):
+                        newCompiledSdfg._lib.unload()
+                        raise
+
+                    # Change back to the normal code
+                    compiledSdfg = compiledSdfg._sdfg.compile(cmake_target=False)
+
                 mode = vscode.send_bp_recv({'type': 'sdfgEditMode'})['mode']
 
             self = compiledSdfg
@@ -354,11 +394,7 @@ class CompiledSDFG(object):
                                     self._libhandle, *argtuple)
             else:
                 self._cfunc(self._libhandle, *argtuple)
-            """ print("argtuple: ", argtuple)
-            print("initargtuple: ", initargtuple)
-            for sdfg, name, _ in self.sdfg.arrays_recursive():
-                print(f'{sdfg.name}:{name}')
-            struct = self.get_state_struct()
+            """ struct = self.get_state_struct()
             for name, _ in struct._fields_:
                 print(f'{name}:{getattr(struct, name)}')
             print("return: ", self._return_arrays) """

@@ -1733,7 +1733,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None) -> \
+    def compile(self, output_file=None, cmake_target=False) -> \
             'dace.codegen.compiler.CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
             :param output_file: If not None, copies the output library file to
@@ -1777,8 +1777,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             sdfg, program_objects, sdfg.build_folder)
 
         # Compile the code and get the shared library path
-        shared_library = compiler.configure_and_compile(program_folder,
-                                                        sdfg.name)
+        shared_library = compiler.configure_and_compile(
+            program_folder, sdfg.name, cmake_target=cmake_target and index == 0)
 
         # If provided, save output to path or filename
         if output_file is not None:

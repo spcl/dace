@@ -137,6 +137,8 @@ namespace perf {
          * @param hash: Hash of the SDFG.
          */
         void save(const char *path, const char *hash) {
+            if (this->_events.empty()) return;
+
             std::lock_guard<std::mutex> guard (this->_mutex);
 
             // Create report filename

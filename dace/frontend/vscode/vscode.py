@@ -54,7 +54,7 @@ def stop_and_transform(sdfg):
     })
     # Continues as soon as vscode sends an answer
     sdfg = dace.SDFG.from_file(filename)
-    sdfg.name = sdfg.name + '_t'
+    #sdfg.name = sdfg.name + '_t'
     return sdfg
 
 

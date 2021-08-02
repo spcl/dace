@@ -11,7 +11,7 @@ from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
 from dace.frontend.vscode import vscode
 from dace.config import Config
-from dace.sdfg import infer_types, state
+from dace.sdfg import infer_types
 
 # Import CPU code generator. TODO: Remove when refactored
 from dace.codegen.targets import cpp, cpu
@@ -134,13 +134,6 @@ def generate_code(sdfg) -> List[CodeObject]:
     # After expansion, run another pass of connector/type inference
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
-
-    if vscode.is_available():  #and more checks
-        #for _, _, array in sdfg.arrays_recursive():
-        #    array.lifetime = dtypes.AllocationLifetime.Persistent
-        for node, _ in sdfg.all_nodes_recursive():
-            if isinstance(node, state.SDFGState):
-                node.instrument = dtypes.InstrumentationType.Accuracy
 
     frame = framecode.DaCeCodeGenerator()
 

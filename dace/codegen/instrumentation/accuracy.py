@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 from dace import dtypes, registry
-from dace.sdfg.nodes import AccessNode
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.prettycode import CodeIOStream
 
@@ -47,29 +46,42 @@ class AccuracyProvider(InstrumentationProvider):
         if state is not None:
             state_id = sdfg.node_id(state)
 
-        for _, name, array in sdfg.arrays_recursive():
-            stream.write(
-                '''myfile << "{sdfgName} StateId: {state_id} ArrayName: {name}\\n";'''
-                .format(state_id=state_id, name=name, sdfgName=sdfg.name))
-            self.write_array(array, name, stream)
+        # get the parent sdfg so the reports gets saved in the same folder
+        parent_sdfg = sdfg
+        while parent_sdfg.parent_sdfg is not None:
+            parent_sdfg = parent_sdfg.parent_sdfg
 
-    def on_sdfg_begin(self, sdfg, local_stream, global_stream):
-        global_stream.write('''#include <iostream>
-            #include <fstream>
-            using namespace std;''')
+        folderpath = os.path.join(parent_sdfg.build_folder, 'accuracy',
+                                  parent_sdfg.hash_sdfg())
+        if not os.path.exists(folderpath):
+            os.makedirs(folderpath, exist_ok=True)
 
-        filename = os.path.join(sdfg.build_folder,
-                                'accuracy_report.txt').replace('\\', '\\\\')
-        local_stream.write('''ofstream myfile;
-            myfile.open ("{file}");'''.format(file=filename))
+        for name, array in sdfg.arrays.items():
+            filepath = os.path.join(folderpath, name + '_' + str(state_id) +
+                                    '.bin').replace('\\', '/')
 
-        # For other file headers
-        sdfg.append_global_code(
-            '''#include <iostream>
-            #include <fstream>''', None)
+            # Calculation for the array length, example: W * H
+            array_length = str(array.sizes()[0])
+            for size in array.sizes()[1::]:
+                array_length = array_length + ' * ' + str(size)
 
-    def on_sdfg_end(self, sdfg, local_stream, global_stream):
-        local_stream.write('''myfile.close();''')
+            if not array.transient:
+                array_access = name
+            else:
+                array_access = '''__state->__{sdfg_id}_{arrayname}'''.format(
+                    sdfg_id=sdfg.sdfg_id, arrayname=name)
+
+            stream.write('''
+                const void *_buffer_{arrayname};
+                _buffer_{arrayname} = {array_access};
+                FILE *{file_var} = fopen("{filepath}", "wb");
+                fwrite(_buffer_{arrayname}, sizeof({array_access}[0]), {array_length}, {file_var});
+                fclose({file_var});
+            '''.format(filepath=filepath,
+                       arrayname=name,
+                       array_access=array_access,
+                       array_length=array_length,
+                       file_var='file_' + name + '_' + str(state_id)))
 
     def on_state_end(self, sdfg, state, local_stream, global_stream):
         if state.instrument == dtypes.InstrumentationType.Accuracy:
