@@ -150,7 +150,7 @@ wide = buffer_in
 wide[j] = from_kernel
 if j == {GEAR_FACTOR} - 1:
     to_memory = wide
-buffer_out = buffer_in""")
+buffer_out = wide""")
     state.add_memlet_path(kernel_to_gearbox_read,
                           write_gearbox_entry,
                           write_gearbox_tasklet,
