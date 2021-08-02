@@ -18,17 +18,21 @@ np_dtype = np.float64
 @dace.program
 def nccl_send_recv():
     out = dace.ndarray([num_gpus], dtype)
-    pinned_out = dace.ndarray([num_gpus],
+    pinned_out = dace.ndarray([num_gpus, 2],
                               dtype,
                               storage=dace.StorageType.CPU_Pinned)
     for gpu_id in dace.map[0:num_gpus]:
         # Transients
-        send_buffer = dace.ndarray([1], dtype)
-        recv_buffer = dace.ndarray([1], dtype)
-        ring_sum = dace.define_local_scalar(dtype)
+        send_buffer = dace.ndarray([2],
+                                   dtype,
+                                   storage=dace.StorageType.GPU_Global)
+        recv_buffer = dace.ndarray([2],
+                                   dtype,
+                                   storage=dace.StorageType.GPU_Global)
+        ring_sum = dace.ndarray([2], dtype, storage=dace.StorageType.GPU_Global)
 
         # Init transients
-        for i in dace.map[0:1]:
+        for i in dace.map[0:2]:
             send_buffer[i] = gpu_id
             ring_sum[i] = 0
 
@@ -59,11 +63,13 @@ def nccl_send_recv():
                                gpu_id - 1,
                                group_calls=dtypes.NcclGroupCalls.End)
 
-            for i in dace.map[0:1]:
+            for i in dace.map[0:2]:
                 ring_sum[i] = recv_buffer[i] + ring_sum[i]
                 send_buffer[i] = recv_buffer[i]
-        pinned_out[gpu_id] = ring_sum[:]
-    out[:] = pinned_out[:]
+
+        pinned_out[gpu_id, :] = ring_sum[:]
+
+    out[:] = pinned_out[:, 0]
     return out
 
 
@@ -87,12 +93,10 @@ def test_nccl_send_recv():
     gpu_map = find_map_by_param(sdfg, 'gpu_id')
     gpu_map.schedule = dtypes.ScheduleType.GPU_Multidevice
     infer_types.set_default_schedule_storage_types_and_location(sdfg, None)
-    data_desc = find_data_desc(sdfg, 'ring_sum')
-    data_desc.storage = dtypes.StorageType.GPU_Global
     sdfg.specialize(dict(num_gpus=ng))
 
     out = sdfg()
-    res = np.sum(range(num_gpus))
+    res = np.sum(range(ng))
 
     assert np.allclose(out, res), f'\nout: {out}\nres: {res}\n'
 
