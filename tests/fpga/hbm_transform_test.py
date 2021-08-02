@@ -30,7 +30,6 @@ def _exec_test(sdfgsource, assign, checkassign):
     sdfg = sdfgsource()
     set_assignment(sdfg, assign)
     sdfg.apply_transformations(HbmTransform, validate=False)
-    #sdfg.view()
     #xform = HbmTransform(sdfg.sdfg_id, -1, {}, -1)
     #xform.apply(sdfg)
     #sdfg.view()
@@ -48,7 +47,9 @@ def create_axpy_sdfg(array_shape=dace.symbol("n"), map_range=dace.symbol("n")):
                 yin << y[i]
                 yout >> y[i]
                 yout = xin + yin
-    return axpy.to_sdfg()
+    sdfg = axpy.to_sdfg()
+    sdfg.apply_strict_transformations()
+    return sdfg
 
 def create_nd_sdfg():
     n = dace.symbol("n")
@@ -62,7 +63,9 @@ def create_nd_sdfg():
                     xin << x[i, j]
                     zout >> z[i, j]
                     xout = yin + xin
-    return nd_sdfg.to_sdfg()
+    sdfg = nd_sdfg.to_sdfg()
+    sdfg.apply_strict_transformations()
+    return sdfg
 
 def create_not_splitable_dependence_sdfg():
     # All arrays would be splitable in principle, if they were alone, but because of
@@ -83,16 +86,20 @@ def create_not_splitable_dependence_sdfg():
                 yin << y[i, 0]
                 zout >> z[n, i]
                 zout = xin + yin
-    return no_split_sdfg.to_sdfg()
+    sdfg = no_split_sdfg.to_sdfg()
+    sdfg.apply_strict_transformations()
+    return sdfg
 
 def create_multiple_range_map_sdfg():
     @dace.program
     def multi_range_sdfg(x: dace.float16[16, 32, 16], y: dace.float16[16, 32, 16]):
         for i, j, w in dace.map[0:16, 0:32, 0:16]:
             y[i, j, w] = x[i, j, w] + y[i, j, w]
-    return multi_range_sdfg.to_sdfg()
+    sdfg = multi_range_sdfg.to_sdfg()
+    sdfg.apply_strict_transformations()
+    return sdfg
 
-def test_direct_axpy():
+def test_axpy_direct():
     _exec_test(create_axpy_sdfg, [], [("x", 16), ("y", 16)])
 
 def test_assigned_axpy_unroll_3():
@@ -123,7 +130,7 @@ def test_multiple_range_map():
     # SDFG defines a third non splitable temporary array which is placed on 17, thats why 16 cannot be taken
     _exec_test(create_multiple_range_map_sdfg, [], [("x", 8), ("y", 8)])
 
-test_direct_axpy()
+test_axpy_direct()
 test_assigned_axpy_unroll_3()
 test_assigned_axpy_unroll_1()
 test_fixed_array_size_axpy_17()
