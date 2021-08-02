@@ -1,14 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
-from dace.fpga_testing import fpga_test
+from dace.fpga_testing import fpga_test, xilinx_test
 
 
 def make_sdfg(dtype,
               name="pipeline_test",
               input_device_memory="ddr",
-            input_device_bank="0",
-            output_device_memory="ddr",
+              input_device_bank="0",
+              output_device_memory="ddr",
               output_device_bank="1"):
 
     n = dace.symbol("N")
@@ -120,17 +120,13 @@ else:
     return sdfg
 
 
-@fpga_test()
-def test_pipeline_scope():
-
+def exec_jacobi(jacobi, dtype):
     import numpy as np
 
-    dtype = np.float64
     n = 16
     k = 24
     m = 32
 
-    jacobi = make_sdfg(dtype=dtype)
     jacobi.specialize({"N": n, "K": k, "M": m})
 
     a = np.arange(n * k * m, dtype=dtype).reshape((n, k, m))
@@ -151,5 +147,24 @@ def test_pipeline_scope():
     return jacobi
 
 
+@fpga_test()
+def test_pipeline_scope():
+    import numpy as np
+
+    dtype = np.float64
+    jacobi = make_sdfg(dtype=dtype)
+    return exec_jacobi(jacobi, dtype)
+
+
+@xilinx_test()
+def test_pipeline_scope_hbm():
+    import numpy as np
+
+    dtype = np.float32
+    jacobi = make_sdfg(dtype, "pipeline_hbm_test", "hbm", "1", "hbm", "2")
+    return exec_jacobi(jacobi, dtype)
+
+
 if __name__ == "__main__":
     test_pipeline_scope(None)
+    test_pipeline_scope_hbm(None)
