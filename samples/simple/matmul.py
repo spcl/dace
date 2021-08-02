@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
-import argparse
+import click
 import dace
 import numpy as np
 from typing import List, Tuple
@@ -221,38 +221,29 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
 #####################################################################
 # Main function
 
-if __name__ == "__main__":
-    # Arugments
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-M", type=int, nargs="?", default=64)
-    parser.add_argument("-K", type=int, nargs="?", default=64)
-    parser.add_argument("-N", type=int, nargs="?", default=64)
-    parser.add_argument('--version',
-                        choices=[
-                            'unoptimized', 'optimize_cpu', 'optimize_gpu',
-                            'mkl', 'cublas', 'fpga_naive', 'fpga_library'
-                        ],
-                        default='unoptimized',
-                        help='''Different available versions:
-unoptimized: Run `matmul` without optimizations;
-optimize_cpu: Transform `matmul` to a reasonably-optimized version for
-                multicore CPU;
-optimize_gpu: Transform `matmul` to a reasonably-optimized version for GPU;
-mkl: Use `matmul_lib` with the MKL library node implementation;
-cublas: Use `matmul_lib` with the CUBLAS library node implementation.''')
-    parser.add_argument('--noverify',
-                        dest='verify',
-                        action='store_false',
-                        help="If set, skips numpy verification.",
-                        default=True)
 
-    args = vars(parser.parse_args())
-    version = args["version"]
+@click.command()
+@click.option('-M', type=int, default=64)
+@click.option('-K', type=int, default=64)
+@click.option('-N', type=int, default=64)
+@click.option('--version',
+              type=click.Choice(
+                  ('unoptimized', 'optimize_cpu', 'optimize_gpu', 'mkl',
+                   'cublas', 'fpga_naive', 'fpga_library')),
+              default='unoptimized')
+@click.option('--verify/--no-verify', default=True)
+def cli(m, k, n, version, verify):
+    """
+    Different available versions:
+    unoptimized: Run `matmul` without optimizations;
+    optimize_cpu: Transform `matmul` to a reasonably-optimized version for
+                    multicore CPU;
+    optimize_gpu: Transform `matmul` to a reasonably-optimized version for GPU;
+    mkl: Use `matmul_lib` with the MKL library node implementation;
+    cublas: Use `matmul_lib` with the CUBLAS library node implementation.
+    """
 
     # Prepare data with numpy
-    m = args["M"]
-    k = args["K"]
-    n = args["N"]
     A = np.random.rand(m, k).astype(np_dtype)
     B = np.random.rand(k, n).astype(np_dtype)
     C = np.zeros((m, n), dtype=np_dtype)
@@ -284,17 +275,21 @@ cublas: Use `matmul_lib` with the CUBLAS library node implementation.''')
         # Call program
         C = matmul_lib(A, B)
     elif version == 'fpga_naive':
-        matmul = matmul.to_sdfg()
-        matmul.apply_transformations(FPGATransformSDFG)
-        matmul(A=A, B=B, C=C, N=n, K=k, M=m)
+        matmul_sdfg = matmul.to_sdfg()
+        matmul_sdfg.apply_transformations(FPGATransformSDFG)
+        matmul_sdfg(A=A, B=B, C=C, N=n, K=k, M=m)
     elif version == 'fpga_systolic':
         dace.libraries.blas.default_implementation = 'FPGA1DSystolic'
         C = matmul_lib(A, B)
     else:
         raise ValueError('Invalid version %s' % version)
 
-    if args["verify"]:
+    if verify:
         expected = A @ B
         diff = np.linalg.norm(C - expected) / (m * n)
         print('Difference:', diff)
-        exit(0 if diff <= 1e-6 else 1)
+        return 0 if diff <= 1e-6 else 1
+
+
+if __name__ == "__main__":
+    cli()

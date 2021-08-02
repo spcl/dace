@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
+import click
 import dace
 import numpy as np
 import pdb
@@ -323,39 +324,27 @@ def make_sdfg(specialized):
     return sdfg
 
 
-if __name__ == "__main__":
+def run_matmul_systolic(m, n, k, p, specialize):
     print("==== Program start ====")
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("M", type=int)
-    parser.add_argument("N", type=int)
-    parser.add_argument("K", type=int)
-    parser.add_argument("P", type=int)
-    parser.add_argument("-specialize",
-                        default=False,
-                        action="store_true",
-                        help="Fix all loop bounds at compile time/in hardware")
-    args = vars(parser.parse_args())
-
-    if not args["specialize"]:
-        P.set(args["P"])
-        M.set(args["M"])
+    if not specialize:
+        P.set(p)
+        M.set(m)
         # M must always be specialized, as it's used for the static buffer size
         sdfg = make_sdfg(False)
-        sdfg.specialize(dict(P=P, M=M))
-        N.set(args["N"])
-        K.set(args["K"])
+        sdfg.specialize(dict(P=p, M=m))
+        N.set(n)
+        K.set(k)
     else:
-        P.set(args["P"])
-        M.set(args["M"])
-        N.set(args["N"])
-        K.set(args["K"])
+        P.set(p)
+        M.set(m)
+        N.set(n)
+        K.set(k)
         sdfg = make_sdfg(True)
-        sdfg.specialize(dict(P=P, M=M, N=N, K=K))
+        sdfg.specialize(dict(P=p, M=m, N=n, K=k))
 
     print("Matrix multiplication {}x{}x{} with {} PEs ({}specialized)".format(
-        M.get(), N.get(), K.get(), P.get(),
-        "" if args["specialize"] else "not "))
+        M.get(), N.get(), K.get(), P.get(), "" if specialize else "not "))
 
     # Initialize arrays: Randomize A and B, zero C
     A = np.ndarray([N.get(), K.get()], dtype=dace.float32.type)
@@ -372,7 +361,7 @@ if __name__ == "__main__":
     B_regression[:] = B[:]
     C_regression[:] = C[:]
 
-    if args["specialize"]:
+    if specialize:
         sdfg(A=A, B=B, C=C)
     else:
         sdfg(A=A, B=B, C=C, N=N, K=K)
@@ -382,3 +371,23 @@ if __name__ == "__main__":
         raise ValueError(f"Verification failed, difference: {diff}")
     else:
         print("Results successfully verified.")
+
+    print("==== Program end ====")
+
+    return sdfg
+
+
+@click.command()
+@click.argument("M", type=int)
+@click.argument("N", type=int)
+@click.argument("K", type=int)
+@click.argument("P", type=int)
+@click.option("--specialize/--no-specialize",
+              default=False,
+              help="Fix all loop bounds at compile time/in hardware")
+def cli(m, n, k, p, specialize):
+    run_matmul_systolic(m, n, k, p, specialize)
+
+
+if __name__ == "__main__":
+    cli()

@@ -71,7 +71,7 @@ jobs:
         else
             export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
         fi
-        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack"
+        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga"
         codecov
     - name: Test OpenBLAS LAPACK
       run: |
@@ -202,29 +202,13 @@ jobs:
         rm -rf .dacecache tests/.dacecache
         . /opt/setupenv
         python -m pip install --upgrade pip
-        pip install flake8 coverage codecov
+        pip install pytest-xdist flake8 coverage codecov
         pip uninstall -y dace
         pip install -e ".[testing]"
 
-    - name: Run Intel FPGA tests
+    - name: Run FPGA Tests
       run: |
-        export NOSTATUSBAR=1
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode --timid"
-        . /opt/setupenv
-        $PYTHON_BINARY tests/fpga/intel_fpga_test.py
-
-    - name: Run Xilinx tests
-      run: |
-        export NOSTATUSBAR=1
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode --timid"
-        . /opt/setupenv
-        $PYTHON_BINARY tests/fpga/xilinx_test.py
-
-    - name: Report overall coverage
-      run: |
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
-        . /opt/setupenv
-        coverage combine . */; coverage report; coverage xml
+        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "fpga"
+        coverage report
+        coverage xml
         codecov
