@@ -1481,7 +1481,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         """
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
         pipeline = nd.Pipeline(name,
-                               *self._make_iterators(ndrange),
+                               *_make_iterators(ndrange),
                                init_size=init_size,
                                init_overlap=init_overlap,
                                drain_size=drain_size,
