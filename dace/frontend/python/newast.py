@@ -3930,8 +3930,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 fargs = (self._eval_arg(arg) for _, arg in args)
 
                 fcopy = copy.copy(func)
+                if hasattr(fcopy, 'global_vars'):
+                    fcopy.global_vars = {**self.globals, **func.global_vars}
+
                 if isinstance(fcopy, DaceProgram):
-                    fcopy.global_vars = {**func.global_vars, **self.globals}
                     fcopy.signature = copy.deepcopy(func.signature)
                     sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
                 else:
