@@ -26,6 +26,19 @@ def check_assignment(sdfg: SDFG, assignments: List[Union[Tuple[str, int], Tuple[
                 low, high = (0, 1)
             assert banks == high - low
             
+def _exec_test(sdfgsource, assign, checkassign):
+    sdfg = sdfgsource()
+    set_assignment(sdfg, assign)
+    sdfg.apply_transformations(HbmTransform, validate=False)
+    #sdfg.view()
+    #xform = HbmTransform(sdfg.sdfg_id, -1, {}, -1)
+    #xform.apply(sdfg)
+    #sdfg.view()
+    check_assignment(sdfg, checkassign)
+    sdfg.validate()
+    assert not HbmTransform.can_be_applied(sdfg, {}, -1, sdfg, False)
+
+
 def create_axpy_sdfg(array_shape=dace.symbol("n"), map_range=dace.symbol("n")):
     @dace.program
     def axpy(x: dace.float32[array_shape], y: dace.float32[array_shape]):
@@ -39,10 +52,11 @@ def create_axpy_sdfg(array_shape=dace.symbol("n"), map_range=dace.symbol("n")):
 
 def create_nd_sdfg():
     n = dace.symbol("n")
+    m = dace.symbol("m")
     @dace.program
-    def nd_sdfg(x: dace.float32[n, n], y: dace.float32[n, n], z: dace.float32[n, n]):
+    def nd_sdfg(x: dace.float32[n, m], y: dace.float32[m, n], z: dace.float32[n, m]):
         for i in dace.map[0:n]:
-            for j in dace.map[0:n]:
+            for j in dace.map[0:m]:
                 with dace.tasklet:
                     yin << y[j, i]
                     xin << x[i, j]
@@ -73,18 +87,10 @@ def create_not_splitable_dependence_sdfg():
 
 def create_multiple_range_map_sdfg():
     @dace.program
-    def multi_range_sdfg(x: dace.float16[16, 16, 16], y: dace.float16[16, 16, 16]):
-        for i, j, w in dace.map[0:16, 0:16, 0:16]:
+    def multi_range_sdfg(x: dace.float16[16, 32, 16], y: dace.float16[16, 32, 16]):
+        for i, j, w in dace.map[0:16, 0:32, 0:16]:
             y[i, j, w] = x[i, j, w] + y[i, j, w]
     return multi_range_sdfg.to_sdfg()
-
-def _exec_test(sdfgsource, assign, checkassign):
-    sdfg = sdfgsource()
-    set_assignment(sdfg, assign)
-    sdfg.apply_transformations(HbmTransform, validate=False)
-    check_assignment(sdfg, checkassign)
-    sdfg.validate()
-    assert not HbmTransform.can_be_applied(sdfg, {}, -1, sdfg, False)
 
 def test_direct_axpy():
     _exec_test(create_axpy_sdfg, [], [("x", 16), ("y", 16)])
@@ -101,8 +107,11 @@ def test_fixed_array_size_axpy_17():
 def test_fixed_map_range_axpy_17():
     _exec_test(lambda: create_axpy_sdfg(map_range=17), [], [("x", 1), ("y", 1)])
 
-def test_fixed_map_range_axpy_21():
-    _exec_test(lambda: create_axpy_sdfg(map_range=21), [], [("x", 7), ("y", 7)])
+def test_fixed_axpy_17():
+    _exec_test(lambda: create_axpy_sdfg(17, 17), [], [("x", 1), ("y", 1)])
+
+def test_fixed_axpy_21():
+    _exec_test(lambda: create_axpy_sdfg(21, 21), [], [("x", 7), ("y", 7)])
 
 def test_nd_split():
     _exec_test(create_nd_sdfg, [], [("x", 10), ("y", 10), ("z", 10)])
@@ -115,13 +124,12 @@ def test_multiple_range_map():
     _exec_test(create_multiple_range_map_sdfg, [], [("x", 8), ("y", 8)])
 
 test_direct_axpy()
-"""
 test_assigned_axpy_unroll_3()
 test_assigned_axpy_unroll_1()
 test_fixed_array_size_axpy_17()
 test_fixed_map_range_axpy_17()
-test_fixed_map_range_axpy_21()
+test_fixed_axpy_17()
+test_fixed_axpy_21()
 test_nd_split()
 test_no_split()
 test_multiple_range_map()
-"""

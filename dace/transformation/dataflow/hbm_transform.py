@@ -85,8 +85,8 @@ def _multiply_sdfg_executions(sdfg: SDFG, outer_map_range: Tuple[str, int]):
 
 def _update_memlet_hbm(state: SDFGState, 
                         inner_edge: graph.MultiConnectorEdge,
-                        inner_subset_index: symbolic.symbol,):
-                        #split_array_info: List[int]):
+                        inner_subset_index: symbolic.symbol,
+                        this_node: nd.AccessNode):
         """
         Add the subset_index to the memlet path defined by convertible_node. If the end/start of
         the path is also an AccessNode, it will insert a tasklet before the access to 
@@ -107,15 +107,12 @@ def _update_memlet_hbm(state: SDFGState,
             #[x // y for x, y in zip(mem.subset, split_array_info)])
 
         path = state.memlet_path(inner_edge)
-        edge_index = path.index(inner_edge)
-        if edge_index == 0:
+        if path[-1].dst == this_node:
             is_write = True
             other_node = path[0].src
-        elif edge_index == len(path) - 1:
+        elif path[0].src == this_node:
             is_write = False
             other_node = path[-1].dst
-        else:
-            raise ValueError("The provided edge is not the innermost")
 
         if isinstance(other_node, nd.AccessNode):
             fwtasklet = state.add_tasklet("fwtasklet", set(["_in"]),
@@ -136,7 +133,7 @@ def _update_memlet_hbm(state: SDFGState,
                     fwtasklet, "_out", other_node, path[-1].dst_conn,
                     memlet.Memlet(other_node.data, subset=target_other_subset))
 
-        utils.update_path_subsets(state, inner_edge, new_subset)
+        inner_edge.data.subset = new_subset
 
 def _update_new_hbm_accesses(sdfg: SDFG, update_access: Dict[str, List[int]], 
     inner_subset_index: symbolic.symbol, recursive=True):
@@ -153,14 +150,9 @@ def _update_new_hbm_accesses(sdfg: SDFG, update_access: Dict[str, List[int]],
                 for edge in state.out_edges(node):
                     add_pass_update(edge.src_conn, edge.data.data)
                 _update_new_hbm_accesses(node.sdfg, pass_update, inner_subset_index, True)
-            elif isinstance(node, nd.AccessNode) and node.data in update_access:
-                for edge in state.all_edges(node):
-                    path = state.memlet_path(edge)
-                    if edge.src == node:
-                        inner_edge = path[-1]
-                    else:
-                        inner_edge = path[0]
-                    _update_memlet_hbm(state, inner_edge, inner_subset_index)
+            elif isinstance(node, nd.AccessNode) and node.data in update_access:    
+                for inner_edge in utils.all_innermost_memlets(state, node):
+                    _update_memlet_hbm(state, inner_edge, inner_subset_index, node)
 
 
 def transform_sdfg_for_hbm(sdfg: SDFG, outer_map_range: Tuple[str, int], 
@@ -194,8 +186,8 @@ def transform_sdfg_for_hbm(sdfg: SDFG, outer_map_range: Tuple[str, int],
     # set default on all outer arrays, such that FPGATransformSDFG can be used
     for desc in sdfg.arrays.items():
         desc[1].storage = dtypes.StorageType.Default
-
-    # memlets may be inconsistent after that, so propagate
+    
+    # memlets will be inconsistent after that, so propagate
     propagation.propagate_memlets_sdfg(sdfg)
 
 @registry.autoregister
@@ -282,7 +274,8 @@ class HbmTransform(transformation.Transformation):
                         possible.add(dim)
                     else:
                         tmp_possible.add(dim)
-                        possible = possible.intersection(tmp_possible)
+                if i != 0:
+                    possible = possible.intersection(tmp_possible)
             for access in arr_dim_list:
                 new_access_list = []
                 for dim, rate, acc_map, divide in access:
@@ -303,32 +296,51 @@ class HbmTransform(transformation.Transformation):
         used to define the split behaviour
         """
 
-        def dim_of_map(edge: graph.MultiConnectorEdge, map: nd.Map, number: int):
-            # Helper to figure out which dimensions are accessed by a map
+        def dim_of_map(edge: graph.MultiConnectorEdge, map: nd.Map, number: int, 
+            prop_subset: subsets.Subset, free_symbols: List[symbolic.SymbolicType], array: str):
             result = []
             symbols = map.params
             ranges = map.range
-            for num, symrangetuple in enumerate(zip(symbols, ranges)):
-                symbol, range = symrangetuple
-                tmp = None
-                low = symbolic.resolve_symbol_to_constant(range[0], sdfg)
+            next_prop_subset = prop_subset
+            map_reverse = list(enumerate(zip(symbols, ranges)))
+            map_reverse.reverse()
+            for num, symrangetuple in map_reverse:
+                symbol, current_range = symrangetuple
+                symbol = symbolic.pystr_to_symbolic(symbol)
+                current_range = subsets.Range([current_range])
+                free_symbols -= set([symbol])
+                for pclass in propagation.MemletPattern.extensions():
+                    pattern = pclass()
+                    if pattern.can_be_applied([next_prop_subset], [free_symbols, [symbol]], current_range, [edge.data]):
+                        next_prop_subset = pattern.propagate(array, [next_prop_subset], current_range)
+                        if isinstance(pattern, propagation.SeparableMemlet):
+                            is_affine_linear_access = [isinstance(pattern.patterns_per_dim[i], propagation.AffineSMemlet) for i in range(len(next_prop_subset))]
+                        else:
+                            is_affine_linear_access = [False] * len(next_prop_subset)
+                        break
+                else:
+                    return ([], None, None) # Cannot propagate, cannot continue.
+                
+                found = None
+                found_count = 0
+                low = symbolic.resolve_symbol_to_constant(current_range[0][0], sdfg)
                 if low is None or low != 0:
                     continue
-                high = symbolic.resolve_symbol_to_constant(range[1], sdfg)
+                high = symbolic.resolve_symbol_to_constant(current_range[0][1], sdfg)
                 if high is not None:
                     high += 1
-                # TODO: Check that accesses are truly equivalent. Will generate valid SDFGs
-                # even if they are not, but the semantics of the program may change in an unexpected fashion
-                for i, what in enumerate(edge.data.subset):
-                    if symbol in [str(x) for x in what[0].free_symbols]:
-                        if tmp is None:
-                            tmp = (i, number+num, (map, num), high)
-                        else:
-                            tmp = None # only one dimension may be bound to the map symbol
-                            break
-                if tmp is not None:
-                    result.append(tmp)
-            return result
+                for dim, what in enumerate(prop_subset):
+                    free_sub = subsets.Range([what]).free_symbols
+                    if str(symbol) in free_sub:
+                        found_count += 1
+                        dim_size = sdfg.arrays[array].shape[dim]
+                        map_spans_array = current_range[0][1] + 1 == dim_size
+                        all_accessed = next_prop_subset[dim][0] == 0 and next_prop_subset[dim][1] + 1 == dim_size
+                        if is_affine_linear_access[dim] and map_spans_array and all_accessed:
+                            found = (dim, number+num, (map, num), high)
+                if found_count == 1 and found is not None: # Only if exactly one dimension influenced
+                    result.append(found)
+            return (result, next_prop_subset, free_symbols)
         split_dimensions = {}
 
         for name in global_memory_array:
@@ -342,24 +354,41 @@ class HbmTransform(transformation.Transformation):
                         for edge in state.all_edges(node):
                             path = state.memlet_path(edge)
                             current_split_dimensions = []
-                            if path[0] == edge: # This is a read
-                                for i in range(len(path)):
-                                    current_edge: graph.MultiConnectorEdge = path[i]
-                                    current_node = current_edge.dst
+                            n = len(path)
+                            free_symbols = set()
+                            for tmp in path:
+                                free_symbols |= tmp.data.free_symbols
+                                if isinstance(tmp.src, nd.MapEntry) or isinstance(tmp.src, nd.MapExit):
+                                    free_symbols |= tmp.src.map.range.free_symbols
+                                elif isinstance(tmp.dst, nd.MapEntry) or isinstance(tmp.dst, nd.MapExit):
+                                    free_symbols |= tmp.dst.map.range.free_symbols
+                            free_symbols = set(symbolic.pystr_to_symbolic(p) for p in free_symbols)
+
+                            if edge == path[0]: # This is a read
+                                prop_subset = path[n-1].data.src_subset if path[n-1].data.src_subset is not None else path[n-1].data.subset
+                                for i in range(n):
+                                    current_edge: graph.MultiConnectorEdge = path[n - i - 1]
+                                    current_node = current_edge.src
                                     if isinstance(current_node, nd.PipelineEntry):
-                                        break
+                                        current_split_dimensions.clear()
                                     if isinstance(current_node, nd.MapEntry):
-                                        result = dim_of_map(path[i+1], current_node.map, i)
+                                        result, prop_subset, free_symbols = dim_of_map(path[n - i - 1], current_node.map, n-i-1, 
+                                            prop_subset, free_symbols, node.data)
+                                        if prop_subset is None:
+                                            break
                                         current_split_dimensions.extend(result)
                             else:
-                                for i in range(len(path)):
-                                    index = len(path) - i - 1
-                                    current_edge: graph.MultiConnectorEdge = path[index]
-                                    current_node = current_edge.src
+                                prop_subset = path[0].data.dst_subset if path[0].data.src_subset is not None else path[0].data.subset
+                                for i in range(n):
+                                    current_edge: graph.MultiConnectorEdge = path[i]
+                                    current_node = current_edge.dst
                                     if isinstance(current_node, nd.PipelineExit):
-                                        break
+                                        current_split_dimensions.clear()
                                     if isinstance(current_node, nd.MapExit):
-                                        result = dim_of_map(path[index - 1], current_node.map, i)
+                                        result, prop_subset, free_symbols = dim_of_map(path[i], current_node.map, n-i-1,
+                                            prop_subset, free_symbols, node.data)
+                                        if prop_subset is None:
+                                            break
                                         current_split_dimensions.extend(result)
                             if len(current_split_dimensions) == 0:
                                 no_split_arrays.add(node.data)
@@ -731,8 +760,6 @@ class HbmTransform(transformation.Transformation):
         same amount of parts.
         """
         total_number_of_banks = 32
-
-        propagation.propagate_memlets_sdfg(sdfg)
         
         # Scan the arrays and collect initial inputs
         (global_memory_array, no_split_arrays, unroll_factor, fixed_arrays, division_info, array_dimensions,) = HbmTransform._scan_arrays(sdfg)
@@ -791,6 +818,52 @@ class HbmTransform(transformation.Transformation):
         for node, _ in sdfg.all_nodes_recursive():
             if isinstance(node, nd.NestedSDFG) or isinstance(node, nd.LibraryNode):
                 return False
+        if sdfg.parent_sdfg is not None: # Can't assign banks from within a nested SDFG
+            return False
+
+        #TODO: Copied from FPGATransformState
+        for node, graph in sdfg.all_nodes_recursive():
+            # Consume scopes are currently unsupported
+            if isinstance(node, (nd.ConsumeEntry, nd.ConsumeExit)):
+                return False
+
+            # Streams have strict conditions due to code generator limitations
+            if (isinstance(node, nd.AccessNode) and isinstance(
+                    graph.parent.arrays[node.data], data.Stream)):
+                nodedesc = graph.parent.arrays[node.data]
+                sdict = graph.scope_dict()
+                if nodedesc.storage in [
+                        dtypes.StorageType.CPU_Heap,
+                        dtypes.StorageType.CPU_Pinned,
+                        dtypes.StorageType.CPU_ThreadLocal
+                ]:
+                    return False
+
+                # Cannot allocate FIFO from CPU code
+                if sdict[node] is None:
+                    return False
+
+                # Arrays of streams cannot have symbolic size on FPGA
+                if symbolic.issymbolic(nodedesc.total_size,
+                                            graph.parent.constants):
+                    return False
+
+                # Streams cannot be unbounded on FPGA
+                if nodedesc.buffer_size < 1:
+                    return False
+
+        # Can't handle dynamic accesses in tasklets. This would work in principle 
+        # once single bank support exists, since then we could
+        # place such arrays on HBM without splitting.
+        for state in sdfg.nodes():
+            for node in state.nodes():
+                if isinstance(node, nd.Tasklet):
+                    for edge in state.all_edges(node):
+                        for sbs in [edge.data.subset, edge.data.other_subset]:
+                            if sbs is not None:
+                                if any([low != high for low, high, _ in sbs]):
+                                    return False
+
 
         # Check if this graph is valid or invalid in the allowed way mentioned above
         backup = {}
@@ -807,6 +880,8 @@ class HbmTransform(transformation.Transformation):
             sdfg.arrays[array].location = location
         if not ok:
             return False
+
+
 
         settings = HbmTransform._try_find_suitable_settings(sdfg)
         if settings is None:

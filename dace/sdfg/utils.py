@@ -13,8 +13,7 @@ from dace.sdfg.nodes import Node
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
-from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
-from string import ascii_uppercase
+from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
 from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 
@@ -1094,49 +1093,25 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
     return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(
         state.node_id(node))
 
-
-def update_path_subsets(
-    state: SDFGState,
-    inner_edge_info: Union[MultiConnectorEdge, nd.AccessNode],
-    new_subset: sbs.Subset,
-):
+def all_innermost_memlets(state: SDFGState, of: Union[nd.AccessNode, gr.MultiConnectorEdge]):
     """
-    Will take the memlet path defined by :param inner_edge:, and recreate it with the specified new_subset
-    :param inner_edge_info: This is either the inner edge defining the memlet path that
-        should be modified, or an AccessNode with exactly one attached ingoing or outgoing
-        memlet path 
-    :param new_subset: The new subset set on the innermost edge
+    generator that returns all the innermost edges.
+    :param of: If of is an AccessNode all the innermost edges of all attached edges are returned.
+        If of is an edge the innermost edges of that memlet path is returned.
     """
-    if isinstance(inner_edge_info, nd.AccessNode):
-        some_edge = list(state.all_edges(inner_edge_info))
-        if len(some_edge) != 1:
-            raise ValueError(
-                "You may not specify an AccessNode in the update_access_list or in "
-                "update_hbm_access_list if it does not have exactly one attached memlet path"
-            )
-        some_edge = some_edge[0]
-        if some_edge.dst == inner_edge_info:
-            inner_edge_info = state.memlet_path(some_edge)[0]
-        else:
-            inner_edge_info = state.memlet_path(some_edge)[-1]
-    mem: mm.Memlet = inner_edge_info.data
-    mem.subset = new_subset
-
-    path = state.memlet_path(inner_edge_info)
-    src_conn = path[0].src_conn
-    dst_conn = path[-1].dst_conn
-    path_nodes = []
-    for edge in path:
-        path_nodes.append(edge.src)
-        state.remove_edge_and_connectors(edge)
-    path_nodes.append(path[-1].dst)
-
-    if src_conn is not None:
-        path[0].src.add_out_connector(src_conn)
-    if dst_conn is not None:
-        path[-1].dst.add_in_connector(dst_conn)
-
-    state.add_memlet_path(*path_nodes,
-                          memlet=mem,
-                          src_conn=src_conn,
-                          dst_conn=dst_conn)
+    def get_innermost_edges(tree):
+        res = []
+        if len(tree.children) == 0:
+            return [tree.edge]
+        for child in tree.children:
+            res.extend(get_innermost_edges(child))
+        return res
+    if isinstance(of, nd.AccessNode):
+        src = lambda: state.all_edges(of)
+    else:
+        src = lambda: [of]
+    for edge in src():
+        tree = state.memlet_tree(edge)
+        res = get_innermost_edges(tree)
+        for r in res:
+            yield r

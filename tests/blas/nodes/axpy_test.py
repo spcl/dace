@@ -134,10 +134,15 @@ def fpga_hbm_graph(veclen, dtype, expansion):
     state = sdfg.states()[0]
     for node in state:
         if isinstance(node, nodes.AccessNode):
+            """
             utils.update_path_subsets(
                 state, node,
                 subsets.Range.from_string(
                     f"0:{banks_per_array}, 0:{per_array_size}"))
+            """
+            for inner_edge in utils.all_innermost_memlets(state, node):
+                inner_edge.data.subset = subsets.Range.from_string(
+                    f"0:{banks_per_array}, 0:{per_array_size}")
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
     sdfg.expand_library_nodes()
     sdfg.arrays["x"].set_shape([per_array_size * banks_per_array])
@@ -149,7 +154,6 @@ def fpga_hbm_graph(veclen, dtype, expansion):
         xform.apply(sdfg)
     sdfg.sdfg_list[3].symbols["a"] = sdfg.sdfg_list[2].symbols[
         "a"]  # Why does inference fail?
-    #sdfg.view()
     return sdfg
 
 
