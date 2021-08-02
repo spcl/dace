@@ -301,6 +301,9 @@ class DaceProgram(pycommon.SDFGConvertible):
         argtypes, arg_mapping, constant_args = self._get_type_annotations(
             args, kwargs)
 
+        # Add constant arguments to globals for caching
+        self.global_vars.update(constant_args)
+
         # Cache key
         cachekey = self._cache.make_key(argtypes, self.closure_array_keys,
                                         self.closure_constant_keys,

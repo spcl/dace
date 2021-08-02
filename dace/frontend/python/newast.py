@@ -312,6 +312,11 @@ class RewriteSympyEquality(ast.NodeTransformer):
             elif isinstance(node.ops[0], ast.NotEq):
                 return sympy.Ne(left, right)
         return self.generic_visit(node)
+    
+    def visit_Constant(self, node):
+        if isinstance(node.value, numpy.bool_):
+            node.value = bool(node.value)
+        return self.generic_visit(node)
 
 
 class ConditionalCodeResolver(ast.NodeTransformer):

@@ -6,6 +6,7 @@ import numpy as np
 from dataclasses import dataclass
 import pytest
 import time
+from types import SimpleNamespace
 
 
 def test_bad_closure():
@@ -544,7 +545,6 @@ def test_array_closure_cache_nested():
 
 
 def test_allconstants():
-    from types import SimpleNamespace
     some_namespace = SimpleNamespace(A=1.0)
     A = np.zeros((10, ))
 
@@ -554,6 +554,24 @@ def test_allconstants():
 
     func(some_namespace)
     assert np.allclose(1.0, A)
+
+
+def test_method_allconstants():
+    A = np.ones((10, ))
+    ns = SimpleNamespace(A=A)
+
+    @dace.program
+    def inner(A: dace.float64[10]):
+        A[...] = 7.0
+
+    class Example:
+        @dace.method
+        def __call__(self, ns: dace.constant):
+            inner(ns.A)
+
+    obj = Example()
+    obj(ns)
+    assert np.allclose(7.0, ns.A)
 
 
 if __name__ == '__main__':
@@ -583,3 +601,4 @@ if __name__ == '__main__':
     test_array_closure_cache()
     test_array_closure_cache_nested()
     test_allconstants()
+    test_method_allconstants()
