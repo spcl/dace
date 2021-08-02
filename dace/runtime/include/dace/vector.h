@@ -282,6 +282,18 @@ namespace dace
             using unaligned = generalvec<T, N>;
         };
 
+        template <typename T>
+        struct simple_or_general<T, 1, true> {
+            using aligned = T;
+            using unaligned = T;
+        };
+
+        template <typename T>
+        struct simple_or_general<T, 1, false> {
+            using aligned = T;
+            using unaligned = T;
+        };
+
     }  // namespace detail
 
     template <typename T, unsigned int N>
