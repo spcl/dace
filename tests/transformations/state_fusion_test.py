@@ -307,6 +307,44 @@ def test_two_outputs_same_name():
     assert A[0] == 1 and A[1] == 4
 
 
+def test_inout_read_after_write():
+    """ 
+    First state ends with a computation that reads an array, while the second
+    state both reads and writes to that same array. Fusion will then cause
+    a RAW conflict.
+    """
+    sdfg = dace.SDFG('state_fusion_test')
+    sdfg.add_array('A', [1], dace.int32)
+    sdfg.add_array('B', [1], dace.int32)
+    sdfg.add_array('C', [1], dace.int32)
+    state = sdfg.add_state()
+    r = state.add_read('A')
+    t1 = state.add_tasklet('init_b', {'a'}, {'b'}, 'b = a + 1')
+    rw = state.add_access('B')
+    t2 = state.add_tasklet('init_c', {'b'}, {'c'}, 'c = 2 + b')
+    w = state.add_access('C')
+    state.add_edge(r, None, t1, 'a', dace.Memlet('A[0]'))
+    state.add_edge(t1, 'b', rw, None, dace.Memlet('B[0]'))
+    state.add_edge(rw, None, t2, 'b', dace.Memlet('B[0]'))
+    state.add_edge(t2, 'c', w, None, dace.Memlet('C[0]'))
+
+    state2 = sdfg.add_state_after(state)
+    r1 = state2.add_read('B')
+    t1 = state2.add_tasklet('update_b', {'bin'}, {'bout'}, 'bout = bin + bin')
+    w1 = state2.add_write('B')
+    state2.add_edge(r1, None, t1, 'bin', dace.Memlet('B[0]'))
+    state2.add_edge(t1, 'bout', w1, None, dace.Memlet('B[0]'))
+
+    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 0
+
+    A = np.zeros([1], dtype=np.int32)
+    B = np.zeros([1], dtype=np.int32)
+    C = np.zeros([1], dtype=np.int32)
+    sdfg(A=A, B=B, C=C)
+    assert C[0] == 3
+    assert B[0] == 2
+
+
 if __name__ == '__main__':
     test_fuse_assignments()
     test_fuse_assignment_in_use()
@@ -320,3 +358,4 @@ if __name__ == '__main__':
     test_array_in_middle_no_overlap()
     test_array_in_middle_overlap()
     test_two_outputs_same_name()
+    test_inout_read_after_write()

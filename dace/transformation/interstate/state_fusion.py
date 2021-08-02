@@ -387,6 +387,18 @@ class StateFusion(transformation.Transformation):
                                     return False
                     # End of data race check
 
+                # Read-after-write dependencies: if there is an output of the
+                # second state that is an input of the first, ensure all paths
+                # from the input of the first state lead to the output.
+                # Otherwise, there may be a RAW due to topological sort or
+                # concurrency.
+                second_inout = (fused_cc.second_inputs & fused_cc.second_outputs
+                                & fused_cc.first_outputs)
+                for inout in second_inout:
+                    nodes_first = [n for n in first_output if n.data == inout]
+                    if any(first_state.out_degree(n) > 0 for n in nodes_first):
+                        return False
+
                 # Read-after-write dependencies: if there is more than one first
                 # output with the same data, make sure it can be unambiguously
                 # connected to the second state
