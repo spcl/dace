@@ -568,27 +568,6 @@ class DaceProgram(pycommon.SDFGConvertible):
         if self.methodobj is not None:
             self.global_vars[self.objname] = self.methodobj
 
-        # Parse argument types from call
-        if len(self.argnames) > 0:
-            if not argtypes:
-                if not args and not kwargs:
-                    raise SyntaxError(
-                        'Compiling DaCe programs requires static types. '
-                        'Please provide type annotations on the function, '
-                        'or add sample arguments to the compilation call.')
-
-                # Parse compilation arguments
-                argtypes = {
-                    k: create_datadescriptor(v)
-                    for k, v in itertools.chain(self.default_args.items(
-                    ), zip(self.argnames, args), kwargs.items())
-                }
-                if len(argtypes) != len(self.argnames):
-                    raise SyntaxError(
-                        'Number of arguments must match parameters '
-                        f'(expecting {self.argnames}, got {list(argtypes.keys())})'
-                    )
-
         for k, v in argtypes.items():
             if v.transient:  # Arguments to (nested) SDFGs cannot be transient
                 v_cpy = copy.deepcopy(v)

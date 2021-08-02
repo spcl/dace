@@ -543,6 +543,19 @@ def test_array_closure_cache_nested():
     assert np.allclose(obj(A), expected)
 
 
+def test_allconstants():
+    from types import SimpleNamespace
+    some_namespace = SimpleNamespace(A=1.0)
+    A = np.zeros((10, ))
+
+    @dace.program
+    def func(ns: dace.constant):
+        A[...] = ns.A
+
+    func(some_namespace)
+    assert np.allclose(1.0, A)
+
+
 if __name__ == '__main__':
     test_bad_closure()
     test_dynamic_closure()
@@ -569,3 +582,4 @@ if __name__ == '__main__':
     test_constant_closure_cache_nested()
     test_array_closure_cache()
     test_array_closure_cache_nested()
+    test_allconstants()
