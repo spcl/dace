@@ -58,10 +58,6 @@ REDUCTION_TYPE_TO_PYEXPR = {
 }
 
 
-class NameTooLongError(ValueError):
-    pass
-
-
 @registry.autoregister_params(name='intel_fpga')
 class IntelFPGACodeGen(fpga.FPGACodeGen):
     target_name = 'intel_fpga'
@@ -599,14 +595,14 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             # problems with some versions of the Intel FPGA runtime, despite it
             # supposedly being thread-safe, so we allow disabling this.
             host_stream.write(
-                """\
+                f"""\
   std::vector<std::future<std::pair<double, double>>> futures;
-  for (auto &k : kernels) {
+  for (auto &k : {kernel_name}_kernels) {{
     futures.emplace_back(k.ExecuteTaskAsync());
-  }
-  for (auto &f : futures) {
+  }}
+  for (auto &f : futures) {{
     f.wait();
-  }""", sdfg, state_id)
+  }}""", sdfg, state_id)
         else:
             # While spawning the kernel, indicates the synchronization events (if any)
             host_stream.write(

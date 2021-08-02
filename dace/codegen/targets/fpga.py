@@ -27,6 +27,7 @@ from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.symbolic import evaluate
+from dace.transformation.dataflow import MapUnroll
 from collections import defaultdict
 
 _CPU_STORAGE_TYPES = {
@@ -117,9 +118,7 @@ def iterate_hbm_multibank_arrays(array_name: str, array: dt.Array, sdfg: SDFG):
     else:
         yield 0
 
-
-def modify_distributed_subset(subset: Union[subsets.Subset, Iterable],
-                              change: int):
+def modify_distributed_subset(subset: subsets.Subset, change: int):
     """
     Modifies the first index of :param subset: (the one used for distributed subsets).
     :param subset: is deepcopied before any modification to it is done.
@@ -127,20 +126,10 @@ def modify_distributed_subset(subset: Union[subsets.Subset, Iterable],
         the first index is completly removed
     """
     cps = copy.deepcopy(subset)
-    if isinstance(subset, subsets.Subset):
-        if change == -1:
-            cps.pop([0])
-        else:
-            cps[0] = (change, change, 1)
-    elif isinstance(subset, Iterable):
-        cps = list(cps)  # Works for any iterable type
-        if change == -1:
-            cps = cps[1:]
-        else:
-            cps[0] = change
+    if change == -1:
+        cps.pop([0])
     else:
-        raise ValueError("unsupported type passed to modify_distributed_subset")
-
+        cps[0] = (change, change, 1)
     return cps
 
 
@@ -441,6 +430,17 @@ class FPGACodeGen(TargetCodeGenerator):
         state_id = sdfg.node_id(state)
 
         if not self._in_device_code:
+
+            # Unroll maps directly in the SDFG so the subgraphs can be
+            # recognized as independent processing elements
+            top_level_unrolled = [
+                n for n in state.scope_children()[None]
+                if isinstance(n, dace.sdfg.nodes.MapEntry)
+                and n.schedule == dtypes.ScheduleType.Unrolled
+            ]
+            for map_entry in top_level_unrolled:
+                MapUnroll.apply_to(sdfg, _map_entry=map_entry)
+
             kernels = []  # List of tuples (subgraph, kernel_id)
 
             # Start a new state code generation: reset previous dependencies if any
@@ -567,7 +567,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{""")
 
             if state.instrument == dtypes.InstrumentationType.FPGA:
                 kernel_host_stream.write("""\
-const unsigned long int _dace_fpga_begin_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+const unsigned long int _dace_fpga_begin_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 """)
 
             kernel_host_stream.write(f"""\
@@ -614,16 +614,16 @@ std::cout << "FPGA OpenCL kernel \\"{module_name}\\" executed in " << elapsed <<
     if (event_end > last_end) {{
         last_end = event_end;
     }}
-    __state->report.add_completion("{module_name} [ns]", "FPGA", event_start, event_end, {sdfg.sdfg_id}, {state_id}, {state.node_id(sg.nodes()[0])});{print_str}
+    __state->report.add_completion("{module_name}", "FPGA", event_start, event_end, {sdfg.sdfg_id}, {state_id}, -1);{print_str}
 }}""")
                 kernel_host_stream.write(f"""\
-const unsigned long int _dace_fpga_end_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-__state->report.add_completion("Full FPGA kernel runtime for {state.label} [ns]", "FPGA", first_start, last_end, {sdfg.sdfg_id}, {state_id}, -1);
-__state->report.add_completion("Full FPGA state runtime for {state.label} [ns]", "FPGA", _dace_fpga_begin_ns, _dace_fpga_end_ns, {sdfg.sdfg_id}, {state_id}, -1);
+const unsigned long int _dace_fpga_end_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+__state->report.add_completion("Full FPGA kernel runtime for {state.label}", "FPGA", first_start, last_end, {sdfg.sdfg_id}, {state_id}, -1);
+__state->report.add_completion("Full FPGA state runtime for {state.label}", "FPGA", _dace_fpga_begin_us, _dace_fpga_end_us, {sdfg.sdfg_id}, {state_id}, -1);
 """)
                 if Config.get_bool("instrumentation", "print_fpga_runtime"):
                     kernel_host_stream.write(f"""
-const double elapsed = 1e-9 * (_dace_fpga_end_ns - _dace_fpga_begin_ns);
+const double elapsed = 1e-9 * (_dace_fpga_end_us - _dace_fpga_begin_us);
 std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " seconds.\\n";\
 """)
 
@@ -1398,8 +1398,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             is_dst_using_hbm = not src_is_subset and is_hbm_array_with_distributed_index(
                 dst_nodedesc)
             if is_src_using_hbm or is_dst_using_hbm:
-                copy_shape = modify_distributed_subset(
-                    copy_shape, -1)
+                copy_shape = copy_shape[1:]
 
             offset_src, offset_dst = "0", "0"
             if memlet.src_subset is not None:
