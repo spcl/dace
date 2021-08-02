@@ -3,7 +3,7 @@
 Provides a library node that converts from a stream of type
 vector(vector(dtype, w0)) to a stream of type vector(dtype, w1), or vice versa.
 This is useful for achieving efficient memory reads on Xilinx FPGAs, where
-modules accessing memories should always read or write512-bit vectors, which
+modules accessing memories should always read or write 512-bit vectors, which
 then potentially need to be narrowed down to the vector width of the
 computational kernel.
 
@@ -29,9 +29,7 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
 
         if is_pack:
             vtype = out_desc.dtype
-            etype = in_desc.dtype
         else:
-            etype = out_desc.dtype
             vtype = in_desc.dtype
 
         sdfg = dace.SDFG("gearbox")
@@ -51,12 +49,10 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
         buffer_write = state.add_write("gearbox_buffer")
         input_read = state.add_read(in_edge.dst_conn)
         output_write = state.add_write(out_edge.src_conn)
-        iteration_space = collections.OrderedDict()
-        for i, r in enumerate(node.ranges):
-            if i == len(node.ranges) - 1:
-                r = (r[0], r[1] / gear_factor, r[2])
-            iteration_space[f"_i{i}_gearbox"] = r
-        iteration_space["_w_gearbox"] = (0, gear_factor - 1, 1)
+        iteration_space = {
+            "_gearbox_i": f"0:{node.size}",
+            "_gearbox_w": f"0:{gear_factor}"
+        }
         entry, exit = state.add_map("gearbox",
                                     iteration_space,
                                     schedule=node.schedule)
@@ -69,12 +65,12 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
                 "buffer_out"
             }, f"""\
 wide = buffer_in
-wide[_w_gearbox] = val_in
-if _w_gearbox == {gear_factor} - 1:
+wide[_gearbox_w] = val_in
+if _gearbox_w == {gear_factor} - 1:
     val_out = wide
 buffer_out = wide""" if is_pack else """\
-wide = val_in if _w_gearbox == 0 else buffer_in
-val_out = wide[_w_gearbox]
+wide = val_in if _gearbox_w == 0 else buffer_in
+val_out = wide[_gearbox_w]
 buffer_out = wide""")
         state.add_memlet_path(input_read,
                               entry,
@@ -111,19 +107,31 @@ class Gearbox(dace.sdfg.nodes.LibraryNode):
     default_implementation = "pure"
 
     # Properties
-    ranges = dace.properties.RangeProperty(
-        desc="One or more ranges defining the iteration space.",
-        default=dace.subsets.Range([]))
+    size = dace.properties.SymbolicProperty(
+        desc="Number of wide vectors to convert to/from narrow vectors.",
+        default=0)
 
-    def __init__(self, ranges, name=None, schedule=None, **kwargs):
+    def __init__(self, size, name=None, schedule=None, **kwargs):
+        """
+        :param size: Number of wide vectors to convert to/from narrow vectors.
+                     For example, if converting n/16 reads (vector size 16) from
+                     memory into n/4 elements (vector size 4), this parameter
+                     should be set to n/16.
+        """
         super().__init__(name=name or "gearbox",
                          schedule=schedule or dace.ScheduleType.FPGA_Device,
                          **kwargs)
-        self.ranges = ranges
+        self.size = size
         if schedule is not None:
             self.schedule = schedule
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState):
+        try:
+            size = dace.symbolic.evaluate(self.size, sdfg.constants)
+            if size < 1:
+                raise ValueError(f"Invalid size parameter for {self}: {size}")
+        except TypeError:
+            pass  # Not a constant
         in_edge = state.in_edges(self)
         if len(in_edge) != 1:
             raise ValueError(

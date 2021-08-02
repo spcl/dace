@@ -82,9 +82,7 @@ def memory_buffering(vec_width, use_library_node):
     read_to_gearbox_read = state.add_read("read_to_gearbox")
     gearbox_to_kernel_write = state.add_write("gearbox_to_kernel")
     if use_library_node:
-        read_gearbox = Gearbox(dace.subsets.Range(
-            ((0, n / vec_width - 1, 1), )),
-                               name="read_gearbox")
+        read_gearbox = Gearbox(n / mem_width, name="read_gearbox")
         state.add_node(read_gearbox)
         state.add_memlet_path(read_to_gearbox_read,
                               read_gearbox,
@@ -162,8 +160,7 @@ buffer_out = wide""")
     kernel_to_gearbox_read = state.add_write("kernel_to_gearbox")
     gearbox_to_write_write = state.add_read("gearbox_to_write")
     if use_library_node:
-        write_gearbox = Gearbox(
-            dace.subsets.Range(((0, n / vec_width - 1, 1), )))
+        write_gearbox = Gearbox(n / mem_width, name="write_gearbox")
         state.add_node(write_gearbox)
         state.add_memlet_path(kernel_to_gearbox_read,
                               write_gearbox,
