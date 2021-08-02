@@ -1,14 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-import copy
 from dace.codegen.targets import fpga
 from typing import List, Tuple, Union
-from dace.sdfg import SDFG, SDFGState
-from dace import Memlet
+from dace.sdfg import SDFG
 import dace
-from dace.libraries import blas
 from dace.transformation.dataflow import HbmTransform
-from dace.transformation.interstate import InlineSDFG
 
 def set_assignment(sdfg: SDFG, assignments: List[Tuple[str, str, str]]):
     for array, memorytype, bank in assignments:
@@ -31,36 +27,15 @@ def check_assignment(sdfg: SDFG, assignments: List[Union[Tuple[str, int], Tuple[
             assert banks == high - low
             
 def create_axpy_sdfg(array_shape=dace.symbol("n"), map_range=dace.symbol("n")):
-    sdfg: SDFG = SDFG("axpy")
-    state = sdfg.add_state("axpy_state")
-
-    x = sdfg.add_array("x", [array_shape], dace.float32)
-    y = sdfg.add_array("y", [array_shape], dace.float32)
-
-    x_in = state.add_read("x")
-    y_in = state.add_read("y")
-    y_out = state.add_write("y")
-
-    axpy_node = blas.axpy.Axpy("axpy", 1)
-    axpy_node.implementation = "fpga"
-    axpy_node.n = map_range
-
-    state.add_memlet_path(x_in,
-                               axpy_node,
-                               dst_conn="_x",
-                               memlet=Memlet(f"x[0:{map_range}]"))
-    state.add_memlet_path(y_in,
-                               axpy_node,
-                               dst_conn="_y",
-                               memlet=Memlet(f"y[0:{map_range}]"))
-    state.add_memlet_path(axpy_node,
-                               y_out,
-                               src_conn="_res",
-                               memlet=Memlet(f"y[0:{map_range}]"))
-    sdfg.expand_library_nodes()
-    sdfg.apply_transformations(InlineSDFG)
-    
-    return sdfg
+    @dace.program
+    def axpy(x: dace.float32[array_shape], y: dace.float32[array_shape]):
+        for i in dace.map[0:map_range]:
+            with dace.tasklet:
+                xin << x[i]
+                yin << y[i]
+                yout >> y[i]
+                yout = xin + yin
+    return axpy.to_sdfg()
 
 def create_nd_sdfg():
     n = dace.symbol("n")
@@ -140,6 +115,7 @@ def test_multiple_range_map():
     _exec_test(create_multiple_range_map_sdfg, [], [("x", 8), ("y", 8)])
 
 test_direct_axpy()
+"""
 test_assigned_axpy_unroll_3()
 test_assigned_axpy_unroll_1()
 test_fixed_array_size_axpy_17()
@@ -148,3 +124,4 @@ test_fixed_map_range_axpy_21()
 test_nd_split()
 test_no_split()
 test_multiple_range_map()
+"""
