@@ -45,7 +45,8 @@ class FPGATransformState(transformation.Transformation):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         state = graph.nodes()[candidate[FPGATransformState._state]]
 
-        fpga.can_run_state_on_fpga(state)
+        if not fpga.can_run_state_on_fpga(state):
+            return False
 
         for node in state.nodes():
 

@@ -1093,7 +1093,7 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
     return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(
         state.node_id(node))
 
-def all_innermost_memlets(state: SDFGState, of: Union[nd.AccessNode, gr.MultiConnectorEdge]):
+def all_innermost_edges(state: SDFGState, of: Union[nd.AccessNode, gr.MultiConnectorEdge]):
     """
     generator that returns all the innermost edges.
     :param of: If of is an AccessNode all the innermost edges of all attached edges are returned.

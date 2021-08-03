@@ -9,7 +9,6 @@ from dace.codegen.targets import fpga
 from dace.transformation import transformation, interstate
 from dace.sdfg import nodes as nd
 from dace import SDFG, SDFGState, memlet, data
-import sympy
 import math
 
 def modify_bank_assignment(array_name: str, sdfg: SDFG, new_memory: str, new_bank: str,
@@ -116,7 +115,6 @@ def _update_memlet_hbm(state: SDFGState,
         new_subset = subsets.Range(
             [[inner_subset_index, inner_subset_index, 1]] +
             [x for x in mem.subset])
-            #[x // y for x, y in zip(mem.subset, split_array_info)])
 
         path = state.memlet_path(inner_edge)
         if path[-1].dst == this_node:
@@ -163,21 +161,34 @@ def _update_new_hbm_accesses(sdfg: SDFG, update_access: set(),
                     add_pass_update(edge.src_conn, edge.data.data)
                 _update_new_hbm_accesses(node.sdfg, pass_update, inner_subset_index, True)
             elif isinstance(node, nd.AccessNode) and node.data in update_access:    
-                for inner_edge in utils.all_innermost_memlets(state, node):
+                for inner_edge in utils.all_innermost_edges(state, node):
                     _update_memlet_hbm(state, inner_edge, inner_subset_index, node)
 
 
 def transform_sdfg_for_hbm(sdfg: SDFG, outer_map_range: Tuple[str, int], 
     update_array_banks: Dict[str, Tuple[str, str, List[int]]],
     update_map_range: Dict[Tuple[nd.Map, int], int], recursive=False):
+    """
+    This function is a tool which allows to quickly rewrite SDFGs to use many HBM-banks. 
+    Essentially all it does is nest the whole SDFG and pack it into a top-level unrolled map. 
+    Additionally it contains options to change the bank assignment of arrays and to modify accesses 
+    such that they contain the top-level unrolled map variable as a distributed subset (i.e. as 
+    an additional first index). 
+    This makes it also usefull to quickly switch bank assignments of existing arrays and have
+    stuff like dimensionality change be handled automatically.
+    Note that this expects to be used on an SDFG which will run on the FPGA.
+    """
+
     update_access = set() # Store which arrays need updates for later
 
     # update array bank positions
     for array_name, infos in update_array_banks.items():
         memory_type, bank, divide_shape = infos
         modify_bank_assignment(array_name, sdfg, memory_type, bank, divide_shape)
-        if memory_type == "HBM" and divide_shape is not None:
-            update_access.add(array_name)
+        if memory_type == "HBM":
+            low, high = fpga.get_multibank_ranges_from_subset(bank, sdfg)
+            if high - low > 1:
+                update_access.add(array_name)
 
     for map_info, division in update_map_range.items():
         target, param_index = map_info
@@ -206,22 +217,42 @@ def transform_sdfg_for_hbm(sdfg: SDFG, outer_map_range: Tuple[str, int],
 @properties.make_properties
 class HbmTransform(transformation.Transformation):
     """
-    This transformation is a tool which allows to quickly rewrite SDFGs to use many HBM-banks. 
-    Essentially all it does is nest the whole SDFG and pack it into a top-level unrolled map. 
-    Additionally it contains options to change the bank assignment of arrays and to modify accesses 
-    such that they contain the top-level unrolled map variable as a distributed subset (i.e. as 
-    an additional first index). If the transformation is called with a value of (_, 0) for 
-    outer_map_range then no top-level map is added, since it would be degenerate anyway. 
-    This makes it also usefull to quickly switch bank assignments of existing arrays and have
-    stuff like dimensionality change be handled automatically.
-    Note that this expects to be applied on an SDFG which will run on the FPGA.
+    This method tries to find suitable settings for transform_sdfg_for_hbm. 
+    Acts only based on heuristics and will assume that all array shapes are
+    divisable by the number of banks the array is placed on when dimension
+    size is a symbolic expression.
+
+    It is allowed to assign banks before applying the transformation, it will respect
+    the assignments. Note that in the case of HBM on multiple banks it is expected that
+    the distributed subset index has not yet been added, and the shape was not modified.
+    Note that those are in principle invalid SDFGs, but they are still allowed here.
+
+    The transformation can usually be applied in a "fallback fashion" by simply placing
+    all arrays on different HBM-banks. Note that placing multiple arrays to the same bank
+    is not supported at the moment.
+
+    If this should actually split an array there are additional conditions:
+    - Each access to the array may only be a source or sink node in each state
+    - Each edge conncted to an accessnode of the array must be
+        connected to at least one map:
+        - that defines a symbol which is used on the innermost
+        memlet to define the access location
+        - that is completly parallel (i.e. the map could execute 
+        also if it wasn't a pipeline). This is not actually checked.
+        If it does not hold the generated SDFG may be correct, 
+        but it may also be wrong.
+    Note that arrays will always only be split in one dimension. 
+    Also note that all arrays that are splitted will be split into the
+    same amount of parts. Since the transformation acts based on heuristics
+    one can potentially "nudge" it into the right direction by forcing a certain 
+    array to be split via explicitely setting it to multiple HBM-banks.
     """
 
     @staticmethod
     def _scan_arrays(sdfg):
         """
         Find all arrays and record them if they are placed in global memory.
-        Find present bank assignemnts and allowed unroll factor for all arrays based on shape.
+        Find present bank assignemnts and constraints for allowed unroll factor for all arrays based on shape.
         """
 
         global_memory_array = set()
@@ -304,117 +335,125 @@ class HbmTransform(transformation.Transformation):
     @staticmethod
     def _scan_accesses_for_possible_splits(sdfg: SDFG, global_memory_array: Set[str], no_split_arrays: Set[str]):
         """
-        Scan all accesses and try to find maps that could be 
-        used to define the split behaviour
+        For all accesses for a dimension say f(i) to a multibank array this searches for maps of the form i=0:n that could 
+        be split into 2 nested maps of the form k=0:r, i=0:n/r such that the access could be rewritten to
+        r*k + f(i). More simply put it searches for dimensions along which an array could be split if we would change the 
+        range of a map influencing that access and adding a second outer map.
+        Works by simply modifying the maps and running propagation to see wether the expected accesses are done,
+        which is inefficient, but the simplest way to go. If propagation fails for a memlet path, the array will be marked not splitable.
+        Multidimensional splits are not considered. Note that the order of elements in no_split_arrays and it's nested lists
+        is non deterministic. 
         """
 
-        def dim_of_map(edge: graph.MultiConnectorEdge, map: nd.Map, number: int, 
-            prop_subset: subsets.Subset, free_symbols: List[symbolic.SymbolicType], array: str):
-            result = []
-            symbols = map.params
-            ranges = map.range
-            next_prop_subset = prop_subset
-            map_reverse = list(enumerate(zip(symbols, ranges)))
-            map_reverse.reverse()
-            for num, symrangetuple in map_reverse:
-                symbol, current_range = symrangetuple
-                symbol = symbolic.pystr_to_symbolic(symbol)
-                current_range = subsets.Range([current_range])
-                free_symbols -= set([symbol])
-                for pclass in propagation.MemletPattern.extensions():
-                    pattern = pclass()
-                    if pattern.can_be_applied([next_prop_subset], [free_symbols, [symbol]], current_range, [edge.data]):
-                        next_prop_subset = pattern.propagate(array, [next_prop_subset], current_range)
-                        if isinstance(pattern, propagation.SeparableMemlet):
-                            is_affine_linear_access = [isinstance(pattern.patterns_per_dim[i], propagation.AffineSMemlet) for i in range(len(next_prop_subset))]
-                        else:
-                            is_affine_linear_access = [False] * len(next_prop_subset)
-                        break
-                else:
-                    return ([], None, None) # Cannot propagate, cannot continue.
-                
-                found = None
-                found_count = 0
-                low = symbolic.resolve_symbol_to_constant(current_range[0][0], sdfg)
-                if low is None or low != 0:
-                    continue
-                high = symbolic.resolve_symbol_to_constant(current_range[0][1], sdfg)
-                if high is not None:
-                    high += 1
-                for dim, what in enumerate(prop_subset):
-                    free_sub = subsets.Range([what]).free_symbols
-                    if str(symbol) in free_sub:
-                        found_count += 1
-                        #dim_size = sdfg.arrays[array].shape[dim]
-                        #map_spans_array = current_range[0][1] + 1 == dim_size
-                        #all_accessed = next_prop_subset[dim][0] == 0 and next_prop_subset[dim][1] + 1 == dim_size
-                        if is_affine_linear_access[dim]:
-                            found = (dim, number+num, (map, num), high)
-                if found_count == 1 and found is not None: # Only if exactly one dimension influenced
-                    result.append(found)
-            return (result, next_prop_subset, free_symbols)
         split_dimensions = {}
-
         for name in global_memory_array:
             split_dimensions[name] = []
+            
+        # Add all arrays which have accesses that are not source/sink-nodes to no_split_arrays
+        all_outer_nodes = set()
         for state in sdfg.states():
-            seen = set()
-            for node in state.sink_nodes() + state.source_nodes():
-                if isinstance(node, nd.AccessNode):
-                    if node.data in global_memory_array and node.data not in no_split_arrays:
-                        seen.add(node)
-                        for edge in state.all_edges(node):
-                            path = state.memlet_path(edge)
-                            current_split_dimensions = []
-                            n = len(path)
-                            free_symbols = set()
-                            for tmp in path:
-                                free_symbols |= tmp.data.free_symbols
-                                if isinstance(tmp.src, nd.MapEntry) or isinstance(tmp.src, nd.MapExit):
-                                    free_symbols |= tmp.src.map.range.free_symbols
-                                elif isinstance(tmp.dst, nd.MapEntry) or isinstance(tmp.dst, nd.MapExit):
-                                    free_symbols |= tmp.dst.map.range.free_symbols
-                            free_symbols = set(symbolic.pystr_to_symbolic(p) for p in free_symbols)
-
-                            if edge == path[0]: # This is a read
-                                prop_subset = path[n-1].data.src_subset if path[n-1].data.src_subset is not None else path[n-1].data.subset
-                                for i in range(n):
-                                    current_edge: graph.MultiConnectorEdge = path[n - i - 1]
-                                    current_node = current_edge.src
-                                    if isinstance(current_node, nd.PipelineEntry):
-                                        current_split_dimensions.clear()
-                                    if isinstance(current_node, nd.MapEntry):
-                                        result, prop_subset, free_symbols = dim_of_map(path[n - i - 1], current_node.map, n-i-1, 
-                                            prop_subset, free_symbols, node.data)
-                                        if prop_subset is None:
-                                            break
-                                        current_split_dimensions.extend(result)
-                            else:
-                                prop_subset = path[0].data.dst_subset if path[0].data.src_subset is not None else path[0].data.subset
-                                for i in range(n):
-                                    current_edge: graph.MultiConnectorEdge = path[i]
-                                    current_node = current_edge.dst
-                                    if isinstance(current_node, nd.PipelineExit):
-                                        current_split_dimensions.clear()
-                                    if isinstance(current_node, nd.MapExit):
-                                        result, prop_subset, free_symbols = dim_of_map(path[i], current_node.map, n-i-1,
-                                            prop_subset, free_symbols, node.data)
-                                        if prop_subset is None:
-                                            break
-                                        current_split_dimensions.extend(result)
-                            if len(current_split_dimensions) == 0:
-                                no_split_arrays.add(node.data)
-                                break
-                            else:
-                                split_dimensions[node.data].append(current_split_dimensions)
-
-            # Check that arrays are only used as source or sink
-            for node in state.nodes(): 
-                if (isinstance(node, nd.AccessNode) and node.data in global_memory_array and 
-                    node not in seen):
+            for node in state.source_nodes() + state.sink_nodes():
+                all_outer_nodes.add(node)
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nd.AccessNode) and node.data in global_memory_array and node not in all_outer_nodes:
                     no_split_arrays.add(node.data)
 
-        no_split_arrays, split_dimensions = HbmTransform._cleanup_incomplete_dimensions_from_split_dimensions(global_memory_array, no_split_arrays, split_dimensions)
+        # Collect all the inner edges of accesses to arrays which could maybe be split
+        inner_edges = set()
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nd.AccessNode):
+                    if node.data in global_memory_array and node.data not in no_split_arrays:
+                        for edge in state.all_edges(node):
+                            tmp = list(utils.all_innermost_edges(state, edge))
+                            if len(tmp) != 1:
+                                no_split_arrays.add(node.data) # Ignore weird stuff
+                            if tmp[0].data.data != node.data:
+                                no_split_arrays.add(no_split_arrays) # Ignore weird stuff
+                            else:
+                                inner_edges.add(tmp[0])
+        
+        multibank_arrays = global_memory_array.difference(no_split_arrays)
+
+        # Find start edge corrsponding to the start of the path
+        inner_edge_to_start = {}
+        for edge in inner_edges:
+            path = state.memlet_path(edge)
+            if path[0] == edge:
+                inner_edge_to_start[edge] = path[-1]
+            else:
+                inner_edge_to_start[edge] = path[0]
+
+        def update_map_range(target, param_index, division):
+            current = target.range[param_index]
+            new_value = (current[0], symbolic.pystr_to_symbolic(f"{current[1] + 1}/{division} - 1"), 
+                current[2])
+            target.range[param_index] = new_value
+
+        # Find maps to influence for all accesses, such that arrays can be split in one dimension.
+        map_to_dependenty_arrays = HbmTransform._scan_maps_for_dependent_arrays(sdfg)
+        inner_edge_to_split_dimensions = {}
+        for map, arrays in map_to_dependenty_arrays.items():
+            if map[0].range[map[1]][0] != 0:
+                continue
+            high = symbolic.resolve_symbol_to_constant(map[0].range[map[1]][1], sdfg)
+            divide_by = 16
+            if high is not None:
+                high += 1
+                divide_by = high #Propagated = 0 if successfull
+            
+            symbol = symbolic.pystr_to_symbolic(map[0].params[map[1]])
+            check_arrays = arrays.intersection(multibank_arrays)
+            if len(check_arrays) == 0:
+                continue
+
+            check_edges = set()
+            check_edges_to_dim = {}
+            for edge in inner_edges:
+                if edge.data.data in check_arrays:
+                    count_found = 0
+                    for dim, dim_acc in enumerate(edge.data.subset):
+                        if str(symbol) in subsets.Range([dim_acc]).free_symbols:
+                            count_found += 1
+                            no_range = dim_acc[0] == dim_acc[1]
+                            stride_one = dim_acc[2] == 1
+                            dimension_found = dim
+                    if count_found == 1:
+                        if no_range and stride_one:
+                            check_edges.add(edge)
+                            check_edges_to_dim[edge] = dimension_found
+            if len(check_edges) == 0:
+                continue
+
+            propagation.propagate_memlets_sdfg(sdfg)
+            old_map_range = map[0].range[map[1]]
+            should_have_value = {}
+            for edge in check_edges:
+                start = inner_edge_to_start[edge]
+                dim = check_edges_to_dim[edge]
+                should_have_value[edge] = symbolic.pystr_to_symbolic(f"{start.data.subset[dim][1] + 1}/{divide_by} - 1")
+            update_map_range(map[0], map[1], divide_by)
+            propagation.propagate_memlets_sdfg(sdfg)
+            for edge in check_edges:
+                start = inner_edge_to_start[edge]
+                dim = check_edges_to_dim[edge]
+                if should_have_value[edge] == start.data.subset[dim][1]:
+                    if edge not in inner_edge_to_split_dimensions:
+                        inner_edge_to_split_dimensions[edge] = []
+                    inner_edge_to_split_dimensions[edge].append((dim, 0, map, high))
+            map[0].range[map[1]] = old_map_range
+        
+        for edge in inner_edges:
+            if edge not in inner_edge_to_split_dimensions:
+                no_split_arrays.add(edge.data.data)
+            else:
+                if edge.data.data not in split_dimensions:
+                    split_dimensions[edge.data.data] = []
+                split_dimensions[edge.data.data].append(inner_edge_to_split_dimensions[edge])
+
+        no_split_arrays, split_dimensions = HbmTransform._cleanup_incomplete_dimensions_from_split_dimensions(global_memory_array, 
+            no_split_arrays, split_dimensions)
 
         for name in no_split_arrays:
             if name in split_dimensions:
@@ -422,29 +461,28 @@ class HbmTransform(transformation.Transformation):
 
         return (split_dimensions, no_split_arrays)
 
-
     @staticmethod
-    def _scan_maps_for_dependent_arrays(sdfg: SDFG, split_dimensions) -> Dict[Tuple[nd.Map, int], Set[str]]:
+    def _scan_maps_for_dependent_arrays(sdfg: SDFG) -> Dict[Tuple[nd.Map, int], Set[str]]:
         """
         Generate a Dict from maps to all the arrays that have accesses that are influenced by the symbol
         defined by that map (i.e. are dependent on that map).
-        Tuple[nd.Map, int] is used as map identifier, because it could define
-        multiple symbols.
+        Tuple[nd.Map, int] is used as map identifier, because it could define multiple symbols.
         """
 
         modifiable_map = set()
         modifiable_map_ranges = {}
         modifiable_map_to_dependent = {}
-        for array_accesses in split_dimensions.values():
-            for access in array_accesses:
-                for _, _, acc_map, _ in access:
-                    modifiable_map.add(acc_map[0])
-                    if acc_map[0] not in modifiable_map_ranges:
-                        modifiable_map_ranges[acc_map[0]] = set()
-                    modifiable_map_ranges[acc_map[0]].add(acc_map[1])
+        
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nd.MapEntry):
+                    modifiable_map.add(node.map)
+                    modifiable_map_ranges[node.map] = set()
+                    for k in range(len(node.map.params)):
+                        modifiable_map_ranges[node.map].add(k)
         for acc_map in modifiable_map:
-            for range in modifiable_map_ranges[acc_map]:
-                modifiable_map_to_dependent[(acc_map, range)] = set()
+            for w in modifiable_map_ranges[acc_map]:
+                modifiable_map_to_dependent[(acc_map, w)] = set()
         symbol_stack = set()
         symbol_to_map = {}
         for state in sdfg.states():
@@ -470,7 +508,7 @@ class HbmTransform(transformation.Transformation):
     @staticmethod
     def _greedy_find_splits(sdfg, global_memory_array, no_split_arrays, fixed_arrays, division_info):
         """
-        Find a valid selection of maps to modify, such that many arrays can be split
+        Find a valid selection of maps to modify, such that some arrays can be split
         Works in the order of arrays such that arrays which are 'important' to split are considered
         sooner. At the moment only the size of the bank assignment (if present) is considered.
 
@@ -480,9 +518,8 @@ class HbmTransform(transformation.Transformation):
         The finding process is greedy.
         """
 
-        split_dimensions = {}
         split_dimensions, no_split_arrays = HbmTransform._scan_accesses_for_possible_splits(sdfg, global_memory_array, no_split_arrays)
-        modifiable_map_to_dependent = HbmTransform._scan_maps_for_dependent_arrays(sdfg, split_dimensions)
+        modifiable_map_to_dependent = HbmTransform._scan_maps_for_dependent_arrays(sdfg)
         multibank_arrays = global_memory_array.difference(no_split_arrays)
 
         access_plans = {} # Reduced, restructured view of split_dimensions: array -> Tuple[array, dimension, frozenset of maps to modify, cost of access_plan, which value must be divided]
@@ -498,6 +535,7 @@ class HbmTransform(transformation.Transformation):
         for array, accesses in split_dimensions.items():
             dim_to_acp = {}
             for access in accesses: 
+                access.sort(key=lambda x: x[2][0].label + str(x[2][1])) # Avoid non-determinism
                 selected_by_dim = {}
                 # There could be multiple maps for the same dimension. Take only the lowest rated one.
                 for dim, rate, acc_map, divide in access:
@@ -510,7 +548,7 @@ class HbmTransform(transformation.Transformation):
                         if current[0] > costs:
                             selected_by_dim[dim] = (costs, acc_map, divide)
                     else:
-                        selected_by_dim[dim] = (rate, acc_map, divide)
+                        selected_by_dim[dim] = (costs, acc_map, divide)
                 # Append the selected maps for the dimensions of the current access
                 for dim, tmp_tuple in selected_by_dim.items(): 
                     rate, acc_map, divide = tmp_tuple
@@ -521,6 +559,7 @@ class HbmTransform(transformation.Transformation):
                     cost += rate
                     current_divide = HbmTransform._custom_gcd([current_divide, divide])
                     dim_to_acp[dim] = (acc_set, cost, current_divide)
+
             sorted_acps = []
             for x in dim_to_acp.items():
                 sorted_acps.append((array, x[0], frozenset(x[1][0]), x[1][1], x[1][2]))
@@ -655,7 +694,7 @@ class HbmTransform(transformation.Transformation):
         for array in global_memory_array:
             if array not in no_split_arrays:
                 # If splitsize must divide a number compute all divisors.
-                # Otherwise take all from 2 to the total number of banks.
+                # Otherwise take all from 1 to the total number of banks.
                 possible = set()
                 tmp_div_info = HbmTransform._custom_gcd(division_info[array][split_dimensions[array]])
                 if tmp_div_info is None:
@@ -742,42 +781,6 @@ class HbmTransform(transformation.Transformation):
 
     @staticmethod
     def _try_find_suitable_settings(sdfg: SDFG):
-        """
-        This method tries to find suitable settings for the transformation. 
-        Acts only based on heuristics and will assume that all array shapes are
-        divisable by the number of banks the array is placed on when dimension
-        size is a symbolic expression.
-
-        It is allowed to assign banks before applying the transformation, it will respect
-        the assignments. Note that in the case of HBM on multiple banks it is expected that
-        the distributed subset index has not yet been added, and the shape was not modified.
-        Note that those are in principle invalid SDFGs, but they are still allowed here.
-
-        As long as this is a valid SDFG (apart from the exceptions above) and the transformation
-        will lead to changes, it will find a valid assignment by having a degenerate top-level map
-        (k=0:1) and placing each array in global memory or with storage default to a different bank.
-
-        If this should actually split an array there are additional conditions:
-        - Each access to the array may only be a source or sink node in each state
-        - Each edge conncted to an accessnode of the array must be
-          connected to at least one map:
-            - that defines a symbol which is used on the innermost
-            memlet to define the access location
-            - that is completly parallel (i.e. the map could execute 
-            also if it wasn't a pipeline). This is not actually checked.
-            If it does not hold the generated SDFG may be correct, 
-            but it may also be wrong.
-            - if multiple such maps exists, the one that is closest 
-            to the accessnode (in terms of edges on the memlet path) will
-            be used to infer how to split the array
-            - If the symbol defined by such a map is used in an access it is assumed
-            (not checked) that all accesses will go to different parts of the array.
-            One could probably fix this using sympy, but for now this is omited.
-        Note that arrays will always only be split in one dimension. If it is
-        an option to split along the 0th dimension this one will be picked.
-        Also note that all arrays that are splitted will be split into the
-        same amount of parts.
-        """
         total_number_of_banks = 32
         
         # Scan the arrays and collect initial inputs
@@ -786,7 +789,7 @@ class HbmTransform(transformation.Transformation):
         # Try to find possibilities for spliting arrays
         maps_to_change, split_dimensions, no_split_arrays, division_info = HbmTransform._greedy_find_splits(sdfg, global_memory_array, 
             no_split_arrays, fixed_arrays, division_info,)
-        
+
         # Find a placement for the arrays on HBM and an unroll factor that works
         place_result = HbmTransform._try_place_arrays(sdfg, fixed_arrays, unroll_factor, 
             global_memory_array, no_split_arrays,
@@ -844,7 +847,8 @@ class HbmTransform(transformation.Transformation):
             return False
 
         for state in sdfg.states():
-            fpga.can_run_state_on_fpga(state)
+            if not fpga.can_run_state_on_fpga(state):
+                return False
 
         # Can't handle dynamic accesses in tasklets. This would work in principle 
         # once single bank support exists, since then we could

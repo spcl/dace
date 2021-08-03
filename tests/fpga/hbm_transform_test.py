@@ -22,6 +22,7 @@ def _exec_test(sdfgsource, assign, checkassign):
     sdfg = sdfgsource()
     set_assignment(sdfg, assign)
     #sdfg.apply_transformations(HbmTransform, validate=False)
+    #sdfg.view()
     xform = HbmTransform(sdfg.sdfg_id, -1, {}, -1)
     xform.apply(sdfg)
     #sdfg.view()
@@ -105,8 +106,6 @@ def create_gemv_blas_sdfg(tile_size_y=None, tile_size_x=None):
     libnode.implementation = "FPGA_TilesByColumn"
     libnode.expand(sdfg, sdfg.nodes()[0], tile_size_y=tile_size_y, tile_size_x=tile_size_x)
     sdfg.apply_strict_transformations()
-    #sdfg.arrays["x"].location["memorytype"] = "HBM"
-    #sdfg.arrays["x"].location["bank"] = "0"
     return sdfg
 
 def test_axpy_direct():
@@ -161,5 +160,5 @@ test_fixed_axpy_21()
 test_nd_split()
 test_no_split()
 test_multiple_range_map()
-test_gemv_blas_nudging()
 test_gemv_blas()
+test_gemv_blas_nudging()

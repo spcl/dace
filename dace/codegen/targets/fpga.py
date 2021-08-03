@@ -263,7 +263,7 @@ def can_run_state_on_fpga(state: SDFGState):
 
         # Streams have strict conditions due to code generator limitations
         if (isinstance(node, nodes.AccessNode) and isinstance(
-                graph.parent.arrays[node.data], data.Stream)):
+                graph.parent.arrays[node.data], dt.Stream)):
             nodedesc = graph.parent.arrays[node.data]
             sdict = graph.scope_dict()
             if nodedesc.storage in [

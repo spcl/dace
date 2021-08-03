@@ -140,7 +140,7 @@ def fpga_hbm_graph(veclen, dtype, expansion):
                 subsets.Range.from_string(
                     f"0:{banks_per_array}, 0:{per_array_size}"))
             """
-            for inner_edge in utils.all_innermost_memlets(state, node):
+            for inner_edge in utils.all_innermost_edges(state, node):
                 inner_edge.data.subset = subsets.Range.from_string(
                     f"0:{banks_per_array}, 0:{per_array_size}")
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
