@@ -30,13 +30,15 @@ def modify_bank_assignment(array_name: str, sdfg: SDFG, new_memory: str, new_ban
             low, high = fpga.get_multibank_ranges_from_subset(new_bank, sdfg)
         else:
             low, high = int(new_bank), int(new_bank) + 1
+        if split_array_info is None:
+            d_size = len(desc.shape)
+            if fpga.is_hbm_array_with_distributed_index(desc):
+                d_size -= 1
+            split_array_info = [1] * d_size
 
         if (old_memory is None or old_memory == "DDR") and new_memory == "HBM":
             desc = sdfg.arrays[array_name]
-            if split_array_info is None:
-                new_shape = desc.shape
-            else:
-                new_shape = [x // y for x, y in zip(desc.shape, split_array_info)]
+            new_shape = [x // y for x, y in zip(desc.shape, split_array_info)]
             if high - low > 1:
                 desc.set_shape((high - low, *new_shape))
             else:
@@ -44,8 +46,11 @@ def modify_bank_assignment(array_name: str, sdfg: SDFG, new_memory: str, new_ban
         elif old_memory == "HBM" and (new_memory == "DDR"
                                       or new_memory is None):
             desc = sdfg.arrays[array_name]
-            #TODO: Handle single bank
-            new_shape = [x * y for x, y in zip(list(desc.shape)[1:], split_array_info)]
+            if fpga.is_hbm_array_with_distributed_index(desc):
+                old_shape = list(desc.shape)[1:]
+            else:
+                old_shape = desc.shape
+            new_shape = [x * y for x, y in zip(old_shape, split_array_info)]
             desc.set_shape(new_shape)
         elif old_memory == "HBM" and new_memory == "HBM":
             oldlow, oldhigh = fpga.get_multibank_ranges_from_subset(desc.location["bank"], sdfg)
@@ -340,10 +345,10 @@ class HbmTransform(transformation.Transformation):
                     free_sub = subsets.Range([what]).free_symbols
                     if str(symbol) in free_sub:
                         found_count += 1
-                        dim_size = sdfg.arrays[array].shape[dim]
-                        map_spans_array = current_range[0][1] + 1 == dim_size
-                        all_accessed = next_prop_subset[dim][0] == 0 and next_prop_subset[dim][1] + 1 == dim_size
-                        if is_affine_linear_access[dim] and map_spans_array and all_accessed:
+                        #dim_size = sdfg.arrays[array].shape[dim]
+                        #map_spans_array = current_range[0][1] + 1 == dim_size
+                        #all_accessed = next_prop_subset[dim][0] == 0 and next_prop_subset[dim][1] + 1 == dim_size
+                        if is_affine_linear_access[dim]:
                             found = (dim, number+num, (map, num), high)
                 if found_count == 1 and found is not None: # Only if exactly one dimension influenced
                     result.append(found)
@@ -486,7 +491,7 @@ class HbmTransform(transformation.Transformation):
         def map_modification_cost(dim, rate, acc_map, divide):
             cost = rate
             if divide is not None:
-                cost += 2
+                cost += 3
             return cost
 
         # Fill access_plans
@@ -495,11 +500,15 @@ class HbmTransform(transformation.Transformation):
             for access in accesses: 
                 selected_by_dim = {}
                 # There could be multiple maps for the same dimension. Take only the lowest rated one.
-                for dim, rate, acc_map, divide in access: 
+                for dim, rate, acc_map, divide in access:
+                    dependent = modifiable_map_to_dependent[acc_map]
+                    if not all([d in multibank_arrays for d in dependent]):
+                        continue
+                    costs = map_modification_cost(dim, rate, acc_map, divide)
                     if dim in selected_by_dim:
                         current = selected_by_dim[dim]
-                        if current[1] > map_modification_cost(dim, rate, acc_map, divide):
-                            selected_by_dim[dim] = (rate, acc_map, divide)
+                        if current[0] > costs:
+                            selected_by_dim[dim] = (costs, acc_map, divide)
                     else:
                         selected_by_dim[dim] = (rate, acc_map, divide)
                 # Append the selected maps for the dimensions of the current access
@@ -515,6 +524,7 @@ class HbmTransform(transformation.Transformation):
             sorted_acps = []
             for x in dim_to_acp.items():
                 sorted_acps.append((array, x[0], frozenset(x[1][0]), x[1][1], x[1][2]))
+            sorted_acps.sort(key=lambda x : x[1]) # Avoid non determinism
             sorted_acps.sort(key=lambda x : x[3])
             access_plans[array] = tuple(sorted_acps)
         # Fill modifiable_map_to_array_with_acp
@@ -531,6 +541,7 @@ class HbmTransform(transformation.Transformation):
             else:
                 return 0
         arrays_by_importance = list(multibank_arrays)
+        arrays_by_importance.sort() # Avoid non determinsm
         arrays_by_importance.sort(key=array_importance_fun, reverse=True)
 
         mod_graph = networkx.Graph()
@@ -646,7 +657,6 @@ class HbmTransform(transformation.Transformation):
                 # If splitsize must divide a number compute all divisors.
                 # Otherwise take all from 2 to the total number of banks.
                 possible = set()
-                has_multi_bank_arrays = True
                 tmp_div_info = HbmTransform._custom_gcd(division_info[array][split_dimensions[array]])
                 if tmp_div_info is None:
                     for i in range(1, total_number_of_banks+1):
@@ -659,6 +669,7 @@ class HbmTransform(transformation.Transformation):
                 if 1 in tmp_intersect and len(tmp_intersect) == 1:
                     no_split_arrays.add(array)
                 else:
+                    has_multi_bank_arrays = True
                     possible_unroll_factors = tmp_intersect
         if has_multi_bank_arrays:
             return possible_unroll_factors
@@ -688,6 +699,7 @@ class HbmTransform(transformation.Transformation):
         num_singlebank = len(no_split_arrays) - len(set(fixed_arrays.keys()).intersection(no_split_arrays))
         single_block_starts = []
         multi_block_starts = []
+        splitable_place, singlebank_place = (1, 1)
         for possible_uf in possible_unroll_factors:
             splitable_place = num_splitable
             singlebank_place = num_singlebank
@@ -789,7 +801,9 @@ class HbmTransform(transformation.Transformation):
         consumed_single = 0
         consumed_splitable = 0
         update_array_banks = {}
-        for array in global_memory_array:
+        sorted_arrays = list(global_memory_array)
+        sorted_arrays.sort() # Avoid non determinism
+        for array in sorted_arrays:
             if array in no_split_arrays:
                 if array in fixed_arrays: 
                     update_array_banks[array] = (*fixed_arrays[array], None)

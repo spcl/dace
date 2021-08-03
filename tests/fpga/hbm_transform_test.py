@@ -2,7 +2,7 @@
 
 from dace.codegen.targets import fpga
 from typing import List, Tuple, Union
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, nodes
 import dace
 from dace.transformation.dataflow import HbmTransform
 from dace.fpga_testing import import_sample
@@ -32,9 +32,9 @@ def check_assignment(sdfg: SDFG, assignments: List[Union[Tuple[str, int], Tuple[
 def _exec_test(sdfgsource, assign, checkassign):
     sdfg = sdfgsource()
     set_assignment(sdfg, assign)
-    sdfg.apply_transformations(HbmTransform, validate=False)
-    #xform = HbmTransform(sdfg.sdfg_id, -1, {}, -1)
-    #xform.apply(sdfg)
+    #sdfg.apply_transformations(HbmTransform, validate=False)
+    xform = HbmTransform(sdfg.sdfg_id, -1, {}, -1)
+    xform.apply(sdfg)
     sdfg.view()
     check_assignment(sdfg, checkassign)
     sdfg.validate()
@@ -103,6 +103,7 @@ def create_multiple_range_map_sdfg():
     return sdfg
 
 def create_gemv_sdfg():
+    # Example of an SDFG that gets splitted arrays, but is still semantically wrong (but valid)
     gemv = import_sample(Path("fpga") / "gemv_fpga.py")
     gemv.N.set(50)
     sdfg = SDFG("gemv_sdfg")
@@ -111,6 +112,24 @@ def create_gemv_sdfg():
     store_state = gemv.make_store_state(sdfg)
     sdfg.add_edge(load_state, compute_state, dace.sdfg.InterstateEdge())
     sdfg.add_edge(compute_state, store_state, dace.sdfg.InterstateEdge())
+    return sdfg
+
+def create_gemv_blas_sdfg():
+    N = dace.symbol("N")
+    M = dace.symbol("M")
+    @dace.program
+    def gemv(A: dace.float32[M, N], x: dace.float32[N], y: dace.float32[M]):
+        y[:] = A @ x
+    sdfg = gemv.to_sdfg()
+    sdfg.apply_strict_transformations()
+    libnode = list(filter(lambda x: isinstance(x, nodes.LibraryNode), sdfg.nodes()[0].nodes()))[0]
+    libnode.expand(sdfg, sdfg.nodes()[0])
+    libnode = list(filter(lambda x: isinstance(x, nodes.LibraryNode), sdfg.nodes()[0].nodes()))[0]
+    libnode.implementation = "FPGA_TilesByColumn"
+    libnode.expand(sdfg, sdfg.nodes()[0])
+    sdfg.apply_strict_transformations()
+    #sdfg.arrays["x"].location["memorytype"] = "HBM"
+    #sdfg.arrays["x"].location["bank"] = "0"
     return sdfg
 
 def test_axpy_direct():
@@ -147,6 +166,8 @@ def test_multiple_range_map():
 def test_gemv():
     _exec_test(create_gemv_sdfg, [], [])
 
+def test_gemv_blas():
+    _exec_test(create_gemv_blas_sdfg, [], [])
 """
 test_axpy_direct()
 test_assigned_axpy_unroll_3()
@@ -159,4 +180,5 @@ test_nd_split()
 test_no_split()
 test_multiple_range_map()
 """
-test_gemv()
+#test_gemv()
+test_gemv_blas()
