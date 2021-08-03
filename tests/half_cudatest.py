@@ -80,6 +80,6 @@ def test_dropout():
 
 
 if __name__ == '__main__':
-    # test_relu()
-    # test_relu_2()
+    test_relu()
+    test_relu_2()
     test_dropout()
