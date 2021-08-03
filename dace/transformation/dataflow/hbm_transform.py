@@ -843,36 +843,8 @@ class HbmTransform(transformation.Transformation):
         if sdfg.parent_sdfg is not None: # Can't assign banks from within a nested SDFG
             return False
 
-        #TODO: Copied from FPGATransformState
-        for node, graph in sdfg.all_nodes_recursive():
-            # Consume scopes are currently unsupported
-            if isinstance(node, (nd.ConsumeEntry, nd.ConsumeExit)):
-                return False
-
-            # Streams have strict conditions due to code generator limitations
-            if (isinstance(node, nd.AccessNode) and isinstance(
-                    graph.parent.arrays[node.data], data.Stream)):
-                nodedesc = graph.parent.arrays[node.data]
-                sdict = graph.scope_dict()
-                if nodedesc.storage in [
-                        dtypes.StorageType.CPU_Heap,
-                        dtypes.StorageType.CPU_Pinned,
-                        dtypes.StorageType.CPU_ThreadLocal
-                ]:
-                    return False
-
-                # Cannot allocate FIFO from CPU code
-                if sdict[node] is None:
-                    return False
-
-                # Arrays of streams cannot have symbolic size on FPGA
-                if symbolic.issymbolic(nodedesc.total_size,
-                                            graph.parent.constants):
-                    return False
-
-                # Streams cannot be unbounded on FPGA
-                if nodedesc.buffer_size < 1:
-                    return False
+        for state in sdfg.states():
+            fpga.can_run_state_on_fpga(state)
 
         # Can't handle dynamic accesses in tasklets. This would work in principle 
         # once single bank support exists, since then we could
