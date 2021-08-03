@@ -599,6 +599,7 @@ for(int i = 0; i < {veclen}; i++){{
                     },
                     "ip_cores": tasklet.ip_cores if isinstance(
                         tasklet, nodes.RTLTasklet) else {},
+                    "clocks": 2 # TODO make this "trickle" down to here. Maybe add speeds as well?
                 }
 
                 self.code_objects.append(
@@ -809,6 +810,8 @@ module {name}
 {parameters}
 ( input  ap_aclk   // convention: ap_aclk clocks the design
 , input  ap_areset // convention: ap_areset resets the design
+, input  ap_aclk_2
+, input  ap_areset_2
 , input  ap_start  // convention: ap_start indicates a start from host
 , output ap_done   // convention: ap_done tells the host that the kernel has finished
 

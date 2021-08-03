@@ -72,17 +72,16 @@ import numpy as np
 N = dace.symbol('N')
 
 # add sdfg
-sdfg = dace.SDFG('axpy_double_pump')
+sdfg = dace.SDFG('axpy')
 
 # add state
 state = sdfg.add_state('device_state')
 
 # add parametr
-veclen = 2
+veclen = 1
 sdfg.add_constant('VECLEN', veclen)
 sdfg.add_constant('DATA_WIDTH', 64)
 sdfg.add_constant('WORD_WIDTH', 32)
-sdfg.add_constant('RATIO', 2)
 
 # add arrays
 sdfg.add_scalar('a', dtype=dace.float32, storage=dace.StorageType.FPGA_Global)
@@ -136,7 +135,7 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
            |                                                        |
         -->| ap_aclk (slow clock input)                             |
         -->| ap_areset (slow reset input, rst on high)              |
-        -->| ap_aclk_2 (fast clock input)                           |
+        -->| ap_aclk (fast clock input)                           |
         -->| ap_areset_2 (fast reset input, rst on high)            |
         -->| ap_start (start pulse from host)                       |
         <--| ap_done (tells the host that the kernel is done)       |
@@ -152,95 +151,21 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
            |--------------------------------------------------------|
     */
     assign ap_done = 1; // free-running kernel
-    wire ap_areset_n = ~ap_areset;
-    wire ap_areset_n_2 = ~ap_areset_2;
-
-    wire        axis_x_clk_data_tvalid;
-    wire [63:0] axis_x_clk_data_tdata;
-    wire        axis_x_clk_data_tready;
-
-    slow_to_fast_clk clock_sync_x (
-        .s_axis_aclk(ap_aclk),
-        .s_axis_aresetn(ap_areset_n),
-        .m_axis_aclk(ap_aclk_2),
-        .m_axis_aresetn(ap_areset_n_2),
-
-        .s_axis_tvalid(s_axis_x_in_tvalid),
-        .s_axis_tdata( s_axis_x_in_tdata),
-        .s_axis_tready(s_axis_x_in_tready),
-
-        .m_axis_tvalid(axis_x_clk_data_tvalid),
-        .m_axis_tdata( axis_x_clk_data_tdata),
-        .m_axis_tready(axis_x_clk_data_tready)
-    );
-
-    wire        axis_y_clk_data_tvalid;
-    wire [63:0] axis_y_clk_data_tdata;
-    wire        axis_y_clk_data_tready;
-
-    slow_to_fast_clk clock_sync_y (
-        .s_axis_aclk(ap_aclk),
-        .s_axis_aresetn(ap_areset_n),
-        .m_axis_aclk(ap_aclk_2),
-        .m_axis_aresetn(ap_areset_n_2),
-
-        .s_axis_tvalid(s_axis_y_in_tvalid),
-        .s_axis_tdata( s_axis_y_in_tdata),
-        .s_axis_tready(s_axis_y_in_tready),
-
-        .m_axis_tvalid(axis_y_clk_data_tvalid),
-        .m_axis_tdata( axis_y_clk_data_tdata),
-        .m_axis_tready(axis_y_clk_data_tready)
-    );
-
-    wire        axis_x_data_fl_tvalid;
-    wire [31:0] axis_x_data_fl_tdata;
-    wire        axis_x_data_fl_tready;
-
-    slow_to_fast_data data_issue_x (
-        .aclk(ap_aclk_2),
-        .aresetn(ap_areset_n_2),
-
-        .s_axis_tvalid(axis_x_clk_data_tvalid),
-        .s_axis_tdata( axis_x_clk_data_tdata),
-        .s_axis_tready(axis_x_clk_data_tready),
-
-        .m_axis_tvalid(axis_x_data_fl_tvalid),
-        .m_axis_tdata( axis_x_data_fl_tdata),
-        .m_axis_tready(axis_x_data_fl_tready)
-    );
-
-    wire        axis_y_data_fl_tvalid;
-    wire [31:0] axis_y_data_fl_tdata;
-    wire        axis_y_data_fl_tready;
-
-    slow_to_fast_data data_issue_y (
-        .aclk(ap_aclk_2),
-        .aresetn(ap_areset_n_2),
-
-        .s_axis_tvalid(axis_y_clk_data_tvalid),
-        .s_axis_tdata( axis_y_clk_data_tdata),
-        .s_axis_tready(axis_y_clk_data_tready),
-
-        .m_axis_tvalid(axis_y_data_fl_tvalid),
-        .m_axis_tdata( axis_y_data_fl_tdata),
-        .m_axis_tready(axis_y_data_fl_tready)
-    );
 
     wire        axis_ax_tvalid;
     wire [31:0] axis_ax_tdata;
     wire        axis_ax_tready;
 
     floating_point_mult multiplier (
-        .aclk(ap_aclk_2),
+        .aclk(ap_aclk),
 
         .s_axis_a_tvalid(1),
         .s_axis_a_tdata(a_in),
         //.s_axis_a_tready(),
 
-        .s_axis_b_tvalid(axis_x_data_fl_tvalid),
-        .s_axis_b_tdata( axis_x_data_fl_tdata),
-        .s_axis_b_tready(axis_x_data_fl_tready),
+        .s_axis_b_tvalid(s_axis_x_in_tvalid),
+        .s_axis_b_tdata( s_axis_x_in_tdata),
+        .s_axis_b_tready(s_axis_x_in_tready),
 
         .m_axis_result_tvalid(axis_ax_tvalid),
         .m_axis_result_tdata( axis_ax_tdata),
@@ -252,66 +177,22 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
     wire        axis_result_tready;
 
     floating_point_add adder (
-        .aclk(ap_aclk_2),
+        .aclk(ap_aclk),
 
         .s_axis_a_tvalid(axis_ax_tvalid),
         .s_axis_a_tdata( axis_ax_tdata),
         .s_axis_a_tready(axis_ax_tready),
 
-        .s_axis_b_tvalid(axis_y_data_fl_tvalid),
-        .s_axis_b_tdata( axis_y_data_fl_tdata),
-        .s_axis_b_tready(axis_y_data_fl_tready),
+        .s_axis_b_tvalid(s_axis_y_in_tvalid),
+        .s_axis_b_tdata( s_axis_y_in_tdata),
+        .s_axis_b_tready(s_axis_y_in_tready),
 
-        .m_axis_result_tvalid(axis_result_tvalid),
-        .m_axis_result_tdata( axis_result_tdata),
-        .m_axis_result_tready(axis_result_tready)
-    );
-
-    wire        axis_result_data_clk_tvalid;
-    wire [63:0] axis_result_data_clk_tdata;
-    wire        axis_result_data_clk_tready;
-
-    fast_to_slow_data data_packer (
-        .aclk(ap_aclk_2),
-        .aresetn(ap_areset_n_2),
-
-        .s_axis_tvalid(axis_result_tvalid),
-        .s_axis_tdata( axis_result_tdata),
-        .s_axis_tready(axis_result_tready),
-
-        .m_axis_tvalid(axis_result_data_clk_tvalid),
-        .m_axis_tdata( axis_result_data_clk_tdata),
-        .m_axis_tready(axis_result_data_clk_tready)
-    );
-
-    fast_to_slow_clk clock_sync_result (
-        .s_axis_aclk(ap_aclk_2),
-        .s_axis_aresetn(ap_areset_n_2),
-        .m_axis_aclk(ap_aclk),
-        .m_axis_aresetn(ap_areset_n),
-
-        .s_axis_tvalid(axis_result_data_clk_tvalid),
-        .s_axis_tdata( axis_result_data_clk_tdata),
-        .s_axis_tready(axis_result_data_clk_tready),
-
-        .m_axis_tvalid(m_axis_result_out_tvalid),
-        .m_axis_tdata( m_axis_result_out_tdata),
-        .m_axis_tready(m_axis_result_out_tready)
+        .m_axis_result_tvalid(m_axis_result_out_tvalid),
+        .m_axis_result_tdata( m_axis_result_out_tdata),
+        .m_axis_result_tready(m_axis_result_out_tready)
     );
     ''',
                                 language=dace.Language.SystemVerilog)
-
-rtl_tasklet.add_ip_core('slow_to_fast_clk', 'axis_clock_converter',
-                        'xilinx.com', '1.1', {
-                            "CONFIG.TDATA_NUM_BYTES": "8",
-                            "CONFIG.SYNCHRONIZATION_STAGES": "8"
-                        })
-
-rtl_tasklet.add_ip_core('slow_to_fast_data', 'axis_dwidth_converter',
-                        'xilinx.com', '1.1', {
-                            "CONFIG.S_TDATA_NUM_BYTES": "8",
-                            "CONFIG.M_TDATA_NUM_BYTES": "4"
-                        })
 
 rtl_tasklet.add_ip_core(
     'floating_point_mult', 'floating_point', 'xilinx.com', '7.1', {
@@ -334,18 +215,6 @@ rtl_tasklet.add_ip_core(
         "CONFIG.Axi_Optimize_Goal": "Performance",
         "CONFIG.C_Latency": "14"
     })
-
-rtl_tasklet.add_ip_core('fast_to_slow_data', 'axis_dwidth_converter',
-                        'xilinx.com', '1.1', {
-                            "CONFIG.S_TDATA_NUM_BYTES": "4",
-                            "CONFIG.M_TDATA_NUM_BYTES": "8"
-                        })
-
-rtl_tasklet.add_ip_core('fast_to_slow_clk', 'axis_clock_converter',
-                        'xilinx.com', '1.1', {
-                            "CONFIG.TDATA_NUM_BYTES": "8",
-                            "CONFIG.SYNCHRONIZATION_STAGES": "8"
-                        })
 
 # add read and write tasklets
 read_x = state.add_tasklet('read_x', {'inp'}, {'out'}, 'out = inp')
