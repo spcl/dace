@@ -153,6 +153,12 @@ def _update_new_hbm_accesses(sdfg: SDFG,
                              update_access: set(),
                              inner_subset_index: symbolic.symbol,
                              recursive=True):
+    """
+    Update all acccesses to multibank-arrays.
+    :param update_access: The names of new multibank-arrays
+    :param inner_subset_index: The name of the map variable
+    :param recursive: Check also in nested SDFGs
+    """
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nd.NestedSDFG) and recursive:
@@ -235,7 +241,7 @@ def transform_sdfg_for_hbm(sdfg: SDFG,
 @properties.make_properties
 class HbmTransform(transformation.Transformation):
     """
-    This method tries to find suitable settings for transform_sdfg_for_hbm. 
+    This transformation tries to find suitable settings for transform_sdfg_for_hbm. 
     Acts only based on heuristics and will assume that all array shapes are
     divisable by the number of banks the array is placed on when dimension
     size is a symbolic expression.
@@ -266,10 +272,15 @@ class HbmTransform(transformation.Transformation):
     array to be split via explicitely setting it to multiple HBM-banks.
     """
     @staticmethod
-    def _scan_arrays(sdfg):
+    def _scan_arrays(sdfg: SDFG):
         """
         Find all arrays and record them if they are placed in global memory.
         Find present bank assignemnts and constraints for allowed unroll factor for all arrays based on shape.
+        :return: A tuple of (arrays in global memory, arrays which may not be split based on their assignment,
+            an unroll factor which is set if an array is placed on multiple HBM-banks, 
+            a dict of arrays which are pre assigned to some location,
+            a list from arrays to the values a potential split has to divide, 
+            the dimensions of the array in global memory)
         """
 
         global_memory_array = set()
@@ -316,10 +327,15 @@ class HbmTransform(transformation.Transformation):
 
     @staticmethod
     def _cleanup_incomplete_dimensions_from_split_dimensions(
-            global_memory_array, no_split_arrays, split_dimensions):
+        global_memory_array: Set[str], no_split_arrays: Set[str],
+        split_dimensions: Dict[str, List[List[Tuple[int, int,
+                                                    Tuple[nd.Map, int], int]]]]
+    ) -> Tuple[Set[str], Dict[str, List[List[Tuple[int, int, Tuple[nd.Map, int],
+                                                   int]]]]]:
         """
-        Erase dimensions from split_dimensions that cannot be achieved for all accesses
-        If there are no split dimensions left add the array to no_split_arrays
+        Erase dimensions from split_dimensions that cannot be achieved for all accesses.
+        If there are no split dimensions left add the array to no_split_arrays.
+        See also _scan_accesses_for_possible_splits, which is the method using this.
         """
 
         multibank_arrays = global_memory_array.difference(no_split_arrays)
@@ -353,9 +369,9 @@ class HbmTransform(transformation.Transformation):
         return (no_split_arrays, split_dimensions)
 
     @staticmethod
-    def _scan_accesses_for_possible_splits(sdfg: SDFG,
-                                           global_memory_array: Set[str],
-                                           no_split_arrays: Set[str]):
+    def _scan_accesses_for_possible_splits(
+        sdfg: SDFG, global_memory_array: Set[str], no_split_arrays: Set[str]
+    ) -> Dict[str, List[List[Tuple[int, int, Tuple[nd.Map, int], int]]]]:
         """
         For all accesses for a dimension say f(i) to a multibank array this searches for maps of the form i=0:n that could 
         be split into 2 nested maps of the form k=0:r, i=0:n/r such that the access could be rewritten to
@@ -363,8 +379,12 @@ class HbmTransform(transformation.Transformation):
         range of a map influencing that access and adding a second outer map.
         Works by simply modifying the maps and running propagation to see wether the expected accesses are done,
         which is inefficient, but the simplest way to go. If propagation fails for a memlet path, the array will be marked not splitable.
-        Multidimensional splits are not considered. Note that the order of elements in no_split_arrays and it's nested lists
+        Multidimensional splits are not considered. Note that the order of elements in split_dimensions and it's nested lists
         is non deterministic. 
+        :return: For each multibank array there is a list which contains lists of tuples for each access to the array.
+            The tuples contain dimension, cost (always 0 at the moment), map, upper range of map, with the semantics that
+            if the array was split along dimension one could rewrite the access by changing map. If the upper range of map
+            is an integer (not symbolic), then the division of the map has to respect this.
         """
 
         split_dimensions = {}
@@ -545,8 +565,12 @@ class HbmTransform(transformation.Transformation):
         return modifiable_map_to_dependent
 
     @staticmethod
-    def _greedy_find_splits(sdfg, global_memory_array, no_split_arrays,
-                            fixed_arrays, division_info):
+    def _greedy_find_splits(
+        sdfg: SDFG, global_memory_array: Set[str], no_split_arrays: Set[str],
+        fixed_arrays: Dict[str, Tuple[str, str]], division_info: Dict[str,
+                                                                      List[int]]
+    ) -> Tuple[Set[Tuple[nd.Map, int]], Dict[str, int], Set[str], Dict[
+            str, List[int]]]:
         """
         Find a valid selection of maps to modify, such that some arrays can be split
         Works in the order of arrays such that arrays which are 'important' to split are considered
@@ -556,6 +580,8 @@ class HbmTransform(transformation.Transformation):
         then finding all arrays that are dependent from any map, and finally finding a selection of
         maps to modify, such that all arrays that have dependent accesses can be split in some dimension.
         The finding process is greedy.
+        :return: A four tuple of (maps to change, which array is split along which dimension, which arrays are not split,
+            which values an assignment to multiple banks has to divide)
         """
 
         split_dimensions, no_split_arrays = HbmTransform._scan_accesses_for_possible_splits(
@@ -564,9 +590,11 @@ class HbmTransform(transformation.Transformation):
             sdfg)
         multibank_arrays = global_memory_array.difference(no_split_arrays)
 
-        access_plans = {}  # Reduced, restructured view of split_dimensions: array -> Tuple[array, dimension, 
-                            # frozenset of maps to modify, cost of access_plan, which value must be divided]
-        modifiable_map_to_array_with_acp = {}  # Mapping from maps to arrays that have an access_plan using them
+        access_plans = {
+        }  # Reduced, restructured view of split_dimensions: array -> Tuple[array, dimension,
+        # frozenset of maps to modify, cost of access_plan, which value must be divided]
+        modifiable_map_to_array_with_acp = {
+        }  # Mapping from maps to arrays that have an access_plan using them
 
         def map_modification_cost(dim, rate, acc_map, divide):
             cost = rate
@@ -690,9 +718,9 @@ class HbmTransform(transformation.Transformation):
                 division_info)
 
     @staticmethod
-    def _custom_gcd(should_divide: List[int]):
+    def _custom_gcd(should_divide: List[int]) -> int:
         """
-        returns the gcd of the passed list. None elements
+        :return: the gcd of the passed list. None elements
         are ignored (assumed to be divisable by everything).
         If all elements are none, this returns None.
         """
@@ -705,9 +733,11 @@ class HbmTransform(transformation.Transformation):
         return current
 
     @staticmethod
-    def _find_free_banks(sdfg, fixed_arrays, total_number_of_banks):
+    def _find_free_banks(sdfg: SDFG, fixed_arrays: Dict[str, Tuple[str, str]],
+                         total_number_of_banks: int) -> List[Tuple[int, int]]:
         """
-        Find free HBM banks
+        Finds free HBM banks. 
+        :param fixed_arrays: The bank assignmnents
         """
         free_blocks = []
         countfree = 0
@@ -729,10 +759,11 @@ class HbmTransform(transformation.Transformation):
             free_blocks.append((lastlow, total_number_of_banks))
         return free_blocks
 
-    def _generate_possible_unroll_factors(unroll_factor, global_memory_array,
-                                          no_split_arrays, division_info,
-                                          total_number_of_banks,
-                                          split_dimensions):
+    def _generate_possible_unroll_factors(
+            unroll_factor: int, global_memory_array: Set[str],
+            no_split_arrays: Set[str], division_info: Dict[str, List[int]],
+            total_number_of_banks: int,
+            split_dimensions: Dict[str, int]) -> Set[int]:
         """
         Find "possible" unroll factors, i.e a size along which all split arrays are divided
         TODO: This could be improved by considering the total acceses to an array and deciding
@@ -774,14 +805,20 @@ class HbmTransform(transformation.Transformation):
             return set([1])
 
     @staticmethod
-    def _try_place_arrays(sdfg, fixed_arrays, unroll_factor,
-                          global_memory_array, no_split_arrays, division_info,
-                          total_number_of_banks, split_dimensions):
+    def _try_place_arrays(
+            sdfg: SDFG, fixed_arrays: Dict[str, Tuple[str,
+                                                      str]], unroll_factor: int,
+            global_memory_array: Set[str], no_split_arrays: Set[str],
+            division_info: Dict[str, List[int]], total_number_of_banks: int,
+            split_dimensions: Dict[str,
+                                   int]) -> Tuple[int, List[int], List[int]]:
         """
         Given information about which arrays can be split in which dimension (or cannot be split)
         generate a valid assignment of arrays to HBM. Never uses DDR by itself, but if set already
         it is beeing respected.
         The assignment also defines the unroll factor, since this decides how much we split.
+        :return: A three tuple of (unroll factor, possible starts for single arrays i.e. arrays which are not split,
+            possible starts for multi arrays i.e. arrays which are placed on unroll_factor banks)
         """
 
         free_blocks = HbmTransform._find_free_banks(sdfg, fixed_arrays,
@@ -842,6 +879,10 @@ class HbmTransform(transformation.Transformation):
 
     @staticmethod
     def _try_find_suitable_settings(sdfg: SDFG):
+        """
+        :return: parameters for transform_sdfg_for_hbm or None, if 
+            None could be found.
+        """
         total_number_of_banks = 32
 
         # Scan the arrays and collect initial inputs

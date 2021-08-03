@@ -257,6 +257,10 @@ def fpga_ptr(name: str,
 
 
 def can_run_state_on_fpga(state: SDFGState):
+    """
+    Checks if state can be executed on FPGA. Used by FPGATransformState 
+    and HbmTransform.
+    """
     for node, graph in state.all_nodes_recursive():
         # Consume scopes are currently unsupported
         if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
