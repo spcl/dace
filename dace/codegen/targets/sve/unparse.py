@@ -159,11 +159,14 @@ class SVEUnparser(cppunparse.CPPUnparser):
                 if expect.type in [np.bool, np.bool_, bool]:
                     # Special case for duplicating boolean into predicate
                     suffix = f'b{self.pred_bits}'
+                    #self.write(f'svptrue_{suffix}()')
+                    self.dispatch_expect(tree, expect.base_type)
+                    self.write(f' ? svptrue_{suffix}() : svpfalse_b()')
                 else:
-                    suffix = util.TYPE_TO_SVE_SUFFIX[expect.type]
-                self.write(f'svdup_{suffix}(')
-                self.dispatch_expect(tree, expect.base_type)
-                self.write(')')
+                    self.write(f'svdup_{util.TYPE_TO_SVE_SUFFIX[expect.type]}(')
+                    self.dispatch_expect(tree, expect.base_type)
+                    self.write(')')
+
             elif isinstance(expect, dtypes.pointer):
                 # Expecting a pointer
                 raise util.NotSupportedError(

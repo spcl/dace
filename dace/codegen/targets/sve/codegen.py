@@ -62,6 +62,10 @@ class SVECodeGen(TargetCodeGenerator):
             dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal,
             dtypes.StorageType.Register
         ]
+
+        # This dispatcher is required to catch the allocation of Code->Code registers
+        # because we want SVE registers instead of dace::vec<>'s.
+        # In any other case it will call the default codegen.
         self.dispatcher.register_array_dispatcher(cpu_storage, self)
 
         self.cpu_codegen: dace.codegen.targets.CPUCodeGen = self.dispatcher.get_generic_node_dispatcher(
@@ -358,6 +362,13 @@ class SVECodeGen(TargetCodeGenerator):
             raise util.NotSupportedError(
                 'Only writeback to Tasklets and AccessNodes is supported')
 
+    def declare_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
+                      node: nodes.Node, nodedesc: data.Data,
+                      global_stream: CodeIOStream,
+                      declaration_stream: CodeIOStream) -> None:
+        self.cpu_codegen.declare_array(sdfg, dfg, state_id, node, nodedesc,
+                                       global_stream, declaration_stream)
+
     def allocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
                        node: nodes.Node, nodedesc: data.Data,
                        global_stream: CodeIOStream,
@@ -366,9 +377,9 @@ class SVECodeGen(TargetCodeGenerator):
         if util.get_sve_scope(sdfg, dfg, node) is not None and isinstance(
                 nodedesc, data.Scalar) and isinstance(nodedesc.dtype,
                                                       dtypes.vector):
-            # Special allocation if vector Scalar in SVE scope (vector register)
+            # Special allocation if vector Code->Code register in SVE scope
+            # We prevent dace::vec<>'s and allocate SVE registers instead
             if self.dispatcher.defined_vars.has(node.data):
-                # Special case because Scalars might be vectorized
                 sve_type = util.TYPE_TO_SVE[nodedesc.dtype.vtype]
                 self.dispatcher.defined_vars.add(node.data, DefinedType.Scalar,
                                                  sve_type)

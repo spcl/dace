@@ -38,6 +38,10 @@ class InferenceNode():
         return self.inferred != InferenceNode.Unknown
 
     def infer_as(self, inf_type: int):
+        """
+        Infers the internal node either as `Scalar` or `Vector`.
+        Re-inferring it to a different type will raise a `VectorInferenceException`.
+        """
         if inf_type != InferenceNode.Scalar and inf_type != InferenceNode.Vector:
             raise ValueError('Can only make node into Vector or Scalar')
 
@@ -147,7 +151,6 @@ class VectorInferenceGraph(DiGraph):
             return inf.inferred
 
     def _forward(self, node: InferenceNode):
-        # Only vector constraints are only propagated forwards
         if node.inferred == InferenceNode.Unknown:
             # Nothing to propagate
             return
@@ -162,7 +165,6 @@ class VectorInferenceGraph(DiGraph):
             self._forward(dst)
 
     def _backward(self, node: InferenceNode):
-        # Only scalar constraints are only propagated backwards
         if node.inferred == InferenceNode.Unknown:
             # Nothing to propagate
             return
