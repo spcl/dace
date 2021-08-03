@@ -178,10 +178,12 @@ def test_axpy_fpga_stream():
     configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
     return run_test(configs, "fpga_stream")
 
+
 @fpga_test()
 def _test_axpy_fpga_hbm():
     configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
     return run_test(configs, "fpga_hbm")
+
 
 if __name__ == "__main__":
     cmdParser = argparse.ArgumentParser(allow_abbrev=False)

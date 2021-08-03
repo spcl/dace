@@ -255,6 +255,7 @@ def fpga_ptr(name: str,
                 name = f"{name}_{interface_id}"
     return name
 
+
 def can_run_state_on_fpga(state: SDFGState):
     for node, graph in state.all_nodes_recursive():
         # Consume scopes are currently unsupported
@@ -262,13 +263,12 @@ def can_run_state_on_fpga(state: SDFGState):
             return False
 
         # Streams have strict conditions due to code generator limitations
-        if (isinstance(node, nodes.AccessNode) and isinstance(
-                graph.parent.arrays[node.data], dt.Stream)):
+        if (isinstance(node, nodes.AccessNode)
+                and isinstance(graph.parent.arrays[node.data], dt.Stream)):
             nodedesc = graph.parent.arrays[node.data]
             sdict = graph.scope_dict()
             if nodedesc.storage in [
-                    dtypes.StorageType.CPU_Heap,
-                    dtypes.StorageType.CPU_Pinned,
+                    dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned,
                     dtypes.StorageType.CPU_ThreadLocal
             ]:
                 return False
@@ -287,6 +287,7 @@ def can_run_state_on_fpga(state: SDFGState):
                 return False
 
     return True
+
 
 class FPGACodeGen(TargetCodeGenerator):
     # Set by deriving class
