@@ -5,7 +5,7 @@ import argparse
 import dace
 import math
 import numpy as np
-import scipy
+import scipy.sparse
 
 W = dace.symbol('W')
 H = dace.symbol('H')
