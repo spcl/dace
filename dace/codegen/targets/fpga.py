@@ -84,7 +84,7 @@ def is_hbm_array(array: dt.Data):
 
 def is_hbm_array_with_distributed_index(array: dt.Data):
     """
-    :return: True if this array is placed on HBM and has an extra first 
+    :return: True if this array is placed on HBM and has an extra first
     dimension equal to the number of banks is placed on. For HBM arrays
     spanning across multiple banks this is always true.
     """
@@ -142,7 +142,7 @@ def get_multibank_ranges_from_subset(subset: Union[subsets.Subset, str],
     """
     Returns the upper and lower end of the accessed HBM-range, evaluated using the
     constants on the SDFG.
-    :returns: (low, high) where low = the lowest accessed bank and high the 
+    :returns: (low, high) where low = the lowest accessed bank and high the
         highest accessed bank + 1.
     """
     if isinstance(subset, str):
@@ -163,9 +163,9 @@ def get_multibank_ranges_from_subset(subset: Union[subsets.Subset, str],
 def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
     """
     :param array: an array on FPGA global memory
-    :return: None if an array is given which does not have a location['memorytype'] value. 
+    :return: None if an array is given which does not have a location['memorytype'] value.
         Otherwise it will return a tuple (bank_type, bank_assignment), where bank_type
-        is one of 'DDR', 'HBM' and bank_assignment a string that describes which banks are 
+        is one of 'DDR', 'HBM' and bank_assignment a string that describes which banks are
         used.
     """
     if "memorytype" in array.location:
@@ -200,7 +200,7 @@ def fpga_ptr(name: str,
     that may apply for that data field.
     :param name: Data name.
     :param desc: Data descriptor.
-    :param subset_info_hbm: Any additional information about the accessed subset. 
+    :param subset_info_hbm: Any additional information about the accessed subset.
     :param ancestor: The ancestor level where the variable should be searched for if
         is_array_interface is True when dispatcher is not None
     :param is_array_interface: Data is pointing to an interface in FPGA-Kernel compilation
@@ -1397,10 +1397,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
 
             copy_shape = memlet.subset.bounding_box_size()
-            is_src_using_hbm = src_is_subset and is_hbm_array_with_distributed_index(
-                src_nodedesc)
-            is_dst_using_hbm = not src_is_subset and is_hbm_array_with_distributed_index(
-                dst_nodedesc)
+            is_src_using_hbm = (
+                src_is_subset
+                and is_hbm_array_with_distributed_index(src_nodedesc))
+            is_dst_using_hbm = (
+                not src_is_subset
+                and is_hbm_array_with_distributed_index(dst_nodedesc))
             if is_src_using_hbm or is_dst_using_hbm:
                 copy_shape = copy_shape[1:]
 
@@ -1436,17 +1438,31 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 host_dtype = sdfg.data(dst_node.data).dtype
             cast = False
             if not device_to_device and host_dtype != device_dtype:
+                host_dtype_base = host_dtype
+                while True:
+                    updated = host_dtype_base.base_type
+                    if updated != host_dtype_base:
+                        host_dtype_base = updated
+                        continue
+                    break
+                device_dtype_base = device_dtype
+                while True:
+                    updated = device_dtype_base.base_type
+                    if updated != device_dtype_base:
+                        device_dtype_base = updated
+                        continue
+                    break
                 if ((isinstance(host_dtype, dace.vector)
                      or isinstance(device_dtype, dace.vector))
-                        and host_dtype.base_type == device_dtype.base_type):
+                        and host_dtype_base == device_dtype_base):
                     if ((host_to_device and memlet.data == src_node.data) or
                         (device_to_host and memlet.data == dst_node.data)):
-                        if host_dtype.veclen > device_dtype.veclen:
-                            copy_shape[-1] *= (host_dtype.veclen //
-                                               device_dtype.veclen)
+                        if host_dtype.bytes > device_dtype.bytes:
+                            copy_shape[-1] *= (host_dtype.bytes //
+                                               device_dtype.bytes)
                         else:
-                            copy_shape[-1] //= (device_dtype.veclen //
-                                                host_dtype.veclen)
+                            copy_shape[-1] //= (device_dtype.bytes //
+                                                host_dtype.bytes)
                     cast = True
                 else:
                     raise TypeError(

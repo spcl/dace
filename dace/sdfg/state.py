@@ -34,6 +34,22 @@ def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
     return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
 
 
+def _make_iterators(ndrange):
+    # Input can either be a dictionary or a list of pairs
+    if isinstance(ndrange, list):
+        params = [k for k, v in ndrange]
+        ndrange = {k: v for k, v in ndrange}
+    else:
+        params = list(ndrange.keys())
+
+    if ndrange and isinstance(next(iter(ndrange.values())), tuple):
+        map_range = sbs.Range([ndrange[p] for p in params])
+    else:
+        map_range = SubsetProperty.from_string(", ".join(
+            [ndrange[p] for p in params]))
+    return params, map_range
+
+
 class StateGraphView(object):
     """
     Read-only view interface of an SDFG state, containing methods for memlet
@@ -1162,21 +1178,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
 
         return s
 
-    def _make_iterators(self, ndrange):
-        # Input can either be a dictionary or a list of pairs
-        if isinstance(ndrange, list):
-            params = [k for k, v in ndrange]
-            ndrange = {k: v for k, v in ndrange}
-        else:
-            params = list(ndrange.keys())
-
-        if ndrange and isinstance(next(iter(ndrange.values())), tuple):
-            map_range = sbs.Range([ndrange[p] for p in params])
-        else:
-            map_range = SubsetProperty.from_string(", ".join(
-                [ndrange[p] for p in params]))
-        return params, map_range
-
     def add_map(
         self,
         name,
@@ -1196,7 +1197,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         """
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
         map = nd.Map(name,
-                     *self._make_iterators(ndrange),
+                     *_make_iterators(ndrange),
                      schedule=schedule,
                      unroll=unroll,
                      debuginfo=debuginfo)
@@ -1311,7 +1312,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             debuginfo=debuginfo,
         )
         map = nd.Map(map_name,
-                     *self._make_iterators(map_ranges),
+                     *_make_iterators(map_ranges),
                      schedule=schedule,
                      unroll=unroll_map,
                      debuginfo=debuginfo)
@@ -1480,7 +1481,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         """
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
         pipeline = nd.Pipeline(name,
-                               *self._make_iterators(ndrange),
+                               *_make_iterators(ndrange),
                                init_size=init_size,
                                init_overlap=init_overlap,
                                drain_size=drain_size,
