@@ -84,7 +84,7 @@ def is_hbm_array(array: dt.Data):
 
 def is_hbm_array_with_distributed_index(array: dt.Data):
     """
-    :return: True if this array is placed on HBM and has a 'fake' first 
+    :return: True if this array is placed on HBM and has an extra first 
     dimension equal to the number of banks is placed on. For HBM arrays
     spanning across multiple banks this is always true.
     """
