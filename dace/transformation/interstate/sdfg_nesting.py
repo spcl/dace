@@ -327,7 +327,12 @@ class InlineSDFG(transformation.Transformation):
             if isinstance(node, nodes.AccessNode):
                 datadesc = nsdfg.arrays[node.data]
                 if node.data not in transients and datadesc.transient:
-                    name = sdfg.add_datadesc('%s_%s' % (nsdfg.label, node.data),
+                    new_name = node.data
+                    if (new_name in sdfg.arrays or new_name in sdfg.symbols
+                            or new_name in sdfg.constants):
+                        new_name = f'{nsdfg.label}_{node.data}'
+
+                    name = sdfg.add_datadesc(new_name,
                                              datadesc,
                                              find_new_name=True)
                     transients[node.data] = name
@@ -339,8 +344,12 @@ class InlineSDFG(transformation.Transformation):
                 if edge.data.data is not None:
                     datadesc = nsdfg.arrays[edge.data.data]
                     if edge.data.data not in transients and datadesc.transient:
-                        name = sdfg.add_datadesc('%s_%s' %
-                                                 (nsdfg.label, edge.data.data),
+                        new_name = edge.data.data
+                        if (new_name in sdfg.arrays or new_name in sdfg.symbols
+                                or new_name in sdfg.constants):
+                            new_name = f'{nsdfg.label}_{edge.data.data}'
+
+                        name = sdfg.add_datadesc(new_name,
                                                  datadesc,
                                                  find_new_name=True)
                         transients[edge.data.data] = name
