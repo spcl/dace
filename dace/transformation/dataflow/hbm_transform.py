@@ -129,7 +129,7 @@ def _update_memlet_hbm(state: SDFGState,
         if isinstance(other_node, nd.AccessNode):
             fwtasklet = state.add_tasklet("fwtasklet", set(["_in"]),
                                           set(["_out"]), "_out = _in")
-            state.remove_edge_and_connectors(inner_edge)
+            state.remove_edge(inner_edge)
             target_other_subset = mem.other_subset
             mem.other_subset = None
             if is_write:
@@ -808,7 +808,8 @@ class HbmTransform(transformation.Transformation):
                 if array in fixed_arrays: 
                     update_array_banks[array] = (*fixed_arrays[array], None)
                 else:
-                    update_array_banks[array] = ('HBM', str(single_block_starts[consumed_single]), None)
+                    low = single_block_starts[consumed_single]
+                    update_array_banks[array] = ('HBM', f"{low}:{low+1}", None)
                     consumed_single += 1
             else:
                 dim = split_dimensions[array]
@@ -901,8 +902,6 @@ class HbmTransform(transformation.Transformation):
             sdfg.arrays[array].location = location
         if not ok:
             return False
-
-
 
         settings = HbmTransform._try_find_suitable_settings(sdfg)
         if settings is None:

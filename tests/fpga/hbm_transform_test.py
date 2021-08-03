@@ -5,9 +5,6 @@ from typing import List, Tuple, Union
 from dace.sdfg import SDFG, nodes
 import dace
 from dace.transformation.dataflow import HbmTransform
-from dace.fpga_testing import import_sample
-from pathlib import Path
-from dace.transformation.interstate import InlineSDFG
 
 def set_assignment(sdfg: SDFG, assignments: List[Tuple[str, str, str]]):
     for array, memorytype, bank in assignments:
@@ -17,17 +14,9 @@ def set_assignment(sdfg: SDFG, assignments: List[Tuple[str, str, str]]):
 
 def check_assignment(sdfg: SDFG, assignments: List[Union[Tuple[str, int], Tuple[str, str, str]]]):
     for val in assignments:
-        if len(val) == 3:
-            array, memorytype, bank = val
-            assert sdfg.arrays[array].location["memorytype"] == memorytype
-            assert sdfg.arrays[array].location["bank"] == bank
-        else:
-            array, banks = val
-            if sdfg.arrays[array].location["memorytype"] == "HBM":
-                low, high = fpga.get_multibank_ranges_from_subset(sdfg.arrays[array].location["bank"], sdfg)
-            else:
-                low, high = (0, 1)
-            assert banks == high - low
+        array, memorytype, bank = val
+        assert sdfg.arrays[array].location["memorytype"] == memorytype
+        assert sdfg.arrays[array].location["bank"] == bank
             
 def _exec_test(sdfgsource, assign, checkassign):
     sdfg = sdfgsource()
@@ -35,7 +24,7 @@ def _exec_test(sdfgsource, assign, checkassign):
     #sdfg.apply_transformations(HbmTransform, validate=False)
     xform = HbmTransform(sdfg.sdfg_id, -1, {}, -1)
     xform.apply(sdfg)
-    sdfg.view()
+    #sdfg.view()
     check_assignment(sdfg, checkassign)
     sdfg.validate()
     assert not HbmTransform.can_be_applied(sdfg, {}, -1, sdfg, False)
@@ -102,19 +91,7 @@ def create_multiple_range_map_sdfg():
     sdfg.apply_strict_transformations()
     return sdfg
 
-def create_gemv_sdfg():
-    # Example of an SDFG that gets splitted arrays, but is still semantically wrong (but valid)
-    gemv = import_sample(Path("fpga") / "gemv_fpga.py")
-    gemv.N.set(50)
-    sdfg = SDFG("gemv_sdfg")
-    load_state = gemv.make_load_state(sdfg)
-    compute_state = gemv.make_compute_state(sdfg)
-    store_state = gemv.make_store_state(sdfg)
-    sdfg.add_edge(load_state, compute_state, dace.sdfg.InterstateEdge())
-    sdfg.add_edge(compute_state, store_state, dace.sdfg.InterstateEdge())
-    return sdfg
-
-def create_gemv_blas_sdfg():
+def create_gemv_blas_sdfg(tile_size_y=None, tile_size_x=None):
     N = dace.symbol("N")
     M = dace.symbol("M")
     @dace.program
@@ -126,49 +103,54 @@ def create_gemv_blas_sdfg():
     libnode.expand(sdfg, sdfg.nodes()[0])
     libnode = list(filter(lambda x: isinstance(x, nodes.LibraryNode), sdfg.nodes()[0].nodes()))[0]
     libnode.implementation = "FPGA_TilesByColumn"
-    libnode.expand(sdfg, sdfg.nodes()[0])
+    libnode.expand(sdfg, sdfg.nodes()[0], tile_size_y=tile_size_y, tile_size_x=tile_size_x)
     sdfg.apply_strict_transformations()
     #sdfg.arrays["x"].location["memorytype"] = "HBM"
     #sdfg.arrays["x"].location["bank"] = "0"
     return sdfg
 
 def test_axpy_direct():
-    _exec_test(create_axpy_sdfg, [], [("x", 16), ("y", 16)])
+    _exec_test(create_axpy_sdfg, [], [("x", "HBM", "0:16"), ("y", "HBM", "16:32")])
 
 def test_assigned_axpy_unroll_3():
     _exec_test(create_axpy_sdfg, [("x", "HBM", "3:6")], [("x", "HBM", "3:6"), ("y", "HBM", "0:3")])
     
 def test_assigned_axpy_unroll_1():
-    _exec_test(create_axpy_sdfg, [("x", "DDR", "0")], [("x", "DDR", "0"), ("y", "HBM", "0")])
+    _exec_test(create_axpy_sdfg, [("x", "DDR", "0")], [("x", "DDR", "0"), ("y", "HBM", "0:1")])
 
 def test_fixed_array_size_axpy_17():
-    _exec_test(lambda: create_axpy_sdfg(17), [], [("x", 1), ("y", 1)])
+    _exec_test(lambda: create_axpy_sdfg(17), [], [("x", "HBM", "0:1"), ("y", "HBM", "1:2")])
 
 def test_fixed_map_range_axpy_17():
-    _exec_test(lambda: create_axpy_sdfg(map_range=17), [], [("x", 1), ("y", 1)])
+    _exec_test(lambda: create_axpy_sdfg(map_range=17), [], [("x", "HBM", "0:1"), ("y", "HBM", "1:2")])
 
 def test_fixed_axpy_17():
-    _exec_test(lambda: create_axpy_sdfg(17, 17), [], [("x", 1), ("y", 1)])
+    _exec_test(lambda: create_axpy_sdfg(17, 17), [], [("x", "HBM", "0:1"), ("y", "HBM", "1:2")])
 
 def test_fixed_axpy_21():
-    _exec_test(lambda: create_axpy_sdfg(21, 21), [], [("x", 7), ("y", 7)])
+    _exec_test(lambda: create_axpy_sdfg(21, 21), [], [("x", "HBM", "0:7"), ("y", "HBM", "7:14")])
 
 def test_nd_split():
-    _exec_test(create_nd_sdfg, [], [("x", 10), ("y", 10), ("z", 10)])
+    _exec_test(create_nd_sdfg, [], [("x", "HBM", "0:10"), ("y", "HBM", "10:20"), ("z", "HBM", "20:30")])
 
 def test_no_split():
-    _exec_test(create_not_splitable_dependence_sdfg, [], [("x", 1), ("y", 1), ("z", 1)])
+    _exec_test(create_not_splitable_dependence_sdfg, [], [("x", "HBM", "0:1"), ("y", "HBM", "1:2"), ("z", "HBM", "2:3")])
 
 def test_multiple_range_map():
     # SDFG defines a third non splitable temporary array which is placed on 17, thats why 16 cannot be taken
-    _exec_test(create_multiple_range_map_sdfg, [], [("x", 8), ("y", 8)])
+    _exec_test(create_multiple_range_map_sdfg, [], [("x", "HBM", "0:8"), ("y", "HBM", "8:16")])
 
-def test_gemv():
-    _exec_test(create_gemv_sdfg, [], [])
+def test_gemv_blas_nudging():
+    # Tests the ability to influence the found splits via asserting arrays
+    # that must be splitable. Note that this graph is wrong because it splits
+    # along the inner map x which has to be a pipeline/sequential. (The map reads
+    # from and writes to y_local). 
+    _exec_test(create_gemv_blas_sdfg, [("x", "HBM", "0:2")], [("x", "HBM", "0:2"), ("A", "HBM", "2:4"), ("y", "HBM", "4:5")])
 
 def test_gemv_blas():
-    _exec_test(create_gemv_blas_sdfg, [], [])
-"""
+    # Because split happens using the outermost map, there needs to be a positive tile size to actually split
+    _exec_test(lambda: create_gemv_blas_sdfg(32), [], [("x", "HBM", "30:31"), ("y", "HBM", "15:30"), ("A", "HBM", "0:15")])
+
 test_axpy_direct()
 test_assigned_axpy_unroll_3()
 test_assigned_axpy_unroll_1()
@@ -179,6 +161,5 @@ test_fixed_axpy_21()
 test_nd_split()
 test_no_split()
 test_multiple_range_map()
-"""
-#test_gemv()
+test_gemv_blas_nudging()
 test_gemv_blas()
