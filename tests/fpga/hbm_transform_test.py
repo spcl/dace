@@ -5,6 +5,9 @@ from typing import List, Tuple, Union
 from dace.sdfg import SDFG
 import dace
 from dace.transformation.dataflow import HbmTransform
+from dace.fpga_testing import import_sample
+from pathlib import Path
+from dace.transformation.interstate import InlineSDFG
 
 def set_assignment(sdfg: SDFG, assignments: List[Tuple[str, str, str]]):
     for array, memorytype, bank in assignments:
@@ -32,7 +35,7 @@ def _exec_test(sdfgsource, assign, checkassign):
     sdfg.apply_transformations(HbmTransform, validate=False)
     #xform = HbmTransform(sdfg.sdfg_id, -1, {}, -1)
     #xform.apply(sdfg)
-    #sdfg.view()
+    sdfg.view()
     check_assignment(sdfg, checkassign)
     sdfg.validate()
     assert not HbmTransform.can_be_applied(sdfg, {}, -1, sdfg, False)
@@ -99,6 +102,17 @@ def create_multiple_range_map_sdfg():
     sdfg.apply_strict_transformations()
     return sdfg
 
+def create_gemv_sdfg():
+    gemv = import_sample(Path("fpga") / "gemv_fpga.py")
+    gemv.N.set(50)
+    sdfg = SDFG("gemv_sdfg")
+    load_state = gemv.make_load_state(sdfg)
+    compute_state = gemv.make_compute_state(sdfg)
+    store_state = gemv.make_store_state(sdfg)
+    sdfg.add_edge(load_state, compute_state, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(compute_state, store_state, dace.sdfg.InterstateEdge())
+    return sdfg
+
 def test_axpy_direct():
     _exec_test(create_axpy_sdfg, [], [("x", 16), ("y", 16)])
 
@@ -130,6 +144,10 @@ def test_multiple_range_map():
     # SDFG defines a third non splitable temporary array which is placed on 17, thats why 16 cannot be taken
     _exec_test(create_multiple_range_map_sdfg, [], [("x", 8), ("y", 8)])
 
+def test_gemv():
+    _exec_test(create_gemv_sdfg, [], [])
+
+"""
 test_axpy_direct()
 test_assigned_axpy_unroll_3()
 test_assigned_axpy_unroll_1()
@@ -140,3 +158,5 @@ test_fixed_axpy_21()
 test_nd_split()
 test_no_split()
 test_multiple_range_map()
+"""
+test_gemv()

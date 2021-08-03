@@ -17,6 +17,9 @@ def modify_bank_assignment(array_name: str, sdfg: SDFG, new_memory: str, new_ban
         """
         Updates bank assignments for the array on the SDFG. Will update 
         the shape of the array as well depending on the previous assignment.
+        :param split_array_info: A list with the same length as the old dimension 
+        of the array. When transfering to HBM the size in each dimension is divided by
+        the corresponding int, when moving to DDR it is multiplied. 
         """
         desc = sdfg.arrays[array_name]
         old_memory = None
@@ -27,17 +30,21 @@ def modify_bank_assignment(array_name: str, sdfg: SDFG, new_memory: str, new_ban
             low, high = fpga.get_multibank_ranges_from_subset(new_bank, sdfg)
         else:
             low, high = int(new_bank), int(new_bank) + 1
-        if split_array_info is None:
-            split_array_info = [1] * len(desc.shape)
-            split_array_info[0] = high - low
 
         if (old_memory is None or old_memory == "DDR") and new_memory == "HBM":
             desc = sdfg.arrays[array_name]
-            new_shape = [x // y for x, y in zip(desc.shape, split_array_info)]
-            desc.set_shape((high - low, *new_shape))
+            if split_array_info is None:
+                new_shape = desc.shape
+            else:
+                new_shape = [x // y for x, y in zip(desc.shape, split_array_info)]
+            if high - low > 1:
+                desc.set_shape((high - low, *new_shape))
+            else:
+                desc.set_shape(new_shape)
         elif old_memory == "HBM" and (new_memory == "DDR"
                                       or new_memory is None):
             desc = sdfg.arrays[array_name]
+            #TODO: Handle single bank
             new_shape = [x * y for x, y in zip(list(desc.shape)[1:], split_array_info)]
             desc.set_shape(new_shape)
         elif old_memory == "HBM" and new_memory == "HBM":
@@ -98,8 +105,8 @@ def _update_memlet_hbm(state: SDFGState,
         mem: memlet.Memlet = inner_edge.data
         # If the memlet already contains the distributed subset, ignore it
         # That's helpful because of inconsistencies when nesting and because
-        # one can 'hint' the correct bank assignment when using HbmTransform
-        if len(mem.subset) == len(state.parent.arrays[mem.data].shape):
+        # one can 'hint' the correct bank assignment when using this function
+        if len(mem.subset) == len(state.parent.arrays[this_node.data].shape):
             return
         new_subset = subsets.Range(
             [[inner_subset_index, inner_subset_index, 1]] +
@@ -135,7 +142,7 @@ def _update_memlet_hbm(state: SDFGState,
 
         inner_edge.data.subset = new_subset
 
-def _update_new_hbm_accesses(sdfg: SDFG, update_access: Dict[str, List[int]], 
+def _update_new_hbm_accesses(sdfg: SDFG, update_access: set(),
     inner_subset_index: symbolic.symbol, recursive=True):
     for state in sdfg.states():
         for node in state.nodes():
@@ -164,7 +171,7 @@ def transform_sdfg_for_hbm(sdfg: SDFG, outer_map_range: Tuple[str, int],
     for array_name, infos in update_array_banks.items():
         memory_type, bank, divide_shape = infos
         modify_bank_assignment(array_name, sdfg, memory_type, bank, divide_shape)
-        if memory_type == "HBM":
+        if memory_type == "HBM" and divide_shape is not None:
             update_access.add(array_name)
 
     for map_info, division in update_map_range.items():
