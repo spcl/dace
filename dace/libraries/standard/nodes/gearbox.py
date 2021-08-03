@@ -1,15 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Provides a library node that converts from a stream of type
-vector(vector(dtype, w0)) to a stream of type vector(dtype, w1), or vice versa.
-This is useful for achieving efficient memory reads on Xilinx FPGAs, where
-modules accessing memories should always read or write 512-bit vectors, which
-then potentially need to be narrowed down to the vector width of the
-computational kernel.
-
-The node expects to have a single input and a single output, where one end is
-of type vector(vector(dtype, w0)), and the other is of type vector(dtype, w1).
-"""
 import collections
 import copy
 import dace
@@ -33,10 +22,10 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
             vtype = in_desc.dtype
 
         sdfg = dace.SDFG("gearbox")
-        in_desc_inner = copy.copy(in_desc)
+        in_desc_inner = copy.deepcopy(in_desc)
         in_desc_inner.transient = False
         sdfg.add_datadesc(in_edge.dst_conn, in_desc_inner)
-        out_desc_inner = copy.copy(out_desc)
+        out_desc_inner = copy.deepcopy(out_desc)
         out_desc_inner.transient = False
         sdfg.add_datadesc(out_edge.src_conn, out_desc_inner)
         sdfg.add_array("gearbox_buffer", (1, ),
@@ -100,6 +89,18 @@ buffer_out = wide""")
 
 @dace.library.node
 class Gearbox(dace.sdfg.nodes.LibraryNode):
+    """
+    Provides a library node that converts from a stream of type
+    vector(vector(dtype, w0)) to a stream of type vector(dtype, w1), or vice
+    versa. This is useful for achieving efficient memory reads on Xilinx FPGAs,
+    where modules accessing memories should always read or write 512-bit
+    vectors, which then potentially need to be narrowed down to the vector width
+    of the computational kernel.
+
+    The node expects to have a single input and a single output, where one end
+    is of type vector(vector(dtype, w0)), and the other is of type
+    vector(dtype, w1).
+    """
 
     implementations = {
         "pure": ExpandGearbox,
