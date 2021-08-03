@@ -128,6 +128,11 @@ def exec_test(dim, size1D, banks, test_name, unroll_map_inside=False):
 
 
 @xilinx_test()
+def test_vadd_1b1d():
+    return exec_test(1, 50, 1, "vadd_1b1d")
+
+
+@xilinx_test()
 def test_vadd_2b1d():
     return exec_test(1, 50, 2, "vadd_2b1d")
 
@@ -148,6 +153,7 @@ def test_vadd_8b1d():
 
 
 if __name__ == '__main__':
+    test_vadd_1b1d(None)
     test_vadd_2b1d(None)
     test_vadd_2b2d(None)
     test_vadd_2b3d(None)
