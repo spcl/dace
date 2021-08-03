@@ -82,6 +82,20 @@ def is_hbm_array(array: dt.Data):
         return False
 
 
+def is_hbm_array_with_distributed_index(array: dt.Data):
+    """
+    :return: True if this array is placed on HBM and has an extra first
+    dimension equal to the number of banks is placed on. For HBM arrays
+    spanning across multiple banks this is always true.
+    """
+    if is_hbm_array(array):
+        res = parse_location_bank(array)
+        low, high = get_multibank_ranges_from_subset(res[1], None)
+        return high - low > 1 or str(array.shape[0]) == "1"
+    else:
+        return False
+
+
 def is_fpga_array(array: dt.Data):
     """
     :return: True if this array is placed on FPGA memory
@@ -193,7 +207,7 @@ def fpga_ptr(name: str,
     :param interface_id: An optional interface id that will be added to the name (only for array interfaces)
     :return: C-compatible name that can be used to access the data.
     """
-    if (desc is not None and is_hbm_array(desc)):
+    if (desc is not None and is_hbm_array_with_distributed_index(desc)):
         if (subset_info_hbm == None):
             raise ValueError(
                 "Cannot generate name for HBM bank without subset info")
@@ -1383,8 +1397,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
 
             copy_shape = memlet.subset.bounding_box_size()
-            is_src_using_hbm = src_is_subset and is_hbm_array(src_nodedesc)
-            is_dst_using_hbm = not src_is_subset and is_hbm_array(dst_nodedesc)
+            is_src_using_hbm = (
+                src_is_subset
+                and is_hbm_array_with_distributed_index(src_nodedesc))
+            is_dst_using_hbm = (
+                not src_is_subset
+                and is_hbm_array_with_distributed_index(dst_nodedesc))
             if is_src_using_hbm or is_dst_using_hbm:
                 copy_shape = copy_shape[1:]
 
@@ -1780,8 +1798,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 and isinstance(dst_node, dace.sdfg.nodes.AccessNode)):
             src_array = src_node.desc(sdfg)
             dst_array = dst_node.desc(sdfg)
-            src_is_hbm = is_hbm_array(src_array)
-            dst_is_hbm = is_hbm_array(dst_array)
+            src_is_hbm = is_hbm_array_with_distributed_index(src_array)
+            dst_is_hbm = is_hbm_array_with_distributed_index(dst_array)
             if src_is_hbm or dst_is_hbm:
                 modedge = copy.deepcopy(edge)
                 mem: memlet.Memlet = modedge.data
@@ -2300,7 +2318,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)
                     and self._dispatcher.defined_vars.has(edge.src_conn)):
-                if is_hbm_array(datadesc):
+                if is_hbm_array_with_distributed_index(datadesc):
                     accessed_subset, _ = get_multibank_ranges_from_subset(
                         edge.data.dst_subset or edge.data.subset, sdfg)
                 else:
