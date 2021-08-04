@@ -13,9 +13,8 @@ from dace.sdfg.nodes import Node
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
-from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
-from string import ascii_uppercase
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 
 def node_path_graph(*args):
@@ -1093,3 +1092,29 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
     state = graph if isinstance(graph, SDFGState) else graph._graph
     return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(
         state.node_id(node))
+
+
+def all_innermost_edges(state: SDFGState, of: Union[nd.AccessNode,
+                                                    gr.MultiConnectorEdge]):
+    """
+    generator that returns all the innermost edges.
+    :param of: If of is an AccessNode all the innermost edges of all attached edges are returned.
+        If of is an edge the innermost edges of that memlet path is returned.
+    """
+    def get_innermost_edges(tree):
+        res = []
+        if len(tree.children) == 0:
+            return [tree.edge]
+        for child in tree.children:
+            res.extend(get_innermost_edges(child))
+        return res
+
+    if isinstance(of, nd.AccessNode):
+        src = lambda: state.all_edges(of)
+    else:
+        src = lambda: [of]
+    for edge in src():
+        tree = state.memlet_tree(edge)
+        res = get_innermost_edges(tree)
+        for r in res:
+            yield r
