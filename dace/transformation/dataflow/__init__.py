@@ -45,6 +45,7 @@ from .gpu_transform import GPUTransformMap
 from .gpu_transform_local_storage import GPUTransformLocalStorage
 from .mpi import MPITransformMap
 from .warp_tiling import WarpTiling
+from .hbm_bank_split import HbmBankSplit
 
 # Algorithmic
 from .matrix_product_transpose import MatrixProductTranspose
