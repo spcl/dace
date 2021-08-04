@@ -106,9 +106,11 @@ def _update_memlet_hbm(state: SDFGState, inner_edge: graph.MultiConnectorEdge,
         Add the subset_index to the memlet path defined by convertible_node. If the end/start of
         the path is also an AccessNode, it will insert a tasklet before the access to 
         avoid validation failures due to dimensionality mismatch.
-        :param convertible_node: An AccessNode with exactly one attached memlet path
+        :param inner_edge: The inner_edge of the path to modify
         :param inner_subset_index: The distributed subset for the innermost edge on
             the memlet path defined by convertible_node
+        :param this_node: The AccessNode for HBM which is associated with this call to 
+            the function. (i.e. one side of the path)
         """
     mem: memlet.Memlet = inner_edge.data
     # If the memlet already contains the distributed subset, ignore it
@@ -197,6 +199,16 @@ def transform_sdfg_for_hbm(sdfg: SDFG,
     This makes it also usefull to quickly switch bank assignments of existing arrays and have
     stuff like dimensionality change be handled automatically.
     Note that this expects to be used on an SDFG which will run on the FPGA.
+    :param outer_map_range: A tuple of (distributed subset variable name, w), where the top level map
+        will count from 0 to w
+    :param update_array_banks: dict from array name to a tuple of (new memorytype, new bank(s), how
+        to divide/multiply the old shape of the array). The tuple actually represents the parameters for
+        modify_bank_assignments, so look there for more explanation.
+    :param update_map_range: A dict from tuples of (map, index of the symbol on the map) to the 
+        value with which the range of that map should be divided. Using this makes sense if you
+        would like to decrease the times a map executes such that the total elements processed 
+        stay the same.
+    :param recursive: Also look inside Nested SDFGs
     """
 
     update_access = set()  # Store which arrays need updates for later
@@ -246,6 +258,13 @@ class HbmTransform(transformation.Transformation):
     divisable by the number of banks the array is placed on when dimension
     size is a symbolic expression.
 
+    Carefull: When there are maps present which have to run sequentially/as a pipeline
+    the transformation might create wrong SDFGs (which are still valid though). Also note
+    that splitted arrays may have unintuitive semantics. Consider e.g. vector multiplication
+    where only the first n/2 elements of the vector are multiplied, the rest is ignored.
+    This would result in a split array, where the first half of all elements on EACH BANK 
+    is multiplied, not the first half of the banks.
+
     It is allowed to assign banks before applying the transformation, it will respect
     the assignments. Note that in the case of HBM on multiple banks it is expected that
     the distributed subset index has not yet been added, and the shape was not modified.
@@ -260,11 +279,13 @@ class HbmTransform(transformation.Transformation):
     - Each edge conncted to an accessnode of the array must be
         connected to at least one map:
         - that defines a symbol which is used on the innermost
-        memlet to define the access location
+        memlet to define the access location in only one dimension
         - that is completly parallel (i.e. the map could execute 
         also if it wasn't a pipeline). This is not actually checked.
         If it does not hold the generated SDFG may be correct, 
         but it may also be wrong.
+        - the memlet path associtated with the edge must fully propagate,
+        and the access has to behave linear in the symbol defined by map-
     Note that arrays will always only be split in one dimension. 
     Also note that all arrays that are splitted will be split into the
     same amount of parts. Since the transformation acts based on heuristics
@@ -515,7 +536,7 @@ class HbmTransform(transformation.Transformation):
         # If there where/is? something like DaCe-ids for nodes, this would probably
         # better be done by collection map ids on a copied SDFG, but for now it seems hard
         # to find the old maps if only given a copy
-        propagation.propagate_memlets_sdfg(sdfg) # Restore propagated version.
+        propagation.propagate_memlets_sdfg(sdfg)  # Restore propagated version.
 
         return (split_dimensions, no_split_arrays)
 
@@ -523,7 +544,7 @@ class HbmTransform(transformation.Transformation):
     def _scan_maps_for_dependent_arrays(
             sdfg: SDFG) -> Dict[Tuple[nd.Map, int], Set[str]]:
         """
-        Generate a Dict from maps to all the arrays that have accesses that are influenced by the symbol
+        :return: a dict from maps to all the arrays that have accesses that are influenced by the symbol
         defined by that map (i.e. are dependent on that map).
         Tuple[nd.Map, int] is used as map identifier, because it could define multiple symbols.
         """
@@ -743,6 +764,8 @@ class HbmTransform(transformation.Transformation):
         """
         Finds free HBM banks. 
         :param fixed_arrays: The bank assignmnents
+        :return: list of tuples of (low, high) which denote a free "block"
+            of HBM-banks
         """
         free_blocks = []
         countfree = 0
@@ -822,8 +845,9 @@ class HbmTransform(transformation.Transformation):
         generate a valid assignment of arrays to HBM. Never uses DDR by itself, but if set already
         it is beeing respected.
         The assignment also defines the unroll factor, since this decides how much we split.
-        :return: A three tuple of (unroll factor, possible starts for single arrays i.e. arrays which are not split,
-            possible starts for multi arrays i.e. arrays which are placed on unroll_factor banks)
+        :return: A three tuple of (unroll factor, possible banks for single arrays i.e. arrays which are not split,
+            possible start banks for multi arrays i.e. arrays which are placed on unroll_factor banks). 
+            None if no possible assignment could be found.
         """
 
         free_blocks = HbmTransform._find_free_banks(sdfg, fixed_arrays,
@@ -885,8 +909,7 @@ class HbmTransform(transformation.Transformation):
     @staticmethod
     def _try_find_suitable_settings(sdfg: SDFG):
         """
-        :return: parameters for transform_sdfg_for_hbm or None, if 
-            None could be found.
+        :return: parameters for transform_sdfg_for_hbm or None, if None could be found.
         """
         total_number_of_banks = 32
 

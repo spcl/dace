@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace.codegen.targets import fpga
 from typing import List, Tuple, Union
 from dace.sdfg import SDFG, nodes
 import dace
@@ -23,14 +22,10 @@ def check_assignment(sdfg: SDFG, assignments: List[Union[Tuple[str, int],
         assert sdfg.arrays[array].location["bank"] == bank
 
 
-def _exec_test(sdfgsource, assign, checkassign):
-    sdfg = sdfgsource()
+def _exec_hbmtransform(sdfg_source, assign, checkassign):
+    sdfg = sdfg_source()
     set_assignment(sdfg, assign)
-    #sdfg.apply_transformations(HbmTransform, validate=False)
-    #sdfg.view()
-    xform = HbmTransform(sdfg.sdfg_id, -1, {}, -1)
-    xform.apply(sdfg)
-    #sdfg.view()
+    sdfg.apply_transformations(HbmTransform, validate=False)
     check_assignment(sdfg, checkassign)
     sdfg.validate()
     assert not HbmTransform.can_be_applied(sdfg, {}, -1, sdfg, False)
@@ -110,7 +105,7 @@ def create_multiple_range_map_sdfg():
     return sdfg
 
 
-def create_gemv_blas_sdfg(tile_size_y=None, tile_size_x=None):
+def create_gemv_blas_sdfg(tile_size_y=None, tile_size_x=None, m=None):
     N = dace.symbol("N")
     M = dace.symbol("M")
 
@@ -120,6 +115,8 @@ def create_gemv_blas_sdfg(tile_size_y=None, tile_size_x=None):
 
     sdfg = gemv.to_sdfg()
     sdfg.apply_strict_transformations()
+    if m is not None:
+        sdfg.specialize({M: m})
     libnode = list(
         filter(lambda x: isinstance(x, nodes.LibraryNode),
                sdfg.nodes()[0].nodes()))[0]
@@ -137,55 +134,56 @@ def create_gemv_blas_sdfg(tile_size_y=None, tile_size_x=None):
 
 
 def test_axpy_direct():
-    _exec_test(create_axpy_sdfg, [], [("x", "HBM", "0:16"),
-                                      ("y", "HBM", "16:32")])
+    _exec_hbmtransform(create_axpy_sdfg, [], [("x", "HBM", "0:16"),
+                                              ("y", "HBM", "16:32")])
 
 
 def test_assigned_axpy_unroll_3():
-    _exec_test(create_axpy_sdfg, [("x", "HBM", "3:6")], [("x", "HBM", "3:6"),
-                                                         ("y", "HBM", "0:3")])
+    _exec_hbmtransform(create_axpy_sdfg, [("x", "HBM", "3:6")],
+                       [("x", "HBM", "3:6"), ("y", "HBM", "0:3")])
 
 
 def test_assigned_axpy_unroll_1():
-    _exec_test(create_axpy_sdfg, [("x", "DDR", "0")], [("x", "DDR", "0"),
-                                                       ("y", "HBM", "0:1")])
+    _exec_hbmtransform(create_axpy_sdfg, [("x", "DDR", "0")],
+                       [("x", "DDR", "0"), ("y", "HBM", "0:1")])
 
 
 def test_fixed_array_size_axpy_17():
-    _exec_test(lambda: create_axpy_sdfg(17), [], [("x", "HBM", "0:1"),
-                                                  ("y", "HBM", "1:2")])
+    _exec_hbmtransform(lambda: create_axpy_sdfg(17), [], [("x", "HBM", "0:1"),
+                                                          ("y", "HBM", "1:2")])
 
 
 def test_fixed_map_range_axpy_17():
-    _exec_test(lambda: create_axpy_sdfg(map_range=17), [],
-               [("x", "HBM", "0:1"), ("y", "HBM", "1:2")])
+    _exec_hbmtransform(lambda: create_axpy_sdfg(map_range=17), [],
+                       [("x", "HBM", "0:1"), ("y", "HBM", "1:2")])
 
 
 def test_fixed_axpy_17():
-    _exec_test(lambda: create_axpy_sdfg(17, 17), [], [("x", "HBM", "0:1"),
-                                                      ("y", "HBM", "1:2")])
+    _exec_hbmtransform(lambda: create_axpy_sdfg(17, 17), [],
+                       [("x", "HBM", "0:1"), ("y", "HBM", "1:2")])
 
 
 def test_fixed_axpy_21():
-    _exec_test(lambda: create_axpy_sdfg(21, 21), [], [("x", "HBM", "0:7"),
-                                                      ("y", "HBM", "7:14")])
+    _exec_hbmtransform(lambda: create_axpy_sdfg(21, 21), [],
+                       [("x", "HBM", "0:7"), ("y", "HBM", "7:14")])
 
 
 def test_nd_split():
-    _exec_test(create_nd_sdfg, [], [("x", "HBM", "0:10"), ("y", "HBM", "10:20"),
-                                    ("z", "HBM", "20:30")])
+    _exec_hbmtransform(create_nd_sdfg, [], [("x", "HBM", "0:10"),
+                                            ("y", "HBM", "10:20"),
+                                            ("z", "HBM", "20:30")])
 
 
 def test_no_split():
-    _exec_test(create_not_splitable_dependence_sdfg, [], [("x", "HBM", "0:1"),
-                                                          ("y", "HBM", "1:2"),
-                                                          ("z", "HBM", "2:3")])
+    _exec_hbmtransform(create_not_splitable_dependence_sdfg, [],
+                       [("x", "HBM", "0:1"), ("y", "HBM", "1:2"),
+                        ("z", "HBM", "2:3")])
 
 
 def test_multiple_range_map():
     # SDFG defines a third non splitable temporary array which is placed on 17, thats why 16 cannot be taken
-    _exec_test(create_multiple_range_map_sdfg, [], [("x", "HBM", "0:8"),
-                                                    ("y", "HBM", "8:16")])
+    _exec_hbmtransform(create_multiple_range_map_sdfg, [],
+                       [("x", "HBM", "0:8"), ("y", "HBM", "8:16")])
 
 
 def test_gemv_blas_nudging():
@@ -193,26 +191,29 @@ def test_gemv_blas_nudging():
     # that must be splitable. Note that this graph is wrong because it splits
     # along the inner map x which has to be a pipeline/sequential. (The map reads
     # from and writes to y_local).
-    _exec_test(create_gemv_blas_sdfg, [("x", "HBM", "0:2")],
-               [("x", "HBM", "0:2"), ("A", "HBM", "2:4"), ("y", "HBM", "4:5")])
+    _exec_hbmtransform(lambda: create_gemv_blas_sdfg(m=150),
+                       [("x", "HBM", "0:2")], [("x", "HBM", "0:2"),
+                                               ("A", "HBM", "2:4"),
+                                               ("y", "HBM", "4:5")])
 
 
 def test_gemv_blas():
     # Because split happens using the outermost map, there needs to be a positive tile size to actually split
-    _exec_test(lambda: create_gemv_blas_sdfg(32), [], [("x", "HBM", "30:31"),
-                                                       ("y", "HBM", "15:30"),
-                                                       ("A", "HBM", "0:15")])
+    _exec_hbmtransform(lambda: create_gemv_blas_sdfg(32), [],
+                       [("x", "HBM", "30:31"), ("y", "HBM", "15:30"),
+                        ("A", "HBM", "0:15")])
 
 
-test_axpy_direct()
-test_assigned_axpy_unroll_3()
-test_assigned_axpy_unroll_1()
-test_fixed_array_size_axpy_17()
-test_fixed_map_range_axpy_17()
-test_fixed_axpy_17()
-test_fixed_axpy_21()
-test_nd_split()
-test_no_split()
-test_multiple_range_map()
-test_gemv_blas()
-test_gemv_blas_nudging()
+if __name__ == "__main__":
+    test_axpy_direct()
+    test_assigned_axpy_unroll_3()
+    test_assigned_axpy_unroll_1()
+    test_fixed_array_size_axpy_17()
+    test_fixed_map_range_axpy_17()
+    test_fixed_axpy_17()
+    test_fixed_axpy_21()
+    test_nd_split()
+    test_no_split()
+    test_multiple_range_map()
+    test_gemv_blas()
+    test_gemv_blas_nudging()
