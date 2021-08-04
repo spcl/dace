@@ -512,6 +512,11 @@ class HbmTransform(transformation.Transformation):
             if name in split_dimensions:
                 del split_dimensions[name]
 
+        # If there where/is? something like DaCe-ids for nodes, this would probably
+        # better be done by collection map ids on a copied SDFG, but for now it seems hard
+        # to find the old maps if only given a copy
+        propagation.propagate_memlets_sdfg(sdfg) # Restore propagated version.
+
         return (split_dimensions, no_split_arrays)
 
     @staticmethod
