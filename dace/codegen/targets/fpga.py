@@ -461,7 +461,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 # Determine kernels in state
                 num_kernels, dependencies = self.partition_kernels(
                     sg, default_kernel=start_kernel)
-
                 if num_kernels > 1:
                     # For each kernel, derive the corresponding subgraphs
                     # and keep track of dependencies
@@ -1213,7 +1212,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         # First step: assign a different Kernel ID
         # to each source node which is not an AccessNode
         for i, node in enumerate(source_nodes):
-            if isinstance(node, nodes.AccessNode):
+            if isinstance(node, nodes.AccessNode) or isinstance(node, nodes.Tasklet):
                 continue
 
             self._node_to_kernel[utils.unique_node_repr(state,
@@ -1243,8 +1242,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     continue
 
                 # Does this node need to be in another kernel?
-                # If it is a crossroad node (has more than one predecessor and its predecessors contain some compute)
-                # then it should be on a separate kernel.
+                # If it is a crossroad node (has more than one predecessor, its predecessors contain some compute, and
+                # no local buffers) then it should be on a separate kernel.
 
                 if len(list(state.predecessors(e.dst))) > 1 and not isinstance(
                         e.dst, nodes.ExitNode) and scopes[e.dst] == None:
@@ -1290,16 +1289,20 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         if succ_edge_dst_repr in self._node_to_kernel and isinstance(
                                 succ_edge.src, nodes.Tasklet) and isinstance(
                                     succ_edge.dst, nodes.Tasklet):
+                            print("Reuse the kernel_id of ", succ_edge_dst_repr)
                             kernel = self._node_to_kernel[succ_edge_dst_repr]
                             break
                     else:
-                        kernel = max_kernels
-                        if (isinstance(e.dst, nodes.AccessNode) and isinstance(
-                                sdfg.arrays[e.dst.data], dt.View)):
-                            # Skip views
+                        if (isinstance(e.dst, nodes.AccessNode) and (isinstance(
+                                sdfg.arrays[e.dst.data], dt.View) or e.dst.desc(state).storage in (dtypes.StorageType.FPGA_Local,
+                                     dtypes.StorageType.FPGA_Registers,
+                                     dtypes.StorageType.FPGA_ShiftRegister))):
+                            # Skip views and local buffers
                             pass
                         else:
+                            kernel = max_kernels
                             max_kernels = increment(max_kernels)
+            print("Node ", e.dst, " is assigned to kernel ", kernel)
             self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel
 
         # do another pass and track dependencies among Kernels
@@ -1324,12 +1327,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         '''
         Given ad edge, this traverses the edges backwards.
         It can be used either for:
-        - understanding if along the backward path there is some compute node, or
+        - understanding if along the backward path there is some compute node,  or
         - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
         '''
 
         curedge = edge
         source_nodes = state.source_nodes()
+        contains_compute = False
+        contains_only_global_buffers = True
         while not curedge.src in source_nodes:
 
             if not look_for_kernel_id:
@@ -1337,7 +1342,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         curedge.src,
                     (nodes.EntryNode, nodes.ExitNode, nodes.CodeNode)):
                     # We can stop here: this is a scope which will contain some compute, or a tasklet/libnode
-                    return True
+                    contains_compute = True
+                elif isinstance(curedge.src, nodes.AccessNode):
+                    if curedge.src.desc(state).storage in (dtypes.StorageType.FPGA_Local,
+                                     dtypes.StorageType.FPGA_Registers,
+                                     dtypes.StorageType.FPGA_ShiftRegister):
+                        print(curedge.src, " is a local buffer")
+                        contains_only_global_buffers = False
+
             else:
                 src_repr = utils.unique_node_repr(state, curedge.src)
                 if src_repr in self._node_to_kernel:
@@ -1348,7 +1360,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         # We didn't return before
         if not look_for_kernel_id:
-            return False
+            return contains_compute and contains_only_global_buffers
         else:
             src_repr = utils.unique_node_repr(state, curedge.src)
             return self._node_to_kernel[
