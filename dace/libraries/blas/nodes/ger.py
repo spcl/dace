@@ -390,7 +390,8 @@ class Ger(LibraryNode):
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.ger')
 @oprepo.replaces('dace.libraries.blas.Ger')
-def ger_libnode(sdfg: SDFG, state: SDFGState, A, x, y, output, alpha):
+def ger_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, A, x, y,
+                output, alpha):
     # Add nodes
     A_in, x_in, y_in = (state.add_read(name) for name in (A, x, y))
     out = state.add_write(output)
