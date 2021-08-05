@@ -1,9 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
+from dace import memlet
 from typing import List, Tuple, Union
 from dace.sdfg import SDFG, nodes
 import dace
-from dace.transformation.dataflow import HbmTransform
+from dace.libraries.blas.nodes import dot
+from dace.transformation.dataflow import HbmTransform, hbm_transform
+from dace.transformation.interstate import NestSDFG
 
 
 def set_assignment(sdfg: SDFG, assignments: List[Tuple[str, str, str]]):
@@ -132,6 +135,20 @@ def create_gemv_blas_sdfg(tile_size_y=None, tile_size_x=None, m=None):
     sdfg.apply_strict_transformations()
     return sdfg
 
+def create_deeply_nested_sdfg():
+    N = dace.symbol("N")
+
+    sdfg = create_axpy_sdfg(N, N)
+    sdfg.apply_transformations(NestSDFG)
+    sdfg.apply_transformations(NestSDFG)
+    map_node = next(filter(lambda x: isinstance(x[0], nodes.MapEntry), sdfg.all_nodes_recursive()))[0]
+    array_banks = {"x": ("HBM", f"0:{16}", [16]), 
+                "y": ("HBM", f"{16}:{32}", [16])}
+    hbm_transform.transform_sdfg_for_hbm(sdfg, ("k", 16), 
+        array_banks, {(map_node.map, 0): 16}, True)
+
+    sdfg.apply_fpga_transformations()
+    return sdfg
 
 def test_axpy_direct():
     _exec_hbmtransform(create_axpy_sdfg, [], [("x", "HBM", "0:16"),
@@ -203,6 +220,9 @@ def test_gemv_blas():
                        [("x", "HBM", "30:31"), ("y", "HBM", "15:30"),
                         ("A", "HBM", "0:15")])
 
+def test_deeply_nested():
+    sdfg = create_deeply_nested_sdfg()
+    sdfg.validate()
 
 if __name__ == "__main__":
     test_axpy_direct()
@@ -217,3 +237,4 @@ if __name__ == "__main__":
     test_multiple_range_map()
     test_gemv_blas()
     test_gemv_blas_nudging()
+    test_deeply_nested()

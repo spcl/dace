@@ -129,6 +129,9 @@ def _update_memlet_hbm(state: SDFGState, inner_edge: graph.MultiConnectorEdge,
         is_write = False
         other_node = path[-1].dst
 
+    if isinstance(other_node, nd.NestedSDFG): # Ignore those and update them via propagation
+        new_subset = subsets.Range.from_array(state.parent.arrays[this_node.data])
+
     if isinstance(other_node, nd.AccessNode):
         fwtasklet = state.add_tasklet("fwtasklet", set(["_in"]), set(["_out"]),
                                       "_out = _in")
@@ -163,25 +166,47 @@ def _update_new_hbm_accesses(sdfg: SDFG,
     """
     for state in sdfg.states():
         for node in state.nodes():
-            if isinstance(node, nd.NestedSDFG) and recursive:
-                pass_update = set()
+            if isinstance(node, nd.AccessNode) and node.data in update_access:
+                for inner_edge in utils.all_innermost_edges(state, node):
+                    _update_memlet_hbm(state, inner_edge, inner_subset_index,
+                                       node)
+
+
+def _recursive_hbm_transform(sdfg, inner_subset_index, update_array_banks, recursive):
+    update_access = set()  # Store which arrays need updates for later
+
+    # update array bank positions
+    for array_name, infos in update_array_banks.items():
+        memory_type, bank, divide_shape = infos
+        if array_name in sdfg.arrays:
+            modify_bank_assignment(array_name, sdfg, memory_type, bank,
+                                divide_shape)
+        if memory_type == "HBM":
+            low, high = fpga.get_multibank_ranges_from_subset(bank, sdfg)
+            if high - low > 1:
+                update_access.add(array_name)
+    
+    _update_new_hbm_accesses(sdfg, update_access, inner_subset_index)
+
+    if not recursive:
+        return
+
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                inner_banks = {}
                 node.symbol_mapping[str(
                     inner_subset_index)] = inner_subset_index
 
                 def add_pass_update(inner_name, outer_name):
-                    if outer_name in update_access:
-                        pass_update.add(inner_name)
+                    if outer_name in update_array_banks:
+                        inner_banks[inner_name] = update_array_banks[outer_name]
 
                 for edge in state.in_edges(node):
                     add_pass_update(edge.dst_conn, edge.data.data)
                 for edge in state.out_edges(node):
                     add_pass_update(edge.src_conn, edge.data.data)
-                _update_new_hbm_accesses(node.sdfg, pass_update,
-                                         inner_subset_index, True)
-            elif isinstance(node, nd.AccessNode) and node.data in update_access:
-                for inner_edge in utils.all_innermost_edges(state, node):
-                    _update_memlet_hbm(state, inner_edge, inner_subset_index,
-                                       node)
+                _recursive_hbm_transform(node.sdfg, inner_subset_index, inner_banks, True)
 
 
 def transform_sdfg_for_hbm(sdfg: SDFG,
@@ -211,18 +236,6 @@ def transform_sdfg_for_hbm(sdfg: SDFG,
     :param recursive: Also look inside Nested SDFGs
     """
 
-    update_access = set()  # Store which arrays need updates for later
-
-    # update array bank positions
-    for array_name, infos in update_array_banks.items():
-        memory_type, bank, divide_shape = infos
-        modify_bank_assignment(array_name, sdfg, memory_type, bank,
-                               divide_shape)
-        if memory_type == "HBM":
-            low, high = fpga.get_multibank_ranges_from_subset(bank, sdfg)
-            if high - low > 1:
-                update_access.add(array_name)
-
     for map_info, division in update_map_range.items():
         target, param_index = map_info
         current = target.range[param_index]
@@ -234,12 +247,13 @@ def transform_sdfg_for_hbm(sdfg: SDFG,
 
     # We need to update on the inner part as well - if recursive is false one needs to do so explicit
     if not recursive:
-        _update_new_hbm_accesses(sdfg, update_access, outer_map_range[0], False)
+        _recursive_hbm_transform(sdfg, outer_map_range[0], update_array_banks, False)
 
     # nest the sdfg and execute in parallel
     _multiply_sdfg_executions(sdfg, outer_map_range)
 
-    _update_new_hbm_accesses(sdfg, update_access, outer_map_range[0], recursive)
+    # Update array assignments and accesses
+    _recursive_hbm_transform(sdfg, outer_map_range[0], update_array_banks, recursive)
 
     # set default on all outer arrays, such that FPGATransformSDFG can be used
     for desc in sdfg.arrays.items():
