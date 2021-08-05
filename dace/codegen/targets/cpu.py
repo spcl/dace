@@ -21,6 +21,7 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
                        dynamic_map_inputs, local_transients)
 from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga
 from typing import Union
+from dace.codegen.targets import fpga
 
 
 @registry.autoregister_params(name='cpu')
@@ -1037,9 +1038,17 @@ class CPUCodeGen(TargetCodeGenerator):
                             array_expr = cpp.cpp_array_expr(sdfg,
                                                             memlet,
                                                             with_brackets=False)
-                            write_expr = (
-                                f"*(__{memlet.data}_out + {array_expr}) "
-                                f"= {in_local_name};")
+                            ptr_str = fpga.fpga_ptr( # we are on fpga, since this is array interface
+                                memlet.data,
+                                desc,
+                                sdfg,
+                                memlet.subset,
+                                True,
+                                None,
+                                None,
+                                True)
+                            write_expr = (f"*({ptr_str} + {array_expr}) "
+                                          f"= {in_local_name};")
                         else:
                             desc_dtype = desc.dtype
                             expr = cpp.cpp_array_expr(sdfg, memlet)
@@ -1208,7 +1217,6 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet_type = conntype.dtype.ctype
 
         desc = sdfg.arrays[memlet.data]
-        ptr = cpp.ptr(memlet.data, desc, sdfg)
 
         types = None
         try:
@@ -1222,6 +1230,14 @@ class CPUCodeGen(TargetCodeGenerator):
         if not types:
             types = self._dispatcher.defined_vars.get(memlet.data)
         var_type, ctypedef = types
+        if fpga.is_fpga_array(desc):
+            ptr = fpga.fpga_ptr(
+                memlet.data, desc, sdfg, memlet.subset, output,
+                self._dispatcher, 0, var_type == DefinedType.ArrayInterface
+                and not isinstance(desc, data.View))
+        else:
+            ptr = cpp.ptr(memlet.data, desc, sdfg)
+
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
                 if var_type in [
@@ -1229,14 +1245,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     DefinedType.ArrayInterface
                 ] else ptr)
 
-        # Special case: ArrayInterface, append _in or _out
-        _ptr = ptr
-        if var_type == DefinedType.ArrayInterface:
-            # Views have already been renamed
-            if not isinstance(desc, data.View):
-                ptr = cpp.array_interface_variable(ptr, output,
-                                                   self._dispatcher)
-        if expr != _ptr:
+        if expr != ptr:
             expr = '%s[%s]' % (ptr, expr)
         # If there is a type mismatch, cast pointer
         expr = codegen.make_ptr_vector_cast(expr, desc.dtype, conntype,
@@ -1610,6 +1619,12 @@ class CPUCodeGen(TargetCodeGenerator):
     def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
         # Connectors that are both input and output share the same name
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
+
+        for _, _, _, vconn, memlet in state.all_edges(node):
+            if (memlet.data in sdfg.arrays
+                    and fpga.is_hbm_array(sdfg.arrays[memlet.data])):
+                raise NotImplementedError(
+                    "HBM in nested SDFGs not supported in non-FPGA code.")
 
         memlet_references = []
         for _, _, _, vconn, in_memlet in sorted(state.in_edges(node),

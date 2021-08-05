@@ -195,7 +195,8 @@ class Transformation(TransformationBase):
 
     def apply_pattern(self,
                       sdfg: SDFG,
-                      append: bool = True) -> Union[Any, None]:
+                      append: bool = True,
+                      annotate: bool = True) -> Union[Any, None]:
         """
         Applies this transformation on the given SDFG, using the transformation
         instance to find the right SDFG object (based on SDFG ID), and applying
@@ -211,7 +212,7 @@ class Transformation(TransformationBase):
             sdfg.append_transformation(self)
         tsdfg: SDFG = sdfg.sdfg_list[self.sdfg_id]
         retval = self.apply(tsdfg)
-        if not self.annotates_memlets():
+        if annotate and not self.annotates_memlets():
             propagation.propagate_memlets_sdfg(tsdfg)
         return retval
 
@@ -273,6 +274,7 @@ class Transformation(TransformationBase):
                  options: Optional[Dict[str, Any]] = None,
                  expr_index: int = 0,
                  verify: bool = True,
+                 annotate: bool = True,
                  strict: bool = False,
                  save: bool = True,
                  **where: Union[nd.Node, SDFGState]):
@@ -294,6 +296,7 @@ class Transformation(TransformationBase):
                         transformation.
         :param expr_index: The pattern expression index to try to match with.
         :param verify: Check that `can_be_applied` returns True before applying.
+        :param annotate: Run memlet propagation after application if necessary.
         :param strict: Apply transformation in strict mode.
         :param save: Save transformation as part of the SDFG file. Set to
                      False if composing transformations.
@@ -351,7 +354,7 @@ class Transformation(TransformationBase):
                                  'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
-        return instance.apply_pattern(sdfg, append=save)
+        return instance.apply_pattern(sdfg, annotate=annotate, append=save)
 
     def __str__(self) -> str:
         return type(self).__name__
