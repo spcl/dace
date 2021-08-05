@@ -463,7 +463,7 @@ class GenericSMemlet(SeparableMemletPattern):
                 raise NotImplementedError
 
             if (node_rs < 0) == True:
-                node_rb, node_re, node_rs = node_re, node_rb, - node_rs
+                node_rb, node_re, node_rs = node_re, node_rb, -node_rs
 
             # Get true range end
             pos_firstindex = node_rb
@@ -1342,8 +1342,8 @@ def propagate_memlet(dfg_state,
                              if not conn.startswith('IN_'))
     defined_vars = [
         symbolic.pystr_to_symbolic(s)
-        for s in dfg_state.symbols_defined_at(entry_node).keys()
-        if s not in scope_node_symbols
+        for s in (dfg_state.symbols_defined_at(entry_node).keys()
+                  | sdfg.constants.keys()) if s not in scope_node_symbols
     ]
 
     # Find other adjacent edges within the connected to the scope node
