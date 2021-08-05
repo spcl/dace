@@ -917,20 +917,20 @@ class ExpandGemvPBLAS(ExpandTransformation):
         @dace.program
         def _gemNv_pblas(_A: dtype[m, n], _x: dtype[n], _y: dtype[m]):
             lA = np.empty((m // Px, n // Py), dtype=_A.dtype)
-            lx = np.empty((n // Px,), dtype=_x.dtype)
-            dace.comm.BCScatter(_A, lA, (m//Px, n//Py))
-            dace.comm.BCScatter(_x, lx, (n//Px, 1))
-            ly = distr.MatMult(_A, _x, lA, lx, (m//Px, n//Py), (n//Px, 1))
-            dace.comm.BCGather(ly, _y, (m//Px, 1))
-        
+            lx = np.empty((n // Px, ), dtype=_x.dtype)
+            dace.comm.BCScatter(_A, lA, (m // Px, n // Py))
+            dace.comm.BCScatter(_x, lx, (n // Px, 1))
+            ly = distr.MatMult(_A, _x, lA, lx, (m // Px, n // Py), (n // Px, 1))
+            dace.comm.BCGather(ly, _y, (m // Px, 1))
+
         @dace.program
         def _gemTv_pblas(_A: dtype[m, n], _x: dtype[m], _y: dtype[n]):
             lA = np.empty((m // Px, n // Py), dtype=_A.dtype)
-            lx = np.empty((m // Px,), dtype=_x.dtype)
-            dace.comm.BCScatter(_A, lA, (m//Px, n//Py))
-            dace.comm.BCScatter(_x, lx, (m//Px, 1))
-            ly = distr.MatMult(_x, _A, lx, lA, (m//Px, 1), (m//Px, n//Py))
-            dace.comm.BCGather(ly, _y, (n//Px, 1))
+            lx = np.empty((m // Px, ), dtype=_x.dtype)
+            dace.comm.BCScatter(_A, lA, (m // Px, n // Py))
+            dace.comm.BCScatter(_x, lx, (m // Px, 1))
+            ly = distr.MatMult(_x, _A, lx, lA, (m // Px, 1), (m // Px, n // Py))
+            dace.comm.BCGather(ly, _y, (n // Px, 1))
 
         # NOTE: The following is done to avoid scalar promotion, which results
         # in ValueError: Node type "BlockCyclicScatter" not supported for
@@ -1026,7 +1026,8 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.gemv')
 @oprepo.replaces('dace.libraries.blas.Gemv')
-def gemv_libnode(sdfg: SDFG,
+def gemv_libnode(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
                  state: SDFGState,
                  A,
                  x,
