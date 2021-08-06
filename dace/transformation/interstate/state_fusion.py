@@ -392,10 +392,13 @@ class StateFusion(transformation.Transformation):
                 # from the input of the first state lead to the output.
                 # Otherwise, there may be a RAW due to topological sort or
                 # concurrency.
-                second_inout = (fused_cc.second_inputs & fused_cc.second_outputs
-                                & fused_cc.first_outputs)
+                second_inout = ((fused_cc.first_inputs | fused_cc.first_outputs)
+                                & fused_cc.second_outputs)
                 for inout in second_inout:
-                    nodes_first = [n for n in first_output if n.data == inout]
+                    nodes_first = [
+                        n for n in (first_input | first_output)
+                        if n.data == inout
+                    ]
                     if any(first_state.out_degree(n) > 0 for n in nodes_first):
                         return False
 

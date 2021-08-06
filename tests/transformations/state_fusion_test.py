@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.transformation import transformation
 from dace.transformation.interstate import StateFusion
 import networkx as nx
 import numpy as np
@@ -345,6 +346,49 @@ def test_inout_read_after_write():
     assert B[0] == 2
 
 
+def test_inout_second_state():
+    """ 
+    Second state has a computation that reads and writes to the same array, 
+    while the first state also reads from that same array. Fusion will then 
+    cause a potential data race.
+    """
+    sdfg = dace.SDFG('state_fusion_test')
+    sdfg.add_array('A', [1], dace.int32)
+    sdfg.add_array('B', [1], dace.int32)
+    state = sdfg.add_state()
+    r = state.add_read('A')
+    t1 = state.add_tasklet('init_b', {'a'}, {'b'}, 'b = a + 1')
+    w = state.add_write('B')
+    state.add_edge(r, None, t1, 'a', dace.Memlet('A[0]'))
+    state.add_edge(t1, 'b', w, None, dace.Memlet('B[0]'))
+
+    state2 = sdfg.add_state_after(state)
+    r1 = state2.add_read('A')
+    t1 = state2.add_tasklet('update_a', {'a'}, {'aout'}, 'aout = a + 5')
+    w1 = state2.add_write('A')
+    state2.add_edge(r1, None, t1, 'a', dace.Memlet('A[0]'))
+    state2.add_edge(t1, 'aout', w1, None, dace.Memlet('A[0]'))
+
+    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 0
+
+    A = np.zeros([1], dtype=np.int32)
+    B = np.zeros([1], dtype=np.int32)
+    sdfg(A=A, B=B)
+    assert A[0] == 5
+    assert B[0] == 1
+
+
+def test_inout_second_state_2():
+    @dace.program
+    def func(A: dace.float64[128, 128], B: dace.float64[128, 128]):
+        B[...] = A[...]
+        A[...] = 2 * A[...]
+
+    sdfg = func.to_sdfg(strict=False)
+    sdfg.apply_strict_transformations()
+    assert sdfg.number_of_nodes() == 2
+
+
 if __name__ == '__main__':
     test_fuse_assignments()
     test_fuse_assignment_in_use()
@@ -359,3 +403,5 @@ if __name__ == '__main__':
     test_array_in_middle_overlap()
     test_two_outputs_same_name()
     test_inout_read_after_write()
+    test_inout_second_state()
+    test_inout_second_state_2()
