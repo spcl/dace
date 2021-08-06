@@ -7,7 +7,7 @@ from dace.codegen.targets.fpga import _FPGA_STORAGE_TYPES
 from dace.fpga_testing import xilinx_test
 from hbm_copy_fpga_test import mkc
 
-#Tests copy of 2 and 3d blocks between host and device
+# Tests copy of 2 and 3d blocks between host and device
 
 @xilinx_test()
 def test_check_host2dev1():

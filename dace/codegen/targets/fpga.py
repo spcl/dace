@@ -224,7 +224,7 @@ def fpga_ptr(name: str,
                     "ptr cannot generate HBM names for subsets accessing more than one HBM bank"
                 )
             name = f"hbm{low}_{name}"
-            subset_info_hbm = low  #used for arrayinterface name where it must be int
+            subset_info_hbm = low  # used for arrayinterface name where it must be int
     if is_array_interface:
         if is_write is None:
             raise ValueError("is_write must be set for ArrayInterface.")
@@ -1457,14 +1457,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         "Memory copy type mismatch: {} vs {}".format(
                             host_dtype, device_dtype))
 
-            #Generally only allow ND-Copies if dst and src subset are explicit
+            # Generally only allow ND-Copies if dst and src subset are explicit
             if memlet.src_subset is not None and memlet.dst_subset is not None:
                 absolute_src_strides = memlet.src_subset.absolute_strides(
                     src_nodedesc.strides)
                 absolute_dst_strides = memlet.dst_subset.absolute_strides(
                     dst_nodedesc.strides)
 
-                #Distinguish 1d and 2 or 3d copies
+                # Distinguish 1d and 2 or 3d copies
                 isNDCopy = not cpp.is_1d_nostrided_copy(
                     copy_shape,
                     src_nodedesc.shape,
@@ -1479,11 +1479,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 isNDCopy = False
 
             if isNDCopy:
-                #Not supported because the Intel version of openCL raised errors
+                # Not supported because the Intel version of openCL raised errors
                 if Config.get('compiler', 'fpga_vendor').lower() == "intel_fpga":
                     raise NotImplementedError("n-dimensional copies are not supported for Intel FPGA's")
 
-                #Compute all required sizes
+                # Compute all required sizes
                 src_copy_offset = [
                     cpp.sym2cpp(start) for start, _, _ in memlet.src_subset
                 ]
@@ -1494,7 +1494,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 dst_blocksize = [cpp.sym2cpp(v) for v in dst_nodedesc.shape]
                 copy_shape_cpp = [cpp.sym2cpp(v) for v in copy_shape]
 
-                #Numpy has different order than hlslib, so indices need to be turned to match
+                # Numpy has different order than hlslib, so indices need to be turned to match
                 def reverseAll():
                     src_copy_offset.reverse()
                     dst_copy_offset.reverse()
@@ -1507,11 +1507,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     len(dst_copy_offset) == len(src_blocksize) and 
                     len(src_blocksize) == len(dst_blocksize) and
                     len(dst_blocksize) == len(copy_shape)):
-                    #If all dimensions match we can turn before extending with ones,
-                    #which may result in fewer strided steps
+                    # If all dimensions match we can turn before extending with ones,
+                    # which may result in fewer strided steps
                     reverseAll()
                     is_reversed = True
-                #Expand so all arrays have size 3
+                # Expand so all arrays have size 3
                 while len(src_copy_offset) < 3:
                     src_copy_offset.append('0')
                 while len(dst_copy_offset) < 3:
