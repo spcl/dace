@@ -9,6 +9,7 @@ from hbm_copy_fpga_test import mkc
 
 # Tests copy of 2 and 3d blocks between host and device
 
+
 @xilinx_test()
 def test_check_host2dev1():
     sdfg = dace.SDFG("h2d1")
@@ -25,6 +26,7 @@ def test_check_host2dev1():
     assert np.allclose(c[1:3, 0:2], a[2:4, 2:4])
     return sdfg
 
+
 @xilinx_test()
 def test_check_dev2host1():
     sdfg = dace.SDFG("d2h1")
@@ -39,6 +41,7 @@ def test_check_dev2host1():
     sdfg(a=a, c=c)
     assert np.allclose(a[2:5, 2:4, 3], c[0:3, 0:2])
     return sdfg
+
 
 @xilinx_test()
 def test_check_dev2dev1():
@@ -57,19 +60,22 @@ def test_check_dev2dev1():
     assert np.allclose(c[2:6], a[2, 2, 1:5])
     return sdfg
 
+
 @xilinx_test()
 def test_checkhost2dev2():
     sdfg = dace.SDFG("h2d2")
-    s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default, StorageType.FPGA_Global,
-         [7, 4, 5], [6, 3, 4], "a[1:5, 1:4, 1:4]->1:5, 0:3, 1:4")
+    s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
+                  StorageType.FPGA_Global, [7, 4, 5], [6, 3, 4],
+                  "a[1:5, 1:4, 1:4]->1:5, 0:3, 1:4")
     s, _, _ = mkc(sdfg, s, "x", "z", StorageType.FPGA_Global,
                   StorageType.FPGA_Global, [6, 3, 4], [6, 3, 4], "x")
-    s, _, c = mkc(sdfg, s, "z", "c", None, StorageType.Default, None,
-                  [6, 3, 4], "z")
+    s, _, c = mkc(sdfg, s, "z", "c", None, StorageType.Default, None, [6, 3, 4],
+                  "z")
 
     sdfg(a=a, c=c)
     assert np.allclose(a[1:5, 1:4, 1:4], c[1:5, 0:3, 1:4])
     return sdfg
+
 
 @xilinx_test()
 def test_checkdev2host2():
@@ -88,6 +94,7 @@ def test_checkdev2host2():
     assert np.allclose(expect, c[2:7, 1:6])
     assert np.allclose(expect[3:5, 0:5], c[0:2, 0:5])
     return sdfg
+
 
 if __name__ == "__main__":
     test_check_host2dev1(None)

@@ -1480,8 +1480,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if isNDCopy:
                 # Not supported because the Intel version of openCL raised errors
-                if Config.get('compiler', 'fpga_vendor').lower() == "intel_fpga":
-                    raise NotImplementedError("n-dimensional copies are not supported for Intel FPGA's")
+                if Config.get('compiler',
+                              'fpga_vendor').lower() == "intel_fpga":
+                    raise NotImplementedError(
+                        "n-dimensional copies are not supported for Intel FPGA's"
+                    )
 
                 # Compute all required sizes
                 src_copy_offset = [
@@ -1501,12 +1504,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     src_blocksize.reverse()
                     dst_blocksize.reverse()
                     copy_shape_cpp.reverse()
-                
+
                 is_reversed = False
-                if (len(src_copy_offset) == len(dst_copy_offset) and 
-                    len(dst_copy_offset) == len(src_blocksize) and 
-                    len(src_blocksize) == len(dst_blocksize) and
-                    len(dst_blocksize) == len(copy_shape)):
+                if (len(src_copy_offset) == len(dst_copy_offset)
+                        and len(dst_copy_offset) == len(src_blocksize)
+                        and len(src_blocksize) == len(dst_blocksize)
+                        and len(dst_blocksize) == len(copy_shape)):
                     # If all dimensions match we can turn before extending with ones,
                     # which may result in fewer strided steps
                     reverseAll()
@@ -1558,7 +1561,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if host_to_device:
                 ptr_str = fpga_ptr(src_node.data, src_nodedesc, sdfg,
-							  src_subset)
+                                   src_subset)
 
                 if isNDCopy:
                     callsite_stream.write(
@@ -1579,8 +1582,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         sdfg, state_id, [src_node, dst_node])
 
             elif device_to_host:
-                ptr_str = fpga_ptr(dst_node.data, dst_nodedesc, sdfg, 
-                                dst_subset)
+                ptr_str = fpga_ptr(dst_node.data, dst_nodedesc, sdfg,
+                                   dst_subset)
 
                 if isNDCopy:
                     callsite_stream.write(
