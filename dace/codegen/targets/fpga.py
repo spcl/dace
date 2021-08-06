@@ -1375,7 +1375,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 src_repr] if src_repr in self._node_to_kernel else None
 
     def _trace_forward_edge(self, edge: dace.sdfg.sdfg.Edge,
-                            state: dace.SDFGState) -> tuple[bool, int]:
+                            state: dace.SDFGState) -> Tuple[bool, int]:
         '''
         Given ad edge, this traverses the edges forward.
         It can be used either for:
