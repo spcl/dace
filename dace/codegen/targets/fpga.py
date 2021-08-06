@@ -445,7 +445,7 @@ class FPGACodeGen(TargetCodeGenerator):
             ]
             for map_entry in top_level_unrolled:
                 MapUnroll.apply_to(sdfg, _map_entry=map_entry)
-
+                
             kernels = []  # List of tuples (subgraph, kernel_id)
 
             # Start a new state code generation: reset previous dependencies if any

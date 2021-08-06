@@ -153,8 +153,8 @@ def test_vadd_8b1d():
 
 
 if __name__ == '__main__':
-    test_vadd_1b1d(None)
+    #test_vadd_1b1d(None)
     test_vadd_2b1d(None)
-    test_vadd_2b2d(None)
-    test_vadd_2b3d(None)
-    test_vadd_8b1d(None)
+    #test_vadd_2b2d(None)
+    #test_vadd_2b3d(None)
+    #test_vadd_8b1d(None)
