@@ -69,6 +69,7 @@ def is_fpga_kernel(sdfg, state):
             return False
     return True
 
+
 def is_hbm_array(array: dt.Data):
     """
     :return: True if this array is placed on HBM
