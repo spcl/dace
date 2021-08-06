@@ -1294,8 +1294,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             kernel = self._node_to_kernel[succ_edge_dst_repr]
                             break
                     else:
-                        # Trace this edge forward: if it lands to something that has a kernel id and
-                        # along the path there is at least one local buffer, then reuse that kernel id
+                        # Trace this edge forward: if it finds something that has a kernel id and
+                        # there is at least one local buffer along the way, then reuse that kernel id
                         only_global, kern = self._trace_forward_edge(e, state)
                         if not only_global:
                             kernel = kern
@@ -1327,12 +1327,18 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         max_kernels = max_kernels if concurrent_kernels == 0 else concurrent_kernels
         return max_kernels, dependencies
 
-    def _trace_back_edge(self, edge, state, look_for_kernel_id=False):
+    def _trace_back_edge(self,
+                         edge: dace.sdfg.sdfg.Edge,
+                         state: dace.SDFGState,
+                         look_for_kernel_id: bool = False) -> Union[bool, int]:
         '''
-        Given ad edge, this traverses the edges backwards.
+        Given an edge, this traverses the edges backwards.
         It can be used either for:
-        - understanding if along the backward path there is some compute node,  or
+        - understanding if along the backward path there is some compute node but no local buffers,  or
         - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
+        :return if look_for_kernel_id is false it returns a boolean indicating if there is a
+            compute node on the backward path and no access nodes to local buffers. Otherwise, it returns
+            the kernel_id of a predecessor node.
         '''
 
         curedge = edge
@@ -1368,12 +1374,15 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             return self._node_to_kernel[
                 src_repr] if src_repr in self._node_to_kernel else None
 
-    def _trace_forward_edge(self, edge, state: dace.SDFGState):
+    def _trace_forward_edge(self, edge: dace.sdfg.sdfg.Edge,
+                            state: dace.SDFGState) -> tuple[bool, int]:
         '''
         Given ad edge, this traverses the edges forward.
         It can be used either for:
         - understanding if along the forward path there is a local buffer,  and
         - returning the the kernel_id of a successor if any
+        :return: a tuple containing two booleans indicating if the path contains only global buffers
+            and the kernel_id of a successor if any
         '''
 
         curedge = edge
