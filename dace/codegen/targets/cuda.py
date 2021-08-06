@@ -306,9 +306,9 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             if self._debugprint else '',
             init_end_print="printf(\"dace_init_cuda: end\\n\");"
             if self._debugprint else '',
-            exit_start_print="printf(\"dace_init_cuda: start\\n\");"
+            exit_start_print="printf(\"dace_exit_cuda: start\\n\");"
             if self._debugprint else '',
-            exit_end_print="printf(\"dace_init_cuda: end\\n\");"
+            exit_end_print="printf(\"dace_exit_cuda: end\\n\");"
             if self._debugprint else '',
             params=params_comma,
             initcode=initcode.getvalue(),
