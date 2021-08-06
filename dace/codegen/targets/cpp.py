@@ -11,7 +11,7 @@ import warnings
 
 import sympy as sp
 from six import StringIO
-from typing import IO, List, Optional, Tuple, Union
+from typing import IO, Iterable, List, Optional, Tuple, Union
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
@@ -409,26 +409,44 @@ def _is_c_contiguous(shape, strides):
     return tuple(strides) == computed_strides
 
 
-def ndcopy_to_strided_copy(
-    copy_shape,
-    src_shape,
-    src_strides,
-    dst_shape,
-    dst_strides,
-    subset,
-    src_subset,
-    dst_subset,
-):
-    """ Detects situations where an N-dimensional copy can be degenerated into
-        a (faster) 1D copy or 2D strided copy. Returns new copy
-        dimensions and offsets to emulate the requested copy.
+def to_cpp_array(arr: "Iterable[str]",
+                 ctype: str,
+                 makestd: bool = False) -> str:
+    """
+    Converts a given list to a c++ array
+    :param makestd: Return as std array
+    """
+    if makestd:
+        result = f"std::array<{ctype}, {len(arr)}>(" + "{"
+    else:
+        result = "{"
+    for i, value in enumerate(arr):
+        result += value
+        if (i != len(arr) - 1):
+            result += ", "
+    result += "}"
+    if makestd:
+        result += ")"
+    return result
 
-        :return: a 3-tuple: copy_shape, src_strides, dst_strides
+
+def is_1d_nostrided_copy(
+    copy_shape: Iterable,
+    src_shape: Iterable,
+    src_strides: Iterable,
+    dst_shape: Iterable,
+    dst_strides: Iterable,
+    subset: subsets.Subset,
+    src_subset: subsets.Subset,
+    dst_subset: subsets.Subset,
+):
+    """ 
+        :return: True if this is a 1d copy without strides, False otherwise
     """
 
-    # Cannot degenerate tiled copies
+    # tiled copies
     if any(ts != 1 for ts in subset.tile_sizes):
-        return None
+        return False
 
     # If the copy is contiguous, the difference between the first and last
     # pointers should be the shape of the copy
@@ -447,24 +465,50 @@ def ndcopy_to_strided_copy(
     src_copylen = symbolic.pystr_to_symbolic(src_copylen).simplify()
     dst_copylen = symbolic.pystr_to_symbolic(dst_copylen).simplify()
 
-    # Detect 1D copies. The first condition is the general one, whereas the
+    #The first condition is the general one, whereas the
     # second one applies when the arrays are completely equivalent in strides
     # and shapes to the copy. The second condition is there because sometimes
     # the symbolic math engine fails to produce the same expressions for both
     # arrays.
-    if (tuple(src_strides) == tuple(dst_strides)
-            and ((src_copylen == copy_length and dst_copylen == copy_length) or
-                 (tuple(src_shape) == tuple(copy_shape)
-                  and tuple(dst_shape) == tuple(copy_shape)))):
-        # Emit 1D copy of the whole array
-        copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
-        return copy_shape, [1], [1]
+    cornercase1 = (tuple(src_strides) == tuple(dst_strides) and
+                   ((src_copylen == copy_length and dst_copylen == copy_length)
+                    or (tuple(src_shape) == tuple(copy_shape)
+                        and tuple(dst_shape) == tuple(copy_shape))))
+
     # Another case of non-strided 1D copy: all indices match and copy length
     # matches pointer difference, as well as match in contiguity and padding
-    elif (first_src_index == first_dst_index
-          and last_src_index == last_dst_index and copy_length == src_copylen
-          and _is_c_contiguous(src_shape, src_strides)
-          and _is_c_contiguous(dst_shape, dst_strides)):
+    cornercase2 = (first_src_index == first_dst_index
+                   and last_src_index == last_dst_index
+                   and copy_length == src_copylen
+                   and _is_c_contiguous(src_shape, src_strides)
+                   and _is_c_contiguous(dst_shape, dst_strides))
+
+    return cornercase1 or cornercase2
+
+
+def ndcopy_to_strided_copy(
+    copy_shape: Iterable,
+    src_shape: Iterable,
+    src_strides: Iterable,
+    dst_shape: Iterable,
+    dst_strides: Iterable,
+    subset: subsets.Subset,
+    src_subset: subsets.Subset,
+    dst_subset: subsets.Subset,
+):
+    """ Detects situations where an N-dimensional copy can be degenerated into
+        a (faster) 1D copy or 2D strided copy. Returns new copy
+        dimensions and offsets to emulate the requested copy.
+
+        :return: a 3-tuple: copy_shape, src_strides, dst_strides
+    """
+
+    # Cannot degenerate tiled copies
+    if any(ts != 1 for ts in subset.tile_sizes):
+        return None
+
+    if is_1d_nostrided_copy(copy_shape, src_shape, src_strides, dst_shape,
+                            dst_strides, subset, src_subset, dst_subset):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
