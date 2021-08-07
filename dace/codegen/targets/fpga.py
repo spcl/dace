@@ -201,7 +201,7 @@ def fpga_ptr(name: str,
              dispatcher=None,
              ancestor: int = 0,
              is_array_interface: bool = False,
-             interface_id: Union[int, List[int]] = None):
+             interface_id: int = None):
     """
     Returns a string that points to the data based on its name, and various other conditions
     that may apply for that data field.
@@ -255,10 +255,7 @@ def fpga_ptr(name: str,
             name = ptr_out if is_write else ptr_in
         # Append the interface id, if provided
         if interface_id is not None:
-            if isinstance(interface_id, tuple):
-                name = f"{name}_{interface_id[subset_info_hbm]}"
-            else:
-                name = f"{name}_{interface_id}"
+            name = f"{name}_{interface_id}"
     return name
 
 
