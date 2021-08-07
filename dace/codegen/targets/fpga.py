@@ -765,7 +765,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
-            hbm_array_to_banks_used: Dict[str, Set[int]] = {}
+            hbm_array_to_banks_used_out: Dict[str, Set[int]] = {}
+            hbm_array_to_banks_used_in: Dict[str, Set[int]] = {}
             for n in subgraph.source_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
@@ -824,19 +825,26 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             candidates.append((True, n.data, desc))
                         if is_hbm_array_with_distributed_index(desc):
                             # Record all banks used by this subgraph to generate interfaces for them
-                            if n.data in hbm_array_to_banks_used:
-                                current_banks = hbm_array_to_banks_used[n.data]
-                            else:
-                                current_banks = set()
+                            # inputs and outputs seperate, because using a bank as an input doesn't mean
+                            # we also need an output interface
+                            current_banks_out = set()
+                            current_banks_in = set()
                             for edge in scope.in_edges(n):
                                 for bank in iterate_distributed_subset(
                                         desc, edge.data, True, sdfg):
-                                    current_banks.add(bank)
+                                    current_banks_out.add(bank)
                             for edge in scope.out_edges(n):
                                 for bank in iterate_distributed_subset(
                                         desc, edge.data, False, sdfg):
-                                    current_banks.add(bank)
-                            hbm_array_to_banks_used[n.data] = current_banks
+                                    current_banks_in.add(bank)
+                            if n.data in hbm_array_to_banks_used_in:
+                                hbm_array_to_banks_used_in[n.data].update(current_banks_in)
+                            else:
+                                hbm_array_to_banks_used_in[n.data] = current_banks_in
+                            if n.data in hbm_array_to_banks_used_out:
+                                hbm_array_to_banks_used_out[n.data].update(current_banks_out)
+                            else:
+                                hbm_array_to_banks_used_out[n.data] = current_banks_out
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dt.Array)
                                     and n.desc(scope).storage
@@ -846,6 +854,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             subgraph_parameters[subgraph] = set()
             # For each subgraph, keep a listing of array to current interface ID
             data_to_interface: Dict[str, int] = {}
+            # multibank data name -> is_output -> List of (bank, interface id)
+            # same as data_to_interface, but for HBM-arrays with multiple banks
+            multibank_data_to_interface: Dict[str, Dict[bool, List[Tuple[int, int]]]] = {}
 
             # Differentiate global and local arrays. The former are allocated
             # from the host and passed to the device code, while the latter are
@@ -863,18 +874,26 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         and desc.storage == dtypes.StorageType.FPGA_Global):
                     if data_name in data_to_interface:
                         interface_id = data_to_interface[data_name]
+                    elif data_name in multibank_data_to_interface and is_output in multibank_data_to_interface[data_name]:
+                        interface_id = multibank_data_to_interface[data_name][is_output]
                     else:
                         # Get and update global memory interface ID
                         if is_hbm_array_with_distributed_index(desc):
                             tmp_interface_ids = []
-                            for bank in hbm_array_to_banks_used[data_name]:
-                                ptr_str = fpga_ptr(data_name, desc, sdfg, bank)
+                            if is_output:
+                                banks_looked_at = hbm_array_to_banks_used_out[data_name]
+                            else:
+                                banks_looked_at = hbm_array_to_banks_used_in[data_name]
+                            for bank in banks_looked_at:
+                                ptr_str = fpga_ptr(data_name, desc, sdfg, bank, )
                                 tmp_interface_id = global_interfaces[ptr_str]
                                 global_interfaces[ptr_str] += 1
                                 tmp_interface_ids.append(
                                     (bank, tmp_interface_id))
                             interface_id = tuple(tmp_interface_ids)
-                            data_to_interface[data_name] = interface_id
+                            if data_name not in multibank_data_to_interface:
+                                multibank_data_to_interface[data_name] = {}
+                            multibank_data_to_interface[data_name][is_output] = interface_id
                         else:
                             interface_id = global_interfaces[data_name]
                             global_interfaces[data_name] += 1
