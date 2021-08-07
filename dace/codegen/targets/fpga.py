@@ -8,8 +8,10 @@ import re
 import warnings
 import sympy as sp
 import numpy as np
-from typing import Dict, Iterable, List, Tuple, Union
+from typing import Dict, Iterable, List, Set, Tuple, Union
 import copy
+
+from sympy.tensor.array import Array
 
 import dace
 from dace.codegen.targets import cpp
@@ -103,24 +105,30 @@ def is_fpga_array(array: dt.Data):
     return isinstance(array, dt.Array) and array.storage in _FPGA_STORAGE_TYPES
 
 
-def iterate_hbm_multibank_arrays(array_name: str, array: dt.Array, sdfg: SDFG):
-    """
-    Small helper function that iterates over the bank indices
-    if the provided array is spanned across multiple HBM banks.
-    Otherwise just returns 0 once.
-    """
+def iterate_hbm_interface_ids(array: dt.Array, interface_ids: Union[int, List[Tuple[int, int]]]):
     res = parse_location_bank(array)
     if res is not None:
         bank_type, bank_place = res
         if (bank_type == "HBM"):
-            low, high = get_multibank_ranges_from_subset(bank_place, sdfg)
-            for i in range(high - low):
-                yield i
+            for bank, id in interface_ids:
+                yield (bank, id)
         else:
-            yield 0
+            yield (0, interface_ids)
     else:
-        yield 0
+        yield (0, interface_ids)
 
+def iterate_distributed_subset(desc: dt.Array, access_memlet: memlet.Memlet, is_write: bool, sdfg: SDFG):
+    if is_hbm_array_with_distributed_index(desc):
+        if is_write:
+            subset = access_memlet.dst_subset or access_memlet.subset
+        else:
+            subset = access_memlet.src_subset or access_memlet.subset
+        if subset is None:
+            yield 0
+        else:
+            low, high = get_multibank_ranges_from_subset(subset, sdfg)
+            for k in range(low, high):
+                yield k
 
 def modify_distributed_subset(subset: subsets.Subset, change: int):
     """
@@ -184,7 +192,6 @@ def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
             )
     else:
         return None
-
 
 def fpga_ptr(name: str,
              desc: dt.Data = None,
@@ -535,11 +542,10 @@ class FPGACodeGen(TargetCodeGenerator):
             kernel_args_opencl.append(f"{self._global_sdfg.name}_t *__state")
             kernel_args_call_host.append(f"__state")
 
-            for is_output, arg_name, arg, _ in state_parameters:
+            for is_output, arg_name, arg, interface_id in state_parameters:
                 # Streams and Views are not passed as arguments
                 if (isinstance(arg, dt.Array)):
-                    for bank in iterate_hbm_multibank_arrays(
-                            arg_name, arg, sdfg):
+                    for bank, _ in iterate_hbm_interface_ids(arg, interface_id):
                         current_name = fpga_ptr(arg_name, arg, sdfg, bank)
                         kernel_args_call_host.append(
                             arg.as_arg(False, name=current_name))
@@ -747,6 +753,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
+            hbm_array_to_banks_used: Dict[str, Set[int]] = {}
             for n in subgraph.source_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
@@ -798,10 +805,26 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     # independent).
                     # Views are not nested global transients
                     if scope == subgraph or n.desc(scope).transient:
+                        desc = n.desc(scope)
                         if scope.out_degree(n) > 0:
-                            candidates.append((False, n.data, n.desc(scope)))
+                            candidates.append((False, n.data, desc))
                         if scope.in_degree(n) > 0:
-                            candidates.append((True, n.data, n.desc(scope)))
+                            candidates.append((True, n.data, desc))
+                        if is_hbm_array_with_distributed_index(desc):
+                            # At this point all schedule unrolled maps are unrolled, so
+                            # all distributed subsets should be constant evaluatable
+                            # Record all banks used by this subgraph to generate interfaces for them
+                            if n.data in hbm_array_to_banks_used:
+                                current_banks = hbm_array_to_banks_used[n.data]
+                            else:
+                                current_banks = set()
+                            for edge in scope.in_edges(n):
+                                for bank in iterate_distributed_subset(desc, edge.data, True, sdfg):
+                                    current_banks.add(bank)
+                            for edge in scope.out_edges(n):
+                                for bank in iterate_distributed_subset(desc, edge.data, False, sdfg):
+                                    current_banks.add(bank)
+                            hbm_array_to_banks_used[n.data] = current_banks
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dt.Array)
                                     and n.desc(scope).storage
@@ -832,12 +855,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         # Get and update global memory interface ID
                         if is_hbm_array(desc):
                             tmp_interface_ids = []
-                            for bank in iterate_hbm_multibank_arrays(
-                                    data_name, desc, sdfg):
+                            for bank in hbm_array_to_banks_used[data_name]:
                                 ptr_str = fpga_ptr(data_name, desc, sdfg, bank)
                                 tmp_interface_id = global_interfaces[ptr_str]
                                 global_interfaces[ptr_str] += 1
-                                tmp_interface_ids.append(tmp_interface_id)
+                                tmp_interface_ids.append((bank, tmp_interface_id))
                             interface_id = tuple(tmp_interface_ids)
                             data_to_interface[data_name] = interface_id
                         else:
