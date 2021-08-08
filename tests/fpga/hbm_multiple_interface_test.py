@@ -9,7 +9,8 @@ import numpy as np
 from dace.sdfg import SDFG
 from dace.transformation.interstate import InlineSDFG
 
-# Checks multiple interfaces attached to the same HBM-bank
+# Checks multiple interfaces attached to the same HBM-bank. 
+# TODO: update
 
 #@xilinx_test()
 def test_3_interface_to_2_banks():
@@ -39,11 +40,18 @@ def test_3_interface_to_2_banks():
             sdfg.states()[0].out_edges(node)[0].data.subset = subsets.Range.from_string("1, 1")
             break
 
+    bank_assignment = sdfg.generate_code()[3].clean_code 
+    assert bank_assignment.count("sp") == 6
+    assert bank_assignment.count("HBM[0]") == 3
+    assert bank_assignment.count("HBM[1]") == 3
+
     a = np.zeros([2, 2], np.int32)
     a[0, 0] = 2
     a[1, 0] = 3
     sdfg(a=a)
     assert a[0, 1] == 5
+
+    return sdfg
 
 if __name__ == "__main__":
     test_3_interface_to_2_banks()
