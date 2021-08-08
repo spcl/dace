@@ -140,6 +140,8 @@ def iterate_distributed_subset(desc: dt.Array, access_memlet: memlet.Memlet,
             low, high = get_multibank_ranges_from_subset(subset, sdfg)
             for k in range(low, high):
                 yield k
+    else:
+        yield 0
 
 
 def modify_distributed_subset(subset: subsets.Subset, change: int):
