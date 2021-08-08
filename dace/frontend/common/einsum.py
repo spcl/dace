@@ -180,7 +180,7 @@ def _create_einsum_internal(sdfg: SDFG,
                             optimize: bool = False,
                             output: Optional[str] = None,
                             nodes: Optional[Dict[str, AccessNode]] = None,
-                            init_output: bool = True):
+                            init_output: bool = None):
     # Infer shapes and strides of input/output arrays
     einsum = EinsumParser(einsum_string)
 
@@ -251,10 +251,12 @@ def _create_einsum_internal(sdfg: SDFG,
     else:
         odesc = sdfg.arrays[output]
         dtype = dtype or odesc.dtype
-        to_init = init_output
+        to_init = init_output or True
 
     is_conflicted = not all(
         all(indim in einsum.output for indim in inp) for inp in einsum.inputs)
+    if not is_conflicted and init_output is None:
+        to_init = False
 
     if not einsum.is_bmm():
         # Fall back to "pure" SDFG einsum with conflict resolution
