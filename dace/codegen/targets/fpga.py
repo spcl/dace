@@ -11,8 +11,6 @@ import numpy as np
 from typing import Dict, Iterable, List, Set, Tuple, Union
 import copy
 
-from sympy.tensor.array import Array
-
 import dace
 from dace.codegen.targets import cpp
 from dace import subsets, data as dt, dtypes, memlet, symbolic
