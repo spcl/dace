@@ -165,6 +165,135 @@ class ExpandReducePure(pm.ExpandTransformation):
 
 
 @dace.library.expansion
+class ExpandReducePureSequentialDim(pm.ExpandTransformation):
+    """
+        Pure SDFG Reduce expansion replaces a reduce node with nested maps and
+        edges with WCR.
+    """
+    environments = []
+
+    @staticmethod
+    def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
+        node.validate(sdfg, state)
+        inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
+        outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
+        insubset = dcpy(inedge.data.subset)
+        isqdim = insubset.squeeze()
+        outsubset = dcpy(outedge.data.subset)
+        osqdim = outsubset.squeeze()
+        input_dims = len(insubset)
+        output_dims = len(outsubset)
+        input_data = sdfg.arrays[inedge.data.data]
+        output_data = sdfg.arrays[outedge.data.data]
+
+        if len(osqdim) == 0:  # Fix for scalars
+            osqdim = [0]
+
+        # Standardize axes
+        axes = node.axes if node.axes else [i for i in range(input_dims)]
+
+        assert node.identity is not None
+        assert len(axes) == 1
+
+        # Create nested SDFG
+        nsdfg = SDFG('reduce')
+
+        nsdfg.add_array('_in',
+                        insubset.size(),
+                        input_data.dtype,
+                        strides=[
+                            s for i, s in enumerate(input_data.strides)
+                            if i in isqdim
+                        ],
+                        storage=input_data.storage)
+
+        nsdfg.add_array('_out',
+                        outsubset.size(),
+                        output_data.dtype,
+                        strides=[
+                            s for i, s in enumerate(output_data.strides)
+                            if i in osqdim
+                        ],
+                        storage=output_data.storage)
+
+        nsdfg.add_transient('acc', [1], nsdfg.arrays['_in'].dtype,
+                            dtypes.StorageType.Register)
+
+        nstate = nsdfg.add_state()
+
+        axis = axes[0]
+        inp = dcpy(nsdfg.arrays['_in'])
+        out = dcpy(nsdfg.arrays['_out'])
+
+        # Interleave input and output axes to match input memlet
+        ictr, octr = 0, 0
+        input_subset = []
+        for i in isqdim:
+            if i in axes:
+                input_subset.append('_i%d' % ictr)
+                ictr += 1
+            else:
+                input_subset.append('_o%d' % octr)
+                octr += 1
+
+        ome, omx = nstate.add_map(
+            'reduce_output', {
+                '_o%d' % i: '0:%s' % symstr(sz)
+                for i, sz in enumerate(outsubset.size())
+            })
+        outm = dace.Memlet.simple('_out',
+                                  ','.join(
+                                      ['_o%d' % i for i in range(output_dims)]))
+                                  #wcr_str=node.wcr)
+        inmm = dace.Memlet.simple('_in', ','.join(input_subset))
+
+        idt = nstate.add_tasklet('reset', {}, {'o'}, f'o = {node.identity}')
+        nstate.add_edge(ome, None, idt, None, dace.Memlet())
+
+        accread = nstate.add_access('acc')
+        accwrite = nstate.add_access('acc')
+        nstate.add_edge(idt, 'o', accread, None, dace.Memlet('acc'))
+
+        # Add inner map, which corresponds to the range to reduce, containing
+        # an identity tasklet
+        ime, imx = nstate.add_map('reduce_values', {
+            '_i%d' % i: '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
+            for i, axis in enumerate(sorted(axes))
+        },
+                                  schedule=dtypes.ScheduleType.Sequential)
+
+        # Add identity tasklet for reduction
+        t = nstate.add_tasklet('identity', {'a', 'b'}, {'o'}, 'o = a + b')
+
+        # Connect everything
+        r = nstate.add_read('_in')
+        w = nstate.add_write('_out')
+        nstate.add_memlet_path(r, ome, ime, t, dst_conn='b', memlet=inmm)
+        nstate.add_memlet_path(accread,
+                               ime,
+                               t,
+                               dst_conn='a',
+                               memlet=dace.Memlet('acc[0]'))
+        nstate.add_memlet_path(t,
+                               imx,
+                               accwrite,
+                               src_conn='o',
+                               memlet=dace.Memlet('acc[0]'))
+        nstate.add_memlet_path(accwrite, omx, w, memlet=outm)
+
+        # Rename outer connectors and add to node
+        inedge._dst_conn = '_in'
+        outedge._src_conn = '_out'
+        node.add_in_connector('_in')
+        node.add_out_connector('_out')
+
+        from dace.transformation import dataflow
+        nsdfg.apply_transformations_repeated(dataflow.MapCollapse)
+
+        return nsdfg
+
+
+@dace.library.expansion
 class ExpandReduceOpenMP(pm.ExpandTransformation):
     """
         OpenMP-based implementation of the reduce node
@@ -373,11 +502,11 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
             reduce_last_axes = sorted(node.axes) == list(
                 range(input_dims - len(node.axes), input_dims))
 
-        if (not reduce_all_axes) and (not reduce_last_axes):
+        if not reduce_all_axes and not reduce_last_axes:
             warnings.warn(
                 'Multiple axis reductions not supported with this expansion. '
                 'Falling back to the pure expansion.')
-            return ExpandReducePure.expansion(node, state, sdfg)
+            return ExpandReducePureSequentialDim.expansion(node, state, sdfg)
 
         # Verify that data is on the GPU
         if input_data.storage not in [
@@ -1058,6 +1187,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         'pure': ExpandReducePure,
+        'pure-seq': ExpandReducePureSequentialDim,
         'OpenMP': ExpandReduceOpenMP,
         'CUDA (device)': ExpandReduceCUDADevice,
         'CUDA (block)': ExpandReduceCUDABlock,
