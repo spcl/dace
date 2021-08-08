@@ -838,13 +838,17 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                         desc, edge.data, False, sdfg):
                                     current_banks_in.add(bank)
                             if n.data in hbm_array_to_banks_used_in:
-                                hbm_array_to_banks_used_in[n.data].update(current_banks_in)
+                                hbm_array_to_banks_used_in[n.data].update(
+                                    current_banks_in)
                             else:
-                                hbm_array_to_banks_used_in[n.data] = current_banks_in
+                                hbm_array_to_banks_used_in[
+                                    n.data] = current_banks_in
                             if n.data in hbm_array_to_banks_used_out:
-                                hbm_array_to_banks_used_out[n.data].update(current_banks_out)
+                                hbm_array_to_banks_used_out[n.data].update(
+                                    current_banks_out)
                             else:
-                                hbm_array_to_banks_used_out[n.data] = current_banks_out
+                                hbm_array_to_banks_used_out[
+                                    n.data] = current_banks_out
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dt.Array)
                                     and n.desc(scope).storage
@@ -856,7 +860,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             data_to_interface: Dict[str, int] = {}
             # multibank data name -> is_output -> List of (bank, interface id)
             # same as data_to_interface, but for HBM-arrays with multiple banks
-            multibank_data_to_interface: Dict[str, Dict[bool, List[Tuple[int, int]]]] = {}
+            multibank_data_to_interface: Dict[str, Dict[bool,
+                                                        List[Tuple[int,
+                                                                   int]]]] = {}
 
             # Differentiate global and local arrays. The former are allocated
             # from the host and passed to the device code, while the latter are
@@ -874,18 +880,27 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         and desc.storage == dtypes.StorageType.FPGA_Global):
                     if data_name in data_to_interface:
                         interface_id = data_to_interface[data_name]
-                    elif data_name in multibank_data_to_interface and is_output in multibank_data_to_interface[data_name]:
-                        interface_id = multibank_data_to_interface[data_name][is_output]
+                    elif data_name in multibank_data_to_interface and is_output in multibank_data_to_interface[
+                            data_name]:
+                        interface_id = multibank_data_to_interface[data_name][
+                            is_output]
                     else:
                         # Get and update global memory interface ID
                         if is_hbm_array_with_distributed_index(desc):
                             tmp_interface_ids = []
                             if is_output:
-                                banks_looked_at = hbm_array_to_banks_used_out[data_name]
+                                banks_looked_at = hbm_array_to_banks_used_out[
+                                    data_name]
                             else:
-                                banks_looked_at = hbm_array_to_banks_used_in[data_name]
+                                banks_looked_at = hbm_array_to_banks_used_in[
+                                    data_name]
                             for bank in banks_looked_at:
-                                ptr_str = fpga_ptr(data_name, desc, sdfg, bank, )
+                                ptr_str = fpga_ptr(
+                                    data_name,
+                                    desc,
+                                    sdfg,
+                                    bank,
+                                )
                                 tmp_interface_id = global_interfaces[ptr_str]
                                 global_interfaces[ptr_str] += 1
                                 tmp_interface_ids.append(
@@ -893,7 +908,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             interface_id = tuple(tmp_interface_ids)
                             if data_name not in multibank_data_to_interface:
                                 multibank_data_to_interface[data_name] = {}
-                            multibank_data_to_interface[data_name][is_output] = interface_id
+                            multibank_data_to_interface[data_name][
+                                is_output] = interface_id
                         else:
                             interface_id = global_interfaces[data_name]
                             global_interfaces[data_name] += 1

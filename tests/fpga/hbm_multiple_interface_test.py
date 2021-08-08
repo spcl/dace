@@ -9,8 +9,9 @@ import numpy as np
 from dace.sdfg import SDFG
 from dace.transformation.interstate import InlineSDFG
 
-# Checks multiple interfaces attached to the same HBM-bank. 
+# Checks multiple interfaces attached to the same HBM-bank.
 # TODO: update
+
 
 @xilinx_test(assert_ii_1=False)
 def test_3_interface_to_2_banks():
@@ -24,23 +25,37 @@ def test_3_interface_to_2_banks():
     acc_write1 = state.add_write("a")
 
     t1 = state.add_tasklet("r1", set(["_x1", "_x2"]), set(["_y1"]),
-        "_y1 = _x1 + _x2")
+                           "_y1 = _x1 + _x2")
 
-    m1_in, m1_out = state.add_map("m", {"k": "0:2"}, dtypes.ScheduleType.Unrolled)
+    m1_in, m1_out = state.add_map("m", {"k": "0:2"},
+                                  dtypes.ScheduleType.Unrolled)
 
-    state.add_memlet_path(acc_read1, m1_in, t1, memlet=memlet.Memlet("a[0, 0]"), dst_conn="_x1")
-    state.add_memlet_path(acc_read1, m1_in, t1, memlet=memlet.Memlet("a[1, 0]"), dst_conn="_x2")
-    state.add_memlet_path(t1, m1_out, acc_write1, memlet=memlet.Memlet("a[0, 1]"), src_conn="_y1")
+    state.add_memlet_path(acc_read1,
+                          m1_in,
+                          t1,
+                          memlet=memlet.Memlet("a[0, 0]"),
+                          dst_conn="_x1")
+    state.add_memlet_path(acc_read1,
+                          m1_in,
+                          t1,
+                          memlet=memlet.Memlet("a[1, 0]"),
+                          dst_conn="_x2")
+    state.add_memlet_path(t1,
+                          m1_out,
+                          acc_write1,
+                          memlet=memlet.Memlet("a[0, 1]"),
+                          src_conn="_y1")
 
     sdfg.apply_fpga_transformations()
     sdfg.apply_transformations(InlineSDFG)
     sdfg.apply_transformations(MapUnroll)
     for node in sdfg.states()[0].nodes():
         if isinstance(node, dace.sdfg.nodes.Tasklet):
-            sdfg.states()[0].out_edges(node)[0].data.subset = subsets.Range.from_string("1, 1")
+            sdfg.states()[0].out_edges(
+                node)[0].data.subset = subsets.Range.from_string("1, 1")
             break
 
-    bank_assignment = sdfg.generate_code()[3].clean_code 
+    bank_assignment = sdfg.generate_code()[3].clean_code
     assert bank_assignment.count("sp") == 6
     assert bank_assignment.count("HBM[0]") == 3
     assert bank_assignment.count("HBM[1]") == 3
@@ -52,6 +67,7 @@ def test_3_interface_to_2_banks():
     assert a[0, 1] == 5
 
     return sdfg
+
 
 if __name__ == "__main__":
     test_3_interface_to_2_banks(None)
