@@ -385,19 +385,9 @@ class MapFusion(transformation.Transformation):
                     nodes_to_remove.add(access_node)
                     continue
 
-                # If the source is an access node, modify the memlet to point
-                # to it
-                if (isinstance(edge.src, nodes.AccessNode)
-                        and edge.data.data != edge.src.data):
-                    edge.data.data = edge.src.data
-                    edge.data.subset = ("0" if edge.data.other_subset is None
-                                        else edge.data.other_subset)
-                    edge.data.other_subset = None
-
-                else:
-                    # Add a transient scalar/array
-                    self.fuse_nodes(sdfg, graph, edge, new_dsts[0].dst,
-                                    new_dsts[0].dst_conn, new_dsts[1:])
+                # Add a transient scalar/array
+                self.fuse_nodes(sdfg, graph, edge, new_dsts[0].dst,
+                                new_dsts[0].dst_conn, new_dsts[1:])
 
                 edges_to_remove.add(edge)
 
