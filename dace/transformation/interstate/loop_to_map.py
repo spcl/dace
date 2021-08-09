@@ -71,11 +71,6 @@ class LoopToMap(DetectLoop):
         if len(guard.nodes()) != 0:
             return False
 
-        # Only support loops with a single-state body
-        # begin_outedges = graph.out_edges(begin)
-        # if len(begin_outedges) != 1 or begin_outedges[0].dst != guard:
-        #     return False
-
         # If loop cannot be detected, fail
         found = find_for_loop(graph, guard, begin)
         if not found:
@@ -106,12 +101,9 @@ class LoopToMap(DetectLoop):
             _, wset = state.read_and_write_sets()
             write_set |= wset
 
-        # _, write_set = begin.read_and_write_sets()
-
         # Get access nodes from other states to isolate local loop variables
         other_access_nodes = set()
         for state in sdfg.nodes():
-            # if state is begin:
             if state in states:
                 continue
             other_access_nodes |= set(n.data for n in state.data_nodes()
@@ -120,8 +112,6 @@ class LoopToMap(DetectLoop):
         for state in states:
             other_access_nodes |= set(n.data for n in state.data_nodes()
                                       if not sdfg.arrays[n.data].transient)
-        # other_access_nodes |= set(n.data for n in begin.data_nodes()
-        #                           if not sdfg.arrays[n.data].transient)
 
         write_memlets = defaultdict(list)
 

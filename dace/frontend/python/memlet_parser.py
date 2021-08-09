@@ -58,11 +58,6 @@ def pyexpr_to_symbolic(defined_arrays_and_symbols: Dict[str, Any],
         :return: Symbolic expression.
     """
     # TODO!
-    # # NOTE: Fix for ast.Slice
-    # expr = expr_ast
-    # if isinstance(expr_ast, ast.Subscript) and isinstance(expr_ast.slice, str):
-    #     expr = copy.deepcopy(expr_ast)
-    #     expr.slice = ast.Name(id=expr_ast.slice)
     return inner_eval_ast(defined_arrays_and_symbols, expr_ast)
 
 

@@ -3397,7 +3397,6 @@ class ProgramVisitor(ExtNodeVisitor):
                     true_target.value.id = true_name
 
                     # Visit slice contents
-                    # true_target.slice = self.visit(true_target.slice)
                     nslice = self._parse_subscript_slice(true_target.slice)
                     defined_arrays = {
                         **self.sdfg.arrays,
