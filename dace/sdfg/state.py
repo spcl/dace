@@ -1325,12 +1325,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             output_nodes = output_nodes or {}
             input_data = set(memlet.data for memlet in inputs.values())
             output_data = set(memlet.data for memlet in outputs.values())
-            for inp in input_data:
+            for inp in sorted(input_data):
                 if inp in input_nodes:
                     inpdict[inp] = input_nodes[inp]
                 else:
                     inpdict[inp] = self.add_read(inp)
-            for out in output_data:
+            for out in sorted(output_data):
                 if out in output_nodes:
                     outdict[out] = output_nodes[out]
                 else:
@@ -1338,7 +1338,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
 
         # Connect inputs from map to tasklet
         tomemlet = {}
-        for name, memlet in inputs.items():
+        for name, memlet in sorted(inputs.items()):
             # Set memlet local name
             memlet.name = name
             # Add internal memlet edge
@@ -1350,7 +1350,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             self.add_edge(map_entry, None, tasklet, None, mm.Memlet())
 
         if external_edges:
-            for inp, inpnode in inpdict.items():
+            for inp, inpnode in sorted(inpdict.items()):
                 # Add external edge
                 if propagate:
                     outer_memlet = propagate_memlet(self, tomemlet[inp],
@@ -1371,7 +1371,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
 
         # Connect outputs from tasklet to map
         tomemlet = {}
-        for name, memlet in outputs.items():
+        for name, memlet in sorted(outputs.items()):
             # Set memlet local name
             memlet.name = name
             # Add internal memlet edge
@@ -1383,7 +1383,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             self.add_edge(tasklet, None, map_exit, None, mm.Memlet())
 
         if external_edges:
-            for out, outnode in outdict.items():
+            for out, outnode in sorted(outdict.items()):
                 # Add external edge
                 if propagate:
                     outer_memlet = propagate_memlet(self, tomemlet[out],
