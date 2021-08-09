@@ -749,14 +749,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         and 'gpu' not in node.location):
                     node.location['gpu'] = default_gpu
                 # Check that the location is in the symbols and symbol mapping.
-                if node.schedule == dtypes.ScheduleType.GPU_Multidevice:
-                    if str(node.location['gpu']) not in node.sdfg.symbols:
-                        node.sdfg.add_symbol(str(node.location['gpu']),
-                                             dtypes.int64)
-                    if str(node.location['gpu']) not in node.symbol_mapping:
-                        node.symbol_mapping[str(
-                            node.location['gpu'])] = symbolic.pystr_to_symbolic(
-                                node.location['gpu'])
+                if str(node.location['gpu']) not in node.sdfg.symbols:
+                    node.sdfg.add_symbol(str(node.location['gpu']),
+                                         dtypes.int64)
+                if str(node.location['gpu']) not in node.symbol_mapping:
+                    node.symbol_mapping[str(
+                        node.location['gpu'])] = symbolic.pystr_to_symbolic(
+                            node.location['gpu'])
 
             # Data
             elif (
@@ -1190,11 +1189,26 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 add_cs_to_location(node, graph, node_gpu_id)
 
         # Recursive call for NestedSDFGs that are not already on a GPU device.
-        if isinstance(node, nodes.NestedSDFG
-                      ) and node.schedule not in dtypes.GPU_DEVICE_SCHEDULES:
-            max_streams, max_events = self._compute_cudastreams_sdfg(
-                node.sdfg, max_streams, current_streams, unused_streams,
-                max_events)
+        if isinstance(node, nodes.NestedSDFG):
+            if node.schedule is dtypes.ScheduleType.GPU_Sequential:
+                for n, s in node.sdfg.all_nodes_recursive():
+                    if isinstance(n, SDFGState):
+                        continue
+                    n_gpu_id = sdutil.get_gpu_location(s, n)
+                    if n_gpu_id == node_gpu_id:
+                        n._cuda_stream = node._cuda_stream
+                        # Add CUDA stream to location (usefull for debugging)
+                        if self._debugprint:
+                            add_cs_to_location(n, s, n_gpu_id)
+                    elif n_gpu_id is not None:
+                        n._cuda_stream = {n_gpu_id, 0}
+                        # Add CUDA stream to location (usefull for debugging)
+                        if self._debugprint:
+                            add_cs_to_location(n, s, n_gpu_id)
+            elif node.schedule not in dtypes.GPU_DEVICE_SCHEDULES:
+                max_streams, max_events = self._compute_cudastreams_sdfg(
+                    node.sdfg, max_streams, current_streams, unused_streams,
+                    max_events)
 
         return max_streams, current_streams, unused_streams, max_events
 

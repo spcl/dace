@@ -60,6 +60,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
     GPU_Multidevice = ()  #: Multiple GPUs
+    GPU_Sequential = ()  #: Uses only a single CUDA stream
     FPGA_Device = ()
 
 
@@ -70,6 +71,7 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_ThreadBlock_Dynamic,
     ScheduleType.GPU_Persistent,
     ScheduleType.GPU_Multidevice,
+    ScheduleType.GPU_Sequential,
 ]
 
 # GPU schedule types that only involve 1 GPU
@@ -203,6 +205,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.GPU_Multidevice: StorageType.GPU_Global,
+    ScheduleType.GPU_Sequential: StorageType.GPU_Global,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
     ScheduleType.SVE_Map: StorageType.CPU_Heap
 }
@@ -221,6 +224,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.GPU_Multidevice: ScheduleType.GPU_Device,
+    ScheduleType.GPU_Sequential: ScheduleType.GPU_Device,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential
 }
@@ -1266,6 +1270,7 @@ def can_access(schedule: ScheduleType, storage: StorageType):
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
             ScheduleType.GPU_Default,
+            ScheduleType.GPU_Sequential,
     ]:
         return storage in [
             StorageType.GPU_Global, StorageType.GPU_Shared,
