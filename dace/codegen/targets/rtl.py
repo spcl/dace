@@ -117,13 +117,16 @@ class RTLCodeGen(target.TargetCodeGenerator):
                     dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                     edge.src.data)
         elif isinstance(edge.src, nodes.MapEntry) and isinstance(edge.dst, nodes.Tasklet) and edge.src.map.unroll:
-            # TODO it would be best to do it here
+            # TODO it would be best to do it here, rather than xilinx?
             #if self.hardware_target:
             #    rtl_name = "{}_{}_{}_{}".format(edge.dst.name, sdfg.sdfg_id,
             #                                    state_id,
             #                                    dfg.node_id(edge.dst))
             #    self._multiple_kernels[rtl_name] = symbolic.evaluate(edge.src.map.range[0][1]+1, sdfg.constants)
-            line: str = '// AOEU'
+            #else:
+            #    raise NotImplementedError(
+            #            'Copy from map in software not implemented')
+            line: str = '// Copy from map handled in xilinx codegen'
         else:
             raise RuntimeError(
                 "Not handling copy_memory case of type {} -> {}.".format(
@@ -156,7 +159,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
                     src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
                     edge.dst.data)
         elif isinstance(edge.src, nodes.Tasklet) and isinstance(edge.dst, nodes.MapExit) and edge.dst.map.unroll:
-            line: str = '// AOEU'
+            line: str = '// Copy to map handled in xilinx codegen'
         else:
             raise RuntimeError(
                 "Not handling define_out_memlet case of type {} -> {}.".format(
