@@ -651,7 +651,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         if elem not in self._stream_connections:
                             self._stream_connections[elem] = [None, None]
                         for edge in subgraph.out_edges(node):
-                            self._stream_connections[elem][1] = '{}_top_{}.s_axis_{}'.format(rtl_name, i+1, state.memlet_path(edge)[-1].dst_conn)
+                            self._stream_connections[elem][1] = '{}_top_{}.s_axis_{}_{}'.format(rtl_name, 1, state.memlet_path(edge)[-1].dst_conn, i)
 
             for node in subgraph.sink_nodes():
                 if isinstance(sdfg.arrays[node.data], dt.Stream):
@@ -668,7 +668,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         if elem not in self._stream_connections:
                             self._stream_connections[elem] = [None, None]
                         for edge in state.in_edges(node):
-                            self._stream_connections[elem][0] = '{}_top_{}.m_axis_{}'.format(rtl_name, i+1, subgraph.memlet_path(edge)[0].src_conn)
+                            self._stream_connections[elem][0] = '{}_top_{}.m_axis_{}_{}'.format(rtl_name, 1, subgraph.memlet_path(edge)[0].src_conn, i)
 
             # Make the dispatcher trigger generation of the RTL module, but
             # ignore the generated code, as the RTL codegen will generate the
