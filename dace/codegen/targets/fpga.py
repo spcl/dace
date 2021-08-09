@@ -39,6 +39,11 @@ _FPGA_STORAGE_TYPES = {
     dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister
 }
 
+_FPGA_LOCAL_STORAGE_TYPES = {
+    dtypes.StorageType.FPGA_Local, dtypes.StorageType.FPGA_Registers,
+    dtypes.StorageType.FPGA_ShiftRegister
+}
+
 
 def vector_element_type_of(dtype):
     if isinstance(dtype, dace.pointer):
@@ -461,7 +466,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 # Determine kernels in state
                 num_kernels, dependencies = self.partition_kernels(
                     sg, default_kernel=start_kernel)
-
                 if num_kernels > 1:
                     # For each kernel, derive the corresponding subgraphs
                     # and keep track of dependencies
@@ -1209,7 +1213,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         source_nodes = state.source_nodes()
         max_kernels = default_kernel
-
         # First step: assign a different Kernel ID
         # to each source node which is not an AccessNode
         for i, node in enumerate(source_nodes):
@@ -1243,9 +1246,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     continue
 
                 # Does this node need to be in another kernel?
-                # If it is a crossroad node (has more than one predecessor and its predecessors contain some compute)
-                # then it should be on a separate kernel.
-
+                # If it is a crossroad node (has more than one predecessor, its predecessors contain some compute, and
+                # no local buffers) then it should be on a separate kernel.
                 if len(list(state.predecessors(e.dst))) > 1 and not isinstance(
                         e.dst, nodes.ExitNode) and scopes[e.dst] == None:
                     # Loop over all predecessors (except this edge)
@@ -1265,7 +1267,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # From this edge we don't have any kernel id.
                 # Look up for the other predecessor nodes, if any of them has a kernel
                 # ID, use that.
-
                 for pred_edge in state.in_edges(e.dst):
                     if pred_edge != e:
                         kernel = self._trace_back_edge(pred_edge,
@@ -1293,13 +1294,19 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             kernel = self._node_to_kernel[succ_edge_dst_repr]
                             break
                     else:
-                        kernel = max_kernels
-                        if (isinstance(e.dst, nodes.AccessNode) and isinstance(
-                                sdfg.arrays[e.dst.data], dt.View)):
-                            # Skip views
-                            pass
+                        # Trace this edge forward: if it finds something that has a kernel id and
+                        # there is at least one local buffer along the way, then reuse that kernel id
+                        only_global, kern = self._trace_forward_edge(e, state)
+                        if not only_global:
+                            kernel = kern
                         else:
-                            max_kernels = increment(max_kernels)
+                            kernel = max_kernels
+                            if (isinstance(e.dst, nodes.AccessNode) and
+                                (isinstance(sdfg.arrays[e.dst.data], dt.View))):
+                                # Skip views and local buffers
+                                pass
+                            else:
+                                max_kernels = increment(max_kernels)
             self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel
 
         # do another pass and track dependencies among Kernels
@@ -1320,16 +1327,24 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         max_kernels = max_kernels if concurrent_kernels == 0 else concurrent_kernels
         return max_kernels, dependencies
 
-    def _trace_back_edge(self, edge, state, look_for_kernel_id=False):
+    def _trace_back_edge(self,
+                         edge: dace.sdfg.sdfg.Edge,
+                         state: dace.SDFGState,
+                         look_for_kernel_id: bool = False) -> Union[bool, int]:
         '''
-        Given ad edge, this traverses the edges backwards.
+        Given an edge, this traverses the edges backwards.
         It can be used either for:
-        - understanding if along the backward path there is some compute node, or
+        - understanding if along the backward path there is some compute node but no local buffers,  or
         - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
+        :return if look_for_kernel_id is false it returns a boolean indicating if there is a
+            compute node on the backward path and no access nodes to local buffers. Otherwise, it returns
+            the kernel_id of a predecessor node.
         '''
 
         curedge = edge
         source_nodes = state.source_nodes()
+        contains_compute = False
+        contains_only_global_buffers = True
         while not curedge.src in source_nodes:
 
             if not look_for_kernel_id:
@@ -1337,7 +1352,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         curedge.src,
                     (nodes.EntryNode, nodes.ExitNode, nodes.CodeNode)):
                     # We can stop here: this is a scope which will contain some compute, or a tasklet/libnode
-                    return True
+                    contains_compute = True
+                elif isinstance(curedge.src, nodes.AccessNode):
+                    if curedge.src.desc(
+                            state).storage in _FPGA_LOCAL_STORAGE_TYPES:
+                        contains_only_global_buffers = False
+
             else:
                 src_repr = utils.unique_node_repr(state, curedge.src)
                 if src_repr in self._node_to_kernel:
@@ -1348,11 +1368,45 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         # We didn't return before
         if not look_for_kernel_id:
-            return False
+            return contains_compute and contains_only_global_buffers
         else:
             src_repr = utils.unique_node_repr(state, curedge.src)
             return self._node_to_kernel[
                 src_repr] if src_repr in self._node_to_kernel else None
+
+    def _trace_forward_edge(self, edge: dace.sdfg.sdfg.Edge,
+                            state: dace.SDFGState) -> Tuple[bool, int]:
+        '''
+        Given ad edge, this traverses the edges forward.
+        It can be used either for:
+        - understanding if along the forward path there is a local buffer,  and
+        - returning the the kernel_id of a successor if any
+        :return: a tuple containing two booleans indicating if the path contains only global buffers
+            and the kernel_id of a successor if any
+        '''
+
+        curedge = edge
+        sink_nodes = state.sink_nodes()
+        contains_compute = False
+        contains_only_global_buffers = True
+        while not curedge.dst in sink_nodes:
+
+            if isinstance(curedge.dst, nodes.AccessNode):
+                if curedge.dst.desc(state).storage in _FPGA_LOCAL_STORAGE_TYPES:
+                    contains_only_global_buffers = False
+            dst_repr = utils.unique_node_repr(state, curedge.dst)
+            if dst_repr in self._node_to_kernel:
+                # Found a node with a kernel id. Use that
+                return contains_only_global_buffers, self._node_to_kernel[
+                    dst_repr]
+            next_edge = next(e for e in state.out_edges(curedge.dst))
+            curedge = next_edge
+
+        # We didn't return before
+        dst_repr = utils.unique_node_repr(state, curedge.dst)
+        kernel_id = self._node_to_kernel[
+            dst_repr] if dst_repr in self._node_to_kernel else None
+        return contains_only_global_buffers, kernel_id
 
     def _emit_copy(self, sdfg, state_id, src_node, src_storage, dst_node,
                    dst_storage, dst_schedule, edge, dfg, function_stream,
