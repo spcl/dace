@@ -39,6 +39,11 @@ _FPGA_STORAGE_TYPES = {
     dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister
 }
 
+_FPGA_LOCAL_STORAGE_TYPES = {
+    dtypes.StorageType.FPGA_Local, dtypes.StorageType.FPGA_Registers,
+    dtypes.StorageType.FPGA_ShiftRegister
+}
+
 
 def vector_element_type_of(dtype):
     if isinstance(dtype, dace.pointer):
@@ -69,6 +74,7 @@ def is_fpga_kernel(sdfg, state):
             return False
     return True
 
+
 def is_hbm_array(array: dt.Data):
     """
     :return: True if this array is placed on HBM
@@ -77,6 +83,20 @@ def is_hbm_array(array: dt.Data):
             and array.storage == dtypes.StorageType.FPGA_Global):
         res = parse_location_bank(array)
         return res is not None and res[0] == "HBM"
+    else:
+        return False
+
+
+def is_hbm_array_with_distributed_index(array: dt.Data):
+    """
+    :return: True if this array is placed on HBM and has an extra first
+    dimension equal to the number of banks is placed on. For HBM arrays
+    spanning across multiple banks this is always true.
+    """
+    if is_hbm_array(array):
+        res = parse_location_bank(array)
+        low, high = get_multibank_ranges_from_subset(res[1], None)
+        return high - low > 1 or str(array.shape[0]) == "1"
     else:
         return False
 
@@ -106,6 +126,7 @@ def iterate_hbm_multibank_arrays(array_name: str, array: dt.Array, sdfg: SDFG):
     else:
         yield 0
 
+
 def modify_distributed_subset(subset: subsets.Subset, change: int):
     """
     Modifies the first index of :param subset: (the one used for distributed subsets).
@@ -126,7 +147,7 @@ def get_multibank_ranges_from_subset(subset: Union[subsets.Subset, str],
     """
     Returns the upper and lower end of the accessed HBM-range, evaluated using the
     constants on the SDFG.
-    :returns: (low, high) where low = the lowest accessed bank and high the 
+    :returns: (low, high) where low = the lowest accessed bank and high the
         highest accessed bank + 1.
     """
     if isinstance(subset, str):
@@ -147,9 +168,9 @@ def get_multibank_ranges_from_subset(subset: Union[subsets.Subset, str],
 def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
     """
     :param array: an array on FPGA global memory
-    :return: None if an array is given which does not have a location['memorytype'] value. 
+    :return: None if an array is given which does not have a location['memorytype'] value.
         Otherwise it will return a tuple (bank_type, bank_assignment), where bank_type
-        is one of 'DDR', 'HBM' and bank_assignment a string that describes which banks are 
+        is one of 'DDR', 'HBM' and bank_assignment a string that describes which banks are
         used.
     """
     if "memorytype" in array.location:
@@ -171,27 +192,27 @@ def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
 
 
 def fpga_ptr(name: str,
-        desc: dt.Data = None,
-        sdfg: SDFG = None,
-        subset_info_hbm: Union[subsets.Subset, int] = None,
-        is_write: bool = None,
-        dispatcher=None,
-        ancestor: int = 0,
-        is_array_interface: bool = False,
-        interface_id: Union[int, List[int]] = None):
+             desc: dt.Data = None,
+             sdfg: SDFG = None,
+             subset_info_hbm: Union[subsets.Subset, int] = None,
+             is_write: bool = None,
+             dispatcher=None,
+             ancestor: int = 0,
+             is_array_interface: bool = False,
+             interface_id: Union[int, List[int]] = None):
     """
     Returns a string that points to the data based on its name, and various other conditions
     that may apply for that data field.
     :param name: Data name.
     :param desc: Data descriptor.
-    :param subset_info_hbm: Any additional information about the accessed subset. 
+    :param subset_info_hbm: Any additional information about the accessed subset.
     :param ancestor: The ancestor level where the variable should be searched for if
         is_array_interface is True when dispatcher is not None
     :param is_array_interface: Data is pointing to an interface in FPGA-Kernel compilation
     :param interface_id: An optional interface id that will be added to the name (only for array interfaces)
     :return: C-compatible name that can be used to access the data.
     """
-    if (desc is not None and is_hbm_array(desc)):
+    if (desc is not None and is_hbm_array_with_distributed_index(desc)):
         if (subset_info_hbm == None):
             raise ValueError(
                 "Cannot generate name for HBM bank without subset info")
@@ -237,6 +258,7 @@ def fpga_ptr(name: str,
             else:
                 name = f"{name}_{interface_id}"
     return name
+
 
 class FPGACodeGen(TargetCodeGenerator):
     # Set by deriving class
@@ -444,7 +466,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 # Determine kernels in state
                 num_kernels, dependencies = self.partition_kernels(
                     sg, default_kernel=start_kernel)
-
                 if num_kernels > 1:
                     # For each kernel, derive the corresponding subgraphs
                     # and keep track of dependencies
@@ -817,8 +838,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             tmp_interface_ids = []
                             for bank in iterate_hbm_multibank_arrays(
                                     data_name, desc, sdfg):
-                                ptr_str = fpga_ptr(
-                                    data_name, desc, sdfg, bank)
+                                ptr_str = fpga_ptr(data_name, desc, sdfg, bank)
                                 tmp_interface_id = global_interfaces[ptr_str]
                                 global_interfaces[ptr_str] += 1
                                 tmp_interface_ids.append(tmp_interface_id)
@@ -1098,7 +1118,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     # Define buffer, using proper type
                     for bank_index in range(memory_bank_arg_count):
                         alloc_name = fpga_ptr(dataname, nodedesc, sdfg,
-                                                    bank_index)
+                                              bank_index)
                         if not declared:
                             result_decl.write(
                                 "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n"
@@ -1193,7 +1213,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         source_nodes = state.source_nodes()
         max_kernels = default_kernel
-
         # First step: assign a different Kernel ID
         # to each source node which is not an AccessNode
         for i, node in enumerate(source_nodes):
@@ -1227,9 +1246,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     continue
 
                 # Does this node need to be in another kernel?
-                # If it is a crossroad node (has more than one predecessor and its predecessors contain some compute)
-                # then it should be on a separate kernel.
-
+                # If it is a crossroad node (has more than one predecessor, its predecessors contain some compute, and
+                # no local buffers) then it should be on a separate kernel.
                 if len(list(state.predecessors(e.dst))) > 1 and not isinstance(
                         e.dst, nodes.ExitNode) and scopes[e.dst] == None:
                     # Loop over all predecessors (except this edge)
@@ -1249,7 +1267,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # From this edge we don't have any kernel id.
                 # Look up for the other predecessor nodes, if any of them has a kernel
                 # ID, use that.
-
                 for pred_edge in state.in_edges(e.dst):
                     if pred_edge != e:
                         kernel = self._trace_back_edge(pred_edge,
@@ -1277,13 +1294,19 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             kernel = self._node_to_kernel[succ_edge_dst_repr]
                             break
                     else:
-                        kernel = max_kernels
-                        if (isinstance(e.dst, nodes.AccessNode) and isinstance(
-                                sdfg.arrays[e.dst.data], dt.View)):
-                            # Skip views
-                            pass
+                        # Trace this edge forward: if it finds something that has a kernel id and
+                        # there is at least one local buffer along the way, then reuse that kernel id
+                        only_global, kern = self._trace_forward_edge(e, state)
+                        if not only_global:
+                            kernel = kern
                         else:
-                            max_kernels = increment(max_kernels)
+                            kernel = max_kernels
+                            if (isinstance(e.dst, nodes.AccessNode) and
+                                (isinstance(sdfg.arrays[e.dst.data], dt.View))):
+                                # Skip views and local buffers
+                                pass
+                            else:
+                                max_kernels = increment(max_kernels)
             self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel
 
         # do another pass and track dependencies among Kernels
@@ -1304,16 +1327,24 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         max_kernels = max_kernels if concurrent_kernels == 0 else concurrent_kernels
         return max_kernels, dependencies
 
-    def _trace_back_edge(self, edge, state, look_for_kernel_id=False):
+    def _trace_back_edge(self,
+                         edge: dace.sdfg.sdfg.Edge,
+                         state: dace.SDFGState,
+                         look_for_kernel_id: bool = False) -> Union[bool, int]:
         '''
-        Given ad edge, this traverses the edges backwards.
+        Given an edge, this traverses the edges backwards.
         It can be used either for:
-        - understanding if along the backward path there is some compute node, or
+        - understanding if along the backward path there is some compute node but no local buffers,  or
         - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
+        :return if look_for_kernel_id is false it returns a boolean indicating if there is a
+            compute node on the backward path and no access nodes to local buffers. Otherwise, it returns
+            the kernel_id of a predecessor node.
         '''
 
         curedge = edge
         source_nodes = state.source_nodes()
+        contains_compute = False
+        contains_only_global_buffers = True
         while not curedge.src in source_nodes:
 
             if not look_for_kernel_id:
@@ -1321,7 +1352,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         curedge.src,
                     (nodes.EntryNode, nodes.ExitNode, nodes.CodeNode)):
                     # We can stop here: this is a scope which will contain some compute, or a tasklet/libnode
-                    return True
+                    contains_compute = True
+                elif isinstance(curedge.src, nodes.AccessNode):
+                    if curedge.src.desc(
+                            state).storage in _FPGA_LOCAL_STORAGE_TYPES:
+                        contains_only_global_buffers = False
+
             else:
                 src_repr = utils.unique_node_repr(state, curedge.src)
                 if src_repr in self._node_to_kernel:
@@ -1332,11 +1368,45 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         # We didn't return before
         if not look_for_kernel_id:
-            return False
+            return contains_compute and contains_only_global_buffers
         else:
             src_repr = utils.unique_node_repr(state, curedge.src)
             return self._node_to_kernel[
                 src_repr] if src_repr in self._node_to_kernel else None
+
+    def _trace_forward_edge(self, edge: dace.sdfg.sdfg.Edge,
+                            state: dace.SDFGState) -> Tuple[bool, int]:
+        '''
+        Given ad edge, this traverses the edges forward.
+        It can be used either for:
+        - understanding if along the forward path there is a local buffer,  and
+        - returning the the kernel_id of a successor if any
+        :return: a tuple containing two booleans indicating if the path contains only global buffers
+            and the kernel_id of a successor if any
+        '''
+
+        curedge = edge
+        sink_nodes = state.sink_nodes()
+        contains_compute = False
+        contains_only_global_buffers = True
+        while not curedge.dst in sink_nodes:
+
+            if isinstance(curedge.dst, nodes.AccessNode):
+                if curedge.dst.desc(state).storage in _FPGA_LOCAL_STORAGE_TYPES:
+                    contains_only_global_buffers = False
+            dst_repr = utils.unique_node_repr(state, curedge.dst)
+            if dst_repr in self._node_to_kernel:
+                # Found a node with a kernel id. Use that
+                return contains_only_global_buffers, self._node_to_kernel[
+                    dst_repr]
+            next_edge = next(e for e in state.out_edges(curedge.dst))
+            curedge = next_edge
+
+        # We didn't return before
+        dst_repr = utils.unique_node_repr(state, curedge.dst)
+        kernel_id = self._node_to_kernel[
+            dst_repr] if dst_repr in self._node_to_kernel else None
+        return contains_only_global_buffers, kernel_id
 
     def _emit_copy(self, sdfg, state_id, src_node, src_storage, dst_node,
                    dst_storage, dst_schedule, edge, dfg, function_stream,
@@ -1381,10 +1451,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
 
             copy_shape = memlet.subset.bounding_box_size()
-            is_src_using_hbm = src_is_subset and is_hbm_array(
-                src_nodedesc)
-            is_dst_using_hbm = not src_is_subset and is_hbm_array(
-                dst_nodedesc)
+            is_src_using_hbm = (
+                src_is_subset
+                and is_hbm_array_with_distributed_index(src_nodedesc))
+            is_dst_using_hbm = (
+                not src_is_subset
+                and is_hbm_array_with_distributed_index(dst_nodedesc))
             if is_src_using_hbm or is_dst_using_hbm:
                 copy_shape = copy_shape[1:]
 
@@ -1420,17 +1492,31 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 host_dtype = sdfg.data(dst_node.data).dtype
             cast = False
             if not device_to_device and host_dtype != device_dtype:
+                host_dtype_base = host_dtype
+                while True:
+                    updated = host_dtype_base.base_type
+                    if updated != host_dtype_base:
+                        host_dtype_base = updated
+                        continue
+                    break
+                device_dtype_base = device_dtype
+                while True:
+                    updated = device_dtype_base.base_type
+                    if updated != device_dtype_base:
+                        device_dtype_base = updated
+                        continue
+                    break
                 if ((isinstance(host_dtype, dace.vector)
                      or isinstance(device_dtype, dace.vector))
-                        and host_dtype.base_type == device_dtype.base_type):
+                        and host_dtype_base == device_dtype_base):
                     if ((host_to_device and memlet.data == src_node.data) or
                         (device_to_host and memlet.data == dst_node.data)):
-                        if host_dtype.veclen > device_dtype.veclen:
-                            copy_shape[-1] *= (host_dtype.veclen //
-                                               device_dtype.veclen)
+                        if host_dtype.bytes > device_dtype.bytes:
+                            copy_shape[-1] *= (host_dtype.bytes //
+                                               device_dtype.bytes)
                         else:
-                            copy_shape[-1] //= (device_dtype.veclen //
-                                                host_dtype.veclen)
+                            copy_shape[-1] //= (device_dtype.bytes //
+                                                host_dtype.bytes)
                     cast = True
                 else:
                     raise TypeError(
@@ -1446,35 +1532,33 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             dst_subset = memlet.dst_subset or memlet.subset
             if host_to_device:
 
-                ptr_str = (fpga_ptr(src_node.data, src_nodedesc, sdfg,
-                                          src_subset) +
-                           (" + {}".format(offset_src) if outgoing_memlet
-                            and str(offset_src) != "0" else ""))
+                ptr_str = (
+                    fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset) +
+                    (" + {}".format(offset_src)
+                     if outgoing_memlet and str(offset_src) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} const *>({})".format(
                         device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
                     "{}.CopyFromHost({}, {}, {});".format(
-                        fpga_ptr(dst_node.data, dst_nodedesc, sdfg,
-                                       dst_subset),
+                        fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset),
                         (offset_dst if not outgoing_memlet else 0), copysize,
                         ptr_str), sdfg, state_id, [src_node, dst_node])
 
             elif device_to_host:
 
-                ptr_str = (fpga_ptr(dst_node.data, dst_nodedesc, sdfg,
-                                          dst_subset) +
-                           (" + {}".format(offset_dst) if outgoing_memlet
-                            and str(offset_dst) != "0" else ""))
+                ptr_str = (
+                    fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset) +
+                    (" + {}".format(offset_dst)
+                     if outgoing_memlet and str(offset_dst) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} *>({})".format(
                         device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
                     "{}.CopyToHost({}, {}, {});".format(
-                        fpga_ptr(src_node.data, src_nodedesc, sdfg,
-                                       src_subset),
+                        fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset),
                         (offset_src if outgoing_memlet else 0), copysize,
                         ptr_str), sdfg, state_id, [src_node, dst_node])
 
@@ -1482,11 +1566,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
                 callsite_stream.write(
                     "{}.CopyToDevice({}, {}, {}, {});".format(
-                        fpga_ptr(src_node.data, src_nodedesc, sdfg,
-                                       src_subset),
+                        fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset),
                         (offset_src if outgoing_memlet else 0), copysize,
-                        fpga_ptr(dst_node.data, dst_nodedesc, sdfg,
-                                       dst_subset),
+                        fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset),
                         (offset_dst if not outgoing_memlet else 0)), sdfg,
                     state_id, [src_node, dst_node])
 
@@ -1770,8 +1852,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 and isinstance(dst_node, dace.sdfg.nodes.AccessNode)):
             src_array = src_node.desc(sdfg)
             dst_array = dst_node.desc(sdfg)
-            src_is_hbm = is_hbm_array(src_array)
-            dst_is_hbm = is_hbm_array(dst_array)
+            src_is_hbm = is_hbm_array_with_distributed_index(src_array)
+            dst_is_hbm = is_hbm_array_with_distributed_index(dst_array)
             if src_is_hbm or dst_is_hbm:
                 modedge = copy.deepcopy(edge)
                 mem: memlet.Memlet = modedge.data
@@ -2290,7 +2372,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)
                     and self._dispatcher.defined_vars.has(edge.src_conn)):
-                if is_hbm_array(datadesc):
+                if is_hbm_array_with_distributed_index(datadesc):
                     accessed_subset, _ = get_multibank_ranges_from_subset(
                         edge.data.dst_subset or edge.data.subset, sdfg)
                 else:
