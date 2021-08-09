@@ -21,13 +21,13 @@ def batchnorm2d_data_parallelism_gpu(x_gpu: dc_dtype[N_gpu, H, W, C],
     x_mean = dace.ndarray([1, H, W, C], dtype=dc_dtype)
     x_std = dace.ndarray([1, H, W, C], dtype=dc_dtype)
     dace.reduce(lambda a, b: a + b, x_gpu, x_mean, axis=(0), identity=0)
-    dace.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
+    dace.comm.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
     fn = np.float32(N)
     x_mean[:] = x_mean[:] / fn
     x_gpu[:] = x_gpu - x_mean
     x_tmp[:] = x_gpu * x_gpu
     dace.reduce(lambda a, b: a + b, x_tmp, x_std, axis=(0), identity=0)
-    dace.nccl.allreduce(lambda a, b: a + b, x_std, x_std)
+    dace.comm.nccl.allreduce(lambda a, b: a + b, x_std, x_std)
     x_std[:] = np.sqrt(x_std / fn)
     x_gpu[:] = x_gpu / np.sqrt(x_std + 1e-5)
 
@@ -44,13 +44,13 @@ def batchnorm2d_data_parallelism(x: dc_dtype[N, H, W, C]):
         x_mean = dace.ndarray([1, H, W, C], dtype=dc_dtype)
         x_std = dace.ndarray([1, H, W, C], dtype=dc_dtype)
         dace.reduce(lambda a, b: a + b, x_gpu, x_mean, axis=(0), identity=0)
-        dace.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
+        dace.comm.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
         fn = np.float32(N)
         x_mean[:] = x_mean[:] / fn
         x_gpu[:] = x_gpu - x_mean
         x_tmp[:] = x_gpu * x_gpu
         dace.reduce(lambda a, b: a + b, x_tmp, x_std, axis=(0), identity=0)
-        dace.nccl.allreduce(lambda a, b: a + b, x_std, x_std)
+        dace.comm.nccl.allreduce(lambda a, b: a + b, x_std, x_std)
         x_std[:] = np.sqrt(x_std / fn)
         x_gpu[:] = x_gpu / np.sqrt(x_std + 1e-5)
         x[N_gpu * gpu_id:N_gpu * (gpu_id + 1)] = x_gpu[:]

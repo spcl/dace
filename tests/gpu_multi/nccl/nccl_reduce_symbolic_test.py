@@ -24,11 +24,8 @@ def nccl_reduce_symbolic(out: dtype[num_gpus, N]):
             gpu_A = dace.ndarray([N], dtype=dtype)
             for i in dace.map[0:N]:
                 gpu_A[i] = root_gpu
-            dace.nccl.Reduce(lambda a, b: a + b,
-                             gpu_A,
-                             reduction_output,
-                             root_gpu,
-                             group_calls=dtypes.NcclGroupCalls.NoGroupCalls)
+            dace.comm.nccl.Reduce(lambda a, b: a + b, gpu_A, reduction_output,
+                                  root_gpu)
             if gpu == root_gpu:
                 out[root_gpu, :] = reduction_output[:]
 

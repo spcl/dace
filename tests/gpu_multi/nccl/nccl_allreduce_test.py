@@ -18,10 +18,7 @@ np_dtype = np.float64
 
 @dace.program
 def allreduce(inbuff: dtype[N], outbuff: dtype[N]):
-    dace.nccl.AllReduce(lambda a, b: a + b,
-                        inbuff,
-                        outbuff,
-                        group_calls=dtypes.NcclGroupCalls.NoGroupCalls)
+    dace.comm.nccl.AllReduce(lambda a, b: a + b, inbuff, outbuff)
 
 
 @dace.program

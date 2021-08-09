@@ -21,9 +21,7 @@ def reduction_test(out: dtype[N]):
         gpu_A = dace.ndarray([N], dtype=dtype)
         for i in dace.map[0:N]:
             gpu_A[i] = gpu
-        dace.nccl.AllReduce(lambda a, b: a + b,
-                            gpu_A,
-                            group_calls=dtypes.NcclGroupCalls.NoGroupCalls)
+        dace.comm.nccl.AllReduce(lambda a, b: a + b, gpu_A)
         if gpu == 0:
             out[:] = gpu_A[:]
 

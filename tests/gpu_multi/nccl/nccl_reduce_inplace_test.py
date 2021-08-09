@@ -23,10 +23,7 @@ def nccl_reduce_inplace(out: dtype[N]):
         gpu_A = dace.ndarray([N], dtype=dtype)
         for i in dace.map[0:N]:
             gpu_A[i] = gpu
-        dace.nccl.Reduce(lambda a, b: a + b,
-                         gpu_A,
-                         root=root_device,
-                         group_calls=dtypes.NcclGroupCalls.NoGroupCalls)
+        dace.comm.nccl.Reduce(lambda a, b: a + b, gpu_A, root=root_device)
         if gpu == root_device:
             out[:] = gpu_A[:]
 

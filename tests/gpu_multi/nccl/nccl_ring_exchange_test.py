@@ -16,7 +16,7 @@ np_dtype = np.float64
 
 
 @dace.program
-def nccl_send_recv():
+def nccl_ring_exchange():
     out = dace.ndarray([num_gpus], dtype)
     pinned_out = dace.ndarray([num_gpus, 2],
                               dtype,
@@ -29,24 +29,32 @@ def nccl_send_recv():
         recv_buffer = dace.ndarray([2],
                                    dtype,
                                    storage=dace.StorageType.GPU_Global)
+        ring_sum = dace.ndarray([2], dtype, storage=dace.StorageType.GPU_Global)
 
         # Init transients
         for i in dace.map[0:2]:
             send_buffer[i] = gpu_id
+            ring_sum[i] = 0
+
+        # Ring Exchange
         group_handle = dace.define_local_scalar(
             dace.int32, storage=dace.StorageType.GPU_Global)
-        if gpu_id == 0:
-            dace.comm.nccl.Send(send_buffer, 1, group_handle=group_handle)
-            dace.comm.nccl.Recv(recv_buffer,
-                                gpu_id - 1,
-                                group_handle=group_handle)
-        else:
-            dace.comm.nccl.Send(send_buffer, (gpu_id + 1) % num_gpus,
-                                group_handle=group_handle)
-            dace.comm.nccl.Recv(recv_buffer, (gpu_id - 1) % num_gpus,
-                                group_handle=group_handle)
+        for i in range(num_gpus):
+            if gpu_id == 0:
+                dace.comm.nccl.Send(send_buffer, gpu_id + 1, group_handle)
+                dace.comm.nccl.Recv(recv_buffer, num_gpus - 1, group_handle)
+            elif gpu_id == num_gpus - 1:
+                dace.comm.nccl.Send(send_buffer, 0, group_handle)
+                dace.comm.nccl.Recv(recv_buffer, gpu_id - 1, group_handle)
+            else:
+                dace.comm.nccl.Send(send_buffer, gpu_id + 1, group_handle)
+                dace.comm.nccl.Recv(recv_buffer, gpu_id - 1, group_handle)
 
-        pinned_out[gpu_id, :] = recv_buffer[:]
+            for i in dace.map[0:2]:
+                ring_sum[i] = recv_buffer[i] + ring_sum[i]
+                send_buffer[i] = recv_buffer[i]
+
+        pinned_out[gpu_id, :] = ring_sum[:]
 
     out[:] = pinned_out[:, 0]
     return out
@@ -64,22 +72,20 @@ def find_data_desc(sdfg: dace.SDFG, name: str) -> dace.nodes.MapEntry:
 
 
 @pytest.mark.multigpu
-def test_nccl_send_recv():
+def test_nccl_ring_exchange():
     ng = Config.get('compiler', 'cuda', 'max_number_gpus')
     if ng < 2:
         raise ValueError('This test needs to run with at least 2 GPUs.')
-    else:
-        ng = 2
-    sdfg: dace.SDFG = nccl_send_recv.to_sdfg(strict=True)
+    sdfg: dace.SDFG = nccl_ring_exchange.to_sdfg(strict=True)
     gpu_map = find_map_by_param(sdfg, 'gpu_id')
     gpu_map.schedule = dtypes.ScheduleType.GPU_Multidevice
     infer_types.set_default_schedule_storage_types_and_location(sdfg, None)
     sdfg.specialize(dict(num_gpus=ng))
 
     out = sdfg()
-    res = np.array([0, 1])
+    res = np.sum(range(ng))
 
-    assert np.allclose(np.unique(out), res), f'\nout: {out}\nres: {res}\n'
+    assert np.allclose(out, res), f'\nout: {out}\nres: {res}\n'
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
@@ -89,4 +95,4 @@ def test_nccl_send_recv():
 
 
 if __name__ == "__main__":
-    test_nccl_send_recv()
+    test_nccl_ring_exchange()
