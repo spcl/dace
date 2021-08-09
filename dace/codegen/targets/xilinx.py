@@ -512,13 +512,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         for _, var_name, node, _ in external_streams:
             arr_len = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
-            if arr_len == 1:
-                kernel_stream.write(
-                    "#pragma HLS INTERFACE axis port={}".format(var_name))
-            else:
+            if arr_len > 1:
                 kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} dim=1 complete".format(var_name))
-                for i in range(arr_len):
-                    kernel_stream.write("#pragma HLS INTERFACE axis port={}_{}".format(var_name, i))
+            kernel_stream.write("#pragma HLS INTERFACE axis port={}".format(var_name))
 
         # TODO: add special case if there's only one module for niceness
         kernel_stream.write("\n#pragma HLS DATAFLOW")
@@ -618,7 +614,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         p.as_arg(with_types=True, name=pname))
 
         # Check if we are generating an RTL module, in which case only the
-        # accesses to the streams should be handled
+        # accesses to the streams and kernel replication should be handled
         rtl_tasklet = None
         for n in subgraph.nodes():
             if (isinstance(n, dace.nodes.Tasklet)
@@ -632,8 +628,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             module_stream.write(
                 f'// [RTL] void {name}({", ".join(kernel_args_module)});\n\n')
 
-            rtl_name = "{}_{}_{}_{}".format(rtl_tasklet, sdfg.sdfg_id, sdfg.node_id(state), state.node_id(rtl_tasklet))
+            rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg)
 
+            # TODO trying to move it to rtl codegen.
             for n in subgraph.nodes():
                 if isinstance(n, dace.nodes.MapEntry) and n.map.unroll:
                     self._multiple_kernels[f'{rtl_name}_top'] = dace.symbolic.evaluate(n.map.range[0][1]+1, sdfg.constants)
@@ -685,7 +682,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                skip_entry_node=False)
 
             # Launch the kernel from the host code
-            rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg)
             host_stream.write(
                 f"  auto kernel_{rtl_name} = program.MakeKernel(\"{rtl_name}_top\"{', '.join([''] + [name for _, name, p, _ in parameters if not isinstance(p, dt.Stream)])}).ExecuteTaskFork();",
                 sdfg, state_id, rtl_tasklet)
@@ -861,7 +857,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         self._stream_connections[unrolled_name] = [None, None]
                     self._stream_connections[unrolled_name][
                         0 if is_output else 1] = '{}_1.{}'.format(kernel_name, unrolled_name)
-            else:
+            else: # _num should not be appended, when there is only one kernel
                 if name not in self._stream_connections:
                     self._stream_connections[name] = [None, None]
                 self._stream_connections[name][

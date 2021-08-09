@@ -330,18 +330,14 @@ class FPGACodeGen(TargetCodeGenerator):
                                      kern_id)
 
                 # Emit the connections ini file
-                if len(self._multiple_kernels) > 0 or len(self._stream_connections) > 0:
+                if len(self._stream_connections) > 0 or len(self._multiple_kernels) > 0:
                     ini_stream = CodeIOStream()
                     ini_stream.write('[connectivity]')
-                    self._other_codes['link.ini'] = ini_stream
-
-                if len(self._multiple_kernels) > 0:
-                    for name, num in self._multiple_kernels.items():
-                        ini_stream.write('nk={}:{}'.format(name, num))
-
-                if len(self._stream_connections) > 0:
                     for _, (src, dst) in self._stream_connections.items():
-                        ini_stream.write('stream_connect={}:{}'.format(src, dst))
+                        ini_stream.write(f'stream_connect={src}:{dst}')
+                    for name, num in self._multiple_kernels.items():
+                        ini_stream.write(f'nk={name}:{num}')
+                    self._other_codes['link.ini'] = ini_stream
 
             kernel_args_call_host = []
             kernel_args_opencl = []
