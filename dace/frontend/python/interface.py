@@ -6,8 +6,8 @@ import inspect
 from dace import dtypes
 from dace.dtypes import paramdec
 from dace.frontend.python import parser, ndloop, tasklet_runner
-from typing import (Any, Callable, Deque, Generator, Optional, Tuple, TypeVar,
-                    overload, Union)
+from typing import (Any, Callable, Deque, Dict, Generator, Optional, Tuple,
+                    TypeVar, overload, Union)
 
 #############################################
 
@@ -26,6 +26,7 @@ def program(f: F) -> parser.DaceProgram:
 def program(*args,
             auto_optimize=False,
             device=dtypes.DeviceType.CPU,
+            constant_functions=False,
             **kwargs) -> parser.DaceProgram:
     ...
 
@@ -35,12 +36,27 @@ def program(f: F,
             *args,
             auto_optimize=False,
             device=dtypes.DeviceType.CPU,
+            constant_functions=False,
             **kwargs) -> parser.DaceProgram:
-    """ DaCe program, entry point to a data-centric program. """
+    """
+    Entry point to a data-centric program. For methods and ``classmethod``s, use
+    ``@dace.method``.
+    :param f: The function to define as the entry point.
+    :param auto_optimize: If True, applies automatic optimization heuristics
+                          on the generated DaCe program during compilation.
+    :param device: Transform the function to run on the target device.
+    :param constant_functions: If True, assumes all external functions that do
+                               not depend on internal variables are constant.
+                               This will hardcode their return values into the
+                               resulting program.
+    :note: If arguments are defined with type hints, the program can be compiled
+           ahead-of-time with ``.compile()``.
+    """
 
     # Parses a python @dace.program function and returns an object that can
     # be translated
-    return parser.DaceProgram(f, args, kwargs, auto_optimize, device)
+    return parser.DaceProgram(f, args, kwargs, auto_optimize, device,
+                              constant_functions)
 
 
 function = program
@@ -55,6 +71,7 @@ def method(f: F) -> parser.DaceProgram:
 def method(*args,
            auto_optimize=False,
            device=dtypes.DeviceType.CPU,
+           constant_functions=False,
            **kwargs) -> parser.DaceProgram:
     ...
 
@@ -64,24 +81,45 @@ def method(f: F,
            *args,
            auto_optimize=False,
            device=dtypes.DeviceType.CPU,
+           constant_functions=False,
            **kwargs) -> parser.DaceProgram:
-    """ Entry point to a data-centric program that is a method or 
-        a ``classmethod``. """
+    """ 
+    Entry point to a data-centric program that is a method or  a ``classmethod``. 
+    :param f: The method to define as the entry point.
+    :param auto_optimize: If True, applies automatic optimization heuristics
+                          on the generated DaCe program during compilation.
+    :param device: Transform the function to run on the target device.
+    :param constant_functions: If True, assumes all external functions that do
+                               not depend on internal variables are constant.
+                               This will hardcode their return values into the
+                               resulting program.
+    :note: If arguments are defined with type hints, the program can be compiled
+           ahead-of-time with ``.compile()``.    
+    """
 
     # Create a wrapper class that can bind to the object instance
     class MethodWrapper:
-        def __init__(self, prog):
-            self.prog = prog
+        def __init__(self):
+            self.wrapped: Dict[int, parser.DaceProgram] = {}
 
-        def __get__(self, obj, objtype=None):
+        def __get__(self, obj, objtype=None) -> parser.DaceProgram:
             # Modify wrapped instance as necessary, only clearing
             # compiled program cache if needed.
-            if self.prog.methodobj is not obj:
-                self.prog.methodobj = obj
-            return self.prog
+            objid = id(obj)
+            if objid in self.wrapped:
+                return self.wrapped[objid]
+            prog = parser.DaceProgram(f,
+                                      args,
+                                      kwargs,
+                                      auto_optimize,
+                                      device,
+                                      constant_functions,
+                                      method=True)
+            prog.methodobj = obj
+            self.wrapped[objid] = prog
+            return prog
 
-    return MethodWrapper(
-        parser.DaceProgram(f, args, kwargs, auto_optimize, device, method=True))
+    return MethodWrapper()
 
 
 # DaCe functions
