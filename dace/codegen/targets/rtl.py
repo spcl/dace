@@ -23,6 +23,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
     title = 'RTL'
     target_name = 'rtl'
     languages = [dtypes.Language.SystemVerilog]
+    n_unrolled = 1
 
     def __init__(self, frame_codegen: framecode.DaCeCodeGenerator,
                  sdfg: sdfg.SDFG):
@@ -126,6 +127,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
             #else:
             #    raise NotImplementedError(
             #            'Copy from map in software not implemented')
+            # TODO works for one kernel, but might break with several.
+            self.n_unrolled = symbolic.evaluate(edge.src.map.range[0][1]+1, sdfg.constants)
             line: str = '// Copy from map handled in xilinx codegen'
         else:
             raise RuntimeError(
@@ -530,7 +533,7 @@ for(int i = 0; i < {veclen}; i++){{
             if isinstance(arr, data.Array):
                 if self.hardware_target:
                     raise NotImplementedError(
-                        'Array input for hardware* not implemented')
+                        'Array input for hardware* target not implemented')
                 else:
                     buses[edge.dst_conn] = (False, total_size, vec_len)
             elif isinstance(arr, data.Stream):
@@ -556,7 +559,7 @@ for(int i = 0; i < {veclen}; i++){{
             if isinstance(arr, data.Array):
                 if self.hardware_target:
                     raise NotImplementedError(
-                        'Array input for hardware* not implemented')
+                        'Array output for hardware* target not implemented')
                 else:
                     buses[edge.src_conn] = (True, total_size, vec_len)
             elif isinstance(arr, data.Stream):
@@ -600,6 +603,7 @@ for(int i = 0; i < {veclen}; i++){{
                         },
                         "memory": {}
                     },
+                    "unroll": self.n_unrolled,
                     "ip_cores": tasklet.ip_cores if isinstance(
                         tasklet, nodes.RTLTasklet) else {},
                     "clocks": 2 # TODO make this "trickle" down to here. Maybe add speeds as well?
