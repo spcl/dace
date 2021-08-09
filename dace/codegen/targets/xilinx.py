@@ -495,10 +495,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         memory_bank[1], sdfg)
                 else:
                     lowest_bank_index = int(memory_bank[1])
-                for bank, if_id in fpga.iterate_hbm_interface_ids(
+                for bank, interface_id in fpga.iterate_hbm_interface_ids(
                         data, interface):
                     kernel_arg = self.make_kernel_argument(
-                        data, data_name, bank, sdfg, is_output, True, if_id)
+                        data, data_name, bank, sdfg, is_output, True, interface_id)
                     if kernel_arg:
                         kernel_args.append(kernel_arg)
                         array_args.append((kernel_arg, data_name))
@@ -624,10 +624,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         kernel_args_call = []
         kernel_args_module = []
-        for is_output, pname, p, interface_id in parameters:
+        for is_output, pname, p, interface_ids in parameters:
             if isinstance(p, dt.Array):
-                for bank, if_id in fpga.iterate_hbm_interface_ids(
-                        p, interface_id):
+                for bank, interface_id in fpga.iterate_hbm_interface_ids(
+                        p, interface_ids):
                     arr_name = fpga.fpga_ptr(pname,
                                              p,
                                              sdfg,
@@ -642,7 +642,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                             bank,
                                             is_output,
                                             is_array_interface=True,
-                                            interface_id=if_id)
+                                            interface_id=interface_id)
 
                     kernel_args_call.append(argname)
                     dtype = p.dtype
@@ -923,12 +923,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                              host_code_stream):
 
         kernel_args = []
-        for is_output, name, arg, interface_id in parameters:
+        for is_output, name, arg, interface_ids in parameters:
             if isinstance(arg, dt.Array):
-                for bank, if_id in fpga.iterate_hbm_interface_ids(
-                        arg, interface_id):
+                for bank, interface_id in fpga.iterate_hbm_interface_ids(
+                        arg, interface_ids):
                     argname = fpga.fpga_ptr(name, arg, sdfg, bank, is_output,
-                                            None, None, True, if_id)
+                                            None, None, True, interface_id)
                     kernel_args.append(arg.as_arg(with_types=True,
                                                   name=argname))
             else:

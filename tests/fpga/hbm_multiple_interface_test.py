@@ -10,7 +10,6 @@ from dace.sdfg import SDFG
 from dace.transformation.interstate import InlineSDFG
 
 # Checks multiple interfaces attached to the same HBM-bank.
-# TODO: update
 
 
 @xilinx_test(assert_ii_1=False)
@@ -47,8 +46,8 @@ def test_3_interface_to_2_banks():
                           src_conn="_y1")
 
     sdfg.apply_fpga_transformations()
-    sdfg.apply_transformations(InlineSDFG)
-    sdfg.apply_transformations(MapUnroll)
+    assert sdfg.apply_transformations(InlineSDFG) == 1
+    assert sdfg.apply_transformations(MapUnroll) == 1
     for node in sdfg.states()[0].nodes():
         if isinstance(node, dace.sdfg.nodes.Tasklet):
             sdfg.states()[0].out_edges(
