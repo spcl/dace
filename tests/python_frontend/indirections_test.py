@@ -353,29 +353,33 @@ def spmv(A_row, A_col, A_val, x):
 
 def test_spmv():
 
-    M, N, nnz = 1000, 1000, 100
+    with dc.config.set_temporary('compiler',
+                                 'allow_view_arguments',
+                                 value=True):
 
-    from numpy.random import default_rng
-    rng = default_rng(42)
+        M, N, nnz = 1000, 1000, 100
 
-    x = rng.random((N, ))
+        from numpy.random import default_rng
+        rng = default_rng(42)
 
-    from scipy.sparse import random
+        x = rng.random((N, ))
 
-    matrix = random(M,
-                    N,
-                    density=nnz / (M * N),
-                    format='csr',
-                    dtype=np.float64,
-                    random_state=rng)
-    rows = np.uint32(matrix.indptr)
-    cols = np.uint32(matrix.indices)
-    vals = matrix.data
+        from scipy.sparse import random
 
-    y = spmv(rows, cols, vals, x)
-    ref = matrix @ x
+        matrix = random(M,
+                        N,
+                        density=nnz / (M * N),
+                        format='csr',
+                        dtype=np.float64,
+                        random_state=rng)
+        rows = np.uint32(matrix.indptr)
+        cols = np.uint32(matrix.indices)
+        vals = matrix.data
 
-    assert (np.allclose(y, ref))
+        y = spmv(rows, cols, vals, x)
+        ref = matrix @ x
+
+        assert (np.allclose(y, ref))
 
 
 if __name__ == "__main__":
