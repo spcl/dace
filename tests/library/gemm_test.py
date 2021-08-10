@@ -84,8 +84,8 @@ def run_test(implementation,
         C_shape = [s if isinstance(s, int) else replace_map[s] for s in C_shape]
 
     # unique name for sdfg
-    sdfg_name = random.choices(string.ascii_lowercase)
-    sdfg_name += ''.join(random.choices(string.ascii_uppercase + string.digits,
+    sdfg_name = random.choices(string.ascii_lowercase)[0]
+    sdfg_name += ''.join(random.choices(string.ascii_lowercase + string.digits,
                          k=19))
 
     # shape of the transposed arrays
