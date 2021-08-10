@@ -2,7 +2,7 @@
 import os
 import json
 import socket
-import time
+import numpy as np
 import dace
 
 
@@ -54,7 +54,7 @@ def stop_and_transform(sdfg):
     })
     # Continues as soon as vscode sends an answer
     sdfg = dace.SDFG.from_file(filename)
-    #sdfg.name = sdfg.name + '_t'
+    sdfg.name = sdfg.name + '_t'
     return sdfg
 
 
@@ -145,3 +145,96 @@ def sdfg_has_instrumentation(sdfg: dace.sdfg.SDFG) -> bool:
             if isinstance(node, dace.sdfg.nodes.NestedSDFG):
                 return sdfg_has_instrumentation(node.sdfg)
     return False
+
+
+def AN_of_Array(graph, array_name: str,
+                state_id: int) -> [dace.sdfg.nodes.AccessNode, int]:
+    for i, node in enumerate(graph.nodes()):
+        if isinstance(node, dace.sdfg.nodes.AccessNode):
+            if node.label == array_name:
+                return (node, i)
+        if isinstance(node, dace.sdfg.state.SDFGState):
+            if i == state_id:
+                return AN_of_Array(node, array_name, state_id)
+    return (None, None)
+
+
+def create_report(parent_sdfg: dace.sdfg.SDFG, sdfg_name: str, foldername1: str,
+                  foldername2: str):
+    reports = []
+
+    all_arrays = [i for i in parent_sdfg.arrays_recursive()]
+
+    for filename in os.listdir(foldername1):
+        if filename.endswith('.npy'):
+            continue
+        filename_split = filename.split('.')[0].split('_')
+        array_name = '_'.join(filename_split[:-2])
+        state_id = int(filename_split[-1])
+        sdfg_id = int(filename_split[-2])
+
+        # Search for the corresponding array in the sdfg
+        # TODO: Improve by passing array once and creating a map
+        curr_array = None
+        access_node_id = None
+        for sdfg, name, array in all_arrays:
+            if name == array_name:
+                if sdfg.sdfg_id == sdfg_id:
+                    curr_array = array
+                    _, access_node_id = AN_of_Array(sdfg, array_name, state_id)
+                    break
+
+        if curr_array is None:
+            print('The array ' + array_name + ' does not belong to this SDFG')
+            continue
+
+        if access_node_id is None:
+            continue
+
+        dtype = curr_array.dtype
+        filename1 = os.path.join(foldername1, filename)
+        filename2 = os.path.join(foldername2, filename)
+
+        # Compare both arrays
+        msg = ''
+        diff = None
+        if os.path.isfile(filename2):
+            nparray1 = np.fromfile(filename1, dtype=dtype.type)
+            nparray2 = np.fromfile(filename2, dtype=dtype.type)
+
+            if len(nparray1) == len(nparray2):
+                diff = np.linalg.norm(nparray1 - nparray2)
+                msg = 'Difference: ' + str(diff)
+            else:
+                msg = 'The array length doesn\'t match: {len1} vs. {len2}'.format(
+                    len1=len(nparray1), len2=len(nparray2))
+        else:
+            msg = '''
+                    The array {array_name} at SDFG: {sdfg_id} State: {state_id} 
+                    isn\'t available in both reports
+                '''.format(array_name=array_name,
+                           state_id=state_id,
+                           sdfg_id=sdfg_id)
+
+        reports.append({
+            'array_name': array_name,
+            'sdfg_id': sdfg_id,
+            'state_id': state_id,
+            'node_id': access_node_id,
+            'diff': str(diff),
+            'msg': msg
+        })
+        if False:
+            print(array_name)
+            print('dtype: ', dtype.type)
+            print('diff: ', diff)
+            print(nparray1)
+            print('---------------------------')
+
+    filename = os.path.abspath(os.path.join(sdfg.build_folder, 'program.sdfg'))
+    send_bp_recv({
+        'type': 'correctness_report',
+        'sdfgName': sdfg_name,
+        'filename': filename,
+        'reports': reports
+    })

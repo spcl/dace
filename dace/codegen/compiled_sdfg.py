@@ -278,8 +278,10 @@ class CompiledSDFG(object):
                  for aname, arg in zip(self.argnames, args)})
 
         if vscode.is_available() and vscode.sdfg_edit():
-            mode = vscode.send_bp_recv({'type': 'sdfgEditMode'})['mode']
+            response = vscode.send_bp_recv({'type': 'sdfgEditMode'})
+            mode = response['mode']
             compiledSdfg = self
+            initital_args = copy.deepcopy(kwargs)
 
             while mode != 'run':
                 # unload lib as the sdfg might change
@@ -337,23 +339,78 @@ class CompiledSDFG(object):
                     vscode.stop_and_save(compiledSdfg._sdfg)
                 elif mode == 'transform':
                     sdfg = vscode.stop_and_transform(compiledSdfg._sdfg)
-                    compiledSdfg = sdfg.compile()
-                elif mode == 'report':
+                    compiledSdfg = sdfg.compile(cmake_target=False)
+                elif mode == 'report' or (mode == 'verification'
+                                          and 'foldername' in response):
+                    if mode == 'verification':
+                        foldername = response['foldername']
+                        # Check if the folder is a accuracy report folder
+                        is_report = True
+                        for filename in os.listdir(foldername):
+                            if (not filename.endswith('.bin')
+                                    and not filename.endswith('.npy')):
+                                is_report = False
+                                break
+                        if not is_report:
+                            print('The folder is not a accuracy report folder')
+                            # Skip this run and give the user another chance to pick
+                            response = vscode.send_bp_recv(
+                                {'type': 'sdfgEditMode'})
+                            mode = response['mode']
+                            continue
+
                     # Create a deep copy as we dont want to
                     # modify the real sdfg
                     sdfg = copy.deepcopy(compiledSdfg._sdfg)
-
                     hasInstr = vscode.sdfg_has_instrumentation(sdfg)
                     if hasInstr:
                         vscode.sdfg_remove_instrumentations(sdfg)
 
+                    # Make every array persistent so that we can access the data
                     for _, _, array in sdfg.arrays_recursive():
                         array.lifetime = dtypes.AllocationLifetime.Persistent
+                    # Crete an Accuracy instrumentation for each SDFG State to
+                    # retrieve the data
                     for node, _ in sdfg.all_nodes_recursive():
                         if isinstance(node, state.SDFGState):
                             node.instrument = dtypes.InstrumentationType.Accuracy
 
                     newCompiledSdfg = sdfg.compile(cmake_target=False)
+
+                    # Write the function arguments to the report file
+                    reportFolder = os.path.abspath(
+                        os.path.join(newCompiledSdfg._sdfg.build_folder,
+                                     'accuracy',
+                                     newCompiledSdfg._sdfg.hash_sdfg()))
+                    for a, b in initital_args.items():
+                        arg_file = os.path.join(reportFolder,
+                                                '__dace_args_' + a + '.npy')
+                        if isinstance(self._typedict.get(a), dt.Scalar):
+                            b = np.array([b])
+                        np.save(arg_file, b)
+
+                    if mode == 'verification':
+                        # Get initial args of the reportfile to compare with
+                        # We make sure to use the same initial arguments as
+                        # the report to be compared with
+                        if initital_args is not None:
+                            for aname in initital_args.keys():
+                                arg_type = self._typedict.get(aname)
+                                fileName = os.path.join(
+                                    foldername, '__dace_args_' + aname + '.bin')
+                                if not os.path.exists(fileName):
+                                    print(
+                                        '''Could not find a report file for the argument {aname}.
+                                        File: {fileName}'''.format(
+                                            aname=aname, fileName=fileName))
+                                    continue
+                                if isinstance(arg_type, dt.Scalar):
+                                    arr = np.load(fileName)
+                                    kwargs.update({aname: arr[0]})
+                                elif isinstance(arg_type, dt.Array):
+                                    kwargs.update({aname: np.load(fileName)})
+                            argtuple, initargtuple = newCompiledSdfg._construct_args(
+                                kwargs)
 
                     try:
                         if not newCompiledSdfg._lib.is_loaded():
@@ -369,11 +426,17 @@ class CompiledSDFG(object):
                             KeyError, cgx.DuplicateDLLError, ReferenceError):
                         newCompiledSdfg._lib.unload()
                         raise
-
                     # Change back to the normal code
-                    compiledSdfg = compiledSdfg._sdfg.compile(cmake_target=False)
+                    compiledSdfg = compiledSdfg._sdfg.compile(
+                        cmake_target=False)
 
-                mode = vscode.send_bp_recv({'type': 'sdfgEditMode'})['mode']
+                    if mode == 'verification' and foldername:
+                        vscode.create_report(newCompiledSdfg._sdfg,
+                                             compiledSdfg.sdfg.name,
+                                             reportFolder, foldername)
+
+                response = vscode.send_bp_recv({'type': 'sdfgEditMode'})
+                mode = response['mode']
 
             self = compiledSdfg
             # make sure to load the library
@@ -394,10 +457,6 @@ class CompiledSDFG(object):
                                     self._libhandle, *argtuple)
             else:
                 self._cfunc(self._libhandle, *argtuple)
-            """ struct = self.get_state_struct()
-            for name, _ in struct._fields_:
-                print(f'{name}:{getattr(struct, name)}')
-            print("return: ", self._return_arrays) """
 
             return self._return_arrays
         except (RuntimeError, TypeError, UnboundLocalError, KeyError,
