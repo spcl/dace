@@ -39,6 +39,8 @@ class ExpandSendNCCL(ExpandTransformation):
                              ' in global GPU memory.')
 
         peer = node.peer
+        if peer.name in sdfg.arrays:
+            sdfg.arrays[peer.name].lifetime = dtypes.AllocationLifetime.SDFG
 
         nccl_dtype_str = nutil.Nccl_dtypes(input_data.dtype.base_type)
         count_str = "*".join(str(e) for e in input_dims)

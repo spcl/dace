@@ -48,6 +48,8 @@ class ExpandReduceNCCL(ExpandTransformation):
                              ' in global GPU memory.')
 
         root = node.root
+        if root.name in sdfg.arrays:
+            sdfg.arrays[root.name].lifetime = dtypes.AllocationLifetime.SDFG
 
         redtype = node.reduction_type
         redtype = nutil.NCCL_SUPPORTED_OPERATIONS[redtype]

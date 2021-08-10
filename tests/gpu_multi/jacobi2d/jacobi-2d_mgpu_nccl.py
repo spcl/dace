@@ -22,7 +22,6 @@ N = dace.symbol('N', dtype=d_int, integer=True, positive=True)
 lNy = dace.symbol('lNy', dtype=d_int, integer=True, positive=True)
 Py = dace.symbol('Py', dtype=dace.int32, integer=True, positive=True)
 pi = dace.symbol('pi', dtype=dace.int32, integer=True, nonnegative=True)
-rank = dace.symbol('rank', dtype=dace.int32, integer=True, nonnegative=True)
 size = dace.symbol('size', dtype=dace.int32, integer=True, positive=True)
 top_neighbor = dace.symbol('top_neighbor',
                            dtype=dace.int32,
@@ -85,7 +84,7 @@ def jacobi_2d_mgpu(A: d_float[Ny, N], B: d_float[Ny, N]):
         bottom_neighbor = dace.define_local_scalar(
             d_int, storage=dace.StorageType.GPU_Global)
 
-        for i in dace.map[1]:
+        for i in dace.map[0:1]:
             top_neighbor[:] = (rank + 1) % size
             if rank > 0:
                 bottom_neighbor[:] = rank - 1
@@ -139,10 +138,10 @@ if __name__ == "__main__":
     gpu_map.schedule = dace.ScheduleType.GPU_Multidevice
     # seq_1 = next(s for s in sdfg.sdfg_list if s.name == 'seq1')
     # seq_2 = next(s for s in sdfg.sdfg_list if s.name == 'seq2')
-    # seq_1.parent_nsdfg_node.schedule = dace.ScheduleType.GPU_Sequential
     # seq_1.parent_nsdfg_node.no_inline = True
-    # seq_2.parent_nsdfg_node.schedule = dace.ScheduleType.GPU_Sequential
     # seq_2.parent_nsdfg_node.no_inline = True
+    # seq_1.parent_nsdfg_node.schedule = dace.ScheduleType.GPU_Sequential
+    # seq_2.parent_nsdfg_node.schedule = dace.ScheduleType.GPU_Sequential
     sdfg.specialize(
         dict(Py=number_of_gpus,
              size=number_of_gpus,
@@ -175,8 +174,9 @@ if __name__ == "__main__":
     assert (np.allclose(B, refB))
     print("OK")
 
+    # sdfg.name += '_lifetime'
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
-    # out_path = '.dacecache/local/jacobi/' + sdfg.name + '_s'
+    # out_path = '.dacecache/local/jacobi/' + sdfg.name
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
