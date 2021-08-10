@@ -17,7 +17,7 @@ np_dtype = np.float64
 
 @dace.program
 def nccl_send_recv():
-    out = dace.ndarray([num_gpus], dtype)
+    out = dace.ndarray([num_gpus, 2], dtype)
     pinned_out = dace.ndarray([num_gpus, 2],
                               dtype,
                               storage=dace.StorageType.CPU_Pinned)
@@ -37,18 +37,14 @@ def nccl_send_recv():
             dace.int32, storage=dace.StorageType.GPU_Global)
         if gpu_id == 0:
             dace.comm.nccl.Send(send_buffer, 1, group_handle=group_handle)
-            dace.comm.nccl.Recv(recv_buffer,
-                                gpu_id - 1,
-                                group_handle=group_handle)
+            dace.comm.nccl.Recv(recv_buffer, 1, group_handle=group_handle)
         else:
-            dace.comm.nccl.Send(send_buffer, (gpu_id + 1) % num_gpus,
-                                group_handle=group_handle)
-            dace.comm.nccl.Recv(recv_buffer, (gpu_id - 1) % num_gpus,
-                                group_handle=group_handle)
+            dace.comm.nccl.Send(send_buffer, 0, group_handle=group_handle)
+            dace.comm.nccl.Recv(recv_buffer, 0, group_handle=group_handle)
 
         pinned_out[gpu_id, :] = recv_buffer[:]
 
-    out[:] = pinned_out[:, 0]
+    out[:] = pinned_out[:]
     return out
 
 
