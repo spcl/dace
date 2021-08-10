@@ -1894,14 +1894,6 @@ class CPUCodeGen(TargetCodeGenerator):
             for v in r
         ])
 
-        # Construct (EXCLUSIVE) map range as a list of comma-delimited C++
-        # strings.
-        maprange_cppstr = [
-            "%s, %s, %s" %
-            (cpp.sym2cpp(rb), cpp.sym2cpp(re + 1), cpp.sym2cpp(rs))
-            for rb, re, rs in node.map.range
-        ]
-
         # Nested loops
         result.write(map_header, sdfg, state_id, node)
         for i, r in enumerate(node.map.range):

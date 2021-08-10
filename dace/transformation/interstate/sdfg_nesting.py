@@ -70,22 +70,14 @@ class InlineSDFG(transformation.Transformation):
         :return: True if all strides match, False otherwise.
         """
         # Replace all inner symbols based on symbol mapping
-        repldict = {
-            symbolic.pystr_to_symbolic(k):
-            symbolic.pystr_to_symbolic('__dacesym_' + str(v))
-            for k, v in nested_sdfg.symbol_mapping.items()
-        }
-        # need two dicts to avoid clashes
-        repldict_inv = {
-            symbolic.pystr_to_symbolic('__dacesym_' + str(v)):
-            symbolic.pystr_to_symbolic(v)
-            for v in nested_sdfg.symbol_mapping.values()
-        }
+        istrides = list(inner_strides)
 
-        istrides = [
-            istr.subs(repldict).subs(repldict_inv)
-            if symbolic.issymbolic(istr) else istr for istr in inner_strides
-        ]
+        def replfunc(mapping):
+            for i, s in enumerate(istrides):
+                if symbolic.issymbolic(s):
+                    istrides[i] = s.subs(mapping)
+
+        symbolic.safe_replace(nested_sdfg.symbol_mapping, replfunc)
 
         if istrides == list(outer_strides):
             return True
@@ -302,6 +294,10 @@ class InlineSDFG(transformation.Transformation):
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
 
+        # Replace symbols using invocation symbol mapping
+        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
+        symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
+
         # Access nodes that need to be reshaped
         reshapes: Set(str) = set()
         for aname, array in nsdfg.arrays.items():
@@ -322,15 +318,6 @@ class InlineSDFG(transformation.Transformation):
                     array.strides, sdfg.arrays[edge.data.data].strides,
                     edge.data, nsdfg_node):
                 reshapes.add(aname)
-
-        # Replace symbols using invocation symbol mapping
-        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        for symname, symvalue in nsdfg_node.symbol_mapping.items():
-            if str(symname) != str(symvalue):
-                nsdfg.replace(symname, '__dacesym_' + symname)
-        for symname, symvalue in nsdfg_node.symbol_mapping.items():
-            if str(symname) != str(symvalue):
-                nsdfg.replace('__dacesym_' + symname, symvalue)
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
@@ -424,11 +411,12 @@ class InlineSDFG(transformation.Transformation):
                 edge.data.data = repldict[edge.data.data]
 
         # Add extra access nodes for out/in view nodes
+        inv_reshapes = {repldict[r]: r for r in reshapes}
         for node in nstate.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data in reshapes:
+            if isinstance(node, nodes.AccessNode) and node.data in inv_reshapes:
                 if nstate.in_degree(node) > 0 and nstate.out_degree(node) > 0:
                     # Such a node has to be in the output set
-                    edge = outputs[node.data]
+                    edge = outputs[inv_reshapes[node.data]]
 
                     # Redirect outgoing edges through access node
                     out_edges = list(nstate.out_edges(node))
