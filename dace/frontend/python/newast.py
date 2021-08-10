@@ -4215,9 +4215,26 @@ class ProgramVisitor(ExtNodeVisitor):
                     if mapping is not None:
                         # Two-step replacement (N -> __dacesym_N --> mapping[N])
                         # to avoid clashes
-                        symbolic.safe_replace(
-                            mapping,
-                            lambda m: sd.replace_properties_dict(newarr, m))
+                        for sym, symvalue in mapping.items():
+                            if str(sym) != str(symvalue):
+                                sd.replace_properties(
+                                    newarr, {
+                                        symbolic.symbol(str(sym)):
+                                        symbolic.symbol('__dacesym_' + str(sym))
+                                    }, sym, '__dacesym_' + sym)
+                        for sym, symvalue in mapping.items():
+                            if str(sym) != str(symvalue):
+                                sd.replace_properties(
+                                    newarr, {
+                                        symbolic.symbol('__dacesym_' + str(sym)):
+                                        symbolic.pystr_to_symbolic(symvalue)
+                                    }, '__dacesym_' + str(sym), symvalue)
+                        # TODO: The following code is newer but fails to
+                        # replace symbols properly (see test_submatrix in 
+                        # tests/python_frontend/indirection_with_scalars_test.py)
+                        # symbolic.safe_replace(
+                        #     symmapping,
+                        #     lambda m: sd.replace_properties_dict(newarr, m))
 
                     new_arrname = self.sdfg.add_datadesc(new_arrname,
                                                          newarr,
