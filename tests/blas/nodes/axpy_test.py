@@ -44,12 +44,16 @@ def run_test(configs, target):
             sdfg = pure_graph(veclen, dtype, "pure", i)
         program = sdfg.compile()
 
-        if target in ["fpga_stream", "fpga_array"]:
-            program(x=x, y=y, a=a, n=np.int32(n))
-            ref_norm = np.linalg.norm(y - ref_result) / n
-        else:
-            program(x=x, y=y, a=a, n=np.int32(n))
-            ref_norm = np.linalg.norm(y - ref_result) / n
+        with dace.config.set_temporary('compiler',
+                                       'allow_view_arguments',
+                                       value=True):
+
+            if target in ["fpga_stream", "fpga_array"]:
+                program(x=x, y=y, a=a, n=np.int32(n))
+                ref_norm = np.linalg.norm(y - ref_result) / n
+            else:
+                program(x=x, y=y, a=a, n=np.int32(n))
+                ref_norm = np.linalg.norm(y - ref_result) / n
 
         if ref_norm >= 1e-5:
             raise ValueError(f"Failed validation for target {target}.")

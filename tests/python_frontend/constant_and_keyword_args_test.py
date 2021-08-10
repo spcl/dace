@@ -226,9 +226,6 @@ def test_constant_argument_default():
     const_prog(A)
     assert np.allclose(A, 7)
 
-    # Forcefully clear cache to recompile
-    const_prog.clear_cache()
-
     # Test program
     A = np.random.rand(20)
     const_prog(A, cst=4)
@@ -248,8 +245,8 @@ def test_constant_argument_object():
             self.p = parameter * 2
             self.q = parameter * 4
 
-        @staticmethod
-        def get_random_number():
+        @property
+        def get_random_number(self):
             return 4
 
     @dace.program
@@ -260,7 +257,7 @@ def test_constant_argument_object():
     def constant_parameter(cfg: dace.constant, cfg2: dace.constant,
                            A: dace.float64[20]):
         A[cfg.q] = nested_func(cfg, A)
-        A[MyConfiguration.get_random_number()] = nested_func(cfg2, A)
+        A[cfg.get_random_number] = nested_func(cfg2, A)
 
     cfg1 = MyConfiguration(3)
     cfg2 = MyConfiguration(4)
@@ -271,6 +268,91 @@ def test_constant_argument_object():
 
     constant_parameter(cfg1, cfg2, A)
     assert np.allclose(A, reg_A)
+
+
+def test_none_field():
+    class ClassA:
+        def __init__(self, field_or_none):
+            self.field_or_none = field_or_none
+
+        @dace.method
+        def method(self, A):
+            if (self.field_or_none is None) and (self.field_or_none is None):
+                A[...] = 7.0
+            if (self.field_or_none is not None) and (self.field_or_none
+                                                     is not None):
+                A[...] += self.field_or_none
+
+    A = np.ones((10, ))
+    obja = ClassA(None)
+    obja.method(A)
+    assert np.allclose(A, 7.0)
+    A = np.ones((10, ))
+    obja = ClassA(np.ones((10, )))
+    obja.method(A)
+    assert np.allclose(A, 2.0)
+
+
+def test_array_by_str_key():
+    class AClass:
+        def __init__(self):
+            self.adict = dict(akey=7.0 * np.ones((10, )))
+
+        @dace.method
+        def __call__(self, A):
+            A[...] = self.adict['akey']
+
+    aobj = AClass()
+    arr = np.empty((10, ))
+    aobj(arr)
+    assert np.allclose(7.0, arr)
+
+
+def test_constant_folding():
+    @dace.program
+    def tofold(A: dace.float64[20], add: dace.constant):
+        if add:
+            A += 1
+        else:
+            A -= 1
+
+    A = np.random.rand(20)
+    expected = A + 1
+    tofold(A, True)
+
+    assert np.allclose(A, expected)
+
+
+def test_boolglobal():
+    some_glob = 124
+
+    @dace.program
+    def func(A):
+        boolvar = 123 == some_glob
+        if boolvar:
+            tmp = 0
+        else:
+            tmp = 1
+        A[...] = tmp
+
+    a = np.empty((10, ))
+    func(a)
+    assert np.allclose(a, 1)
+
+
+def test_intglobal():
+    some_glob = 124
+
+    @dace.program
+    def func(A):
+        var = some_glob
+        tmp = 1
+        for it in range(100):
+            if 123 == it or (it == var - 1):
+                tmp = 0
+        A[...] = tmp
+
+    func(np.empty((10, )))
 
 
 if __name__ == '__main__':
@@ -290,3 +372,8 @@ if __name__ == '__main__':
     test_constant_argument_simple()
     test_constant_argument_default()
     test_constant_argument_object()
+    test_none_field()
+    test_array_by_str_key()
+    test_constant_folding()
+    test_boolglobal()
+    test_intglobal()

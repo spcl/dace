@@ -431,7 +431,7 @@ class RedundantArray(pm.Transformation):
             for e in graph.in_edges(in_array):
                 new_memlet = copy.deepcopy(e.data)
                 e.dst_subset = b_subset
-                graph.add_edge(e.src, e.src_conn, out_array, 
+                graph.add_edge(e.src, e.src_conn, out_array,
                                e.dst_conn, new_memlet)
             graph.remove_node(in_array)
             if in_array.data in sdfg.arrays:
@@ -546,8 +546,11 @@ class RedundantArray(pm.Transformation):
 
         # Finally, remove in_array node
         graph.remove_node(in_array)
-        if in_array.data in sdfg.arrays:
-            del sdfg.arrays[in_array.data]
+        try:
+            if in_array.data in sdfg.arrays:
+                sdfg.remove_data(in_array.data)
+        except ValueError:  # Already in use (e.g., with Views)
+            pass
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
@@ -897,7 +900,10 @@ class RedundantSecondArray(pm.Transformation):
         # Finally, remove out_array node
         graph.remove_node(out_array)
         if out_array.data in sdfg.arrays:
-            del sdfg.arrays[out_array.data]
+            try:
+                sdfg.remove_data(out_array.data)
+            except ValueError:  # Already in use (e.g., with Views)
+                pass
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
@@ -987,7 +993,10 @@ class SqueezeViewRemove(pm.Transformation):
 
         # Remove node and descriptor
         state.remove_node(out_array)
-        sdfg.remove_data(out_array.data)
+        try:
+            sdfg.remove_data(out_array.data)
+        except ValueError:  # Already in use (e.g., with Views)
+            pass
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
@@ -1080,4 +1089,7 @@ class UnsqueezeViewRemove(pm.Transformation):
 
         # Remove node and descriptor
         state.remove_node(in_array)
-        sdfg.remove_data(in_array.data)
+        try:
+            sdfg.remove_data(in_array.data)
+        except ValueError:  # Already in use (e.g., with Views)
+            pass

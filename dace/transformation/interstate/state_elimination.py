@@ -63,6 +63,8 @@ def _assignments_to_consider(sdfg, edge):
     assignments_to_consider = {}
     for var, assign in edge.data.assignments.items():
         as_symbolic = symbolic.pystr_to_symbolic(assign)
+        if isinstance(as_symbolic, bool):
+            as_symbolic = symbolic.pystr_to_symbolic(as_symbolic)
         # Assignments cannot access a data container
         if not symbolic.contains_sympy_functions(as_symbolic):  # via subscript
             # Assignments cannot use scalar values
@@ -293,10 +295,10 @@ class HoistState(transformation.Transformation):
                                edge.data)
 
         # Safe replacement of edge contents
-        for k, v in mapping.items():
-            nisedge.data.replace(k, '__dacesym_' + k, replace_keys=False)
-        for k, v in mapping.items():
-            nisedge.data.replace('__dacesym_' + k, v, replace_keys=False)
+        def replfunc(m):
+            for k, v in mapping.items():
+                nisedge.data.replace(k, v, replace_keys=False)
+        symbolic.safe_replace(mapping, replfunc)
 
         # Add interstate edge
         for akey, aval in nisedge.data.assignments.items():

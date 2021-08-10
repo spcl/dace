@@ -68,7 +68,7 @@ class MapUnroll(transformation.Transformation):
         # Check for local memories that need to be replicated
         local_memories = [
             name for name in sdutil.local_transients(
-                sdfg, subgraph, entry_node=None, include_nested=True)
+                sdfg, subgraph, entry_node=map_entry, include_nested=True)
             if not isinstance(sdfg.arrays[name], dt.Stream)
             and not isinstance(sdfg.arrays[name], dt.View)
         ]
