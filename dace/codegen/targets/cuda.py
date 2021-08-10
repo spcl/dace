@@ -736,13 +736,17 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         and 'gpu' not in node.location):
                     node.location['gpu'] = default_gpu
                 # Check that the location is in the symbols and symbol mapping.
-                if str(node.location['gpu']) not in node.sdfg.symbols:
-                    node.sdfg.add_symbol(str(node.location['gpu']),
-                                         dtypes.int64)
-                if str(node.location['gpu']) not in node.symbol_mapping:
-                    node.symbol_mapping[str(
-                        node.location['gpu'])] = symbolic.pystr_to_symbolic(
-                            node.location['gpu'])
+                if node.schedule in [
+                        dtypes.ScheduleType.GPU_Multidevice,
+                        dtypes.ScheduleType.GPU_Sequential
+                ]:
+                    if str(node.location['gpu']) not in node.sdfg.symbols:
+                        node.sdfg.add_symbol(str(node.location['gpu']),
+                                             dtypes.int64)
+                    if str(node.location['gpu']) not in node.symbol_mapping:
+                        node.symbol_mapping[str(
+                            node.location['gpu'])] = symbolic.pystr_to_symbolic(
+                                node.location['gpu'])
 
             # Data
             elif (
