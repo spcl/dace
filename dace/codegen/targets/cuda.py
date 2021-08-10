@@ -95,8 +95,6 @@ class CUDACodeGen(TargetCodeGenerator):
         self._gpus, self._gpu_values, self._default_gpu_id = self._get_gpus_and_default_gpu(
             sdfg)
 
-        self._peer_to_peer_accesses = self._get_peer_to_peer_accesses(sdfg)
-
         # Keep track of current "scope entry/exit" code streams for extra
         # code generation
         self.scope_entry_stream = self._initcode
@@ -233,11 +231,10 @@ int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
     int gpu_devices[{ngpus}] = {{{list_gpus}}};
     int gpu_streams = {nstreams};
     int gpu_events = {nevents};
-    int p2p_supported;
 
     __state->gpu_context = new std::unordered_map<int, dace::cuda::Context> {{{ngpus}}};
 
-    // Enable peer-to-peer access
+    // Initialize GPU devices
     for(int i = 0; i < {ngpus}; ++i)
     {{
         __state->gpu_context->insert({{gpu_devices[i],{{gpu_streams,gpu_events}}}});
@@ -260,19 +257,7 @@ int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
         for(int j = 0; j < gpu_events; ++j) {{
             DACE_CUDA_CHECK({backend}EventCreateWithFlags(&__state->gpu_context->at(gpu_devices[i]).events[j], {backend}EventDisableTiming));
         }}
-
-        // Enable peer access
-        for(int j = 0; j < {ngpus}; ++j) {{
-            if (i != j) {{
-                DACE_CUDA_CHECK({backend}DeviceCanAccessPeer(&p2p_supported, gpu_devices[i], gpu_devices[j]));
-                if (p2p_supported == 1) {{
-                    DACE_CUDA_CHECK({backend}DeviceEnablePeerAccess(gpu_devices[j], 0));
-                }} else {{
-                    printf("ERROR: Device %d cannot access device %d.\\n", gpu_devices[i], gpu_devices[j]);
-                    return 4;
-                }}
-            }}
-        }}
+        {p2p_enable_str}
     }}
     {initcode}
     {init_end_print}
@@ -318,11 +303,11 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             other_globalcode=self._globalcode.getvalue(),
             localcode=self._localcode.getvalue(),
             file_header=fileheader.getvalue(),
-
+            p2p_enable_str=self._p2p_enablge_string(self._global_sdfg),
             # Could be changed to create Context with right amount of streams,
             # events.
-            nstreams=max(self._cuda_streams.values()) + 1,
-            nevents=max(self._cuda_events.values()),
+            nstreams=max(self._cuda_streams.values(), default=0) + 1,
+            nevents=max(self._cuda_events.values(), default=0),
             # list_streams=", ".join(map(str, self._cuda_streams.values())),
             # list_events=", ".join(map(str, self._cuda_events.values())),
             backend=self.backend,
@@ -786,26 +771,73 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         peer_to_peer_access: Dict[
             symbolic.SymbolicType,
             Set[symbolic.SymbolicType]] = collections.defaultdict(set)
-        for sdfg in sdfg.sdfg_list:
-            for state in sdfg.nodes():
-                for edge in state.dfs_edges():
-                    src = edge.src
-                    dst = edge.dst
-                    src_gpu = sdutil.get_gpu_location(sdfg, src)
-                    if src_gpu is not None:
-                        dst_gpu = sdutil.get_gpu_location(sdfg, dst)
-                        if dst_gpu is None and isinstance(
-                                dst, (nodes.EntryNode, nodes.ExitNode)):
-                            for mpe in state.memlet_path(edge):
-                                if not isinstance(
-                                        mpe.dst,
-                                    (nodes.EntryNode, nodes.ExitNode)):
-                                    break
-                                dst_gpu = sdutil.get_gpu_location(sdfg, dst)
-                        if dst_gpu is not None:
-                            peer_to_peer_access[src_gpu].add(dst_gpu)
+        for edge, state in sdfg.all_edges_recursive():
+            src = edge.src
+            dst = edge.dst
+            src_gpu = sdutil.get_gpu_location(state, src)
+            if src_gpu is not None:
+                dst_gpu = sdutil.get_gpu_location(state, dst)
+                if dst_gpu is None and isinstance(
+                        dst, (nodes.EntryNode, nodes.ExitNode)):
+                    for mpe in state.memlet_path(edge):
+                        if not isinstance(mpe.dst,
+                                          (nodes.EntryNode, nodes.ExitNode)):
+                            break
+                    dst = mpe.dst
+                    dst_gpu = sdutil.get_gpu_location(state, dst)
+                if ((not isinstance(src, nodes.AccessNode)
+                     or isinstance(dst, nodes.AccessNode))
+                        and dst_gpu is not None):
+                    peer_to_peer_access[src_gpu].add(dst_gpu)
 
-        return peer_to_peer_access
+                if (not isinstance(dst, nodes.AccessNode)
+                        and dst_gpu is not None):
+                    peer_to_peer_access[dst_gpu].add(src_gpu)
+
+        p2p_mapping: Dict[symbolic.SymbolicType,
+                          Set[symbolic.SymbolicType]] = collections.defaultdict(
+                              set)
+        for key, values in peer_to_peer_access.items():
+            for g in self._gpus[key]:
+                for v in values:
+                    p2p_mapping[g].update(self._gpus[v])
+                p2p_mapping[g].discard(g)
+        return p2p_mapping
+
+    def _p2p_enablge_string(self, sdfg):
+        p2p_mapping = self._get_peer_to_peer_accesses(self._global_sdfg)
+        np2p = max((len(i) for i in p2p_mapping.values()), default=0)
+        p2p_enable_str = ''
+        if np2p > 0:
+            p2p_str_list = []
+            for gpu in self._gpu_values:
+                p2p_str_list.append('{' + ', '.join(
+                    map(
+                        str,
+                        list(p2p_mapping[gpu]) +
+                        [-1
+                         for n in range(np2p - len(p2p_mapping[gpu]))])) + '}')
+            p2pstr = '{' + ',\n                            '.join(
+                p2p_str_list) + '}'
+
+            p2p_enable_str = f'''
+        int p2p_supported;
+        int p2p_mapping[{len(self._gpu_values)}][{np2p}] = {p2pstr};
+
+        // Enable peer-to-peer access
+        for(int j = 0; j < {np2p}; ++j) {{
+            int peer = p2p_mapping[i][j];
+            if (peer != -1) {{
+                DACE_CUDA_CHECK({self.backend}DeviceCanAccessPeer(&p2p_supported, gpu_devices[i], peer));
+                if (p2p_supported == 1) {{
+                    DACE_CUDA_CHECK({self.backend}DeviceEnablePeerAccess(peer, 0));
+                }} else {{
+                    printf("ERROR: Device %d cannot access device %d.\\n", gpu_devices[i], peer);
+                    return 4;
+                }}
+            }}
+        }}'''
+        return p2p_enable_str
 
     def _set_gpu_device(self,
                         sdfg: SDFG,
