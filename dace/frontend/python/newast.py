@@ -3307,8 +3307,8 @@ class ProgramVisitor(ExtNodeVisitor):
         parent_name = self.scope_vars[name]
         parent_array = self.scope_arrays[parent_name]
 
-        has_indirection = (_subset_has_indirection(rng, self) or
-                           _subset_is_local_symbol_dependent(rng, self))
+        has_indirection = (_subset_has_indirection(rng, self)
+                           or _subset_is_local_symbol_dependent(rng, self))
         if has_indirection:
             # squeezed_rng = list(range(len(rng)))
             shape = parent_array.shape
@@ -3354,7 +3354,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if arr_type is None:
             arr_type = type(parent_array)
             # Size (1,) slice of NumPy array returns scalar value
-            if arr_type != data.Stream and (shape == [1] or shape == (1,)):
+            if arr_type != data.Stream and (shape == [1] or shape == (1, )):
                 arr_type = data.Scalar
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
@@ -3410,8 +3410,8 @@ class ProgramVisitor(ExtNodeVisitor):
             new_name, new_rng = self._add_access(name, rng, 'r', target,
                                                  new_name, arr_type)
             full_rng = subsets.Range.from_array(self.sdfg.arrays[new_name])
-            if (_subset_has_indirection(rng, self) or
-                    _subset_is_local_symbol_dependent(rng, self)):
+            if (_subset_has_indirection(rng, self)
+                    or _subset_is_local_symbol_dependent(rng, self)):
                 new_name, new_rng = self.make_slice(new_name, rng)
             elif full_rng != new_rng:
                 new_name, new_rng = self.make_slice(new_name, new_rng)
@@ -3634,7 +3634,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if not _subset_is_local_symbol_dependent(new_rng, self):
                     independent = True
                     waccess = inverse_dict_lookup(self.accesses,
-                                                (new_name, new_rng))
+                                                  (new_name, new_rng))
                     if self.map_symbols and waccess:
                         for s in self.map_symbols:
                             if s not in waccess[1].free_symbols:
@@ -3958,9 +3958,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 funcname = sdfg.name
                 all_args = required_args
                 # Try to promote args of kind `sym = scalar`
-                args = [(a, self._parse_subscript_slice(v))
-                        if a in sdfg.symbols and str(v) not in self.sdfg.symbols
-                        else (a, v) for a, v in args]
+                args = [(a, self._parse_subscript_slice(v)) if a in sdfg.symbols
+                        and str(v) not in self.sdfg.symbols else (a, v)
+                        for a, v in args]
                 required_args = [k for k, _ in args if k in sdfg.arg_names]
                 # Filter out constant and None-constant arguments
                 req = sdfg.arglist().keys()
@@ -4230,7 +4230,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                         symbolic.pystr_to_symbolic(symvalue)
                                     }, '__dacesym_' + str(sym), symvalue)
                         # TODO: The following code is newer but fails to
-                        # replace symbols properly (see test_submatrix in 
+                        # replace symbols properly (see test_submatrix in
                         # tests/python_frontend/indirection_with_scalars_test.py)
                         # symbolic.safe_replace(
                         #     symmapping,
@@ -4705,8 +4705,9 @@ class ProgramVisitor(ExtNodeVisitor):
                                lineno=node.lineno,
                                col_offset=node.col_offset)
         return self.visit_BinOp(binop_node)
-    
-    def _add_read_slice(self, array: str, node: ast.Subscript, expr: MemletExpr):
+
+    def _add_read_slice(self, array: str, node: ast.Subscript,
+                        expr: MemletExpr):
 
         arrobj = self.sdfg.arrays[array]
 
@@ -4752,16 +4753,20 @@ class ProgramVisitor(ExtNodeVisitor):
                                               debuginfo=self.current_lineinfo)
             self.last_state.add_nedge(
                 rnode, wnode,
-                Memlet.simple(array,
-                              expr.subset,
-                              num_accesses=expr.accesses,
-                              wcr_str=expr.wcr,
-                              other_subset_str=other_subset))
+                Memlet(f'{array}[{expr.subset}]->{other_subset}',
+                       volume=expr.accesses,
+                       wcr=expr.wcr))
             return tmp
 
-    def _parse_subscript_slice(self, s: ast.AST, multidim: bool = False):
-
-        def _promote(node: ast.AST):
+    def _parse_subscript_slice(
+        self,
+        s: ast.AST,
+        multidim: bool = False
+    ) -> Union[Any, Tuple[Union[Any, str, symbolic.symbol]]]:
+        """ Parses the slice attribute of an ast.Subscript node.
+            Scalar data are promoted to symbols.
+        """
+        def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
             if node_str in self.indirections:
                 scalar, sym = self.indirections[node_str]
@@ -4800,13 +4805,13 @@ class ProgramVisitor(ExtNodeVisitor):
             if multidim:
                 res = (lower, upper, step)
             else:
-                res = ((lower, upper, step),)
+                res = ((lower, upper, step), )
         elif isinstance(s, ast.Tuple):
-            res = tuple(self._parse_subscript_slice(d, multidim=True)
-                        for d in s.elts)
+            res = tuple(
+                self._parse_subscript_slice(d, multidim=True) for d in s.elts)
         elif isinstance(s, ast.ExtSlice):
-            res = tuple(self._parse_subscript_slice(d, multidim=True)
-                        for d in s.dims)
+            res = tuple(
+                self._parse_subscript_slice(d, multidim=True) for d in s.dims)
         else:
             res = _promote(s)
         return res
@@ -4834,12 +4839,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 true_node = copy.deepcopy(node)
                 true_node.value.id = true_name
 
-
                 # Visit slice contents
                 nslice = self._parse_subscript_slice(node.slice)
 
                 # Try to construct memlet from subscript
-                expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node, nslice)
+                expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node,
+                                               nslice)
                 rng = expr.subset
                 new_name, new_rng = self._add_read_access(name, rng, node)
                 new_arr = self.sdfg.arrays[new_name]
@@ -4887,7 +4892,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return self._add_read_slice(array, node, expr)
 
-    def _visit_ast_or_value(self, node: ast.AST):
+    def _visit_ast_or_value(self, node: ast.AST) -> Any:
         result = self.visit(node)
         newnode = None
         if result is None:
