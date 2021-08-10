@@ -1043,7 +1043,7 @@ def gemv_libnode(pv: 'ProgramVisitor',
     A_in, x_in = (state.add_read(name) for name in (A, x))
     y_out = state.add_write(y)
 
-    libnode = Gemv('gemv', transA=trans, alpha=alpha, beta=beta)
+    libnode = Gemv('gemv', transA=bool(trans), alpha=alpha, beta=beta)
     state.add_node(libnode)
 
     # Connect nodes
