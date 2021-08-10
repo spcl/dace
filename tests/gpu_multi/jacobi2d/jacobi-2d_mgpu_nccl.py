@@ -153,11 +153,13 @@ if __name__ == "__main__":
     sdfg.apply_transformations_repeated(MapFusion)
     sdfg.apply_strict_transformations()
 
+    print('GPU: start')
     A, B = init_data(n, np_float)
     sdfg(A, B)
+    print('GPU: done')
 
+    print('CPU: start')
     refA, refB = init_data(n, np.float64)
-
     shared_sdfg = jacobi_2d_shared.to_sdfg()
     shared_sdfg.specialize(
         dict(Py=number_of_gpus,
@@ -166,6 +168,7 @@ if __name__ == "__main__":
              TSTEPS=ts,
              N=n))
     shared_sdfg(A=refA, B=refB)
+    print('CPU: done')
 
     print("=======Validation=======")
     assert (np.allclose(A, refA))
