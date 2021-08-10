@@ -130,11 +130,11 @@ class Recv(nodes.LibraryNode):
 
     def validate(self, sdfg: SDFG, state: SDFGState):
         in_edges = state.in_edges(self)
-        if len(in_edges) not in [0, 1, 2]:
-            raise ValueError("NCCL Recv must have one or two input.")
+        if len(in_edges) not in [0, 1]:
+            raise ValueError("NCCL Recv must have zero or one input.")
         out_edges = state.out_edges(self)
         if len(out_edges) not in [1, 2]:
-            raise ValueError("NCCL Recv must have zero or one output.")
+            raise ValueError("NCCL Recv must have one or two outputs.")
 
     @property
     def free_symbols(self) -> Set[str]:
@@ -145,16 +145,13 @@ class Recv(nodes.LibraryNode):
 
 @oprepo.replaces('dace.comm.nccl.recv')
 @oprepo.replaces('dace.comm.nccl.Recv')
-def nccl_recv(
-        pv: 'ProgramVisitor',
-        sdfg: SDFG,
-        state: SDFGState,
-        out_buffer: str,
-        # in_buffer: str = None,
-        peer: symbolic.SymbolicType = 0,
-        group_handle: str = None):
+def nccl_recv(pv: 'ProgramVisitor',
+              sdfg: SDFG,
+              state: SDFGState,
+              out_buffer: str,
+              peer: symbolic.SymbolicType = 0,
+              group_handle: str = None):
 
-    # inputs = {"_inbuffer"}
     inputs = set()
     outputs = {"_outbuffer"}
 
@@ -180,23 +177,6 @@ def nccl_recv(
             state.add_edge(gh_in, None, libnode, "_group_handle", gh_memlet)
         state.add_edge(libnode, "_group_handle", gh_out, None, gh_memlet)
 
-    # in_range = None
-    # if in_buffer is None:
-    #     in_buffer = out_buffer
-    # if isinstance(in_buffer, tuple):
-    #     in_name, in_range = in_buffer
-    # else:
-    #     in_name = in_buffer
-
-    # desc = sdfg.arrays[in_name]
-    # conn = libnode.in_connectors
-    # conn = {
-    #     c: (dtypes.pointer(desc.dtype) if c == '_buffer' else t)
-    #     for c, t in conn.items()
-    # }
-    # libnode.in_connectors = conn
-    # in_node = state.add_read(in_name)
-
     out_range = None
     if isinstance(out_buffer, tuple):
         out_name, out_range = out_buffer
@@ -208,16 +188,11 @@ def nccl_recv(
         raise ValueError(
             "NCCL_Recv out_buffer must be an array, or a an array range tuple.")
 
-    # if in_range:
-    #     buf_mem = Memlet.simple(in_name, in_range)
-    # else:
-    #     buf_mem = Memlet.from_array(in_name, desc)
     if out_range:
         out_mem = Memlet.simple(out_name, out_range)
     else:
         out_mem = Memlet.simple(out_name, '0')
 
-    # state.add_edge(in_node, None, libnode, '_inbuffer', buf_mem)
     state.add_edge(libnode, '_outbuffer', out_node, None, out_mem)
 
     return []

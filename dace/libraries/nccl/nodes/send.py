@@ -131,9 +131,9 @@ class Send(nodes.LibraryNode):
     def validate(self, sdfg: SDFG, state: SDFGState):
         in_edges = state.in_edges(self)
         if len(in_edges) not in [1, 2]:
-            raise ValueError("NCCL Send must have one or two input.")
+            raise ValueError("NCCL Send must have one or two inputs.")
         out_edges = state.out_edges(self)
-        if len(out_edges) not in [0, 1, 2]:
+        if len(out_edges) not in [0, 1]:
             raise ValueError("NCCL Send must have zero or one output.")
 
     @property
@@ -145,17 +145,14 @@ class Send(nodes.LibraryNode):
 
 @oprepo.replaces('dace.comm.nccl.send')
 @oprepo.replaces('dace.comm.nccl.Send')
-def nccl_send(
-        pv: 'ProgramVisitor',
-        sdfg: SDFG,
-        state: SDFGState,
-        in_buffer: str,
-        # out_buffer: Union[str, sp.Expr, Number] = None,
-        peer: symbolic.SymbolicType = 0,
-        group_handle: str = None):
+def nccl_send(pv: 'ProgramVisitor',
+              sdfg: SDFG,
+              state: SDFGState,
+              in_buffer: str,
+              peer: symbolic.SymbolicType = 0,
+              group_handle: str = None):
 
     inputs = {"_inbuffer"}
-    # outputs = {"_outbuffer"}
     outputs = set()
 
     if isinstance(group_handle, str):
@@ -195,29 +192,11 @@ def nccl_send(
     libnode.in_connectors = conn
     in_node = state.add_read(in_name)
 
-    # out_range = None
-    # if out_buffer is None:
-    #     out_buffer = in_buffer
-    # if isinstance(out_buffer, tuple):
-    #     out_name, out_range = out_buffer
-    #     out_node = state.add_write(out_name)
-    # elif isinstance(out_buffer, str) and out_buffer in sdfg.arrays.keys():
-    #     out_name = out_buffer
-    #     out_node = state.add_write(out_name)
-    # else:
-    #     raise ValueError(
-    #         "NCCL_Send out_buffer must be an array, or a an array range tuple.")
-
     if in_range:
         buf_mem = Memlet.simple(in_name, in_range)
     else:
         buf_mem = Memlet.from_array(in_name, desc)
-    # if out_range:
-    #     out_mem = Memlet.simple(out_name, out_range)
-    # else:
-    #     out_mem = Memlet.simple(out_name, '0')
 
     state.add_edge(in_node, None, libnode, '_inbuffer', buf_mem)
-    # state.add_edge(libnode, '_outbuffer', out_node, None, out_mem)
 
     return []
