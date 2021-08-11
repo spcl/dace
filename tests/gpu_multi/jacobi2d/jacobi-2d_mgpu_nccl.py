@@ -23,6 +23,7 @@ lNy = dace.symbol('lNy', dtype=d_int, integer=True, positive=True)
 Py = dace.symbol('Py', dtype=dace.int32, integer=True, positive=True)
 pi = dace.symbol('pi', dtype=dace.int32, integer=True, nonnegative=True)
 size = dace.symbol('size', dtype=dace.int32, integer=True, positive=True)
+# r = dace.symbol('r', dtype=dace.int32, integer=True, positive=True)
 top_neighbor = dace.symbol('top_neighbor',
                            dtype=dace.int32,
                            integer=True,
@@ -46,9 +47,9 @@ def jacobi_2d_shared(A: dace.float64[N, Ny], B: dace.float64[N, Ny]):
 
 @dace.program
 def seq1(lA: d_float[lNy + 2, N + 2]):
-    # send North, recv South
     group_handle = dace.define_local_scalar(d_int,
                                             storage=dace.StorageType.GPU_Global)
+    # send North, recv South
     dace.comm.nccl.Recv(lA[-1], peer=bottom_neighbor, group_handle=group_handle)
     dace.comm.nccl.Send(lA[1], peer=top_neighbor, group_handle=group_handle)
     # send South, recv North
@@ -58,14 +59,68 @@ def seq1(lA: d_float[lNy + 2, N + 2]):
 
 @dace.program
 def seq2(lB: d_float[lNy + 2, N + 2]):
-    # send North, recv South
     group_handle = dace.define_local_scalar(d_int,
                                             storage=dace.StorageType.GPU_Global)
+    # send North, recv South
     dace.comm.nccl.Recv(lB[-1], peer=bottom_neighbor, group_handle=group_handle)
     dace.comm.nccl.Send(lB[1], peer=top_neighbor, group_handle=group_handle)
     # send South, recv North
     dace.comm.nccl.Recv(lB[0], peer=top_neighbor, group_handle=group_handle)
     dace.comm.nccl.Send(lB[-2], peer=bottom_neighbor, group_handle=group_handle)
+
+
+@dace.program
+def manexchange1(lA: d_float[lNy + 2, N + 2], rank: d_int):
+    group_handle = dace.define_local_scalar(d_int,
+                                            storage=dace.StorageType.GPU_Global)
+    if rank == 0:
+        # send North, recv South
+        dace.comm.nccl.Recv(lA[-1], peer=size - 1, group_handle=group_handle)
+        dace.comm.nccl.Send(lA[1], peer=rank + 1, group_handle=group_handle)
+        # send South, recv North
+        dace.comm.nccl.Recv(lA[0], peer=rank + 1, group_handle=group_handle)
+        dace.comm.nccl.Send(lA[-2], peer=size - 1, group_handle=group_handle)
+    elif rank == size - 1:
+        # send North, recv South
+        dace.comm.nccl.Recv(lA[-1], peer=rank - 1, group_handle=group_handle)
+        dace.comm.nccl.Send(lA[1], peer=0, group_handle=group_handle)
+        # send South, recv North
+        dace.comm.nccl.Recv(lA[0], peer=0, group_handle=group_handle)
+        dace.comm.nccl.Send(lA[-2], peer=rank - 1, group_handle=group_handle)
+    else:
+        # send North, recv South
+        dace.comm.nccl.Recv(lA[-1], peer=rank - 1, group_handle=group_handle)
+        dace.comm.nccl.Send(lA[1], peer=rank + 1, group_handle=group_handle)
+        # send South, recv North
+        dace.comm.nccl.Recv(lA[0], peer=rank + 1, group_handle=group_handle)
+        dace.comm.nccl.Send(lA[-2], peer=rank - 1, group_handle=group_handle)
+
+
+@dace.program
+def manexchange2(lB: d_float[lNy + 2, N + 2], r: d_int):
+    group_handle = dace.define_local_scalar(d_int,
+                                            storage=dace.StorageType.GPU_Global)
+    if r == 0:
+        # send North, recv South
+        dace.comm.nccl.Recv(lB[-1], peer=size - 1, group_handle=group_handle)
+        dace.comm.nccl.Send(lB[1], peer=r + 1, group_handle=group_handle)
+        # send South, recv North
+        dace.comm.nccl.Recv(lB[0], peer=r + 1, group_handle=group_handle)
+        dace.comm.nccl.Send(lB[-2], peer=size - 1, group_handle=group_handle)
+    elif r == size - 1:
+        # send North, recv South
+        dace.comm.nccl.Recv(lB[-1], peer=r - 1, group_handle=group_handle)
+        dace.comm.nccl.Send(lB[1], peer=0, group_handle=group_handle)
+        # send South, recv North
+        dace.comm.nccl.Recv(lB[0], peer=0, group_handle=group_handle)
+        dace.comm.nccl.Send(lB[-2], peer=r - 1, group_handle=group_handle)
+    else:
+        # send North, recv South
+        dace.comm.nccl.Recv(lB[-1], peer=r - 1, group_handle=group_handle)
+        dace.comm.nccl.Send(lB[1], peer=r + 1, group_handle=group_handle)
+        # send South, recv North
+        dace.comm.nccl.Recv(lB[0], peer=r + 1, group_handle=group_handle)
+        dace.comm.nccl.Send(lB[-2], peer=r - 1, group_handle=group_handle)
 
 
 @dace.program
@@ -79,21 +134,23 @@ def jacobi_2d_mgpu(A: d_float[Ny, N], B: d_float[Ny, N]):
         lA[1:-1, 1:-1] = A[rank * lNy:(rank + 1) * lNy, :]
         lB[1:-1, 1:-1] = B[rank * lNy:(rank + 1) * lNy, :]
 
-        top_neighbor = dace.define_local_scalar(
-            d_int, storage=dace.StorageType.CPU_ThreadLocal)
-        bottom_neighbor = dace.define_local_scalar(
-            d_int, storage=dace.StorageType.CPU_ThreadLocal)
-        top_neighbor = -(rank + 1) % size
-        if rank > 0:
-            bottom_neighbor = rank - 1
-        else:
-            bottom_neighbor = size - 1
+        # top_neighbor = dace.define_local_scalar(
+        #     d_int, storage=dace.StorageType.CPU_ThreadLocal)
+        # bottom_neighbor = dace.define_local_scalar(
+        #     d_int, storage=dace.StorageType.CPU_ThreadLocal)
+        # top_neighbor = -(rank + 1) % size
+        # if rank > 0:
+        #     bottom_neighbor = rank - 1
+        # else:
+        #     bottom_neighbor = size - 1
 
         for t in range(1, TSTEPS):
-            seq1(lA, top_neighbor=top_neighbor, bottom_neighbor=bottom_neighbor)
+            # seq1(lA, top_neighbor=top_neighbor, bottom_neighbor=bottom_neighbor)
+            manexchange1(lA, rank=rank, size=size)
             lB[1:-1, 1:-1] = 0.2 * (lA[1:-1, 1:-1] + lA[1:-1, :-2] +
                                     lA[1:-1, 2:] + lA[2:, 1:-1] + lA[:-2, 1:-1])
-            seq2(lB, top_neighbor=top_neighbor, bottom_neighbor=bottom_neighbor)
+            # seq2(lB, top_neighbor=top_neighbor, bottom_neighbor=bottom_neighbor)
+            manexchange2(lB, r=rank, size=size)
             lA[1:-1, 1:-1] = 0.2 * (lB[1:-1, 1:-1] + lB[1:-1, :-2] +
                                     lB[1:-1, 2:] + lB[2:, 1:-1] + lB[:-2, 1:-1])
 
@@ -129,15 +186,15 @@ def find_data_desc(sdfg: dace.SDFG, name: str) -> dace.nodes.MapEntry:
 
 
 if __name__ == "__main__":
-    ts, n = 100, 280
+    ts, n = 100, 8
     number_of_gpus = 4
     sdfg = jacobi_2d_mgpu.to_sdfg(strict=False)
     gpu_map = find_map_by_param(sdfg, 'rank')
     gpu_map.schedule = dace.ScheduleType.GPU_Multidevice
-    seq_1 = next(s for s in sdfg.sdfg_list if s.name == 'seq1')
-    seq_2 = next(s for s in sdfg.sdfg_list if s.name == 'seq2')
-    seq_1.parent_nsdfg_node.no_inline = True
-    seq_2.parent_nsdfg_node.no_inline = True
+    # seq_1 = next(s for s in sdfg.sdfg_list if s.name == 'seq1')
+    # seq_2 = next(s for s in sdfg.sdfg_list if s.name == 'seq2')
+    # seq_1.parent_nsdfg_node.no_inline = True
+    # seq_2.parent_nsdfg_node.no_inline = True
     # seq_1.parent_nsdfg_node.schedule = dace.ScheduleType.GPU_Sequential
     # seq_2.parent_nsdfg_node.schedule = dace.ScheduleType.GPU_Sequential
     sdfg.specialize(
@@ -149,6 +206,13 @@ if __name__ == "__main__":
     sdfg.apply_strict_transformations()
     sdfg.apply_transformations_repeated(MapFusion)
     sdfg.apply_strict_transformations()
+
+    sdfg.name += '_manexchange'
+    program_objects = sdfg.generate_code()
+    from dace.codegen import compiler
+    out_path = '.dacecache/local/jacobi/' + sdfg.name
+    program_folder = compiler.generate_program_folder(sdfg, program_objects,
+                                                      out_path)
 
     print('GPU: start')
     A, B = init_data(n, np_float)
@@ -168,13 +232,6 @@ if __name__ == "__main__":
     print('CPU: done')
 
     print("=======Validation=======")
-    assert (np.allclose(A, refA))
-    assert (np.allclose(B, refB))
+    assert (np.allclose(A, refA)), f'A:\n{repr(A)}\nrefA:\n{repr(refA)}'
+    assert (np.allclose(B, refB)), f'A:\n{repr(B)}\nrefA:\n{repr(refB)}'
     print("OK")
-
-    # sdfg.name += '_cpu'
-    # program_objects = sdfg.generate_code()
-    # from dace.codegen import compiler
-    # out_path = '.dacecache/local/jacobi/' + sdfg.name
-    # program_folder = compiler.generate_program_folder(sdfg, program_objects,
-    #                                                   out_path)
