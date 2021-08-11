@@ -48,8 +48,10 @@ class ExpandReduceNCCL(ExpandTransformation):
                              ' in global GPU memory.')
 
         root = node.root
+        rootstr = str(root)
         if root.name in sdfg.arrays:
             sdfg.arrays[root.name].lifetime = dtypes.AllocationLifetime.SDFG
+            rootstr = f'{root}[0]'
 
         redtype = node.reduction_type
         redtype = nutil.NCCL_SUPPORTED_OPERATIONS[redtype]
@@ -62,7 +64,7 @@ class ExpandReduceNCCL(ExpandTransformation):
         if input_data.dtype.veclen > 1:
             raise (NotImplementedError)
 
-        code = f"""ncclReduce(_inbuffer, _outbuffer, {count_str}, {nccl_dtype_str}, {wcr_str}, {root}, __state->ncclCommunicators->at(__dace_cuda_device),  __dace_current_stream)"""
+        code = f"""ncclReduce(_inbuffer, _outbuffer, {count_str}, {nccl_dtype_str}, {wcr_str}, {rootstr}, __state->ncclCommunicators->at(__dace_cuda_device),  __dace_current_stream)"""
         if Config.get('compiler', 'build_type') == 'Debug':
             code = '''DACE_NCCL_CHECK(''' + code + ''');\n'''
         else:
@@ -105,7 +107,8 @@ class ExpandReduceNCCL(ExpandTransformation):
                                 node.out_connectors,
                                 code,
                                 location=node.location,
-                                language=dtypes.Language.CPP)
+                                language=dtypes.Language.CPP,
+                                library_expansion_symbols=set([str(root)]))
 
         return tasklet
 

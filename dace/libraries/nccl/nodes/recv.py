@@ -39,8 +39,10 @@ class ExpandRecvNCCL(ExpandTransformation):
                              ' in global GPU memory.')
 
         peer = node.peer
+        peerstr = str(peer)
         if peer.name in sdfg.arrays:
             sdfg.arrays[peer.name].lifetime = dtypes.AllocationLifetime.SDFG
+            peerstr = f'{peer}[0]'
 
         nccl_dtype_str = nutil.Nccl_dtypes(output_data.dtype.base_type)
         count_str = "*".join(str(e) for e in output_dims)
@@ -48,7 +50,7 @@ class ExpandRecvNCCL(ExpandTransformation):
         if output_data.dtype.veclen > 1:
             raise (NotImplementedError)
 
-        code = f"""ncclRecv(_outbuffer, {count_str}, {nccl_dtype_str}, {peer}, __state->ncclCommunicators->at(__dace_cuda_device),  __dace_current_stream)"""
+        code = f"""ncclRecv(_outbuffer, {count_str}, {nccl_dtype_str}, {peerstr}, __state->ncclCommunicators->at(__dace_cuda_device),  __dace_current_stream)"""
         if Config.get('compiler', 'build_type') == 'Debug':
             code = '''DACE_NCCL_CHECK(''' + code + ''');\n'''
         else:
@@ -91,7 +93,8 @@ class ExpandRecvNCCL(ExpandTransformation):
                                 node.out_connectors,
                                 code,
                                 location=node.location,
-                                language=dtypes.Language.CPP)
+                                language=dtypes.Language.CPP,
+                                library_expansion_symbols=set([str(peer)]))
 
         return tasklet
 
