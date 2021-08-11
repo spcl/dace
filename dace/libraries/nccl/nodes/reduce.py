@@ -50,9 +50,11 @@ class ExpandReduceNCCL(ExpandTransformation):
         root = node.root
         rootstr = str(root)
         for fs in root.free_symbols:
-            if fs.name in sdfg.arrays or fs.name in sdfg.parent_sdfg.arrays:
+            if fs.name in sdfg.arrays:
                 sdfg.arrays[fs.name].lifetime = dtypes.AllocationLifetime.SDFG
-
+            if fs.name in sdfg.parent_sdfg.arrays:
+                sdfg.parent_sdfg.arrays[
+                    fs.name].lifetime = dtypes.AllocationLifetime.SDFG
         redtype = node.reduction_type
         redtype = nutil.NCCL_SUPPORTED_OPERATIONS[redtype]
         wcr_str = str(redtype)

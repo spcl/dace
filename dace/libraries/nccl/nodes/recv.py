@@ -41,8 +41,11 @@ class ExpandRecvNCCL(ExpandTransformation):
         peer = node.peer
         peerstr = str(peer)
         for fs in peer.free_symbols:
-            if fs.name in sdfg.arrays or fs.name in sdfg.parent_sdfg.arrays:
+            if fs.name in sdfg.arrays:
                 sdfg.arrays[fs.name].lifetime = dtypes.AllocationLifetime.SDFG
+            if fs.name in sdfg.parent_sdfg.arrays:
+                sdfg.parent_sdfg.arrays[
+                    fs.name].lifetime = dtypes.AllocationLifetime.SDFG
 
         nccl_dtype_str = nutil.Nccl_dtypes(output_data.dtype.base_type)
         count_str = "*".join(str(e) for e in output_dims)
@@ -52,7 +55,7 @@ class ExpandRecvNCCL(ExpandTransformation):
 
         code = f"""ncclRecv(_outbuffer, {count_str}, {nccl_dtype_str}, {peerstr}, __state->ncclCommunicators->at(__dace_cuda_device),  __dace_current_stream)"""
         if Config.get('compiler', 'build_type') == 'Debug':
-            code = '''DACE_NCCL_CHECK(''' + code + ''');\n'''
+            code = f'''printf("{str(node)}: begin;  dev,peer: %d, %d\\n", __dace_cuda_device, {peerstr});\n''' + '''DACE_NCCL_CHECK(''' + code + ''');\n''' + f'''printf("{str(node)}: end;  dev,peer: %d, %d\\n", __dace_cuda_device, {peerstr});\n'''
         else:
             code = code + ''';\n'''
 
@@ -78,7 +81,7 @@ class ExpandRecvNCCL(ExpandTransformation):
                     out_gh_edge = edge
                     out_gh_node = edge.dst
             if not state.successors(out_gh_node):
-                code += """ncclGroupEnd();"""
+                code += """ncclGroupEnd();\ncudaStreamSynchronize(__dace_current_stream);"""
                 out_gh_data = out_gh_node.data
                 state.remove_edge_and_connectors(out_gh_edge)
                 state.remove_node(out_gh_node)
