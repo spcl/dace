@@ -4,7 +4,6 @@ import warnings
 import itertools
 import sys
 import dace
-import string
 import random
 import numpy as np
 from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
@@ -84,9 +83,10 @@ def run_test(implementation,
         C_shape = [s if isinstance(s, int) else replace_map[s] for s in C_shape]
 
     # unique name for sdfg
-    sdfg_name = random.choices(string.ascii_lowercase)[0]
-    sdfg_name += ''.join(random.choices(string.ascii_lowercase + string.digits,
-                         k=19))
+    C_str = "None" if C_shape is None else (
+        str(C_shape[0]) if len(C_shape) == 1 else f"{C_shape[0]}_{C_shape[1]}")
+    sdfg_name = f"{implementation}_{M}_{N}_{K}_{complex}_{transA}_{transB}_{alpha}_{beta}_{C_str}".replace(
+        ".", "_dot_").replace("+", "_plus_").replace("(", "").replace(")", "")
 
     # shape of the transposed arrays
     A_shape = trans_A_shape = [M, K]
