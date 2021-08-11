@@ -335,8 +335,7 @@ class LoopToMap(DetectLoop):
             for sym, dtype in nsymbols.items():
                 if sym in sdfg.free_symbols:
                     del sdfg.symbols[sym]
-                else:
-                    nsdfg.symbols[sym] = dtype
+                nsdfg.symbols[sym] = dtype
 
             # Change body state reference
             body = new_body
