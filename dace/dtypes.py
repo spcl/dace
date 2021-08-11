@@ -1310,7 +1310,8 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     ]:
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
-            ScheduleType.MPI
+            ScheduleType.MPI, ScheduleType.GPU_Multidevice,
+            ScheduleType.GPU_Sequential
         ]
 
     # GPU-global memory

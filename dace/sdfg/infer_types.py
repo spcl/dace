@@ -248,9 +248,14 @@ def _set_default_storage_types(sdfg: SDFG,
                     if parent_node not in scopes_with_tbmaps:
                         parent_schedule = dtypes.ScheduleType.GPU_ThreadBlock
                 # End of special cases
-
-                # Set default storage type
-                desc.storage = dtypes.SCOPEDEFAULT_STORAGE[parent_schedule]
+                if (isinstance(desc, data.Scalar) and parent_schedule in [
+                        dtypes.ScheduleType.GPU_Sequential,
+                        dtypes.ScheduleType.GPU_Multidevice
+                ]):
+                    desc.storage = dtypes.StorageType.CPU_Pinned
+                else:
+                    # Set default storage type
+                    desc.storage = dtypes.SCOPEDEFAULT_STORAGE[parent_schedule]
 
     # Take care of remaining arrays/scalars, e.g., code->code edges
     for desc in sdfg.arrays.values():
