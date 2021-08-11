@@ -279,6 +279,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
                        "cl",
                        IntelFPGACodeGen,
                        "Intel FPGA",
+                       target_name="intel_fpga",
                        target_type="device")
             for (file_name, code) in self._other_codes.items()
         ]
