@@ -5,8 +5,6 @@ import numpy as np
 import warnings
 import dace.dtypes
 
-JSON_STORE_METADATA = True
-
 
 class SerializableObject(object):
 
@@ -171,13 +169,6 @@ def all_properties_to_json(object_with_properties):
     retdict = {}
     for x, v in object_with_properties.properties():
         retdict[x.attr_name] = x.to_json(v)
-
-        # Add the meta elements decoupled from key/value to facilitate value usage
-        # (The meta is only used when rendering the values)
-        # TODO: Remove when DIODE server is rewritten to ask for metadata
-        #       separately.
-        if JSON_STORE_METADATA:
-            retdict['_meta_' + x.attr_name] = x.meta_to_json(x)
 
     return retdict
 
