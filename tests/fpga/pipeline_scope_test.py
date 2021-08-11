@@ -129,7 +129,7 @@ def exec_jacobi(jacobi, dtype):
 
     jacobi.specialize({"N": n, "K": k, "M": m})
 
-    a = np.arange(n * k * m, dtype=dtype).reshape((n, k, m))
+    a = np.copy(np.arange(n * k * m, dtype=dtype).reshape((n, k, m)))
     b = np.empty((n, k, m), dtype=dtype)
 
     jacobi(a=a, b=b)

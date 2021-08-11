@@ -105,7 +105,7 @@ def test_remove_degenerate_loop():
     if first_assignment is None:
         raise ValueError("Assignment to constant variable not found.")
 
-    a_input = np.arange(size, dtype=np.float64).reshape((size, 1))
+    a_input = np.copy(np.arange(size, dtype=np.float64).reshape((size, 1)))
     a_output = np.empty((1, size), dtype=np.float64)
 
     sdfg(a_input=a_input, a_output=a_output)
