@@ -233,17 +233,16 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG',
         :param node: The node in question
         :return: True if node is in device-level code, False otherwise.
     """
-    return False  # FIXME: Hack for StencilFlow
-    # if with_gpu_default:
-    #     schedules = dtypes.GPU_SCHEDULES + [dtypes.ScheduleType.GPU_Default]
-    # else:
-    #     schedules = dtypes.GPU_SCHEDULES
-    # return is_in_scope(
-    #     sdfg,
-    #     state,
-    #     node,
-    #     schedules,
-    # )
+    if with_gpu_default:
+        schedules = dtypes.GPU_SCHEDULES + [dtypes.ScheduleType.GPU_Default]
+    else:
+        schedules = dtypes.GPU_SCHEDULES
+    return is_in_scope(
+        sdfg,
+        state,
+        node,
+        schedules,
+    )
 
 
 def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
