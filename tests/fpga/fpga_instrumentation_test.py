@@ -81,13 +81,13 @@ def make_sdfg(make_tmp_local: bool):
     assert sdfg.apply_transformations(FPGATransformSDFG) == 1
     assert sdfg.apply_transformations(InlineSDFG) == 1
 
-    made_local = 0
     if make_tmp_local:
+        made_local = 0
         for name, desc in sdfg.arrays.items():
             if "tmp" in name:
                 desc.storage = dace.StorageType.FPGA_Local
                 made_local += 1
-    assert not make_tmp_local or made_local == 2
+        assert made_local == 2
 
     for s in sdfg.states():
         if is_fpga_kernel(sdfg, s):
