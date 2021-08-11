@@ -316,8 +316,8 @@ class CodeNode(Node):
     @property
     def free_symbols(self) -> Set[str]:
         return set().union(*(map(str,
-                  pystr_to_symbolic(v).free_symbols)
-              for v in self.location.values()))
+                                 pystr_to_symbolic(v).free_symbols)
+                             for v in self.location.values()))
 
 
 @make_properties
@@ -341,6 +341,10 @@ class Tasklet(CodeNode):
     code_exit = CodeProperty(
         desc="Extra code that is called on DaCe runtime cleanup",
         default=CodeBlock("", dtypes.Language.CPP))
+    library_expansion_symbols = SetProperty(
+        str,
+        desc="Free symbols that get lost in the expansion of a Library Node")
+
     debuginfo = DebugInfoProperty()
 
     instrument = EnumProperty(
@@ -359,7 +363,8 @@ class Tasklet(CodeNode):
                  code_init="",
                  code_exit="",
                  location=None,
-                 debuginfo=None):
+                 debuginfo=None,
+                 library_expansion_symbols=set()):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
         self.code = CodeBlock(code, language)
@@ -369,6 +374,7 @@ class Tasklet(CodeNode):
         self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
         self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
         self.debuginfo = debuginfo
+        self.library_expansion_symbols = library_expansion_symbols
 
     @property
     def language(self):
@@ -398,7 +404,8 @@ class Tasklet(CodeNode):
     def free_symbols(self) -> Set[str]:
         result = super().free_symbols
         result |= self.code.get_free_symbols(self.in_connectors.keys()
-                                          | self.out_connectors.keys())
+                                             | self.out_connectors.keys())
+        result |= self.library_expansion_symbols
         return result
 
     def infer_connector_types(self, sdfg, state):
@@ -588,8 +595,8 @@ class NestedSDFG(CodeNode):
     def free_symbols(self) -> Set[str]:
         result = super().free_symbols
         result.update(*(map(str,
-                  pystr_to_symbolic(v).free_symbols)
-              for v in self.symbol_mapping.values()))
+                            pystr_to_symbolic(v).free_symbols)
+                        for v in self.symbol_mapping.values()))
         return result
 
     def infer_connector_types(self, sdfg, state):
@@ -720,12 +727,12 @@ class MapEntry(EntryNode):
     @property
     def free_symbols(self) -> Set[str]:
         result = set().union(*(map(str,
-                  pystr_to_symbolic(v).free_symbols)
-              for v in self.location.values()))
+                                   pystr_to_symbolic(v).free_symbols)
+                               for v in self.location.values()))
         dyn_inputs = set(c for c in self.in_connectors
                          if not c.startswith('IN_'))
         result.update(k for k in self._map.range.free_symbols
-                    if k not in dyn_inputs)
+                      if k not in dyn_inputs)
         return result
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
@@ -840,9 +847,10 @@ class Map(object):
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation)
 
-    location = DictProperty(key_type=str,
-                            value_type=dace.symbolic.pystr_to_symbolic,
-                            desc='Full storage location identifier (e.g., rank, GPU ID)')
+    location = DictProperty(
+        key_type=str,
+        value_type=dace.symbolic.pystr_to_symbolic,
+        desc='Full storage location identifier (e.g., rank, GPU ID)')
 
     def __init__(self,
                  label,
@@ -944,12 +952,12 @@ class ConsumeEntry(EntryNode):
     @property
     def free_symbols(self) -> Set[str]:
         result = set().union(*(map(str,
-                  pystr_to_symbolic(v).free_symbols)
-              for v in self.location.values()))
+                                   pystr_to_symbolic(v).free_symbols)
+                               for v in self.location.values()))
         dyn_inputs = set(c for c in self.in_connectors
                          if not c.startswith('IN_'))
         result |= (set(self._consume.num_pes.free_symbols)
-                 | set(self._consume.condition.get_free_symbols()))
+                   | set(self._consume.condition.get_free_symbols()))
         return result - dyn_inputs
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
@@ -1060,7 +1068,7 @@ class Consume(object):
     location = DictProperty(key_type=str,
                             value_type=dace.symbolic.pystr_to_symbolic,
                             desc='Full storage location identifier'
-                                '(e.g., rank, GPU ID)')
+                            '(e.g., rank, GPU ID)')
 
     def as_map(self):
         """ Compatibility function that allows to view the consume as a map,
