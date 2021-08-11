@@ -657,7 +657,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             self, sdfg: dace.SDFG, state: dace.SDFGState, kernel_name: str,
             predecessors: list, subgraphs: list, kernel_stream: CodeIOStream,
             state_host_header_stream: CodeIOStream,
-            state_host_body_stream: CodeIOStream, function_stream: CodeIOStream,
+            state_host_body_stream: CodeIOStream,
+            instrumentation_stream: CodeIOStream, function_stream: CodeIOStream,
             callsite_stream: CodeIOStream, state_parameters: list):
         '''
         Generates Kernel code, both device and host side.
@@ -671,6 +672,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             for the state global declarations.
         :param state_host_body_stream: Device-specific code stream: contains all the code related to
             this state, for creating transient buffers, spawning kernels, and synchronizing them.
+        :param instrumentation_stream: Code for profiling kernel execution time.
         :param function_stream: CPU code stream.
         :param callsite_stream: CPU code stream.
         :param state_parameters: list of state parameters. The kernel-specific parameters will be appended to it.
@@ -738,7 +740,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # Generate PEs code
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, kernel_body_stream,
-                              state_host_header_stream, state_host_body_stream)
+                              state_host_header_stream, state_host_body_stream,
+                              instrumentation_stream)
 
         kernel_body_stream.write("\n")
 
@@ -822,7 +825,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
     def generate_module(self, sdfg, state, kernel_name, module_name, subgraph,
                         parameters, module_stream, host_header_stream,
-                        host_body_stream):
+                        host_body_stream, instrumentation_stream):
         state_id = sdfg.node_id(state)
         dfg = sdfg.nodes()[state_id]
         smi_args = False  # True if smi_args (if needed) have been already added
@@ -899,6 +902,10 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                         kernel_name, module_function_name,
                         ", ".join([""] + kernel_args_call)
                         if len(kernel_args_call) > 0 else ""), sdfg, state_id)
+                if state.instrument == dtypes.InstrumentationType.FPGA:
+                    self.instrument_opencl_kernel(module_function_name,
+                                                  state_id, sdfg.sdfg_id,
+                                                  instrumentation_stream)
             else:
                 # We will generate a separate kernel for each PE. Adds host call
                 start, stop, skip = unrolled_loop.range.ranges[0]
@@ -915,12 +922,17 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                     # Last element in list kernel_args_call is the PE ID, but
                     # this is already written in stone in the OpenCL generated
                     # code
+                    unrolled_module_name = f"{module_function_name}_{p}"
                     host_body_stream.write(
-                        "{}_kernels.emplace_back(program.MakeKernel(\"{}_{}\"{}));"
+                        "{}_kernels.emplace_back(program.MakeKernel(\"{}\"{}));"
                         .format(
-                            kernel_name, module_function_name, p,
+                            kernel_name, unrolled_module_name,
                             ", ".join([""] + kernel_args_call[:-1]) if
                             len(kernel_args_call) > 1 else ""), sdfg, state_id)
+                    if state.instrument == dtypes.InstrumentationType.FPGA:
+                        self.instrument_opencl_kernel(unrolled_module_name,
+                                                      state_id, sdfg.sdfg_id,
+                                                      instrumentation_stream)
 
         # ----------------------------------------------------------------------
         # Generate kernel code
