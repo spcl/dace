@@ -40,9 +40,9 @@ class ExpandRecvNCCL(ExpandTransformation):
 
         peer = node.peer
         peerstr = str(peer)
-        if peer.name in sdfg.arrays:
-            sdfg.arrays[peer.name].lifetime = dtypes.AllocationLifetime.SDFG
-            peerstr = f'{peer}[0]'
+        for fs in peer.free_symbols:
+            if fs.name in sdfg.arrays or fs.name in sdfg.parent_sdfg.arrays:
+                sdfg.arrays[fs.name].lifetime = dtypes.AllocationLifetime.SDFG
 
         nccl_dtype_str = nutil.Nccl_dtypes(output_data.dtype.base_type)
         count_str = "*".join(str(e) for e in output_dims)

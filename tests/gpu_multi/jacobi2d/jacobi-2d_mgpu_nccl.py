@@ -49,11 +49,11 @@ def seq1(lA: d_float[lNy + 2, N + 2]):
     # send North, recv South
     group_handle = dace.define_local_scalar(d_int,
                                             storage=dace.StorageType.GPU_Global)
-    dace.comm.nccl.Send(lA[1], peer=top_neighbor, group_handle=group_handle)
     dace.comm.nccl.Recv(lA[-1], peer=bottom_neighbor, group_handle=group_handle)
+    dace.comm.nccl.Send(lA[1], peer=top_neighbor, group_handle=group_handle)
     # send South, recv North
-    dace.comm.nccl.Send(lA[-2], peer=bottom_neighbor, group_handle=group_handle)
     dace.comm.nccl.Recv(lA[0], peer=top_neighbor, group_handle=group_handle)
+    dace.comm.nccl.Send(lA[-2], peer=bottom_neighbor, group_handle=group_handle)
 
 
 @dace.program
@@ -61,11 +61,11 @@ def seq2(lB: d_float[lNy + 2, N + 2]):
     # send North, recv South
     group_handle = dace.define_local_scalar(d_int,
                                             storage=dace.StorageType.GPU_Global)
-    dace.comm.nccl.Send(lB[1], peer=top_neighbor, group_handle=group_handle)
     dace.comm.nccl.Recv(lB[-1], peer=bottom_neighbor, group_handle=group_handle)
+    dace.comm.nccl.Send(lB[1], peer=top_neighbor, group_handle=group_handle)
     # send South, recv North
-    dace.comm.nccl.Send(lB[-2], peer=bottom_neighbor, group_handle=group_handle)
     dace.comm.nccl.Recv(lB[0], peer=top_neighbor, group_handle=group_handle)
+    dace.comm.nccl.Send(lB[-2], peer=bottom_neighbor, group_handle=group_handle)
 
 
 @dace.program
@@ -80,16 +80,14 @@ def jacobi_2d_mgpu(A: d_float[Ny, N], B: d_float[Ny, N]):
         lB[1:-1, 1:-1] = B[rank * lNy:(rank + 1) * lNy, :]
 
         top_neighbor = dace.define_local_scalar(
-            d_int, storage=dace.StorageType.GPU_Global)
+            d_int, storage=dace.StorageType.CPU_ThreadLocal)
         bottom_neighbor = dace.define_local_scalar(
-            d_int, storage=dace.StorageType.GPU_Global)
-
-        for i in dace.map[0:1]:
-            top_neighbor[:] = (rank + 1) % size
-            if rank > 0:
-                bottom_neighbor[:] = rank - 1
-            else:
-                bottom_neighbor[:] = size - 1
+            d_int, storage=dace.StorageType.CPU_ThreadLocal)
+        top_neighbor = -(rank + 1) % size
+        if rank > 0:
+            bottom_neighbor = rank - 1
+        else:
+            bottom_neighbor = size - 1
 
         for t in range(1, TSTEPS):
             seq1(lA, top_neighbor=top_neighbor, bottom_neighbor=bottom_neighbor)
@@ -136,10 +134,10 @@ if __name__ == "__main__":
     sdfg = jacobi_2d_mgpu.to_sdfg(strict=False)
     gpu_map = find_map_by_param(sdfg, 'rank')
     gpu_map.schedule = dace.ScheduleType.GPU_Multidevice
-    # seq_1 = next(s for s in sdfg.sdfg_list if s.name == 'seq1')
-    # seq_2 = next(s for s in sdfg.sdfg_list if s.name == 'seq2')
-    # seq_1.parent_nsdfg_node.no_inline = True
-    # seq_2.parent_nsdfg_node.no_inline = True
+    seq_1 = next(s for s in sdfg.sdfg_list if s.name == 'seq1')
+    seq_2 = next(s for s in sdfg.sdfg_list if s.name == 'seq2')
+    seq_1.parent_nsdfg_node.no_inline = True
+    seq_2.parent_nsdfg_node.no_inline = True
     # seq_1.parent_nsdfg_node.schedule = dace.ScheduleType.GPU_Sequential
     # seq_2.parent_nsdfg_node.schedule = dace.ScheduleType.GPU_Sequential
     sdfg.specialize(
@@ -174,7 +172,7 @@ if __name__ == "__main__":
     assert (np.allclose(B, refB))
     print("OK")
 
-    # sdfg.name += '_lifetime'
+    # sdfg.name += '_cpu'
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
     # out_path = '.dacecache/local/jacobi/' + sdfg.name
