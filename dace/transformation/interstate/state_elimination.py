@@ -155,7 +155,8 @@ class StateAssignElimination(transformation.Transformation):
             else:
                 # If removed assignment does not appear in any other edge,
                 # replace and remove symbol
-                sdfg.replace(varname, assignments_to_consider[varname])
+                if assignments_to_consider[varname] in sdfg.symbols:
+                    sdfg.replace(varname, assignments_to_consider[varname])
                 if varname in sdfg.symbols:
                     sdfg.remove_symbol(varname)
 
