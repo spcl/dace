@@ -630,11 +630,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
             rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg)
 
-            # TODO trying to move it to rtl codegen.
-            for n in subgraph.nodes():
-                if isinstance(n, dace.nodes.MapEntry) and n.map.unroll:
-                    self._multiple_kernels[f'{rtl_name}_top'] = dace.symbolic.evaluate(n.map.range[0][1]+1, sdfg.constants)
-
             # _i in names are due to vitis
             for node in subgraph.source_nodes():
                 if isinstance(sdfg.arrays[node.data], dt.Stream):
