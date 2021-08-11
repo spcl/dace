@@ -127,7 +127,7 @@ def iterate_distributed_subset(desc: dt.Array, access_memlet: memlet.Memlet,
     """
     :param desc: The array accessed by the memlet
     :param access_memlet: The memlet
-    :param is_write: If we care about the write or read direction. is_write means we write to desc, 
+    :param is_write: If we care about the write or read direction. is_write means we write to desc,
         not is_write means we read from it
     :return: if access_memlet contains a distributed subset the method will count from the lower to the upper
     end of it. Otherwise returns 0 once.
@@ -317,6 +317,9 @@ class FPGACodeGen(TargetCodeGenerator):
         self._other_codes = {}
         self._bank_assignments = {}  # {(data name, sdfg): (type, id)}
         self._stream_connections = {}  # { name: [src, dst] }
+        # For generating kernel instrumentation code, is incremented every time
+        # a kernel is instrumented
+        self._kernel_instrumentation_index: int = 0
 
         # Register additional FPGA dispatchers
         self._dispatcher.register_map_dispatcher(
@@ -505,13 +508,12 @@ class FPGACodeGen(TargetCodeGenerator):
             # synchronize them, create transient buffers.
             state_host_header_stream = CodeIOStream()
             state_host_body_stream = CodeIOStream()
+            instrumentation_stream = CodeIOStream()
 
             # Kernels are now sorted considering their dependencies
-            all_subgraphs = []
             for kern, kern_id in kernels:
                 # Generate all kernels in this state
                 subgraphs = dace.sdfg.concurrent_subgraphs(kern)
-                all_subgraphs += subgraphs
                 shared_transients = set(sdfg.shared_transients())
 
                 # Allocate global memory transients, unless they are shared with
@@ -548,7 +550,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 self.generate_kernel(sdfg, state, kernel_name, subgraphs,
                                      function_stream, callsite_stream,
                                      state_host_header_stream,
-                                     state_host_body_stream, state_parameters,
+                                     state_host_body_stream,
+                                     instrumentation_stream, state_parameters,
                                      kern_id)
 
             kernel_args_call_host = []
@@ -580,7 +583,6 @@ class FPGACodeGen(TargetCodeGenerator):
 
             ## Generate the global function here
 
-            # TODO: add profiling
             kernel_host_stream = CodeIOStream()
             host_function_name = f"__dace_runstate_{sdfg.sdfg_id}_{state.name}_{state_id}"
             function_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(
@@ -619,30 +621,7 @@ cl_ulong last_end = std::numeric_limits<unsigned long int>::min();""")
                 if Config.get_bool("instrumentation", "print_fpga_runtime"):
                     kernel_host_stream.write("""
 std::cout << std::scientific;""")
-                for i, sg in enumerate(all_subgraphs):
-                    module_name = self._module_name(sg, state)
-                    if Config.get_bool("instrumentation", "print_fpga_runtime"):
-                        print_str = f"""
-const double elapsed = 1e-9 * (event_end - event_start);
-std::cout << "FPGA OpenCL kernel \\"{module_name}\\" executed in " << elapsed << " seconds.\\n";\
-"""
-                    else:
-                        print_str = ""
-                    kernel_host_stream.write(f"""\
-{{
-    cl_ulong event_start = 0;
-    cl_ulong event_end = 0;
-    cl::Event const &event = all_events[{i}];
-    event.getProfilingInfo(CL_PROFILING_COMMAND_START, &event_start);
-    event.getProfilingInfo(CL_PROFILING_COMMAND_END, &event_end);
-    if (event_start < first_start) {{
-        first_start = event_start;
-    }}
-    if (event_end > last_end) {{
-        last_end = event_end;
-    }}
-    __state->report.add_completion("{module_name}", "FPGA", event_start, event_end, {sdfg.sdfg_id}, {state_id}, -1);{print_str}
-}}""")
+                kernel_host_stream.write(instrumentation_stream.getvalue())
                 kernel_host_stream.write(f"""\
 const unsigned long int _dace_fpga_end_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 __state->report.add_completion("Full FPGA kernel runtime for {state.label}", "FPGA", first_start, last_end, {sdfg.sdfg_id}, {state_id}, -1);
@@ -2275,6 +2254,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         callsite_stream: CodeIOStream,
                         state_host_header_stream: CodeIOStream,
                         state_host_body_stream: CodeIOStream,
+                        instrumentation_stream: CodeIOStream,
                         state_parameters: list,
                         kernel_id: int = None):
         '''
@@ -2289,6 +2269,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             for the state global declarations.
         :param state_host_body_stream: Device-specific host code stream: contains all the code related
             to this state, for creating transient buffers, spawning kernels, and synchronizing them.
+        :param instrumentation_stream: Code for profiling kernel execution time.
         :param state_parameters: a list of parameters that must be passed to the state. It will get populated
             considering all the parameters needed by the kernels in this state.
         :param kernel_id: Unique ID of this kernels as computed in the generate_state function
@@ -2320,7 +2301,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         self.generate_kernel_internal(sdfg, state, kernel_name, predecessors,
                                       subgraphs, kernel_stream,
                                       state_host_header_stream,
-                                      state_host_body_stream, function_stream,
+                                      state_host_body_stream,
+                                      instrumentation_stream, function_stream,
                                       callsite_stream, state_parameters)
         self._kernel_count = self._kernel_count + 1
         self._in_device_code = False
@@ -2368,13 +2350,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
     def generate_modules(self, sdfg, state, kernel_name, subgraphs,
                          subgraph_parameters, module_stream, entry_stream,
-                         host_stream):
+                         host_stream, instrumentation_stream):
         """Generate all PEs inside an FPGA Kernel."""
         for subgraph in subgraphs:
             module_name = self._module_name(subgraph, state)
             self.generate_module(sdfg, state, kernel_name, module_name,
                                  subgraph, subgraph_parameters[subgraph],
-                                 module_stream, entry_stream, host_stream)
+                                 module_stream, entry_stream, host_stream,
+                                 instrumentation_stream)
 
     def generate_nsdfg_header(self, sdfg, state, state_id, node,
                               memlet_references, sdfg_label):
@@ -2459,3 +2442,33 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         return self._cpu_codegen.make_ptr_assignment(*args,
                                                      codegen=self,
                                                      **kwargs)
+
+    def instrument_opencl_kernel(self, kernel_name: str, state_id: int,
+                                 sdfg_id: int, code_stream: CodeIOStream):
+        """
+        Emits code to instrument the OpenCL kernel with the given `kernel_name`.
+        """
+        kernel_index = self._kernel_instrumentation_index
+        self._kernel_instrumentation_index += 1
+        if Config.get_bool("instrumentation", "print_fpga_runtime"):
+            print_str = f"""
+const double elapsed = 1e-9 * (event_end - event_start);
+std::cout << "FPGA OpenCL kernel \\"{kernel_name}\\" executed in " << elapsed << " seconds.\\n";\
+    """
+        else:
+            print_str = ""
+        code_stream.write(f"""\
+    {{
+cl_ulong event_start = 0;
+cl_ulong event_end = 0;
+cl::Event const &event = all_events[{kernel_index}];
+event.getProfilingInfo(CL_PROFILING_COMMAND_START, &event_start);
+event.getProfilingInfo(CL_PROFILING_COMMAND_END, &event_end);
+if (event_start < first_start) {{
+    first_start = event_start;
+}}
+if (event_end > last_end) {{
+    last_end = event_end;
+}}
+__state->report.add_completion("{kernel_name}", "FPGA", event_start, event_end, {sdfg_id}, {state_id}, -1);{print_str}
+}}""")
