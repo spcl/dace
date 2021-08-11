@@ -208,6 +208,7 @@ jobs:
 
     - name: Run FPGA Tests
       run: |
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
         pytest -n auto --cov-report=xml --cov=dace --tb=short -m "fpga"
         coverage report
         coverage xml
