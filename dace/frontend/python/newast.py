@@ -4788,7 +4788,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     return sym
             return scalar
 
-        if isinstance(s, ast.Constant):  # 1D index (since Python 3.9)
+        if isinstance(s, Number):
+            res = s
+        elif isinstance(s, ast.Constant):  # 1D index (since Python 3.9)
             res = self._visit_ast_or_value(s)
         elif isinstance(s, ast.Index):
             res = self._parse_subscript_slice(s.value)
