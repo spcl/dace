@@ -527,7 +527,7 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
     This expansion supports both transposed A and non-transposed A, but
     vectorization is only implemented for transposed A.
     """
-    # This corresponds to gemv_v2 in FBLAS
+    # This corresponds to gemv_v3 in FBLAS
 
     environments = []
 
