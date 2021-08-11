@@ -17,48 +17,53 @@ def make_sdfg(make_tmp_local: bool):
     """
 
     sdfg = dace.SDFG("instrumentation_test")
-    sdfg.add_array("a", (16, ), dace.float32)
-    sdfg.add_array("b", (16, ), dace.float32)
+    sdfg.add_array("in0", (16, ), dace.float32)
+    sdfg.add_array("in1", (16, ), dace.float32)
+    sdfg.add_array("in2", (16, ), dace.float32)
     sdfg.add_array("tmp0", (16, ), dace.float32, transient=True)
     sdfg.add_array("tmp1", (16, ), dace.float32, transient=True)
-    sdfg.add_array("c", (16, ), dace.float32)
+    sdfg.add_array("out0", (16, ), dace.float32)
+    sdfg.add_array("out1", (16, ), dace.float32)
 
     state = sdfg.add_state("instrumentation_test")
 
-    a = state.add_read("a")
-    b = state.add_read("b")
+    in0 = state.add_read("in0")
+    in1 = state.add_read("in1")
     tmp0 = state.add_access("tmp0")
     tmp1 = state.add_access("tmp1")
-    c = state.add_write("c")
+    out0 = state.add_write("out0")
 
+    # Left branch subgraph
     entry_left, exit_left = state.add_map("left_map", {"i": "0:16"})
-    tasklet_left = state.add_tasklet("left_tasklet", {"_a"}, {"_tmp"},
-                                     "_tmp = _a + 1")
-    state.add_memlet_path(a,
+    tasklet_left = state.add_tasklet("left_tasklet", {"_in"}, {"_tmp"},
+                                     "_tmp = _in + 1")
+    state.add_memlet_path(in0,
                           entry_left,
                           tasklet_left,
-                          dst_conn="_a",
-                          memlet=dace.Memlet("a[i]"))
+                          dst_conn="_in",
+                          memlet=dace.Memlet("in0[i]"))
     state.add_memlet_path(tasklet_left,
                           exit_left,
                           tmp0,
                           src_conn="_tmp",
                           memlet=dace.Memlet("tmp0[i]"))
 
+    # Right branch subgraph
     entry_right, exit_right = state.add_map("right_map", {"i": "0:16"})
-    tasklet_right = state.add_tasklet("right_tasklet", {"_b"}, {"_tmp"},
-                                      "_tmp = _b + 1")
-    state.add_memlet_path(b,
+    tasklet_right = state.add_tasklet("right_tasklet", {"_in"}, {"_tmp"},
+                                      "_tmp = _in + 1")
+    state.add_memlet_path(in1,
                           entry_right,
                           tasklet_right,
-                          dst_conn="_b",
-                          memlet=dace.Memlet("b[i]"))
+                          dst_conn="_in",
+                          memlet=dace.Memlet("in1[i]"))
     state.add_memlet_path(tasklet_right,
                           exit_right,
                           tmp1,
                           src_conn="_tmp",
                           memlet=dace.Memlet("tmp1[i]"))
 
+    # Bottom subgraph
     entry_after, exit_after = state.add_map("after_map", {"i": "0:16"})
     tasklet_after = state.add_tasklet("after_tasklet", {"_tmp0", "_tmp1"},
                                       {"_c"}, "_c = 2 * (_tmp0 + _tmp1)")
@@ -74,9 +79,26 @@ def make_sdfg(make_tmp_local: bool):
                           memlet=dace.Memlet("tmp1[i]"))
     state.add_memlet_path(tasklet_after,
                           exit_after,
-                          c,
+                          out0,
                           src_conn="_c",
-                          memlet=dace.Memlet("c[i]"))
+                          memlet=dace.Memlet("out0[i]"))
+
+    # Extra independent subgraph (will be a PE on Xilinx, kernel on Intel)
+    in2 = state.add_read("in2")
+    out1 = state.add_write("out1")
+    entry_extra, exit_extra = state.add_map("extra_map", {"i": "0:16"})
+    tasklet_extra = state.add_tasklet("extra_tasklet", {"_in"}, {"_out"},
+                                      "_out = _in * _in")
+    state.add_memlet_path(in2,
+                          entry_extra,
+                          tasklet_extra,
+                          dst_conn="_in",
+                          memlet=dace.Memlet("in2[i]"))
+    state.add_memlet_path(tasklet_extra,
+                          exit_extra,
+                          out1,
+                          src_conn="_out",
+                          memlet=dace.Memlet("out1[i]"))
 
     assert sdfg.apply_transformations(FPGATransformSDFG) == 1
     assert sdfg.apply_transformations(InlineSDFG) == 1
@@ -101,13 +123,16 @@ def make_sdfg(make_tmp_local: bool):
 
 def run_program(sdfg):
 
-    a = np.zeros((16, ), np.float32)
-    b = np.ones((16, ), np.float32)
-    c = np.empty((16, ), np.float32)
+    in0 = np.zeros((16, ), np.float32)
+    in1 = np.ones((16, ), np.float32)
+    in2 = np.ones((16, ), np.float32)
+    out0 = np.empty((16, ), np.float32)
+    out1 = np.empty((16, ), np.float32)
 
-    sdfg(a=a, b=b, c=c)
+    sdfg(in0=in0, in1=in1, in2=in2, out0=out0, out1=out1)
 
-    assert all(c == 2 * ((a + 1) + (b + 1)))
+    assert np.allclose(out0, 2 * ((in0 + 1) + (in1 + 1)))
+    assert np.allclose(out1, in2 * in2)
 
 
 @fpga_test()
@@ -116,9 +141,15 @@ def test_instrumentation_single():
     run_program(sdfg)
     report = sdfg.get_latest_report()
     # There should be three runtimes: One for the kernel, and two for the state
+    if dace.Config.get("compiler", "fpga_vendor") == "xilinx":
+        # For Xilinx, processing elements live within a single kernel
+        expected_num_kernels = 1
+    elif dace.Config.get("compiler", "fpga_vendor") == "intel_fpga":
+        # For Intel, each processing element is a distinct kernel
+        expected_num_kernels = 2
     assert len(
         re.findall(r"[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+",
-                   str(report))) == 3
+                   str(report))) == 2 + expected_num_kernels
     return sdfg
 
 
@@ -130,7 +161,7 @@ def test_instrumentation_multiple():
     # There should be five runtimes: One for each kernel, and two for the state
     assert len(
         re.findall(r"[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+",
-                   str(report))) == 5
+                   str(report))) == 6
     return sdfg
 
 
