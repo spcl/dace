@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 import sys
@@ -75,7 +75,7 @@ def get_partition(sdfg, graph):
 
 def test_2fuse():
     sdfg = softmax.to_sdfg()
-    sdfg._name = 'softmax_2part'
+    sdfg.name = 'softmax_2part'
     sdfg.apply_strict_transformations()
     X_in = np.random.rand(H.get(), B.get(), SN.get(),
                           SM.get()).astype(np.float32)
@@ -100,7 +100,33 @@ def test_2fuse():
 
 def test_1fuse():
     sdfg = softmax.to_sdfg()
-    sdfg._name = 'softmax_fused'
+    sdfg.name = 'softmax_fused'
+    sdfg.apply_strict_transformations()
+    X_in = np.random.rand(H.get(), B.get(), SN.get(),
+                          SM.get()).astype(np.float32)
+
+    csdfg = sdfg.compile()
+    res1 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
+    del csdfg
+
+    expand_reduce(sdfg, sdfg.nodes()[0])
+    expand_maps(sdfg, sdfg.nodes()[0])
+    fusion(sdfg, sdfg.nodes()[0])
+
+    csdfg = sdfg.compile()
+    res2 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
+    del csdfg
+
+    print(np.linalg.norm(res1))
+    print(np.linalg.norm(res2))
+    assert np.allclose(res1, res2)
+    print("PASS")
+    return
+
+
+def test_1fuse():
+    sdfg = softmax.to_sdfg()
+    sdfg.name = 'softmax_fused'
     sdfg.apply_strict_transformations()
     X_in = np.random.rand(H.get(), B.get(), SN.get(),
                           SM.get()).astype(np.float32)
@@ -122,7 +148,6 @@ def test_1fuse():
     print(np.linalg.norm(res2))
     assert np.allclose(res1, res2)
     print("PASS")
-    return
 
 
 if __name__ == "__main__":

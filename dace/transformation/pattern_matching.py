@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains functions related to pattern matching in transformations. """
 
 from dace.config import Config
@@ -95,12 +95,11 @@ def type_or_class_match(node_a, node_b):
     return isinstance(node_a['node'], type(node_b['node']))
 
 
-def _try_to_match_transformation(graph: Union[SDFG, SDFGState],
-                                 collapsed_graph: nx.DiGraph,
-                                 subgraph: Dict[int, int], sdfg: SDFG,
-                                 xform: Type[xf.Transformation], expr_idx: int,
-                                 nxpattern: nx.DiGraph, state_id: int,
-                                 strict: bool) -> Optional[xf.Transformation]:
+def _try_to_match_transformation(
+        graph: Union[SDFG, SDFGState], collapsed_graph: nx.DiGraph,
+        subgraph: Dict[int, int], sdfg: SDFG, xform: Type[xf.Transformation],
+        expr_idx: int, nxpattern: nx.DiGraph, state_id: int, strict: bool,
+        options: Dict[str, Any]) -> Optional[xf.Transformation]:
     """ 
     Helper function that tries to instantiate a pattern match into a 
     transformation object. 
@@ -112,7 +111,12 @@ def _try_to_match_transformation(graph: Union[SDFG, SDFGState],
     }
 
     try:
-        match_found = xform.can_be_applied(graph,
+        match = xform(sdfg.sdfg_id,
+                      state_id,
+                      subgraph,
+                      expr_idx,
+                      options=options)
+        match_found = match.can_be_applied(graph,
                                            subgraph,
                                            expr_idx,
                                            sdfg,
@@ -125,29 +129,34 @@ def _try_to_match_transformation(graph: Union[SDFG, SDFGState],
         return None
 
     if match_found:
-        return xform(sdfg.sdfg_id, state_id, subgraph, expr_idx)
+        return match
 
     return None
 
 
-TransformationData = List[Tuple[Type, int, nx.DiGraph]]
+TransformationData = List[Tuple[Type[xf.Transformation], int, nx.DiGraph,
+                                Callable, Dict[str, Any]]]
 PatternMetadataType = Tuple[TransformationData, TransformationData]
 
 
 def get_transformation_metadata(
-    patterns: Union[Type[xf.Transformation], List[Type[xf.Transformation]]]
-) -> PatternMetadataType:
+        patterns: List[Type[xf.Transformation]],
+        options: Optional[List[Dict[str, Any]]] = None) -> PatternMetadataType:
     """
     Collect all transformation expressions and metadata once, for use when
     applying transformations repeatedly.
     :param patterns: Transformation type (or list thereof) to compute.
+    :param options: An optional list of transformation parameter dictionaries.
     :return: A tuple of inter-state and single-state pattern matching
              transformations.
     """
-    singlestate_transformations: List[Tuple[Type, int, nx.DiGraph]] = []
-    interstate_transformations: List[Tuple[Type, int, nx.DiGraph]] = []
+    if options is None:
+        options = [None] * len(patterns)
+
+    singlestate_transformations: TransformationData = []
+    interstate_transformations: TransformationData = []
     ext_dict = xf.Transformation.extensions()
-    for pattern in patterns:
+    for pattern, opts in zip(patterns, options):
         # Find if the transformation is inter-state
         is_interstate = not ext_dict[pattern].get('singlestate', False)
         for i, expr in enumerate(pattern.expressions()):
@@ -162,10 +171,10 @@ def get_transformation_metadata(
 
             if is_interstate:
                 interstate_transformations.append(
-                    (pattern, i, nxpattern, matcher))
+                    (pattern, i, nxpattern, matcher, opts))
             else:
                 singlestate_transformations.append(
-                    (pattern, i, nxpattern, matcher))
+                    (pattern, i, nxpattern, matcher, opts))
 
     return interstate_transformations, singlestate_transformations
 
@@ -215,9 +224,10 @@ def match_patterns(sdfg: SDFG,
                    edge_match: Optional[Callable[[Any, Any], bool]] = None,
                    strict: bool = False,
                    metadata: Optional[PatternMetadataType] = None,
-                   states: Optional[List[SDFGState]] = None):
-    """ Returns a list of single-state Transformations of a certain class that
-        match the input SDFG.
+                   states: Optional[List[SDFGState]] = None,
+                   options: Optional[List[Dict[str, Any]]] = None):
+    """ Returns a generator of Transformations that match the input SDFG. 
+        Ordered by SDFG ID.
         :param sdfg: The SDFG to match in.
         :param patterns: Transformation type (or list thereof) to match.
         :param node_match: Function for checking whether two nodes match.
@@ -227,11 +237,15 @@ def match_patterns(sdfg: SDFG,
         :param metadata: Transformation metadata that can be reused.
         :param states: If given, only tries to match single-state 
                        transformations on this list.
+        :param options: An optional iterable of transformation parameter
+                        dictionaries.
         :return: A list of Transformation objects that match.
     """
 
     if isinstance(patterns, type):
         patterns = [patterns]
+    if isinstance(options, dict):
+        options = [options]
 
     # Collect transformation metadata
     if metadata is not None:
@@ -240,7 +254,8 @@ def match_patterns(sdfg: SDFG,
     else:
         # Otherwise, precompute all transformation data once
         (interstate_transformations,
-         singlestate_transformations) = get_transformation_metadata(patterns)
+         singlestate_transformations) = get_transformation_metadata(
+             patterns, options)
 
     # Collect SDFG and nested SDFGs
     sdfgs = sdfg.all_sdfgs_recursive()
@@ -253,11 +268,12 @@ def match_patterns(sdfg: SDFG,
             # Collapse multigraph into directed graph in order to use VF2
             digraph = collapse_multigraph_to_nx(tsdfg)
 
-        for xform, expr_idx, nxpattern, matcher in interstate_transformations:
+        for xform, expr_idx, nxpattern, matcher, opts in interstate_transformations:
             for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
                 match = _try_to_match_transformation(tsdfg, digraph, subgraph,
                                                      tsdfg, xform, expr_idx,
-                                                     nxpattern, -1, strict)
+                                                     nxpattern, -1, strict,
+                                                     opts)
                 if match is not None:
                     yield match
 
@@ -272,12 +288,12 @@ def match_patterns(sdfg: SDFG,
             # Collapse multigraph into directed graph in order to use VF2
             digraph = collapse_multigraph_to_nx(state)
 
-            for xform, expr_idx, nxpattern, matcher in singlestate_transformations:
+            for xform, expr_idx, nxpattern, matcher, opts in singlestate_transformations:
                 for subgraph in matcher(digraph, nxpattern, node_match,
                                         edge_match):
                     match = _try_to_match_transformation(
                         state, digraph, subgraph, tsdfg, xform, expr_idx,
-                        nxpattern, state_id, strict)
+                        nxpattern, state_id, strict, opts)
                     if match is not None:
                         yield match
 

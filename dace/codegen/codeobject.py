@@ -1,5 +1,6 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import re
+from dace import sourcemap
 from dace.properties import (Property, DictProperty, SetProperty,
                              make_properties)
 
@@ -46,7 +47,8 @@ class CodeObject(object):
                  target_name="",
                  additional_compiler_kwargs=None,
                  linkable=True,
-                 environments=None):
+                 environments=None,
+                 sdfg=None):
         super(CodeObject, self).__init__()
 
         self.name = name
@@ -60,6 +62,9 @@ class CodeObject(object):
         self.linkable = linkable
         self.environments = environments or set()
 
+        if language == 'cpp' and title == 'Frame' and sdfg:
+            sourcemap.create_maps(sdfg, code, self.target.target_name)
+
     @property
     def clean_code(self):
-        return re.sub(r'[ \t]*////__DACE:[^\n]*', '', self.code)
+        return re.sub(r'[ \t]*////__(DACE:|CODEGEN;)[^\n]*', '', self.code)

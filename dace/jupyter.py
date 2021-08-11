@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Jupyter Notebook support for DaCe. """
 
 import os
@@ -34,7 +34,7 @@ def preamble():
     sdfv_js_deps = [
         'renderer_dir/dagre.js', 'renderer_dir/global_vars.js',
         'context_menu.js', 'renderer_elements.js', 'sdfg_utils.js',
-        'renderer.js'
+        'overlay_manager.js', 'renderer.js'
     ]
     sdfv_css_deps = ['sdfv.css']
 
@@ -82,7 +82,11 @@ def preamble():
     return result
 
 
-# Code that runs on "import dace"
-if isnotebook():
+def enable():
     from IPython.display import display, HTML
     display(HTML(preamble()))
+
+
+# Code that runs on "import dace"
+if isnotebook():
+    enable()

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import re
 import dace
 from collections import OrderedDict
@@ -28,10 +28,10 @@ class AST_Node():
             str(type(self)) + " does not implement replace_child()")
 
     def specialize(self):
-        """ Some nodes can be simplified after parsing the complete AST and 
-            before actually generating code, i.e., AST_FunCall nodes could be 
+        """ Some nodes can be simplified after parsing the complete AST and
+            before actually generating code, i.e., AST_FunCall nodes could be
             function calls or array accesses, and we don't really know unless
-            we know the context of the call. 
+            we know the context of the call.
 
             This function traverses the AST
             and tries to specialize nodes after completing the AST. It should
@@ -126,7 +126,7 @@ class AST_Node():
             sdfg_state = sdfg.nodes()[state]
             for node in sdfg_state.nodes():
                 if isinstance(node, dace.sdfg.nodes.AccessNode):
-                    m = re.match(TEMPVARS_PREFIX + "(\d+)", node.label)
+                    m = re.match(TEMPVARS_PREFIX + r"(\d+)", node.label)
                     if m is not None:
                         if maxvar < int(m.group(1)):
                             maxvar = int(m.group(1))
@@ -136,7 +136,7 @@ class AST_Node():
 
     def get_name_in_sdfg(self, sdfg):
         """ If this node has no name assigned yet, create a new one of the form
-            `__tmp_X` where `X` is an integer, such that this node does not yet 
+            `__tmp_X` where `X` is an integer, such that this node does not yet
             exist in the given SDFG.
             @note: We assume that we create exactly one SDFG from each AST,
                    otherwise we need to store the hash of the SDFG the name was

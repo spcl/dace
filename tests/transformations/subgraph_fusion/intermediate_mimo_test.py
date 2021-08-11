@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
 from dace.sdfg import nodes
@@ -19,8 +19,8 @@ N.set(1000)
 
 
 @dace.program
-def program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
-            D: dace.float64[N]):
+def mimo(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
+         D: dace.float64[N]):
 
     for i in dace.map[0:N // 2]:
         with dace.tasklet:
@@ -61,10 +61,14 @@ def _test_quantitatively(sdfg):
     del csdfg
 
     subgraph = SubgraphView(graph, [node for node in graph.nodes()])
-    assert MultiExpansion.can_be_applied(sdfg, subgraph) == True
-    MultiExpansion(subgraph).apply(sdfg)
-    assert SubgraphFusion.can_be_applied(sdfg, subgraph) == True
-    SubgraphFusion(subgraph).apply(sdfg)
+
+    me = MultiExpansion(subgraph)
+    assert me.can_be_applied(sdfg, subgraph) == True
+    me.apply(sdfg)
+
+    sf = SubgraphFusion(subgraph)
+    assert sf.can_be_applied(sdfg, subgraph) == True
+    sf.apply(sdfg)
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, D=D2, N=N)
@@ -74,7 +78,7 @@ def _test_quantitatively(sdfg):
 
 
 def test_mimo():
-    sdfg = program.to_sdfg()
+    sdfg = mimo.to_sdfg()
     from dace.transformation.interstate.state_fusion import StateFusion
     sdfg.apply_transformations_repeated(StateFusion)
     # merge the C array

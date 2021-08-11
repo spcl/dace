@@ -1,11 +1,12 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
+from dace.dtypes import StorageType
 import os
-from typing import Dict, Union
+from typing import Dict, Tuple, Union
 import warnings
-
-from dace.dtypes import typeclass, validate_name, AccessType
+from dace import dtypes, data as dt, subsets
+from dace import symbolic
 
 ###########################################
 # Validation
@@ -27,9 +28,12 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
         Raises an InvalidSDFGError with the erroneous node/edge
         on failure.
     """
+    # Avoid import loop
+    from dace.codegen.targets import fpga
+
     try:
         # SDFG-level checks
-        if not validate_name(sdfg.name):
+        if not dtypes.validate_name(sdfg.name):
             raise InvalidSDFGError("Invalid name", sdfg, None)
 
         if len(sdfg.source_nodes()) > 1 and sdfg.start_state is None:
@@ -39,17 +43,64 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             raise InvalidSDFGError("Found multiple states with the same name",
                                    sdfg, None)
 
-        # Validate array names
-        for name in sdfg._arrays.keys():
-            if name is not None and not validate_name(name):
+        # Validate data descriptors
+        for name, desc in sdfg._arrays.items():
+            # Validate array names
+            if name is not None and not dtypes.validate_name(name):
                 raise InvalidSDFGError("Invalid array name %s" % name, sdfg,
                                        None)
+            # Allocation lifetime checks
+            if (desc.lifetime is dtypes.AllocationLifetime.Persistent
+                    and desc.storage is dtypes.StorageType.Register):
+                raise InvalidSDFGError(
+                    "Array %s cannot be both persistent and use Register as "
+                    "storage type. Please use a different storage location." %
+                    name, sdfg, None)
+
+            # Check for valid bank assignments
+            try:
+                bank_assignment = fpga.parse_location_bank(desc)
+            except ValueError as e:
+                raise InvalidSDFGError(str(e), sdfg, None)
+            if bank_assignment is not None:
+                if bank_assignment[0] == "DDR":
+                    try:
+                        tmp = int(bank_assignment[1])
+                    except ValueError:
+                        raise InvalidSDFGError(
+                            "Memory bank specifier must be convertible to int, "
+                            f"got {bank_assignment[1]} on array {name}", sdfg,
+                            None)
+                elif bank_assignment[0] == "HBM":
+                    try:
+                        tmp = subsets.Range.from_string(bank_assignment[1])
+                    except SyntaxError:
+                        raise InvalidSDFGError(
+                            "Memory bank specifier must be convertible to subsets.Range"
+                            f" for array {name} since it uses HBM", sdfg, None)
+                    try:
+                        low, high = fpga.get_multibank_ranges_from_subset(
+                            bank_assignment[1], sdfg)
+                    except ValueError as e:
+                        raise InvalidSDFGError(str(e), sdfg, None)
+                    if (high - low < 1):
+                        raise InvalidSDFGError(
+                            "Memory bank specifier must at least define one bank to be used"
+                            f" for array {name}", sdfg, None)
+                    if (high - low > 1 and
+                        (high - low != desc.shape[0] or len(desc.shape) < 2)):
+                        raise InvalidSDFGError(
+                            "Arrays that use HBM must have the size of the first dimension equal"
+                            f" the number of banks and have at least 2 dimensions for array {name}",
+                            sdfg, None)
 
         # Check every state separately
         start_state = sdfg.start_state
         symbols = copy.deepcopy(sdfg.symbols)
         symbols.update(sdfg.arrays)
-        symbols.update(sdfg.constants)
+        symbols.update(
+            {k: dt.create_datadescriptor(v)
+             for k, v in sdfg.constants.items()})
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
@@ -77,8 +128,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
 
             # Validate inter-state edge names
             issyms = edge.data.new_symbols(symbols)
-            if any(not validate_name(s) for s in issyms):
-                invalid = next(s for s in issyms if not validate_name(s))
+            if any(not dtypes.validate_name(s) for s in issyms):
+                invalid = next(s for s in issyms if not dtypes.validate_name(s))
                 eid = sdfg.edge_id(edge)
                 raise InvalidSDFGInterstateEdgeError(
                     "Invalid interstate symbol name %s" % invalid, sdfg, eid)
@@ -103,8 +154,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             if edge in visited_edges:
                 continue
             issyms = edge.data.assignments.keys()
-            if any(not validate_name(s) for s in issyms):
-                invalid = next(s for s in issyms if not validate_name(s))
+            if any(not dtypes.validate_name(s) for s in issyms):
+                invalid = next(s for s in issyms if not dtypes.validate_name(s))
                 raise InvalidSDFGInterstateEdgeError(
                     "Invalid interstate symbol name %s" % invalid, sdfg, eid)
 
@@ -117,7 +168,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
 def validate_state(state: 'dace.sdfg.SDFGState',
                    state_id: int = None,
                    sdfg: 'dace.sdfg.SDFG' = None,
-                   symbols: Dict[str, typeclass] = None):
+                   symbols: Dict[str, dtypes.typeclass] = None):
     """ Verifies the correctness of an SDFG state by applying multiple
         tests. Raises an InvalidSDFGError with the erroneous node on
         failure.
@@ -129,12 +180,16 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     from dace.sdfg.scope import scope_contains_scope
     from dace import data as dt
     from dace import subsets as sbs
+    from dace.sdfg import utils as sdutil
+    from dace.codegen.targets import fpga
 
     sdfg = sdfg or state.parent
     state_id = state_id or sdfg.node_id(state)
     symbols = symbols or {}
+    scope_local_constants: dict[nd.MapEntry, list[str]] = dict()
+    scope = state.scope_dict()
 
-    if not validate_name(state._label):
+    if not dtypes.validate_name(state._label):
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
 
     if state._parent != sdfg:
@@ -212,9 +267,16 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     state_id,
                     nid,
                 )
+            arr = sdfg.arrays[node.data]
+
+            # Verify View references
+            if isinstance(arr, dt.View):
+                if sdutil.get_view_edge(state, node) is None:
+                    raise InvalidSDFGNodeError(
+                        "Ambiguous or invalid edge to/from a View access node",
+                        sdfg, state_id, nid)
 
             # Find uninitialized transients
-            arr = sdfg.arrays[node.data]
             if (arr.transient and state.in_degree(node) == 0
                     and state.out_degree(node) > 0
                     # Streams do not need to be initialized
@@ -237,7 +299,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         % (node.data, state.label))
 
             # Find writes to input-only arrays
-            only_empty_inputs = all(e.data.is_empty() for e in state.in_edges(node))
+            only_empty_inputs = all(e.data.is_empty()
+                                    for e in state.in_edges(node))
             if (not arr.transient) and (not only_empty_inputs):
                 nsdfg_node = sdfg.parent_nsdfg_node
                 if nsdfg_node is not None:
@@ -261,11 +324,24 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 nid,
             )
 
+        # Tasklets may only access 1 HBM bank at a time
+        if isinstance(node, nd.Tasklet):
+            for attached in state.all_edges(node):
+                if attached.data.data in sdfg.arrays:
+                    if fpga.is_hbm_array_with_distributed_index(
+                            sdfg.arrays[attached.data.data]):
+                        low, high, _ = attached.data.subset[0]
+                        if (low != high):
+                            raise InvalidSDFGNodeError(
+                                "Tasklets may only be directly connected"
+                                " to HBM-memlets accessing only one bank", sdfg,
+                                state_id, nid)
+
         # Connector tests
         ########################################
         # Check for duplicate connector names (unless it's a nested SDFG)
         if (len(node.in_connectors.keys() & node.out_connectors.keys()) > 0
-                and not isinstance(node, nd.NestedSDFG)):
+                and not isinstance(node, (nd.NestedSDFG, nd.LibraryNode))):
             dups = node.in_connectors.keys() & node.out_connectors.keys()
             raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups),
                                        sdfg, state_id, nid)
@@ -352,7 +428,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         ########################################
 
     # Memlet checks
-    scope = state.scope_dict()
     for eid, e in enumerate(state.edges()):
         # Edge validation
         try:
@@ -505,13 +580,15 @@ def validate_state(state: 'dace.sdfg.SDFGState',
              and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
             (isinstance(dst_node, nd.AccessNode)
              and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
-            if (e.data.src_subset.num_elements() *
-                    sdfg.arrays[src_node.data].veclen !=
-                    e.data.dst_subset.num_elements() *
-                    sdfg.arrays[dst_node.data].veclen):
+            src_expr = (e.data.src_subset.num_elements() *
+                        sdfg.arrays[src_node.data].veclen)
+            dst_expr = (e.data.dst_subset.num_elements() *
+                        sdfg.arrays[dst_node.data].veclen)
+            if symbolic.inequal_symbols(src_expr, dst_expr):
                 raise InvalidSDFGEdgeError(
                     'Dimensionality mismatch between src/dst subsets', sdfg,
                     state_id, eid)
+
     ########################################
 
 

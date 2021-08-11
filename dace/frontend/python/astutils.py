@@ -1,12 +1,13 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various AST parsing utilities for DaCe. """
 import ast
 import astunparse
+import copy
 from collections import OrderedDict
 import inspect
 import numbers
 import sympy
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 from dace import dtypes, symbolic
 
@@ -29,21 +30,50 @@ def function_to_ast(f):
     """
     try:
         src = inspect.getsource(f)
+        src_file = inspect.getfile(f)
+        _, src_line = inspect.findsource(f)
     # TypeError: X is not a module, class, method, function, traceback, frame,
     # or code object; OR OSError: could not get source code
     except (TypeError, OSError):
-        raise TypeError('Cannot obtain source code for dace program. This may '
-                        'happen if you are using the "python" default '
-                        'interpreter. Please either use the "ipython" '
-                        'interpreter, a Jupyter or Colab notebook, or place '
-                        'the source code in a file and import it.')
+        # Try to import dill to obtain code from compiled functions
+        try:
+            import dill
+            src = dill.source.getsource(f)
+            src_file = '<interpreter>'
+            src_line = 0
+        except (ImportError, ModuleNotFoundError, TypeError, OSError):
+            raise TypeError(
+                'Cannot obtain source code for dace program. This may '
+                'happen if you are using the "python" default '
+                'interpreter. Please either use the "ipython" '
+                'interpreter, a Jupyter or Colab notebook, or place '
+                'the source code in a file and import it.')
 
-    src_file = inspect.getfile(f)
-    _, src_line = inspect.findsource(f)
     src_ast = ast.parse(_remove_outer_indentation(src))
     ast.increment_lineno(src_ast, src_line)
 
     return src_ast, src_file, src_line, src
+
+
+def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
+    """
+    Tries to evaluate an AST node given only global variables.
+    :param node: The AST node/subtree to evaluate.
+    :param gvars: A dictionary mapping names to variables.
+    :return: The result of evaluation, or raises ``SyntaxError`` on any
+             failure to evaluate.
+    """
+    if not isinstance(node, ast.AST):
+        return node
+    try:
+        # Ensure context is load so eval works (e.g., when using value as lhs)
+        if not isinstance(getattr(node, 'ctx', False), ast.Load):
+            node = copy.deepcopy(node)
+            node.ctx = ast.Load()
+        return eval(compile(ast.Expression(node), '<string>', mode='eval'),
+                    gvars)
+    except:  # Anything can happen here
+        raise SyntaxError
 
 
 def rname(node):
@@ -110,23 +140,34 @@ def subscript_to_ast_slice(node, without_array=False):
     if not isinstance(node, ast.Subscript):
         raise TypeError('AST node is not a subscript')
 
-    # ND Index
+    # Python <3.9 compatibility
+    result_slice = None
     if isinstance(node.slice, ast.Index):
-        if isinstance(node.slice.value, ast.Tuple):
-            result_slice = [dim for dim in node.slice.value.elts]
-        else:
-            result_slice = [node.slice.value]
-    # 1D slice
-    elif isinstance(node.slice, ast.Slice):
-        result_slice = [(node.slice.lower, node.slice.upper, node.slice.step)]
-    else:  # ND slice
-        result_slice = []
+        slc = node.slice.value
+        if not isinstance(slc, ast.Tuple):
+            result_slice = [slc]
+    elif isinstance(node.slice, ast.ExtSlice):
+        slc = tuple(node.slice.dims)
+    else:
+        slc = node.slice
 
-        for d in node.slice.dims:
-            if isinstance(d, ast.Index):
-                result_slice.append(d.value)
-            else:
-                result_slice.append((d.lower, d.upper, d.step))
+    # Decode slice tuple
+    if result_slice is None:
+        if isinstance(slc, ast.Tuple):
+            slices = slc.elts
+        elif isinstance(slc, tuple):
+            slices = slc
+        else:
+            slices = [slc]
+        result_slice = []
+        for s in slices:
+            # Slice
+            if isinstance(s, ast.Slice):
+                result_slice.append((s.lower, s.upper, s.step))
+            elif isinstance(s, ast.Index):  # Index (Python <3.9)
+                result_slice.append(s.value)
+            else:  # Index
+                result_slice.append(s)
 
     if without_array:
         return result_slice
@@ -183,6 +224,11 @@ def subscript_to_slice(node, arrays, without_array=False):
         return name, rng
 
 
+def slice_to_subscript(arrname, range):
+    """ Converts a name and subset to a Python AST Subscript object. """
+    return ast.parse(f'{arrname}[{range}]').body[0].value
+
+
 def astrange_to_symrange(astrange, arrays, arrname=None):
     """ Converts an AST range (array, [(start, end, skip)]) to a symbolic math 
         range, using the obtained array sizes and resolved symbols. """
@@ -219,10 +265,14 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
                 begin = symbolic.pystr_to_symbolic(0)
             else:
                 begin = symbolic.pystr_to_symbolic(unparse(begin))
+                if (begin < 0) == True:
+                    begin += arrdesc.shape[i]
             if end is None and arrname is None:
                 raise SyntaxError('Cannot define range without end')
             elif end is not None:
                 end = symbolic.pystr_to_symbolic(unparse(end)) - 1
+                if (end < 0) == True:
+                    end += arrdesc.shape[i]
             else:
                 end = symbolic.pystr_to_symbolic(
                     symbolic.symbol_name_or_value(arrdesc.shape[i])) - 1
@@ -233,6 +283,8 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
         else:
             # In the case where a single element is given
             begin = symbolic.pystr_to_symbolic(unparse(r))
+            if (begin < 0) == True:
+                begin += arrdesc.shape[i]
             end = begin
             skip = symbolic.pystr_to_symbolic(1)
 
@@ -248,7 +300,7 @@ def negate_expr(node):
     # Negation support for SymPy expressions
     if isinstance(node, sympy.Basic):
         return sympy.Not(node)
-     # Support for numerical constants
+    # Support for numerical constants
     if isinstance(node, numbers.Number):
         return str(not node)
     # Negation support for strings (most likely dace.Data.Scalar names)
@@ -292,9 +344,8 @@ class ExtNodeTransformer(ast.NodeTransformer):
                 new_values = []
                 for value in old_value:
                     if isinstance(value, ast.AST):
-                        if (field == 'body'
-                                or field == 'orelse') and isinstance(
-                                    value, ast.Expr):
+                        if (field == 'body' or field
+                                == 'orelse') and isinstance(value, ast.Expr):
                             clsname = type(value).__name__
                             if getattr(self, "visit_TopLevel" + clsname, False):
                                 value = getattr(self, "visit_TopLevel" +
@@ -367,6 +418,17 @@ class ASTFindReplace(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+class RemoveSubscripts(ast.NodeTransformer):
+    def __init__(self, keywords: Set[str]):
+        self.keywords = keywords
+
+    def visit_Subscript(self, node: ast.Subscript):
+        if rname(node) in self.keywords:
+            return ast.copy_location(node.value, node)
+
+        return self.generic_visit(node)
+
+
 class TaskletFreeSymbolVisitor(ast.NodeVisitor):
     """ 
     Simple Python AST visitor to find free symbols in a code, not including
@@ -389,7 +451,8 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
     def visit_AnnAssign(self, node):
         # Skip visiting annotation
         self.visit(node.target)
-        self.visit(node.value)
+        if node.value is not None:
+            self.visit(node.value)
 
     def visit_Name(self, node):
         if (isinstance(node.ctx, ast.Load) and node.id not in self.defined

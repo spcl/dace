@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains redundant array removal transformations. """
 
 from dace import registry
@@ -8,7 +8,7 @@ from dace.transformation import transformation as pm
 from dace.config import Config
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, strict=False)
 class RedundantArrayCopyingIn(pm.Transformation):
     """ Implements the redundant array removal transformation. Removes the first and second access nodeds
         in pattern A -> B -> A
@@ -93,7 +93,7 @@ class RedundantArrayCopyingIn(pm.Transformation):
         graph.remove_node(in_array)
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, strict=False)
 class RedundantArrayCopying(pm.Transformation):
     """ Implements the redundant array removal transformation. Removes the last access node
         in pattern A -> B -> A, and the second (if possible)

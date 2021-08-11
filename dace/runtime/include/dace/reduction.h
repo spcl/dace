@@ -1,10 +1,11 @@
-// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #ifndef __DACE_REDUCTION_H
 #define __DACE_REDUCTION_H
 
 #include <cstdint>
 
 #include "types.h"
+#include "vector.h"
 #include "math.h"  // for ::min, ::max
 
 #ifdef __CUDACC__
@@ -147,7 +148,7 @@ namespace dace {
         // Non-conflicting version --> no critical section
         template <typename WCR>
         static DACE_HDFI double reduce(WCR wcr, double *ptr, const double& value) {
-            double old;
+            double old = *ptr;
             *ptr = wcr(old, value);
             return old;
         }
@@ -195,6 +196,20 @@ namespace dace {
         }
 
         DACE_HDFI double operator()(const double &a, const double &b) const { return a + b; }
+    };
+#endif
+
+#if defined(DACE_USE_GPU_ATOMICS)
+    template <>
+    struct _wcr_fixed<ReductionType::Sum, long long> {
+       
+        static DACE_HDFI long long reduce_atomic(long long *ptr, const long long& value) {
+            return _wcr_fixed<ReductionType::Sum, unsigned long long>::reduce_atomic((
+                unsigned long long *)ptr, 
+                static_cast<unsigned long long>(value));
+        }
+
+        DACE_HDFI long long operator()(const long long &a, const long long &b) const { return a + b; }
     };
 #endif
 
@@ -526,6 +541,32 @@ namespace dace {
         {
             return _wcr_fixed<REDTYPE, T>()(a, b);
         }
+
+        // Vector -> Scalar versions
+        template <int N>
+        static DACE_HDFI T vreduce(T *ptr, const dace::vec<T, N>& value)
+        {
+            T old = *ptr;
+
+            T scal = value[0];
+            __DACE_UNROLL
+            for (int i = 1; i < N; ++i)
+              scal = _wcr_fixed<REDTYPE, T>()(scal, value[i]);
+
+            *ptr = _wcr_fixed<REDTYPE, T>()(old, scal);
+            return old;
+        }
+
+        template <int N>
+        static DACE_HDFI T vreduce_atomic(T *ptr, const dace::vec<T, N>& value)
+        {
+            T scal = value[0];
+            __DACE_UNROLL
+            for (int i = 1; i < N; ++i)
+              scal = _wcr_fixed<REDTYPE, T>()(scal, value[i]);
+            
+            return _wcr_fixed<REDTYPE, T>::reduce_atomic(ptr, scal);
+        }
     };
 
 
@@ -547,6 +588,16 @@ namespace dace {
         cub::TransformInputIterator<int, decltype(conversion_op), decltype(counting_iterator)> itr(counting_iterator, conversion_op);
         return itr;
     }
+
+    template <ReductionType REDTYPE, typename T>
+    struct warpReduce {
+        static DACE_DFI T reduce(T v)
+        {
+            for (int i = 1; i < 32; i = i * 2)
+                v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor_sync(0xffffffff, v, i));
+            return v;
+        }
+    };
 #endif
 
 }  // namespace dace

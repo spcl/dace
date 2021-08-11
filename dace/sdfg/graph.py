@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ File containing DaCe-serializable versions of graphs, nodes, and edges. """
 
 from collections import deque, OrderedDict
@@ -166,6 +166,9 @@ class MultiConnectorEdge(MultiEdge, Generic[T]):
     @staticmethod
     def __len__():
         return 5
+
+    def __repr__(self):
+        return f"{self.src}:{self.src_conn}  -({self.data})->  {self.dst}:{self.dst_conn}"
 
 
 @dace.serialize.serializable
@@ -433,7 +436,7 @@ class Graph(Generic[NodeT, EdgeT]):
             node_out_edges = self.out_edges(n)
             if len(node_out_edges) == 0:
                 # We traversed to the end without finding the end
-                return None
+                return set()
             for e in node_out_edges:
                 next_node = e.dst
                 if next_node != end and next_node not in seen:
@@ -718,7 +721,8 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
     def find_cycles(self):
         return nx.simple_cycles(self._nx)
 
-    def edges_between(self, source, destination):
+    def edges_between(self, source: NodeT,
+                      destination: NodeT) -> List[Edge[EdgeT]]:
         if source not in self.nodes(): return []
         return [e for e in self.out_edges(source) if e.dst == destination]
 
@@ -754,6 +758,16 @@ class OrderedMultiDiGraph(OrderedDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         del self._nodes[edge.src][1][edge]
         del self._nodes[edge.dst][0][edge]
         self._nx.remove_edge(edge.src, edge.dst, edge.key)
+
+    def in_edges(self, node) -> List[MultiEdge[EdgeT]]:
+        return super().in_edges(node)
+
+    def out_edges(self, node) -> List[MultiEdge[EdgeT]]:
+        return super().out_edges(node)
+
+    def edges_between(self, source: NodeT,
+                      destination: NodeT) -> List[MultiEdge[EdgeT]]:
+        return super().edges_between(source, destination)
 
     def reverse(self) -> None:
         self._nx.reverse(False)
@@ -813,6 +827,10 @@ class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT],
 
     def out_edges(self, node) -> List[MultiConnectorEdge[EdgeT]]:
         return super().out_edges(node)
+
+    def edges_between(self, source: NodeT,
+                      destination: NodeT) -> List[MultiConnectorEdge[EdgeT]]:
+        return super().edges_between(source, destination)
 
     def is_multigraph(self) -> bool:
         return True

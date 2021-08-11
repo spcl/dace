@@ -1,5 +1,7 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.config import set_temporary
+from dace.library import change_default
 from dace.memlet import Memlet
 from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 import dace.libraries.blas as blas
@@ -51,7 +53,7 @@ def make_sdfg(implementation,
     y = state.add_read("y" + suffix)
     result = state.add_write("result" + suffix)
 
-    node = blas.nodes.matmul.MatMul("matmul", dtype)
+    node = blas.nodes.matmul.MatMul("matmul")
 
     state.add_memlet_path(x,
                           node,
@@ -67,9 +69,9 @@ def make_sdfg(implementation,
                           memlet=Memlet.simple(result, "0:m, 0:n"))
 
     if storage != dace.StorageType.Default:
-        sdfg.add_array("x", [m, k], dtype)
-        sdfg.add_array("y", [k, n], dtype)
-        sdfg.add_array("result", [m, n], dtype)
+        sdfg.add_array("x", [m, k], dtype, strides=xstrides)
+        sdfg.add_array("y", [k, n], dtype, strides=ystrides)
+        sdfg.add_array("result", [m, n], dtype, strides=zstrides)
 
         init_state = sdfg.add_state("copy_to_device")
         sdfg.add_edge(init_state, state, dace.InterstateEdge())
@@ -137,27 +139,25 @@ def _test_matmul(implementation,
 
 @pytest.mark.gpu
 def test_types():
-    old_impl = blas.default_implementation
-    blas.default_implementation = "cuBLAS"
-    # Try different data types
-    _test_matmul('cuBLAS double',
-                 dace.float64,
-                 'cuBLAS',
-                 dace.StorageType.GPU_Global,
-                 eps=1e-6)
-    _test_matmul('cuBLAS half',
-                 dace.float16,
-                 'cuBLAS',
-                 dace.StorageType.GPU_Global,
-                 eps=1)
-    _test_matmul('cuBLAS scmplx', dace.complex64, 'cuBLAS',
-                 dace.StorageType.GPU_Global)
-    _test_matmul('cuBLAS dcmplx',
-                 dace.complex128,
-                 'cuBLAS',
-                 dace.StorageType.GPU_Global,
-                 eps=1e-6)
-    blas.default_implementation = old_impl
+    with change_default(blas, "cuBLAS"):
+        # Try different data types
+        _test_matmul('cuBLAS double',
+                     dace.float64,
+                     'cuBLAS',
+                     dace.StorageType.GPU_Global,
+                     eps=1e-6)
+        _test_matmul('cuBLAS half',
+                     dace.float16,
+                     'cuBLAS',
+                     dace.StorageType.GPU_Global,
+                     eps=1)
+        _test_matmul('cuBLAS scmplx', dace.complex64, 'cuBLAS',
+                     dace.StorageType.GPU_Global)
+        _test_matmul('cuBLAS dcmplx',
+                     dace.complex128,
+                     'cuBLAS',
+                     dace.StorageType.GPU_Global,
+                     eps=1e-6)
 
 
 # Try all data layouts
@@ -167,46 +167,71 @@ LAYOUTS = map(lambda t: ''.join(t), itertools.product(*([['C', 'F']] * 3)))
 @pytest.mark.gpu
 @pytest.mark.parametrize('dl', LAYOUTS)
 def test_layouts(dl):
-    old_impl = blas.default_implementation
-    blas.default_implementation = "cuBLAS"
-    _test_matmul('cuBLAS float ' + dl,
-                 dace.float32,
-                 'cuBLAS',
-                 dace.StorageType.GPU_Global,
-                 data_layout=dl)
-    blas.default_implementation = old_impl
+    with change_default(blas, "cuBLAS"):
+        _test_matmul('cuBLAS float ' + dl,
+                     dace.float32,
+                     'cuBLAS',
+                     dace.StorageType.GPU_Global,
+                     data_layout=dl)
 
 
 @pytest.mark.gpu
 def test_batchmm():
     b, m, n, k = tuple(dace.symbol(k) for k in 'bmnk')
 
-    old_impl = blas.default_implementation
-    blas.default_implementation = "cuBLAS"
+    with change_default(blas, "cuBLAS"):
 
-    @dace.program
-    def bmmtest(A: dace.float64[b, m, k], B: dace.float64[b, k, n],
-                C: dace.float64[b, m, n]):
-        C[:] = A @ B
+        @dace.program
+        def bmmtest(A: dace.float64[b, m, k], B: dace.float64[b, k, n],
+                    C: dace.float64[b, m, n]):
+            C[:] = A @ B
 
-    sdfg = bmmtest.to_sdfg()
-    sdfg.apply_gpu_transformations()
-    csdfg = sdfg.compile()
+        sdfg = bmmtest.to_sdfg()
+        sdfg.apply_gpu_transformations()
+        csdfg = sdfg.compile()
 
-    b, m, n, k = 3, 32, 31, 30
+        b, m, n, k = 3, 32, 31, 30
 
-    x = np.random.rand(b, m, k)
-    y = np.random.rand(b, k, n)
-    z = np.zeros([b, m, n], np.float64)
-    csdfg(A=x, B=y, C=z, b=b, m=m, n=n, k=k)
-
-    blas.default_implementation = old_impl
+        x = np.random.rand(b, m, k)
+        y = np.random.rand(b, k, n)
+        z = np.zeros([b, m, n], np.float64)
+        csdfg(A=x, B=y, C=z, b=b, m=m, n=n, k=k)
 
     ref = x @ y
 
     diff = np.linalg.norm(ref - z)
     print('Difference:', diff)
     assert diff < 1e-6
+
+
+@pytest.mark.gpu
+def test_default_stream_blas_node():
+    A_desc = dace.float32[10, 5]
+    B_desc = dace.float32[5, 3]
+    C_desc = dace.float32[10, 3]
+    with set_temporary("compiler", "cuda", "max_concurrent_streams", value=-1):
+        with change_default(blas, "cuBLAS"):
+
+            @dace.program
+            def test_default_stream_blas_node(A: A_desc, B: B_desc, C: C_desc):
+                C[:] = A @ B
+
+            A = np.random.rand(*A_desc.shape).astype(np.float32)
+            B = np.random.rand(*B_desc.shape).astype(np.float32)
+            C = np.zeros(C_desc.shape).astype(np.float32)
+
+            sdfg: dace.SDFG = test_default_stream_blas_node.to_sdfg()
+            sdfg.apply_gpu_transformations()
+            sdfg.expand_library_nodes()
+
+            all_tasklets = (n for n, _ in sdfg.all_nodes_recursive()
+                            if isinstance(n, dace.nodes.Tasklet))
+            environments = {env for n in all_tasklets for env in n.environments}
+
+            assert blas.environments.cuBLAS.full_class_path() in environments
+
+            sdfg(A=A, B=B, C=C)
+            assert np.allclose(A @ B, C)
 
 
 ###############################################################################
@@ -216,6 +241,7 @@ if __name__ == '__main__':
     try:
         test_batchmm()
         test_types()
+        test_default_stream_blas_node()
         for dl in LAYOUTS:
             test_layouts(dl)
     except SystemExit as ex:

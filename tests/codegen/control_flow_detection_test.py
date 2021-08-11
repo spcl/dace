@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from math import exp
 import dace
 import numpy as np
@@ -13,7 +13,8 @@ def test_for_loop_detection():
             A[i] += 5
 
     sdfg: dace.SDFG = looptest.to_sdfg()
-    assert 'for (' in sdfg.generate_code()[0].code
+    if dace.Config.get_bool('optimizer', 'detect_control_flow'):
+        assert 'for (' in sdfg.generate_code()[0].code
 
     A = np.random.rand(20)
     expected = A + 5
@@ -30,6 +31,7 @@ def test_invalid_for_loop_detection():
     end = sdfg.add_state()
     sdfg.add_edge(init, guard, dace.InterstateEdge(assignments=dict(i='0')))
     # Invalid: Edge between guard and loop state must not have assignments
+    # This edge will be split in code generation
     sdfg.add_edge(
         guard, loop,
         dace.InterstateEdge(condition='i < 20', assignments=dict(j='i')))
@@ -42,7 +44,9 @@ def test_invalid_for_loop_detection():
     loop.add_edge(r, None, t, 'a', dace.Memlet('A[j]'))
     loop.add_edge(t, 'out', w, None, dace.Memlet('A[j]'))
 
-    assert 'for (' not in sdfg.generate_code()[0].code
+    # If edge was split successfully, a for loop will be generated
+    if dace.Config.get_bool('optimizer', 'detect_control_flow'):
+        assert 'for (' in sdfg.generate_code()[0].code
     A = np.random.rand(20)
     expected = A + 5
     sdfg(A=A)
@@ -60,11 +64,12 @@ def test_edge_split_loop_detection():
         return A
 
     sdfg: dace.SDFG = looptest.to_sdfg(strict=True)
-    assert 'for (' in sdfg.generate_code()[0].code
+    if dace.Config.get_bool('optimizer', 'detect_control_flow'):
+        assert 'for (' in sdfg.generate_code()[0].code
 
     A = looptest()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
-    assert (np.array_equal(A, A_ref))
+    assert (np.array_equal(A[::2], A_ref[::2]))
 
 
 if __name__ == '__main__':

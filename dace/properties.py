@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import OrderedDict
 import copy
@@ -536,7 +536,7 @@ class ListProperty(Property):
             return [elem.to_json() for elem in l]
         # If elements are one of the JSON basic types, use directly
         if self.element_type in (int, float, list, tuple, dict):
-            return l
+            return list(map(self.element_type, l))
         # Otherwise, convert to strings
         return list(map(str, l))
 
@@ -577,7 +577,7 @@ class TransformationHistProperty(Property):
     def to_json(self, hist):
         if hist is None:
             return None
-        return [elem.to_json() for elem in hist]
+        return [elem.to_json() if elem is not None else None for elem in hist]
 
     def from_json(self, data, sdfg=None):
         if data is None:
@@ -699,6 +699,38 @@ class DictProperty(Property):
 ###############################################################################
 # Custom properties
 ###############################################################################
+
+
+class EnumProperty(Property):
+
+    def __init__(self, dtype, *args, **kwargs):
+        kwargs['dtype'] = dtype
+        super().__init__(*args, **kwargs)
+
+        def f(s, *args, **kwargs):
+            if s is None:
+                return None
+            try:
+                self._undefined_val = None
+                return dtype[s]
+            except KeyError:
+                self._undefined_val = s
+                return dtype['Undefined']
+
+        self._choices = dtype
+        self._from_json = f
+        self._from_string = f
+
+        self._undefined_val = None
+
+        def g(obj):
+            if self._undefined_val is None:
+                return dace.serialize.to_json(obj)
+            else:
+                return self._undefined_val
+
+        self._to_json = g
+        self._to_string = g
 
 
 class SDFGReferenceProperty(Property):
@@ -986,6 +1018,9 @@ class CodeBlock(object):
     def from_json(tmp, sdfg=None):
         if tmp is None:
             return None
+        if isinstance(tmp, CodeBlock):
+            return tmp
+
         try:
             lang = tmp['language']
         except:
@@ -1002,6 +1037,8 @@ class CodeBlock(object):
             lang = dace.dtypes.Language.CPP
         elif lang.endswith("sv") or lang.endswith("systemverilog"):
             lang = dace.dtypes.Language.SystemVerilog
+        elif lang.endswith("MLIR"):
+            lang = dace.dtypes.Language.MLIR
 
         try:
             cdata = tmp['string_data']
@@ -1036,6 +1073,8 @@ class CodeProperty(Property):
 
         if tmp is None:
             return None
+        if isinstance(tmp, CodeBlock):
+            return tmp
 
         try:
             lang = tmp['language']
@@ -1051,8 +1090,10 @@ class CodeProperty(Property):
             lang = dace.dtypes.Language.Python
         elif lang.endswith("CPP"):
             lang = dace.dtypes.Language.CPP
-        elif lang.endswith("SystemVerilog"):
+        elif lang.endswith("sv") or lang.endswith("SystemVerilog"):
             lang = dace.dtypes.Language.SystemVerilog
+        elif lang.endswith("MLIR"):
+            lang = dace.dtypes.Language.MLIR
 
         try:
             cdata = tmp['string_data']
@@ -1136,11 +1177,10 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        if (val is not None and not isinstance(val, sp.expr.Expr)
-                and not isinstance(val, Integral) and not isinstance(val, str)):
-            raise TypeError(
-                "Property {} must be a literal or symbolic expression".format(
-                    self.attr_name))
+        if (val is not None
+                and not isinstance(val, (sp.Expr, Number, np.bool_, str))):
+            raise TypeError(f"Property {self.attr_name} must be a literal "
+                            f"or symbolic expression, got: {type(val)}")
         if isinstance(val, (Number, str)):
             val = SymbolicProperty.from_string(str(val))
 
@@ -1339,3 +1379,26 @@ class LibraryImplementationProperty(Property):
     """
     def typestring(self):
         return "LibraryImplementationProperty"
+
+
+class DataclassProperty(Property):
+    """
+    Property that stores pydantic models or dataclasses.
+    """
+    @staticmethod
+    def to_string(obj):
+        return str(obj)
+
+    @staticmethod
+    def from_string(s):
+        raise TypeError('Dataclasses cannot be loaded from a string, only JSON')
+
+    def to_json(self, obj):
+        if obj is None:
+            return None
+        return obj.dict()
+
+    def from_json(self, d, sdfg=None):
+        if d is None:
+            return None
+        return self.dtype.parse_obj(d)

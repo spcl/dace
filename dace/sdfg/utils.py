@@ -1,15 +1,21 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
 import collections
 import copy
+import os
+import networkx as nx
+
+import dace.sdfg.nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import SDFGState
+from dace.sdfg.nodes import Node, NestedSDFG
+from dace.sdfg.state import SDFGState, StateSubgraphView
+from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
-from dace import data as dt, dtypes, subsets as sbs
+from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from string import ascii_uppercase
-from typing import Callable, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 
 def node_path_graph(*args):
@@ -321,6 +327,25 @@ def merge_maps(
 
     graph.add_nodes_from([merged_entry, merged_exit])
 
+    # Handle the case of dynamic map inputs in the inner map
+    inner_dynamic_map_inputs = dynamic_map_inputs(graph, inner_map_entry)
+    for edge in inner_dynamic_map_inputs:
+        remove_conn = (len(
+            list(graph.out_edges_by_connector(edge.src, edge.src_conn))) == 1)
+        conn_to_remove = edge.src_conn[4:]
+        if remove_conn:
+            merged_entry.remove_in_connector('IN_' + conn_to_remove)
+            merged_entry.remove_out_connector('OUT_' + conn_to_remove)
+        merged_entry.add_in_connector(
+            edge.dst_conn, inner_map_entry.in_connectors[edge.dst_conn])
+        outer_edge = next(
+            graph.in_edges_by_connector(outer_map_entry,
+                                        'IN_' + conn_to_remove))
+        graph.add_edge(outer_edge.src, outer_edge.src_conn, merged_entry,
+                       edge.dst_conn, outer_edge.data)
+        if remove_conn:
+            graph.remove_edge(outer_edge)
+
     # Redirect inner in edges.
     for edge in graph.out_edges(inner_map_entry):
         if edge.src_conn is None:  # Empty memlets
@@ -562,6 +587,89 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
     return False
 
 
+def get_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
+    """
+    Given a view access node, returns the viewed access node
+    if existent, else None
+    """
+    view_edge = get_view_edge(state, view)
+    if view_edge is None:
+        return None
+    if view_edge.dst == view:
+        return view_edge.src
+    else:
+        return view_edge.dst
+
+
+def get_view_edge(state: SDFGState,
+                  view: nd.AccessNode) -> gr.MultiConnectorEdge[mm.Memlet]:
+    """
+    Given a view access node, returns the
+    incoming/outgoing edge which points to the viewed access node.
+    See the ruleset in the documentation of ``dace.data.View``.
+
+    :param state: The state in which the view resides.
+    :param view: The view access node.
+    :return: An edge pointing to the viewed data or None if view is invalid.
+    :see: ``dace.data.View``
+    """
+
+    in_edges = state.in_edges(view)
+    out_edges = state.out_edges(view)
+
+    # Invalid case: No data to view
+    if len(in_edges) == 0 or len(out_edges) == 0:
+        return None
+
+    # If there is one edge (in/out) that leads (via memlet path) to an access
+    # node, and the other side (out/in) has a different number of edges.
+    if len(in_edges) == 1 and len(out_edges) != 1:
+        return in_edges[0]
+    if len(out_edges) == 1 and len(in_edges) != 1:
+        return out_edges[0]
+    if len(out_edges) == len(in_edges) and len(out_edges) != 1:
+        return None
+
+    in_edge = in_edges[0]
+    out_edge = out_edges[0]
+
+    # If there is one incoming and one outgoing edge, and one leads to a code
+    # node, the one that leads to an access node is the viewed data.
+    inmpath = state.memlet_path(in_edge)
+    outmpath = state.memlet_path(out_edge)
+    src_is_data, dst_is_data = False, False
+    if isinstance(inmpath[0].src, nd.AccessNode):
+        src_is_data = True
+    if isinstance(outmpath[-1].dst, nd.AccessNode):
+        dst_is_data = True
+
+    if src_is_data and not dst_is_data:
+        return in_edge
+    if not src_is_data and dst_is_data:
+        return out_edge
+    if not src_is_data and not dst_is_data:
+        return None
+
+    # If both sides lead to access nodes, if one memlet's data points to the
+    # view it cannot point to the viewed node.
+    if in_edge.data.data == view.data and out_edge.data.data != view.data:
+        return out_edge
+    if in_edge.data.data != view.data and out_edge.data.data == view.data:
+        return in_edge
+    if in_edge.data.data == view.data and out_edge.data.data == view.data:
+        return None
+
+    # If both memlets' data are the respective access nodes, the access
+    # node at the highest scope is the one that is viewed.
+    if isinstance(in_edge.src, nd.EntryNode):
+        return in_edge
+    if isinstance(out_edge.dst, nd.ExitNode):
+        return out_edge
+
+    # If both access nodes reside in the same scope, the input data is viewed.
+    return in_edge
+
+
 def dynamic_map_inputs(state: SDFGState,
                        map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge]:
     """
@@ -628,6 +736,34 @@ def find_output_arraynode(graph, edge):
         raise RuntimeError("Output array node not found for memlet " +
                            str(edge.data))
     return result.dst
+
+
+def weakly_connected_component(dfg,
+                               node_in_component: Node) -> StateSubgraphView:
+    """
+    Returns a subgraph of all nodes that form the weakly connected component in
+    `dfg` that contains `node_in_component`.
+    """
+    seen = set()
+    to_search = [node_in_component]
+    while to_search:
+        node = to_search.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        for succ in dfg.successors(node):
+            to_search.append(succ)
+    to_search = [node_in_component]
+    seen.remove(node_in_component)
+    while to_search:
+        node = to_search.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        for succ in dfg.predecessors(node):
+            to_search.append(succ)
+    subgraph = StateSubgraphView(dfg, seen)
+    return subgraph
 
 
 def concurrent_subgraphs(graph):
@@ -737,15 +873,33 @@ def separate_maps(state, dfg, schedule):
     return result
 
 
-def _transients_in_scope(sdfg, scope, scope_dict):
-    return set(
-        node.data for node in scope_dict[scope.entry if scope else scope]
-        if isinstance(node, nd.AccessNode) and sdfg.arrays[node.data].transient)
+def _transients_in_scope(sdfg, outer_scope, scope_dict, include_nested):
+    scopes = [outer_scope.entry]
+    transients = set()
+    while scopes:
+        scope = scopes.pop()
+        for node in scope_dict[scope]:
+            if (isinstance(node, nd.AccessNode)
+                    and sdfg.arrays[node.data].transient):
+                transients.add(node.data)
+            if (isinstance(node, nd.EntryNode) and node is not scope
+                    and include_nested):
+                # "Recurse" into nested scopes
+                scopes.append(node)
+        if not include_nested:
+            # Only run the first iteration of the while loop
+            break
+    return transients
 
 
-def local_transients(sdfg, dfg, entry_node):
-    """ Returns transients local to the scope defined by the specified entry
-        node in the dataflow graph. """
+def local_transients(sdfg, dfg, entry_node, include_nested=False):
+    """
+    Returns transients local to the scope defined by the specified entry node in
+    the dataflow graph.
+    :param entry_node: The entry node that opens the scope. If `None`, the
+                       top-level scope is used.
+    :param include_nested: Include transients defined in nested scopes.
+    """
     state: SDFGState = dfg._graph
     scope_children = state.scope_children()
     scope_tree = state.scope_tree()
@@ -755,18 +909,21 @@ def local_transients(sdfg, dfg, entry_node):
     defined_transients = set(sdfg.shared_transients())
 
     # Get access nodes in current scope
-    transients = _transients_in_scope(sdfg, current_scope, scope_children)
+    transients = _transients_in_scope(sdfg, current_scope, scope_children,
+                                      include_nested)
 
     # Add transients defined in parent scopes
     while current_scope.parent is not None:
         current_scope = current_scope.parent
         defined_transients.update(
-            _transients_in_scope(sdfg, current_scope, scope_children))
+            _transients_in_scope(sdfg, current_scope, scope_children, False))
 
     return sorted(list(transients - defined_transients))
 
 
-def trace_nested_access(node, state, sdfg):
+def trace_nested_access(
+        node: nd.AccessNode, state: SDFGState,
+        sdfg: SDFG) -> List[Tuple[nd.AccessNode, SDFGState, SDFG]]:
     """
     Given an AccessNode in a nested SDFG, trace the accessed memory
     back to the outermost scope in which it is defined.
@@ -795,18 +952,15 @@ def trace_nested_access(node, state, sdfg):
             memlet_read = m.data
             break
 
-    trace = [((curr_read, curr_write), (memlet_read, memlet_write), state, sdfg)]
+    trace = [((curr_read, curr_write), (memlet_read, memlet_write), state, sdfg)
+             ]
 
     while curr_sdfg.parent is not None:
         curr_state = curr_sdfg.parent
+
         # Find the nested SDFG containing ourself in the parent state
-        for nested_sdfg in curr_state.nodes():
-            if isinstance(nested_sdfg,
-                          nd.NestedSDFG) and nested_sdfg.sdfg == curr_sdfg:
-                break
-        else:
-            raise ValueError("{} not found in its parent state {}".format(
-                curr_sdfg.name, curr_state.label))
+        nested_sdfg = curr_sdfg.parent_nsdfg_node
+
         if curr_read is not None:
             for e in curr_state.in_edges(nested_sdfg):
                 if e.dst_conn == curr_read.data:
@@ -840,3 +994,163 @@ def trace_nested_access(node, state, sdfg):
             break
         curr_sdfg = curr_state.parent  # Recurse
     return list(reversed(trace))
+
+
+def fuse_states(sdfg: SDFG, strict: bool = True, progress: bool = False) -> int:
+    """
+    Fuses all possible states of an SDFG (and all sub-SDFGs) using an optimized
+    routine that uses the structure of the StateFusion transformation.
+    :param sdfg: The SDFG to transform.
+    :param strict: If True (default), operates in strict mode.
+    :param progress: If True, prints out a progress bar of fusion (may be
+                     inaccurate, requires ``tqdm``)
+    :return: The total number of states fused.
+    """
+    from dace.transformation.interstate import StateFusion  # Avoid import loop
+    counter = 0
+    if progress:
+        from tqdm import tqdm
+        fusible_states = 0
+        for sd in sdfg.all_sdfgs_recursive():
+            fusible_states += sd.number_of_edges()
+        pbar = tqdm(total=fusible_states)
+
+    for sd in sdfg.all_sdfgs_recursive():
+        id = sd.sdfg_id
+        while True:
+            edges = list(sd.nx.edges)
+            applied = 0
+            skip_nodes = set()
+            for u, v in edges:
+                if u in skip_nodes or v in skip_nodes:
+                    continue
+                candidate = {
+                    StateFusion.first_state: u,
+                    StateFusion.second_state: v
+                }
+                sf = StateFusion(id, -1, candidate, 0, override=True)
+                if sf.can_be_applied(sd, candidate, 0, sd, strict=strict):
+                    sf.apply(sd)
+                    applied += 1
+                    counter += 1
+                    if progress:
+                        pbar.update(1)
+                    skip_nodes.add(u)
+                    skip_nodes.add(v)
+            if applied == 0:
+                break
+    if progress:
+        pbar.close()
+    if config.Config.get_bool('debugprint'):
+        print(f'Applied {counter} State Fusions')
+    return counter
+
+
+def inline_sdfgs(sdfg: SDFG,
+                 strict: bool = True,
+                 progress: bool = False) -> int:
+    """
+    Inlines all possible nested SDFGs (or sub-SDFGs) using an optimized
+    routine that uses the structure of the SDFG hierarchy.
+    :param sdfg: The SDFG to transform.
+    :param strict: If True (default), operates in strict mode.
+    :param progress: If True, prints out a progress bar of inlining (may be
+                     inaccurate, requires ``tqdm``)
+    :return: The total number of SDFGs inlined.
+    """
+    from dace.transformation.interstate import InlineSDFG  # Avoid import loop
+    counter = 0
+    sdfgs = list(sdfg.all_sdfgs_recursive())
+    if progress:
+        from tqdm import tqdm
+        pbar = tqdm(total=len(sdfgs))
+
+    for sd in reversed(sdfgs):
+        id = sd.sdfg_id
+        for state_id, state in enumerate(sd.nodes()):
+            for node in state.nodes():
+                if not isinstance(node, NestedSDFG):
+                    continue
+                # We have to reevaluate every time due to changing IDs
+                node_id = state.node_id(node)
+                candidate = {
+                    InlineSDFG._nested_sdfg: node_id,
+                }
+                inliner = InlineSDFG(id, state_id, candidate, 0, override=True)
+                if inliner.can_be_applied(state,
+                                          candidate,
+                                          0,
+                                          sd,
+                                          strict=strict):
+                    inliner.apply(sd)
+                    counter += 1
+                    if progress:
+                        pbar.update(1)
+    if progress:
+        pbar.close()
+    if config.Config.get_bool('debugprint'):
+        print(f'Inlined {counter} SDFGs')
+    return counter
+
+
+def load_precompiled_sdfg(folder: str):
+    """
+    Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
+    Folder must contain a file called "program.sdfg" and a subfolder called
+    "build" with the shared object.
+
+    :param folder: Path to SDFG output folder.
+    :return: A callable CompiledSDFG object.
+    """
+    from dace.codegen import compiled_sdfg as csdfg
+    sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
+    suffix = config.Config.get('compiler', 'library_extension')
+    return csdfg.CompiledSDFG(
+        sdfg,
+        csdfg.ReloadableDLL(
+            os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'),
+            sdfg.name))
+
+
+def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
+    """
+    From the given state, return the next set of states that are reachable
+    in the SDFG, skipping empty states. Traversal stops at the non-empty
+    state.
+    This function is used to determine whether synchronization should happen
+    at the end of a GPU state.
+    :param sdfg: The SDFG that contains the state.
+    :param state: The state to start from.
+    :return: A set of reachable non-empty states.
+    """
+    result: Set[SDFGState] = set()
+
+    # Traverse children until states are not empty
+    for succ in sdfg.successors(state):
+        result |= set(
+            dfs_conditional(sdfg,
+                            sources=[succ],
+                            condition=lambda parent, _: parent.is_empty()))
+
+    # Filter out empty states
+    result = {s for s in result if not s.is_empty()}
+
+    return result
+
+
+def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
+                     node: Node) -> str:
+    """
+    Returns unique string representation of the given node,
+    considering its placement into the SDFG graph.
+    Useful for hashing, or building node-based dictionaries.
+    :param graph: the state/subgraph that contains the node
+    :param node: node to represent
+    :return: the unique representation
+    """
+
+    # Build a unique representation
+    sdfg = graph.parent
+    state = graph if isinstance(graph, SDFGState) else graph._graph
+    return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(
+        state.node_id(node))

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -8,7 +8,7 @@ number = 42
 
 
 @dace.program
-def f(A, number):
+def duplicate_naming_inner(A, number):
     @dace.map(_[0:W])
     def bla(i):
         inp << A[i]
@@ -17,11 +17,11 @@ def f(A, number):
 
 
 @dace.program
-def prog(A, B):
+def duplicate_naming(A, B):
     no = dace.define_local([number], dace.float32)
     number = dace.define_local([W], dace.float32)
 
-    f(A, number)
+    duplicate_naming_inner(A, number)
 
     @dace.map(_[0:W])
     def bla2(i):
@@ -39,7 +39,7 @@ def test():
     A[:] = np.mgrid[0:W.get()]
     B[:] = dace.float32(0.0)
 
-    prog(A, B, W=W)
+    duplicate_naming(A, B, W=W)
 
     diff = np.linalg.norm(4 * A - B) / W.get()
     print("Difference:", diff)

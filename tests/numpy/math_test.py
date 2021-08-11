@@ -1,8 +1,9 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
 from common import compare_numpy_output
 from numpy import exp, sin, cos, sqrt, log, conj, real, imag
+import pytest
 
 M, N = 24, 24
 
@@ -77,6 +78,38 @@ def test_exponent_t():
     assert np.allclose(B, np.exp(A))
 
 
+class TestMathFuncs:
+    @pytest.mark.parametrize("mathfunc", [abs, np.abs, np.sqrt])
+    @pytest.mark.parametrize("arg", [0.7, np.random.randn(5, 5)])
+    def test_func(self, mathfunc, arg):
+        @dace.program
+        def func(arg):
+            return mathfunc(arg)
+
+        res = func(arg)
+        assert np.allclose(mathfunc(arg), res, equal_nan=True)
+
+    @pytest.mark.parametrize("mathfunc", [min, max])
+    def test_func2_scalar(self, mathfunc):
+        @dace.program
+        def func(arg1, arg2):
+            return mathfunc(arg1, arg2)
+
+        res = func(0.7, 0.5)
+        assert np.allclose(mathfunc(0.7, 0.5), res)
+
+    @pytest.mark.parametrize("mathfunc", [np.minimum, np.maximum])
+    def test_func2_arr(self, mathfunc):
+        @dace.program
+        def func(arg1, arg2):
+            return mathfunc(arg1, arg2)
+
+        arg1 = np.random.randn(5, 5)
+        arg2 = np.random.randn(5, 5)
+        res = func(arg1, arg2)
+        assert np.allclose(mathfunc(arg1, arg2), res)
+
+
 if __name__ == '__main__':
     test_exponent()
     test_sine()
@@ -88,3 +121,5 @@ if __name__ == '__main__':
     test_imag_part()
     test_exponent_m()
     test_exponent_t()
+    TestMathFuncs().test_func(np.abs, 0.7)
+    TestMathFuncs().test_func(abs, 0.7)

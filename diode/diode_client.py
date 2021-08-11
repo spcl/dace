@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ DIODE client using a command line interface. """
 
 # Usage example: cat ../samples/simple/matmul.py | ./diode_client.py --code --compile

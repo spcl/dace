@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 # This module is derived from astunparse: https://github.com/simonpercivall/astunparse
 ##########################################################################
 ### astunparse LICENSES
@@ -89,8 +89,13 @@ INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
-_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr",
-                  "inf": "INFINITY", "nan": "NAN"}
+_py2c_reserved = {
+    "True": "true",
+    "False": "false",
+    "None": "nullptr",
+    "inf": "INFINITY",
+    "nan": "NAN"
+}
 
 _py2c_typeconversion = {
     "uint": dace.dtypes.typeclass(np.uint32),
@@ -179,7 +184,7 @@ class CPPUnparser:
         self.indent_output = indent_output
         self.indent_offset = indent_offset
         self.expr_semicolon = expr_semicolon
-        self.defined_symbols = defined_symbols
+        self.defined_symbols = defined_symbols or {}
         self.type_inference = type_inference
         self.dtype = None
         self.locals = locals
@@ -308,40 +313,48 @@ class CPPUnparser:
             if isinstance(target, ast.Tuple):
                 if len(target.elts) > 1:
                     self.dispatch_lhs_tuple(target.elts)
-                target = target.elts[0]
+                    target = None
+                else:
+                    target = target.elts[0]
 
-            if not isinstance(
+            if target and not isinstance(
                     target,
                 (ast.Subscript, ast.Attribute)) and not self.locals.is_defined(
                     target.id, self._indent):
 
-                # the target is not already defined: we should try to infer the type
-                if self.type_inference is True:
-                    # Perform type inference
-                    # Build dictionary with symbols
-                    def_symbols = {}
-                    def_symbols.update(self.locals.get_name_type_associations())
-                    def_symbols.update(self.defined_symbols)
-                    inferred_symbols = type_inference.infer_types(
-                        t, def_symbols)
-                    inferred_type = inferred_symbols[target.id]
+                # if the target is already defined, do not redefine it
+                if self.defined_symbols is None or target.id not in self.defined_symbols:
+                    # we should try to infer the type
+                    if self.type_inference is True:
+                        # Perform type inference
+                        # Build dictionary with symbols
+                        def_symbols = {}
+                        def_symbols.update(
+                            self.locals.get_name_type_associations())
+                        def_symbols.update(self.defined_symbols)
+                        inferred_symbols = type_inference.infer_types(
+                            t, def_symbols)
+                        inferred_type = inferred_symbols[target.id]
 
-                    self.locals.define(target.id, t.lineno, self._indent,
-                                       inferred_type)
-                    if self.language == dace.dtypes.Language.OpenCL and inferred_type.veclen > 1:
-                        # if the veclen is greater than one, this should be defined with a vector data type
-                        self.write("{}{} ".format(dace.dtypes._OCL_VECTOR_TYPES[inferred_type.type],inferred_type.veclen))
+                        self.locals.define(target.id, t.lineno, self._indent,
+                                           inferred_type)
+                        if self.language == dace.dtypes.Language.OpenCL and (
+                                inferred_type is not None
+                                and inferred_type.veclen > 1):
+                            # if the veclen is greater than one, this should be defined with a vector data type
+                            self.write("{}{} ".format(
+                                dace.dtypes._OCL_VECTOR_TYPES[
+                                    inferred_type.type], inferred_type.veclen))
+                        else:
+                            self.write(dace.dtypes._CTYPES[inferred_type.type] +
+                                       " ")
                     else:
-                        self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
-                else:
-                    self.locals.define(target.id, t.lineno, self._indent)
-                    self.write("auto ")
+                        self.locals.define(target.id, t.lineno, self._indent)
+                        self.write("auto ")
 
             # dispatch target
-            self.dispatch(target)
-            #if not infer_type:
-            #   inferred_type = self.dispatch(target, True)
-            #self.dtype = inferred_type
+            if target:
+                self.dispatch(target)
 
         self.write(" = ")
         self.dispatch(t.value)
@@ -543,7 +556,7 @@ class CPPUnparser:
         if value is True or value is False or value is None:
             self.write(_py2c_nameconst[value])
         else:
-            if isinstance(value, Number):
+            if isinstance(value, (Number, np.bool_)):
                 self._Num(t)
             elif isinstance(value, tuple):
                 self.write("(")
@@ -937,8 +950,8 @@ class CPPUnparser:
         if (isinstance(t.value, (ast.Num, ast.Constant))
                 and isinstance(t.value.n, int)):
             self.write(" ")
-        if (isinstance(t.value, ast.Name) and
-                t.value.id in ("dace::math", "dace::cmath")):
+        if (isinstance(t.value, ast.Name)
+                and t.value.id in ('dace', 'dace::math', 'dace::cmath')):
             self.write("::")
         else:
             self.write(".")
@@ -1068,22 +1081,28 @@ class CPPUnparser:
         raise NotImplementedError('Invalid C++')
 
 
-def cppunparse(node, expr_semicolon=True, locals=None):
+def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None):
     strio = StringIO()
     CPPUnparser(node,
                 0,
                 locals or CPPLocals(),
                 strio,
-                expr_semicolon=expr_semicolon)
+                expr_semicolon=expr_semicolon,
+                defined_symbols=defined_symbols)
     return strio.getvalue().strip()
 
 
 # Code can either be a string or a function
-def py2cpp(code, expr_semicolon=True):
+def py2cpp(code, expr_semicolon=True, defined_symbols=None):
     if isinstance(code, str):
-        return cppunparse(ast.parse(code), expr_semicolon)
+        try:
+            return cppunparse(ast.parse(code),
+                              expr_semicolon,
+                              defined_symbols=defined_symbols)
+        except SyntaxError:
+            return code
     elif isinstance(code, ast.AST):
-        return cppunparse(code, expr_semicolon)
+        return cppunparse(code, expr_semicolon, defined_symbols=defined_symbols)
     elif isinstance(code, list):
         return '\n'.join(py2cpp(stmt) for stmt in code)
     elif code.__class__.__name__ == 'function':
@@ -1099,7 +1118,9 @@ def py2cpp(code, expr_semicolon=True):
 
         except:  # Can be different exceptions coming from Python's AST module
             raise NotImplementedError('Invalid function given')
-        return cppunparse(ast.parse(code_str), expr_semicolon)
+        return cppunparse(ast.parse(code_str),
+                          expr_semicolon,
+                          defined_symbols=defined_symbols)
 
     else:
         raise NotImplementedError('Unsupported type for py2cpp')

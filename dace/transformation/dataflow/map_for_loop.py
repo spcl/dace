@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement a map->for loop transformation.
 """
 
@@ -86,10 +86,11 @@ class MapToForLoop(transformation.Transformation):
         # End of dynamic input range
 
         # Create a loop inside the nested SDFG
-        nsdfg.add_loop(None, nstate, None, loop_idx, replace_param(loop_from),
-                       '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
-                       '%s + %s' % (loop_idx, replace_param(loop_step)))
-
+        loop_result = nsdfg.add_loop(None, nstate, None, loop_idx, replace_param(loop_from),
+                        '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
+                        '%s + %s' % (loop_idx, replace_param(loop_step)))
+        # store as object fields for external access
+        self.before_state, self.guard, self.after_state = loop_result
         # Skip map in input edges
         for edge in nstate.out_edges(map_entry):
             src_node = nstate.memlet_path(edge)[0].src
@@ -107,5 +108,8 @@ class MapToForLoop(transformation.Transformation):
             [e.src for e in dace.sdfg.dynamic_map_inputs(nstate, map_entry)])
         # Remove scope nodes
         nstate.remove_nodes_from([map_entry, map_exit])
+
+        # create object field for external nsdfg access
+        self.nsdfg = nsdfg
 
         return node, nstate

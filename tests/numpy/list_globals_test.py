@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 import pytest
@@ -83,13 +83,8 @@ def test_local_list_nested_lists():
 
     inp = np.random.randint(0, 10, (3, 2, 4)).astype(np.int32)
 
-    try:
+    with pytest.raises(TypeError):
         result = local_list(A=inp.copy())
-    except DaceSyntaxError as e:
-        assert "local_shape" in e.message
-        return
-
-    assert False, "excepted exception"
 
 
 if __name__ == "__main__":

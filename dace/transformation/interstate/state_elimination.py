@@ -1,11 +1,12 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ State elimination transformations """
 
 import copy
 import networkx as nx
+from typing import Dict, List, Set
 
-from dace import dtypes, registry, sdfg, symbolic
-from dace.sdfg import nodes
+from dace import data as dt, dtypes, registry, sdfg, symbolic
+from dace.sdfg import nodes, SDFG, SDFGState, InterstateEdge
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.config import Config
@@ -62,6 +63,8 @@ def _assignments_to_consider(sdfg, edge):
     assignments_to_consider = {}
     for var, assign in edge.data.assignments.items():
         as_symbolic = symbolic.pystr_to_symbolic(assign)
+        if isinstance(as_symbolic, bool):
+            as_symbolic = symbolic.pystr_to_symbolic(as_symbolic)
         # Assignments cannot access a data container
         if not symbolic.contains_sympy_functions(as_symbolic):  # via subscript
             # Assignments cannot use scalar values
@@ -154,3 +157,169 @@ class StateAssignElimination(transformation.Transformation):
                 # remove symbol
                 if varname in sdfg.symbols:
                     sdfg.remove_symbol(varname)
+
+
+@registry.autoregister_params(singlestate=True)
+class HoistState(transformation.Transformation):
+    """ Move a state out of a nested SDFG """
+    nsdfg = transformation.PatternNode(nodes.NestedSDFG)
+
+    @staticmethod
+    def expressions():
+        return [sdutil.node_path_graph(HoistState.nsdfg)]
+
+    @staticmethod
+    def can_be_applied(graph: SDFGState,
+                       candidate,
+                       expr_index,
+                       sdfg,
+                       strict=False):
+        nsdfg: nodes.NestedSDFG = graph.node(candidate[HoistState.nsdfg])
+
+        # Must be a free nested SDFG
+        if graph.entry_node(nsdfg) is not None:
+            return False
+
+        # If strict, must have two states with an empty source state.
+        # Otherwise structured control flow (loop init states, for example)
+        # may be broken.
+        if strict:
+            if nsdfg.sdfg.number_of_nodes() != 2:
+                return False
+            if nsdfg.sdfg.start_state.number_of_nodes() != 0:
+                return False
+
+        # Must have at least two states with a hoistable source state
+        if nsdfg.sdfg.number_of_nodes() < 2:
+            return False
+        # Source state must not lead to more than one state or be conditional
+        source_state = nsdfg.sdfg.start_state
+        if nsdfg.sdfg.out_degree(source_state) != 1:
+            return False
+        nisedge = nsdfg.sdfg.out_edges(source_state)[0]
+        if not nisedge.data.is_unconditional():
+            return False
+
+        # Keep all data descriptors to check for potential issues
+        data_to_check: Set[str] = set()
+
+        # Add data descriptors from interstate edge
+        syms = nisedge.data.free_symbols
+        for sym in syms:
+            sym = str(sym)
+            if sym in nsdfg.sdfg.arrays:
+                if nsdfg.sdfg.arrays[sym].transient:  # Cannot keep transient
+                    return False
+                data_to_check.add(sym)
+
+        # Add data descriptors from access nodes
+        for dnode in source_state.data_nodes():
+            data_to_check.add(dnode.data)
+            desc = nsdfg.sdfg.arrays[dnode.data]
+            # Cannot hoist state with transient
+            if not isinstance(desc, dt.View) and desc.transient:
+                return False
+
+        # Nested SDFG surrounding edges must contain all of the array
+        # TODO(later): Allow this case (with offsetting)
+        outer_data_to_check: Set[str] = set()
+        for e in graph.in_edges(nsdfg):
+            if e.dst_conn in data_to_check:
+                outer_data_to_check.add(e.data.data)
+                if any(me != 0 for me in e.data.subset.min_element()):
+                    return False
+        for e in graph.out_edges(nsdfg):
+            if e.src_conn in data_to_check:
+                outer_data_to_check.add(e.data.data)
+                if any(me != 0 for me in e.data.subset.min_element()):
+                    return False
+
+        # Data validity checks for descriptors in data_to_check:
+        # 1. Path to nested SDFG must not go through descriptors,
+        # 2. No other connected components can use descriptors.
+        for dnode in graph.data_nodes():
+            if dnode.data in outer_data_to_check:
+                if nx.has_path(graph._nx, nsdfg, dnode):
+                    # OK, has path from nsdfg to access node
+                    continue
+                if dnode in graph.predecessors(nsdfg):
+                    # OK, a direct edge to nsdfg
+                    continue
+                if nx.has_path(graph._nx, dnode, nsdfg):
+                    # NOT OK, some path goes through access node to SDFG,
+                    # so state cannot safely be hoisted
+                    return False
+                # NOT OK, access node used independently from nsdfg
+                return False
+
+        return True
+
+    def apply(self, sdfg: SDFG):
+        nsdfg: nodes.NestedSDFG = self.nsdfg(sdfg)
+        state = sdfg.node(self.state_id)
+
+        new_state = sdfg.add_state_before(state)
+        isedge = sdfg.edges_between(new_state, state)[0]
+
+        # Find relevant symbol and data descriptor mapping
+        mapping: Dict[str, str] = {}
+        mapping.update({k: str(v) for k, v in nsdfg.symbol_mapping.items()})
+        mapping.update({
+            k: next(iter(state.in_edges_by_connector(nsdfg, k))).data.data
+            for k in nsdfg.in_connectors
+        })
+        mapping.update({
+            k: next(iter(state.out_edges_by_connector(nsdfg, k))).data.data
+            for k in nsdfg.out_connectors
+        })
+
+        # Get internal state and interstate edge
+        source_state = nsdfg.sdfg.start_state
+        nisedge = nsdfg.sdfg.out_edges(source_state)[0]
+
+        # Add state contents (nodes)
+        new_state.add_nodes_from(source_state.nodes())
+
+        # Replace data descriptors and symbols on state graph
+        for node in source_state.nodes():
+            if isinstance(node, nodes.AccessNode) and node.data in mapping:
+                node.data = mapping[node.data]
+        for edge in source_state.edges():
+            edge.data.replace(mapping)
+            if edge.data.data in mapping:
+                edge.data.data = mapping[edge.data.data]
+
+        # Add state contents (edges)
+        for edge in source_state.edges():
+            new_state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn,
+                               edge.data)
+
+        # Safe replacement of edge contents
+        def replfunc(m):
+            for k, v in mapping.items():
+                nisedge.data.replace(k, v, replace_keys=False)
+        symbolic.safe_replace(mapping, replfunc)
+
+        # Add interstate edge
+        for akey, aval in nisedge.data.assignments.items():
+            # Map assignment to outer edge
+            if akey not in sdfg.symbols and akey not in sdfg.arrays:
+                newname = akey
+            else:
+                newname = nsdfg.label + '_' + akey
+
+            isedge.data.assignments[newname] = aval
+
+            # Add symbol to outer SDFG
+            sdfg.add_symbol(newname, nsdfg.sdfg.symbols[akey])
+
+            # Add symbol mapping to nested SDFG
+            nsdfg.symbol_mapping[akey] = newname
+
+        isedge.data.condition = nisedge.data.condition
+
+        # Clean nested SDFG
+        nsdfg.sdfg.remove_node(source_state)
+
+        # Set new starting state
+        nsdfg.sdfg.start_state = nsdfg.sdfg.node_id(nisedge.dst)

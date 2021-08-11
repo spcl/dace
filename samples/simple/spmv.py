@@ -1,11 +1,11 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import argparse
 import dace
 import math
 import numpy as np
-import scipy
+import scipy.sparse
 
 W = dace.symbol('W')
 H = dace.symbol('H')

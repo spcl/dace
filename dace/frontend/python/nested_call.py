@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.sdfg import SDFG, SDFGState
 
@@ -8,8 +8,8 @@ class NestedCall():
        the last added state.
 
        Example usage:
-       def _cos_then_max(sdfg, state, a: str):
-           nest = NestedCall(sdfg, state)
+       def _cos_then_max(pv, sdfg, state, a: str):
+           nest = NestedCall(pv, sdfg, state)
 
            # you don't need to pass the first two args
            c = nest(_cos)(a)
@@ -18,7 +18,8 @@ class NestedCall():
            # return a tuple of the nest object and the result
            return nest, result
     """
-    def __init__(self, sdfg: SDFG, state: SDFGState):
+    def __init__(self, pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState):
+        self.pv = pv
         self.sdfg = sdfg
         self.state = state
         self.last_state = state
@@ -27,6 +28,7 @@ class NestedCall():
     def __call__(self, func):
         def nested(*args, **kwargs):
             result = func(
+                self.pv,
                 self.sdfg,
                 self.add_state("{}_nested_call_{}_{}".format(
                     self.state.label, self.count, func.__name__)), *args,

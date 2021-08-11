@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
 from dace.memlet import Memlet
@@ -6,7 +6,7 @@ import dace.libraries.blas as blas
 import numpy as np
 import scipy
 
-vec_width = 4
+vec_width = 2
 vtype = dace.vector(dace.float32, vec_width)
 
 n = dace.symbol("n")

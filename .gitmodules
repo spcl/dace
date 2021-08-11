@@ -11,7 +11,9 @@
 [submodule "diode/webclient"]
 	path = diode/webclient
 	url = https://github.com/spcl/dace-webclient.git
-
 [submodule "dace/external/SMI"]
 	path = dace/external/SMI
 	url = https://github.com/spcl/SMI
+[submodule "dace/external/rtllib"]
+	path = dace/external/rtllib
+	url = https://github.com/carljohnsen/rtllib.git 

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 import os
 
@@ -49,12 +49,15 @@ def _test(sdfg):
 
 
 def test_cpu():
-    _test(cudahello.to_sdfg())
+    sdfg = cudahello.to_sdfg()
+    sdfg.name = "cuda_grid_cpu"
+    _test(sdfg)
 
 
 @pytest.mark.gpu
 def test_gpu():
     sdfg = cudahello.to_sdfg()
+    sdfg.name = "cuda_grid_gpu"
     assert sdfg.apply_transformations(GPUTransformMap) == 1
     _test(sdfg)
 
@@ -62,6 +65,7 @@ def test_gpu():
 @pytest.mark.gpu
 def test_gpu_vec():
     sdfg: dace.SDFG = cudahello.to_sdfg()
+    sdfg.name = "cuda_grid_gpu_vec"
     assert sdfg.apply_transformations([GPUTransformMap, Vectorization]) == 2
     _test(sdfg)
 

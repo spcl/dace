@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains functionality to perform find-and-replace of symbols in SDFGs. """
 
 from dace import dtypes, properties, symbolic
@@ -100,3 +100,9 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
             for symname, sym_mapping in propval.items():
                 propval[symname] = symbolic.pystr_to_symbolic(sym_mapping).subs(
                     symrepl)
+
+
+def replace_properties_dict(node: Any, symrepl: Dict[symbolic.SymbolicType,
+                                                     symbolic.SymbolicType]):
+    for k, v in symrepl.items():
+        replace_properties(node, {k: v}, str(k), str(v))

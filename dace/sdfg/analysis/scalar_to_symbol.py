@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Scalar to symbol promotion functionality. """
 
 import ast
@@ -12,7 +12,7 @@ from dace.sdfg import graph as gr
 from dace.frontend.python import astutils
 from dace.transformation import helpers as xfh
 import re
-from typing import Any, DefaultDict, Dict, List, Set, Tuple, Union
+from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
 
 class AttributedCallDetector(ast.NodeVisitor):
@@ -55,6 +55,8 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
         if not desc.transient or isinstance(desc, dt.Stream):
             continue
         if desc.total_size != 1:
+            continue
+        if desc.lifetime is dtypes.AllocationLifetime.Persistent:
             continue
         candidates.add(aname)
 
@@ -168,6 +170,13 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
                         # if the type of the data is an array we will also skip
                         if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*\s*=.*;$',
                                     cstr) is None:
+                            candidates.remove(candidate)
+                            continue
+                        newcode = translate_cpp_tasklet_to_python(cstr)
+                        try:
+                            parsed_ast = ast.parse(str(newcode))
+                        except SyntaxError:
+                            #if we cannot parse the expression to pythonize it, we cannot promote the candidate
                             candidates.remove(candidate)
                             continue
                     else:  # Other languages are currently unsupported
@@ -491,6 +500,12 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                         for ise in dst.sdfg.edges():
                             ise.data.replace(e.dst_conn, tmp_symname)
                             # Remove subscript occurrences as well
+                            for aname, aval in ise.data.assignments.items():
+                                vast = ast.parse(aval)
+                                vast = astutils.RemoveSubscripts({tmp_symname
+                                                                  }).visit(vast)
+                                ise.data.assignments[aname] = astutils.unparse(
+                                    vast)
                             ise.data.replace(tmp_symname + '[0]', tmp_symname)
 
                         # Set symbol mapping
@@ -517,7 +532,17 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
             [n for n in scalar_nodes if len(state.all_edges(n)) == 0])
 
 
-def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
+def translate_cpp_tasklet_to_python(code: str):
+    newcode: str = ''
+    newcode = re.findall(r'.*?=\s*(.*);', code)[0]
+    # We need to also translate the tasklet itself from CPP to Python
+    newcode = re.sub(r'\|\|', ' or ', newcode)
+    newcode = re.sub(r'\&\&', ' and ', newcode)
+    return newcode
+
+
+def promote_scalars_to_symbols(sdfg: sd.SDFG,
+                               ignore: Optional[Set[str]] = None) -> Set[str]:
     """
     Promotes all matching transient scalars to SDFG symbols, changing all
     tasklets to inter-state assignments. This enables the transformed symbols
@@ -526,6 +551,7 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
     optimization.
 
     :param sdfg: The SDFG to run the pass on.
+    :param ignore: An optional set of strings of scalars to ignore.
     :return: Set of promoted scalars.
     :note: Operates in-place.
     """
@@ -542,8 +568,9 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
     # 5. Remove data descriptors and add symbols to SDFG
     # 6. Replace subscripts in all interstate conditions and assignments
     # 7. Make indirections with symbols a single memlet
-
     to_promote = find_promotable_scalars(sdfg)
+    if ignore:
+        to_promote -= ignore
     if len(to_promote) == 0:
         return to_promote
 
@@ -554,11 +581,13 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
         ]
         # Step 2: Assignment tasklets
         for node in scalar_nodes:
-            # There is only zero or one incoming edges by definition
             if state.in_degree(node) == 0:
                 continue
             in_edge = state.in_edges(node)[0]
             input = in_edge.src
+
+            # There is only zero or one incoming edges by definition
+
             tasklet_inputs = [e.src for e in state.in_edges(input)]
             # Step 2.1
             new_state = xfh.state_fission(
@@ -574,8 +603,9 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
                 if input.language is dtypes.Language.Python:
                     newcode = astutils.unparse(input.code.code[0].value)
                 elif input.language is dtypes.Language.CPP:
-                    newcode = re.findall(r'.*?=\s*(.*);',
-                                         input.code.as_string.strip())[0]
+                    newcode = translate_cpp_tasklet_to_python(
+                        input.code.as_string.strip())
+
                 # Replace tasklet inputs with incoming edges
                 for e in new_state.in_edges(input):
                     memlet_str: str = e.data.data
@@ -621,17 +651,18 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
         ise: InterstateEdge = edge.data
         for scalar in to_promote:
             # Condition
-            if ise.condition.language is dtypes.Language.Python:
-                promo = TaskletPromoter(scalar, scalar)
-                for stmt in ise.condition.code:
-                    promo.visit(stmt)
-            elif ise.condition.language is dtypes.Language.CPP:
-                ise.condition = re.sub(r'\b%s\[.*\]' % re.escape(scalar),
-                                       scalar, ise.condition.as_string)
+            if not edge.data.is_unconditional():
+                if ise.condition.language is dtypes.Language.Python:
+                    promo = TaskletPromoter(scalar, scalar)
+                    for stmt in ise.condition.code:
+                        promo.visit(stmt)
+                elif ise.condition.language is dtypes.Language.CPP:
+                    ise.condition = re.sub(r'\b%s\[.*?\]' % re.escape(scalar),
+                                           scalar, ise.condition.as_string)
             # Assignments
             for aname, assignment in ise.assignments.items():
                 ise.assignments[aname] = re.sub(
-                    r'\b%s\[.*\]' % re.escape(scalar), scalar,
+                    r'\b%s\[.*?\]' % re.escape(scalar), scalar,
                     assignment.strip())
 
     # Step 7: Indirection

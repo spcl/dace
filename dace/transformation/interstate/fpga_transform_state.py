@@ -1,6 +1,7 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
+import copy
 import dace
 from dace import data, memlet, dtypes, registry, sdfg as sd, subsets
 from dace.sdfg import nodes
@@ -42,13 +43,6 @@ class FPGATransformState(transformation.Transformation):
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         state = graph.nodes()[candidate[FPGATransformState._state]]
-
-        # TODO: Support most of these cases
-        for edge, graph in state.all_edges_recursive():
-            # Code->Code memlets are disallowed (for now)
-            if (isinstance(edge.src, nodes.CodeNode)
-                    and isinstance(edge.dst, nodes.CodeNode)):
-                return False
 
         for node, graph in state.all_nodes_recursive():
             # Consume scopes are currently unsupported
@@ -93,14 +87,15 @@ class FPGATransformState(transformation.Transformation):
             candidate_map = map_entry.map
 
             # No more than 3 dimensions
-            if candidate_map.range.dims() > 3: return False
+            if candidate_map.range.dims() > 3:
+                return False
 
             # Map schedules that are disallowed to transform to FPGAs
             if (candidate_map.schedule == dtypes.ScheduleType.MPI
                     or candidate_map.schedule == dtypes.ScheduleType.GPU_Device
                     or candidate_map.schedule == dtypes.ScheduleType.FPGA_Device
-                    or candidate_map.schedule ==
-                    dtypes.ScheduleType.GPU_ThreadBlock):
+                    or candidate_map.schedule
+                    == dtypes.ScheduleType.GPU_ThreadBlock):
                 return False
 
             # Recursively check parent for FPGA schedules
@@ -108,10 +103,10 @@ class FPGATransformState(transformation.Transformation):
             current_node = map_entry
             while current_node is not None:
                 if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
-                        or current_node.map.schedule ==
-                        dtypes.ScheduleType.FPGA_Device
-                        or current_node.map.schedule ==
-                        dtypes.ScheduleType.GPU_ThreadBlock):
+                        or current_node.map.schedule
+                        == dtypes.ScheduleType.FPGA_Device
+                        or current_node.map.schedule
+                        == dtypes.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
@@ -126,9 +121,19 @@ class FPGATransformState(transformation.Transformation):
     def apply(self, sdfg):
         state = sdfg.nodes()[self.subgraph[FPGATransformState._state]]
 
-        # Find source/sink (data) nodes
-        input_nodes = sdutil.find_source_nodes(state)
-        output_nodes = sdutil.find_sink_nodes(state)
+        # Find source/sink (data) nodes that are relevant outside this FPGA
+        # kernel
+        shared_transients = set(sdfg.shared_transients())
+        input_nodes = [
+            n for n in sdutil.find_source_nodes(state)
+            if isinstance(n, nodes.AccessNode) and
+            (not sdfg.arrays[n.data].transient or n.data in shared_transients)
+        ]
+        output_nodes = [
+            n for n in sdutil.find_sink_nodes(state)
+            if isinstance(n, nodes.AccessNode) and
+            (not sdfg.arrays[n.data].transient or n.data in shared_transients)
+        ]
 
         fpga_data = {}
 
@@ -158,7 +163,6 @@ class FPGATransformState(transformation.Transformation):
                             continue
                         input_nodes.append(outer_node)
                         wcr_input_nodes.add(outer_node)
-
         if input_nodes:
             # create pre_state
             pre_state = sd.SDFGState('pre_' + state.label, sdfg)
@@ -184,12 +188,14 @@ class FPGATransformState(transformation.Transformation):
                         allow_conflicts=desc.allow_conflicts,
                         strides=desc.strides,
                         offset=desc.offset)
+                    fpga_array[1].location = copy.copy(desc.location)
+                    desc.location.clear()
                     fpga_data[node.data] = fpga_array
 
                 pre_node = pre_state.add_read(node.data)
                 pre_fpga_node = pre_state.add_write('fpga_' + node.data)
-                full_range = subsets.Range([(0, s - 1, 1) for s in desc.shape])
-                mem = memlet.Memlet.simple(node.data, full_range)
+                mem = memlet.Memlet(data=node.data,
+                                    subset=subsets.Range.from_array(desc))
                 pre_state.add_edge(pre_node, None, pre_fpga_node, None, mem)
 
                 if node not in wcr_input_nodes:
@@ -226,13 +232,15 @@ class FPGATransformState(transformation.Transformation):
                         allow_conflicts=desc.allow_conflicts,
                         strides=desc.strides,
                         offset=desc.offset)
+                    fpga_array[1].location = copy.copy(desc.location)
+                    desc.location.clear()
                     fpga_data[node.data] = fpga_array
                 # fpga_node = type(node)(fpga_array)
 
                 post_node = post_state.add_write(node.data)
                 post_fpga_node = post_state.add_read('fpga_' + node.data)
-                full_range = subsets.Range([(0, s - 1, 1) for s in desc.shape])
-                mem = memlet.Memlet.simple('fpga_' + node.data, full_range)
+                mem = memlet.Memlet(f"fpga_{node.data}", None,
+                                    subsets.Range.from_array(desc))
                 post_state.add_edge(post_fpga_node, None, post_node, None, mem)
 
                 fpga_node = state.add_write('fpga_' + node.data)
@@ -247,5 +255,4 @@ class FPGATransformState(transformation.Transformation):
         for src, src_conn, dst, dst_conn, mem in state.edges():
             if mem.data is not None and mem.data in fpga_data:
                 mem.data = 'fpga_' + mem.data
-
         fpga_update(sdfg, state, 0)

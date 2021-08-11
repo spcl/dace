@@ -1,7 +1,8 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+from dace import dtypes, data
 from dace.data import Array
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 
 def to_blastype(dtype):
@@ -21,6 +22,26 @@ def to_blastype(dtype):
     else:
         raise TypeError('Type %s not supported in BLAS operations' %
                         dtype.__name__)
+
+
+def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
+    """ 
+    Returns type metadata on a given dace dtype. 
+    :return: A 3 tuple of (BLAS letter, CUDA C type, Name in dace runtime).
+    """
+
+    if dtype == dtypes.float16:
+        return 'H', '__half', 'Half'
+    elif dtype == dtypes.float32:
+        return 'S', 'float', 'Float'
+    elif dtype == dtypes.float64:
+        return 'D', 'double', 'Double'
+    elif dtype == dtypes.complex64:
+        return 'C', 'cuComplex', 'Complex64'
+    elif dtype == dtypes.complex128:
+        return 'Z', 'cuDoubleComplex', 'Complex128'
+    else:
+        raise TypeError('Type %s not supported in BLAS operations' % str(dtype))
 
 
 def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
@@ -142,3 +163,15 @@ def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
         raise Exception("sCM or sCN should be 1")
 
     return opts[optA + optB + optC]
+
+
+def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
+    """ If schedule cannot access all passed descriptors, through an error.
+
+        :param schedule: the schedule.
+        :param descs: the descriptors to check.
+    """
+    for desc in descs:
+        if not dtypes.can_access(schedule, desc.storage):
+            raise ValueError(
+                f"Schedule mismatch: {schedule} cannot access {desc.storage}")

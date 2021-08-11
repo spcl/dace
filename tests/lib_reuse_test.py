@@ -1,25 +1,28 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import dace
+from dace.frontend.python.parser import DaceProgram
 from dace.codegen.exceptions import CompilationError
+from dace.sdfg.utils import load_precompiled_sdfg
 import numpy as np
+import os
 
 
 # Dynamically creates DaCe programs with the same name
-def program_generator(size, factor):
+def program_generator(size: int, factor: float) -> DaceProgram:
     @dace.program(dace.float64[size],
                   dace.float64[size],
                   size=size,
                   factor=factor)
-    def program(input, output):
+    def lib_reuse(input, output):
         @dace.map(_[0:size])
         def tasklet(i):
             a << input[i]
             b >> output[i]
             b = a * factor
 
-    return program
+    return lib_reuse
 
 
 def test_reload():
@@ -52,5 +55,26 @@ def test_reload():
     print("Differences:", diff1, diff2)
     assert (diff1 < 1e-5 and diff2 < 1e-5)
 
+
+def test_load_precompiled():
+    prog = program_generator(10, 2.0)
+    sdfg = prog.to_sdfg()
+    func1 = sdfg.compile()
+    func2 = load_precompiled_sdfg(sdfg.build_folder)
+
+    inp = np.random.rand(10).astype(np.float64)
+    output_one = np.zeros(10, dtype=np.float64)
+    output_two = np.zeros(10, dtype=np.float64)
+
+    func1(input=inp, output=output_one)
+    func2(input=inp, output=output_two)
+
+    assert (np.allclose(output_one, output_two))
+
+    del func1
+    del func2
+
+
 if __name__ == '__main__':
     test_reload()
+    test_load_precompiled()

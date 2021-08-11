@@ -1,10 +1,10 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
 
 @dace.program
-def control_flow(A: dace.float64[10]):
+def addstate(A: dace.float64[10]):
     if A[0] < 0.5:
         for i in range(5):
             A[i] *= 2
@@ -20,7 +20,7 @@ def _configure():
         expected[0:5] *= 2
     else:
         expected[5:10] *= 2
-    sdfg = control_flow.to_sdfg()
+    sdfg = addstate.to_sdfg()
     return sdfg, A, expected
 
 

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes of a single SDFG state and dataflow subgraphs. """
 
 import collections
@@ -11,8 +11,9 @@ from dace.sdfg.graph import (OrderedMultiDiConnectorGraph, MultiConnectorEdge,
                              SubgraphView)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
-from dace.properties import (Property, DictProperty, SubsetProperty,
-                             SymbolicProperty, CodeBlock, make_properties)
+from dace.properties import (EnumProperty, Property, DictProperty,
+                             SubsetProperty, SymbolicProperty, CodeBlock,
+                             make_properties)
 from inspect import getframeinfo, stack
 import itertools
 from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple,
@@ -30,8 +31,23 @@ def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
         return old_dinfo
 
     caller = getframeinfo(stack()[2][0])
-    return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0,
-                            caller.filename)
+    return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
+
+
+def _make_iterators(ndrange):
+    # Input can either be a dictionary or a list of pairs
+    if isinstance(ndrange, list):
+        params = [k for k, v in ndrange]
+        ndrange = {k: v for k, v in ndrange}
+    else:
+        params = list(ndrange.keys())
+
+    if ndrange and isinstance(next(iter(ndrange.values())), tuple):
+        map_range = sbs.Range([ndrange[p] for p in params])
+    else:
+        map_range = SubsetProperty.from_string(", ".join(
+            [ndrange[p] for p in params]))
+    return params, map_range
 
 
 class StateGraphView(object):
@@ -79,8 +95,7 @@ class StateGraphView(object):
     ###################################################################
     # Memlet-tracking methods
 
-    def memlet_path(self,
-                    edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
+    def memlet_path(self, edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
 
@@ -126,8 +141,7 @@ class StateGraphView(object):
                 if not curedge.dst_conn.startswith("IN_"):  # Map variable
                     break
                 next_edge = next(e for e in state.out_edges(curedge.dst)
-                                 if e.src_conn == "OUT_" +
-                                 curedge.dst_conn[3:])
+                                 if e.src_conn == "OUT_" + curedge.dst_conn[3:])
                 result.append(next_edge)
                 curedge = next_edge
 
@@ -148,8 +162,7 @@ class StateGraphView(object):
             (isinstance(edge.dst, nd.EntryNode) and edge.dst_conn is not None
              and edge.dst_conn.startswith('IN_'))):
             propagate_forward = True
-        if ((isinstance(edge.src, nd.ExitNode) and edge.src_conn is not None)
-                or
+        if ((isinstance(edge.src, nd.ExitNode) and edge.src_conn is not None) or
             (isinstance(edge.dst, nd.ExitNode) and edge.dst_conn is not None)):
             propagate_backward = True
 
@@ -224,7 +237,7 @@ class StateGraphView(object):
 
     def in_edges_by_connector(
             self, node: nd.Node,
-            connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+            connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
         """ Returns a generator over edges entering the given connector of the
             given node.
             :param node: Destination node of edges.
@@ -234,7 +247,7 @@ class StateGraphView(object):
 
     def out_edges_by_connector(
             self, node: nd.Node,
-            connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+            connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
         """ Returns a generator over edges exiting the given connector of the
             given node.
             :param node: Source node of edges.
@@ -242,8 +255,9 @@ class StateGraphView(object):
         """
         return (e for e in self.out_edges(node) if e.src_conn == connector)
 
-    def edges_by_connector(self, node: nd.Node,
-                           connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+    def edges_by_connector(
+            self, node: nd.Node,
+            connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
         """ Returns a generator over edges entering or exiting the given
             connector of the given node.
             :param node: Source/destination node of edges.
@@ -287,10 +301,6 @@ class StateGraphView(object):
                 exit_node = next(v for v in scopenodes
                                  if isinstance(v, nd.ExitNode))
             scope = ScopeTree(node, exit_node)
-            scope.defined_vars = set(
-                symbolic.pystr_to_symbolic(s)
-                for s in (self.symbols_defined_at(node).keys()
-                          | sdfg_symbols))
             result[node] = scope
 
         # Scope parents and children
@@ -335,9 +345,22 @@ class StateGraphView(object):
             node_queue = collections.deque(self.source_nodes())
             eq = _scope_dict_inner(self, node_queue, None, False, result)
 
-            # Sanity check
+            # Sanity checks
             if validate and len(eq) != 0:
+                cycles = list(self.find_cycles())
+                if cycles:
+                    raise ValueError('Found cycles in state %s: %s' %
+                                     (self.label, cycles))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
+
+            if validate and len(result) != self.number_of_nodes():
+                cycles = list(self.find_cycles())
+                if cycles:
+                    raise ValueError('Found cycles in state %s: %s' %
+                                     (self.label, cycles))
+                leftover_nodes = set(self.nodes()) - result.keys()
+                raise RuntimeError(
+                    "Some nodes were not processed: {}".format(leftover_nodes))
 
             # Cache result
             self._scope_dict_toparent_cached = result
@@ -371,9 +394,24 @@ class StateGraphView(object):
             node_queue = collections.deque(self.source_nodes())
             eq = _scope_dict_inner(self, node_queue, None, True, result)
 
-            # Sanity check
+            # Sanity checks
             if validate and len(eq) != 0:
+                cycles = self.find_cycles()
+                if cycles:
+                    raise ValueError('Found cycles in state %s: %s' %
+                                     (self.label, list(cycles)))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
+
+            entry_nodes = set(n for n in self.nodes()
+                              if isinstance(n, nd.EntryNode)) | {None}
+            if (validate and len(result) != len(entry_nodes)):
+                cycles = self.find_cycles()
+                if cycles:
+                    raise ValueError('Found cycles in state %s: %s' %
+                                     (self.label, list(cycles)))
+                raise RuntimeError(
+                    "Some nodes were not processed: {}".format(entry_nodes -
+                                                               result.keys()))
 
             # Cache result
             self._scope_dict_tochildren_cached = result
@@ -407,14 +445,12 @@ class StateGraphView(object):
                 freesyms |= set(map(str, n.desc(sdfg).free_symbols))
 
             freesyms |= n.free_symbols
-
         # Free symbols from memlets
         for e in self.edges():
             freesyms |= e.data.free_symbols
 
         # Do not consider SDFG constants as symbols
         new_symbols.update(set(sdfg.constants.keys()))
-
         return freesyms - new_symbols
 
     def defined_symbols(self) -> Dict[str, dt.Data]:
@@ -440,7 +476,7 @@ class StateGraphView(object):
             defined_syms.update(edge.data.new_symbols(defined_syms))
 
         # Add scope symbols all the way to the subgraph
-        sdict = self.scope_dict()
+        sdict = state.scope_dict()
         scope_nodes = []
         for source_node in self.source_nodes():
             curnode = source_node
@@ -449,7 +485,7 @@ class StateGraphView(object):
                 scope_nodes.append(curnode)
 
         for snode in dtypes.deduplicate(list(reversed(scope_nodes))):
-            defined_syms.update(snode.new_symbols(defined_syms))
+            defined_syms.update(snode.new_symbols(sdfg, state, defined_syms))
 
         return defined_syms
 
@@ -481,9 +517,6 @@ class StateGraphView(object):
                         # skip empty memlets
                         if e.data.is_empty():
                             continue
-                        if n.data in ws:
-                            if any(s.covers(e.data.subset) for s in ws[n.data]):
-                                continue
                         rs[n.data].append(e.data.subset)
             # Union all subgraphs, so an array that was excluded from the read
             # set because it was written first is still included if it is read
@@ -648,10 +681,7 @@ class StateGraphView(object):
             for k, v in self.arglist().items()
         ]
 
-    def scope_subgraph(self,
-                       entry_node,
-                       include_entry=True,
-                       include_exit=True):
+    def scope_subgraph(self, entry_node, include_entry=True, include_exit=True):
         from dace.sdfg.scope import _scope_subgraph
         return _scope_subgraph(self, entry_node, include_entry, include_exit)
 
@@ -683,7 +713,8 @@ class StateGraphView(object):
 
 
 @make_properties
-class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView):
+class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
+                StateGraphView):
     """ An acyclic dataflow multigraph in an SDFG, corresponding to a
         single state in the SDFG state machine. """
 
@@ -695,8 +726,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                       default=False,
                       desc="Do not synchronize at the end of the state")
 
-    instrument = Property(
-        choices=dtypes.InstrumentationType,
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation)
 
@@ -727,9 +758,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             :param sdfg: A reference to the parent SDFG.
             :param debuginfo: Source code locator for debugging.
         """
+        from dace.sdfg.sdfg import SDFG  # Avoid import loop
         super(SDFGState, self).__init__()
         self._label = label
-        self._parent = sdfg
+        self._parent: SDFG = sdfg
         self._graph = self  # Allowing MemletTrackingView mixin to work
         self._clear_scopedict_cache()
         self._debuginfo = debuginfo
@@ -792,7 +824,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
     def add_node(self, node):
         if not isinstance(node, nd.Node):
-            raise TypeError("Expected Node, got " + str(type(node)) + " (" +
+            raise TypeError("Expected Node, got " + type(node).__name__ + " (" +
                             str(node) + ")")
         self._clear_scopedict_cache()
         return super(SDFGState, self).add_node(node)
@@ -819,8 +851,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                             str(type(memlet)))
 
         self._clear_scopedict_cache()
-        result = super(SDFGState, self).add_edge(u, u_connector, v,
-                                                 v_connector, memlet)
+        result = super(SDFGState, self).add_edge(u, u_connector, v, v_connector,
+                                                 memlet)
         memlet.try_initialize(self.parent, self, result)
         return result
 
@@ -844,7 +876,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                 for k, v in sorted(
                     self.scope_children(return_ids=True).items())
             }
-        except RuntimeError:
+        except (RuntimeError, ValueError):
             scope_dict = {}
 
         # Try to initialize edges before serialization
@@ -961,8 +993,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         # Add symbols from inter-state edges along the path to the state
         try:
             start_state = sdfg.start_state
-            for path in sdfg.all_simple_paths(start_state, self,
-                                              as_edges=True):
+            for path in sdfg.all_simple_paths(start_state, self, as_edges=True):
                 for e in path:
                     symbols.update(e.data.new_symbols(symbols))
         except ValueError:
@@ -1036,6 +1067,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         code: str,
         language: dtypes.Language = dtypes.Language.Python,
+        state_fields: Optional[List[str]] = None,
+        code_global: str = "",
+        code_init: str = "",
+        code_exit: str = "",
         location: dict = None,
         debuginfo=None,
     ):
@@ -1054,6 +1089,22 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             outputs,
             code,
             language,
+            state_fields=state_fields,
+            code_global=code_global,
+            code_init=code_init,
+            code_exit=code_exit,
+            location=location,
+            debuginfo=debuginfo,
+        ) if language != dtypes.Language.SystemVerilog else nd.RTLTasklet(
+            name,
+            inputs,
+            outputs,
+            code,
+            language,
+            state_fields=state_fields,
+            code_global=code_global,
+            code_init=code_init,
+            code_exit=code_exit,
             location=location,
             debuginfo=debuginfo,
         )
@@ -1127,21 +1178,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
         return s
 
-    def _make_iterators(self, ndrange):
-        # Input can either be a dictionary or a list of pairs
-        if isinstance(ndrange, list):
-            params = [k for k, v in ndrange]
-            ndrange = {k: v for k, v in ndrange}
-        else:
-            params = list(ndrange.keys())
-        
-        if ndrange and isinstance(next(iter(ndrange.values())), tuple):
-            map_range = sbs.Range([ndrange[p] for p in params])
-        else:
-            map_range = SubsetProperty.from_string(", ".join(
-                [ndrange[p] for p in params]))
-        return params, map_range
-
     def add_map(
         self,
         name,
@@ -1161,7 +1197,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         """
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
         map = nd.Map(name,
-                     *self._make_iterators(ndrange),
+                     *_make_iterators(ndrange),
                      schedule=schedule,
                      unroll=unroll,
                      debuginfo=debuginfo)
@@ -1276,7 +1312,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             debuginfo=debuginfo,
         )
         map = nd.Map(map_name,
-                     *self._make_iterators(map_ranges),
+                     *_make_iterators(map_ranges),
                      schedule=schedule,
                      unroll=unroll_map,
                      debuginfo=debuginfo)
@@ -1290,8 +1326,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         if external_edges:
             input_nodes = input_nodes or {}
             output_nodes = output_nodes or {}
-            input_data = set(memlet.data for memlet in inputs.values())
-            output_data = set(memlet.data for memlet in outputs.values())
+            input_data = dtypes.deduplicate(
+                [memlet.data for memlet in inputs.values()])
+            output_data = dtypes.deduplicate(
+                [memlet.data for memlet in outputs.values()])
             for inp in input_data:
                 if inp in input_nodes:
                     inpdict[inp] = input_nodes[inp]
@@ -1303,13 +1341,15 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                 else:
                     outdict[out] = self.add_write(out)
 
+        edges = []
+
         # Connect inputs from map to tasklet
         tomemlet = {}
         for name, memlet in inputs.items():
             # Set memlet local name
             memlet.name = name
             # Add internal memlet edge
-            self.add_edge(map_entry, None, tasklet, name, memlet)
+            edges.append(self.add_edge(map_entry, None, tasklet, name, memlet))
             tomemlet[memlet.data] = memlet
 
         # If there are no inputs, add empty memlet
@@ -1324,8 +1364,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                                                     map_entry, True)
                 else:
                     outer_memlet = tomemlet[inp]
-                self.add_edge(inpnode, None, map_entry, "IN_" + inp,
-                              outer_memlet)
+                edges.append(
+                    self.add_edge(inpnode, None, map_entry, "IN_" + inp,
+                                  outer_memlet))
 
                 # Add connectors to internal edges
                 for e in self.out_edges(map_entry):
@@ -1342,7 +1383,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             # Set memlet local name
             memlet.name = name
             # Add internal memlet edge
-            self.add_edge(tasklet, name, map_exit, None, memlet)
+            edges.append(self.add_edge(tasklet, name, map_exit, None, memlet))
             tomemlet[memlet.data] = memlet
 
         # If there are no outputs, add empty memlet
@@ -1357,8 +1398,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                                                     map_exit, True)
                 else:
                     outer_memlet = tomemlet[out]
-                self.add_edge(map_exit, "OUT_" + out, outnode, None,
-                              outer_memlet)
+                edges.append(
+                    self.add_edge(map_exit, "OUT_" + out, outnode, None,
+                                  outer_memlet))
 
                 # Add connectors to internal edges
                 for e in self.in_edges(map_exit):
@@ -1368,6 +1410,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                 # Add connectors to map entry
                 map_exit.add_in_connector("IN_" + out)
                 map_exit.add_out_connector("OUT_" + out)
+
+        # Try to initialize memlets
+        for edge in edges:
+            edge.data.try_initialize(self.parent, self, edge)
 
         return tasklet, map_entry, map_exit
 
@@ -1406,6 +1452,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                      init_overlap=False,
                      drain_size=0,
                      drain_overlap=False,
+                     additional_iterators={},
                      schedule=dtypes.ScheduleType.FPGA_Device,
                      debuginfo=None,
                      **kwargs) -> Tuple[nd.PipelineEntry, nd.PipelineExit]:
@@ -1426,15 +1473,20 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             :param drain_size:    Number of iterations of draining phase.
             :param drain_overlap: Whether the draining phase overlaps with
                                   the "main" streaming phase of the loop.
+            :param additional_iterators: a dictionary containing additional
+                                  iterators that will be created for this scope and that are not
+                                  automatically managed by the scope code.
+                                  The dictionary takes the form 'variable_name' -> init_value
             :return: (map_entry, map_exit) node 2-tuple
         """
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
         pipeline = nd.Pipeline(name,
-                               *self._make_iterators(ndrange),
+                               *_make_iterators(ndrange),
                                init_size=init_size,
                                init_overlap=init_overlap,
                                drain_size=drain_size,
                                drain_overlap=drain_overlap,
+                               additional_iterators=additional_iterators,
                                schedule=schedule,
                                debuginfo=debuginfo,
                                **kwargs)
@@ -1547,6 +1599,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                 external_memlet,
             )
 
+        # Try to initialize memlets
+        iedge.data.try_initialize(self.parent, self, iedge)
+        eedge.data.try_initialize(self.parent, self, eedge)
+
         return (iedge, eedge)
 
     def add_memlet_path(self,
@@ -1593,8 +1649,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         # Innermost edge memlet
         cur_memlet = memlet
 
-        cur_memlet._is_data_src = (isinstance(src_node, nd.AccessNode) and
-                                   src_node.data == cur_memlet.data)
+        cur_memlet._is_data_src = (isinstance(src_node, nd.AccessNode)
+                                   and src_node.data == cur_memlet.data)
 
         # Verify that connectors exist
         if (not memlet.is_empty() and hasattr(edges[0].src, "out_connectors")
@@ -1680,7 +1736,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
         path = self.memlet_path(edge)
 
-        is_read = isinstance(path[0], nd.AccessNode)
+        is_read = isinstance(path[0].src, nd.AccessNode)
         if is_read:
             # Traverse from connector to access node, so we can check if it's
             # safe to delete edges going out of a scope

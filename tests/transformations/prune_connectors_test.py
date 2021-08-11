@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
 import numpy as np
 import os
@@ -51,6 +51,7 @@ def make_sdfg():
         # Read
 
         sdfg_outer.add_array(f"read_{s}", [n, n], dace.uint16)
+        sdfg_outer.add_array(f"read_{s}_outer", [n, n], dace.uint16)
         sdfg_middle.add_array(f"read_{s}_middle", [n, n], dace.uint16)
         sdfg_inner.add_array(f"read_{s}_inner", [n], dace.uint16)
 
@@ -71,6 +72,7 @@ def make_sdfg():
         # Write
 
         sdfg_outer.add_array(f"write_{s}", [n, n], dace.uint16)
+        sdfg_outer.add_array(f"write_{s}_outer", [n, n], dace.uint16)
         sdfg_middle.add_array(f"write_{s}_middle", [n, n], dace.uint16)
         sdfg_inner.add_array(f"write_{s}_inner", [n], dace.uint16)
 
@@ -118,16 +120,18 @@ def make_sdfg():
     isolated_nsdfg.symbol_mapping["i"] = "i"
     isolated_entry, isolated_exit = state_outer.add_map("isolated",
                                                         {"i": "0:N"})
-    state_outer.add_memlet_path(isolated_read,
-                                isolated_entry,
-                                isolated_nsdfg,
-                                dst_conn="read_unused_isolated",
-                                memlet=dace.Memlet("read_unused[0:N, 0:N]"))
-    state_outer.add_memlet_path(isolated_nsdfg,
-                                isolated_exit,
-                                isolated_write,
-                                src_conn="write_unused_isolated",
-                                memlet=dace.Memlet("write_unused[0:N, 0:N]"))
+    state_outer.add_memlet_path(
+        isolated_read,
+        isolated_entry,
+        isolated_nsdfg,
+        dst_conn="read_unused_isolated",
+        memlet=dace.Memlet("read_unused_outer[0:N, 0:N]"))
+    state_outer.add_memlet_path(
+        isolated_nsdfg,
+        isolated_exit,
+        isolated_write,
+        src_conn="write_unused_isolated",
+        memlet=dace.Memlet("write_unused_outer[0:N, 0:N]"))
     isolated_state = isolated_sdfg.add_state("isolated")
     isolated_state.add_tasklet("isolated", {}, {},
                                """\
@@ -159,8 +163,12 @@ def test_prune_connectors(n=None):
 
     sdfg(read_used=arr_in,
          read_unused=arr_in,
+         read_used_outer=arr_in,
+         read_unused_outer=arr_in,
          write_used=arr_out,
          write_unused=arr_out,
+         write_used_outer=arr_out,
+         write_unused_outer=arr_out,
          N=n)
 
     assert np.allclose(arr_out, arr_in + 1)

@@ -1,8 +1,9 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 from functools import partial
 
 from timeit import default_timer as timer
+import time
 import ast
 import numpy as np
 import sympy
@@ -13,11 +14,11 @@ from dace import dtypes
 from dace.config import Config
 
 
-def timethis(program, title, flop_count, f, *args, **kwargs):
+def timethis(sdfg, title, flop_count, f, *args, **kwargs):
     """ Runs a function multiple (`DACE_treps`) times, logs the running times 
         to a file, and prints the median time (with FLOPs if given).
-        :param program: The title of the measurement.
-        :param title: A sub-title of the measurement.
+        :param sdfg: The SDFG belonging to the measurement.
+        :param title: A title of the measurement.
         :param flop_count: Number of floating point operations in `program`.
                            If greater than zero, produces a median FLOPS 
                            report.
@@ -29,6 +30,7 @@ def timethis(program, title, flop_count, f, *args, **kwargs):
 
     start = timer()
     REPS = int(Config.get('treps'))
+
     times = [start] * (REPS + 1)
     ret = None
     print('\nProfiling...')
@@ -36,7 +38,7 @@ def timethis(program, title, flop_count, f, *args, **kwargs):
     if Config.get_bool('profiling_status'):
         try:
             from tqdm import tqdm
-            iterator = tqdm(iterator, desc="Profiling")
+            iterator = tqdm(iterator, desc="Profiling", file=sys.stdout)
         except ImportError:
             print('WARNING: Cannot show profiling progress, missing optional '
                 'dependency tqdm...\n\tTo see a live progress bar please install '
@@ -52,13 +54,18 @@ def timethis(program, title, flop_count, f, *args, **kwargs):
 
     problem_size = sys.argv[1] if len(sys.argv) >= 2 else 0
 
-    if not os.path.isfile('results.log'):
-        with open('results.log', 'w') as f:
-            f.write('Program\tOptimization\tProblem_Size\tRuntime_sec\n')
+    profiling_dir = os.path.join(sdfg.build_folder, 'profiling')
+    os.makedirs(profiling_dir, exist_ok=True)
+    timestamp_string = str(int(time.time() * 1000))
+    outfile_path = os.path.join(
+        profiling_dir,
+        'results-' + timestamp_string + '.csv'
+    )
 
-    with open('results.log', 'w') as f:
+    with open(outfile_path, 'w') as f:
+        f.write('Program,Optimization,Problem_Size,Runtime_sec\n')
         for d in diffs:
-            f.write('%s\t%s\t%s\t%.8f\n' % (program, title, problem_size, d))
+            f.write('%s,%s,%s,%.8f\n' % (sdfg.name, title, problem_size, d))
 
     if flop_count > 0:
         gflops_arr = (flop_count / diffs) * 1e-9

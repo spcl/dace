@@ -1,9 +1,10 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+from functools import lru_cache
 import sympy
 import pickle
 import re
-from typing import Dict, Optional, Set, Union
+from typing import Any, Callable, Dict, Optional, Set, Tuple, Union
 import warnings
 import numpy
 
@@ -145,6 +146,26 @@ class SymExpr(object):
         else:
             self._approx_expr = pystr_to_symbolic(approx_expr)
 
+    def __new__(cls, *args, **kwargs):
+        main_expr, approx_expr = None, None
+        if len(args) == 0:
+            if 'main_expr' in kwargs:
+                main_expr = kwargs['main_expr']
+            if 'approx_expr' in kwargs:
+                approx_expr = kwargs['approx_expr']
+        if len(args) == 1:
+            main_expr = args[0]
+            if 'approx_expr' in kwargs:
+                approx_expr = kwargs['approx_expr']
+        if len(args) == 2:
+            main_expr, approx_expr = args
+        # If values are equivalent, create a normal symbolic expression
+        if main_expr and (approx_expr is None or main_expr == approx_expr):
+            if isinstance(main_expr, str):
+                return pystr_to_symbolic(main_expr)
+            return main_expr
+        return super(SymExpr, cls).__new__(cls)
+
     @property
     def expr(self):
         return self._main_expr
@@ -237,6 +258,20 @@ class SymExpr(object):
         if isinstance(other, SymExpr):
             return self.expr == other.expr and self.approx == other.approx
         return self == pystr_to_symbolic(other)
+    
+    def __lt__(self, other):
+        if isinstance(other, sympy.Expr):
+            return self.expr < other
+        if isinstance(other, SymExpr):
+            return self.expr < other.expr
+        return self < pystr_to_symbolic(other)
+    
+    def __gt__(self, other):
+        if isinstance(other, sympy.Expr):
+            return self.expr > other
+        if isinstance(other, SymExpr):
+            return self.expr > other.expr
+        return self > pystr_to_symbolic(other)
 
 
 # Type hint for symbolic expressions
@@ -368,6 +403,27 @@ def overapproximate(expr):
     return expr
 
 
+def resolve_symbol_to_constant(symb, start_sdfg):
+    """
+    Tries to resolve a symbol to constant, by looking up into SDFG's constants,
+    following nested SDFGs hierarchy if necessary.
+    :param symb: symbol to resolve to constant
+    :param start_sdfg: starting SDFG
+    :return: the constant value if the symbol is resolved, None otherwise
+    """
+    if not issymbolic(symb):
+        return symb
+    else:
+        sdfg = start_sdfg
+        while sdfg is not None:
+            if not issymbolic(symb, sdfg.constants):
+                return evaluate(symb, sdfg.constants)
+            else:
+                sdfg = sdfg.parent_sdfg
+        # can not be resolved
+        return None
+
+
 def symbols_in_ast(tree):
     """ Walks an AST and finds all names, excluding function names. """
     to_visit = list(tree.__dict__.items())
@@ -425,7 +481,11 @@ def sympy_to_dace(exprs, symbol_map=None):
 
 def is_sympy_userfunction(expr):
     """ Returns True if the expression is a SymPy function. """
-    return issubclass(type(type(expr)), sympy.function.UndefinedFunction)
+    try:
+        return issubclass(type(type(expr)),
+                          sympy.core.function.UndefinedFunction)
+    except AttributeError:
+        return issubclass(type(type(expr)), sympy.function.UndefinedFunction)
 
 
 def swalk(expr, enter_functions=False):
@@ -443,7 +503,7 @@ def swalk(expr, enter_functions=False):
 
 _builtin_userfunctions = {
     'int_floor', 'int_ceil', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq',
-    'NotEq', 'Ne'
+    'NotEq', 'Ne', 'AND', 'OR'
 }
 
 
@@ -453,6 +513,8 @@ def contains_sympy_functions(expr):
         if str(expr.func) in _builtin_userfunctions:
             return False
         return True
+    if not isinstance(expr, sympy.Basic):
+        return False
     for arg in expr.args:
         if contains_sympy_functions(arg):
             return True
@@ -464,6 +526,8 @@ def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
         if dtypes.validate_name(expr):
             return {expr}
         expr = pystr_to_symbolic(expr)
+    if not isinstance(expr, sympy.Basic):
+        return set()
 
     result = {str(k) for k in expr.free_symbols}
     for atom in swalk(expr):
@@ -476,13 +540,23 @@ def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
 def sympy_numeric_fix(expr):
     """ Fix for printing out integers as floats with ".00000000".
         Converts the float constants in a given expression to integers. """
-    if not isinstance(expr, sympy.Basic):
-        if int(expr) == expr:
-            return int(expr)
-        return expr
-
-    if isinstance(expr, sympy.Number) and expr == int(expr):
-        return int(expr)
+    if not isinstance(expr, sympy.Basic) or isinstance(expr, sympy.Number):
+        try:
+            # NOTE: If expr is ~ 1.8e308, i.e. infinity, `numpy.int64(expr)`
+            # will throw OverflowError (which we want).
+            # `int(1.8e308) == expr` evaluates unfortunately to True
+            # because Python has variable-bit integers.
+            if numpy.int64(expr) == expr:
+                return int(expr)
+        except OverflowError:
+            try:
+                if numpy.float64(expr) == expr:
+                    return expr
+            except OverflowError:
+                if expr > 0:
+                    return sympy.oo
+                else:
+                    return -sympy.oo
     return expr
 
 
@@ -500,6 +574,11 @@ def sympy_intdiv_fix(expr):
     b = sympy.Wild('b', properties=[lambda k: k.is_Symbol or k.is_Integer])
     c = sympy.Wild('c')
     d = sympy.Wild('d')
+    e = sympy.Wild('e',
+                   properties=[
+                       lambda k: isinstance(k, sympy.Basic) and not isinstance(
+                           k, sympy.Atom)
+                   ])
     int_ceil = sympy.Function('int_ceil')
     int_floor = sympy.Function('int_floor')
 
@@ -536,6 +615,12 @@ def sympy_intdiv_fix(expr):
                 nexpr = nexpr.subs(ceil, m[a] * int_ceil(m[c], m[d]))
                 processed += 1
                 continue
+            # Ceiling with composite expression at the numerator
+            m = ceil.match(sympy.ceiling(e / b))
+            if m is not None:
+                nexpr = nexpr.subs(ceil, int_ceil(m[e], m[b]))
+                processed += 1
+                continue
         for floor in nexpr.find(sympy.floor):
             # Simple floor
             m = floor.match(sympy.floor(a / b))
@@ -557,7 +642,12 @@ def sympy_intdiv_fix(expr):
                                                                     m[d])))
                 processed += 1
                 continue
-
+            # floor with composite expression
+            m = floor.match(sympy.floor(e / b))
+            if m is not None:
+                nexpr = nexpr.subs(floor, int_floor(m[e], m[b]))
+                processed += 1
+                continue
     return nexpr
 
 
@@ -574,7 +664,7 @@ def sympy_divide_fix(expr):
     processed = 1
     while processed > 0:
         processed = 0
-        for candidate in nexpr.find(sympy.mul.Mul):
+        for candidate in nexpr.find(sympy.Mul):
             for i, arg in enumerate(candidate.args):
                 if isinstance(arg, sympy.Number) and abs(arg) >= 1:
                     continue
@@ -586,8 +676,7 @@ def sympy_divide_fix(expr):
             nexpr = nexpr.subs(
                 candidate,
                 int_floor(
-                    sympy.mul.Mul(*(candidate.args[:ri] +
-                                    candidate.args[ri + 1:])),
+                    sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1:])),
                     int(1 / candidate.args[ri])))
             processed += 1
 
@@ -622,6 +711,20 @@ class SympyBooleanConverter(ast.NodeTransformer):
     Replaces boolean operations with the appropriate SymPy functions to avoid
     non-symbolic evaluation.
     """
+    _ast_to_sympy_comparators = {
+        ast.Eq: 'Eq',
+        ast.Gt: 'Gt',
+        ast.GtE: 'Ge',
+        ast.Lt: 'Lt',
+        ast.LtE: 'Le',
+        ast.NotEq: 'Ne',
+        # Python-specific
+        ast.In: 'In',
+        ast.Is: 'Is',
+        ast.IsNot: 'IsNot',
+        ast.NotIn: 'NotIn',
+    }
+
     def visit_UnaryOp(self, node):
         if isinstance(node.op, ast.Not):
             func_node = ast.copy_location(
@@ -646,13 +749,25 @@ class SympyBooleanConverter(ast.NodeTransformer):
         op = node.ops[0]
         arguments = [node.left, node.comparators[0]]
         func_node = ast.copy_location(
-            ast.Name(id=type(op).__name__, ctx=ast.Load()), node)
+            ast.Name(
+                id=SympyBooleanConverter._ast_to_sympy_comparators[type(op)],
+                ctx=ast.Load()), node)
         new_node = ast.Call(func=func_node,
                             args=[self.visit(arg) for arg in arguments],
                             keywords=[])
         return ast.copy_location(new_node, node)
 
+    def visit_Constant(self, node):
+        if node.value is None:
+            return ast.copy_location(ast.Name(id='NoneSymbol', ctx=ast.Load()),
+                                     node)
+        return self.generic_visit(node)
 
+    def visit_NameConstant(self, node):
+        return self.visit_Constant(node)
+
+
+@lru_cache(2048)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
     from dace.frontend.python.astutils import unparse  # Avoid import loops
@@ -667,7 +782,15 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         'min': sympy.Min,
         'max': sympy.Max,
         'True': sympy.true,
-        'False': sympy.false
+        'False': sympy.false,
+        'GtE': sympy.Ge,
+        'LtE': sympy.Le,
+        'NotEq': sympy.Ne,
+        # Convert and/or to special sympy functions to avoid boolean evaluation
+        'And': sympy.Function('AND'),
+        'Or': sympy.Function('OR'),
+        'var': sympy.Symbol('var'),
+        'root': sympy.Symbol('root'),
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
@@ -675,8 +798,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
 
     # Sympy processes "not/and/or" as direct evaluation. Replace with
     # And/Or(x, y), Not(x)
-    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b|==|!=',
-                                           expr):
+    if isinstance(expr, str) and re.search(
+            r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=', expr):
         expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
@@ -691,15 +814,27 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
                              symbol_map)
 
 
+@lru_cache(maxsize=2048)
+def simplify(expr: SymbolicType) -> SymbolicType:
+    return sympy.simplify(expr)
+
+
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
+    def __init__(self, arrays, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.arrays = arrays or set()
+
     def _print_Float(self, expr):
-        if int(expr) == expr:
-            return str(int(expr))
+        nf = sympy_numeric_fix(expr)
+        if isinstance(nf, int) or nf != expr:
+            return self._print(nf)
         return super()._print_Float(expr)
 
     def _print_Function(self, expr):
+        if str(expr.func) in self.arrays:
+            return f'{expr.func}[{expr.args[0]}]'
         if str(expr.func) == 'int_floor':
             return '((%s) / (%s))' % (self._print(
                 expr.args[0]), self._print(expr.args[1]))
@@ -720,21 +855,52 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_Not(self, expr):
         return '(not (%s))' % self._print(expr.args[0])
 
+    def _print_Infinity(self, expr):
+        return 'INFINITY'
 
-def symstr(sym):
-    """ Convert a symbolic expression to a C++ compilable expression. """
+    def _print_NegativeInfinity(self, expr):
+        return '-INFINITY'
+
+    def _print_Symbol(self, expr):
+        if expr.name == 'NoneSymbol':
+            return 'nullptr'
+        return super()._print_Symbol(expr)
+
+    def _print_Pow(self, expr):
+        base = self._print(expr.args[0])
+        exponent = self._print(expr.args[1])
+        try:
+            int_exp = int(exponent)
+            assert (int_exp > 0)
+            res = "({})".format(base)
+            for _ in range(1, int_exp):
+                res += "*({})".format(base)
+            return res
+        except ValueError:
+            return "dace::math::pow({f}, {s})".format(
+                f=self._print(expr.args[0]), s=self._print(expr.args[1]))
+
+
+def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
+    """ 
+    Convert a symbolic expression to a C++ compilable expression. 
+    :param sym: Symbolic expression to convert.
+    :param arrayexprs: Set of names of arrays, used to convert SymPy 
+                       user-functions back to array expressions.
+    :return: C++-compilable expression.
+    """
     def repstr(s):
         return s.replace('Min', 'min').replace('Max', 'max')
 
     if isinstance(sym, SymExpr):
-        return symstr(sym.expr)
+        return symstr(sym.expr, arrayexprs)
 
     try:
         sym = sympy_numeric_fix(sym)
         sym = sympy_intdiv_fix(sym)
         sym = sympy_divide_fix(sym)
 
-        sstr = DaceSympyPrinter().doprint(sym)
+        sstr = DaceSympyPrinter(arrayexprs).doprint(sym)
 
         if isinstance(sym,
                       symbol) or isinstance(sym, sympy.Symbol) or isinstance(
@@ -743,8 +909,53 @@ def symstr(sym):
         else:
             return '(' + repstr(sstr) + ')'
     except (AttributeError, TypeError, ValueError):
-        sstr = DaceSympyPrinter().doprint(sym)
+        sstr = DaceSympyPrinter(arrayexprs).doprint(sym)
         return '(' + repstr(sstr) + ')'
+
+
+def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType,
+                                                               str]],
+                 replace_callback: Callable[[Dict[str, str]], None]) -> None:
+    """
+    Safely replaces symbolic expressions that may clash with each other via a
+    two-step replacement. For example, the mapping ``{M: N, N: M}`` would be
+    translated to replacing ``{N, M} -> __dacesym_{N, M}`` followed by
+    ``__dacesym{N, M} -> {M, N}``.
+    :param mapping: The replacement dictionary.
+    :param replace_callback: A callable function that receives a replacement
+                             dictionary and performs the replacement (can be 
+                             unsafe).
+    """
+    # First, filter out direct (to constants) and degenerate (N -> N) replacements
+    repl = {}
+    invrepl = {}
+    for k, v in mapping.items():
+        # Degenerate
+        if str(k) == str(v):
+            continue
+
+        # Not symbolic
+        try:
+            v = pystr_to_symbolic(v)
+        except (TypeError, ValueError, AttributeError, sympy.SympifyError):
+            repl[k] = v
+            continue
+
+        # Constant
+        try:
+            float(v)
+            repl[k] = v
+            continue
+        except (TypeError, ValueError, AttributeError):
+            pass
+
+        # Otherwise, symbolic replacement
+        repl[k] = f'__dacesym_{k}'
+        invrepl[f'__dacesym_{k}'] = v
+
+    # Make the two-step replacement
+    replace_callback(repl)
+    replace_callback(invrepl)
 
 
 def _spickle(obj):
@@ -763,8 +974,9 @@ def _sunpickle(obj):
 
 
 class SympyAwarePickler(pickle.Pickler):
-    """ Custom Pickler class that safely saves SymPy expressions
-        with function definitions in expressions (e.g., int_ceil).
+    """
+    Custom Pickler class that safely saves SymPy expressions
+    with function definitions in expressions (e.g., int_ceil).
     """
     def persistent_id(self, obj):
         if isinstance(obj, sympy.Basic):
@@ -776,8 +988,9 @@ class SympyAwarePickler(pickle.Pickler):
 
 
 class SympyAwareUnpickler(pickle.Unpickler):
-    """ Custom Unpickler class that safely restores SymPy expressions
-        with function definitions in expressions (e.g., int_ceil).
+    """
+    Custom Unpickler class that safely restores SymPy expressions
+    with function definitions in expressions (e.g., int_ceil).
     """
     def persistent_load(self, pid):
         type_tag, value = pid
@@ -785,3 +998,50 @@ class SympyAwareUnpickler(pickle.Unpickler):
             return _sunpickle(value)
         else:
             raise pickle.UnpicklingError("unsupported persistent object")
+
+
+def equalize_symbol(sym: sympy.Expr) -> sympy.Expr:
+    """
+    If a symbol or symbolic expressions has multiple symbols with the same
+    name, it substitutes them with the last symbol (as they appear in
+    s.free_symbols).
+    """
+    symdict = {s.name: s for s in sym.free_symbols}
+    repldict = {s: symdict[s.name] for s in sym.free_symbols}
+    return sym.subs(repldict)
+
+
+def equalize_symbols(a: sympy.Expr,
+                     b: sympy.Expr) -> Tuple[sympy.Expr, sympy.Expr]:
+    """
+    If the 2 input expressions use different symbols but with the same name,
+    it substitutes the symbols of the second expressions with those of the
+    first expression.
+    """
+    a = equalize_symbol(a)
+    b = equalize_symbol(b)
+    a_syms = {s.name: s for s in a.free_symbols}
+    b_syms = {s.name: s for s in b.free_symbols}
+    common_names = set(a_syms.keys()).intersection(set(b_syms.keys()))
+    if common_names:
+        repldict = dict()
+        for name in common_names:
+            repldict[b_syms[name]] = a_syms[name]
+        b = b.subs(repldict)
+    return a, b
+
+
+def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr,
+                                                        Any]) -> bool:
+    """
+    Compares 2 symbolic expressions and returns True if they are not equal.
+    """
+    if not isinstance(a, sympy.Expr) or not isinstance(b, sympy.Expr):
+        return a != b
+    else:
+        a, b = equalize_symbols(a, b)
+        # NOTE: We simplify in an attempt to remove inconvenient methods, such
+        # as `ceiling` and `floor`, if the symbol assumptions allow it.
+        # We subtract and compare to zero according to the SymPy documentation
+        # (https://docs.sympy.org/latest/tutorial/gotchas.html).
+        return (a - b).simplify() != 0

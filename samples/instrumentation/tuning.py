@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This sample uses basic grid-search based tuning to adapt memory layouts for
     a simple matrix multiplication. """
 import dace
@@ -119,7 +119,7 @@ if __name__ == '__main__':
                                         tB_padding)
 
             # Obtain the first entry type from the report (there is only one)
-            entry = np.array(list(report.entries.values())[0])
+            entry = np.array(list(report.durations.values())[0])
             print(list(entry))
 
             # Use median value to rank performance

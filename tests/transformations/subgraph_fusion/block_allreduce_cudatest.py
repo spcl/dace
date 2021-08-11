@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 import pytest
@@ -15,6 +15,7 @@ M.set(30)
 @dace.program
 def program(A: dace.float32[M, N]):
     return dace.reduce(lambda a, b: max(a, b), A, axis=1, identity=0)
+
 
 @pytest.mark.gpu
 def test_blockallreduce():

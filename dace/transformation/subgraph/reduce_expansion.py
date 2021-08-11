@@ -1,16 +1,18 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement the reduce-map transformation.
 """
 
 from dace import dtypes, registry, symbolic, subsets
-from dace.sdfg import nodes, utils
+from dace.sdfg import SDFG, nodes, utils
 from dace.memlet import Memlet
-from dace.sdfg import SDFG
+from dace.sdfg.scope import ScopeTree
 from dace.transformation import transformation
 from dace.properties import make_properties, Property
 from dace.symbolic import symstr
+from dace.data import View
 
 from dace.frontend.operations import detect_reduction_type
+from dace.sdfg.propagation import propagate_memlets_scope
 
 from copy import deepcopy as dcpy
 from typing import List
@@ -87,13 +89,17 @@ class ReduceExpansion(transformation.Transformation):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         reduce_node = graph.nodes()[candidate[ReduceExpansion._reduce]]
         inedge = graph.in_edges(reduce_node)[0]
-        input_dims = inedge.data.subset.data_dims()
+        input_dims = inedge.data.subset.dims()
         axes = reduce_node.axes
+        # we cannot expand upon full reduction
         if axes is None:
-            # axes = None -> full reduction, can't expand
             return False
-        if len(axes) == input_dims:
-            # axes = all  -> full reduction, can't expand
+
+        # we cannot expand if there are not outer dimensions
+        for (i, sz) in enumerate(inedge.data.subset.size()):
+            if i not in reduce_node.axes and sz != 1:
+                break
+        else:
             return False
 
         return True
@@ -122,25 +128,28 @@ class ReduceExpansion(transformation.Transformation):
 
         """
 
-        out_storage_node = graph.out_edges(reduce_node)[0].dst
-        in_storage_node = graph.in_edges(reduce_node)[0].src
+        # get out storage node, might be hidden behind view node
+        out_data = graph.out_edges(reduce_node)[0].data
+        out_storage_node = reduce_node
+        while not isinstance(out_storage_node, nodes.AccessNode):
+            out_storage_node = graph.out_edges(out_storage_node)[0].dst
+
+        if isinstance(sdfg.data(out_storage_node.data), View):
+            out_storage_node = graph.out_edges(out_storage_node)[0].dst
+            while not isinstance(out_storage_node, nodes.AccessNode):
+                out_storage_node = graph.out_edges(out_storage_node)[0].dst
+
+        # get other useful quantities from the original reduce node
         wcr = reduce_node.wcr
         identity = reduce_node.identity
-        schedule = reduce_node.schedule
         implementation = reduce_node.implementation
-        if implementation and 'warp' in implementation:
-            raise NotImplementedError(
-                "WIP: Warp Reductions are not Implemented yet.")
 
-        # remove the reduce identity
-        # we will reassign it later after expanding
+        # remove the reduce identity, will get reassigned after expansion
         reduce_node.identity = None
         # expand the reduce node
         in_edge = graph.in_edges(reduce_node)[0]
         nsdfg = self._expand_reduce(sdfg, graph, reduce_node)
-
         # find the new nodes in the nested sdfg created
-        # TODO SCOPE_DICT => SCOPE CHILDREN?
         nstate = nsdfg.sdfg.nodes()[0]
         for node, scope in nstate.scope_dict().items():
             if isinstance(node, nodes.MapEntry):
@@ -154,52 +163,35 @@ class ReduceExpansion(transformation.Transformation):
         inner_exit = nstate.exit_node(inner_entry)
         outer_exit = nstate.exit_node(outer_entry)
 
-        # find earliest parent read-write occurrence of array onto which
-        # we perform the reduction:
-        # do BFS, best complexity O(V+E)
-
-        queue = [nsdfg]
-        array_closest_ancestor = None
-        while len(queue) > 0:
-            current = queue.pop(0)
-            if isinstance(current, nodes.AccessNode):
-                if current.data == out_storage_node.data:
-                    # it suffices to find the first node
-                    # no matter what access (ReadWrite or Read)
-                    array_closest_ancestor = current
-                    break
-            queue.extend([in_edge.src for in_edge in graph.in_edges(current)])
-
-        # if ancestor doesn't exist:
-        #           if non-transient: create data node accessing it
-        #           if transient: ancestor_node = none, set_zero on outer node
-
-        shortcut = False
-        if (not array_closest_ancestor and sdfg.data(out_storage_node.data).transient) \
-                                        or identity is not None:
-            if self.debug:
-                print("ReduceExpansion::Expanding Reduction into Map")
-            # we are lucky
-            shortcut = True
-            nstate.out_edges(outer_exit)[0].data.wcr = None
-
-        else:
-            if self.debug:
-                print(f"ReduceExpansion::Expanding Reduction into Map"
-                      "and introducing update Tasklet,"
-                      "connecting with ancestor {array_closest_ancestor}")
-            if not array_closest_ancestor:
-                array_closest_ancestor = nodes.AccessNode(
-                    out_storage_node.data, access=dtypes.AccessType.ReadOnly)
-                graph.add_node(array_closest_ancestor)
-                # array_closest_ancestor now points to the node we want to connect
-                # to the map entry
-
-            # always have to create out transient in this case
-            self.create_out_transient = True
+        # find earliest parent read-write occurrence of array onto which the reduction is performed: BFS
 
         if self.create_out_transient:
-            ###### create an out transient between inner and outer map exit
+            queue = [nsdfg]
+            enqueued = set()
+            array_closest_ancestor = None
+
+            while len(queue) > 0:
+                current = queue.pop()
+                if isinstance(current, nodes.AccessNode):
+                    if current.data == out_storage_node.data:
+                        # it suffices to find the first node
+                        # no matter what access (ReadWrite or Read)
+                        array_closest_ancestor = current
+                        break
+                for in_edge in graph.in_edges(current):
+                    if in_edge.src not in enqueued:
+                        queue.append(in_edge.src)
+                        enqueued.add(in_edge.src)
+
+            if self.debug and array_closest_ancestor:
+                print(
+                    f"ReduceExpansion::Closest ancestor={array_closest_ancestor}"
+                )
+            elif self.debug:
+                print("ReduceExpansion::No closest ancestor found")
+
+        if self.create_out_transient:
+            # create an out transient between inner and outer map exit
             array_out = nstate.out_edges(outer_exit)[0].data.data
 
             from dace.transformation.dataflow.local_storage import LocalStorage
@@ -221,9 +213,16 @@ class ReduceExpansion(transformation.Transformation):
             nsdfg.sdfg.data(out_transient_node_inner.data
                             ).storage = dtypes.StorageType.Register
 
-            if shortcut:
+            # remove WCRs from all edges where possible if there is no
+            # prior occurrence
+            if array_closest_ancestor is None:
+                nstate.out_edges(outer_exit)[0].data.wcr = None
                 nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
                 nstate.out_edges(out_transient_node_inner)[0].data.volume = 1
+        else:
+
+            # remove WCR from outer exit
+            nstate.out_edges(outer_exit)[0].data.wcr = None
 
         if self.create_in_transient:
             # create an in-transient between inner and outer map entry
@@ -245,11 +244,11 @@ class ReduceExpansion(transformation.Transformation):
             local_storage.apply(nsdfg.sdfg)
             in_transient_node_inner = local_storage._data_node
 
-            # push to shared memory / default
+            # push to register
             nsdfg.sdfg.data(in_transient_node_inner.data
                             ).storage = dtypes.StorageType.Register
 
-        # first, inline fuse back our nested SDFG
+        # inline fuse back our nested SDFG
         from dace.transformation.interstate import InlineSDFG
         inline_sdfg = InlineSDFG(
             sdfg.sdfg_list.index(sdfg),
@@ -257,75 +256,6 @@ class ReduceExpansion(transformation.Transformation):
             {InlineSDFG._nested_sdfg: graph.nodes().index(nsdfg)}, 0)
         inline_sdfg.apply(sdfg)
 
-        if not shortcut:
-
-            reduction_type = detect_reduction_type(wcr)
-            try:
-                code = ReduceExpansion.reduction_type_update[reduction_type]
-            except KeyError:
-                raise NotImplementedError(
-                    "Not yet implemented for custom reduction")
-
-            new_tasklet = graph.add_tasklet(name="reduction_transient_update",
-                                            inputs={"reduction_in", "array_in"},
-                                            outputs={"out"},
-                                            code=code)
-
-            edge_to_remove = graph.out_edges(out_transient_node_inner)[0] \
-                             if self.create_out_transient \
-                             else graph.out_edges(inner_exit)[0]
-
-            new_memlet_array_inner = Memlet(data=out_storage_node.data,
-                                            volume=1,
-                                            subset=edge_to_remove.data.subset)
-            new_memlet_array_outer = Memlet(
-                data=array_closest_ancestor.data,
-                volume=graph.in_edges(outer_entry)[0].data.volume,
-                subset=subsets.Range.from_array(sdfg.data(
-                    out_storage_node.data)))
-
-            new_memlet_reduction = Memlet(
-                data=graph.out_edges(inner_exit)[0].data.data,
-                volume=1,
-                subset=graph.out_edges(inner_exit)[0].data.subset)
-            new_memlet_out_inner = Memlet(data=edge_to_remove.data.data,
-                                          volume=1,
-                                          subset=edge_to_remove.data.subset)
-            new_memlet_out_outer = dcpy(new_memlet_array_outer)
-
-            # remove old edges
-
-            outer_edge_to_remove = None
-            for edge in graph.out_edges(outer_exit):
-                if edge.src == edge_to_remove.dst:
-                    outer_edge_to_remove = edge
-
-            graph.remove_edge_and_connectors(edge_to_remove)
-            graph.remove_edge_and_connectors(outer_edge_to_remove)
-
-
-            graph.add_edge(out_transient_node_inner if self.create_out_transient \
-                                                    else inner_exit,
-                           None,
-                           new_tasklet,
-                           "reduction_in",
-                           new_memlet_reduction)
-
-            graph.add_edge(outer_entry, None, new_tasklet, "array_in",
-                           new_memlet_array_inner)
-            graph.add_edge(array_closest_ancestor, None, outer_entry, None,
-                           new_memlet_array_outer)
-            graph.add_edge(new_tasklet, "out", outer_exit, None,
-                           new_memlet_out_inner)
-            graph.add_edge(outer_exit, None, out_storage_node, None,
-                           new_memlet_out_outer)
-
-            # fill map scope connectors
-            graph.fill_scope_connectors()
-            graph._clear_scopedict_cache()
-            # wcr is already removed
-
-        # FORNOW: choose default schedule and implementation
         new_schedule = dtypes.ScheduleType.Default
         new_implementation = self.reduce_implementation \
                              if self.reduce_implementation is not None \
@@ -337,7 +267,7 @@ class ReduceExpansion(transformation.Transformation):
                                            schedule=new_schedule,
                                            identity=identity)
         reduce_node_new.implementation = new_implementation
-
+        # replace inner map with new reduction node
         edge_tmp = graph.in_edges(inner_entry)[0]
         memlet_src_reduce = dcpy(edge_tmp.data)
         graph.add_edge(edge_tmp.src, edge_tmp.src_conn, reduce_node_new, None,
@@ -356,16 +286,25 @@ class ReduceExpansion(transformation.Transformation):
         graph.remove_node(inner_exit)
         graph.remove_node(identity_tasklet)
 
+        # propagate scope for correct volumes
+        scope_tree = ScopeTree(outer_entry, outer_exit)
+        scope_tree.parent = ScopeTree(None, None)
+        propagate_memlets_scope(sdfg, graph, scope_tree)
         sdfg.validate()
 
         # create variables for outside access
-        self._new_reduce = reduce_node_new
+        self._reduce = reduce_node_new
         self._outer_entry = outer_entry
 
-        if identity is None and not shortcut:
+        if identity is None and self.create_out_transient:
+            if self.debug:
+                print(
+                    "ReduceExpansion::Trying to infer reduction WCR type due to out transient created"
+                )
             # set the reduction identity accordingly so that the correct
             # blank result is written to the out_transient node
             # we use default values deducted from the reduction type
+            reduction_type = detect_reduction_type(wcr)
             try:
                 reduce_node_new.identity = self.reduction_type_identity[
                     reduction_type]

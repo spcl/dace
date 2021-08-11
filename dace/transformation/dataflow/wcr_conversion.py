@@ -1,9 +1,9 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Transformations to convert subgraphs to write-conflict resolutions. """
 import re
 from dace import registry, nodes, dtypes
-from dace.transformation import transformation
-from dace.sdfg import utils as sdutil
+from dace.transformation import transformation, helpers as xfh
+from dace.sdfg import graph as gr, utils as sdutil
 from dace import SDFG, SDFGState
 
 
@@ -16,14 +16,20 @@ class AugAssignToWCR(transformation.Transformation):
     input = transformation.PatternNode(nodes.AccessNode)
     tasklet = transformation.PatternNode(nodes.Tasklet)
     output = transformation.PatternNode(nodes.AccessNode)
+    map_entry = transformation.PatternNode(nodes.MapEntry)
+    map_exit = transformation.PatternNode(nodes.MapExit)
 
-    _EXPRESSIONS = ['+', '-', '*', '/', '^', '%']
+    _EXPRESSIONS = ['+', '-', '*', '^', '%']  #, '/']
+    _EXPR_MAP = {
+        '-': ('+', '-({expr})'),
+        '/': ('*', '((decltype({expr}))1)/({expr})')
+    }
 
     @staticmethod
     def expressions():
         return [
             sdutil.node_path_graph(AugAssignToWCR.input, AugAssignToWCR.tasklet,
-                                   AugAssignToWCR.output)
+                                   AugAssignToWCR.output),
         ]
 
     @staticmethod
@@ -34,22 +40,46 @@ class AugAssignToWCR(transformation.Transformation):
         if inarr.data != outarr.data:
             return False
 
-        # Only free tasklets supported for now
-        if graph.entry_node(tasklet) is not None:
-            return False
+        # Free tasklet
+        if expr_index == 0:
+            # Only free tasklets supported for now
+            if graph.entry_node(tasklet) is not None:
+                return False
 
-        if graph.degree(inarr) != 1:
-            return False
+            inedges = graph.edges_between(inarr, tasklet)
+            if len(graph.edges_between(tasklet, outarr)) > 1:
+                return False
 
-        inedge = graph.edges_between(inarr, tasklet)[0]
-        outedge = graph.edges_between(tasklet, outarr)[0]
+            # Make sure augmented assignment can be fissioned as necessary
+            if any(not isinstance(e.src, nodes.AccessNode)
+                   for e in graph.in_edges(tasklet)):
+                return False
+            if graph.in_degree(inarr) > 0 and graph.out_degree(outarr) > 0:
+                return False
 
-        # Same memlet
-        if inedge.data.subset != outedge.data.subset:
-            return False
+            outedge = graph.edges_between(tasklet, outarr)[0]
+        else:  # Free map
+            me: nodes.MapEntry = graph.node(candidate[AugAssignToWCR.map_entry])
+            mx = graph.node(candidate[AugAssignToWCR.map_exit])
 
-        # Get relevant input/output connectors
-        inconn = inedge.dst_conn
+            # Only free maps supported for now
+            if graph.entry_node(me) is not None:
+                return False
+
+            inedges = graph.edges_between(me, tasklet)
+            if len(graph.edges_between(tasklet, mx)) > 1:
+                return False
+
+            # Currently no fission is supported
+            if any(e.src is not me and not isinstance(e.src, nodes.AccessNode)
+                   for e in graph.in_edges(me) + graph.in_edges(tasklet)):
+                return False
+            if graph.in_degree(inarr) > 0:
+                return False
+
+            outedge = graph.edges_between(tasklet, mx)[0]
+
+        # Get relevant output connector
         outconn = outedge.src_conn
 
         ops = '[%s]' % ''.join(
@@ -59,17 +89,33 @@ class AugAssignToWCR(transformation.Transformation):
             # Expect ast.Assign(ast.Expr())
             return False
         elif tasklet.language is dtypes.Language.CPP:
-            # Try to match a single C assignment that can be converted to WCR
             cstr = tasklet.code.as_string.strip()
-            if re.match(
-                    r'^\s*%s\s*=\s*%s\s*%s.*;$' %
-                (re.escape(outconn), re.escape(inconn), ops), cstr) is None:
-                return False
+            for edge in inedges:
+                # Try to match a single C assignment that can be converted to WCR
+                inconn = edge.dst_conn
+                lhs = r'^\s*%s\s*=\s*%s\s*%s.*;$' % (re.escape(outconn),
+                                                     re.escape(inconn), ops)
+                rhs = r'^\s*%s\s*=\s*.*%s\s*%s;$' % (re.escape(outconn), ops,
+                                                     re.escape(inconn))
+                if re.match(lhs, cstr) is None:
+                    continue
+                # Same memlet
+                if edge.data.subset != outedge.data.subset:
+                    continue
+
+                # If in map, only match if the subset is independent of any
+                # map indices (otherwise no conflict)
+                if (expr_index == 1
+                        and len(outedge.data.subset.free_symbols
+                                & set(me.map.params)) == len(me.map.params)):
+                    continue
+
+                return True
         else:
             # Only Python/C++ tasklets supported
             return False
 
-        return True
+        return False
 
     def apply(self, sdfg: SDFG):
         input: nodes.AccessNode = self.input(sdfg)
@@ -77,10 +123,54 @@ class AugAssignToWCR(transformation.Transformation):
         output: nodes.AccessNode = self.output(sdfg)
         state: SDFGState = sdfg.node(self.state_id)
 
-        inedge = state.edges_between(input, tasklet)[0]
-        outedge = state.edges_between(tasklet, output)[0]
-        # Get relevant input/output connectors
-        inconn = inedge.dst_conn
+        # If state fission is necessary to keep semantics, do it first
+        if (self.expr_index == 0 and state.in_degree(input) > 0
+                and state.out_degree(output) == 0):
+            newstate = sdfg.add_state_after(state)
+            newstate.add_node(tasklet)
+            new_input, new_output = None, None
+
+            # Keep old edges for after we remove tasklet from the original state
+            in_edges = list(state.in_edges(tasklet))
+            out_edges = list(state.out_edges(tasklet))
+
+            for e in in_edges:
+                r = newstate.add_read(e.src.data)
+                newstate.add_edge(r, e.src_conn, e.dst, e.dst_conn, e.data)
+                if e.src is input:
+                    new_input = r
+            for e in out_edges:
+                w = newstate.add_write(e.dst.data)
+                newstate.add_edge(e.src, e.src_conn, w, e.dst_conn, e.data)
+                if e.dst is output:
+                    new_output = w
+
+            # Remove tasklet and resulting isolated nodes
+            state.remove_node(tasklet)
+            for e in in_edges:
+                if state.degree(e.src) == 0:
+                    state.remove_node(e.src)
+            for e in out_edges:
+                if state.degree(e.dst) == 0:
+                    state.remove_node(e.dst)
+
+            # Reset state and nodes for rest of transformation
+            input = new_input
+            output = new_output
+            state = newstate
+        # End of state fission
+
+        if self.expr_index == 0:
+            inedges = state.edges_between(input, tasklet)
+            outedge = state.edges_between(tasklet, output)[0]
+        else:
+            me = self.map_entry(sdfg)
+            mx = self.map_exit(sdfg)
+
+            inedges = state.edges_between(me, tasklet)
+            outedge = state.edges_between(tasklet, mx)[0]
+
+        # Get relevant output connector
         outconn = outedge.src_conn
 
         ops = '[%s]' % ''.join(
@@ -90,19 +180,62 @@ class AugAssignToWCR(transformation.Transformation):
         if tasklet.language is dtypes.Language.Python:
             raise NotImplementedError
         elif tasklet.language is dtypes.Language.CPP:
-            match = re.match(
-                r'^\s*%s\s*=\s*%s\s*(%s)(.*);$' %
-                (re.escape(outconn), re.escape(inconn), ops),
-                tasklet.code.as_string.strip())
-            op = match.group(1)
-            expr = match.group(2)
-            tasklet.code.code = '%s = %s;' % (outconn, expr)
+            cstr = tasklet.code.as_string.strip()
+            for edge in inedges:
+                inconn = edge.dst_conn
+                match = re.match(
+                    r'^\s*%s\s*=\s*%s\s*(%s)(.*);$' %
+                    (re.escape(outconn), re.escape(inconn), ops), cstr)
+                if match is None:
+                    # match = re.match(
+                    #     r'^\s*%s\s*=\s*(.*)\s*(%s)\s*%s;$' %
+                    #     (re.escape(outconn), ops, re.escape(inconn)), cstr)
+                    # if match is None:
+                    continue
+                    # op = match.group(2)
+                    # expr = match.group(1)
+                else:
+                    op = match.group(1)
+                    expr = match.group(2)
+
+                if edge.data.subset != outedge.data.subset:
+                    continue
+
+
+                # Map asymmetric WCRs to symmetric ones if possible
+                if op in AugAssignToWCR._EXPR_MAP:
+                    op, newexpr = AugAssignToWCR._EXPR_MAP[op]
+                    expr = newexpr.format(expr=expr)
+
+                tasklet.code.code = '%s = %s;' % (outconn, expr)
+                inedge = edge
+                break
         else:
-            op = ''
+            raise NotImplementedError
 
         # Change output edge
         outedge.data.wcr = f'lambda a,b: a {op} b'
 
-        # Remove input node and connector
-        state.remove_edge_and_connectors(inedge)
-        state.remove_node(input)
+        if self.expr_index == 0:
+            # Remove input node and connector
+            state.remove_edge_and_connectors(inedge)
+            if state.degree(input) == 0:
+                state.remove_node(input)
+        else:
+            # Remove input edge and dst connector, but not necessarily src
+            state.remove_memlet_path(inedge)
+
+        # If outedge leads to non-transient, and this is a nested SDFG,
+        # propagate outwards
+        sd = sdfg
+        while (not sd.arrays[outedge.data.data].transient
+               and sd.parent_nsdfg_node is not None):
+            nsdfg = sd.parent_nsdfg_node
+            nstate = sd.parent
+            sd = sd.parent_sdfg
+            outedge = next(
+                iter(nstate.out_edges_by_connector(nsdfg, outedge.data.data)))
+            for outedge in nstate.memlet_path(outedge):
+                outedge.data.wcr = f'lambda a,b: a {op} b'
+            # At this point we are leading to an access node again and can
+            # traverse further up

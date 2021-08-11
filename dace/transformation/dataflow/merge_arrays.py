@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.transformation import transformation
 from dace import memlet, registry
 from dace.sdfg import nodes
@@ -53,9 +53,12 @@ class InMergeArrays(transformation.Transformation):
 
         map = graph.node(candidate[InMergeArrays._map_entry])
 
-        # If arr1's connector leads directly to map, skip it
+        # If array's connector leads directly to map, skip it
         if all(e.dst_conn and not e.dst_conn.startswith('IN_')
                for e in graph.edges_between(arr1, map)):
+            return False
+        if all(e.dst_conn and not e.dst_conn.startswith('IN_')
+               for e in graph.edges_between(arr2, map)):
             return False
 
         if (any(e.dst != map for e in graph.out_edges(arr1))

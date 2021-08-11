@@ -1,9 +1,9 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import argparse
 import dace
 import numpy as np
-import scipy as sp
+import scipy.linalg
 
 N = dace.symbol('N')
 
@@ -45,8 +45,9 @@ if __name__ == "__main__":
 
     axpy(A, X, Y)
 
-    c_axpy = sp.linalg.blas.get_blas_funcs('axpy',
-                                           arrays=(X_regression, Y_regression))
+    c_axpy = scipy.linalg.blas.get_blas_funcs('axpy',
+                                              arrays=(X_regression,
+                                                      Y_regression))
     if dace.Config.get_bool('profiling'):
         dace.timethis('axpy', 'BLAS', (2 * N.get()), c_axpy, X_regression,
                       Y_regression, N.get(), A_regression)

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from common import compare_numpy_output
 
@@ -224,6 +224,12 @@ def test_bitorr4(A: dace.int64[4, 1], B: dace.int64[3, 5]):
 @compare_numpy_output()
 def test_regression_result_none(A: dace.int32[1, 3], B: dace.int32[3]):
     return A + B
+
+
+@compare_numpy_output()
+def test_both_match(A: dace.float64[5, 1], B: dace.float64[1, 3]):
+    return A + B
+
 
 if __name__ == '__main__':
     # generate this with

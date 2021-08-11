@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 import warnings
 import itertools
@@ -14,31 +14,55 @@ K = dace.symbol('K')
 N = dace.symbol('N')
 
 
-def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB,
-                     alpha, beta, implementation):
+@pytest.mark.parametrize(('implementation', ),
+                         [('pure', ),
+                          pytest.param('MKL', marks=pytest.mark.mkl),
+                          pytest.param('cuBLAS', marks=pytest.mark.gpu)])
+def test_gemm_no_c(implementation):
 
-    sdfg = dace.SDFG("gemm")
+    Gemm.default_implementation = implementation
+
+    @dace.program
+    def simple_gemm(A: dace.float64[10, 15], B: dace.float64[15, 3]):
+        return A @ B
+
+    A = np.random.rand(10, 15)
+    B = np.random.rand(15, 3)
+
+    result = simple_gemm(A, B)
+    assert np.allclose(result, A @ B)
+
+    Gemm.default_implementation = None
+
+
+def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB,
+                     alpha, beta, implementation, sdfg_name):
+
+    sdfg = dace.SDFG(sdfg_name)
     state = sdfg.add_state()
     A, A_arr = sdfg.add_array("A", A_shape, dtype)
     B, B_arr = sdfg.add_array("B", B_shape, dtype)
-    Y, Y_arr = sdfg.add_array("Y", Y_shape, dtype)
+    C, C_arr = sdfg.add_array("C", Y_shape, dtype)
 
     rA = state.add_read("A")
     rB = state.add_read("B")
-    wY = state.add_write("Y")
+    wC = state.add_write("C")
 
-    tasklet = Gemm('_Gemm_',
-                   dtype,
+    libnode = Gemm('_Gemm_',
                    transA=transA,
                    transB=transB,
                    alpha=alpha,
                    beta=beta)
-    tasklet.implementation = implementation
-    state.add_node(tasklet)
+    libnode.implementation = implementation
+    state.add_node(libnode)
 
-    state.add_edge(rA, None, tasklet, '_a', dace.Memlet.from_array(A, A_arr))
-    state.add_edge(rB, None, tasklet, '_b', dace.Memlet.from_array(B, B_arr))
-    state.add_edge(tasklet, '_c', wY, None, dace.Memlet.from_array(Y, Y_arr))
+    state.add_edge(rA, None, libnode, '_a', dace.Memlet.from_array(A, A_arr))
+    state.add_edge(rB, None, libnode, '_b', dace.Memlet.from_array(B, B_arr))
+    state.add_edge(libnode, '_c', wC, None, dace.Memlet.from_array(C, C_arr))
+    if beta != 0.0:
+        rC = state.add_read('C')
+        state.add_edge(rC, None, libnode, '_cin',
+                       dace.Memlet.from_array(C, C_arr))
 
     return sdfg
 
@@ -53,9 +77,16 @@ def run_test(implementation,
              alpha=1.0,
              beta=1.0,
              C_shape=["M", "N"]):
+
     if C_shape is not None:
         replace_map = dict(M=M, N=N)
         C_shape = [s if isinstance(s, int) else replace_map[s] for s in C_shape]
+
+    # unique name for sdfg
+    C_str = "None" if C_shape is None else (
+        str(C_shape[0]) if len(C_shape) == 1 else f"{C_shape[0]}_{C_shape[1]}")
+    sdfg_name = f"{implementation}_{M}_{N}_{K}_{complex}_{transA}_{transB}_{alpha}_{beta}_{C_str}".replace(
+        ".", "_dot_").replace("+", "_plus_").replace("(", "").replace(")", "")
 
     # shape of the transposed arrays
     A_shape = trans_A_shape = [M, K]
@@ -69,7 +100,7 @@ def run_test(implementation,
     if transB:
         B_shape = list(reversed(trans_B_shape))
 
-    print('Matrix multiplication {}x{}x{}'.format(M, K, N))
+    print(f'Matrix multiplication {M}x{K}x{N} (alpha={alpha}, beta={beta})')
 
     np_dtype = np.complex64 if complex else np.float32
 
@@ -94,26 +125,22 @@ def run_test(implementation,
 
     sdfg = create_gemm_sdfg(dace.complex64 if complex else dace.float32,
                             A_shape, B_shape, C_shape, Y_shape, transA, transB,
-                            alpha, beta, implementation)
+                            alpha, beta, implementation, sdfg_name)
 
     if C_shape is not None:
         Y[:] = C
-        sdfg(A=A, B=B, Y=Y)
+        sdfg(A=A, B=B, C=Y)
     else:
-        sdfg(A=A, B=B, Y=Y)
+        sdfg(A=A, B=B, C=Y)
 
     diff = np.linalg.norm(Y_regression - Y) / (M * N)
     print("Difference:", diff)
     assert diff <= 1e-5
 
 
-@pytest.mark.parametrize(
-    ('implementation', ),
-    [
-        ('pure', ),
-        ('MKL', ),
-        # pytest.param('cuBLAS', marks=pytest.mark.gpu)])
-    ])
+@pytest.mark.parametrize(('implementation', ),
+                         [('pure', ), ('MKL', ),
+                          pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_library_gemm(implementation):
     param_grid_trans = dict(
         transA=[True, False],
