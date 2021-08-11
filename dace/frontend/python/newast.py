@@ -4768,20 +4768,19 @@ class ProgramVisitor(ExtNodeVisitor):
         """
         def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
+            sym = None
             if node_str in self.indirections:
-                scalar, sym = self.indirections[node_str]
+                sym = self.indirections[node_str]
+            if isinstance(node, str):
+                scalar = node_str
             else:
-                if isinstance(node, str):
-                    scalar = node_str
-                else:
-                    scalar = self.visit(node)
-                sym = None
+                scalar = self.visit(node)
             if isinstance(scalar, str) and scalar in self.sdfg.arrays:
                 desc = self.sdfg.arrays[scalar]
                 if isinstance(desc, data.Scalar):
                     if not sym:
                         sym = dace.symbol(f'__sym_{scalar}', dtype=desc.dtype)
-                        self.indirections[node_str] = (scalar, sym)
+                        self.indirections[node_str] = sym
                     state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
                     edge = self.sdfg.in_edges(state)[0]
                     edge.data.assignments = {str(sym): scalar}
