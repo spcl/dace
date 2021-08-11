@@ -124,6 +124,5 @@ if __name__ == "__main__":
     parser.add_argument("--target", dest="target", default="pure")
     parser.add_argument("--vector-length", type=int, default=16)
     args = parser.parse_args()
-    size = args.N
 
-    run_test(target, size, vector_length)
+    run_test(args.target, args.N, args.vector_length)

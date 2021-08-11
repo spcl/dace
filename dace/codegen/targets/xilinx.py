@@ -1074,4 +1074,4 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         return self.make_write(DefinedType.Pointer, dst_dtype, None,
                                "&" + dst_expr, None, src_expr, None,
                                dst_dtype.veclen < src_dtype.veclen,
-                               src_dtype.veclen)
+                               src_dtype.veclen, None)
