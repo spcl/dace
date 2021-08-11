@@ -220,14 +220,37 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
             read_y = state.add_read("_y")
         write_y = state.add_write("_y")
 
+        # These sizes already account for vectorization
         size_x = desc_x.shape[0]
         size_y = desc_y.shape[0]
         if tile_size_x is None:
             tile_size_x = size_x
         if tile_size_y is None:
             tile_size_y = size_y
-        num_tiles_y = f"{size_y}/{tile_size_y}"
-        num_tiles_x = f"{size_x}/{tile_size_x}"
+
+        num_tiles_y = f"ceiling({size_y}/{tile_size_y})"
+        num_tiles_x = f"ceiling({size_x}/{tile_size_x})"
+
+        # TODO: Support tiles sizes that do not evenly divide the matrix size
+
+        # Correctness check (TMP):
+        # - tile size must evenly divide the matrix size
+        # - tile size can not be greater than the matrix size
+        # If tile and x size are known, check these conditions
+        size_x_constant = dace.symbolic.resolve_symbol_to_constant(
+            size_x, parent_sdfg)
+        tile_size_constant = dace.symbolic.resolve_symbol_to_constant(
+            tile_size_x, parent_sdfg)
+
+        if size_x_constant is not None and tile_size_constant is not None:
+            if tile_size_constant > size_x_constant:
+                raise ValueError(
+                    f"Tile size {tile_size_constant} must be smaller than size {size_x_constant}."
+                )
+            if size_x_constant % tile_size_constant != 0:
+                raise ValueError(
+                    f"Tile size {tile_size_constant} does not divide size {size_x_constant}."
+                )
 
         veclen = desc_a.dtype.veclen
 
@@ -521,7 +544,6 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
                             set to None, no tiling is used, corresponding to
                             setting the tile size equal to the full size of y.
         """
-
         node.validate(sdfg, state)
 
         for e in state.in_edges(node):
@@ -561,19 +583,40 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
             read_y = state.add_read("_y")
         write_y = state.add_write("_y")
 
+        # These sizes already account for vectorization
         size_x = desc_x.shape[0]
         size_y = desc_y.shape[0]
         if tile_size_x is None:
             tile_size_x = size_x
         if tile_size_y is None:
             tile_size_y = size_y
-        num_tiles_y = f"{size_y}/{tile_size_y}"
-        num_tiles_x = f"{size_x}/{tile_size_x}"
+        num_tiles_y = f"ceiling({size_y}/{tile_size_y})"
+        num_tiles_x = f"ceiling({size_x}/{tile_size_x})"
 
         # Create y tile map
         y_tile_entry, y_tile_exit = state.add_map(
             "y_tiles", {"ty": f"0:{num_tiles_y}"},
             schedule=dace.ScheduleType.FPGA_Device)
+
+        # TODO: Support tiles sizes that do not evenly divide the matrix size
+
+        # Correctness check (TMP):
+        # - tile size must evenly divide the matrix size
+        # - tile size can not be greater than the matrix size
+        # If tile and x size are known, check these conditions
+        size_y_constant = dace.symbolic.resolve_symbol_to_constant(size_y, sdfg)
+        tile_size_constant = dace.symbolic.resolve_symbol_to_constant(
+            tile_size_y, sdfg)
+
+        if size_y_constant is not None and tile_size_constant is not None:
+            if tile_size_constant > size_y_constant:
+                raise ValueError(
+                    f"Tile size {tile_size_constant} must be smaller than size {size_y_constant}."
+                )
+            if size_y_constant % tile_size_constant != 0:
+                raise ValueError(
+                    f"Tile size {tile_size_constant} does not divide size {size_y_constant}."
+                )
 
         # Create buffer
         sdfg.add_array("y_local", (tile_size_y, ),
