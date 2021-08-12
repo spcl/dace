@@ -105,4 +105,7 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
 def replace_properties_dict(node: Any, symrepl: Dict[symbolic.SymbolicType,
                                                      symbolic.SymbolicType]):
     for k, v in symrepl.items():
-        replace_properties(node, {k: v}, str(k), str(v))
+        replace_properties(
+            node,
+            {symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)},
+            str(k), str(v))
