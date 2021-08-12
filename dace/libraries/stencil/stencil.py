@@ -67,7 +67,7 @@ class Stencil(dace.library.LibraryNode):
 
     def __init__(self,
                  label: str,
-                 code: str,
+                 code: str = "",
                  iterator_mapping: Dict[str, Tuple[int]] = {},
                  boundary_conditions: Dict[str, Dict] = {}):
         super().__init__(label)
