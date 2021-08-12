@@ -182,14 +182,8 @@ def _alias_assignments(sdfg, edge):
 @registry.autoregister_params(strict=True)
 class SymbolAliasPromotion(transformation.Transformation):
     """
-    1. We define inter-state edge assignments to be "SymbolAlias" when a symbol
-    has is set equal to another symbol or (potentially promotable) scalar.
-    2. We define inter-state edge assignment promotion as moving the assignment
-    to the previous inter-state edge according to the topological order, when
-    this is unambiguous.
-    3. SymbolAliasPromotion moves SymbolAlias assignments to the previous
-    inter-state edge according to the topological order.
-
+    SymbolAliasPromotion moves inter-state assignments that create symbolic
+    aliases to the previous inter-state edge according to the topological order.
     The purpose of this transformation is to iteratively move symbolic aliases
     together, so that true duplicates can be easily removed.
     """
