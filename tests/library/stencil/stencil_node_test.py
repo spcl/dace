@@ -3,16 +3,17 @@ import dace
 from dace.libraries.stencil import Stencil
 import numpy as np
 
-SIZE = 32
+ROWS = dace.symbol("rows")
+COLS = dace.symbol("cols")
 DTYPE = np.float32
 
 
 def make_sdfg():
 
     sdfg = dace.SDFG("stencil_node_test")
-    _, a_desc = sdfg.add_array("a", (SIZE, SIZE), dtype=DTYPE)
-    _, b_desc = sdfg.add_array("b", (SIZE, ), dtype=DTYPE)
-    _, c_desc = sdfg.add_array("c", (SIZE, SIZE), dtype=DTYPE)
+    _, a_desc = sdfg.add_array("a", (ROWS, COLS), dtype=DTYPE)
+    _, b_desc = sdfg.add_array("b", (ROWS, ), dtype=DTYPE)
+    _, c_desc = sdfg.add_array("c", (ROWS, COLS), dtype=DTYPE)
 
     state = sdfg.add_state("stencil_node_test")
     a = state.add_read("a")
@@ -43,12 +44,14 @@ def make_sdfg():
 
 def test_stencil_node():
     sdfg = make_sdfg()
-    a = np.ones((SIZE, SIZE), dtype=DTYPE)
+    rows = 16
+    cols = 32
+    a = np.ones((rows, cols), dtype=DTYPE)
     a[1:-1, 1:-1] = 0
-    b = np.empty((SIZE, ), dtype=DTYPE)
+    b = np.empty((rows, ), dtype=DTYPE)
     b[:] = 0.25
-    c = np.empty((SIZE, SIZE), dtype=DTYPE)
-    sdfg(a=a, b=b, c=c)
+    c = np.empty((rows, cols), dtype=DTYPE)
+    sdfg(a=a, b=b, c=c, rows=rows, cols=cols)
     assert np.allclose(
         0.25 * (a[2:, 1:-1] + a[:-2, 1:-1] + a[1:-1, 2:] + a[1:-1, :-2]),
         c[1:-1, 1:-1])
