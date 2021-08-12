@@ -4264,6 +4264,15 @@ def view(pv: 'ProgramVisitor',
     return newarr
 
 
+@oprepo.replaces_attribute('Array', 'size')
+@oprepo.replaces_attribute('Scalar', 'size')
+@oprepo.replaces_attribute('View', 'size')
+def size(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> Size:
+    desc = sdfg.arrays[arr]
+    totalsize = data._prod(desc.shape)
+    return totalsize
+
+
 @oprepo.replaces_attribute('Array', 'flat')
 @oprepo.replaces_attribute('Scalar', 'flat')
 @oprepo.replaces_attribute('View', 'flat')
