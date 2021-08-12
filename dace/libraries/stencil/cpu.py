@@ -3,29 +3,13 @@ import ast
 import astunparse
 import collections
 import copy
+import numpy as np
 from typing import Dict, List, Tuple
 
 import dace
-import numpy as np
+
 from .subscript_converter import SubscriptConverter
-
-
-def _check_stencil_shape(shape: Tuple, other: Tuple):
-    """
-    Compares the existing shape with a proposed shape, setting it to the new
-    shape if the new shape has higher dimensionality. If the dimensionality is
-    the same, they must be identical.
-    """
-    if len(other) > len(shape):
-        shape = copy.copy(other)
-    elif len(other) == len(shape):
-        if shape != other:
-            raise ValueError(f"Inconsistent input sizes: {shape} "
-                             f"vs. {other}")
-    else:
-        # Allow lower-dimensional accesses
-        pass
-    return shape
+from ._common import _parse_connectors
 
 
 @dace.library.expansion
@@ -40,24 +24,8 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         state = sdfg.add_state(node.label + "_outer")
 
         # Find outer data descriptor
-        field_desc = {}
-        shape = []
-        inputs = []
-        outputs = []
-        for e in parent_state.in_edges(node):
-            field = e.dst_conn
-            inputs.append(field)
-            desc = parent_sdfg.data(
-                dace.sdfg.find_input_arraynode(parent_state, e).data)
-            field_desc[field] = desc
-            shape = _check_stencil_shape(shape, desc.shape)
-        for e in parent_state.out_edges(node):
-            field = e.src_conn
-            outputs.append(field)
-            desc = parent_sdfg.data(
-                dace.sdfg.find_output_arraynode(parent_state, e).data)
-            field_desc[field] = desc
-            shape = _check_stencil_shape(shape, desc.shape)
+        (inputs, outputs, shape,
+         field_to_desc) = _parse_connectors(node, parent_state, parent_sdfg)
 
         parameters = [f"_i{i}" for i in range(len(shape))]
 
@@ -94,7 +62,7 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
             if len(iterators) != len(shape):
                 raise ValueError(
                     f"Invalid iterator mapping for {field_name}: {iterators}")
-            dtype = field_desc[field_name].dtype.type
+            dtype = field_to_desc[field_name].dtype.type
             # Loop over each access to this data
             for indices, memlet_name in accesses.items():
                 if len(indices) != num_dims:
@@ -186,7 +154,7 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
 
         for field in inputs:
 
-            dtype = field_desc[field].dtype
+            dtype = field_to_desc[field].dtype
 
             read_node = state.add_read(field)
             input_dims = iterator_mapping[field]
@@ -208,7 +176,7 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         index_tuple = ", ".join(parameters)
         for field in outputs:
 
-            dtype = field_desc[field].dtype
+            dtype = field_to_desc[field].dtype
 
             data = sdfg.add_array(field, shape, dtype)
             write_node = state.add_write(field)
