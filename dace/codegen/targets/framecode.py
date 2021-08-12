@@ -558,7 +558,15 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 curscope: Union[nodes.EntryNode, SDFGState] = None
                 curstate: SDFGState = None
                 multistate = False
+
+                # Does the array appear in inter-state edges?
+                for isedge in sdfg.edges():
+                    if name in isedge.data.free_symbols:
+                        multistate = True
+
                 for state in sdfg.nodes():
+                    if multistate:
+                        break
                     sdict = state.scope_dict()
                     for node in state.nodes():
                         if not isinstance(node, nodes.AccessNode):
