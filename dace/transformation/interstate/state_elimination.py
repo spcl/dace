@@ -145,6 +145,8 @@ class StateAssignElimination(transformation.Transformation):
             state.replace(varname, assignment)
             keys_to_remove.add(varname)
 
+        repl_dict = {}
+
         for varname in keys_to_remove:
             # Remove assignments from edge
             del edge.data.assignments[varname]
@@ -156,9 +158,16 @@ class StateAssignElimination(transformation.Transformation):
                 # If removed assignment does not appear in any other edge,
                 # replace and remove symbol
                 if assignments_to_consider[varname] in sdfg.symbols:
-                    sdfg.replace(varname, assignments_to_consider[varname])
+                    repl_dict[varname] = assignments_to_consider[varname]
                 if varname in sdfg.symbols:
                     sdfg.remove_symbol(varname)
+        
+        def _str_repl(s, d):
+            for k, v in d.items():
+                s.replace(str(k), str(v))
+
+        if repl_dict:
+            symbolic.safe_replace(repl_dict, lambda m: _str_repl(sdfg, m))
 
 
 def _alias_assignments(sdfg, edge):
