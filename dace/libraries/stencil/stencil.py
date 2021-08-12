@@ -11,9 +11,9 @@ from .cpu import ExpandStencilCPU
 @dace.library.node
 class Stencil(dace.library.LibraryNode):
     """
-    Represents applying a stencil that reads from constants offset from one or
+    Represents applying a stencil that reads at constants offset from one or
     more input connectors, and writes to one or more output connector, using
-    the given boundary condition when accesses are out of bounds.
+    the given boundary conditions when accesses are out of bounds.
     The size of the iteration space will be inferred from the largest field
     being accessed, and it is assumed that all other fields accessed have the
     same size in each corresponding dimension.
