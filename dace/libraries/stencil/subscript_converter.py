@@ -64,12 +64,17 @@ class SubscriptConverter(ast.NodeTransformer):
             raise TypeError('Only subscripts of variables are supported')
 
         varname = node.value.id
-        index_tuple = ast.literal_eval(node.slice.value)
-        try:
-            len(index_tuple)
-        except TypeError:
-            # Turn into a tuple
+
+        # This can be a bunch of different things, varying between Python 3.8
+        # and Python 3.9, so try hard to unpack it into an index we can use.
+        index_tuple = node.slice
+        if isinstance(index_tuple, (ast.Subscript, ast.Index)):
+            index_tuple = index_tuple.value
+        if isinstance(index_tuple, ast.Constant):
             index_tuple = (index_tuple, )
+        if isinstance(index_tuple, ast.Tuple):
+            index_tuple = index_tuple.elts
+        index_tuple = tuple(ast.literal_eval(t) for t in index_tuple)
 
         index_str = self.convert(varname, index_tuple)
 
