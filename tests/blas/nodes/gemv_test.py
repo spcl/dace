@@ -71,10 +71,11 @@ def fpga_graph(dtype, transposed, expansion, veclen, alpha, beta, tile_size_x,
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
 
     sdfg.expand_library_nodes()
-    sdfg.apply_transformations_repeated(
-        [InlineSDFG, StreamingMemory], [{}, {
-            "storage": dace.StorageType.FPGA_Local
-        }])
+    # sdfg.apply_transformations_repeated(
+    #     [InlineSDFG, StreamingMemory], [{}, {
+    #         "storage": dace.StorageType.FPGA_Local
+    #     }])
+    sdfg.save('/tmp/out.sdfg')
     return sdfg
 
 
@@ -107,6 +108,15 @@ def run_gemv(target: str,
         sdfg = fpga_graph(dace.float32,
                           transposed,
                           "FPGA_Accumulate",
+                          vectorize,
+                          alpha,
+                          beta,
+                          tile_size_x=tile_size_x,
+                          tile_size_y=tile_size_y)
+    elif target == "transposed_tiles_by_row":
+        sdfg = fpga_graph(dace.float32,
+                          transposed,
+                          "FPGA_TransposedTilesByRow",
                           vectorize,
                           alpha,
                           beta,
@@ -146,6 +156,8 @@ def test_gemv_fpga_accumulate():
     return run_gemv("accumulate", 256, 512, vectorize=4)
 
 
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("M", type=int, nargs="?", default=256)
@@ -163,5 +175,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    run_gemv(args.target, args.n, args.m, args.alpha, args.transposed,
+    run_gemv(args.target, args.N, args.M, args.alpha, args.transposed,
              args.vectorize, args.tile_size_x, args.tile_size_y)
