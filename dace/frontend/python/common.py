@@ -19,8 +19,11 @@ class DaceSyntaxError(Exception):
             line = 0
             col = 0
 
-        return (self.message + "\n  in File " + str(self.visitor.filename) +
-                ", line " + str(line) + ":" + str(col))
+        if self.visitor is not None:
+            return (self.message + "\n  in File " + str(self.visitor.filename) +
+                    ", line " + str(line) + ":" + str(col))
+        else:
+            return (self.message + "\n  in line " + str(line) + ":" + str(col))
 
 
 def inverse_dict_lookup(dict: Dict[str, Any], value: Any):

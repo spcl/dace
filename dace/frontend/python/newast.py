@@ -150,7 +150,6 @@ def parse_dace_program(f,
                                   outside of the program as returning constant
                                   values.
         :return: A 2-tuple of SDFG and its reduced (used) closure.
-        @rtype: SDFG
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
 
@@ -174,6 +173,7 @@ def parse_dace_program(f,
     }
     closure_resolver = GlobalResolver(resolved, resolve_functions)
     src_ast = closure_resolver.visit(src_ast)
+    src_ast = LoopUnroller(resolved).visit(src_ast)
     src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
     src_ast = DeadCodeEliminator().visit(src_ast)
 
@@ -312,7 +312,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
             elif isinstance(node.ops[0], ast.NotEq):
                 return sympy.Ne(left, right)
         return self.generic_visit(node)
-    
+
     def visit_Constant(self, node):
         if isinstance(node.value, numpy.bool_):
             node.value = bool(node.value)
@@ -350,6 +350,176 @@ class ConditionalCodeResolver(ast.NodeTransformer):
 
     def visit_IfExp(self, node: ast.IfExp) -> Any:
         return self.visit_If(node)
+
+
+class _FindBreakContinueStmts(ast.NodeVisitor):
+    """
+    Find control statements in the given loop (break / continue), without
+    traversing into nested loops.
+    """
+    def __init__(self) -> None:
+        super().__init__()
+        self.has_cflow = False
+
+    def visit_For(self, node):
+        # Skip visiting contents
+        return
+
+    def visit_AsyncFor(self, node):
+        # Skip visiting contents
+        return
+
+    def visit_While(self, node):
+        # Skip visiting contents
+        return
+
+    def visit_Break(self, node):
+        self.has_cflow = True
+        return self.generic_visit(node)
+
+    def visit_Continue(self, node):
+        self.has_cflow = True
+        return self.generic_visit(node)
+
+
+class LoopUnroller(ast.NodeTransformer):
+    """ 
+    Replaces loops by their unrolled bodies if generator can be evaluated at
+    compile time and one of the following conditions apply:
+        1. `dace.unroll` was explicitly called
+        2. looping over compile-time constant tuples/lists/dictionaries
+        3. generator is one of the predetermined "stateless generators".
+    """
+    STATELESS_GENERATORS = [
+        enumerate,
+        zip,
+        reversed,
+        dict.values,
+        dict.keys,
+        dict.items,
+    ]
+
+    EXPLICIT_GENERATORS = [
+        range,  # Handled in ProgramVisitor
+    ]
+
+    def __init__(self, globals: Dict[str, Any]):
+        super().__init__()
+        self.globals = globals
+
+    def visit_For(self, node: ast.For) -> Any:
+        node = self.generic_visit(node)
+
+        # First, skip loops that contain break/continue that is part of this
+        # for loop (rather than nested ones)
+        cannot_unroll = False
+        cflow_finder = _FindBreakContinueStmts()
+        for stmt in node.body:
+            cflow_finder.visit(stmt)
+        if cflow_finder.has_cflow or node.orelse:
+            cannot_unroll = True
+
+        niter = node.iter
+
+        # Find out if loop was explicitly requested to be unrolled with unroll,
+        # and whether it should be done implicitly
+        explicitly_requested = False
+        if isinstance(niter, ast.Call):
+            # Avoid import loop
+            from dace.frontend.python.interface import unroll
+
+            try:
+                genfunc = astutils.evalnode(niter.func, self.globals)
+            except SyntaxError:
+                genfunc = None
+
+            if genfunc is unroll:
+                explicitly_requested = True
+                niter = niter.args[0]
+
+        if explicitly_requested and cannot_unroll:
+            raise DaceSyntaxError(
+                None, node, 'Cannot unroll loop due to '
+                '"break", "continue", or "else" statements.')
+
+        # Find out if unrolling should be done implicitly
+        implicit = True
+        # Anything not a call is implicitly allowed
+        if isinstance(niter, ast.Call):
+            implicit = False
+            # Try to see if it's one of the allowed stateless generators
+            try:
+                genfunc = astutils.evalnode(niter.func, self.globals)
+
+                # If genfunc is a bound method, try to extract function from type
+                if hasattr(genfunc, '__self__'):
+                    genfunc = getattr(type(genfunc.__self__), genfunc.__name__,
+                                      False)
+
+                if genfunc in LoopUnroller.STATELESS_GENERATORS:
+                    implicit = True
+                elif genfunc in LoopUnroller.EXPLICIT_GENERATORS:
+                    implicit = False
+
+            except SyntaxError:
+                pass
+
+        # Loop will not be unrolled
+        if not implicit and not explicitly_requested:
+            return node
+
+        # Check if loop target is supported
+        if isinstance(node.target, ast.Tuple):
+            to_replace = node.target.elts
+        elif isinstance(node.target, ast.Name):
+            to_replace = [node.target]
+        else:
+            # Unsupported loop target
+            return node
+
+        if isinstance(niter, (ast.Tuple, ast.List, ast.Set)):
+            # Check if a literal tuple/list/set
+            generator = niter.elts
+        elif isinstance(niter, ast.Dict):
+            # If dict, take keys (Python compatible)
+            generator = niter.keys
+        # elif isinstance(iter, (ast.ListComp, ast.DictComp, ast.SetComp, ast.GeneratorExp)):
+        #     # Check if a comprehension or generator expression
+        #     pass
+        else:
+            # Check if the generator is compile-time constant
+            try:
+                generator = astutils.evalnode(niter, self.globals)
+            except SyntaxError:
+                # Cannot evaluate generator at compile time
+                return node
+
+        # Too verbose?
+        if implicit and not explicitly_requested:
+            warnings.warn(f'Loop at line {node.lineno} will be implicitly '
+                          'unrolled.')
+
+        ##########################################
+        # Unroll loop
+        new_body = []
+        for elem in generator:
+            # Paste loop body with replaced elements
+            try:
+                iter(elem)
+            except (TypeError, ValueError):
+                elem = [elem]
+
+            elembody = copy.deepcopy(node.body)
+            replace = astutils.ASTFindReplace(
+                {k: v
+                 for k, v in zip(to_replace, elem)})
+            for stmt in elembody:
+                new_body.append(replace.visit(stmt))
+
+        return new_body
+
+    def visit_AsyncFor(self, node) -> Any:
+        return self.visit_For(node)
 
 
 class DeadCodeEliminator(ast.NodeTransformer):

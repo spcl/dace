@@ -403,18 +403,30 @@ class ExtNodeVisitor(ast.NodeVisitor):
 class ASTFindReplace(ast.NodeTransformer):
     def __init__(self, repldict: Dict[str, str]):
         self.repldict = repldict
+        # If ast.Names were given, use them as keys as well
+        self.repldict.update({
+            k.id: v
+            for k, v in self.repldict.items() if isinstance(k, ast.Name)
+        })
 
     def visit_Name(self, node: ast.Name):
         if node.id in self.repldict:
-            new_node = ast.copy_location(
-                ast.parse(str(self.repldict[node.id])).body[0].value, node)
+            val = self.repldict[node.id]
+            if isinstance(val, ast.AST):
+                new_node = ast.copy_location(val, node)
+            else:
+                new_node = ast.copy_location(
+                    ast.parse(str(self.repldict[node.id])).body[0].value, node)
             return new_node
 
         return self.generic_visit(node)
 
     def visit_keyword(self, node: ast.keyword):
         if node.arg in self.repldict:
-            node.arg = self.repldict[node.arg]
+            val = self.repldict[node.arg]
+            if isinstance(val, ast.AST):
+                val = unparse(val)
+            node.arg = val
         return self.generic_visit(node)
 
 
