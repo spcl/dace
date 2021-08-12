@@ -278,6 +278,7 @@ class LoopToMap(DetectLoop):
             nsdfg.add_node(body, is_start_state=True)
             body.parent = nsdfg
             exit_state = nsdfg.add_state('exit')
+            fsymbols = set(sdfg.free_symbols)
             nsymbols = dict()
             for state in states:
                 if state is body:
@@ -332,9 +333,9 @@ class LoopToMap(DetectLoop):
                     memlet.Memlet.from_array(name, sdfg.arrays[name]))
 
             # Fix SDFG symbols
+            for sym in sdfg.free_symbols - fsymbols:
+                del sdfg.symbols[sym]
             for sym, dtype in nsymbols.items():
-                if sym in sdfg.free_symbols:
-                    del sdfg.symbols[sym]
                 nsdfg.symbols[sym] = dtype
 
             # Change body state reference
