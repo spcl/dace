@@ -2,13 +2,42 @@
 import ast
 import astunparse
 from collections import defaultdict
+from typing import Tuple
 
 
 class SubscriptConverter(ast.NodeTransformer):
-    def __init__(self, offset=None, dtype=None):
-        self.names = defaultdict(dict)
+    """
+    Finds all subscript accesses using constant indices in the given code, and
+    renames them to a connector name that is not indexed, e.g.:
+
+    a[0, 1, 0] is renamed to a_0_1_0
+    b[-1, 0] is renamed to b_m1_0
+
+    These mappings can be accessed in the `mapping` property, which returns a
+    dictionary mapping the index tuple to the connector name, e.g.:
+
+    {
+      "a": {
+        (0, 1, 0): "a_0_1_0"
+      },
+      "b": {
+        (-1, 0): "b_m1_0
+      }
+    }
+    """
+    def __init__(self, offset: Tuple[int] = None, dtype=None):
+        """
+        :param offset: Apply the given offset tuple to every index found.
+        :param dtype: Data type of constants found to enforce that the right
+                      type is used (e.g., that 1.0 is interpreted as float32).
+        """
+        self._mapping = defaultdict(dict)
         self.offset = offset
         self.dtype = dtype
+
+    @property
+    def mapping(self):
+        return self._mapping
 
     def convert(self, varname, index_tuple):
 
@@ -26,7 +55,7 @@ class SubscriptConverter(ast.NodeTransformer):
         # Add variable name
         index_str = varname + '_' + index_str
 
-        self.names[varname][index_tuple] = index_str
+        self._mapping[varname][index_tuple] = index_str
 
         return index_str
 

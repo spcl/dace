@@ -10,7 +10,7 @@ import numpy as np
 from .subscript_converter import SubscriptConverter
 
 
-def _check_stencil_shape(shape, other):
+def _check_stencil_shape(shape: Tuple, other: Tuple):
     """
     Compares the existing shape with a proposed shape, setting it to the new
     shape if the new shape has higher dimensionality. If the dimensionality is
@@ -71,7 +71,7 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         converter = SubscriptConverter()
         new_ast = converter.visit(ast.parse(code))
         code = astunparse.unparse(new_ast)
-        field_accesses: Dict[str, List[Tuple[int]]] = converter.names
+        field_accesses: Dict[str, List[Tuple[int]]] = converter.mapping
 
         #######################################################################
         # Implement boundary conditions
@@ -161,8 +161,9 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
                 if sum(iterator_mapping[k], 0) > 0
             ],
             [])
-        output_connectors = sum([[f"{c}_out" for c in field_accesses[k].values()]
-                              for k in outputs], [])
+        output_connectors = sum(
+            [[f"{c}_out" for c in field_accesses[k].values()] for k in outputs],
+            [])
 
         #######################################################################
         # Create tasklet
@@ -196,7 +197,7 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
             for indices, connector in field_accesses[field].items():
                 access_str = ", ".join(
                     f"{p} + ({i})" for p, i in zip(field_parameters, indices))
-                memlet = dace.Memlet.simple(field, access_str, num_accesses=-1)
+                memlet = dace.Memlet(f"{field}[{access_str}]", dynamic=True)
                 memlet.allow_oob = True
                 state.add_memlet_path(read_node,
                                       entry,
@@ -226,8 +227,5 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
                 sdfg.add_symbol(field_name, parent_sdfg.symbols[field_name])
 
         #######################################################################
-
-        sdfg.parent = parent_state
-        sdfg._parent_sdfg = parent_sdfg  # TODO: this should not be necessary
 
         return sdfg
