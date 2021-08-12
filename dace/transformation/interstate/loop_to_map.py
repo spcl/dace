@@ -273,12 +273,12 @@ class LoopToMap(DetectLoop):
 
             # Create NestedSDFG and add all loop-body states and edges
             # Also, find defined symbols in NestedSDFG
+            fsymbols = set(sdfg.free_symbols)
             new_body = sdfg.add_state('single_state_body')
             nsdfg = SDFG("loop_body", constants=sdfg.constants, parent=new_body)
             nsdfg.add_node(body, is_start_state=True)
             body.parent = nsdfg
             exit_state = nsdfg.add_state('exit')
-            fsymbols = set(sdfg.free_symbols)
             nsymbols = dict()
             for state in states:
                 if state is body:
