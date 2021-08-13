@@ -76,6 +76,14 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
                         (properties.RangeProperty, properties.ShapeProperty)):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
+            # Don't replace variables that appear as an input or an output
+            # connector, as this should shadow the outer declaration.
+            if hasattr(node, 'in_connectors'):
+                if name in node.in_connectors:
+                    continue
+            if hasattr(node, 'out_connectors'):
+                if name in node.out_connectors:
+                    continue
             if isinstance(propval.code, str):
                 if str(name) != str(new_name):
                     lang = propval.language
