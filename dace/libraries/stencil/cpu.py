@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2020-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import astunparse
 import collections
@@ -9,7 +9,7 @@ from typing import Dict, List, Tuple
 import dace
 
 from .subscript_converter import SubscriptConverter
-from ._common import _parse_connectors
+from ._common import *
 
 
 @dace.library.expansion
@@ -23,11 +23,8 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         sdfg = dace.SDFG(node.label + "_outer")
         state = sdfg.add_state(node.label + "_outer")
 
-        # Find outer data descriptor
-        (inputs, outputs, shape,
-         field_to_desc) = _parse_connectors(node, parent_state, parent_sdfg)
-
-        parameters = [f"_i{i}" for i in range(len(shape))]
+        (inputs, outputs, shape, field_to_data, field_to_desc,
+         _, vector_lengths) = parse_connectors(node, parent_state, parent_sdfg)
 
         #######################################################################
         # Tasklet code generation
@@ -40,72 +37,15 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         new_ast = converter.visit(ast.parse(code))
         code = astunparse.unparse(new_ast)
         field_accesses: Dict[str, List[Tuple[int]]] = converter.mapping
+        iterator_mapping = make_iterator_mapping(node, field_accesses, shape)
+        validate_vector_lengths(vector_lengths, iterator_mapping)
 
         #######################################################################
-        # Implement boundary conditions
+        # Boundary condition generation
         #######################################################################
 
-        boundary_code = ""
-        iterator_mapping: Dict[str, Tuple[int]] = {}
-        oob_cond = set()
-        # Loop over each input
-        for field_name in inputs:
-            accesses = field_accesses[field_name]
-            if field_name in node.iterator_mapping:
-                iterators = node.iterator_mapping[field_name]
-            else:
-                iterators = tuple(True for _ in range(len(shape)))
-            iterator_mapping[field_name] = iterators
-            num_dims = sum(iterators, 0)
-            if num_dims == 0:
-                continue  # Scalar input
-            if len(iterators) != len(shape):
-                raise ValueError(
-                    f"Invalid iterator mapping for {field_name}: {iterators}")
-            dtype = field_to_desc[field_name].dtype.type
-            # Loop over each access to this data
-            for indices, memlet_name in accesses.items():
-                if len(indices) != num_dims:
-                    raise ValueError(f"Access {indices} inconsistent with "
-                                     f"iterator mapping {iterators}.")
-                cond = set()
-                # Loop over each index of this access
-                for i, offset in enumerate(indices):
-                    if offset < 0:
-                        term = parameters[i] + " < " + str(-offset)
-                    elif offset > 0:
-                        term = parameters[i] + " >= " + str(shape[i] - offset)
-                    cond.add(term)
-                if len(cond) == 0:
-                    boundary_code += "{} = {}_in\n".format(
-                        memlet_name, memlet_name)
-                else:
-                    if field_name in node.boundary_conditions:
-                        bc = node.boundary_conditions[field_name]
-                    else:
-                        bc = {"btype": "shrink"}
-                    btype = bc["btype"]
-                    if btype == "copy":
-                        center_memlet = accesses[center]
-                        boundary_val = "_{}".format(center_memlet)
-                    elif btype == "constant":
-                        boundary_val = bc["value"]
-                    elif btype == "shrink":
-                        # We don't need to do anything here, it's up to the
-                        # user to not use the junk output
-                        if np.issubdtype(dtype, np.floating):
-                            boundary_val = np.nan
-                        else:
-                            # If not a float, assume it's some kind of integer
-                            boundary_val = np.iinfo(dtype).min
-                        # Add this to the output condition
-                        oob_cond |= cond
-                    else:
-                        raise ValueError(
-                            f"Unsupported boundary condition type: {btype}")
-                    boundary_code += ("{} = {} if {} else {}_in\n".format(
-                        memlet_name, boundary_val, " or ".join(sorted(cond)),
-                        memlet_name))
+        boundary_code, oob_cond = generate_boundary_conditions(
+            node, shape, field_accesses, field_to_desc, iterator_mapping)
 
         #######################################################################
         # Write all output memlets
@@ -124,13 +64,13 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
 
         input_connectors = sum(
             [
-                [f"{c}_in" for c in field_accesses[k].values()] for k in inputs
+                [f"_{c}" for c in field_accesses[k].values()] for k in inputs
                 # Don't include scalar variables
                 if sum(iterator_mapping[k], 0) > 0
             ],
             [])
         output_connectors = sum(
-            [[f"{c}_out" for c in field_accesses[k].values()] for k in outputs],
+            [[f"_{c}" for c in field_accesses[k].values()] for k in outputs],
             [])
 
         #######################################################################
@@ -146,6 +86,8 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         #######################################################################
         # Build dataflow state
         #######################################################################
+
+        parameters = [f"_i{i}" for i in range(len(shape))]
 
         entry, exit = state.add_map(
             node.name + "_map",
@@ -170,7 +112,7 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
                 state.add_memlet_path(read_node,
                                       entry,
                                       tasklet,
-                                      dst_conn=connector + "_in",
+                                      dst_conn=f"_{connector}",
                                       memlet=memlet)
 
         index_tuple = ", ".join(parameters)
@@ -184,7 +126,7 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
                 state.add_memlet_path(tasklet,
                                       exit,
                                       write_node,
-                                      src_conn=connector + "_out",
+                                      src_conn=f"_{connector}",
                                       memlet=dace.Memlet(
                                           f"{field}[{index_tuple}]",
                                           dynamic=len(oob_cond) > 0))

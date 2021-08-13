@@ -1,14 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.fpga_testing import fpga_test
 from dace.libraries.stencil import Stencil
 import numpy as np
+from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 
 ROWS = dace.symbol("rows")
 COLS = dace.symbol("cols")
 DTYPE = np.float32
 
 
-def make_sdfg():
+def make_sdfg(implementation="pure"):
 
     sdfg = dace.SDFG("stencil_node_test")
     _, a_desc = sdfg.add_array("a", (ROWS, COLS), dtype=DTYPE)
@@ -25,6 +27,7 @@ def make_sdfg():
         "stencil_test",
         "res[0, 0] = c * b[0] * (a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1])",
         iterator_mapping={"b": (True, False)})
+    stencil_node.implementation = implementation
     state.add_node(stencil_node)
 
     state.add_memlet_path(a,
@@ -43,21 +46,38 @@ def make_sdfg():
     return sdfg
 
 
-def test_stencil_node():
-    sdfg = make_sdfg()
-    rows = 16
-    cols = 32
+def run_stencil(sdfg, specialize: bool):
+    rows = 8
+    cols = 4
     a = np.ones((rows, cols), dtype=DTYPE)
     a[1:-1, 1:-1] = 0
     b = np.empty((rows, ), dtype=DTYPE)
     b[:] = 1
     c = DTYPE(0.25)
-    res = np.empty((rows, cols), dtype=DTYPE)
-    sdfg(a=a, b=b, c=c, res=res, rows=rows, cols=cols)
-    assert np.allclose(
-        0.25 * (a[2:, 1:-1] + a[:-2, 1:-1] + a[1:-1, 2:] + a[1:-1, :-2]),
-        res[1:-1, 1:-1])
+    res = np.zeros((rows, cols), dtype=DTYPE)
+    if specialize:
+        sdfg.specialize({"cols": cols})
+        sdfg(a=a, b=b, c=c, res=res, rows=rows)
+    else:
+        sdfg(a=a, b=b, c=c, res=res, rows=rows, cols=cols)
+    expected = 0.25 * (a[2:, 1:-1] + a[:-2, 1:-1] + a[1:-1, 2:] + a[1:-1, :-2])
+    print(expected)
+    print(res)
+    assert np.allclose(expected, res[1:-1, 1:-1])
+
+
+def test_stencil_node():
+    run_stencil(make_sdfg(), False)
+
+
+def test_stencil_node_fpga():
+    sdfg = make_sdfg(dace.Config.get("compiler", "fpga_vendor"))
+    assert sdfg.apply_transformations(FPGATransformSDFG) == 1
+    assert sdfg.apply_transformations(InlineSDFG) == 1
+    run_stencil(sdfg, True)
+    return sdfg
 
 
 if __name__ == "__main__":
     test_stencil_node()
+    test_stencil_node_fpga()
