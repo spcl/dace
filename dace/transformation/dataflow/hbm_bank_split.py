@@ -22,6 +22,9 @@ class HbmBankSplit(transformation.Transformation):
     for the shapes of the array, it is expected that each dimension is divisible by the number
     of splits specified.
 
+    When appling an unrolled map is generated around the accessnodes, which copies the parts of 
+    the array to the target array.
+
     Examples:
     Distribute: Suppose for example we copy from A to B, where A has shape [100, 100] and B shape
     [10, 100, 10]. We can distribute A in that case to B using the transformation by setting
@@ -87,11 +90,9 @@ class HbmBankSplit(transformation.Transformation):
             array, data.Array) and not isinstance(array, data.View)
 
         if not plain_array(src_array):
-            raise ValueError(
-                f"{src.data} must be of type array and mustn't be a view")
+            return False
         if not plain_array(dst_array):
-            raise ValueError(
-                f"{dst.data} must be of type array and mustn't be a view")
+            return False
 
         # same dimensions means HBM-array needs 1 dimension more
         collect_src = len(src_array.shape) - 1 == len(dst_array.shape)
