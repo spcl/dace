@@ -399,15 +399,18 @@ class LoopUnroller(ast.NodeTransformer):
         dict.items,
     ]
 
-    EXPLICIT_GENERATORS = [
-        range,  # Handled in ProgramVisitor
-    ]
-
     def __init__(self, globals: Dict[str, Any]):
         super().__init__()
         self.globals = globals
 
     def visit_For(self, node: ast.For) -> Any:
+        # Avoid import loops
+        EXPLICIT_GENERATORS = [
+            range,  # Handled in ProgramVisitor
+            dace.map,
+            dace.consume,
+        ]
+
         node = self.generic_visit(node)
 
         # First, skip loops that contain break/continue that is part of this
@@ -445,11 +448,16 @@ class LoopUnroller(ast.NodeTransformer):
         # Find out if unrolling should be done implicitly
         implicit = True
         # Anything not a call is implicitly allowed
-        if isinstance(niter, ast.Call):
+        if isinstance(niter, (ast.Call, ast.Subscript)):
+            if isinstance(niter, ast.Subscript):
+                nfunc = niter.value
+            else:
+                nfunc = niter.value
+
             implicit = False
             # Try to see if it's one of the allowed stateless generators
             try:
-                genfunc = astutils.evalnode(niter.func, self.globals)
+                genfunc = astutils.evalnode(nfunc, self.globals)
 
                 # If genfunc is a bound method, try to extract function from type
                 if hasattr(genfunc, '__self__'):
@@ -458,7 +466,7 @@ class LoopUnroller(ast.NodeTransformer):
 
                 if genfunc in LoopUnroller.STATELESS_GENERATORS:
                     implicit = True
-                elif genfunc in LoopUnroller.EXPLICIT_GENERATORS:
+                elif genfunc in EXPLICIT_GENERATORS:
                     implicit = False
 
             except SyntaxError:
