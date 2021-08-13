@@ -13,13 +13,13 @@ import functools
 @properties.make_properties
 class HbmBankSplit(transformation.Transformation):
     """
-    A transformation that allows to split an array and distribute on
-    an array with one dimension more, or the reverse operation. Works in principle
-    with arbitrary arrays, but it's real use case is to distribute data on many HBM-banks.
-    Matches any 2 AccessNodes connected by any edge, if the dimensionality of the two accessed
+    A transformation that allow splitting an array and distribute it on another
+    array with one dimension more, or vice versa. Works with arbitrary arrays,
+    but its intended use case is to distribute data on many HBM-banks.
+    Matches any 2 AccessNodes connected by an edge, if the dimensionality of the two accessed
     arrays differ by exactly one. The sizes of the arrays have to be large enough with
     respect to the split executed, but this is not verified. While it is allowed to use symbolics 
-    for the shapes of the array, it is expected that each dimension is divisable by the number
+    for the shapes of the array, it is expected that each dimension is divisible by the number
     of splits specified.
 
     Examples:
@@ -33,7 +33,7 @@ class HbmBankSplit(transformation.Transformation):
     Therefore A[0] will be copied to B[0:50, 0:50], A[1] to B[0:50, 50:100], A[2] to B[50:100, 0:50] and
     A[3] to B[50:100, 50:100].
 
-    Note that simply turning the AccessNodes for the arrays in the above examples would
+    Note that simply reversing the AccessNodes for the arrays in the above examples would
     have lead to the inverse operation, i.e. the gather would become a distribute and 
     the other way around.
     """
@@ -164,7 +164,7 @@ class HbmBankSplit(transformation.Transformation):
             ndrange[usable_params[i]] = f"0:{split_info[i]}"
         graph.remove_edge_and_connectors(graph.edges_between(src, dst)[0])
         copy_map_enter, copy_map_exit = graph.add_map(
-            "copy_map", ndrange, dtypes.ScheduleType.Unrolled)
+            "hbm_bank_split", ndrange, dtypes.ScheduleType.Unrolled)
         graph.add_edge(copy_map_enter, None, src, None, memlet.Memlet())
         graph.add_edge(dst, None, copy_map_exit, None, memlet.Memlet())
 
