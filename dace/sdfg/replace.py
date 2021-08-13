@@ -94,12 +94,17 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
             elif propval.code is not None:
                 for stmt in propval.code:
                     ASTFindReplace({name: new_name}).visit(stmt)
-        elif (isinstance(propclass, properties.DictProperty)
-              and pname == 'symbol_mapping'):
-            # Symbol mappings for nested SDFGs
-            for symname, sym_mapping in propval.items():
-                propval[symname] = symbolic.pystr_to_symbolic(sym_mapping).subs(
-                    symrepl)
+        elif isinstance(propclass, properties.DictProperty):
+            if pname == 'symbol_mapping':
+                # Symbol mappings for nested SDFGs
+                for symname, sym_mapping in propval.items():
+                    propval[symname] = symbolic.pystr_to_symbolic(sym_mapping).subs(
+                        symrepl)
+            elif pname in ('in_connectors', 'out_connectors'):
+                for key in list(propval.keys()):
+                    updated = str(symbolic.pystr_to_symbolic(key).subs(symrepl))
+                    if key != updated:
+                        propval[updated] = propval.pop(key)
 
 
 def replace_properties_dict(node: Any, symrepl: Dict[symbolic.SymbolicType,
