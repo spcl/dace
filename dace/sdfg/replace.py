@@ -58,6 +58,10 @@ def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
             edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
         if symname in edge.data.volume.free_symbols:
             edge.data.volume = _replsym(edge.data.volume, symrepl)
+        if edge.src_conn == name:
+            edge.src_conn = new_name
+        if edge.dst_conn == name:
+            edge.dst_conn = new_name
 
 
 def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
@@ -98,13 +102,12 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
             if pname == 'symbol_mapping':
                 # Symbol mappings for nested SDFGs
                 for symname, sym_mapping in propval.items():
-                    propval[symname] = symbolic.pystr_to_symbolic(sym_mapping).subs(
-                        symrepl)
+                    propval[symname] = symbolic.pystr_to_symbolic(
+                        sym_mapping).subs(symrepl)
             elif pname in ('in_connectors', 'out_connectors'):
                 for key in list(propval.keys()):
-                    updated = str(symbolic.pystr_to_symbolic(key).subs(symrepl))
-                    if key != updated:
-                        propval[updated] = propval.pop(key)
+                    if key == name:
+                        propval[new_name] = propval.pop(key)
 
 
 def replace_properties_dict(node: Any, symrepl: Dict[symbolic.SymbolicType,
