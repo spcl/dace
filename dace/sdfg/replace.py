@@ -58,10 +58,6 @@ def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
             edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
         if symname in edge.data.volume.free_symbols:
             edge.data.volume = _replsym(edge.data.volume, symrepl)
-        if edge.src_conn == name:
-            edge.src_conn = new_name
-        if edge.dst_conn == name:
-            edge.dst_conn = new_name
 
 
 def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
@@ -80,6 +76,14 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
                         (properties.RangeProperty, properties.ShapeProperty)):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
+            # Don't replace variables that appear as an input or an output
+            # connector, as this should shadow the outer declaration.
+            if hasattr(node, 'in_connectors'):
+                if name in node.in_connectors:
+                    continue
+            if hasattr(node, 'out_connectors'):
+                if name in node.out_connectors:
+                    continue
             if isinstance(propval.code, str):
                 if str(name) != str(new_name):
                     lang = propval.language
@@ -98,16 +102,12 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
             elif propval.code is not None:
                 for stmt in propval.code:
                     ASTFindReplace({name: new_name}).visit(stmt)
-        elif isinstance(propclass, properties.DictProperty):
-            if pname == 'symbol_mapping':
-                # Symbol mappings for nested SDFGs
-                for symname, sym_mapping in propval.items():
-                    propval[symname] = symbolic.pystr_to_symbolic(
-                        sym_mapping).subs(symrepl)
-            elif pname in ('in_connectors', 'out_connectors'):
-                for key in list(propval.keys()):
-                    if key == name:
-                        propval[new_name] = propval.pop(key)
+        elif (isinstance(propclass, properties.DictProperty)
+              and pname == 'symbol_mapping'):
+            # Symbol mappings for nested SDFGs
+            for symname, sym_mapping in propval.items():
+                propval[symname] = symbolic.pystr_to_symbolic(sym_mapping).subs(
+                    symrepl)
 
 
 def replace_properties_dict(node: Any, symrepl: Dict[symbolic.SymbolicType,
