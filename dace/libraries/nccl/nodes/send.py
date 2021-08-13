@@ -81,7 +81,8 @@ class ExpandSendNCCL(ExpandTransformation):
                     out_gh_edge = edge
                     out_gh_node = edge.dst
             if not state.successors(out_gh_node):
-                code += """ncclGroupEnd();\ncudaStreamSynchronize(__dace_current_stream);"""
+                code += """ncclGroupEnd();"""
+                # code += """\ncudaStreamSynchronize(__dace_current_stream);"""
                 out_gh_data = out_gh_node.data
                 state.remove_edge_and_connectors(out_gh_edge)
                 state.remove_node(out_gh_node)
