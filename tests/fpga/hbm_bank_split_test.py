@@ -5,6 +5,16 @@ from dace.transformation.dataflow import HbmBankSplit
 from dace.transformation import optimizer
 import numpy as np
 
+def test_simple_split():
+    sdfg = dace.SDFG("hbm_bank_split_first_dim")
+    _, b, a = mkc(sdfg, None, "b", "a", StorageType.CPU_Heap,
+        StorageType.CPU_Heap, [4, 10, 10], [40, 10], "b")
+    for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
+            patterns=HbmBankSplit):
+        xform.apply(sdfg)
+    sdfg(a=a, b=b)
+    assert np.allclose(b[1], a[10:20, :])
+    assert np.allclose(b[3], a[30:40, :])
 
 def test_even_split_3d():
     sdfg = dace.SDFG("hbm_bank_split_even_split_3d")
@@ -12,6 +22,7 @@ def test_even_split_3d():
                   StorageType.CPU_Heap, [8, 50, 50, 50], [100, 100, 100], "b")
     for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
             patterns=HbmBankSplit):
+        xform.split_array_info = [2, 2, 2]
         xform.apply(sdfg)
     b = np.random.uniform(0, 100, [8, 50, 50, 50]).astype(np.int32)
     sdfg(a=a, b=b)
@@ -50,6 +61,7 @@ def test_explicit_split_3d():
 
 
 if __name__ == "__main__":
+    test_simple_split()
     test_even_split_3d()
     test_second_dim_split_2d()
     test_explicit_split_3d()

@@ -27,10 +27,9 @@ class HbmBankSplit(transformation.Transformation):
     [10, 100, 10]. We can distribute A in that case to B using the transformation by setting
     split_array_info=[1, 10]. A will then be divided along it's second dimension into 10 parts
     of size [100, 10] and distributed on B.
-    Gather: Suppose A has shape [4, 50, 50] and B has shape [100, 100]. If one leaves 
-    split_array_info set to None and applies the transformation, it will try to split 
-    equally in all dimensions. In this case this works by setting split_array_info=[2, 2]
-    since 2**2 = 4.
+    Gather: Suppose A has shape [4, 50, 50] and B has shape [100, 100]. If one sets
+    split_array_info to [2, 2] and applies the transformation, it will split 
+    equally in all dimensions.
     Therefore A[0] will be copied to B[0:50, 0:50], A[1] to B[0:50, 50:100], A[2] to B[50:100, 0:50] and
     A[3] to B[50:100, 50:100].
 
@@ -51,7 +50,7 @@ class HbmBankSplit(transformation.Transformation):
         "where the k-th number describes how many times dimension k is split. "
         "If the k-th number is 1 this means that the array is not split in "
         "the k-th dimension at all. "
-        "If None, then the transform will try to split equally in each dimension."
+        "If None, then the transform will split the first dimension."
     )
 
     default_to_storage = properties.Property(
@@ -142,8 +141,8 @@ class HbmBankSplit(transformation.Transformation):
 
         # Figure out how to split
         if self.split_array_info is None:
-            tmp_split = round((bank_count)**(1 / ndim))
-            split_info = [tmp_split] * ndim
+            split_info = [1] * ndim
+            split_info[0] = bank_count
         else:
             split_info = self.split_array_info
             if len(split_info) != ndim:
