@@ -52,6 +52,7 @@ def batchnorm2d_data_parallelism(x: dc_dtype[N, H, W, C]):
         x_std = dace.ndarray([H, W, C], dtype=dc_dtype)
         dace.reduce(lambda a, b: a + b, x_gpu, x_mean, axis=(0), identity=0)
 <<<<<<< HEAD
+<<<<<<< HEAD
         dace.comm.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
         fn = np.float32(N)
         x_mean[:] = x_mean[:] / fn
@@ -62,11 +63,14 @@ def batchnorm2d_data_parallelism(x: dc_dtype[N, H, W, C]):
         x_std[:] = np.sqrt(x_std / fn)
 =======
         dace.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
+=======
+        dace.comm.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
+>>>>>>> 2a79869f... cleanup
         x_mean[:] = x_mean[:] / NN
         x_gpu[:] = x_gpu - x_mean
         x_tmp[:] = x_gpu * x_gpu
         dace.reduce(lambda a, b: a + b, x_tmp, x_std, axis=(0), identity=0)
-        dace.nccl.allreduce(lambda a, b: a + b, x_std, x_std)
+        dace.comm.nccl.allreduce(lambda a, b: a + b, x_std, x_std)
         x_std[:] = np.sqrt(x_std / NN)
 >>>>>>> 65cb7934... batchnormalization: Fix
         x_gpu[:] = x_gpu / np.sqrt(x_std + 1e-5)
@@ -117,7 +121,8 @@ def find_library_nodes(
 
 @pytest.mark.multigpu
 def test_batchnorm2d_data_parallelism():
-    n, h, w, c = 16, 128, 128, 64
+    # n, h, w, c = 16, 128, 128, 64
+    n, h, w, c = 16, 4, 4, 8
     ng = 4
 
     sdfg: dace.SDFG = batchnorm2d_data_parallelism.to_sdfg(strict=True)
@@ -141,31 +146,32 @@ def test_batchnorm2d_data_parallelism():
     sdfg.apply_transformations_repeated([RedundantSecondArray, RedundantArray])
     sdfg.apply_strict_transformations()
 
-    # np.random.seed(0)
-    # X = np.ndarray(shape=[n, h, w, c], dtype=np_dtype)
-    # X[:] = np.random.rand(n, h, w, c)[:]
-    # # X = np.arange(n * h * w * c, dtype=np_dtype).reshape([n, h, w, c])
-    # Z = np.copy(X)
+    np.random.seed(0)
+    X = np.ndarray(shape=[n, h, w, c], dtype=np_dtype)
+    X[:] = np.random.rand(n, h, w, c)[:]
+    # X = np.arange(n * h * w * c, dtype=np_dtype).reshape([n, h, w, c])
+    Z = np.copy(X)
 
-    # print('GPU')
-    # sdfg(X)
-    # print('GPU done')
+    print('GPU')
+    sdfg(X)
+    print('GPU done')
 
-    # bnsdfg: dace.SDFG = batchnorm2d.to_sdfg()
-    # lib_nodes = find_library_nodes(bnsdfg, Reduce)
-    # lib_nodes[0].implementation = 'pure'
-    # lib_nodes[1].implementation = 'pure'
+    bnsdfg: dace.SDFG = batchnorm2d.to_sdfg()
+    lib_nodes = find_library_nodes(bnsdfg, Reduce)
+    lib_nodes[0].implementation = 'pure'
+    lib_nodes[1].implementation = 'pure'
 
-    # print('CPU')
-    # res = bnsdfg(Z, N=n, H=h, W=w, C=c)
-    # print('CPU done')
-    # assert np.allclose(X, Z), f'\nout:\n{X[0][0][0]}\nres:\n{res[0][0][0]}\n'
+    print('CPU')
+    res = bnsdfg(Z, N=n, H=h, W=w, C=c)
+    print('CPU done')
+    assert np.allclose(X, res), f'\ndiff: {np.linalg.norm(X-res)}'
+    # , f'\nout:\n{X[0][0][0]}\nres:\n{res[0][0][0]}\n'
 
-    program_objects = sdfg.generate_code()
-    from dace.codegen import compiler
-    out_path = '.dacecache/local/batchnorm/' + sdfg.name
-    program_folder = compiler.generate_program_folder(sdfg, program_objects,
-                                                      out_path)
+    # program_objects = sdfg.generate_code()
+    # from dace.codegen import compiler
+    # out_path = '.dacecache/local/batchnorm/' + sdfg.name
+    # program_folder = compiler.generate_program_folder(sdfg, program_objects,
+    #                                                   out_path)
 
 
 if __name__ == "__main__":

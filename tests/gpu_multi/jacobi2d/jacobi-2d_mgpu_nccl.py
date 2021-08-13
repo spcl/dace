@@ -46,30 +46,6 @@ def jacobi_2d_shared(A: dace.float64[N, Ny], B: dace.float64[N, Ny]):
 
 
 @dace.program
-def seq1(lA: d_float[lNy + 2, N + 2]):
-    group_handle = dace.define_local_scalar(d_int,
-                                            storage=dace.StorageType.GPU_Global)
-    # send North, recv South
-    dace.comm.nccl.Recv(lA[-1], peer=bottom_neighbor, group_handle=group_handle)
-    dace.comm.nccl.Send(lA[1], peer=top_neighbor, group_handle=group_handle)
-    # send South, recv North
-    dace.comm.nccl.Recv(lA[0], peer=top_neighbor, group_handle=group_handle)
-    dace.comm.nccl.Send(lA[-2], peer=bottom_neighbor, group_handle=group_handle)
-
-
-@dace.program
-def seq2(lB: d_float[lNy + 2, N + 2]):
-    group_handle = dace.define_local_scalar(d_int,
-                                            storage=dace.StorageType.GPU_Global)
-    # send North, recv South
-    dace.comm.nccl.Recv(lB[-1], peer=bottom_neighbor, group_handle=group_handle)
-    dace.comm.nccl.Send(lB[1], peer=top_neighbor, group_handle=group_handle)
-    # send South, recv North
-    dace.comm.nccl.Recv(lB[0], peer=top_neighbor, group_handle=group_handle)
-    dace.comm.nccl.Send(lB[-2], peer=bottom_neighbor, group_handle=group_handle)
-
-
-@dace.program
 def manexchange1(lA: d_float[lNy + 2, N + 2], rank: d_int):
     group_handle = dace.define_local_scalar(d_int,
                                             storage=dace.StorageType.GPU_Global)
@@ -134,22 +110,10 @@ def jacobi_2d_mgpu(A: d_float[Ny, N], B: d_float[Ny, N]):
         lA[1:-1, 1:-1] = A[rank * lNy:(rank + 1) * lNy, :]
         lB[1:-1, 1:-1] = B[rank * lNy:(rank + 1) * lNy, :]
 
-        # top_neighbor = dace.define_local_scalar(
-        #     d_int, storage=dace.StorageType.CPU_ThreadLocal)
-        # bottom_neighbor = dace.define_local_scalar(
-        #     d_int, storage=dace.StorageType.CPU_ThreadLocal)
-        # top_neighbor = -(rank + 1) % size
-        # if rank > 0:
-        #     bottom_neighbor = rank - 1
-        # else:
-        #     bottom_neighbor = size - 1
-
         for t in range(1, TSTEPS):
-            # seq1(lA, top_neighbor=top_neighbor, bottom_neighbor=bottom_neighbor)
             manexchange1(lA, rank=rank, size=size)
             lB[1:-1, 1:-1] = 0.2 * (lA[1:-1, 1:-1] + lA[1:-1, :-2] +
                                     lA[1:-1, 2:] + lA[2:, 1:-1] + lA[:-2, 1:-1])
-            # seq2(lB, top_neighbor=top_neighbor, bottom_neighbor=bottom_neighbor)
             manexchange2(lB, r=rank, size=size)
             lA[1:-1, 1:-1] = 0.2 * (lB[1:-1, 1:-1] + lB[1:-1, :-2] +
                                     lB[1:-1, 2:] + lB[2:, 1:-1] + lB[:-2, 1:-1])

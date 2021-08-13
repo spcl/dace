@@ -14,8 +14,8 @@ N, H, W, C, N_gpu, H_gpu, W_gpu, C_gpu, NN, number_of_gpus = (dace.symbol(
                                    'W_gpu', 'C_gpu', 'NN', 'number_of_gpus'))
 dc_dtype = dace.float32
 np_dtype = np.float32
-
-n, h, w, c = 16, 4, 4, 8
+n, h, w, c = 16, 128, 128, 64
+# n, h, w, c = 16, 4, 4, 8
 ng = 4
 cpu_storage = dace.StorageType.CPU_Pinned
 
@@ -138,7 +138,7 @@ def test_batchnorm2d_model_parallelism():
     print('GPU')
     mean, std, red = sdfg(X)
     print('GPU done')
-    print(f'\rred:\n{repr(red)}\n\nmean:\n{repr(mean)}\n\nstd:\n{repr(std)}\n')
+    # print(f'\rred:\n{repr(red)}\n\nmean:\n{repr(mean)}\n\nstd:\n{repr(std)}\n')
 
     bnsdfg: dace.SDFG = batchnorm2d.to_sdfg()
     lib_nodes = find_library_nodes(bnsdfg, Reduce)
@@ -148,9 +148,8 @@ def test_batchnorm2d_model_parallelism():
     print('CPU')
     res = bnsdfg(Z, N=n, H=h, W=w, C=c)
     print('CPU done')
-    assert np.allclose(
-        X, Z
-    ), f'\nout:\n{repr(X[:,0,0,0])}\n{repr(X[:,-1,-1,-1])}\nres:\n{repr(res[:,0,0,0])}\n{repr(res[:,-1,-1,-1])}\n'
+    assert np.allclose(X, res), f'\ndiff: {np.linalg.norm(X-res)}'
+    # , f'\nout:\n{repr(X[:,0,0,0])}\n{repr(X[:,-1,-1,-1])}\nres:\n{repr(res[:,0,0,0])}\n{repr(res[:,-1,-1,-1])}\n'
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
@@ -199,7 +198,7 @@ def test_batchnorm2d_model_parallelism_numpy():
     print('CPU')
     res = bnsdfg(Z, N=n, H=h, W=w, C=c)
     print('CPU done')
-    assert np.allclose(X, Z), f'\nout:\n{X[0][0][0]}\nres:\n{res[0][0][0]}\n'
+    assert np.allclose(X, res), f'\nout:\n{X[0][0][0]}\nres:\n{res[0][0][0]}\n'
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
