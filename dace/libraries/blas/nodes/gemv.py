@@ -774,6 +774,8 @@ class ExpandGemvFpgaTransposedTilesByRow(ExpandTransformation):
 
     This expansion supports both transposed A and non-transposed A, but
     vectorization is only implemented for transposed A.
+    The number of elements in a tile of y must be larger than the latency of a multiply-and-add
+    for the given data type.
 
 
 
@@ -830,8 +832,7 @@ class ExpandGemvFpgaTransposedTilesByRow(ExpandTransformation):
         # Create accesses
         read_a = state.add_read("_A")
         read_x = state.add_read("_x")
-        if beta != 0:
-            read_y = state.add_read("_y")
+        read_y = state.add_read("_y")
         write_y = state.add_write("_y")
 
         # These sizes already account for vectorization
@@ -917,18 +918,29 @@ class ExpandGemvFpgaTransposedTilesByRow(ExpandTransformation):
 
         # Buffer (or initialize) one tile of y
         # TODO: support beta != 0
+        if isinstance(desc_y, dt.Stream):
+            subset = "0"
+        else:
+            subset = f"ty*{tile_size_y}+iy"
         y_local = state.add_access("y_local")
-        init_entry, init_exit = state.add_map(
+        read_or_init_entry, read_or_init_exit = state.add_map(
             "init", {"iy": f"0:{tile_size_y}"},
             schedule=dace.ScheduleType.FPGA_Device)
-        init_tasklet = state.add_tasklet("init", {}, {"y_out"}, "y_out = 0")
-        state.add_memlet_path(x_tile_entry,
+        read_or_init_tasklet = state.add_tasklet(
+            "read_or_init", {"y_in"}, {"y_out"}, f"""\
+if tx == 0:
+    y_out = 0
+else:   # Read the previously computed partial result
+    y_out = y_in""")
+        state.add_memlet_path(read_y,
+                              x_tile_entry,
                               y_tile_entry,
-                              init_entry,
-                              memlet=dace.Memlet())
-        state.add_memlet_path(init_entry, init_tasklet, memlet=dace.Memlet())
-        state.add_memlet_path(init_tasklet,
-                              init_exit,
+                              read_or_init_entry,
+                              read_or_init_tasklet,
+                              dst_conn="y_in",
+                              memlet=dace.Memlet(f"_y[{subset}]", dynamic=True))
+        state.add_memlet_path(read_or_init_tasklet,
+                              read_or_init_exit,
                               y_local,
                               src_conn="y_out",
                               memlet=dace.Memlet("y_local[iy]"))
@@ -955,7 +967,6 @@ class ExpandGemvFpgaTransposedTilesByRow(ExpandTransformation):
         else:
             # Read matrix col-major order, tiles by column
             subset = f"ty * {tile_size_y} + iy, tx * {tile_size_x} + ix"
-
 
         y_local_write = state.add_write("y_local")
         state.add_memlet_path(y_local,

@@ -155,7 +155,9 @@ def test_gemv_fpga_tiles_by_column():
 def test_gemv_fpga_accumulate():
     return run_gemv("accumulate", 256, 512, vectorize=4)
 
-
+@fpga_test()
+def test_gemv_fpga_transposed_tiles_by_row():
+    return run_gemv("transposed_tiles_by_row", 512, 256, vectorize=4)
 
 
 if __name__ == "__main__":
