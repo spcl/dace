@@ -108,7 +108,7 @@ def infer_connector_types(sdfg: SDFG):
 
 def set_default_schedule_storage_types_and_location(
         sdfg: SDFG,
-        toplevel_schedule: dtypes.ScheduleType,
+        toplevel_schedule: Union[dtypes.ScheduleType, None] = None,
         toplevel_gpu_location: Union[None, SymbolicType, int] = None) -> None:
     """ 
     Sets default storage, schedule types and location throughout SDFG in-place.

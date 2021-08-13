@@ -141,31 +141,31 @@ def test_batchnorm2d_data_parallelism():
     sdfg.apply_transformations_repeated([RedundantSecondArray, RedundantArray])
     sdfg.apply_strict_transformations()
 
-    np.random.seed(0)
-    X = np.ndarray(shape=[n, h, w, c], dtype=np_dtype)
-    X[:] = np.random.rand(n, h, w, c)[:]
-    # X = np.arange(n * h * w * c, dtype=np_dtype).reshape([n, h, w, c])
-    Z = np.copy(X)
+    # np.random.seed(0)
+    # X = np.ndarray(shape=[n, h, w, c], dtype=np_dtype)
+    # X[:] = np.random.rand(n, h, w, c)[:]
+    # # X = np.arange(n * h * w * c, dtype=np_dtype).reshape([n, h, w, c])
+    # Z = np.copy(X)
 
-    print('GPU')
-    sdfg(X)
-    print('GPU done')
+    # print('GPU')
+    # sdfg(X)
+    # print('GPU done')
 
-    bnsdfg: dace.SDFG = batchnorm2d.to_sdfg()
-    lib_nodes = find_library_nodes(bnsdfg, Reduce)
-    lib_nodes[0].implementation = 'pure'
-    lib_nodes[1].implementation = 'pure'
+    # bnsdfg: dace.SDFG = batchnorm2d.to_sdfg()
+    # lib_nodes = find_library_nodes(bnsdfg, Reduce)
+    # lib_nodes[0].implementation = 'pure'
+    # lib_nodes[1].implementation = 'pure'
 
-    print('CPU')
-    res = bnsdfg(Z, N=n, H=h, W=w, C=c)
-    print('CPU done')
-    assert np.allclose(X, Z), f'\nout: {X[0][0][0]}\nres: {res[0][0][0]}\n'
+    # print('CPU')
+    # res = bnsdfg(Z, N=n, H=h, W=w, C=c)
+    # print('CPU done')
+    # assert np.allclose(X, Z), f'\nout:\n{X[0][0][0]}\nres:\n{res[0][0][0]}\n'
 
-    # program_objects = sdfg.generate_code()
-    # from dace.codegen import compiler
-    # out_path = '.dacecache/local/batchnorm/' + sdfg.name
-    # program_folder = compiler.generate_program_folder(sdfg, program_objects,
-    #                                                   out_path)
+    program_objects = sdfg.generate_code()
+    from dace.codegen import compiler
+    out_path = '.dacecache/local/batchnorm/' + sdfg.name
+    program_folder = compiler.generate_program_folder(sdfg, program_objects,
+                                                      out_path)
 
 
 if __name__ == "__main__":
