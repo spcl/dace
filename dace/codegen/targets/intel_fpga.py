@@ -58,10 +58,6 @@ REDUCTION_TYPE_TO_PYEXPR = {
 }
 
 
-class NameTooLongError(ValueError):
-    pass
-
-
 @registry.autoregister_params(name='intel_fpga')
 class IntelFPGACodeGen(fpga.FPGACodeGen):
     target_name = 'intel_fpga'
@@ -129,9 +125,16 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
                 "Unknown Intel FPGA execution mode: {}".format(execution_mode))
 
         host_code = CodeIOStream()
-        host_code.write("""\
-#include "dace/intel_fpga/host.h"
-#include <iostream>\n\n""")
+        host_code.write('#include "dace/intel_fpga/host.h"')
+        if len(self._dispatcher.instrumentation) > 1:
+            host_code.write("""\
+#include "dace/perf/reporting.h"
+#include <chrono>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+""")
+        host_code.write("\n\n")
 
         self._frame.generate_fileheader(self._global_sdfg, host_code,
                                         'intelfpga_host')
@@ -156,7 +159,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
                       emulation_flag=emulation_flag,
                       kernel_file_name=kernel_file_name,
                       host_code="".join([
-                          "{separator}\n// Kernel: {kernel_name}"
+                          "{separator}\n// State: {kernel_name}"
                           "\n{separator}\n\n{code}\n\n".format(separator="/" *
                                                                79,
                                                                kernel_name=name,
@@ -467,13 +470,36 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                                     sdfg,
                                     state_id,
                                     node,
-                                    var_name=None):
+                                    var_name=None,
+                                    accessed_subset=None):
         pass
 
-    def generate_kernel_internal(self, sdfg, state, kernel_name, subgraphs,
-                                 kernel_stream, function_stream,
-                                 callsite_stream):
+    def generate_kernel_internal(
+            self, sdfg: dace.SDFG, state: dace.SDFGState, kernel_name: str,
+            predecessors: list, subgraphs: list, kernel_stream: CodeIOStream,
+            state_host_header_stream: CodeIOStream,
+            state_host_body_stream: CodeIOStream,
+            instrumentation_stream: CodeIOStream, function_stream: CodeIOStream,
+            callsite_stream: CodeIOStream, state_parameters: list):
+        '''
+        Generates Kernel code, both device and host side.
+        :param sdfg:
+        :param state:
+        :param kernel_name:
+        :param predecessors: list containing all the name of kernels from which this one depends
+        :param subgraphs:
+        :param kernel_stream: Device code stream, contains the kernel code
+        :param state_host_header_stream: Device-specific code stream: contains the host code
+            for the state global declarations.
+        :param state_host_body_stream: Device-specific code stream: contains all the code related to
+            this state, for creating transient buffers, spawning kernels, and synchronizing them.
+        :param instrumentation_stream: Code for profiling kernel execution time.
+        :param function_stream: CPU code stream.
+        :param callsite_stream: CPU code stream.
+        :param state_parameters: list of state parameters. The kernel-specific parameters will be appended to it.
+        '''
 
+        # In xilnx one of them is not used because part of the code goes in another place (entry_stream)
         state_id = sdfg.node_id(state)
 
         kernel_header_stream = CodeIOStream()
@@ -491,30 +517,28 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
          nested_global_transients, bank_assignments,
          external_streams) = self.make_parameters(sdfg, state, subgraphs)
 
-        host_code_header_stream = CodeIOStream()
-        host_code_body_stream = CodeIOStream()
-
         # Emit allocations of inter-kernel memories
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               callsite_stream,
+                                               node.desc(sdfg), callsite_stream,
                                                kernel_body_stream)
 
         kernel_body_stream.write("\n")
-
-        # Generate host code
-        self.generate_host_function_boilerplate(sdfg, state, kernel_name,
-                                                global_data_parameters,
+        state_parameters.extend(global_data_parameters)
+        # Generate host code (Global transients)
+        self.generate_host_function_boilerplate(sdfg, state,
                                                 nested_global_transients,
-                                                host_code_body_stream,
-                                                function_stream,
-                                                callsite_stream)
+                                                state_host_body_stream)
 
-        self.generate_host_function_prologue(sdfg, state, host_code_body_stream)
+        self.generate_host_function_prologue(sdfg, state,
+                                             state_host_body_stream,
+                                             kernel_name)
 
+        # Generate PEs code
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, kernel_body_stream,
-                              host_code_header_stream, host_code_body_stream)
+                              state_host_header_stream, state_host_body_stream,
+                              instrumentation_stream)
 
         kernel_body_stream.write("\n")
 
@@ -524,58 +548,78 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_stream.write(kernel_header_stream.getvalue() +
                             kernel_body_stream.getvalue())
 
-        self.generate_host_function_epilogue(sdfg, state, host_code_body_stream)
+        # Generate host kernel invocation
+        self.generate_host_function_body(sdfg, state, state_host_body_stream,
+                                         kernel_name, predecessors)
 
-        # Store code to be passed to compilation phase
-        self._host_codes.append(
-            (kernel_name, host_code_header_stream.getvalue() +
-             host_code_body_stream.getvalue()))
-
-    @staticmethod
-    def generate_host_function_prologue(sdfg, state, host_stream):
-        host_stream.write("std::vector<hlslib::ocl::Kernel> kernels;", sdfg,
-                          sdfg.node_id(state))
-
-    @staticmethod
-    def generate_host_function_epilogue(sdfg, state, host_stream):
-        state_id = sdfg.node_id(state)
+    def generate_host_function_prologue(self, sdfg, state, host_stream,
+                                        kernel_name):
+        seperator = "/" * 59
         host_stream.write(
-            "const auto start = std::chrono::high_resolution_clock::now();",
-            sdfg, state_id)
+            f"\n{seperator}\n// Kernel: {kernel_name}\n{seperator}\n\n")
+
+        host_stream.write(
+            f"std::vector<hlslib::ocl::Kernel> {kernel_name}_kernels;", sdfg,
+            sdfg.node_id(state))
+
+    def generate_host_function_body(self, sdfg: dace.SDFG,
+                                    state: dace.SDFGState,
+                                    host_stream: CodeIOStream, kernel_name: str,
+                                    predecessors: list):
+        '''
+        Generate the host-specific code for spawning and synchronizing the given kernel.
+        :param sdfg:
+        :param state:
+        :param host_stream: Device-specific code stream
+        :param kernel_name:
+        :param predecessors: list containing all the name of kernels that must be finished before starting this one
+        '''
+        state_id = sdfg.node_id(state)
         launch_async = Config.get_bool("compiler", "intel_fpga", "launch_async")
+
+        # Check if this kernel depends from other kernels
+        needs_synch = len(predecessors) > 0
+
+        if needs_synch:
+            # Build a vector containing all the events associated with the kernels from which this one depends
+            kernel_deps_name = f"deps_{kernel_name}"
+            host_stream.write(f"std::vector<cl::Event> {kernel_deps_name};")
+            for pred in predecessors:
+                # concatenate events from predecessor kernel
+                host_stream.write(
+                    f"{kernel_deps_name}.insert({kernel_deps_name}.end(), {pred}_events.begin(), {pred}_events.end());"
+                )
+
         if launch_async:
+            #TODO remove this?
+
             # hlslib uses std::async to launch each kernel launch as an
             # asynchronous task in a separate C++ thread. This seems to cause
             # problems with some versions of the Intel FPGA runtime, despite it
             # supposedly being thread-safe, so we allow disabling this.
             host_stream.write(
-                """\
+                f"""\
   std::vector<std::future<std::pair<double, double>>> futures;
-  for (auto &k : kernels) {
+  for (auto &k : {kernel_name}_kernels) {{
     futures.emplace_back(k.ExecuteTaskAsync());
-  }
-  for (auto &f : futures) {
+  }}
+  for (auto &f : futures) {{
     f.wait();
-  }""", sdfg, state_id)
+  }}""", sdfg, state_id)
         else:
-            # Launch one-by-one and wait for the cl::Events
+            # While spawning the kernel, indicates the synchronization events (if any)
             host_stream.write(
-                """\
-  std::vector<cl::Event> events;
-  for (auto &k : kernels) {
-    events.emplace_back(k.ExecuteTaskFork());
-  }
-  cl::Event::waitForEvents(events);""", sdfg, state_id)
-        host_stream.write(
-            """\
-  const auto end = std::chrono::high_resolution_clock::now();
-  const double elapsedChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-  std::cout << "Kernel executed in " << elapsedChrono << " seconds.\\n" << std::flush;
-}""", sdfg, sdfg.node_id(state))
+                f"""\
+  std::vector<cl::Event> {kernel_name}_events;
+  for (auto &k : {kernel_name}_kernels) {{
+    {kernel_name}_events.emplace_back(k.ExecuteTaskFork({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''}));
+  }}
+  all_events.insert(all_events.end(), {kernel_name}_events.begin(), {kernel_name}_events.end());
+""", sdfg, state_id)
 
-    def generate_module(self, sdfg, state, name, subgraph, parameters,
-                        module_stream, host_header_stream, host_body_stream):
-
+    def generate_module(self, sdfg, state, kernel_name, module_name, subgraph,
+                        parameters, module_stream, host_header_stream,
+                        host_body_stream, instrumentation_stream):
         state_id = sdfg.node_id(state)
         dfg = sdfg.nodes()[state_id]
 
@@ -596,7 +640,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         is_autorun = len(kernel_args_opencl) == 0
 
         # create a unique module name to prevent name clashes
-        module_function_name = "mod_" + str(sdfg.sdfg_id) + "_" + name
+        module_function_name = "mod_" + str(sdfg.sdfg_id) + "_" + module_name
         # The official limit suggested by Intel for module name is 61. However, the compiler
         # can also append text to the module. Longest seen so far is
         # "_cra_slave_inst", which is 15 characters, so we restrict to
@@ -634,10 +678,15 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         if not is_autorun:
             if unrolled_loop is None:
                 host_body_stream.write(
-                    "kernels.emplace_back(program.MakeKernel(\"{}\"{}));".
+                    "{}_kernels.emplace_back(program.MakeKernel(\"{}\"{}));".
                     format(
-                        module_function_name, ", ".join([""] + kernel_args_call)
+                        kernel_name, module_function_name,
+                        ", ".join([""] + kernel_args_call)
                         if len(kernel_args_call) > 0 else ""), sdfg, state_id)
+                if state.instrument == dtypes.InstrumentationType.FPGA:
+                    self.instrument_opencl_kernel(module_function_name,
+                                                  state_id, sdfg.sdfg_id,
+                                                  instrumentation_stream)
             else:
                 # We will generate a separate kernel for each PE. Adds host call
                 start, stop, skip = unrolled_loop.range.ranges[0]
@@ -654,12 +703,17 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                     # Last element in list kernel_args_call is the PE ID, but
                     # this is already written in stone in the OpenCL generated
                     # code
+                    unrolled_module_name = f"{module_function_name}_{p}"
                     host_body_stream.write(
-                        "kernels.emplace_back(program.MakeKernel(\"{}_{}\"{}));"
+                        "{}_kernels.emplace_back(program.MakeKernel(\"{}\"{}));"
                         .format(
-                            module_function_name, p,
+                            kernel_name, unrolled_module_name,
                             ", ".join([""] + kernel_args_call[:-1]) if
                             len(kernel_args_call) > 1 else ""), sdfg, state_id)
+                    if state.instrument == dtypes.InstrumentationType.FPGA:
+                        self.instrument_opencl_kernel(unrolled_module_name,
+                                                      state_id, sdfg.sdfg_id,
+                                                      instrumentation_stream)
 
         # ----------------------------------------------------------------------
         # Generate kernel code
@@ -683,7 +737,8 @@ __attribute__((autorun))\n"""
             # a function that will be used create a kernel multiple times
 
             # generate a unique name for this function
-            pe_function_name = "pe_" + str(sdfg.sdfg_id) + "_" + name + "_func"
+            pe_function_name = "pe_" + str(
+                sdfg.sdfg_id) + "_" + module_name + "_func"
             module_body_stream.write(
                 "inline void {}({}) {{".format(pe_function_name,
                                                ", ".join(kernel_args_opencl)),
@@ -701,7 +756,7 @@ __attribute__((autorun))\n"""
                 continue
             allocated.add(node.data)
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               module_stream,
+                                               node.desc(sdfg), module_stream,
                                                module_body_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
@@ -948,6 +1003,7 @@ __kernel void \\
         mpath = dfg.memlet_path(edge)
         viewed_dnode = mpath[0].src if edge.dst is node else mpath[-1].dst
         self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, viewed_dnode,
+                                           viewed_dnode.desc(sdfg),
                                            global_stream, allocation_stream)
 
         # Emit memlet as a reference and register defined variable
@@ -1028,6 +1084,10 @@ __kernel void \\
 
         result = ""
 
+        # NOTE: FPGA Streams are defined at the top-level scope. We use the
+        # following boolean to pass this informations to the `get` method of
+        # the `defined_vars` object.
+        is_global = False
         if isinstance(data_desc, dace.data.Stream):
             # Derive the name of the original stream, by tracing the memlet path through nested SDFGs
             outer_stream_node_trace = utils.trace_nested_access(
@@ -1035,8 +1095,10 @@ __kernel void \\
                 sdfg.nodes()[state_id], sdfg)
             data_name = outer_stream_node_trace[0][0][
                 1 if is_output else 0].label
+            is_global = True
 
-        def_type, ctypedef = self._dispatcher.defined_vars.get(data_name)
+        def_type, ctypedef = self._dispatcher.defined_vars.get(
+            data_name, is_global=is_global)
         if def_type == DefinedType.Scalar:
             if cast:
                 rhs = f"(*({memlet_type} const *)&{data_name})"
@@ -1552,7 +1614,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 else:
                     code_str = "{dst}[{idx}] = {src};"
                 slice = self.visit(node.targets[0].slice)
-                if isinstance(slice.value, ast.Tuple):
+                if (isinstance(slice, ast.Slice)
+                        and isinstance(slice.value, ast.Tuple)):
                     subscript = unparse(slice)[1:-1]
                 else:
                     subscript = unparse(slice)

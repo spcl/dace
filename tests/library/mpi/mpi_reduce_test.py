@@ -3,7 +3,6 @@ import dace
 from dace.memlet import Memlet
 import dace.libraries.mpi as mpi
 import numpy as np
-from mpi4py import MPI as MPI4PY
 import pytest
 
 ###############################################################################
@@ -48,6 +47,7 @@ def make_sdfg(dtype):
     pytest.param("MPI", dace.float64, marks=pytest.mark.mpi)
 ])
 def test_mpi(implementation, dtype):
+    from mpi4py import MPI as MPI4PY
     np_dtype = getattr(np, dtype.to_string())
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()

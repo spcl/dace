@@ -2,9 +2,27 @@
 import aenum
 import json
 import numpy as np
+import warnings
 import dace.dtypes
 
-JSON_STORE_METADATA = True
+
+class SerializableObject(object):
+
+    json_obj = {}
+    typename = None
+
+    def __init__(self, json_obj={}, typename=None):
+        self.json_obj = json_obj
+        self.typename = typename
+
+    def to_json(self):
+        retval = self.json_obj
+        retval['dace_unregistered'] = True
+        return retval
+
+    @staticmethod
+    def from_json(json_obj, context=None, typename=None):
+        return SerializableObject(json_obj, typename)
 
 
 class NumpySerializer:
@@ -120,7 +138,16 @@ def from_json(obj, context=None, known_type=None):
                         known_type.__name__)
 
     if t:
-        return _DACE_SERIALIZE_TYPES[t].from_json(obj, context=context)
+        try:
+            deserialized = _DACE_SERIALIZE_TYPES[t].from_json(obj,
+                                                              context=context)
+        except Exception as ex:
+            warnings.warn(
+                f'Failed to deserialize element, {type(ex).__name__}: {ex}')
+            deserialized = SerializableObject.from_json(obj,
+                                                        context=context,
+                                                        typename=t)
+        return deserialized
 
     # No type was found, so treat this as a regular dictionary
     return {
@@ -142,13 +169,6 @@ def all_properties_to_json(object_with_properties):
     retdict = {}
     for x, v in object_with_properties.properties():
         retdict[x.attr_name] = x.to_json(v)
-
-        # Add the meta elements decoupled from key/value to facilitate value usage
-        # (The meta is only used when rendering the values)
-        # TODO: Remove when DIODE server is rewritten to ask for metadata
-        #       separately.
-        if JSON_STORE_METADATA:
-            retdict['_meta_' + x.attr_name] = x.meta_to_json(x)
 
     return retdict
 

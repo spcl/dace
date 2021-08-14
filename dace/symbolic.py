@@ -4,7 +4,7 @@ from functools import lru_cache
 import sympy
 import pickle
 import re
-from typing import Any, Dict, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Set, Tuple, Union
 import warnings
 import numpy
 
@@ -147,13 +147,23 @@ class SymExpr(object):
             self._approx_expr = pystr_to_symbolic(approx_expr)
 
     def __new__(cls, *args, **kwargs):
+        main_expr, approx_expr = None, None
+        if len(args) == 0:
+            if 'main_expr' in kwargs:
+                main_expr = kwargs['main_expr']
+            if 'approx_expr' in kwargs:
+                approx_expr = kwargs['approx_expr']
         if len(args) == 1:
-            return args[0]
+            main_expr = args[0]
+            if 'approx_expr' in kwargs:
+                approx_expr = kwargs['approx_expr']
         if len(args) == 2:
             main_expr, approx_expr = args
-            # If values are equivalent, create a normal symbolic expression
-            if approx_expr is None or main_expr == approx_expr:
-                return main_expr
+        # If values are equivalent, create a normal symbolic expression
+        if main_expr and (approx_expr is None or main_expr == approx_expr):
+            if isinstance(main_expr, str):
+                return pystr_to_symbolic(main_expr)
+            return main_expr
         return super(SymExpr, cls).__new__(cls)
 
     @property
@@ -248,6 +258,20 @@ class SymExpr(object):
         if isinstance(other, SymExpr):
             return self.expr == other.expr and self.approx == other.approx
         return self == pystr_to_symbolic(other)
+    
+    def __lt__(self, other):
+        if isinstance(other, sympy.Expr):
+            return self.expr < other
+        if isinstance(other, SymExpr):
+            return self.expr < other.expr
+        return self < pystr_to_symbolic(other)
+    
+    def __gt__(self, other):
+        if isinstance(other, sympy.Expr):
+            return self.expr > other
+        if isinstance(other, SymExpr):
+            return self.expr > other.expr
+        return self > pystr_to_symbolic(other)
 
 
 # Type hint for symbolic expressions
@@ -479,7 +503,7 @@ def swalk(expr, enter_functions=False):
 
 _builtin_userfunctions = {
     'int_floor', 'int_ceil', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq',
-    'NotEq', 'Ne'
+    'NotEq', 'Ne', 'AND', 'OR'
 }
 
 
@@ -489,6 +513,8 @@ def contains_sympy_functions(expr):
         if str(expr.func) in _builtin_userfunctions:
             return False
         return True
+    if not isinstance(expr, sympy.Basic):
+        return False
     for arg in expr.args:
         if contains_sympy_functions(arg):
             return True
@@ -496,12 +522,12 @@ def contains_sympy_functions(expr):
 
 
 def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
-    if not isinstance(expr, (sympy.Basic, str)):
-        return set()
     if isinstance(expr, str):
         if dtypes.validate_name(expr):
             return {expr}
         expr = pystr_to_symbolic(expr)
+    if not isinstance(expr, sympy.Basic):
+        return set()
 
     result = {str(k) for k in expr.free_symbols}
     for atom in swalk(expr):
@@ -514,7 +540,7 @@ def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
 def sympy_numeric_fix(expr):
     """ Fix for printing out integers as floats with ".00000000".
         Converts the float constants in a given expression to integers. """
-    if not isinstance(expr, sympy.Basic):
+    if not isinstance(expr, sympy.Basic) or isinstance(expr, sympy.Number):
         try:
             # NOTE: If expr is ~ 1.8e308, i.e. infinity, `numpy.int64(expr)`
             # will throw OverflowError (which we want).
@@ -523,14 +549,14 @@ def sympy_numeric_fix(expr):
             if numpy.int64(expr) == expr:
                 return int(expr)
         except OverflowError:
-            if expr > 0:
-                return sympy.oo
-            else:
-                return -sympy.oo
-        return expr
-
-    if isinstance(expr, sympy.Number) and expr == int(expr):
-        return int(expr)
+            try:
+                if numpy.float64(expr) == expr:
+                    return expr
+            except OverflowError:
+                if expr > 0:
+                    return sympy.oo
+                else:
+                    return -sympy.oo
     return expr
 
 
@@ -731,6 +757,15 @@ class SympyBooleanConverter(ast.NodeTransformer):
                             keywords=[])
         return ast.copy_location(new_node, node)
 
+    def visit_Constant(self, node):
+        if node.value is None:
+            return ast.copy_location(ast.Name(id='NoneSymbol', ctx=ast.Load()),
+                                     node)
+        return self.generic_visit(node)
+
+    def visit_NameConstant(self, node):
+        return self.visit_Constant(node)
+
 
 @lru_cache(2048)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
@@ -751,6 +786,11 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         'GtE': sympy.Ge,
         'LtE': sympy.Le,
         'NotEq': sympy.Ne,
+        # Convert and/or to special sympy functions to avoid boolean evaluation
+        'And': sympy.Function('AND'),
+        'Or': sympy.Function('OR'),
+        'var': sympy.Symbol('var'),
+        'root': sympy.Symbol('root'),
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
@@ -758,8 +798,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
 
     # Sympy processes "not/and/or" as direct evaluation. Replace with
     # And/Or(x, y), Not(x)
-    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b|==|!=',
-                                           expr):
+    if isinstance(expr, str) and re.search(
+            r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=', expr):
         expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
@@ -787,8 +827,9 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         self.arrays = arrays or set()
 
     def _print_Float(self, expr):
-        if int(expr) == expr:
-            return str(int(expr))
+        nf = sympy_numeric_fix(expr)
+        if isinstance(nf, int) or nf != expr:
+            return self._print(nf)
         return super()._print_Float(expr)
 
     def _print_Function(self, expr):
@@ -820,15 +861,20 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_NegativeInfinity(self, expr):
         return '-INFINITY'
 
+    def _print_Symbol(self, expr):
+        if expr.name == 'NoneSymbol':
+            return 'nullptr'
+        return super()._print_Symbol(expr)
+
     def _print_Pow(self, expr):
         base = self._print(expr.args[0])
         exponent = self._print(expr.args[1])
         try:
             int_exp = int(exponent)
-            assert(int_exp > 0)
+            assert (int_exp > 0)
             res = "({})".format(base)
             for _ in range(1, int_exp):
-                res += "*{}".format(base)
+                res += "*({})".format(base)
             return res
         except ValueError:
             return "dace::math::pow({f}, {s})".format(
@@ -865,6 +911,51 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
     except (AttributeError, TypeError, ValueError):
         sstr = DaceSympyPrinter(arrayexprs).doprint(sym)
         return '(' + repstr(sstr) + ')'
+
+
+def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType,
+                                                               str]],
+                 replace_callback: Callable[[Dict[str, str]], None]) -> None:
+    """
+    Safely replaces symbolic expressions that may clash with each other via a
+    two-step replacement. For example, the mapping ``{M: N, N: M}`` would be
+    translated to replacing ``{N, M} -> __dacesym_{N, M}`` followed by
+    ``__dacesym{N, M} -> {M, N}``.
+    :param mapping: The replacement dictionary.
+    :param replace_callback: A callable function that receives a replacement
+                             dictionary and performs the replacement (can be 
+                             unsafe).
+    """
+    # First, filter out direct (to constants) and degenerate (N -> N) replacements
+    repl = {}
+    invrepl = {}
+    for k, v in mapping.items():
+        # Degenerate
+        if str(k) == str(v):
+            continue
+
+        # Not symbolic
+        try:
+            v = pystr_to_symbolic(v)
+        except (TypeError, ValueError, AttributeError, sympy.SympifyError):
+            repl[k] = v
+            continue
+
+        # Constant
+        try:
+            float(v)
+            repl[k] = v
+            continue
+        except (TypeError, ValueError, AttributeError):
+            pass
+
+        # Otherwise, symbolic replacement
+        repl[k] = f'__dacesym_{k}'
+        invrepl[f'__dacesym_{k}'] = v
+
+    # Make the two-step replacement
+    replace_callback(repl)
+    replace_callback(invrepl)
 
 
 def _spickle(obj):

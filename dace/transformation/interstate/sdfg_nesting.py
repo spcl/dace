@@ -70,22 +70,14 @@ class InlineSDFG(transformation.Transformation):
         :return: True if all strides match, False otherwise.
         """
         # Replace all inner symbols based on symbol mapping
-        repldict = {
-            symbolic.pystr_to_symbolic(k):
-            symbolic.pystr_to_symbolic('__dacesym_' + str(v))
-            for k, v in nested_sdfg.symbol_mapping.items()
-        }
-        # need two dicts to avoid clashes
-        repldict_inv = {
-            symbolic.pystr_to_symbolic('__dacesym_' + str(v)):
-            symbolic.pystr_to_symbolic(v)
-            for v in nested_sdfg.symbol_mapping.values()
-        }
+        istrides = list(inner_strides)
 
-        istrides = [
-            istr.subs(repldict).subs(repldict_inv)
-            if symbolic.issymbolic(istr) else istr for istr in inner_strides
-        ]
+        def replfunc(mapping):
+            for i, s in enumerate(istrides):
+                if symbolic.issymbolic(s):
+                    istrides[i] = s.subs(mapping)
+
+        symbolic.safe_replace(nested_sdfg.symbol_mapping, replfunc)
 
         if istrides == list(outer_strides):
             return True
@@ -107,22 +99,33 @@ class InlineSDFG(transformation.Transformation):
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph: SDFGState,
+                       candidate,
+                       expr_index,
+                       sdfg,
+                       strict=False):
         nested_sdfg = graph.nodes()[candidate[InlineSDFG._nested_sdfg]]
         if nested_sdfg.no_inline:
             return False
         if len(nested_sdfg.sdfg.nodes()) != 1:
             return False
 
-        # Ensure every connector has one incoming/outgoing edge
+        # Ensure every connector has one incoming/outgoing edge and that it
+        # is not empty
         in_connectors = set()
         out_connectors = set()
         for edge in graph.in_edges(nested_sdfg):
             if edge.dst_conn in in_connectors:
                 return False
+            if (edge.data.is_empty()
+                    and not isinstance(edge.src, nodes.EntryNode)):
+                return False
             in_connectors.add(edge.dst_conn)
         for edge in graph.out_edges(nested_sdfg):
             if edge.src_conn in out_connectors:
+                return False
+            if (edge.data.is_empty()
+                    and not isinstance(edge.dst, nodes.ExitNode)):
                 return False
             out_connectors.add(edge.src_conn)
 
@@ -143,6 +146,40 @@ class InlineSDFG(transformation.Transformation):
                                     for e in nstate.out_edges(node)
                                     if isinstance(e.dst, nodes.AccessNode))):
                         return False
+
+        # Ensure that every connector has at least one corresponding access
+        # node in the (nested) SDFG. Otherwise, inlining is not possible.
+        # NOTE: FPGA-compatible SDFGs can have input connectors for data that
+        # are only written.
+        inp_data = {conn: set() for conn in in_connectors}
+        for e in graph.in_edges(nested_sdfg):
+            src = graph.memlet_path(e)[0].src
+            if isinstance(src, nodes.AccessNode):
+                inp_data[e.dst_conn].add(src.data)
+        out_data = dict()
+        for e in graph.out_edges(nested_sdfg):
+            dst = graph.memlet_path(e)[-1].dst
+            if isinstance(dst, nodes.AccessNode):
+                out_data[dst.data] = e.src_conn
+        rem_inpconns = dc(in_connectors)
+        rem_outconns = dc(out_connectors)
+        nstate = nested_sdfg.sdfg.node(0)
+        for node in nstate.nodes():
+            if isinstance(node, nodes.AccessNode):
+                if node.data in rem_inpconns:
+                    rem_inpconns.remove(node.data)
+                if node.data in rem_outconns:
+                    rem_outconns.remove(node.data)
+        if len(rem_outconns) > 0:
+            return False
+        if len(rem_inpconns) > 0:
+            for inpconn in list(rem_inpconns):
+                for access in inp_data[inpconn]:
+                    if access in out_data.keys():
+                        rem_inpconns.remove(inpconn)
+                        break
+        if len(rem_inpconns) > 0:
+            return False
 
         return True
 
@@ -261,6 +298,10 @@ class InlineSDFG(transformation.Transformation):
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
 
+        # Replace symbols using invocation symbol mapping
+        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
+        symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
+
         # Access nodes that need to be reshaped
         reshapes: Set(str) = set()
         for aname, array in nsdfg.arrays.items():
@@ -281,15 +322,6 @@ class InlineSDFG(transformation.Transformation):
                     array.strides, sdfg.arrays[edge.data.data].strides,
                     edge.data, nsdfg_node):
                 reshapes.add(aname)
-
-        # Replace symbols using invocation symbol mapping
-        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        for symname, symvalue in nsdfg_node.symbol_mapping.items():
-            if str(symname) != str(symvalue):
-                nsdfg.replace(symname, '__dacesym_' + symname)
-        for symname, symvalue in nsdfg_node.symbol_mapping.items():
-            if str(symname) != str(symvalue):
-                nsdfg.replace('__dacesym_' + symname, symvalue)
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
@@ -383,11 +415,12 @@ class InlineSDFG(transformation.Transformation):
                 edge.data.data = repldict[edge.data.data]
 
         # Add extra access nodes for out/in view nodes
+        inv_reshapes = {repldict[r]: r for r in reshapes}
         for node in nstate.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data in reshapes:
+            if isinstance(node, nodes.AccessNode) and node.data in inv_reshapes:
                 if nstate.in_degree(node) > 0 and nstate.out_degree(node) > 0:
                     # Such a node has to be in the output set
-                    edge = outputs[node.data]
+                    edge = outputs[inv_reshapes[node.data]]
 
                     # Redirect outgoing edges through access node
                     out_edges = list(nstate.out_edges(node))

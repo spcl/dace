@@ -140,17 +140,6 @@ class MapFusion(transformation.Transformation):
         params_dict = {}
         for _index, _param in enumerate(second_map_entry.map.params):
             params_dict[_param] = first_map_entry.map.params[perm[_index]]
-        # Create intermediate dicts to avoid conflicts, such as {i:j, j:i}
-        repldict = {
-            symbolic.pystr_to_symbolic(k):
-            symbolic.pystr_to_symbolic('__dacesym_' + str(v))
-            for k, v in params_dict.items()
-        }
-        repldict_inv = {
-            symbolic.pystr_to_symbolic('__dacesym_' + str(v)):
-            symbolic.pystr_to_symbolic(v)
-            for v in params_dict.values()
-        }
 
         out_memlets = [e.data for e in graph.in_edges(first_map_exit)]
 
@@ -175,8 +164,9 @@ class MapFusion(transformation.Transformation):
             # Compute second subset with respect to first subset's symbols
             sbs_permuted = dcpy(second_edge.data.subset)
             if sbs_permuted:
-                sbs_permuted.replace(repldict)
-                sbs_permuted.replace(repldict_inv)
+                # Create intermediate dicts to avoid conflicts, such as {i:j, j:i}
+                symbolic.safe_replace(params_dict,
+                                      lambda m: sbs_permuted.replace(m))
 
             for first_memlet in out_memlets:
                 if first_memlet.data != second_edge.data.data:
@@ -263,8 +253,8 @@ class MapFusion(transformation.Transformation):
             # Compute output accesses with respect to first map's symbols
             oacc_permuted = [dcpy(a) for a in output_accesses]
             for a in oacc_permuted:
-                a.replace(repldict)
-                a.replace(repldict_inv)
+                # Create intermediate dicts to avoid conflicts, such as {i:j, j:i}
+                symbolic.safe_replace(params_dict, lambda m: a.replace(m))
 
             a = input_accesses[0]
             for b in oacc_permuted:
@@ -488,11 +478,13 @@ class MapFusion(transformation.Transformation):
         # Add intermediate memory between subgraphs. If a scalar,
         # uses direct connection. If an array, adds a transient node
         if edge.data.subset.num_elements() == 1:
-            local_name, _ = sdfg.add_scalar(local_name,
-                                            dtype=access_node.desc(graph).dtype,
-                                            transient=True,
-                                            storage=dtypes.StorageType.Register,
-                                            find_new_name=True)
+            local_name, _ = sdfg.add_scalar(
+                local_name,
+                dtype=access_node.desc(graph).dtype,
+                transient=True,
+                storage=dtypes.StorageType.Register,
+                find_new_name=True,
+            )
             edge.data.data = local_name
             edge.data.subset = "0"
 

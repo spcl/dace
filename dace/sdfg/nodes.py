@@ -12,10 +12,10 @@ from typing import Any, Dict, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
-from dace.properties import (Property, CodeProperty, LambdaProperty,
-                             RangeProperty, DebugInfoProperty, SetProperty,
-                             make_properties, indirect_properties, DataProperty,
-                             SymbolicProperty, ListProperty,
+from dace.properties import (EnumProperty, Property, CodeProperty,
+                             LambdaProperty, RangeProperty, DebugInfoProperty,
+                             SetProperty, make_properties, indirect_properties,
+                             DataProperty, SymbolicProperty, ListProperty,
                              SDFGReferenceProperty, DictProperty,
                              LibraryImplementationProperty, CodeBlock)
 from dace.frontend.operations import detect_reduction_type
@@ -65,7 +65,7 @@ class Node(object):
 
         try:
             scope_entry_node = parent.entry_node(self)
-        except (RuntimeError, StopIteration):
+        except (RuntimeError, ValueError, StopIteration):
             scope_entry_node = None
 
         if scope_entry_node is not None:
@@ -80,7 +80,7 @@ class Node(object):
         if isinstance(self, EntryNode):
             try:
                 scope_exit_node = str(parent.node_id(parent.exit_node(self)))
-            except (RuntimeError, StopIteration):
+            except (RuntimeError, ValueError, StopIteration):
                 scope_exit_node = None
 
         retdict = {
@@ -222,9 +222,9 @@ class Node(object):
 class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
-    access = Property(choices=dtypes.AccessType,
-                      desc="Type of access to this array",
-                      default=dtypes.AccessType.ReadWrite)
+    access = EnumProperty(dtype=dtypes.AccessType,
+                          desc="Type of access to this array",
+                          default=dtypes.AccessType.ReadWrite)
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
     debuginfo = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
@@ -328,7 +328,8 @@ class Tasklet(CodeNode):
     """
 
     code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
-    state_fields = ListProperty(element_type=str, desc="Fields that are added to the global state")
+    state_fields = ListProperty(
+        element_type=str, desc="Fields that are added to the global state")
     code_global = CodeProperty(
         desc="Global scope code needed for tasklet execution",
         default=CodeBlock("", dtypes.Language.CPP))
@@ -340,9 +341,10 @@ class Tasklet(CodeNode):
         default=CodeBlock("", dtypes.Language.CPP))
     debuginfo = DebugInfoProperty()
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -396,6 +398,45 @@ class Tasklet(CodeNode):
                                           | self.out_connectors.keys())
 
     def infer_connector_types(self, sdfg, state):
+        # If a MLIR tasklet, simply read out the types (it's explicit)
+        if self.code.language == dtypes.Language.MLIR:
+            # Inline import because mlir.utils depends on pyMLIR which may not be installed
+            # Doesn't cause crashes due to missing pyMLIR if a MLIR tasklet is not present
+            from dace.codegen.targets.mlir import utils
+
+            mlir_ast = utils.get_ast(self.code.code)
+            mlir_is_generic = utils.is_generic(mlir_ast)
+            mlir_entry_func = utils.get_entry_func(mlir_ast, mlir_is_generic)
+
+            mlir_result_type = utils.get_entry_result_type(
+                mlir_entry_func, mlir_is_generic)
+            mlir_out_name = next(iter(self.out_connectors.keys()))[0]
+
+            if self.out_connectors[mlir_out_name] is None or self.out_connectors[
+                    mlir_out_name].ctype == "void":
+                self.out_connectors[mlir_out_name] = utils.get_dace_type(
+                    mlir_result_type)
+            elif self.out_connectors[mlir_out_name] != utils.get_dace_type(
+                    mlir_result_type):
+                warnings.warn(
+                    "Type mismatch between MLIR tasklet out connector and MLIR code"
+                )
+
+            for mlir_arg in utils.get_entry_args(mlir_entry_func,
+                                                 mlir_is_generic):
+                if self.in_connectors[
+                        mlir_arg[0]] is None or self.in_connectors[
+                            mlir_arg[0]].ctype == "void":
+                    self.in_connectors[mlir_arg[0]] = utils.get_dace_type(
+                        mlir_arg[1])
+                elif self.in_connectors[mlir_arg[0]] != utils.get_dace_type(
+                        mlir_arg[1]):
+                    warnings.warn(
+                        "Type mismatch between MLIR tasklet in connector and MLIR code"
+                    )
+
+            return
+
         # If a Python tasklet, use type inference to figure out all None output
         # connectors
         if all(cval.type is not None for cval in self.out_connectors.values()):
@@ -472,12 +513,10 @@ class NestedSDFG(CodeNode):
 
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="SDFG schedule",
-                        allow_none=True,
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    schedule = EnumProperty(dtype=dtypes.ScheduleType,
+                            desc="SDFG schedule",
+                            allow_none=True,
+                            default=dtypes.ScheduleType.Default)
     symbol_mapping = DictProperty(
         key_type=str,
         value_type=dace.symbolic.pystr_to_symbolic,
@@ -488,9 +527,10 @@ class NestedSDFG(CodeNode):
                             desc="Show this node/scope/state as collapsed",
                             default=False)
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     no_inline = Property(
         dtype=bool,
@@ -651,9 +691,12 @@ class MapEntry(EntryNode):
             except KeyError:
                 # Backwards compatibility
                 nid = int(json_obj['scope_exits'][0])
+            except TypeError:
+                nid = None
 
-            exit_node = context['sdfg_state'].node(nid)
-            exit_node.map = m
+            if nid is not None:
+                exit_node = context['sdfg_state'].node(nid)
+                exit_node.map = m
         except IndexError:  # Exit node has a higher node ID
             # Connection of the scope nodes handled in MapExit
             pass
@@ -724,7 +767,8 @@ class MapExit(ExitNode):
                 json_obj['scope_entry']))
 
             ret = cls(map=entry_node.map)
-        except IndexError:  # Entry node has a higher ID than exit node
+        except (IndexError, TypeError):
+            # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in MapEntry
             ret = cls(cls.map_type()('_', [], []))
 
@@ -772,11 +816,9 @@ class Map(object):
     params = ListProperty(element_type=str, desc="Mapped parameters")
     range = RangeProperty(desc="Ranges of map parameters",
                           default=sbs.Range([]))
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="Map schedule",
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    schedule = EnumProperty(dtype=dtypes.ScheduleType,
+                            desc="Map schedule",
+                            default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
     collapse = Property(dtype=int,
                         default=1,
@@ -787,9 +829,10 @@ class Map(object):
                             desc="Show this node/scope/state as collapsed",
                             default=False)
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -858,9 +901,12 @@ class ConsumeEntry(EntryNode):
             except KeyError:
                 # Backwards compatibility
                 nid = int(json_obj['scope_exits'][0])
+            except TypeError:
+                nid = None
 
-            exit_node = context['sdfg_state'].node(nid)
-            exit_node.consume = c
+            if nid is not None:
+                exit_node = context['sdfg_state'].node(nid)
+                exit_node.consume = c
         except IndexError:  # Exit node has a higher node ID
             # Connection of the scope nodes handled in ConsumeExit
             pass
@@ -930,7 +976,8 @@ class ConsumeExit(ExitNode):
             entry_node = context['sdfg_state'].node(int(
                 json_obj['scope_entry']))
             ret = ConsumeExit(consume=entry_node.consume)
-        except IndexError:  # Entry node has a higher ID than exit node
+        except (IndexError, TypeError):
+            # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in ConsumeEntry
             ret = ConsumeExit(Consume("", ['i', 1], None))
 
@@ -979,11 +1026,9 @@ class Consume(object):
     pe_index = Property(dtype=str, desc="Processing element identifier")
     num_pes = SymbolicProperty(desc="Number of processing elements", default=1)
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="Consume schedule",
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    schedule = EnumProperty(dtype=dtypes.ScheduleType,
+                            desc="Consume schedule",
+                            default=dtypes.ScheduleType.Default)
     chunksize = Property(dtype=int,
                          desc="Maximal size of elements to consume at a time",
                          default=1)
@@ -992,9 +1037,10 @@ class Consume(object):
                             desc="Show this node/scope/state as collapsed",
                             default=False)
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     def as_map(self):
         """ Compatibility function that allows to view the consume as a map,
@@ -1185,19 +1231,18 @@ class LibraryNode(CodeNode):
         allow_none=True,
         desc=("Which implementation this library node will expand into."
               "Must match a key in the list of possible implementations."))
-    schedule = Property(
+    schedule = EnumProperty(
         dtype=dtypes.ScheduleType,
         desc="If set, determines the default device mapping of "
         "the node upon expansion, if expanded to a nested SDFG.",
-        choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x],
         default=dtypes.ScheduleType.Default)
     debuginfo = DebugInfoProperty()
 
-    def __init__(self, name, *args, **kwargs):
+    def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name
         self.label = name
+        self.schedule = schedule or dtypes.ScheduleType.Default
 
     # Overrides subclasses to return LibraryNode as their JSON type
     @property
@@ -1214,8 +1259,7 @@ class LibraryNode(CodeNode):
         if cls == LibraryNode:
             clazz = pydoc.locate(json_obj['classpath'])
             if clazz is None:
-                raise TypeError('Unrecognized library node type "%s"' %
-                                json_obj['classpath'])
+                return UnregisteredLibraryNode.from_json(json_obj, context)
             return clazz.from_json(json_obj, context)
         else:  # Subclasses are actual library nodes
             ret = cls(json_obj['attributes']['name'])
@@ -1279,9 +1323,10 @@ class LibraryNode(CodeNode):
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation = transformation_type(sdfg_id, state_id, subgraph, 0)
-        if not transformation.can_be_applied(state, self, 0, sdfg): 
+        if not transformation.can_be_applied(state, self, 0, sdfg):
             raise RuntimeError("Library node "
-               "expansion applicability check failed.")
+                               "expansion applicability check failed.")
+        sdfg.append_transformation(transformation)
         transformation.apply(sdfg, *args, **kwargs)
         return implementation
 
@@ -1290,3 +1335,20 @@ class LibraryNode(CodeNode):
         """Register an implementation to belong to this library node type."""
         cls.implementations[name] = transformation_type
         transformation_type._match_node = cls
+
+
+class UnregisteredLibraryNode(LibraryNode):
+
+    original_json = {}
+
+    def __init__(self, json_obj={}, label=None):
+        self.original_json = json_obj
+        super().__init__(label)
+
+    def to_json(self):
+        return self.original_json
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        return UnregisteredLibraryNode(json_obj=json_obj,
+                                       label=json_obj['attributes']['name'])

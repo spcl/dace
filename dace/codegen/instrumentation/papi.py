@@ -145,8 +145,9 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' %
             dtypes.StorageType.Register,
         ]
 
-        perf_cpu_only = (src_storage in cpu_storage_types) and (
-            dst_storage in cpu_storage_types)
+        perf_cpu_only = (src_storage
+                         in cpu_storage_types) and (dst_storage
+                                                    in cpu_storage_types)
 
         self.perf_should_instrument = (
             not src_instrumented and not dst_instrumented and perf_cpu_only
@@ -424,8 +425,8 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         """ Returns True if this entry node should be instrumented. """
         if map_entry.map.instrument != dace.InstrumentationType.PAPI_Counters:
             return False
-        if (map_entry.map.schedule not in
-                PAPIInstrumentation.perf_whitelist_schedules):
+        if (map_entry.map.schedule
+                not in PAPIInstrumentation.perf_whitelist_schedules):
             return False
         try:
             cond = not map_entry.fence_instrumentation
@@ -440,8 +441,8 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         parent = dfg.entry_node(node)
 
         if isinstance(parent, MapEntry):
-            if (parent.map.schedule not in
-                    PAPIInstrumentation.perf_whitelist_schedules):
+            if (parent.map.schedule
+                    not in PAPIInstrumentation.perf_whitelist_schedules):
                 return False
             return True
 
@@ -463,10 +464,10 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
             self._counters)
 
     def perf_counter_start_measurement_string(
-        self,
-        unified_id: int,
-        iteration: str,
-        core_str: str = "PAPI_thread_id()"):
+            self,
+            unified_id: int,
+            iteration: str,
+            core_str: str = "PAPI_thread_id()"):
         pcs = self.perf_counter_string()
         return '''dace::perf::{counter_str} __perf_{id};
 auto& __vs_{id} = __perf_store.getNewValueSet(__perf_{id}, {id}, {core}, {it});

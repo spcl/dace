@@ -1051,7 +1051,8 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.gemv')
 @oprepo.replaces('dace.libraries.blas.Gemv')
-def gemv_libnode(sdfg: SDFG,
+def gemv_libnode(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
                  state: SDFGState,
                  A,
                  x,

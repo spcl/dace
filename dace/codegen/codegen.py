@@ -91,13 +91,15 @@ int main(int argc, char **argv) {{
 '''
 
 
-def generate_code(sdfg) -> List[CodeObject]:
+def generate_code(sdfg, validate=True) -> List[CodeObject]:
     """ Generates code as a list of code objects for a given SDFG.
         :param sdfg: The SDFG to use
+        :param validate: If True, validates the SDFG before generating the code.
         :return: List of code objects that correspond to files to compile.
     """
     # Before compiling, validate SDFG correctness
-    sdfg.validate()
+    if validate:
+        sdfg.validate()
 
     if Config.get_bool('testing', 'serialization'):
         from dace.sdfg import SDFG
@@ -183,7 +185,8 @@ def generate_code(sdfg) -> List[CodeObject]:
                    'cpp',
                    cpu.CPUCodeGen,
                    'Frame',
-                   environments=used_environments)
+                   environments=used_environments,
+                   sdfg=sdfg)
     ]
 
     # Create code objects for each target
@@ -200,7 +203,8 @@ def generate_code(sdfg) -> List[CodeObject]:
                        linkable=False)
     target_objects.append(dummy)
 
-    for env in dace.library.get_environments_and_dependencies(used_environments):
+    for env in dace.library.get_environments_and_dependencies(
+            used_environments):
         if hasattr(env, "codeobjects"):
             target_objects.extend(env.codeobjects)
 

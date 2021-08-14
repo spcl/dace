@@ -648,7 +648,8 @@ class Dot(dace.sdfg.nodes.LibraryNode):
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.dot')
 @oprepo.replaces('dace.libraries.blas.Dot')
-def dot_libnode(sdfg: SDFG, state: SDFGState, x, y, result, acctype=None):
+def dot_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, y,
+                result, acctype=None):
     # Add nodes
     x_in, y_in = (state.add_read(name) for name in (x, y))
     res = state.add_write(result)

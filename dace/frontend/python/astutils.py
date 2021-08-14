@@ -2,6 +2,7 @@
 """ Various AST parsing utilities for DaCe. """
 import ast
 import astunparse
+import copy
 from collections import OrderedDict
 import inspect
 import numbers
@@ -52,6 +53,27 @@ def function_to_ast(f):
     ast.increment_lineno(src_ast, src_line)
 
     return src_ast, src_file, src_line, src
+
+
+def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
+    """
+    Tries to evaluate an AST node given only global variables.
+    :param node: The AST node/subtree to evaluate.
+    :param gvars: A dictionary mapping names to variables.
+    :return: The result of evaluation, or raises ``SyntaxError`` on any
+             failure to evaluate.
+    """
+    if not isinstance(node, ast.AST):
+        return node
+    try:
+        # Ensure context is load so eval works (e.g., when using value as lhs)
+        if not isinstance(getattr(node, 'ctx', False), ast.Load):
+            node = copy.deepcopy(node)
+            node.ctx = ast.Load()
+        return eval(compile(ast.Expression(node), '<string>', mode='eval'),
+                    gvars)
+    except:  # Anything can happen here
+        raise SyntaxError
 
 
 def rname(node):
@@ -121,32 +143,31 @@ def subscript_to_ast_slice(node, without_array=False):
     # Python <3.9 compatibility
     result_slice = None
     if isinstance(node.slice, ast.Index):
-        slice = node.slice.value
-        if not isinstance(slice, ast.Tuple):
-            result_slice = [slice]
+        slc = node.slice.value
+        if not isinstance(slc, ast.Tuple):
+            result_slice = [slc]
     elif isinstance(node.slice, ast.ExtSlice):
-        slice = tuple(node.slice.dims)
+        slc = tuple(node.slice.dims)
     else:
-        slice = node.slice
+        slc = node.slice
 
     # Decode slice tuple
     if result_slice is None:
-        if isinstance(slice, ast.Tuple):
-            slices = slice.elts
-        elif isinstance(slice, tuple):
-            slices = slice
+        if isinstance(slc, ast.Tuple):
+            slices = slc.elts
+        elif isinstance(slc, tuple):
+            slices = slc
         else:
-            slices = [slice]
+            slices = [slc]
         result_slice = []
         for s in slices:
             # Slice
             if isinstance(s, ast.Slice):
                 result_slice.append((s.lower, s.upper, s.step))
-            elif isinstance(s, ast.Index): # Index (Python <3.9)
+            elif isinstance(s, ast.Index):  # Index (Python <3.9)
                 result_slice.append(s.value)
             else:  # Index
                 result_slice.append(s)
-
 
     if without_array:
         return result_slice

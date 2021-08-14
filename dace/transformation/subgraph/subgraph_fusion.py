@@ -9,7 +9,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.scope import ScopeTree
 from dace.memlet import Memlet
 from dace.transformation import transformation
-from dace.properties import ListProperty, make_properties, Property
+from dace.properties import EnumProperty, ListProperty, make_properties, Property
 from dace.symbolic import symstr, overapproximate
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet, propagate_memlets_scope, _propagate_node
 from dace.transformation.subgraph import helpers
@@ -45,12 +45,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
     debug = Property(desc="Show debug info", dtype=bool, default=False)
 
-    transient_allocation = Property(
+    transient_allocation = EnumProperty(
         dtype=dtypes.StorageType,
         desc="Storage Location to push transients to that are "
         "fully contained within the subgraph.",
-        choices=dtypes.StorageType,
-        from_string=lambda x: dtypes.StorageType[x],
         default=dtypes.StorageType.Default)
 
     schedule_innermaps = Property(desc="Schedule of inner maps. If none, "

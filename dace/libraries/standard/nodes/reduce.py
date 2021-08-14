@@ -10,7 +10,7 @@ import dace.serialize
 import dace.library
 from typing import Any, Dict, Set
 from dace.config import Config
-from dace.sdfg import SDFG, SDFGState, devicelevel_block_size
+from dace.sdfg import SDFG, SDFGState, devicelevel_block_size, propagation
 from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, CodeProperty, LambdaProperty,
@@ -327,7 +327,8 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         # Get reduction type for OpenMP
         redtype = detect_reduction_type(node.wcr, openmp=True)
         if redtype not in ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP:
-            raise ValueError('Reduction type not supported for "%s"' % node.wcr)
+            warnings.warn('Reduction type not supported for "%s"' % node.wcr)
+            return ExpandReducePure.expansion(node, state, sdfg)
         omptype, expr = ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP[redtype]
 
         # Standardize axes
@@ -359,7 +360,7 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
 
         # Write identity value first
         if node.identity is not None:
-            code += '%s = %s;\n' % (outexpr, node.identity)
+            code += '%s = %s;\n' % (outexpr, sym2cpp(node.identity))
 
         # Reduction OpenMP clause
         code += '#pragma omp parallel for collapse({cdim}) ' \
@@ -491,6 +492,16 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         input_memlet = input_edge.data
         reduce_shape = input_memlet.subset.bounding_box_size()
         num_items = ' * '.join(symstr(s) for s in reduce_shape)
+        overapprox_memlet = dcpy(input_memlet)
+        if any(
+                str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                for s in overapprox_memlet.subset.free_symbols):
+            propagation.propagate_states(sdfg)
+            for p, r in state.ranges.items():
+                overapprox_memlet = propagation.propagate_subset(
+                    [overapprox_memlet], input_data, [p], r)
+        overapprox_shape = overapprox_memlet.subset.bounding_box_size()
+        overapprox_items = ' * '.join(symstr(s) for s in overapprox_shape)
 
         input_dims = input_memlet.subset.dims()
         output_dims = output_memlet.subset.data_dims()
@@ -537,7 +548,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
 
         if reduce_all_axes:
             reduce_type = 'DeviceReduce'
-            reduce_range = num_items
+            reduce_range = overapprox_items
             reduce_range_def = 'size_t num_items'
             reduce_range_use = 'num_items'
             reduce_range_call = num_items
@@ -545,14 +556,21 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
             num_reduce_axes = len(node.axes)
             not_reduce_axes = reduce_shape[:-num_reduce_axes]
             reduce_axes = reduce_shape[-num_reduce_axes:]
+            overapprox_not_reduce_axes = overapprox_shape[:-num_reduce_axes]
+            overapprox_reduce_axes = overapprox_shape[-num_reduce_axes:]
 
             num_segments = ' * '.join([symstr(s) for s in not_reduce_axes])
             segment_size = ' * '.join([symstr(s) for s in reduce_axes])
+            overapprox_num_segments = ' * '.join(
+                [symstr(s) for s in overapprox_not_reduce_axes])
+            overapprox_segment_size = ' * '.join(
+                [symstr(s) for s in overapprox_reduce_axes])
 
             reduce_type = 'DeviceSegmentedReduce'
-            iterator = 'dace::stridedIterator({size})'.format(size=segment_size)
-            reduce_range = '{num}, {it}, {it} + 1'.format(num=num_segments,
-                                                          it=iterator)
+            iterator = 'dace::stridedIterator({size})'.format(
+                size=overapprox_segment_size)
+            reduce_range = '{num}, {it}, {it} + 1'.format(
+                num=overapprox_num_segments, it=iterator)
             reduce_range_def = 'size_t num_segments, size_t segment_size'
             iterator_use = 'dace::stridedIterator(segment_size)'
             reduce_range_use = 'num_segments, {it}, {it} + 1'.format(

@@ -37,6 +37,8 @@
     namespace std {
         template <>
         struct is_scalar<half> : std::integral_constant<bool, true> {};
+        template <>
+        struct is_fundamental<half> : std::integral_constant<bool, true> {};
     }  // namespace std
 #elif defined(__HIPCC__)
     #include <hip/hip_runtime.h>

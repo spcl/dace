@@ -157,18 +157,21 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
             beta = 0.0
+            cin = True
             if c[0].data.wcr:
                 from dace.frontend import operations
                 redtype = operations.detect_reduction_type(c[0].data.wcr)
                 if redtype == dace.dtypes.ReductionType.Sum:
                     beta = 1.0
+                    cin = False
                 else:
                     warnings.warn("Unsupported WCR in output of MatMul "
                                   "library node: {}".format(c[0].data.wcr))
             gemm = Gemm(node.name + 'gemm',
                         location=node.location,
                         alpha=1.0,
-                        beta=beta)
+                        beta=beta,
+                        cin=cin)
             return gemm
         elif len(size_b) == 3 and (len(size_a) in [2, 3]):
             # Batched matrix and matrix -> batched matrix multiplication

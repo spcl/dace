@@ -1,20 +1,20 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Implicitly distributed (transformed shared-memory SDFG) Gesummv sample."""
-import numpy as np
 import dace as dc
+import numpy as np
+import os
+from dace.sdfg.utils import load_precompiled_sdfg
 from mpi4py import MPI
 
-from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
 from dace.transformation.dataflow import (ElementWiseArrayOperation,
                                           ElementWiseArrayOperation2D,
                                           RedundantComm2D)
-
 
 N = dc.symbol('N', dtype=dc.int64, integer=True, positive=True)
 
 
 def relerr(ref, val):
-    return np.linalg.norm(ref-val) / np.linalg.norm(ref)
+    return np.linalg.norm(ref - val) / np.linalg.norm(ref)
 
 
 @dc.program
@@ -64,18 +64,26 @@ if __name__ == "__main__":
         mpi_func = mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:
-        mpi_sdfg = dc.SDFG.from_file(".dacecache/{n}/program.sdfg".format(n=gesummv.name))
-        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
-            ".dacecache/{n}/build/lib{n}.so".format(n=gesummv.name), gesummv.name))
+        build_folder = dc.Config.get('default_build_folder')
+        mpi_func = load_precompiled_sdfg(
+            os.path.join(build_folder, gesummv.name))
     comm.Barrier()
-  
+
     Px, Py = 1, size
-    mpi_func(A=A, B=B, x=x, alpha=alpha, beta=beta, y=y, 
-             N=N, commsize=size, Px=Px, Py=Py)
+    mpi_func(A=A,
+             B=B,
+             x=x,
+             alpha=alpha,
+             beta=beta,
+             y=y,
+             N=N,
+             commsize=size,
+             Px=Px,
+             Py=Py)
 
     comm.Barrier()
 
     if rank == 0:
         alpha, beta, refA, refB, tmp, refx, refy = init_data(N, np.float64)
         refy[:] = alpha * refA @ refx + beta * refB @ refx
-        assert(np.allclose(refy, y))
+        assert (np.allclose(refy, y))

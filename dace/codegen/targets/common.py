@@ -4,6 +4,7 @@ from dace.sdfg import SDFG
 from dace.properties import CodeBlock
 from dace.codegen import cppunparse
 from typing import List, Optional, Set, Union
+import sympy
 import warnings
 
 

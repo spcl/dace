@@ -1,12 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Explicitly distributed Jacobi-1D sample."""
-import numpy as np
 import dace as dc
+import numpy as np
+import os
+from dace.sdfg.utils import load_precompiled_sdfg
 
 from mpi4py import MPI
-from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
-from dace.transformation.dataflow import MapFusion
-
 
 N = dc.symbol('N', dtype=dc.int64)
 lN = dc.symbol('lN', dtype=dc.int64)
@@ -15,12 +14,12 @@ size = dc.symbol('size', dtype=dc.int32)
 
 
 def relerr(ref, val):
-    return np.linalg.norm(ref-val) / np.linalg.norm(ref)
+    return np.linalg.norm(ref - val) / np.linalg.norm(ref)
 
 
 @dc.program
 def jacobi_1d_shared(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
-    
+
     for t in range(1, TSTEPS):
         B[1:-1] = 0.33333 * (A[:-2] + A[1:-1] + A[2:])
         A[1:-1] = 0.33333 * (B[:-2] + B[1:-1] + B[2:])
@@ -29,15 +28,15 @@ def jacobi_1d_shared(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
 @dc.program
 def jacobi_1d_dist(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
 
-    lA = np.zeros((lN + 2,), dtype=A.dtype)
-    lB = np.zeros((lN + 2,), dtype=B.dtype)
+    lA = np.zeros((lN + 2, ), dtype=A.dtype)
+    lB = np.zeros((lN + 2, ), dtype=B.dtype)
     tAB = np.empty((lN, ), dtype=A.dtype)
 
     dc.comm.Scatter(A, tAB)
     lA[1:-1] = tAB
     dc.comm.Scatter(B, tAB)
     lB[1:-1] = tAB
-    
+
     for t in range(1, TSTEPS):
         if rank > 0:
             dc.comm.Recv(lA[0], rank - 1, t)
@@ -63,7 +62,7 @@ def jacobi_1d_dist(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
             lA[1:-2] = 0.33333 * (lB[:-3] + lB[1:-2] + lB[2:-1])
         else:
             lA[1:-1] = 0.33333 * (lB[:-2] + lB[1:-1] + lB[2:])
-    
+
     tAB[:] = lA[1:-1]
     dc.comm.Gather(tAB, A)
     tAB[:] = lB[1:-1]
@@ -72,8 +71,8 @@ def jacobi_1d_dist(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
 
 def init_data(N, datatype):
 
-    A = np.fromfunction(lambda i: (i + 2) / N, shape=(N,), dtype=datatype)
-    B = np.fromfunction(lambda i: (i + 3) / N, shape=(N,), dtype=datatype)
+    A = np.fromfunction(lambda i: (i + 2) / N, shape=(N, ), dtype=datatype)
+    B = np.fromfunction(lambda i: (i + 3) / N, shape=(N, ), dtype=datatype)
 
     return A, B
 
@@ -88,21 +87,20 @@ if __name__ == "__main__":
     rank = comm.Get_rank()
     size = comm.Get_size()
     lN = N // size
-    
+
     mpi_sdfg = jacobi_1d_dist.to_sdfg()
     if rank == 0:
         mpi_func = mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:
-        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
-            ".dacecache/{n}/build/lib{n}.so".format(n=jacobi_1d_dist.name),
-            jacobi_1d_dist.name))
+        build_folder = dc.Config.get('default_build_folder')
+        mpi_func = load_precompiled_sdfg(
+            os.path.join(build_folder, jacobi_1d_dist.name))
 
-  
     mpi_func(A=A, B=B, TSTEPS=TSTEPS, N=N, lN=lN, rank=rank, size=size)
 
     if rank == 0:
         refA, refB = init_data(N, np.float64)
         jacobi_1d_shared(TSTEPS, refA, refB)
-        assert(np.allclose(A, refA))
-        assert(np.allclose(B, refB))
+        assert (np.allclose(A, refA))
+        assert (np.allclose(B, refB))
