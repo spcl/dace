@@ -68,7 +68,7 @@ foreach(DACE_FILE ${DACE_FILES})
       set(DACE_XILINX_HOST_FILES ${DACE_XILINX_HOST_FILES} ${DACE_FILE})
     elseif(DACE_FILE_EXT MATCHES ".cpp")
       set(DACE_XILINX_KERNEL_FILES ${DACE_XILINX_KERNEL_FILES} ${DACE_FILE})
-    elseif(DACE_FILE_EXT MATCHES ".ini")
+    elseif(DACE_FILE_EXT MATCHES ".cfg")
       set(DACE_XILINX_CONFIG_FILE ${DACE_FILE})
     endif()
   elseif(${DACE_FILE_TARGET} STREQUAL "intel_fpga")
@@ -479,21 +479,6 @@ if(DACE_ENABLE_XILINX)
           --advanced.prop kernel.${DACE_KERNEL_NAME}.kernel_flags="${DACE_XILINX_SYNTHESIS_FLAGS}")
     endif()
 
-    # Load kernel memory interface assignments, if they exist
-    if (EXISTS ${DACE_KERNEL_DIRECTORY}/${DACE_KERNEL_NAME}_memory_interfaces.csv)
-      file(STRINGS
-          ${DACE_KERNEL_DIRECTORY}/${DACE_KERNEL_NAME}_memory_interfaces.csv
-          _ASSIGNMENTS)
-      foreach(_ASSIGNMENT ${_ASSIGNMENTS})
-        string(REPLACE "," ";" _ASSIGNMENT ${_ASSIGNMENT})
-        list(GET _ASSIGNMENT 0 _INTERFACE_NAME)
-        list(GET _ASSIGNMENT 1 _INTERFACE_TYPE)
-        list(GET _ASSIGNMENT 2 _INTERFACE_INDEX)
-        set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS}
-            --sp "${DACE_KERNEL_NAME}_1.m_axi_${_INTERFACE_NAME}:${_INTERFACE_TYPE}[${_INTERFACE_INDEX}]")
-      endforeach()
-    endif()
-
   endforeach()
 
   add_custom_target(xilinx_synthesis DEPENDS ${DACE_SYNTHESIS_TARGETS})
@@ -626,27 +611,23 @@ if(DACE_ENABLE_XILINX)
       OUTPUT ${DACE_PROGRAM_NAME}_sw_emu.xclbin
       COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${VITIS_BUILD_FLAGS}
+      --config "${DACE_XILINX_CONFIG_FILE}"
       -l
       -t sw_emu
       ${DACE_VITIS_KERNELS_SW_EMU}
       -o ${DACE_PROGRAM_NAME}_sw_emu.xclbin
-      DEPENDS ${DACE_PROGRAM_NAME}_sw_emu.xo)
-
-    unset (VITIS_CONFIG_LINK)
-    if (EXISTS ${DACE_XILINX_CONFIG_FILE})
-        set (VITIS_CONFIG_LINK --config "${DACE_XILINX_CONFIG_FILE}")
-    endif()
+      DEPENDS ${DACE_PROGRAM_NAME}_sw_emu.xo ${DACE_XILINX_CONFIG_FILE})
 
     add_custom_command(
       OUTPUT ${DACE_PROGRAM_NAME}_hw_emu.xclbin
       COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${VITIS_BUILD_FLAGS}
-      ${VITIS_CONFIG_LINK}
+      --config "${DACE_XILINX_CONFIG_FILE}"
       -l
       -t hw_emu
       ${DACE_VITIS_KERNELS_HW_EMU}
       -o ${DACE_PROGRAM_NAME}_hw_emu.xclbin
-      DEPENDS ${DACE_VITIS_KERNELS_HW_EMU})
+      DEPENDS ${DACE_VITIS_KERNELS_HW_EMU} ${DACE_XILINX_CONFIG_FILE})
 
     add_custom_command(
       OUTPUT emconfig.json
@@ -657,12 +638,12 @@ if(DACE_ENABLE_XILINX)
       OUTPUT ${DACE_PROGRAM_NAME}_hw.xclbin
       COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${VITIS_BUILD_FLAGS}
-      ${VITIS_CONFIG_LINK}
+      --config "${DACE_XILINX_CONFIG_FILE}"
       -l
       -t hw
       ${DACE_VITIS_KERNELS_HW}
       -o ${DACE_PROGRAM_NAME}_hw.xclbin
-      DEPENDS ${DACE_VITIS_KERNELS_HW})
+      DEPENDS ${DACE_VITIS_KERNELS_HW} ${DACE_XILINX_CONFIG_FILE})
 
   endif()
 

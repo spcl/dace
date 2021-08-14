@@ -1,17 +1,17 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ DaCe Python parsing functionality and entry point to Python frontend. """
-from __future__ import print_function
+from dataclasses import dataclass
 import inspect
 import itertools
 import copy
 import os
 import sympy
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Sequence, Tuple
 import warnings
 
 from dace import symbolic, dtypes
 from dace.config import Config
-from dace.frontend.python import newast
+from dace.frontend.python import newast, common as pycommon, cached_program
 from dace.sdfg import SDFG
 from dace.data import create_datadescriptor, Data
 
@@ -31,6 +31,13 @@ def _is_empty(val: Any) -> bool:
     return val is inspect._empty
 
 
+def _get_cell_contents_or_none(cell):
+    try:
+        return cell.cell_contents
+    except ValueError:  # Empty cell
+        return None
+
+
 def _get_locals_and_globals(f):
     """ Retrieves a list of local and global variables for the function ``f``.
         This is used to retrieve variables around and defined before  @dace.programs for adding symbols and constants.
@@ -42,8 +49,9 @@ def _get_locals_and_globals(f):
     if f.__closure__ is not None:
         result.update({
             k: v
-            for k, v in zip(f.__code__.co_freevars,
-                            [x.cell_contents for x in f.__closure__])
+            for k, v in
+            zip(f.__code__.co_freevars,
+                [_get_cell_contents_or_none(x) for x in f.__closure__])
         })
 
     return result
@@ -120,16 +128,24 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
     return {str(k)[8:]: v for k, v in result.items()}
 
 
-class DaceProgram:
+class DaceProgram(pycommon.SDFGConvertible):
     """ A data-centric program object, obtained by decorating a function with
         ``@dace.program``. """
-    def __init__(self, f, args, kwargs, auto_optimize, device, method=False):
+    def __init__(self,
+                 f,
+                 args,
+                 kwargs,
+                 auto_optimize,
+                 device,
+                 constant_functions=False,
+                 method=False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
         self.dec_args = args
         self.dec_kwargs = kwargs
         self.name = f.__name__
+        self.resolve_functions = constant_functions
         self.argnames = _get_argnames(f)
         if method:
             self.objname = self.argnames[0]
@@ -139,6 +155,7 @@ class DaceProgram:
         self.auto_optimize = auto_optimize
         self.device = device
         self._methodobj: Any = None  #: Object whose method this program is
+        self.validate: bool = True  #: Whether to validate on code generation
 
         self.global_vars = _get_locals_and_globals(f)
         self.signature = inspect.signature(f)
@@ -149,6 +166,7 @@ class DaceProgram:
         }
         self.symbols = set(k for k, v in self.global_vars.items()
                            if isinstance(v, symbolic.symbol))
+        self.closure_arg_mapping: Dict[str, str] = {}
 
         # Add type annotations from decorator arguments (DEPRECATED)
         if self.dec_args:
@@ -167,9 +185,12 @@ class DaceProgram:
         if self.argnames is None:
             self.argnames = []
 
-        # Cache SDFG with last used arguments
-        self._cache: Tuple[ArgTypes, SDFG,
-                           compiled_sdfg.CompiledSDFG] = (None, None, None)
+        # Cache SDFGs with last used arguments
+        self._cache = cached_program.DaceProgramCache(self._eval_closure)
+        # These sets fill up after the first parsing of the program and stay
+        # the same unless the argument types change
+        self.closure_array_keys: Set[str] = set()
+        self.closure_constant_keys: Set[str] = set()
 
     def _auto_optimize(self,
                        sdfg: SDFG,
@@ -179,38 +200,35 @@ class DaceProgram:
         from dace.transformation.auto import auto_optimize as autoopt
         return autoopt.auto_optimize(sdfg, self.device, symbols=symbols)
 
-    def to_sdfg(self, *args, strict=None, save=False, **kwargs) -> SDFG:
+    def to_sdfg(self,
+                *args,
+                strict=None,
+                save=False,
+                validate=False,
+                **kwargs) -> SDFG:
         """ Parses the DaCe function into an SDFG. """
-        return self._parse(args, kwargs, strict=strict, save=save)
+        return self._parse(args,
+                           kwargs,
+                           strict=strict,
+                           save=save,
+                           validate=validate)[0]
 
     def __sdfg__(self, *args, **kwargs) -> SDFG:
-        return self._parse(args, kwargs, strict=None, save=False)
+        return self._parse(args,
+                           kwargs,
+                           strict=None,
+                           save=False,
+                           validate=False)[0]
 
     def compile(self, *args, strict=None, save=False, **kwargs):
         """ Convenience function that parses and compiles a DaCe program. """
-        sdfg = self._parse(args, kwargs, strict=strict, save=save)
+        sdfg = self._parse(args, kwargs, strict=strict, save=save)[0]
 
         # Invoke auto-optimization as necessary
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
             sdfg = self._auto_optimize(sdfg)
 
-        return sdfg.compile()
-
-    def is_cached(self, argtypes: ArgTypes) -> bool:
-        """
-        Returns True if the given arguments exist in the compiled SDFG cache.
-        """
-        if self._cache[0] is None or self._cache[0].keys() != argtypes.keys():
-            return False
-        for k, v in self._cache[0].items():
-            if not v.is_equivalent(argtypes[k]):
-                return False
-        return True
-
-    def clear_cache(self):
-        """ Force-clear compiled SDFG cache of this program. """
-        del self._cache
-        self._cache = (None, None, None)
+        return sdfg.compile(validate=self.validate)
 
     @property
     def methodobj(self) -> Any:
@@ -219,9 +237,36 @@ class DaceProgram:
     @methodobj.setter
     def methodobj(self, new_obj: Any):
         self._methodobj = new_obj
-        # Clear cache upon changing parent object
-        del self._cache
-        self._cache = (None, None, None)
+
+    def __sdfg_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
+        return self.argnames, self.constant_args
+
+    def __sdfg_closure__(
+            self,
+            reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """ 
+        Returns the closure arrays of the SDFG represented by the dace 
+        program as a mapping between array name and the corresponding value.
+        :param reevaluate: If given, re-evaluates closure elements based on the
+                           input mapping (keys: array names, values: expressions
+                           to evaluate). Otherwise, re-evaluates 
+                           ``self.closure_arg_mapping``.
+        :return: A dictionary mapping between a name in the closure and the 
+                 currently evaluated value.
+        """
+        mapping = self.closure_arg_mapping if reevaluate is None else reevaluate
+        return {
+            k: eval(v, self.global_vars) if isinstance(v, str) else v
+            for k, v in mapping.items()
+        }
+
+    def _eval_closure(self,
+                      arg: str,
+                      extra_constants: Optional[Dict[str, Any]] = None) -> Any:
+        extra_constants = extra_constants or {}
+        if arg in self.closure_arg_mapping:
+            return self.closure_arg_mapping[arg]
+        return eval(arg, self.global_vars, extra_constants)
 
     def _create_sdfg_args(self, sdfg: SDFG, args: Tuple[Any],
                           kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -230,6 +275,9 @@ class DaceProgram:
         # Reconstruct keyword arguments
         result.update({aname: arg for aname, arg in zip(self.argnames, args)})
         result.update(kwargs)
+
+        # Add closure arguments to the call
+        result.update(self.__sdfg_closure__())
 
         # Update arguments with symbols in data shapes
         result.update(
@@ -243,31 +291,33 @@ class DaceProgram:
     def __call__(self, *args, **kwargs):
         """ Convenience function that parses, compiles, and runs a DaCe 
             program. """
-        # Check if SDFG with these argument types and shapes is cached
+        # Update global variables with current closure
+        self.global_vars = _get_locals_and_globals(self.f)
+
+        # Move "self" from an argument into the closure
         if self.methodobj is not None:
             self.global_vars[self.objname] = self.methodobj
 
-        argtypes, arg_mapping, _ = self._get_type_annotations(args, kwargs)
+        argtypes, arg_mapping, constant_args = self._get_type_annotations(
+            args, kwargs)
 
-        if self.is_cached(argtypes):
+        # Cache key
+        cachekey = self._cache.make_key(argtypes, self.closure_array_keys,
+                                        self.closure_constant_keys,
+                                        constant_args)
+
+        if self._cache.has(cachekey):
+            entry = self._cache.get(cachekey)
             kwargs.update(arg_mapping)
-            self._cache[2].clear_return_values()
-            return self._cache[2](
-                **self._create_sdfg_args(self._cache[1], args, kwargs))
+            entry.compiled_sdfg.clear_return_values()
+            return entry.compiled_sdfg(
+                **self._create_sdfg_args(entry.sdfg, args, kwargs))
 
         # Clear cache to enforce deletion and closure of compiled program
-        self.clear_cache()
-
-        # Add classes (that are not defined yet when the method is) to closure
-        local_vars = _get_locals_and_globals(self.f)
-        self.global_vars.update({
-            k: v
-            for k, v in local_vars.items()
-            if k not in self.global_vars and isinstance(v, type)
-        })
+        # self._cache.pop()
 
         # Parse SDFG
-        sdfg = self._parse(args, kwargs)
+        sdfg, self.closure_arg_mapping = self._parse(args, kwargs)
 
         # Add named arguments to the call
         kwargs.update(arg_mapping)
@@ -283,16 +333,25 @@ class DaceProgram:
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
-        binaryobj = sdfg.compile()
+        binaryobj = sdfg.compile(validate=self.validate)
 
-        self._cache = (argtypes, sdfg, binaryobj)
+        # Recreate key and add to cache
+        cachekey = self._cache.make_key(argtypes, self.closure_array_keys,
+                                        self.closure_constant_keys,
+                                        constant_args)
+        self._cache.add(cachekey, sdfg, binaryobj)
 
         # Call SDFG
         result = binaryobj(**sdfg_args)
 
         return result
 
-    def _parse(self, args, kwargs, strict=None, save=False) -> SDFG:
+    def _parse(self,
+               args,
+               kwargs,
+               strict=None,
+               save=False,
+               validate=False) -> SDFG:
         """ 
         Try to parse a DaceProgram object and return the `dace.SDFG` object
         that corresponds to it.
@@ -304,6 +363,7 @@ class DaceProgram:
                        uses configuration-defined value). 
         :param save: If True, saves the generated SDFG to 
                     ``_dacegraphs/program.sdfg`` after parsing.
+        :param validate: If True, validates the resulting SDFG after creation.
         :return: The generated SDFG object.
         """
         # Avoid import loop
@@ -311,7 +371,7 @@ class DaceProgram:
         from dace.transformation import helpers as xfh
 
         # Obtain DaCe program as SDFG
-        sdfg = self._generate_pdp(args, kwargs, strict=strict)
+        sdfg, arg_mapping = self._generate_pdp(args, kwargs, strict=strict)
 
         # Apply strict transformations automatically
         if (strict == True or (strict is None and Config.get_bool(
@@ -335,9 +395,10 @@ class DaceProgram:
             sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
         # Validate SDFG
-        sdfg.validate()
+        if validate:
+            sdfg.validate()
 
-        return sdfg
+        return sdfg, arg_mapping
 
     def _get_type_annotations(
         self, given_args: Tuple[Any], given_kwargs: Dict[str, Any]
@@ -483,7 +544,10 @@ class DaceProgram:
 
         return types, arg_mapping, gvar_mapping
 
-    def _generate_pdp(self, args, kwargs, strict=None):
+    def _generate_pdp(self,
+                      args,
+                      kwargs,
+                      strict=None) -> Tuple[SDFG, Dict[str, str]]:
         """ Generates the parsed AST representation of a DaCe program.
             :param args: The given arguments to the program.
             :param kwargs: The given keyword arguments to the program.
@@ -499,6 +563,10 @@ class DaceProgram:
 
         # If exist, obtain type annotations (for compilation)
         argtypes, _, gvars = self._get_type_annotations(args, kwargs)
+
+        # Move "self" from an argument into the closure
+        if self.methodobj is not None:
+            self.global_vars[self.objname] = self.methodobj
 
         # Parse argument types from call
         if len(self.argnames) > 0:
@@ -534,9 +602,11 @@ class DaceProgram:
         global_vars = copy.copy(self.global_vars)
 
         # Remove None arguments and make into globals that can be folded
+        removed_args = set()
         for k, v in argtypes.items():
             if v.dtype.type is None:
                 global_vars[k] = None
+                removed_args.add(k)
         argtypes = {
             k: v
             for k, v in argtypes.items() if v.dtype.type is not None
@@ -560,25 +630,35 @@ class DaceProgram:
         # Add constant arguments to global_vars
         global_vars.update(gvars)
 
-        # Allow SDFGs and DaceProgram objects
-        # NOTE: These are the globals AT THE TIME OF INVOCATION, NOT DEFINITION
-        other_sdfgs = {
-            k: v
-            for k, v in _get_locals_and_globals(dace_func).items()
-            if isinstance(v, (SDFG, DaceProgram))
-        }
-
         # Parse AST to create the SDFG
-        sdfg = newast.parse_dace_program(dace_func,
-                                         self.name,
-                                         argtypes,
-                                         global_vars,
-                                         modules,
-                                         other_sdfgs,
-                                         self.dec_kwargs,
-                                         strict=strict)
+        sdfg, closure = newast.parse_dace_program(
+            dace_func,
+            self.name,
+            argtypes,
+            global_vars,
+            modules,
+            self.dec_kwargs,
+            strict=strict,
+            resolve_functions=self.resolve_functions)
 
         # Set SDFG argument names, filtering out constants
         sdfg.arg_names = [a for a in self.argnames if a in argtypes]
 
-        return sdfg
+        # Create new argument mapping from closure arrays
+        arg_mapping = {
+            v: k
+            for k, (v, _) in closure.closure_arrays.items()
+            if isinstance(v, str)
+        }
+        arg_mapping.update({
+            k: v
+            for k, (v, _) in closure.closure_arrays.items()
+            if not isinstance(v, str)
+        })
+        self.closure_arg_mapping = arg_mapping
+        self.closure_array_keys = set(
+            closure.closure_arrays.keys()) - removed_args
+        self.closure_constant_keys = set(
+            closure.closure_constants.keys()) - removed_args
+
+        return sdfg, arg_mapping

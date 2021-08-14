@@ -71,7 +71,7 @@ class Data(object):
                             default=dtypes.AllocationLifetime.Scope)
     location = DictProperty(
         key_type=str,
-        value_type=symbolic.pystr_to_symbolic,
+        value_type=str,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
     debuginfo = DebugInfoProperty(allow_none=True)
 
@@ -173,8 +173,6 @@ class Scalar(Data):
         ret = Scalar(dtypes.int8)
         serialize.set_properties_from_json(ret, json_obj, context=context)
 
-        # Check validity now
-        ret.validate()
         return ret
 
     def __repr__(self):
@@ -489,8 +487,6 @@ class Stream(Data):
         ret = cls(dtypes.int8, 1)
         serialize.set_properties_from_json(ret, json_obj, context=context)
 
-        # Check validity now
-        ret.validate()
         return ret
 
     def __repr__(self):

@@ -548,6 +548,12 @@ def _imag(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'imag', _complex_to_scalar(inptype))
 
 
+@oprepo.replaces('abs')
+def _abs(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+         input: Union[str, Number, symbolic.symbol]):
+    return _simple_call(sdfg, state, input, 'abs')
+
+
 @oprepo.replaces('transpose')
 @oprepo.replaces('dace.transpose')
 @oprepo.replaces('numpy.transpose')
@@ -750,6 +756,11 @@ def _pymin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
             current_state = pv.last_state
         left_arg = _minmax2(pv, sdfg, current_state, left_arg, b)
     return left_arg
+
+
+@oprepo.replaces('slice')
+def _slice(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, *args, **kwargs):
+    return (slice(*args, **kwargs), )
 
 
 @oprepo.replaces('numpy.argmax')
@@ -4251,6 +4262,15 @@ def view(pv: 'ProgramVisitor',
     pv.views[newarr] = arr
 
     return newarr
+
+
+@oprepo.replaces_attribute('Array', 'size')
+@oprepo.replaces_attribute('Scalar', 'size')
+@oprepo.replaces_attribute('View', 'size')
+def size(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> Size:
+    desc = sdfg.arrays[arr]
+    totalsize = data._prod(desc.shape)
+    return totalsize
 
 
 @oprepo.replaces_attribute('Array', 'flat')

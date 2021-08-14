@@ -22,13 +22,17 @@ def test_flat():
 
 
 def test_flat_noncontiguous():
-    @dace.program
-    def indexing_test(A):
-        return A.flat
+    with dace.config.set_temporary('compiler',
+                                   'allow_view_arguments',
+                                   value=True):
 
-    A = np.random.rand(20, 30).transpose()
-    res = indexing_test(A)
-    assert np.allclose(A.flat, res)
+        @dace.program
+        def indexing_test(A):
+            return A.flat
+
+        A = np.random.rand(20, 30).transpose()
+        res = indexing_test(A)
+        assert np.allclose(A.flat, res)
 
 
 def test_ellipsis():
