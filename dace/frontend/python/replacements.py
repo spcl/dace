@@ -391,11 +391,10 @@ def _numpy_flip(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, ax
     # anode = state.add_read(acpy)
     # state.add_edge(vnode, None, anode, None, Memlet(f'{view}[{sset}] -> {dset}'))
 
-    sbset = subsets.Range([(s-1, 0, -1) if a else (0, s-1, 1)
-                           for a, s in zip(axis, desc.shape)])
     arr_copy, _ = sdfg.add_temp_transient(desc.shape, desc.dtype, desc.storage)
     inpidx = ','.join([f'__i{i}' for i in range(ndim)])
-    outidx = ','.join([f'{s} - __i{i} - 1' for i, s in enumerate(desc.shape)])
+    outidx = ','.join([f'{s} - __i{i} - 1' if a else f'__i{i}'
+                       for i, (a, s) in enumerate(zip(axis, desc.shape))])
     state.add_mapped_tasklet(
         name="_numpy_flip_",
         map_ranges={f'__i{i}': f'0:{s}:1' for i, s in enumerate(desc.shape)},
