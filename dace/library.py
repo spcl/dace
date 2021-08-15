@@ -147,8 +147,8 @@ def node(n):
 def expansion(exp):
     exp = dace.properties.make_properties(exp)
     if not issubclass(exp, ExpandTransformation):
-        raise TypeError("Library node expansion \"" + type(exp).__name__ +
-                        "\"must derive from ExpandTransformation")
+        raise TypeError("Library node expansion \"" + exp.__name__ +
+                        "\" must derive from ExpandTransformation")
     if not hasattr(exp, "environments"):
         raise ValueError("Library node expansion must define environments "
                          "(can be an empty list).")

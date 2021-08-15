@@ -358,6 +358,116 @@ def _numpy_copy(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
     return name
 
 
+@oprepo.replaces('numpy.flip')
+def _numpy_flip(pv: 'ProgramVisitor',
+                sdfg: SDFG,
+                state: SDFGState,
+                arr: str,
+                axis=None):
+    """ Reverse the order of elements in an array along the given axis.
+        The shape of the array is preserved, but the elements are reordered.
+    """
+
+    if arr not in sdfg.arrays.keys():
+        raise mem_parser.DaceSyntaxError(
+            pv, None, "Prototype argument {a} is not SDFG data!".format(a=arr))
+    desc = sdfg.arrays[arr]
+    if isinstance(desc, data.Stream):
+        raise mem_parser.DaceSyntaxError(pv, None, "Streams are not supported!")
+    if isinstance(desc, data.Scalar):
+        return arr
+
+    ndim = len(desc.shape)
+    if axis is None:
+        axis = [True] * ndim
+    else:
+        if not isinstance(axis, (list, tuple)):
+            axis = [axis]
+        axis = [a if a >= 0 else a + ndim for a in axis]
+        axis = [True if i in axis else False for i in range(ndim)]
+
+    # TODO: The following code assumes that code generation resolves an inverted copy.
+    # sset = ','.join([f'{s}-1:-1:-1' if a else f'0:{s}:1'
+    #                  for a, s in zip(axis, desc.shape)])
+    # dset = ','.join([f'0:{s}:1' for s in desc.shape])
+
+    # view = _ndarray_reshape(pv, sdfg, state, arr, desc.shape)
+    # acpy, _ = sdfg.add_temp_transient(desc.shape, desc.dtype, desc.storage)
+    # vnode = state.add_read(view)
+    # anode = state.add_read(acpy)
+    # state.add_edge(vnode, None, anode, None, Memlet(f'{view}[{sset}] -> {dset}'))
+
+    arr_copy, _ = sdfg.add_temp_transient(desc.shape, desc.dtype, desc.storage)
+    inpidx = ','.join([f'__i{i}' for i in range(ndim)])
+    outidx = ','.join([
+        f'{s} - __i{i} - 1' if a else f'__i{i}'
+        for i, (a, s) in enumerate(zip(axis, desc.shape))
+    ])
+    state.add_mapped_tasklet(
+        name="_numpy_flip_",
+        map_ranges={f'__i{i}': f'0:{s}:1'
+                    for i, s in enumerate(desc.shape)},
+        inputs={'__inp': Memlet(f'{arr}[{inpidx}]')},
+        code='__out = __inp',
+        outputs={'__out': Memlet(f'{arr_copy}[{outidx}]')},
+        external_edges=True)
+
+    return arr_copy
+
+
+@oprepo.replaces('numpy.rot90')
+def _numpy_rot90(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 arr: str,
+                 k=1,
+                 axes=(0, 1)):
+    """ Rotate an array by 90 degrees in the plane specified by axes.
+        Rotation direction is from the first towards the second axis.
+    """
+
+    if arr not in sdfg.arrays.keys():
+        raise mem_parser.DaceSyntaxError(
+            pv, None, "Prototype argument {a} is not SDFG data!".format(a=arr))
+    desc = sdfg.arrays[arr]
+    if not isinstance(desc, (data.Array, data.View)):
+        raise mem_parser.DaceSyntaxError(pv, None,
+                                         "Only Arrays and Views supported!")
+
+    ndim = len(desc.shape)
+    axes = tuple(axes)
+    if len(axes) != 2:
+        raise ValueError("len(axes) must be 2.")
+
+    if axes[0] == axes[1] or abs(axes[0] - axes[1]) == ndim:
+        raise ValueError("Axes must be different.")
+
+    if (axes[0] >= ndim or axes[0] < -ndim or axes[1] >= ndim
+            or axes[1] < -ndim):
+        raise ValueError("Axes={} out of range for array of ndim={}.".format(
+            axes, ndim))
+
+    k %= 4
+
+    if k == 0:
+        return arr
+    if k == 2:
+        return _numpy_flip(pv, sdfg, state,
+                           _numpy_flip(pv, sdfg, state, arr, axes[0]), axes[1])
+
+    axes_list = list(range(ndim))
+    (axes_list[axes[0]], axes_list[axes[1]]) = (axes_list[axes[1]],
+                                                axes_list[axes[0]])
+
+    if k == 1:
+        return _transpose(pv, sdfg, state,
+                          _numpy_flip(pv, sdfg, state, arr, axes[1]), axes_list)
+    else:
+        # k == 3
+        return _numpy_flip(pv, sdfg, state,
+                           _transpose(pv, sdfg, state, arr, axes_list), axes[1])
+
+
 @oprepo.replaces('elementwise')
 @oprepo.replaces('dace.elementwise')
 def _elementwise(pv: 'ProgramVisitor',
@@ -4262,6 +4372,15 @@ def view(pv: 'ProgramVisitor',
     pv.views[newarr] = arr
 
     return newarr
+
+
+@oprepo.replaces_attribute('Array', 'size')
+@oprepo.replaces_attribute('Scalar', 'size')
+@oprepo.replaces_attribute('View', 'size')
+def size(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> Size:
+    desc = sdfg.arrays[arr]
+    totalsize = data._prod(desc.shape)
+    return totalsize
 
 
 @oprepo.replaces_attribute('Array', 'flat')
