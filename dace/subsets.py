@@ -406,7 +406,7 @@ class Range(Subset):
             if d[1] is not None:
                 if d[1] - d[0] != 0:
                     off = 1
-                    if (d[2] < 0) == True:
+                    if d[2] is not None and (d[2] < 0) == True:
                         off = -1
                     dres += ':' + _simplified_str(d[1] + off)
             if d[2] != 1:
