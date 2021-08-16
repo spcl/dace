@@ -15,17 +15,19 @@ def make_sdfg(implementation="pure"):
     sdfg = dace.SDFG("stencil_node_test")
     _, a_desc = sdfg.add_array("a", (ROWS, COLS), dtype=DTYPE)
     _, b_desc = sdfg.add_array("b", (ROWS, ), dtype=DTYPE)
-    _, res_desc = sdfg.add_array("res", (ROWS, COLS), dtype=DTYPE)
     sdfg.add_symbol("c", DTYPE)
+    _, d_desc = sdfg.add_array("d", (ROWS, COLS), dtype=DTYPE)
+    _, res_desc = sdfg.add_array("res", (ROWS, COLS), dtype=DTYPE)
 
     state = sdfg.add_state("stencil_node_test")
     a = state.add_read("a")
     b = state.add_read("b")
+    d = state.add_read("d")
     res = state.add_write("res")
 
     stencil_node = Stencil(
         "stencil_test",
-        "res[0, 0] = c * b[0] * (a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1])",
+        "res[0, 0] = c * b[0] * (a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1]) + d[0, 0]",
         iterator_mapping={"b": (True, False)})
     stencil_node.implementation = implementation
     state.add_node(stencil_node)
@@ -38,6 +40,10 @@ def make_sdfg(implementation="pure"):
                           stencil_node,
                           dst_conn="b",
                           memlet=dace.Memlet.from_array("b", b_desc))
+    state.add_memlet_path(d,
+                          stencil_node,
+                          dst_conn="d",
+                          memlet=dace.Memlet.from_array("d", d_desc))
     state.add_memlet_path(stencil_node,
                           res,
                           src_conn="res",
@@ -54,13 +60,16 @@ def run_stencil(sdfg, specialize: bool):
     b = np.empty((rows, ), dtype=DTYPE)
     b[:] = 1
     c = DTYPE(0.25)
+    d = np.ones((rows, cols), dtype=DTYPE)
     res = np.zeros((rows, cols), dtype=DTYPE)
     if specialize:
         sdfg.specialize({"cols": cols})
-        sdfg(a=a, b=b, c=c, res=res, rows=rows)
+        sdfg(a=a, b=b, c=c, d=d, res=res, rows=rows)
     else:
-        sdfg(a=a, b=b, c=c, res=res, rows=rows, cols=cols)
-    expected = 0.25 * (a[2:, 1:-1] + a[:-2, 1:-1] + a[1:-1, 2:] + a[1:-1, :-2])
+        sdfg(a=a, b=b, c=c, d=d, res=res, rows=rows, cols=cols)
+    expected = (0.25 *
+                (a[2:, 1:-1] + a[:-2, 1:-1] + a[1:-1, 2:] + a[1:-1, :-2]) +
+                d[1:-1, 1:-1])
     print(expected)
     print(res)
     assert np.allclose(expected, res[1:-1, 1:-1])
@@ -79,5 +88,5 @@ def test_stencil_node_fpga():
 
 
 if __name__ == "__main__":
-    test_stencil_node()
+    # test_stencil_node()
     test_stencil_node_fpga()

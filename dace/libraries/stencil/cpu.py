@@ -54,7 +54,7 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         write_code = ""
         if len(oob_cond) > 1:
             write_code += "if not (" + " or ".join(sorted(oob_cond)) + "):\n"
-        write_code += "\n".join("{}{}_out = {}".format(
+        write_code += "\n".join("{}_{} = {}".format(
             "\t" if len(oob_cond) > 0 else "", field_accesses[output][tuple(
                 0 for _ in range(len(shape)))], field_accesses[output][tuple(
                     0 for _ in range(len(shape)))], output)
