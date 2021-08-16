@@ -47,6 +47,74 @@ class SimpleTaskletFusion(pm.Transformation):
     """ Fuses two connected Tasklets.
         It is recommended that this transformation is used on Tasklets that
         contain only simple assignments.
+
+        The transformation always fuses the second Tasklet (`t2`) to the first
+        one (`t1`).
+
+        In the following examples, the pre- and post-transformation subgraphs
+        are described with the following syntax:
+        - Tasklets <name: inputs, ouputs, code>
+        - Edges <name: src, src_conn, dst, dst_conn, memlet>
+
+        Names and memlets in brackets are not part of the subgraph.
+
+        Example 1:
+        Pre-transformation Subgraph
+        `t1: {'__in1', '__in2'}, {'__out'}, "__out = __in1 + __in2"`
+        `t2: {'__in1', '__in2'}, {'__out'}, "__out = __in1 * __in2"`
+        `e1: [s1], [sc1], t1, '__in1', [m1]`
+        `e2: [s2], [sc2], t1, '__in2', [m2]`
+        `e3: t1, '__out', t2, '__in1', Memlet()`
+        `e4: [s3], [sc3], t2, '__in2', [m3]`
+        `e4: t2, '__out', [d1], [dc1], [m4]`
+        Post-transformation Subgraph
+        ```
+        t1: {'__in1', '__in2', '__in3'}, {'__out_0'},
+            "__out = __in1 + __in2\n__out_0 = __out * __in3"
+        ```
+        `e1: [s1], [sc1], t1, '__in1', [m1]`
+        `e2: [s2], [sc2], t1, '__in2', [m2]`
+        `e4: [s3], [sc3], t1, '__in3', [m3]`
+        `e4: t1, '__out_0', [d1], [dc1], [m4]`
+
+        Example 2:
+        Pre-transformation Subgraph
+        ```
+        t1: {'__in1', '__in2'}, {'__out', __out1},
+            "__out = __in1 + __in2\n__out1 = __out"
+        ```
+        `t2: {'__in1', '__in2'}, {'__out'}, "__out = __in1 * __in2"`
+        `t3: {'__in1', '__in2'}, {'__out'}, "__out = __in1 - __in2"`
+        `e1: [s1], [sc1], t1, '__in1', [m1]`
+        `e2: [s2], [sc2], t1, '__in2', [m2]`
+        `e3: t1, '__out', t2, '__in1', Memlet()`
+        `e4: t1, '__out1', t3, '__in1', Memlet()`
+        `e5: [s3], [sc3], t2, '__in2', [m3]`
+        `e6: [s4], [sc4], t3, '__in2', [m4]`
+        `e7: t3, '__out', [d1], [dc1], [m5]`
+        Post-first-transformation Subgraph
+        ```
+        t1: {'__in1', '__in2', '__in3'}, {'__out1', '__out_0'},
+            "__out = __in1 + __in2\n__out1 = __out\n__out_0 = __out * __in3"
+        ```
+        `t3: {'__in1', '__in2'}, {'__out'}, "__out = __in1 - __in2"`
+        `e1: [s1], [sc1], t1, '__in1', [m1]`
+        `e2: [s2], [sc2], t1, '__in2', [m2]`
+        `e4: t1, '__out1', t3, '__in1', Memlet()`
+        `e5: [s3], [sc3], t1, '__in3', [m3]`
+        `e6: [s4], [sc4], t3, '__in2', [m4]`
+        `e7: t3, '__out', [d1], [dc1], [m5]`
+        Post-second-transformation Sugraph (`t3` fused to `t1`)
+        ```
+        t1: {'__in1', '__in2', '__in3', '__in4'}, {'__out_1'},
+            "__out = __in1 + __in2\n__out1 = __out\n__out_0 = __out * __in3\n"
+            "__out_1 = __out1 - __in4"
+        ```
+        `e1: [s1], [sc1], t1, '__in1', [m1]`
+        `e2: [s2], [sc2], t1, '__in2', [m2]`
+        `e5: [s3], [sc3], t1, '__in3', [m3]`
+        `e6: [s4], [sc4], t1, '__in4', [m4]`
+        `e7: t1, '__out_1', [d1], [dc1], [m5]`
     """
 
     _t1 = pm.PatternNode(nodes.Tasklet)
