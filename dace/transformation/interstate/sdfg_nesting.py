@@ -120,14 +120,16 @@ class InlineSDFG(transformation.Transformation):
             if (edge.data.is_empty()
                     and not isinstance(edge.src, nodes.EntryNode)):
                 return False
-            in_connectors.add(edge.dst_conn)
+            if edge.dst_conn is not None:
+                in_connectors.add(edge.dst_conn)
         for edge in graph.out_edges(nested_sdfg):
             if edge.src_conn in out_connectors:
                 return False
             if (edge.data.is_empty()
                     and not isinstance(edge.dst, nodes.ExitNode)):
                 return False
-            out_connectors.add(edge.src_conn)
+            if edge.src_conn is not None:
+                out_connectors.add(edge.src_conn)
 
         # Ensure output connectors have no additional outputs (if in a scope),
         # and ensure no two connectors are directly connected to each other
