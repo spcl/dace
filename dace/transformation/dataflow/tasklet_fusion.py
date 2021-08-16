@@ -42,9 +42,11 @@ class PythonRHSExtractor(ast.NodeVisitor):
             self.assignments.add(node.targets[0].id)
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, strict=False)
 class SimpleTaskletFusion(pm.Transformation):
     """ Fuses two connected Tasklets.
+        It is recommended that this transformation is used on Tasklets that
+        contain only simple assignments.
     """
 
     _t1 = pm.PatternNode(nodes.Tasklet)
