@@ -452,7 +452,7 @@ class LoopUnroller(ast.NodeTransformer):
             if isinstance(niter, ast.Subscript):
                 nfunc = niter.value
             else:
-                nfunc = niter.value
+                nfunc = niter.func
 
             implicit = False
             # Try to see if it's one of the allowed stateless generators
@@ -4955,7 +4955,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     return sym
             return scalar
 
-        if isinstance(s, Number):
+        if isinstance(s, (Number, bool, numpy.bool_, sympy.Basic)):
             res = s
         elif isinstance(s, ast.Constant):  # 1D index (since Python 3.9)
             res = self._visit_ast_or_value(s)
