@@ -18,25 +18,25 @@ from dace.transformation.subgraph.helpers import subgraph_from_maps
 from functools import reduce
 
 
-class TaskletReplace(ast.NodeTransformer):
-    """
-    Replaces connector names in Tasklet code.
+class ConnectorRenamer(ast.NodeTransformer):
+    """ Renames connector names in Tasklet code.
     """
     def __init__(self, repl_dict: Dict[str, str]) -> None:
-        """
-        Initializes AST transformer.
-        :param repl_dict: Replacement dictionary.
+        """ Initializes AST transformer.
+            :param repl_dict: Replacement dictionary.
         """
         self.repl_dict = repl_dict
 
     def visit_Name(self, node: ast.Name) -> Any:
-        # Replace connector name
+        # Rename connector
         if node.id in self.repl_dict:
             node.id = self.repl_dict[node.id]
         return self.generic_visit(node)
 
 
-class TaskletExtract(ast.NodeVisitor):
+class PythonRHSExtractor(ast.NodeVisitor):
+    """ Extracts assignments' RHS in Tasklet code.
+    """
     def __init__(self):
         self.assignments = set()
     
@@ -50,7 +50,7 @@ class TaskletExtract(ast.NodeVisitor):
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
-class TaskletFusion(pm.Transformation):
+class SimpleTaskletFusion(pm.Transformation):
     """ Fuses two connected Tasklets.
     """
 
@@ -59,7 +59,7 @@ class TaskletFusion(pm.Transformation):
 
     @staticmethod
     def expressions():
-        return [sdutil.node_path_graph(TaskletFusion._t1, TaskletFusion._t2)]
+        return [sdutil.node_path_graph(SimpleTaskletFusion._t1, SimpleTaskletFusion._t2)]
 
     @staticmethod
     def can_be_applied(graph: dace.SDFGState,
@@ -68,15 +68,15 @@ class TaskletFusion(pm.Transformation):
                        sdfg: dace.SDFG,
                        strict: bool = False):
     
-        t1 = graph.node(candidate[TaskletFusion._t1])
-        t2 = graph.node(candidate[TaskletFusion._t2])
+        t1 = graph.node(candidate[SimpleTaskletFusion._t1])
+        t2 = graph.node(candidate[SimpleTaskletFusion._t2])
         return t1.language == t2.language
 
     @staticmethod
     def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
                                                             int]) -> str:
-        t1 = graph.node(candidate[TaskletFusion._t1])
-        t2 = graph.node(candidate[TaskletFusion._t2])
+        t1 = graph.node(candidate[SimpleTaskletFusion._t1])
+        t2 = graph.node(candidate[SimpleTaskletFusion._t2])
         return f'fuse({t1.label}, {t2.label})'
 
 
@@ -93,7 +93,7 @@ class TaskletFusion(pm.Transformation):
 
         def replace(tasklet, repl_dict):
             if tasklet.language is dtypes.Language.Python:
-                repl = TaskletReplace(repl_dict)
+                repl = ConnectorRenamer(repl_dict)
                 for stmt in tasklet.code.code:
                     repl.visit(stmt)
             elif tasklet.language is dtypes.Language.CPP:
@@ -113,7 +113,7 @@ class TaskletFusion(pm.Transformation):
 
         cnames = t1.in_connectors.keys() | t1.out_connectors.keys()
 
-        extr = TaskletExtract()
+        extr = PythonRHSExtractor()
         for stmt in t1.code.code:
             extr.visit(stmt)
         cnames = cnames | extr.assignments
@@ -151,7 +151,7 @@ class TaskletFusion(pm.Transformation):
             outconn[nconn] = t2.out_connectors[e.src_conn]
             graph.add_edge(t1, nconn, e.dst, e.dst_conn, e.data)
         
-        extr = TaskletExtract()
+        extr = PythonRHSExtractor()
         for stmt in t2.code.code:
             extr.visit(stmt)
         for name in extr.assignments:
