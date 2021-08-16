@@ -95,11 +95,18 @@ class SimpleTaskletFusion(pm.Transformation):
         t1 = graph.nodes()[self.subgraph[self._t1]]
         t2 = graph.nodes()[self.subgraph[self._t2]]
 
-        def rename_conn(conn):
+        def rename_conn(conn: str, names: Set[str]) -> str:
+            """ Renames connector so that it doesn't clash with names.
+            """
             match = re.match('(.*?)([0-9]+)$', conn)
             if match:
-                return match.group(1) + str(int(match.group(2)) + 1)
-            return conn + '_0'
+                pre = match.group(1)
+            else:
+                pre = f'{conn}_'
+            i = 0
+            while f'{pre}{i}' in names:
+                i += 1
+            return f'{pre}{i}'
 
         def replace(tasklet, repl_dict):
             """ Renames connectors based on the input replacement dictionary.
@@ -141,14 +148,30 @@ class SimpleTaskletFusion(pm.Transformation):
                     rhs.add(match)
                 return rhs
 
-        t1_dict = dict()
         rdict = dict()
         rdict_inout = dict()
 
-        cnames = t1.in_connectors.keys() | t1.out_connectors.keys()
-        rhs = extract_rhs(t1)
-        if rhs:
-            cnames |= rhs
+        # Find names of current and former connectors
+        # (assignments' RHS that are not connectors).
+        t1_names = t1.in_connectors.keys() | t1.out_connectors.keys()
+        t1_rhs = extract_rhs(t1)
+        if t1_rhs:
+            t1_names |= t1_rhs
+        t2_names = t2.in_connectors.keys() | t2.out_connectors.keys()
+        t2_rhs = extract_rhs(t2)
+        if t2_rhs:
+            t2_names |= t2_rhs
+
+        # Change t2 connector names.
+        nlist = list(t2_names)
+        for name in nlist:
+            if name in t1_names:
+                newname = rename_conn(name, t1_names | t2_names)
+                rdict[name] = newname
+                t2_names.remove(name)
+                t2_names.add(newname)
+        if rdict:
+            replace(t2, rdict)
 
         # Handle input edges.
         inconn = {}
@@ -156,16 +179,14 @@ class SimpleTaskletFusion(pm.Transformation):
             inconn[e.dst_conn] = t1.in_connectors[e.dst_conn]
         for e in graph.in_edges(t2):
             graph.remove_edge(e)
+            conn = e.dst_conn
+            if conn in rdict.keys():
+                conn = rdict[conn]
             if e.src is t1:
-                rdict_inout[e.dst_conn] = e.src_conn
+                rdict_inout[conn] = e.src_conn
             else:
-                nconn = e.dst_conn
-                while nconn in cnames:
-                    nconn = rename_conn(nconn)
-                rdict[e.dst_conn] = nconn
-                cnames.add(nconn)
-                inconn[nconn] = t2.in_connectors[e.dst_conn]
-                graph.add_edge(e.src, e.src_conn, t1, nconn, e.data)
+                inconn[conn] = t2.in_connectors[e.dst_conn]
+                graph.add_edge(e.src, e.src_conn, t1, conn, e.data)
 
         # Handle output edges.
         outconn = {}
@@ -173,30 +194,17 @@ class SimpleTaskletFusion(pm.Transformation):
             outconn[e.src_conn] = t1.out_connectors[e.src_conn]
         for e in graph.out_edges(t2):
             graph.remove_edge(e)
-            nconn = e.src_conn
-            while nconn in cnames:
-                nconn = rename_conn(nconn)
-            rdict[e.src_conn] = nconn
-            cnames.add(nconn)
-            outconn[nconn] = t2.out_connectors[e.src_conn]
-            graph.add_edge(t1, nconn, e.dst, e.dst_conn, e.data)
+            conn = e.src_conn
+            if conn in rdict:
+                conn = rdict[conn]
+            outconn[conn] = t2.out_connectors[e.src_conn]
+            graph.add_edge(t1, conn, e.dst, e.dst_conn, e.data)
 
-        # Handle "lost" connectors, i.e. assignment RHS that are not connectors.
-        t2_rhs = extract_rhs(t2)
-        for name in t2_rhs:
-            if name in cnames and name not in t2.out_connectors:
-                newname = name
-                while newname in cnames:
-                    newname = rename_conn(newname)
-                rdict[name] = newname
-
-        if t1_dict:
-            replace(t1, t1_dict)
-        if rdict:
-            replace(t2, rdict)
+        # Rename in-out connectors.
         if rdict_inout:
             replace(t2, rdict_inout)
 
+        # Update t1 connectors and code.
         t1.in_connectors = inconn
         t1.out_connectors = outconn
         if t1.language is dtypes.Language.Python:
