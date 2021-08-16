@@ -4238,8 +4238,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         new_conn = self.sdfg.temp_data_name()
                     else:
                         new_conn = sdfg.temp_data_name()
-                    warnings.warn("Renaming nested SDFG connector {c} to "
-                                  "{n}".format(c=conn, n=new_conn))
+                    # warnings.warn("Renaming nested SDFG connector {c} to "
+                    #               "{n}".format(c=conn, n=new_conn))
                     sdfg.replace(conn, new_conn)
                     updated_args.append((new_conn, arg))
                 else:
