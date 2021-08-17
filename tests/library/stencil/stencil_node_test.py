@@ -4,6 +4,7 @@ from dace.fpga_testing import intel_fpga_test
 from dace.libraries.stencil import Stencil
 import numpy as np
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.transformation.dataflow import StreamingMemory
 
 ROWS = dace.symbol("rows")
 COLS = dace.symbol("cols")
@@ -52,9 +53,7 @@ def make_sdfg(implementation="pure"):
     return sdfg
 
 
-def run_stencil(sdfg, specialize: bool):
-    rows = 16
-    cols = 32
+def run_stencil(sdfg, rows, cols, specialize: bool):
     a = np.zeros((rows, cols), dtype=DTYPE)
     a[1:-1, 1:-1] = np.arange(1, (rows - 2) * (cols - 2) + 1,
                               dtype=DTYPE).reshape((rows - 2, cols - 2))
@@ -63,31 +62,29 @@ def run_stencil(sdfg, specialize: bool):
     c = DTYPE(0.25)
     d = 0.5 * np.ones((rows, cols), dtype=DTYPE)
     res = np.zeros((rows, cols), dtype=DTYPE)
-    print("RUNNING SDFG")
     if specialize:
-        sdfg.specialize({"cols": cols})
         sdfg(a=a, b=b, c=c, d=d, res=res, rows=rows)
     else:
         sdfg(a=a, b=b, c=c, d=d, res=res, rows=rows, cols=cols)
-    print("FINISHED RUNNING SDFG")
     expected = (0.25 *
                 (a[2:, 1:-1] + a[:-2, 1:-1] + a[1:-1, 2:] + a[1:-1, :-2]) + 1)
     assert np.allclose(expected, res[1:-1, 1:-1])
 
 
 def test_stencil_node():
-    run_stencil(make_sdfg(), False)
+    run_stencil(make_sdfg(), 16, 32, False)
 
 
 @intel_fpga_test()
-def test_stencil_node_fpga():
+def test_stencil_node_fpga_array():
     sdfg = make_sdfg(dace.Config.get("compiler", "fpga_vendor"))
+    sdfg.specialize({"cols": 32})
     assert sdfg.apply_transformations(FPGATransformSDFG) == 1
     assert sdfg.apply_transformations(InlineSDFG) == 1
-    run_stencil(sdfg, True)
+    run_stencil(sdfg, 16, 32, True)
     return sdfg
 
 
 if __name__ == "__main__":
     test_stencil_node()
-    test_stencil_node_fpga(None)
+    test_stencil_node_fpga_array(None)
