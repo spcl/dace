@@ -50,7 +50,7 @@ def test_map_unroll():
 
     assert sdfg.apply_transformations_repeated(MapUnroll) == 4
 
-    input_array = np.arange(0, 6, dtype=np.int32).reshape((3, 2, 1))
+    input_array = np.copy(np.arange(0, 6, dtype=np.int32).reshape((3, 2, 1)))
     output_array = np.empty((1, 2, 3), dtype=np.int32)
     sdfg(input_array=input_array, output_array=output_array)
     for i in range(3):

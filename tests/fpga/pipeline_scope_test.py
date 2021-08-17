@@ -1,10 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
-from dace.fpga_testing import fpga_test
+from dace.fpga_testing import fpga_test, xilinx_test
 
 
-def make_sdfg(dtype, name="pipeline_test"):
+def make_sdfg(dtype,
+              name="pipeline_test",
+              input_device_memory="ddr",
+              input_device_bank="0",
+              output_device_memory="ddr",
+              output_device_bank="1"):
 
     n = dace.symbol("N")
     k = dace.symbol("K")
@@ -22,13 +27,13 @@ def make_sdfg(dtype, name="pipeline_test"):
     _, desc_output_host = sdfg.add_array("b", (n, k, m), dtype)
     desc_input_device = copy.copy(desc_input_host)
     desc_input_device.storage = dace.StorageType.FPGA_Global
-    desc_input_device.location["memorytype"] = "ddr"
-    desc_input_device.location["bank"] = "0"
+    desc_input_device.location["memorytype"] = input_device_memory
+    desc_input_device.location["bank"] = input_device_bank
     desc_input_device.transient = True
     desc_output_device = copy.copy(desc_output_host)
     desc_output_device.storage = dace.StorageType.FPGA_Global
-    desc_output_device.location["memorytype"] = "ddr"
-    desc_output_device.location["bank"] = "1"
+    desc_output_device.location["memorytype"] = output_device_memory
+    desc_output_device.location["bank"] = output_device_bank
     desc_output_device.transient = True
     sdfg.add_datadesc("a_device", desc_input_device)
     sdfg.add_datadesc("b_device", desc_output_device)
@@ -115,20 +120,16 @@ else:
     return sdfg
 
 
-@fpga_test()
-def test_pipeline_scope():
-
+def exec_jacobi(jacobi, dtype):
     import numpy as np
 
-    dtype = np.float64
     n = 16
     k = 24
     m = 32
 
-    jacobi = make_sdfg(dtype=dtype)
     jacobi.specialize({"N": n, "K": k, "M": m})
 
-    a = np.arange(n * k * m, dtype=dtype).reshape((n, k, m))
+    a = np.copy(np.arange(n * k * m, dtype=dtype).reshape((n, k, m)))
     b = np.empty((n, k, m), dtype=dtype)
 
     jacobi(a=a, b=b)
@@ -146,5 +147,24 @@ def test_pipeline_scope():
     return jacobi
 
 
+@fpga_test()
+def test_pipeline_scope():
+    import numpy as np
+
+    dtype = np.float64
+    jacobi = make_sdfg(dtype=dtype)
+    return exec_jacobi(jacobi, dtype)
+
+
+@xilinx_test()
+def test_pipeline_scope_hbm():
+    import numpy as np
+
+    dtype = np.float32
+    jacobi = make_sdfg(dtype, "pipeline_hbm_test", "hbm", "1", "hbm", "2")
+    return exec_jacobi(jacobi, dtype)
+
+
 if __name__ == "__main__":
     test_pipeline_scope(None)
+    test_pipeline_scope_hbm(None)

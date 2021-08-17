@@ -673,7 +673,17 @@ class CPUCodeGen(TargetCodeGenerator):
                 if isinstance(src_nodedesc,
                               (data.Scalar, data.Array)) and isinstance(
                                   dst_nodedesc, data.Stream):
-                    if hasattr(src_nodedesc, "src"):  # ArrayStreamView
+                    if isinstance(src_nodedesc, data.Scalar):
+                        stream.write(
+                            "{s}.push({arr});".format(
+                                s=cpp.ptr(dst_node.data, dst_nodedesc, sdfg),
+                                arr=cpp.ptr(src_node.data, src_nodedesc, sdfg)
+                            ),
+                            sdfg,
+                            state_id,
+                            [src_node, dst_node],
+                        )
+                    elif hasattr(src_nodedesc, "src"):  # ArrayStreamView
                         stream.write(
                             "{s}.push({arr});".format(
                                 s=cpp.ptr(dst_node.data, dst_nodedesc, sdfg),
@@ -1883,14 +1893,6 @@ class CPUCodeGen(TargetCodeGenerator):
             not symbolic.issymbolic(v, sdfg.constants) for r in node.map.range
             for v in r
         ])
-
-        # Construct (EXCLUSIVE) map range as a list of comma-delimited C++
-        # strings.
-        maprange_cppstr = [
-            "%s, %s, %s" %
-            (cpp.sym2cpp(rb), cpp.sym2cpp(re + 1), cpp.sym2cpp(rs))
-            for rb, re, rs in node.map.range
-        ]
 
         # Nested loops
         result.write(map_header, sdfg, state_id, node)

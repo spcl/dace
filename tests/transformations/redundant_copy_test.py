@@ -36,10 +36,10 @@ def test_out():
     assert B not in state.nodes()
     sdfg.validate()
 
-    A_arr = np.arange(9, dtype=np.float32).reshape(3, 3)
+    A_arr = np.copy(np.arange(9, dtype=np.float32).reshape(3, 3))
     D_arr = np.zeros_like(A_arr)
     sdfg(A=A_arr, D=D_arr)
-    assert (A_arr == D_arr.T).all()
+    assert np.allclose(A_arr, D_arr.T)
 
 
 def test_out_success():
@@ -94,7 +94,7 @@ def test_out_success():
     assert arrays == 4
     sdfg.validate()
 
-    A_arr = np.arange(125, dtype=np.float32).reshape(5, 5, 5)
+    A_arr = np.copy(np.arange(125, dtype=np.float32).reshape(5, 5, 5))
     C_arr = np.zeros([5, 5, 5, 5], dtype=np.float32)
     E_arr = np.zeros([3, 3, 3], dtype=np.float32)
 
@@ -213,10 +213,10 @@ def test_in():
     assert C not in state.nodes()
     sdfg.validate()
 
-    A_arr = np.arange(9, dtype=np.float32).reshape(3, 3)
+    A_arr = np.copy(np.arange(9, dtype=np.float32).reshape(3, 3))
     D_arr = np.zeros_like(A_arr)
     sdfg(A=A_arr, D=D_arr)
-    assert (A_arr == D_arr.T).all()
+    assert np.allclose(A_arr, D_arr.T)
 
 
 def test_view_array_array():
