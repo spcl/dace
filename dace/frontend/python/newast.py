@@ -2243,10 +2243,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
         ast_ranges = []
 
-        if iterator not in {'range', 'parrange', 'dace.map'}:
+        if iterator not in {'range', 'prange', 'parrange', 'dace.map'}:
             raise DaceSyntaxError(self, node,
                                   "Iterator {} is unsupported".format(iterator))
-        elif iterator in ['range', 'parrange']:
+        elif iterator in ['range', 'prange', 'parrange']:
             # AST nodes for common expressions
             zero = ast.parse('0').body[0]
             one = ast.parse('1').body[0]
@@ -2275,7 +2275,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(
                     self, node,
                     'Invalid number of arguments for "%s"' % iterator)
-            if iterator == 'parrange':
+            if iterator in ('prange', 'parrange'):
                 iterator = 'dace.map'
         else:
             ranges = []
