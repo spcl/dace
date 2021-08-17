@@ -27,8 +27,8 @@ class ConnectorRenamer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-class PythonRHSExtractor(ast.NodeVisitor):
-    """ Extracts assignments' RHS in Tasklet code.
+class PythonLHSExtractor(ast.NodeVisitor):
+    """ Extracts assignments' LHS in Tasklet code.
     """
     def __init__(self):
         self.assignments = set()
@@ -66,7 +66,7 @@ class SimpleTaskletFusion(pm.Transformation):
         `e2: [s2], [sc2], t1, '__in2', [m2]`
         `e3: t1, '__out', t2, '__in1', Memlet()`
         `e4: [s3], [sc3], t2, '__in2', [m3]`
-        `e4: t2, '__out', [d1], [dc1], [m4]`
+        `e5: t2, '__out', [d1], [dc1], [m4]`
         Post-transformation Subgraph
         ```
         t1: {'__in1', '__in2', '__in3'}, {'__out_0'},
@@ -75,7 +75,7 @@ class SimpleTaskletFusion(pm.Transformation):
         `e1: [s1], [sc1], t1, '__in1', [m1]`
         `e2: [s2], [sc2], t1, '__in2', [m2]`
         `e4: [s3], [sc3], t1, '__in3', [m3]`
-        `e4: t1, '__out_0', [d1], [dc1], [m4]`
+        `e5: t1, '__out_0', [d1], [dc1], [m4]`
 
         Example 2:
         Pre-transformation Subgraph
@@ -117,14 +117,14 @@ class SimpleTaskletFusion(pm.Transformation):
         `e7: t1, '__out_1', [d1], [dc1], [m5]`
     """
 
-    _t1 = pm.PatternNode(nodes.Tasklet)
-    _t2 = pm.PatternNode(nodes.Tasklet)
+    t1 = pm.PatternNode(nodes.Tasklet)
+    t2 = pm.PatternNode(nodes.Tasklet)
 
     @staticmethod
     def expressions():
         return [
-            sdutil.node_path_graph(SimpleTaskletFusion._t1,
-                                   SimpleTaskletFusion._t2)
+            sdutil.node_path_graph(SimpleTaskletFusion.t1,
+                                   SimpleTaskletFusion.t2)
         ]
 
     @staticmethod
@@ -134,14 +134,14 @@ class SimpleTaskletFusion(pm.Transformation):
                        sdfg: dace.SDFG,
                        strict: bool = False):
 
-        t1 = graph.node(candidate[SimpleTaskletFusion._t1])
-        t2 = graph.node(candidate[SimpleTaskletFusion._t2])
+        t1 = graph.node(candidate[SimpleTaskletFusion.t1])
+        t2 = graph.node(candidate[SimpleTaskletFusion.t2])
 
         # Tasklets must be of the same language
         if t1.language != t2.language:
             return False
 
-        # Avoid circles
+        # Avoid cycles
         t1_dst = set()
         for e in graph.out_edges(t1):
             t1_dst.add(e.dst)
@@ -156,14 +156,14 @@ class SimpleTaskletFusion(pm.Transformation):
     @staticmethod
     def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
                                                             int]) -> str:
-        t1 = graph.node(candidate[SimpleTaskletFusion._t1])
-        t2 = graph.node(candidate[SimpleTaskletFusion._t2])
+        t1 = graph.node(candidate[SimpleTaskletFusion.t1])
+        t2 = graph.node(candidate[SimpleTaskletFusion.t2])
         return f'fuse({t1.label}, {t2.label})'
 
     def apply(self, sdfg: dace.SDFG):
         graph = sdfg.nodes()[self.state_id]
-        t1 = graph.nodes()[self.subgraph[self._t1]]
-        t2 = graph.nodes()[self.subgraph[self._t2]]
+        t1 = graph.nodes()[self.subgraph[self.t1]]
+        t2 = graph.nodes()[self.subgraph[self.t2]]
 
         def rename_conn(conn: str, names: Set[str]) -> str:
             """ Renames connector so that it doesn't clash with names.
@@ -190,8 +190,8 @@ class SimpleTaskletFusion(pm.Transformation):
                     tasklet.code.code = re.sub(r'\b%s\b' % re.escape(old), new,
                                                tasklet.code.as_string)
 
-        def replace_rhs(tasklet, repl_dict):
-            """ Replaces assignments' RHS based on the input replacement
+        def replace_lhs(tasklet, repl_dict):
+            """ Replaces assignments' LHS based on the input replacement
                 dictionary. This is used only on CPP tasklets.
             """
             if tasklet.language is dtypes.Language.Python:
@@ -203,11 +203,11 @@ class SimpleTaskletFusion(pm.Transformation):
                         r'(?<!auto\s)%s[\s\t]*=' % re.escape(old), new,
                         tasklet.code.as_string)
 
-        def extract_rhs(tasklet) -> Set[str]:
-            """ Returns the RHS of assignments in Tasklet code.
+        def extract_lhs(tasklet) -> Set[str]:
+            """ Returns the LHS of assignments in Tasklet code.
             """
             if tasklet.language is dtypes.Language.Python:
-                extr = PythonRHSExtractor()
+                extr = PythonLHSExtractor()
                 for stmt in tasklet.code.code:
                     extr.visit(stmt)
                 return extr.assignments
@@ -222,13 +222,13 @@ class SimpleTaskletFusion(pm.Transformation):
         rdict_inout = dict()
 
         # Find names of current and former connectors
-        # (assignments' RHS that are not connectors).
+        # (assignments' LHS that are not connectors).
         t1_names = t1.in_connectors.keys() | t1.out_connectors.keys()
-        t1_rhs = extract_rhs(t1)
+        t1_rhs = extract_lhs(t1)
         if t1_rhs:
             t1_names |= t1_rhs
         t2_names = t2.in_connectors.keys() | t2.out_connectors.keys()
-        t2_rhs = extract_rhs(t2)
+        t2_rhs = extract_lhs(t2)
         if t2_rhs:
             t2_names |= t2_rhs
 
@@ -283,12 +283,12 @@ class SimpleTaskletFusion(pm.Transformation):
             t1.code.code += f'\n{t2.code.code}'
         graph.remove_node(t2)
 
-        # Fix CPP assignemnt RHS that are not connectors.
+        # Fix CPP assignemnt LHS that are not connectors.
         if t1.language is dtypes.Language.CPP:
-            rhs = extract_rhs(t1)
+            rhs = extract_lhs(t1)
             repl_dict = dict()
             for name in rhs:
                 if name not in inconn and name not in outconn:
                     repl_dict[name] = f'auto {name} ='
             if repl_dict:
-                replace_rhs(t1, repl_dict)
+                replace_lhs(t1, repl_dict)
