@@ -135,7 +135,8 @@ class LoopToMap(DetectLoop):
                         # variable. The iteration variable must be used.
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
-                            if not _check_range(dst_subset, a, itersym, b, step):
+                            if not _check_range(dst_subset, a, itersym, b,
+                                                step):
                                 return False
                         # End of check
 
@@ -154,7 +155,8 @@ class LoopToMap(DetectLoop):
                     for e in state.out_edges(dn):
                         # If the same container is both read and written, only match if
                         # it read and written at locations that will not create data races
-                        if e.data.dynamic and e.data.src_subset.num_elements() != 1:
+                        if e.data.dynamic and e.data.src_subset.num_elements(
+                        ) != 1:
                             # If pointers are involved, give up
                             return False
                         src_subset = e.data.get_src_subset(e, state)
@@ -162,20 +164,23 @@ class LoopToMap(DetectLoop):
                             return False
 
                         pread = propagate_subset([e.data], sdfg.arrays[data],
-                                                [itervar],
-                                                subsets.Range([(start, end, step)
-                                                                ]))
+                                                 [itervar],
+                                                 subsets.Range([(start, end,
+                                                                 step)]))
                         for candidate in write_memlets[data]:
                             # Simple case: read and write are in the same subset
-                            if e.data.subset == candidate.subset:
+                            if src_subset == candidate.dst_subset:
                                 break
                             # Propagated read does not overlap with propagated write
                             pwrite = propagate_subset([candidate],
-                                                    sdfg.arrays[data], [itervar],
-                                                    subsets.Range([(start, end,
-                                                                    step)]))
-                            if subsets.intersects(pread.subset,
-                                                pwrite.subset) is False:
+                                                      sdfg.arrays[data],
+                                                      [itervar],
+                                                      subsets.Range([
+                                                          (start, end, step)
+                                                      ]),
+                                                      use_dst=True)
+                            if subsets.intersects(pread.src_subset,
+                                                  pwrite.dst_subset) is False:
                                 break
                             return False
 
@@ -218,7 +223,8 @@ class LoopToMap(DetectLoop):
         after: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
 
         # Obtain iteration variable, range, and stride
-        itervar, (start, end, step), (_, body_end) = find_for_loop(sdfg, guard, body)
+        itervar, (start, end,
+                  step), (_, body_end) = find_for_loop(sdfg, guard, body)
 
         # Find all loop-body states
         states = set([body_end])
@@ -260,16 +266,24 @@ class LoopToMap(DetectLoop):
                     if state in states:
                         continue
                     for node in state.nodes():
-                        if (isinstance(node, nodes.AccessNode) and
-                                node.data == name):
+                        if (isinstance(node, nodes.AccessNode)
+                                and node.data == name):
                             found = True
                             break
                 if not found:
                     unique_set.add(name)
 
             # Find NestedSDFG's connectors
-            read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
-            write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
+            read_set = {
+                n
+                for n in read_set
+                if n not in unique_set or not sdfg.arrays[n].transient
+            }
+            write_set = {
+                n
+                for n in write_set
+                if n not in unique_set or not sdfg.arrays[n].transient
+            }
 
             # Create NestedSDFG and add all loop-body states and edges
             # Also, find defined symbols in NestedSDFG
@@ -289,7 +303,10 @@ class LoopToMap(DetectLoop):
                 if state is body:
                     continue
                 for src, dst, data in sdfg.in_edges(state):
-                    nsymbols.update({s: sdfg.symbols[s] for s in data.assignments.keys() if s in sdfg.symbols})
+                    nsymbols.update({
+                        s: sdfg.symbols[s]
+                        for s in data.assignments.keys() if s in sdfg.symbols
+                    })
                     nsdfg.add_edge(src, dst, data)
             nsdfg.add_edge(body_end, exit_state, InterstateEdge())
 
@@ -299,13 +316,13 @@ class LoopToMap(DetectLoop):
             # Move body_end -> guard edge to new_body -> guard
             for src, dst, data in sdfg.edges_between(body_end, guard):
                 sdfg.add_edge(new_body, dst, data)
-            
+
             # Delete loop-body states and edges from parent SDFG
             for state in states:
                 for e in sdfg.all_edges(state):
                     sdfg.remove_edge(e)
                 sdfg.remove_node(state)
-            
+
             # Add NestedSDFG arrays
             for name in read_set | write_set:
                 nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
@@ -313,7 +330,7 @@ class LoopToMap(DetectLoop):
             for name in unique_set:
                 nsdfg.arrays[name] = sdfg.arrays[name]
                 del sdfg.arrays[name]
-            
+
             # Add NestedSDFG node
             cnode = new_body.add_nested_sdfg(nsdfg, None, read_set, write_set)
             if sdfg.parent:
