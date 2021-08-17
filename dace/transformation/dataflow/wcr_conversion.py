@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Transformations to convert subgraphs to write-conflict resolutions. """
+import ast
 import re
 from dace import registry, nodes, dtypes
 from dace.transformation import transformation, helpers as xfh
@@ -23,6 +24,14 @@ class AugAssignToWCR(transformation.Transformation):
     _EXPR_MAP = {
         '-': ('+', '-({expr})'),
         '/': ('*', '((decltype({expr}))1)/({expr})')
+    }
+    _PYOP_MAP = {
+        ast.Add: '+',
+        ast.Sub: '-',
+        ast.Mult: '*',
+        ast.BitXor: '^',
+        ast.Mod: '%',
+        ast.Div: '/'
     }
 
     @staticmethod
@@ -86,8 +95,28 @@ class AugAssignToWCR(transformation.Transformation):
             re.escape(o) for o in AugAssignToWCR._EXPRESSIONS)
 
         if tasklet.language is dtypes.Language.Python:
-            # Expect ast.Assign(ast.Expr())
-            return False
+            # Match a single assignment with a binary operation as RHS
+            if len(tasklet.code.code) > 1:
+                return False
+            if not isinstance(tasklet.code.code[0], ast.Assign):
+                return False
+            ast_node: ast.Assign = tasklet.code.code[0]
+            if len(ast_node.targets) > 1:
+                return False
+            if not isinstance(ast_node.targets[0], ast.Name):
+                return False
+            lhs: ast.Name = ast_node.targets[0]
+            if lhs.id != outconn:
+                return False
+            if not isinstance(ast_node.value, ast.BinOp):
+                return False
+            rhs: ast.BinOp = ast_node.value
+            if not isinstance(rhs.op, tuple(AugAssignToWCR._PYOP_MAP.keys())):
+                return False
+            inconns = tuple(edge.dst_conn for edge in inedges)
+            for n in (rhs.left, rhs.right):
+                if isinstance(n, ast.Name) and n.id in inconns:
+                    return True
         elif tasklet.language is dtypes.Language.CPP:
             cstr = tasklet.code.as_string.strip()
             for edge in inedges:
@@ -178,7 +207,21 @@ class AugAssignToWCR(transformation.Transformation):
 
         # Change tasklet code
         if tasklet.language is dtypes.Language.Python:
-            raise NotImplementedError
+            # Match a single assignment with a binary operation as RHS
+            ast_node: ast.Assign = tasklet.code.code[0]
+            lhs: ast.Name = ast_node.targets[0]
+            rhs: ast.BinOp = ast_node.value
+            op = AugAssignToWCR._PYOP_MAP[type(rhs.op)]
+            inconns = list(edge.dst_conn for edge in inedges)
+            for n in (rhs.left, rhs.right):
+                if isinstance(n, ast.Name) and n.id in inconns:
+                    inedge = inedges[inconns.index(n.id)]
+                else:
+                    new_rhs = n
+            new_node = ast.copy_location(
+                ast.Assign(targets=[lhs], value=new_rhs), ast_node)
+            tasklet.code.code = [new_node]
+            
         elif tasklet.language is dtypes.Language.CPP:
             cstr = tasklet.code.as_string.strip()
             for edge in inedges:
