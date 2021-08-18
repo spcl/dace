@@ -16,7 +16,7 @@ def test_decreasing_propagation():
                 q[i, j] = q[j - 12, 17 - i]
 
 
-    sdfg = copy_nw_corner.to_sdfg(stric=None)
+    sdfg = copy_nw_corner.to_sdfg()
     me = None
     state = None
     for n, s in sdfg.all_nodes_recursive():
