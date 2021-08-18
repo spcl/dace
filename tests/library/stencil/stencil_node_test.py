@@ -4,14 +4,13 @@ from dace.fpga_testing import intel_fpga_test
 from dace.libraries.stencil import Stencil
 import numpy as np
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory
 
 ROWS = dace.symbol("rows")
 COLS = dace.symbol("cols")
 DTYPE = np.float32
 
 
-def make_sdfg(implementation="pure"):
+def make_sdfg(implementation: str):
 
     sdfg = dace.SDFG("stencil_node_test")
     _, a_desc = sdfg.add_array("a", (ROWS, COLS), dtype=DTYPE)
@@ -72,7 +71,7 @@ def run_stencil(sdfg, rows, cols, specialize: bool):
 
 
 def test_stencil_node():
-    run_stencil(make_sdfg(), 16, 32, False)
+    run_stencil(make_sdfg("pure"), 16, 32, False)
 
 
 @intel_fpga_test()

@@ -2422,7 +2422,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             dataname = edge.data.data
             if not dataname:
                 continue  # Empty memlet
-            datadesc = sdfg.arrays[edge.data.data]
+            datadesc = sdfg.arrays[dataname]
             if (isinstance(datadesc, dt.Array)
                     and (datadesc.storage == dace.StorageType.FPGA_Local
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
