@@ -70,7 +70,7 @@ class SubscriptConverter(ast.NodeTransformer):
         index_tuple = node.slice
         if isinstance(index_tuple, (ast.Subscript, ast.Index)):
             index_tuple = index_tuple.value
-        if isinstance(index_tuple, ast.Constant):
+        if isinstance(index_tuple, (ast.Constant, ast.Num)):
             index_tuple = (index_tuple, )
         if isinstance(index_tuple, ast.Tuple):
             index_tuple = index_tuple.elts

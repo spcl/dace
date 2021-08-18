@@ -2420,7 +2420,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                    after_memlets_stream):
         # Inject dependency pragmas on memlets
         for edge in dfg.out_edges(node):
-            datadesc = sdfg.arrays[edge.data.data]
+            dataname = edge.data.data
+            if not dataname:
+                continue  # Empty memlet
+            datadesc = sdfg.arrays[dataname]
             if (isinstance(datadesc, dt.Array)
                     and (datadesc.storage == dace.StorageType.FPGA_Local
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
