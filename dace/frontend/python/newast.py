@@ -17,7 +17,7 @@ from dace import sourcemap
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
-from dace.frontend.python.common import DaceSyntaxError, inverse_dict_lookup
+from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible, inverse_dict_lookup
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements
@@ -127,15 +127,18 @@ def _add_transient_data(sdfg: SDFG,
         return func(sdfg, sample_data, dtype)
 
 
-def parse_dace_program(f,
-                       name,
-                       argtypes,
-                       global_vars,
-                       modules,
-                       constants,
-                       strict=None,
-                       resolve_functions=False):
-    """ Parses a `@dace.program` function into a _ProgramNode object.
+def preparse_dace_program(
+    f: Callable[..., Any],
+    name: str,
+    argtypes: Dict[str, data.Data],
+    global_vars: Dict[str, Any],
+    modules: Dict[str, Any],
+    constants: Dict[str, Any],
+    strict: Optional[bool] = None,
+    resolve_functions: bool = False,
+) -> Tuple[ast.AST, 'ProgramVisitor', 'GlobalResolver']:
+    """ Parses the structure and closures of a ``@dace.program`` and all its
+        nested functions.
         :param f: A Python function to parse.
         :param argtypes: An dictionary of (name, type) for the given
                          function's arguments, which may pertain to data
@@ -192,6 +195,7 @@ def parse_dace_program(f,
                         filename=src_file,
                         line_offset=src_line,
                         col_offset=0,
+                        source_code=src,
                         global_vars=program_globals,
                         constants=constants,
                         scope_arrays=argtypes,
@@ -199,11 +203,30 @@ def parse_dace_program(f,
                         other_sdfgs=closure_resolver.closure_sdfgs,
                         strict=strict)
 
-    sdfg, _, _, _ = pv.parse_program(src_ast.body[0])
-    sdfg.set_sourcecode(src, 'python')
+    # TODO: Combine nested closures with the current one
+    # closure_resolver.combine_nested_closures()
+
+    return src_ast, pv, closure_resolver
+
+
+def parse_dace_program(src_ast: ast.AST,
+                       visitor: 'ProgramVisitor',
+                       closure_resolver: 'GlobalResolver',
+                       save=True) -> SDFG:
+    """ Parses a `@dace.program` function into an SDFG.
+        :param src_ast: The AST of the Python program to parse.
+        :param visitor: A ProgramVisitor object returned from 
+                        ``preparse_dace_program``.
+        :param closure_resolver: An object that contains the @dace.program
+                                 closure.
+        :param save: If True, saves source mapping data for this SDFG.
+        :return: A 2-tuple of SDFG and its reduced (used) closure.
+    """
+    sdfg, _, _, _ = visitor.parse_program(src_ast.body[0])
+    sdfg.set_sourcecode(visitor.src, 'python')
 
     # Combine nested closures with the current one
-    for name, (arr, desc) in pv.nested_closure_arrays.items():
+    for name, (arr, desc) in visitor.nested_closure_arrays.items():
         # Check if the same array is already passed as part of a nested closure
         if id(arr) in closure_resolver.array_mapping:
             existing_name = closure_resolver.array_mapping[id(arr)]
@@ -215,18 +238,20 @@ def parse_dace_program(f,
             closure_resolver.closure_arrays[name] = (arr, desc)
 
     # We save information in a tmp file for improved source mapping.
-    other_functions = [
-        func for func in closure_resolver.closure_sdfgs if not func == name
-    ]
-    data = {
-        "start_line": src_line + 1,
-        "end_line": src_line + len(src.split("\n")) - 1,
-        "src_file": path.abspath(src_file),
-        "other_sdfgs": other_functions,
-    }
-    sourcemap.temporaryInfo(name, data)
+    if save:
+        other_functions = [
+            func for func in closure_resolver.closure_sdfgs
+            if not func == visitor.orig_name
+        ]
+        data = {
+            "start_line": visitor.src_line + 1,
+            "end_line": visitor.src_line + len(visitor.src.split("\n")) - 1,
+            "src_file": path.abspath(visitor.filename),
+            "other_sdfgs": other_functions,
+        }
+        sourcemap.temporaryInfo(visitor.orig_name, data)
 
-    return sdfg, closure_resolver
+    return sdfg
 
 
 class StructTransformer(ast.NodeTransformer):
@@ -936,11 +961,8 @@ class GlobalResolver(ast.NodeTransformer):
         # other SDFG-convertible objects
         self.closure_constants: Dict[str, Any] = {}
         self.closure_arrays: Dict[str, Tuple[str, data.Data]] = {}
-        self.closure_sdfgs: Dict[str, SDFG] = {
-            k: v
-            for k, v in globals.items()
-            if isinstance(v, SDFG) or hasattr(v, '__sdfg__')
-        }
+        self.closure_sdfgs: Dict[str, Union[SDFG, SDFGConvertible]] = {}
+        self.nested_closures: Dict[str, GlobalResolver] = {}
 
         # Map same array objects (checked via python id) to the same name
         self.array_mapping: Dict[int, str] = {}
@@ -962,6 +984,11 @@ class GlobalResolver(ast.NodeTransformer):
             return result
         else:
             return super().generic_visit(node)
+
+    def print_call_tree(self, name, indent=0):
+        print('  ' * indent + name)
+        for cname, child in self.nested_closures.items():
+            child.print_call_tree(cname, indent + 1)
 
     def _qualname_to_array_name(self, qualname: str) -> str:
         """ Converts a Python qualified attribute name to an SDFG array name. """
@@ -1016,6 +1043,9 @@ class GlobalResolver(ast.NodeTransformer):
             # Could be a constant, an SDFG, or SDFG-convertible object
             if isinstance(value, SDFG) or hasattr(value, '__sdfg__'):
                 self.closure_sdfgs[qualname] = value
+                if not isinstance(value, SDFG):
+                    self.nested_closures[qualname] = value.closure_resolver(
+                        None, None)
             else:
                 self.closure_constants[qualname] = value
 
@@ -1601,11 +1631,12 @@ class ProgramVisitor(ExtNodeVisitor):
                  filename: str,
                  line_offset: int,
                  col_offset: int,
+                 source_code: str,
                  global_vars: Dict[str, Any],
                  constants: Dict[str, Any],
                  scope_arrays: Dict[str, data.Data],
                  scope_vars: Dict[str, str],
-                 map_symbols: Set[Union[str, 'symbol']] = None,
+                 map_symbols: Set[Union[str, symbolic.symbol]] = None,
                  other_sdfgs: Dict[str, Union[SDFG, 'DaceProgram']] = None,
                  nested: bool = False,
                  tmp_idx: int = 0,
@@ -1630,12 +1661,16 @@ class ProgramVisitor(ExtNodeVisitor):
         """
 
         self.filename = filename
+        self.src_line = line_offset
+        self.src_col = col_offset
+        self.orig_name = name
         if nested:
             self.name = "{n}_{l}_{c}".format(n=name,
                                              l=line_offset,
                                              c=col_offset)
         else:
             self.name = name
+        self.src = source_code
 
         self.globals = global_vars
         self.other_sdfgs = other_sdfgs

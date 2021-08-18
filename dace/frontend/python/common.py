@@ -74,3 +74,12 @@ class SDFGConvertible(object):
         :return: A 2-tuple of (all arguments, constant arguments).
         """
         raise NotImplementedError
+
+    def closure_resolver(self) -> 'dace.frontend.python.newast.GlobalResolver':
+        """ 
+        Returns a GlobalResolver object representing the closure of the
+        object to be converted to an SDFG.
+        """
+        # Avoid import loops
+        from dace.frontend.python.newast import GlobalResolver
+        return GlobalResolver({})
