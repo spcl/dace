@@ -63,16 +63,14 @@ def find_new_name(name: str, existing_names: Sequence[str]) -> str:
     :param existing_names: The set of existing names.
     :return: A new name that is not in existing_names.
     """
-    expr = re.compile(rf'^{name}_(\d+)$')
-    cur_offset = -1
-    for ename in existing_names:
-        if ename == name:
-            cur_offset = max(cur_offset, 0)
-            continue
-        m = expr.match(ename)
-        if m:
-            cur_offset = max(cur_offset, int(m.group(1)) + 1)
-    return name if cur_offset == -1 else name + '_' + str(cur_offset)
+    if name not in existing_names:
+        return name
+    cur_offset = 0
+    new_name = name + '_' + str(cur_offset)
+    while new_name in existing_names:
+        cur_offset += 1
+        new_name = name + '_' + str(cur_offset)
+    return new_name
 
 @make_properties
 class Data(object):
