@@ -1874,6 +1874,8 @@ void  *{kname}_args[] = {{ {kargs} }};
                 sdfg, state_id, scope_entry)
 
             outer_scope = sdfg.nodes()[state_id].entry_node(scope_entry)
+            if not outer_scope:
+                outer_scope = sdfg.parent.entry_node(sdfg.parent_nsdfg_node)
             callsite_stream.write(
                 'if ({} < {}) {{'.format(
                     outer_scope.map.params[0],
