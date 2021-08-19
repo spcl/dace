@@ -4321,7 +4321,11 @@ class ProgramVisitor(ExtNodeVisitor):
         if isinstance(s, (Number, bool, numpy.bool_, sympy.Basic)):
             res = s
         elif isinstance(s, ast.Constant):  # 1D index (since Python 3.9)
-            res = self._visit_ast_or_value(s)
+            # Special case for Python slice objects
+            if isinstance(s.value, slice):
+                res = self.visit(s)
+            else:
+                res = self._visit_ast_or_value(s)
         elif isinstance(s, ast.Index):
             res = self._parse_subscript_slice(s.value)
         elif isinstance(s, ast.Slice):
@@ -4346,6 +4350,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 self._parse_subscript_slice(d, multidim=True) for d in s.dims)
         else:
             res = _promote(s)
+        # Unpack tuple of a single Python slice object
+        if (isinstance(res, (list, tuple)) and len(res) == 1
+                and isinstance(res[0], slice)):
+            res = res[0]
         return res
 
     ### Subscript (slicing) handling

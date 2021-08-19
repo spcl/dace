@@ -624,12 +624,13 @@ std::cout << std::scientific;""")
                 kernel_host_stream.write(instrumentation_stream.getvalue())
                 kernel_host_stream.write(f"""\
 const unsigned long int _dace_fpga_end_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-__state->report.add_completion("Full FPGA kernel runtime for {state.label}", "FPGA", first_start, last_end, {sdfg.sdfg_id}, {state_id}, -1);
+// Convert from nanoseconds (reported by OpenCL) to microseconds (expected by the profiler)
+__state->report.add_completion("Full FPGA kernel runtime for {state.label}", "FPGA", 1e-3 * first_start, 1e-3 * last_end, {sdfg.sdfg_id}, {state_id}, -1);
 __state->report.add_completion("Full FPGA state runtime for {state.label}", "FPGA", _dace_fpga_begin_us, _dace_fpga_end_us, {sdfg.sdfg_id}, {state_id}, -1);
 """)
                 if Config.get_bool("instrumentation", "print_fpga_runtime"):
                     kernel_host_stream.write(f"""
-const double elapsed = 1e-9 * (_dace_fpga_end_us - _dace_fpga_begin_us);
+const double elapsed = 1e-6 * (_dace_fpga_end_us - _dace_fpga_begin_us);
 std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " seconds.\\n";\
 """)
 
@@ -2419,7 +2420,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                    after_memlets_stream):
         # Inject dependency pragmas on memlets
         for edge in dfg.out_edges(node):
-            datadesc = sdfg.arrays[edge.data.data]
+            dataname = edge.data.data
+            if not dataname:
+                continue  # Empty memlet
+            datadesc = sdfg.arrays[dataname]
             if (isinstance(datadesc, dt.Array)
                     and (datadesc.storage == dace.StorageType.FPGA_Local
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
@@ -2470,5 +2474,6 @@ if (event_start < first_start) {{
 if (event_end > last_end) {{
     last_end = event_end;
 }}
-__state->report.add_completion("{kernel_name}", "FPGA", event_start, event_end, {sdfg_id}, {state_id}, -1);{print_str}
+// Convert from nanoseconds (reported by OpenCL) to microseconds (expected by the profiler)
+__state->report.add_completion("{kernel_name}", "FPGA", 1e-3 * event_start, 1e-3 * event_end, {sdfg_id}, {state_id}, -1);{print_str}
 }}""")

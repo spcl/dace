@@ -120,7 +120,8 @@ class InlineSDFG(transformation.Transformation):
             if (edge.data.is_empty()
                     and not isinstance(edge.src, nodes.EntryNode)):
                 return False
-            if edge.dst_conn is not None:
+            # NOTE: Empty memlets do not attach to connectors
+            if edge.dst_conn or not edge.data.is_empty():
                 in_connectors.add(edge.dst_conn)
         for edge in graph.out_edges(nested_sdfg):
             if edge.src_conn in out_connectors:
@@ -128,7 +129,8 @@ class InlineSDFG(transformation.Transformation):
             if (edge.data.is_empty()
                     and not isinstance(edge.dst, nodes.ExitNode)):
                 return False
-            if edge.src_conn is not None:
+            # NOTE: Empty memlets do not attach to connectors
+            if edge.src_conn or not edge.data.is_empty():
                 out_connectors.add(edge.src_conn)
 
         # Ensure output connectors have no additional outputs (if in a scope),
