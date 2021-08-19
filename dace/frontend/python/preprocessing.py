@@ -666,8 +666,11 @@ class CallTreeResolver(ast.NodeVisitor):
         # Resolve nested closure as necessary
         qualname = next(k for k, v in self.closure.closure_sdfgs.items()
                         if v is value)
-        self.closure.nested_closures[qualname] = value.closure_resolver(
-            constant_args)
+        if hasattr(value, 'closure_resolver'):
+            self.closure.nested_closures[qualname] = value.closure_resolver(
+                constant_args)
+        else:
+            self.closure.nested_closures[qualname] = SDFGClosure()
 
 
 def preprocess_dace_program(
