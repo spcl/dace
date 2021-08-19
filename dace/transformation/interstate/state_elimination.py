@@ -145,6 +145,8 @@ class StateAssignElimination(transformation.Transformation):
             state.replace(varname, assignment)
             keys_to_remove.add(varname)
 
+        repl_dict = {}
+
         for varname in keys_to_remove:
             # Remove assignments from edge
             del edge.data.assignments[varname]
@@ -154,9 +156,145 @@ class StateAssignElimination(transformation.Transformation):
                     break
             else:
                 # If removed assignment does not appear in any other edge,
-                # remove symbol
+                # replace and remove symbol
+                if assignments_to_consider[varname] in sdfg.symbols:
+                    repl_dict[varname] = assignments_to_consider[varname]
                 if varname in sdfg.symbols:
                     sdfg.remove_symbol(varname)
+        
+        def _str_repl(s, d):
+            for k, v in d.items():
+                s.replace(str(k), str(v))
+
+        if repl_dict:
+            symbolic.safe_replace(repl_dict, lambda m: _str_repl(sdfg, m))
+
+
+def _alias_assignments(sdfg, edge):
+    assignments_to_consider = {}
+    for var, assign in edge.assignments.items():
+        if assign in sdfg.symbols or (assign in sdfg.arrays and isinstance(
+                sdfg.arrays[assign], dt.Scalar)):
+            assignments_to_consider[var] = assign
+    return assignments_to_consider
+
+
+@registry.autoregister_params(strict=True)
+class SymbolAliasPromotion(transformation.Transformation):
+    """
+    SymbolAliasPromotion moves inter-state assignments that create symbolic
+    aliases to the previous inter-state edge according to the topological order.
+    The purpose of this transformation is to iteratively move symbolic aliases
+    together, so that true duplicates can be easily removed.
+    """
+
+    _first_state = sdfg.SDFGState()
+    _second_state = sdfg.SDFGState()
+
+    @staticmethod
+    def expressions():
+        return [
+            sdutil.node_path_graph(SymbolAliasPromotion._first_state,
+                                   SymbolAliasPromotion._second_state)
+        ]
+
+    @staticmethod
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        fstate = graph.nodes()[candidate[SymbolAliasPromotion._first_state]]
+        sstate = graph.nodes()[candidate[SymbolAliasPromotion._second_state]]
+
+        # For the topological order to be unambiguous:
+        # 1. First state must have unique input edge.
+        in_fedges = graph.in_edges(fstate)
+        if len(in_fedges) != 1:
+            return False
+        in_edge = in_fedges[0].data
+        # 2. There must be a unique edge from the first state to the second
+        # one and no edge from the second state to the first one.
+        edges = graph.edges_between(fstate, sstate)
+        if len(edges) != 1:
+            return False
+        if len(graph.edges_between(sstate, fstate)) > 1:
+            return False
+
+        edge = edges[0].data
+        in_edge = in_fedges[0].data
+
+        to_consider = _alias_assignments(sdfg, edge)
+
+        to_not_consider = set()
+        for k, v in to_consider.items():
+            # Remove symbols that are taking part in the edge's condition
+            condsyms = [str(s) for s in edge.condition_sympy().free_symbols]
+            if k in condsyms:
+                to_not_consider.add(k)
+            # Remove symbols that are set in the in_edge
+            # with a different assignment
+            if k in in_edge.assignments and in_edge.assignments[k] != v:
+                to_not_consider.add(k)
+            # Remove symbols whose assignment (RHS) is a symbol
+            # and is set in the in_edge.
+            if v in sdfg.symbols and v in in_edge.assignments:
+                to_not_consider.add(k)
+            # Remove symbols whose assignment (RHS) is a scalar
+            # and is set in the first state.
+            if v in sdfg.arrays and isinstance(sdfg.arrays[v], dt.Scalar):
+                if any(
+                        isinstance(n, nodes.AccessNode) and n.data == v
+                        for n in fstate.nodes()):
+                    to_not_consider.add(k)
+
+        for k in to_not_consider:
+            del to_consider[k]
+
+        # No assignments to promote
+        if len(to_consider) == 0:
+            return False
+
+        return True
+
+    @staticmethod
+    def match_to_str(graph, candidate):
+        state = graph.nodes()[candidate[SymbolAliasPromotion._second_state]]
+        return state.label
+
+    def apply(self, sdfg):
+        fstate = sdfg.nodes()[self.subgraph[SymbolAliasPromotion._first_state]]
+        sstate = sdfg.nodes()[self.subgraph[SymbolAliasPromotion._second_state]]
+
+        edge = sdfg.edges_between(fstate, sstate)[0].data
+        in_edge = sdfg.in_edges(fstate)[0].data
+
+        to_consider = _alias_assignments(sdfg, edge)
+
+        to_not_consider = set()
+        for k, v in to_consider.items():
+            # Remove symbols that are taking part in the edge's condition
+            condsyms = [str(s) for s in edge.condition_sympy().free_symbols]
+            if k in condsyms:
+                to_not_consider.add(k)
+            # Remove symbols that are set in the in_edge
+            # with a different assignment
+            if k in in_edge.assignments and in_edge.assignments[k] != v:
+                to_not_consider.add(k)
+            # Remove symbols whose assignment (RHS) is a symbol
+            # and is set in the in_edge.
+            if v in sdfg.symbols and v in in_edge.assignments:
+                to_not_consider.add(k)
+            # Remove symbols whose assignment (RHS) is a scalar
+            # and is set in the first state.
+            if v in sdfg.arrays and isinstance(sdfg.arrays[v], dt.Scalar):
+                if any(
+                        isinstance(n, nodes.AccessNode) and n.data == v
+                        for n in fstate.nodes()):
+                    to_not_consider.add(k)
+
+        for k in to_not_consider:
+            del to_consider[k]
+
+        for k, v in to_consider.items():
+            del edge.assignments[k]
+            in_edge.assignments[k] = v
 
 
 @registry.autoregister_params(singlestate=True)

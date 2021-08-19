@@ -644,7 +644,10 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG,
     for scalar in to_promote:
         desc = sdfg.arrays[scalar]
         sdfg.remove_data(scalar, validate=False)
-        sdfg.add_symbol(scalar, desc.dtype)
+        # If the scalar is already a symbol (e.g., as part of an array size),
+        # do not re-add the symbol
+        if scalar not in sdfg.symbols:
+            sdfg.add_symbol(scalar, desc.dtype)
 
     # Step 6: Inter-state edge cleanup
     for edge in sdfg.edges():

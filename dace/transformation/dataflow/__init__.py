@@ -38,6 +38,7 @@ from .redundant_array_copying import (RedundantArrayCopyingIn,
 from .merge_arrays import InMergeArrays, OutMergeArrays, MergeSourceSinkArrays
 from .prune_connectors import PruneConnectors, PruneSymbols
 from .wcr_conversion import AugAssignToWCR
+from .tasklet_fusion import SimpleTaskletFusion
 
 # Device-related
 from .copy_to_device import CopyToDevice

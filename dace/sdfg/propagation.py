@@ -260,6 +260,10 @@ class AffineSMemlet(SeparableMemletPattern):
         result_begin = rb.subs(self.param, node_rb).expand()
         result_end = re.subs(self.param, node_re).expand()
 
+        # Special case: multiplier < 0
+        if (self.multiplier < 0) == True:
+            result_begin, result_end = result_end, result_begin
+
         # Special case: i:i+stride for a begin:end:stride range
         if (node_rb == result_begin and (re - rb + 1) == node_rs and rs == 1
                 and rt == 1):

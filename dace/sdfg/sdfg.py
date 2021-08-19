@@ -54,7 +54,7 @@ def _arrays_from_json(obj, context=None):
 def _replace_dict(d, old, new):
     if old in d:
         if new in d:
-            raise FileExistsError('"%s" already exists in SDFG' % new)
+            warnings.warn('"%s" already exists in SDFG' % new)
         d[new] = d[old]
         del d[old]
 
