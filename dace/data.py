@@ -1,10 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
-import re, json
+import re
 import copy as cp
 import sympy as sp
 import numpy
-from typing import Set
+from typing import Set, Sequence
 
 import dace.dtypes as dtypes
 from dace.codegen import cppunparse
@@ -53,6 +53,26 @@ def create_datadescriptor(obj):
         return Scalar(dtypes.callback(None))
     return Scalar(dtypes.typeclass(type(obj)))
 
+def find_new_name(name: str, existing_names: Sequence[str]) -> str:
+    """
+    Returns a name that matches the given ``name`` as a prefix, but does not
+    already exist in the given existing name set. The behavior is typically
+    to append an underscore followed by a unique (increasing) number. If the
+    name does not already exist in the set, it is returned as-is.
+    :param name: The given name to find.
+    :param existing_names: The set of existing names.
+    :return: A new name that is not in existing_names.
+    """
+    expr = re.compile(rf'^{name}_(\d+)$')
+    cur_offset = -1
+    for ename in existing_names:
+        if ename == name:
+            cur_offset = max(cur_offset, 0)
+            continue
+        m = expr.match(ename)
+        if m:
+            cur_offset = max(cur_offset, int(m.group(1)) + 1)
+    return name if cur_offset == -1 else name + '_' + str(cur_offset)
 
 @make_properties
 class Data(object):

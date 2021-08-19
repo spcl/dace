@@ -474,7 +474,8 @@ class GlobalResolver(ast.NodeTransformer):
             else:
                 arrname = self._qualname_to_array_name(qualname)
                 desc = data.create_datadescriptor(value)
-                self.closure.closure_arrays[qualname] = (arrname, desc)
+                self.closure.closure_arrays[arrname] = (
+                    qualname, desc, lambda: eval(qualname, self.globals), False)
                 self.closure.array_mapping[id(value)] = arrname
 
             newnode = ast.Name(id=arrname, ctx=ast.Load())
@@ -628,7 +629,7 @@ class CallTreeResolver(ast.NodeVisitor):
 
     def _eval_args(self, node: ast.Call) -> Dict[str, Any]:
         res = {}
-        
+
         # Evaluate positional arguments
         for i, arg in enumerate(node.args):
             try:
@@ -732,12 +733,12 @@ def preprocess_dace_program(
 
     # Fill in data descriptors from closure arrays
     argtypes.update({
-        arrname: v
-        for arrname, v in closure_resolver.closure.closure_arrays.values()
+        arrname: v[1]
+        for arrname, v in closure_resolver.closure.closure_arrays.items()
     })
 
-    # TODO: Combine nested closures with the current one
-    # closure_resolver.combine_nested_closures()
+    # Combine nested closures with the current one
+    closure_resolver.closure.combine_nested_closures()
 
     past = PreprocessedAST(src_file, src_line, src, src_ast, program_globals)
 

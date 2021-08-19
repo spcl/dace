@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import collections
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Optional, OrderedDict, Sequence, Tuple, Union
 from dace import data
 from dace.sdfg.sdfg import SDFG
 
@@ -94,19 +95,31 @@ class SDFGClosure:
     A dace.program's closure is composed of its used constants, arrays, and
     other internal SDFG-convertible objects.
     """
-    closure_constants: Dict[str, Any]
-    closure_arrays: Dict[str, Tuple[str, data.Data]]
-    closure_sdfgs: Dict[str, Union[SDFG, SDFGConvertible]]
-    nested_closures: Dict[str, 'SDFGClosure']
 
-    # Map same array objects (checked via python id) to the same name
+    # Constants that are part of the closure (mapping from name to value)
+    closure_constants: Dict[str, Any]
+
+    # Mutable arrays that are part of the closure, mapping from data descriptor
+    # names to a 4-tuple of (python name, descriptor, callable that returns
+    # array, does the array belong to a nested SDFG).
+    closure_arrays: Dict[str, Tuple[str, data.Data, Callable[[], Any], bool]]
+
+    # Nested SDFGs and SDFG-convertible objects that are used in the program
+    # (mapping from name to object)
+    closure_sdfgs: Dict[str, Union[SDFG, SDFGConvertible]]
+
+    # Dictionary that maps names of nested SDFG-convertible objects to their
+    # own SDFGClosure objects
+    nested_closures: OrderedDict[str, 'SDFGClosure']
+
+    # Maps same array objects (checked via python id) to the same name
     array_mapping: Dict[int, str]
 
     def __init__(self):
         self.closure_constants = {}
         self.closure_arrays = {}
         self.closure_sdfgs = {}
-        self.nested_closures = {}
+        self.nested_closures = collections.OrderedDict()
         self.array_mapping = {}
 
     def print_call_tree(self, name, indent=0):
@@ -114,8 +127,22 @@ class SDFGClosure:
         for cname, child in self.nested_closures.items():
             child.print_call_tree(cname, indent + 1)
 
-    def call_tree_length(self):
+    def call_tree_length(self) -> int:
         value = 1
         for child in self.nested_closures.values():
             value += child.call_tree_length()
         return value
+
+    def combine_nested_closures(self):
+        for child in self.nested_closures.values():
+            child.combine_nested_closures()
+            for arrname, (_, desc, evaluator,
+                          _) in sorted(child.closure_arrays.items()):
+
+                # TODO: Check if the same array is already passed as part of a 
+                # nested closure
+                # if id(arr) in closure.array_mapping:
+
+                new_name = data.find_new_name(arrname,
+                                              self.closure_arrays.keys())
+                self.closure_arrays[new_name] = (arrname, desc, evaluator, True)
