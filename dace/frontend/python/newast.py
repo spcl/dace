@@ -3354,7 +3354,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Obtain a string representation
         result = self.visit(arg)
         if isinstance(result, (list, tuple)):
-            if len(result) == 1 and isinstance(result[0], str):
+            if len(result) == 1 and isinstance(result[0], (str, slice)):
                 return result[0]
         return result
 
