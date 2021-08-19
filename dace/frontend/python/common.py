@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from typing import Any, Dict, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Sequence, Tuple, Union
+from dace import data
 from dace.sdfg.sdfg import SDFG
 
 
@@ -75,11 +77,45 @@ class SDFGConvertible(object):
         """
         raise NotImplementedError
 
-    def closure_resolver(self) -> 'dace.frontend.python.newast.GlobalResolver':
+    def closure_resolver(self, constant_args: Dict[str, Any]) -> 'SDFGClosure':
         """ 
-        Returns a GlobalResolver object representing the closure of the
+        Returns an SDFGClosure object representing the closure of the
         object to be converted to an SDFG.
+        :param constant_args: Arguments whose values are already resolved to
+                              compile-time values.
         """
-        # Avoid import loops
-        from dace.frontend.python.newast import GlobalResolver
-        return GlobalResolver({})
+        return SDFGClosure()
+
+
+@dataclass
+class SDFGClosure:
+    """
+    Represents a reduced closure of a parsed DaCe program.
+    A dace.program's closure is composed of its used constants, arrays, and
+    other internal SDFG-convertible objects.
+    """
+    closure_constants: Dict[str, Any]
+    closure_arrays: Dict[str, Tuple[str, data.Data]]
+    closure_sdfgs: Dict[str, Union[SDFG, SDFGConvertible]]
+    nested_closures: Dict[str, 'SDFGClosure']
+
+    # Map same array objects (checked via python id) to the same name
+    array_mapping: Dict[int, str]
+
+    def __init__(self):
+        self.closure_constants = {}
+        self.closure_arrays = {}
+        self.closure_sdfgs = {}
+        self.nested_closures = {}
+        self.array_mapping = {}
+
+    def print_call_tree(self, name, indent=0):
+        print('  ' * indent + name)
+        for cname, child in self.nested_closures.items():
+            child.print_call_tree(cname, indent + 1)
+
+    def call_tree_length(self):
+        value = 1
+        for child in self.nested_closures.values():
+            value += child.call_tree_length()
+        return value

@@ -11,7 +11,8 @@ import warnings
 
 from dace import symbolic, dtypes
 from dace.config import Config
-from dace.frontend.python import newast, common as pycommon, cached_program
+from dace.frontend.python import (newast, common as pycommon, cached_program,
+                                  preprocessing)
 from dace.sdfg import SDFG
 from dace.data import create_datadescriptor, Data
 
@@ -140,7 +141,6 @@ class DaceProgram(pycommon.SDFGConvertible):
                  constant_functions=False,
                  method=False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
-        from dace.frontend.python.newast import GlobalResolver
 
         self.f = f
         self.dec_args = args
@@ -168,7 +168,6 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.symbols = set(k for k, v in self.global_vars.items()
                            if isinstance(v, symbolic.symbol))
         self.closure_arg_mapping: Dict[str, str] = {}
-        self.resolver: Optional[GlobalResolver] = None
 
         # Add type annotations from decorator arguments (DEPRECATED)
         if self.dec_args:
@@ -266,42 +265,30 @@ class DaceProgram(pycommon.SDFGConvertible):
             for k, v in mapping.items()
         }
 
-    def closure_resolver(self, args, kwargs):
+    def closure_resolver(self, constant_args):
         # Parse allowed global variables
         # (for inferring types and values in the DaCe program)
         global_vars = copy.copy(self.global_vars)
 
-        # If exist, obtain type annotations (for compilation)
-        if args is not None or kwargs is not None:
-            argtypes, _, gvars = self._get_type_annotations(args, kwargs)
-        else:
-            argtypes = {}
-            gvars = {}
-            global_vars = {
-                k: v
-                for k, v in global_vars.items() if k not in self.argnames
+        # If exist, obtain compile-time constants
+        gvars = {}
+        if constant_args is not None:
+            gvars = {
+                self.argnames[i]: v
+                for i, v in constant_args.items() if isinstance(i, int)
             }
+            gvars.update({
+                k: v
+                for k, v in constant_args.items() if not isinstance(k, int)
+            })
+        global_vars = {
+            k: v
+            for k, v in global_vars.items() if k not in self.argnames
+        }
 
         # Move "self" from an argument into the closure
         if self.methodobj is not None:
             global_vars[self.objname] = self.methodobj
-
-        for k, v in argtypes.items():
-            if v.transient:  # Arguments to (nested) SDFGs cannot be transient
-                v_cpy = copy.deepcopy(v)
-                v_cpy.transient = False
-                argtypes[k] = v_cpy
-
-        # Remove None arguments and make into globals that can be folded
-        removed_args = set()
-        for k, v in argtypes.items():
-            if v.dtype.type is None:
-                global_vars[k] = None
-                removed_args.add(k)
-        argtypes = {
-            k: v
-            for k, v in argtypes.items() if v.dtype.type is not None
-        }
 
         # Set module aliases to point to their actual names
         modules = {
@@ -315,21 +302,16 @@ class DaceProgram(pycommon.SDFGConvertible):
             v.name: v
             for _, v in global_vars.items() if isinstance(v, symbolic.symbol)
         })
-        for argtype in argtypes.values():
-            global_vars.update({v.name: v for v in argtype.free_symbols})
 
         # Add constant arguments to global_vars
         global_vars.update(gvars)
 
         # Parse AST to create the SDFG
-        _, _, closure = newast.preparse_dace_program(
+        _, closure = preprocessing.preprocess_dace_program(
             self.f,
-            self.name,
-            argtypes,
+            {},
             global_vars,
             modules,
-            self.dec_kwargs,
-            strict=False,
             resolve_functions=self.resolve_functions)
         return closure
 
@@ -686,16 +668,18 @@ class DaceProgram(pycommon.SDFGConvertible):
         global_vars.update(gvars)
 
         # Parse AST to create the SDFG
-        src_ast, pv, closure = newast.preparse_dace_program(
+        parsed_ast, closure = preprocessing.preprocess_dace_program(
             dace_func,
-            self.name,
             argtypes,
             global_vars,
             modules,
-            self.dec_kwargs,
-            strict=strict,
             resolve_functions=self.resolve_functions)
-        sdfg = newast.parse_dace_program(src_ast, pv, closure)
+        sdfg = newast.parse_dace_program(self.name,
+                                         parsed_ast,
+                                         argtypes,
+                                         self.dec_kwargs,
+                                         closure,
+                                         strict=strict)
 
         # Set SDFG argument names, filtering out constants
         sdfg.arg_names = [a for a in self.argnames if a in argtypes]

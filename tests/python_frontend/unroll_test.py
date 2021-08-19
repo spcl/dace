@@ -2,7 +2,7 @@
 """ Tests loop unrolling functionality. """
 import dace
 from dace.frontend.python import astutils
-from dace.frontend.python.newast import LoopUnroller, DaceSyntaxError
+from dace.frontend.python.preprocessing import LoopUnroller, DaceSyntaxError
 import numpy as np
 import pytest
 
@@ -23,8 +23,8 @@ def test_dace_unroll():
         for i in dace.unroll(range(1, 4)):
             A[0] += i * i
 
-    src_ast, _, _, _ = astutils.function_to_ast(tounroll.f)
-    lu = LoopUnroller(tounroll.global_vars)
+    src_ast, fname, _, _ = astutils.function_to_ast(tounroll.f)
+    lu = LoopUnroller(tounroll.global_vars, fname)
     unrolled = lu.visit(src_ast)
     assert len(unrolled.body[0].body) == 3
 
@@ -42,8 +42,8 @@ def test_dace_unroll_multistatement():
             if i in (3, ):
                 A[0] += 2
 
-    src_ast, _, _, _ = astutils.function_to_ast(tounroll.f)
-    lu = LoopUnroller(tounroll.global_vars)
+    src_ast, fname, _, _ = astutils.function_to_ast(tounroll.f)
+    lu = LoopUnroller(tounroll.global_vars, fname)
     unrolled = lu.visit(src_ast)
     assert len(unrolled.body[0].body) == 6
 
@@ -61,8 +61,8 @@ def test_dace_unroll_break():
             if i in (2, 3):
                 break
 
-    src_ast, _, _, _ = astutils.function_to_ast(tounroll.f)
-    lu = LoopUnroller(tounroll.global_vars)
+    src_ast, fname, _, _ = astutils.function_to_ast(tounroll.f)
+    lu = LoopUnroller(tounroll.global_vars, fname)
     with pytest.raises(DaceSyntaxError):
         unrolled = lu.visit(src_ast)
 
