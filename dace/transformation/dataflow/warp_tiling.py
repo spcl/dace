@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from dace import registry, properties, nodes, dtypes, symbolic
+from dace import registry, properties, nodes, dtypes, subsets, symbolic
 from dace import Memlet, SDFG, SDFGState
 from dace.frontend.operations import detect_reduction_type
 from dace.transformation import transformation as xf, helpers as xfh
@@ -125,10 +125,16 @@ class WarpTiling(xf.Transformation):
                                 str(redtype)[str(redtype).find('.') + 1:])
 
                     # Add local access between thread-locan and warp reduction
-                    newnode = nstate.add_access(out_edge.data.data)
+                    name = nsdfg._find_new_name(out_edge.data.data)
+                    nsdfg.add_scalar(name, nsdfg.arrays[out_edge.data.data].dtype, transient=True)
+                    # newnode = nstate.add_access(out_edge.data.data)
+                    newnode = nstate.add_access(name)
                     nstate.remove_edge(out_edge)
-                    nstate.add_edge(out_edge.src, out_edge.src_conn, newnode,
-                                    None, copy.deepcopy(out_edge.data))
+                    edge = nstate.add_edge(out_edge.src, out_edge.src_conn, newnode,
+                                           None, copy.deepcopy(out_edge.data))
+                    for e in nstate.memlet_path(edge):
+                        e.data.data = name
+                        e.data.subset = subsets.Range([(0, 0, 1)])
 
                     if out_edge.data.subset.num_elements(
                     ) == 1:  # One element: tasklet
@@ -137,7 +143,8 @@ class WarpTiling(xf.Transformation):
                             f'__out = dace::warpReduce<{credtype}, {ctype}>::reduce(__a);',
                             dtypes.Language.CPP)
                         nstate.add_edge(newnode, None, wrt, '__a',
-                                        Memlet(out_edge.data.data))
+                                        # Memlet(out_edge.data.data))
+                                        Memlet(name))
                         out_edge.data.wcr = None
                         nstate.add_edge(wrt, '__out', out_edge.dst, None,
                                         out_edge.data)
