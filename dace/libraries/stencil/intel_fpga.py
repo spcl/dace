@@ -120,7 +120,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             nested_sdfg,
             sdfg,
             # Input connectors
-            [k + "_in" for k in field_accesses if any(iterator_mapping[k])] +
+            [k + "_in" for k in inputs if any(iterator_mapping[k])] +
             [name + "_buffer_in" for name, _ in buffer_sizes.items()],
             # Output connectors
             [k + "_out" for k in outputs] +
