@@ -432,11 +432,12 @@ class DaceProgram(pycommon.SDFGConvertible):
         from dace.transformation import helpers as xfh
 
         # Obtain DaCe program as SDFG
-        sdfg = self._generate_pdp(args, kwargs, strict=strict)
+        sdfg, cached = self._generate_pdp(args, kwargs, strict=strict)
 
         # Apply strict transformations automatically
-        if (strict == True or (strict is None and Config.get_bool(
-                'optimizer', 'automatic_strict_transformations'))):
+        if not cached and (
+                strict == True or (strict is None and Config.get_bool(
+                    'optimizer', 'automatic_strict_transformations'))):
 
             # Promote scalars to symbols as necessary
             promoted = scal2sym.promote_scalars_to_symbols(sdfg)
@@ -452,7 +453,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Save the SDFG. Skip this step if running from a cached SDFG, as
         # it might overwrite the cached SDFG.
-        if not Config.get_bool('compiler', 'use_cache') and save:
+        if not cached and not Config.get_bool('compiler', 'use_cache') and save:
             sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
         # Validate SDFG
@@ -686,7 +687,8 @@ class DaceProgram(pycommon.SDFGConvertible):
             :param kwargs: The given keyword arguments to the program.
             :param strict: Whether to apply strict transforms when parsing 
                            nested dace programs.
-            :return: The parsed SDFG object.
+            :return: A 2-tuple of (parsed SDFG object, was the SDFG retrieved
+                     from cache).
         """
         dace_func = self.f
 
@@ -763,7 +765,9 @@ class DaceProgram(pycommon.SDFGConvertible):
                                         self.closure_constant_keys, gvars)
         if self._cache.has(cachekey):
             sdfg = self._cache.get(cachekey).sdfg
+            cached = True
         else:
+            cached = False
             sdfg = newast.parse_dace_program(self.name,
                                              parsed_ast,
                                              argtypes,
@@ -776,4 +780,4 @@ class DaceProgram(pycommon.SDFGConvertible):
 
             # TODO: Add to parsed SDFG cache
 
-        return sdfg
+        return sdfg, cached
