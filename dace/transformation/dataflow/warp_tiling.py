@@ -127,8 +127,8 @@ class WarpTiling(xf.Transformation):
                     # Add local access between thread-locan and warp reduction
                     name = nsdfg._find_new_name(out_edge.data.data)
                     nsdfg.add_scalar(name, nsdfg.arrays[out_edge.data.data].dtype, transient=True)
-                    # newnode = nstate.add_access(out_edge.data.data)
                     newnode = nstate.add_access(name)
+                    newnode.setzero = True
                     nstate.remove_edge(out_edge)
                     edge = nstate.add_edge(out_edge.src, out_edge.src_conn, newnode,
                                            None, copy.deepcopy(out_edge.data))
