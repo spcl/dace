@@ -8,7 +8,7 @@ import sympy
 import sys
 import warnings
 
-from typing import Any, Callable, Dict, List, Tuple, Union
+from typing import Any, Callable, Dict, List, Set, Tuple, Union
 import dace
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.sdfg import SDFG
@@ -668,10 +668,21 @@ class CallTreeResolver(ast.NodeVisitor):
         qualname = next(k for k, v in self.closure.closure_sdfgs.items()
                         if v is value)
         if hasattr(value, 'closure_resolver'):
-            self.closure.nested_closures[qualname] = value.closure_resolver(
-                constant_args)
+            self.closure.nested_closures.append(
+                (qualname, value.closure_resolver(constant_args)))
         else:
-            self.closure.nested_closures[qualname] = SDFGClosure()
+            self.closure.nested_closures.append((qualname, SDFGClosure()))
+
+
+class ArrayClosureResolver(ast.NodeVisitor):
+    def __init__(self, closure: SDFGClosure):
+        self.closure = closure
+        self.arrays: Set[str] = set()
+
+    def visit_Name(self, node: ast.Name):
+        if node.id in self.closure.closure_arrays:
+            self.arrays.add(node.id)
+        self.generic_visit(node)
 
 
 def preprocess_dace_program(
@@ -724,6 +735,15 @@ def preprocess_dace_program(
     src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
     src_ast = DeadCodeEliminator().visit(src_ast)
     CallTreeResolver(closure_resolver.closure, resolved).visit(src_ast)
+    used_arrays = ArrayClosureResolver(closure_resolver.closure)
+    used_arrays.visit(src_ast)
+
+    # Filter out arrays that are not used after dead code elimination
+    closure_resolver.closure.closure_arrays = {
+        k: v
+        for k, v in closure_resolver.closure.closure_arrays.items()
+        if k in used_arrays.arrays
+    }
 
     # Filter remaining global variables according to type and scoping rules
     program_globals = {

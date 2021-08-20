@@ -159,6 +159,15 @@ def parse_dace_program(name: str,
         preprocessed_ast.preprocessed_ast.body[0])
     sdfg.set_sourcecode(preprocessed_ast.src, 'python')
 
+    # Combine nested closures with the current one
+    for name, (arr, _) in visitor.nested_closure_arrays.items():
+        # Check if the same array is already passed as part of a nested closure
+        if id(arr) in closure.array_mapping:
+            existing_name = closure.array_mapping[id(arr)]
+            del sdfg.arrays[name]
+            for state in sdfg.nodes():
+                state.replace(name, existing_name)
+
     # We save information in a tmp file for improved source mapping.
     if save:
         other_functions = [
@@ -1001,6 +1010,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
         self.views: Dict[str, str] = {}  # Keeps track of views
+        self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
 
         # Keep track of map symbols from upper scopes
         map_symbols = map_symbols or set()
@@ -3513,6 +3523,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     outer_name = self.sdfg.add_datadesc(aname,
                                                         desc,
                                                         find_new_name=True)
+                    self.nested_closure_arrays[outer_name] = (arr, desc)
                     # Add closure arrays as function arguments
                     args.append((aname, outer_name))
                     required_args.append(aname)

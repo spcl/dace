@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests pre-parsing of SDFG call tree and (nested) closure. """
+""" Tests preprocessing of SDFG call tree and (nested) closure. """
 import dace
 import numpy as np
 import os
@@ -46,7 +46,7 @@ def test_nested_objects_same_name():
     A = np.random.rand(20)
     obj = ObjB(6)
     obj.outer.load_sdfg(temp_path, A)
-    
+
     # Verify that cache contains new SDFG
     assert len(obj.outer._cache.cache) == 1
 
@@ -84,6 +84,35 @@ def test_calltree():
     assert res.call_tree_length() == 2
 
 
+def test_same_function_different_closure():
+    arrx = np.full([20], 1)
+    arry = np.full([20], 2)
+
+    @dace.program
+    def nested(A: dace.float64[20], dir: dace.constant):
+        if dir == 'x':
+            return A + arrx
+        elif dir == 'y':
+            return A * arry
+        return A + 3
+
+    @dace.program
+    def mainprog(A: dace.float64[20]):
+        B = nested(A, 'x')
+        return nested(B, 'y')
+
+    closure = mainprog.closure_resolver(None)
+    assert closure.call_tree_length() == 3
+    assert len(closure.closure_arrays) == 2  # arrx and arry should appear once
+
+    A = np.random.rand(20)
+    expected = (A + 1) * 2
+    res = mainprog(A)
+    assert np.allclose(res, expected)
+    assert len(mainprog.resolver.closure_arrays) == 2
+
+
 if __name__ == '__main__':
     test_nested_objects_same_name()
     test_calltree()
+    test_same_function_different_closure()
