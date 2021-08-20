@@ -8,6 +8,7 @@ from typing import List
 
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import InlineSDFG, StateFusion
+from dace.transformation.subgraph import SubgraphFusion
 from dace.sdfg import nodes, infer_types
 from dace import dtypes
 import dace.libraries.nccl as nccl
@@ -23,6 +24,7 @@ lNy = dace.symbol('lNy', dtype=d_int, integer=True, positive=True)
 Py = dace.symbol('Py', dtype=dace.int32, integer=True, positive=True)
 pi = dace.symbol('pi', dtype=dace.int32, integer=True, nonnegative=True)
 size = dace.symbol('size', dtype=dace.int32, integer=True, positive=True)
+
 Ny = Py * lNy
 
 
@@ -61,36 +63,44 @@ def exchange(arr: d_float[lNy + 2, N], rank: d_int):
 
 
 @dace.program
-def comp(in_arr: d_float[lNy + 2, N], out_arr: d_float[lNy + 2, N],
-         rank: d_int):
+def comp_interior(in_arr: d_float[lNy + 2, N], out_arr: d_float[lNy + 2, N],
+                  rank: d_int):
     if rank == 0:
-        # noff = 1
-        # soff = 0
-        # out_arr[1 + noff:-1,
-        #         1:-1] = 0.2 * (in_arr[1 + noff:-1, 1:-1] +
-        #                        in_arr[1 + noff:-1, :-2] +
-        #                        in_arr[1 + noff:-1, 2:] +
-        #                        in_arr[2 + noff:, 1:-1] + in_arr[noff:-2, 1:-1])
-        out_arr[2:-1, 1:-1] = 0.2 * (in_arr[2:-1, 1:-1] + in_arr[2:-1, :-2] +
-                                     in_arr[2:-1, 2:] + in_arr[3:, 1:-1] +
-                                     in_arr[1:-2, 1:-1])
+        out_arr[2:-2, 1:-1] = 0.2 * (in_arr[2:-2, 1:-1] + in_arr[2:-2, :-2] +
+                                     in_arr[2:-2, 2:] + in_arr[3:-1, 1:-1] +
+                                     in_arr[1:-3, 1:-1])
     elif rank == size - 1:
-        # soff = 1
-        # noff = 0
-        # out_arr[1:-1 - soff,
-        #         1:-1] = 0.2 * (in_arr[1:-1 - soff, 1:-1] +
-        #                        in_arr[1:-1 - soff, :-2] +
-        #                        in_arr[1:-1 - soff, 2:] + in_arr[2:-soff, 1:-1] +
-        #                        in_arr[:-2 - soff, 1:-1])
-        out_arr[1:-2, 1:-1] = 0.2 * (in_arr[1:-2, 1:-1] + in_arr[1:-2, :-2] +
-                                     in_arr[1:-2, 2:] + in_arr[2:-1, 1:-1] +
-                                     in_arr[:-3, 1:-1])
+        out_arr[2:-2, 1:-1] = 0.2 * (in_arr[2:-2, 1:-1] + in_arr[2:-2, :-2] +
+                                     in_arr[2:-2, 2:] + in_arr[3:-1, 1:-1] +
+                                     in_arr[1:-3, 1:-1])
     else:
-        # soff = 0
-        # noff = 0
-        out_arr[1:-1, 1:-1] = 0.2 * (in_arr[1:-1, 1:-1] + in_arr[1:-1, :-2] +
-                                     in_arr[1:-1, 2:] + in_arr[2:, 1:-1] +
-                                     in_arr[:-2, 1:-1])
+        out_arr[2:-2, 1:-1] = 0.2 * (in_arr[2:-2, 1:-1] + in_arr[2:-2, :-2] +
+                                     in_arr[2:-2, 2:] + in_arr[3:-1, 1:-1] +
+                                     in_arr[1:-3, 1:-1])
+
+
+@dace.program
+def comp_boundary(in_arr: d_float[lNy + 2, N], out_arr: d_float[lNy + 2, N],
+                  rank: d_int):
+    if rank == 0:
+        # South boundary
+        out_arr[-2, 1:-1] = 0.2 * (in_arr[-2, 1:-1] + in_arr[-2, :-2] +
+                                   in_arr[-2, 2:] + in_arr[-1, 1:-1] +
+                                   in_arr[-3, 1:-1])
+    elif rank == size - 1:
+        # North boundary
+        out_arr[1,
+                1:-1] = 0.2 * (in_arr[1, 1:-1] + in_arr[1, :-2] + in_arr[1, 2:]
+                               + in_arr[2, 1:-1] + in_arr[0, 1:-1])
+    else:
+        # North boundary
+        out_arr[1,
+                1:-1] = 0.2 * (in_arr[1, 1:-1] + in_arr[1, :-2] + in_arr[1, 2:]
+                               + in_arr[2, 1:-1] + in_arr[0, 1:-1])
+        # South boundary
+        out_arr[-2, 1:-1] = 0.2 * (in_arr[-2, 1:-1] + in_arr[-2, :-2] +
+                                   in_arr[-2, 2:] + in_arr[-1, 1:-1] +
+                                   in_arr[-3, 1:-1])
 
 
 @dace.program
@@ -103,25 +113,17 @@ def jacobi_2d_mgpu(A: d_float[Ny, N], B: d_float[Ny, N]):
 
         lA[1:-1, :] = A[rank * lNy:(rank + 1) * lNy, :]
         lB[1:-1, :] = B[rank * lNy:(rank + 1) * lNy, :]
-        # if rank == 0:
-        #     noff, soff = 1, 0
-        # elif rank == size - 1:
-        #     noff, soff = 0, 1
-        # else:
-        #     noff, soff = 0, 0
+
+        exchange(lA, rank=rank, size=size)
         for t in range(1, TSTEPS):
-            exchange(lA, rank=rank, size=size)
-            comp(lA, lB, rank=rank, size=size)
-            # lB[1 + noff:-1 - soff, 1:-1] = 0.2 * (
-            #     lA[1 + noff:-1 - soff, 1:-1] + lA[1 + noff:-1 - soff, :-2] +
-            #     lA[1 + noff:-1 - soff, 2:] + lA[2 + noff:-soff, 1:-1] +
-            #     lA[noff:-2 - soff, 1:-1])
+            comp_boundary(lA, lB, rank=rank, size=size)
             exchange(lB, rank=rank, size=size)
-            comp(lB, lA, rank=rank, size=size)
-            # lA[1 + noff:-1 - soff, 1:-1] = 0.2 * (
-            #     lB[1 + noff:-1 - soff, 1:-1] + lB[1 + noff:-1 - soff, :-2] +
-            #     lB[1 + noff:-1 - soff, 2:] + lB[2 + noff:-soff, 1:-1] +
-            #     lB[noff:-2 - soff, 1:-1])
+            comp_interior(lA, lB, rank=rank, size=size)
+
+            comp_boundary(lB, lA, rank=rank, size=size)
+            if t < TSTEPS - 1:
+                exchange(lA, rank=rank, size=size)
+            comp_interior(lB, lA, rank=rank, size=size)
 
         A[rank * lNy:(rank + 1) * lNy] = lA[1:-1, :]
         B[rank * lNy:(rank + 1) * lNy] = lB[1:-1, :]
@@ -170,7 +172,6 @@ if __name__ == "__main__":
     sdfg.apply_transformations_repeated(MapFusion)
     sdfg.apply_strict_transformations()
 
-    # sdfg.name += '_correct'
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
     # out_path = '.dacecache/local/jacobi/' + sdfg.name
