@@ -70,7 +70,7 @@ class WarpTiling(xf.Transformation):
                 nsdfg_node.symbol_mapping['__tid'] = __tid
                 if '__tid' not in nsdfg.symbols:
                     nsdfg.add_symbol('__tid', dtypes.int32)
-            nmap.range[-1] = (nmap.range[-1][0], nmap.range[-1][1],
+            nmap.range[-1] = (nmap.range[-1][0], nmap.range[-1][1] - __tid,
                               nmap.range[-1][2] * self.warp_size)
             subgraph = nstate.scope_subgraph(nmap)
             subgraph.replace(nmap.params[-1], f'{nmap.params[-1]} + __tid')
