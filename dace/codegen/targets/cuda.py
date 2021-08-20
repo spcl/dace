@@ -1874,8 +1874,12 @@ void  *{kname}_args[] = {{ {kargs} }};
                 sdfg, state_id, scope_entry)
 
             outer_scope = sdfg.nodes()[state_id].entry_node(scope_entry)
-            if not outer_scope:
-                outer_scope = sdfg.parent.entry_node(sdfg.parent_nsdfg_node)
+            current_sdfg = sdfg
+            while not outer_scope:
+                current_state = current_sdfg.parent
+                nsdfg_node = current_sdfg.parent_nsdfg_node
+                outer_scope = current_state.entry_node(nsdfg_node)
+                current_sdfg = current_state.parent
             callsite_stream.write(
                 'if ({} < {}) {{'.format(
                     outer_scope.map.params[0],
