@@ -127,19 +127,24 @@ class WarpTiling(xf.Transformation):
 
                     # Add local access between thread-local and warp reduction
                     name = nsdfg._find_new_name(out_edge.data.data)
-                    nsdfg.add_scalar(name, nsdfg.arrays[out_edge.data.data].dtype, transient=True)
+                    nsdfg.add_scalar(name,
+                                     nsdfg.arrays[out_edge.data.data].dtype,
+                                     transient=True)
 
                     # Initialize thread-local to global value
                     read = nstate.add_read(out_edge.data.data)
                     write = nstate.add_write(name)
-                    edge = nstate.add_nedge(read, write, copy.deepcopy(out_edge.data))
+                    edge = nstate.add_nedge(read, write,
+                                            copy.deepcopy(out_edge.data))
                     edge.data.wcr = None
-                    xfh.state_fission(nsdfg, SubgraphView(nstate, [read, write]))
+                    xfh.state_fission(nsdfg,
+                                      SubgraphView(nstate, [read, write]))
 
                     newnode = nstate.add_access(name)
                     nstate.remove_edge(out_edge)
-                    edge = nstate.add_edge(out_edge.src, out_edge.src_conn, newnode,
-                                           None, copy.deepcopy(out_edge.data))
+                    edge = nstate.add_edge(out_edge.src, out_edge.src_conn,
+                                           newnode, None,
+                                           copy.deepcopy(out_edge.data))
                     for e in nstate.memlet_path(edge):
                         e.data.data = name
                         e.data.subset = subsets.Range([(0, 0, 1)])
@@ -150,9 +155,7 @@ class WarpTiling(xf.Transformation):
                             'warpreduce', {'__a'}, {'__out'},
                             f'__out = dace::warpReduce<{credtype}, {ctype}>::reduce(__a);',
                             dtypes.Language.CPP)
-                        nstate.add_edge(newnode, None, wrt, '__a',
-                                        # Memlet(out_edge.data.data))
-                                        Memlet(name))
+                        nstate.add_edge(newnode, None, wrt, '__a', Memlet(name))
                         out_edge.data.wcr = None
                         nstate.add_edge(wrt, '__out', out_edge.dst, None,
                                         out_edge.data)
