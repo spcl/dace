@@ -1,11 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the trivial-tasklet-elimination transformation. """
 
-from dace import registry
+from dace import data, registry
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.transformation import helpers
 from dace.properties import make_properties
 
 
@@ -30,8 +29,14 @@ class TrivialTaskletElimination(transformation.Transformation):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        read = graph.nodes()[candidate[TrivialTaskletElimination.read]]
         tasklet = graph.nodes()[candidate[TrivialTaskletElimination.tasklet]]
         write = graph.nodes()[candidate[TrivialTaskletElimination.write]]
+        # Do not apply on Streams
+        if isinstance(sdfg.arrays[read.data], data.Stream):
+            return False
+        if isinstance(sdfg.arrays[write.data], data.Stream):
+            return False
         if len(graph.in_edges(tasklet)) != 1:
             return False
         if len(graph.out_edges(tasklet)) != 1:
