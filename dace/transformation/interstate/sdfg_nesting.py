@@ -559,7 +559,6 @@ class InlineSDFG(transformation.Transformation):
                            edge.data)
             # Fission state if necessary
             if not any(n in cc for n in subgraph.nodes()):
-            if subgraph.nodes()[0] not in cc:
                 cc2 = SubgraphView([n for n in state.nodes() if n not in cc])
                 state = helpers.state_fission(sdfg, cc2)
 
