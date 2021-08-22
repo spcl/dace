@@ -543,7 +543,7 @@ class InlineSDFG(transformation.Transformation):
                            edge.data)
             # Fission state if necessary
             cc = utils.weakly_connected_component(state, node)
-            if subgraph.nodes()[0] not in cc:
+            if not any(n in cc for n in subgraph.nodes()):
                 helpers.state_fission(state.parent, cc)
         for edge in removed_out_edges:
             # Find last access node that refers to this edge
@@ -558,7 +558,7 @@ class InlineSDFG(transformation.Transformation):
             state.add_edge(node, edge.src_conn, edge.dst, edge.dst_conn,
                            edge.data)
             # Fission state if necessary
-            cc = utils.weakly_connected_component(state, node)
+            if not any(n in cc for n in subgraph.nodes()):
             if subgraph.nodes()[0] not in cc:
                 cc2 = SubgraphView([n for n in state.nodes() if n not in cc])
                 state = helpers.state_fission(sdfg, cc2)
