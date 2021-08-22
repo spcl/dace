@@ -55,8 +55,11 @@ class ExpandReducePure(pm.ExpandTransformation):
         if len(osqdim) == 0:  # Fix for scalars
             osqdim = [0]
 
-        # Standardize axes
-        axes = node.axes if node.axes else [i for i in range(input_dims)]
+        # Standardize and squeeze axes
+        axes = node.axes if node.axes else [
+            i for i in range(len(inedge.data.subset))
+        ]
+        axes = [axis for axis in axes if axis in isqdim]
 
         # Create nested SDFG
         nsdfg = SDFG('reduce')
@@ -241,10 +244,9 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
                 '_o%d' % i: '0:%s' % symstr(sz)
                 for i, sz in enumerate(outsubset.size())
             })
-        outm = dace.Memlet.simple('_out',
-                                  ','.join(
-                                      ['_o%d' % i for i in range(output_dims)]))
-                                  #wcr_str=node.wcr)
+        outm = dace.Memlet.simple(
+            '_out', ','.join(['_o%d' % i for i in range(output_dims)]))
+        #wcr_str=node.wcr)
         inmm = dace.Memlet.simple('_in', ','.join(input_subset))
 
         idt = nstate.add_tasklet('reset', {}, {'o'}, f'o = {node.identity}')
