@@ -34,6 +34,14 @@ class PruneConnectors(pm.Transformation):
         prune_in = nsdfg.in_connectors.keys() - read_set
         prune_out = nsdfg.out_connectors.keys() - write_set
 
+        # Take into account symbol mappings
+        strs = tuple(nsdfg.symbol_mapping.values())
+        syms = tuple(symbolic.pystr_to_symbolic(s) for s in strs)
+        symnames = tuple(s.name if hasattr(s, 'name') else '' for s in syms)
+        for conn in list(prune_in):
+            if conn in syms or conn in symnames:
+                prune_in.remove(conn)
+
         # Add WCR outputs to "do not prune" input list
         for e in graph.out_edges(nsdfg):
             if e.data.wcr is not None and e.src_conn in prune_in:

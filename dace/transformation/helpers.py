@@ -726,25 +726,30 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry,
         map_entry,
         dims + [i for i in range(len(map_entry.map.params)) if i not in dims])
     # Expand map
-    entries = MapExpansion.apply_to(sdfg, map_entry=map_entry)
+    if len(map_entry.map.params) > 1:
+        entries = MapExpansion.apply_to(sdfg, map_entry=map_entry)
 
-    # Collapse extracted maps
-    extracted_map = entries[0]
-    for idx in range(len(dims) - 1):
-        extracted_map, _ = MapCollapse.apply_to(
-            sdfg,
-            _outer_map_entry=extracted_map,
-            _inner_map_entry=entries[idx + 1],
-        )
+        # Collapse extracted maps
+        extracted_map = entries[0]
+        for idx in range(len(dims) - 1):
+            extracted_map, _ = MapCollapse.apply_to(
+                sdfg,
+                _outer_map_entry=extracted_map,
+                _inner_map_entry=entries[idx + 1],
+            )
 
-    # Collapse remaining maps
-    map_to_collapse = entries[len(dims)]
-    for idx in range(len(dims), len(entries) - 1):
-        map_to_collapse, _ = MapCollapse.apply_to(
-            sdfg,
-            _outer_map_entry=map_to_collapse,
-            _inner_map_entry=entries[idx + 1],
-        )
+        # Collapse remaining maps
+        map_to_collapse = entries[len(dims)]
+        for idx in range(len(dims), len(entries) - 1):
+            map_to_collapse, _ = MapCollapse.apply_to(
+                sdfg,
+                _outer_map_entry=map_to_collapse,
+                _inner_map_entry=entries[idx + 1],
+            )
+    else:
+        extracted_map = map_entry
+        map_to_collapse = map_entry
+
 
     return extracted_map, map_to_collapse
 

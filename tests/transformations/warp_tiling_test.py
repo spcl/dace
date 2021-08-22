@@ -46,7 +46,7 @@ def test_warp_softmax(vector_length=1):
     sdfg.apply_strict_transformations()
     sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusion])
     sdfg.apply_transformations(GPUTransformSDFG)
-    sdfg.apply_transformations(WarpTiling)
+    assert sdfg.apply_transformations(WarpTiling) == 1
     sdfg.apply_transformations_repeated([HoistState, InlineSDFG, StateFusion],
                                         strict=True)
     sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusion])
