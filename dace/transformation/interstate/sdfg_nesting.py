@@ -15,7 +15,7 @@ import copy
 
 from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
-from dace.sdfg import nodes, propagation
+from dace.sdfg import nodes, propagation, utils
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types, propagation
@@ -120,14 +120,18 @@ class InlineSDFG(transformation.Transformation):
             if (edge.data.is_empty()
                     and not isinstance(edge.src, nodes.EntryNode)):
                 return False
-            in_connectors.add(edge.dst_conn)
+            # NOTE: Empty memlets do not attach to connectors
+            if edge.dst_conn or not edge.data.is_empty():
+                in_connectors.add(edge.dst_conn)
         for edge in graph.out_edges(nested_sdfg):
             if edge.src_conn in out_connectors:
                 return False
             if (edge.data.is_empty()
                     and not isinstance(edge.dst, nodes.ExitNode)):
                 return False
-            out_connectors.add(edge.src_conn)
+            # NOTE: Empty memlets do not attach to connectors
+            if edge.src_conn or not edge.data.is_empty():
+                out_connectors.add(edge.src_conn)
 
         # Ensure output connectors have no additional outputs (if in a scope),
         # and ensure no two connectors are directly connected to each other
@@ -537,6 +541,10 @@ class InlineSDFG(transformation.Transformation):
                     '(reconnecting inputs)')
             state.add_edge(edge.src, edge.src_conn, node, edge.dst_conn,
                            edge.data)
+            # Fission state if necessary
+            cc = utils.weakly_connected_component(state, node)
+            if not any(n in cc for n in subgraph.nodes()):
+                helpers.state_fission(state.parent, cc)
         for edge in removed_out_edges:
             # Find last access node that refers to this edge
             try:
@@ -549,6 +557,11 @@ class InlineSDFG(transformation.Transformation):
                     '(reconnecting outputs)')
             state.add_edge(node, edge.src_conn, edge.dst, edge.dst_conn,
                            edge.data)
+            # Fission state if necessary
+            cc = utils.weakly_connected_component(state, node)
+            if not any(n in cc for n in subgraph.nodes()):
+                cc2 = SubgraphView([n for n in state.nodes() if n not in cc])
+                state = helpers.state_fission(sdfg, cc2)
 
         #######################################################
         # Remove nested SDFG node

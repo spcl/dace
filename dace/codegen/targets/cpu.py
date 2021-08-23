@@ -673,7 +673,17 @@ class CPUCodeGen(TargetCodeGenerator):
                 if isinstance(src_nodedesc,
                               (data.Scalar, data.Array)) and isinstance(
                                   dst_nodedesc, data.Stream):
-                    if hasattr(src_nodedesc, "src"):  # ArrayStreamView
+                    if isinstance(src_nodedesc, data.Scalar):
+                        stream.write(
+                            "{s}.push({arr});".format(
+                                s=cpp.ptr(dst_node.data, dst_nodedesc, sdfg),
+                                arr=cpp.ptr(src_node.data, src_nodedesc, sdfg)
+                            ),
+                            sdfg,
+                            state_id,
+                            [src_node, dst_node],
+                        )
+                    elif hasattr(src_nodedesc, "src"):  # ArrayStreamView
                         stream.write(
                             "{s}.push({arr});".format(
                                 s=cpp.ptr(dst_node.data, dst_nodedesc, sdfg),
