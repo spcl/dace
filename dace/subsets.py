@@ -5,7 +5,7 @@ import re
 import sympy as sp
 from functools import reduce
 import sympy.core.sympify
-from typing import List, Optional, Set, Union
+from typing import List, Optional, Sequence, Set, Union
 import warnings
 from dace.config import Config
 
@@ -216,32 +216,36 @@ class Range(Subset):
 
     def num_elements(self):
         return reduce(sp.Mul, self.size(), 1)
-    
+
     def num_elements_exact(self):
         return reduce(sp.Mul, self.bounding_box_size(), 1)
 
     def size(self, for_codegen=False):
         """ Returns the number of elements in each dimension. """
+        offset = [-1 if (s < 0) == True else 1 for _, _, s in self.ranges]
+
         if for_codegen == True:
             int_ceil = sp.Function('int_ceil')
             return [
                 ts * int_ceil(
                     ((iMax.approx if isinstance(iMax, symbolic.SymExpr) else
-                      iMax) + 1 - (iMin.approx if isinstance(
+                      iMax) + off - (iMin.approx if isinstance(
                           iMin, symbolic.SymExpr) else iMin)),
                     (step.approx
                      if isinstance(step, symbolic.SymExpr) else step))
-                for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
+                for (iMin, iMax,
+                     step), off, ts in zip(self.ranges, offset, self.tile_sizes)
             ]
         else:
             return [
                 ts * sp.ceiling(
                     ((iMax.approx
-                      if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
+                      if isinstance(iMax, symbolic.SymExpr) else iMax) + off -
                      (iMin.approx if isinstance(iMin, symbolic.SymExpr) else
                       iMin)) / (step.approx if isinstance(
                           step, symbolic.SymExpr) else step))
-                for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
+                for (iMin, iMax,
+                     step), off, ts in zip(self.ranges, offset, self.tile_sizes)
             ]
 
     def size_exact(self):
@@ -401,7 +405,10 @@ class Range(Subset):
             dres = _simplified_str(d[0])
             if d[1] is not None:
                 if d[1] - d[0] != 0:
-                    dres += ':' + _simplified_str(d[1] + 1)
+                    off = 1
+                    if d[2] is not None and (d[2] < 0) == True:
+                        off = -1
+                    dres += ':' + _simplified_str(d[1] + off)
             if d[2] != 1:
                 if d[1] is None:
                     dres += ':'
@@ -509,10 +516,6 @@ class Range(Subset):
                     begin = symbolic.SymExpr(tokens[0][0], tokens[0][1])
                 else:
                     begin = symbolic.pystr_to_symbolic(tokens[0])
-                if isinstance(tokens[1], tuple):
-                    end = symbolic.SymExpr(tokens[1][0], tokens[1][1]) - 1
-                else:
-                    end = symbolic.pystr_to_symbolic(tokens[1]) - 1
                 if len(tokens) >= 3:
                     if isinstance(tokens[2], tuple):
                         step = symbolic.SymExpr(tokens[2][0], tokens[2][1])
@@ -520,6 +523,13 @@ class Range(Subset):
                         step = symbolic.SymExpr(tokens[2])
                 else:
                     step = 1
+                eoff = -1
+                if (step < 0) == True:
+                    eoff = 1
+                if isinstance(tokens[1], tuple):
+                    end = symbolic.SymExpr(tokens[1][0], tokens[1][1]) + eoff
+                else:
+                    end = symbolic.pystr_to_symbolic(tokens[1]) + eoff
                 if len(tokens) >= 4:
                     if isinstance(tokens[3], tuple):
                         tsize = tokens[3][0]
@@ -617,9 +627,10 @@ class Range(Subset):
                              rs * other[idx][2], rt))
                     else:
                         new_subset.append(rb + rs * other[idx])
-        elif (other.data_dims() == 0 and
-                all([r == (0, 0, 1) if isinstance(other, Range) else r == 0
-                for r in other])):
+        elif (other.data_dims() == 0 and all([
+                r == (0, 0, 1) if isinstance(other, Range) else r == 0
+                for r in other
+        ])):
             # NOTE: This is a special case where the other subset is the
             # (potentially multidimensional) index zero.
             # For example, A[i, j] -> tmp[0]. The result of such a
@@ -668,7 +679,24 @@ class Range(Subset):
             self.offset(self, True, indices=offset_indices)
         return non_ones
 
-    def unsqueeze(self, axes):
+    def unsqueeze(self, axes: Sequence[int]) -> List[int]:
+        """ Adds 0:1 ranges to the subset, in the indices contained in axes.
+        
+        The method is mostly used to restore subsets that had their length-1
+        ranges removed (i.e., squeezed subsets). Hence, the method is
+        called 'unsqueeze'.
+
+        Examples (initial subset, axes -> result subset, output):
+        - [i:i+10], [0] -> [0:1, i], [0]
+        - [i:i+10], [0, 1] -> [0:1, 0:1, i:i+10], [0, 1]
+        - [i:i+10], [0, 2] -> [0:1, i:i+10, 0:1], [0, 2]
+        - [i:i+10], [0, 1, 2, 3] -> [0:1, 0:1, 0:1, 0:1, i:i+10], [0, 1, 2, 3]
+        - [i:i+10], [0, 2, 3, 4] -> [0:1, i:i+10, 0:1, 0:1, 0:1], [0, 2, 3, 4]
+        - [i:i+10], [0, 1, 1] -> [0:1, 0:1, 0:1, i:i+10], [0:1, 1, 2]
+
+        :param axes: The axes where the 0:1 ranges should be added.
+        :return: A list of the actual axes where the 0:1 ranges were added.
+        """
         result = []
         for axis in sorted(axes):
             self.ranges.insert(axis, (0, 0, 1))
@@ -733,7 +761,7 @@ class Range(Subset):
                     return False
             except TypeError:  # cannot determine truth value of Relational
                 type_error = True
-        
+
         if type_error:
             raise TypeError("cannot determine truth value of Relational")
 
@@ -781,7 +809,7 @@ class Indices(Subset):
 
     def num_elements(self):
         return 1
-    
+
     def num_elements_exact(self):
         return 1
 
@@ -936,7 +964,24 @@ class Indices(Subset):
         self.indices = squeezed_indices
         return non_ones
 
-    def unsqueeze(self, axes):
+    def unsqueeze(self, axes: Sequence[int]) -> List[int]:
+        """ Adds zeroes to the subset, in the indices contained in axes.
+        
+        The method is mostly used to restore subsets that had their
+        zero-indices removed (i.e., squeezed subsets). Hence, the method is
+        called 'unsqueeze'.
+
+        Examples (initial subset, axes -> result subset, output):
+        - [i], [0] -> [0, i], [0]
+        - [i], [0, 1] -> [0, 0, i], [0, 1]
+        - [i], [0, 2] -> [0, i, 0], [0, 2]
+        - [i], [0, 1, 2, 3] -> [0, 0, 0, 0, i], [0, 1, 2, 3]
+        - [i], [0, 2, 3, 4] -> [0, i, 0, 0, 0], [0, 2, 3, 4]
+        - [i], [0, 1, 1] -> [0, 0, 0, i], [0, 1, 2]
+
+        :param axes: The axes where the zero-indices should be added.
+        :return: A list of the actual axes where the zero-indices were added.
+        """
         result = []
         for axis in sorted(axes):
             self.indices.insert(axis, 0)

@@ -10,6 +10,7 @@ from .map_interchange import MapInterchange
 from .map_dim_shuffle import MapDimShuffle
 from .map_fusion import MapFusion
 from .map_fission import MapFission
+from .map_unroll import MapUnroll
 from .trivial_map_elimination import TrivialMapElimination
 from .trivial_map_range_elimination import TrivialMapRangeElimination
 
@@ -37,6 +38,8 @@ from .redundant_array_copying import (RedundantArrayCopyingIn,
 from .merge_arrays import InMergeArrays, OutMergeArrays, MergeSourceSinkArrays
 from .prune_connectors import PruneConnectors, PruneSymbols
 from .wcr_conversion import AugAssignToWCR
+from .tasklet_fusion import SimpleTaskletFusion
+from .trivial_tasklet_elimination import TrivialTaskletElimination
 
 # Device-related
 from .copy_to_device import CopyToDevice

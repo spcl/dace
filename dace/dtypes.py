@@ -70,6 +70,18 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Persistent,
 ]
 
+# A subset of on-GPU storage types
+GPU_STORAGES = [
+    StorageType.GPU_Shared,
+]
+
+# A subset of on-FPGA storage types
+FPGA_STORAGES = [
+    StorageType.FPGA_Local,
+    StorageType.FPGA_Registers,
+    StorageType.FPGA_ShiftRegister,
+]
+
 
 @undefined_safe_enum
 class ReductionType(aenum.AutoNumberEnum):
@@ -139,6 +151,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
     Timer = ()
     PAPI_Counters = ()
     GPU_Events = ()
+    FPGA = ()
 
 
 @undefined_safe_enum
@@ -195,10 +208,12 @@ _CTYPES = {
     numpy.int8: "char",
     numpy.int16: "short",
     numpy.int32: "int",
+    numpy.intc: "int",
     numpy.int64: "long long",
     numpy.uint8: "unsigned char",
     numpy.uint16: "unsigned short",
     numpy.uint32: "unsigned int",
+    numpy.uintc:  "unsigned int",
     numpy.uint64: "unsigned long long",
     numpy.float16: "dace::float16",
     numpy.float32: "float",
@@ -217,11 +232,13 @@ _OCL_TYPES = {
     numpy.int8: "char",
     numpy.int16: "short",
     numpy.int32: "int",
+    numpy.intc: "int",
     numpy.int64: "long long",
     numpy.uint8: "unsigned char",
     numpy.uint16: "unsigned short",
     numpy.uint32: "unsigned int",
     numpy.uint64: "unsigned long long",
+    numpy.uintc: "unsigned int",
     numpy.float32: "float",
     numpy.float64: "double",
     numpy.complex64: "complex float",
@@ -235,7 +252,9 @@ _OCL_VECTOR_TYPES = {
     numpy.int16: "short",
     numpy.uint16: "ushort",
     numpy.int32: "int",
+    numpy.intc: "int",
     numpy.uint32: "uint",
+    numpy.uintc: "uint",
     numpy.int64: "long",
     numpy.uint64: "ulong",
     numpy.float16: "half",
@@ -257,10 +276,12 @@ _FFI_CTYPES = {
     numpy.int16: ctypes.c_int16,
     numpy.int32: ctypes.c_int32,
     numpy.int64: ctypes.c_int64,
+    numpy.intc: ctypes.c_int,
     numpy.uint8: ctypes.c_uint8,
     numpy.uint16: ctypes.c_uint16,
     numpy.uint32: ctypes.c_uint32,
     numpy.uint64: ctypes.c_uint64,
+    numpy.uintc: ctypes.c_uint,
     numpy.float16: ctypes.c_uint16,
     numpy.float32: ctypes.c_float,
     numpy.float64: ctypes.c_double,
@@ -280,10 +301,12 @@ _BYTES = {
     numpy.int16: 2,
     numpy.int32: 4,
     numpy.int64: 8,
+    numpy.intc: 4,
     numpy.uint8: 1,
     numpy.uint16: 2,
     numpy.uint32: 4,
     numpy.uint64: 8,
+    numpy.uintc: 4,
     numpy.float16: 2,
     numpy.float32: 4,
     numpy.float64: 8,
@@ -440,8 +463,8 @@ def min_value(dtype: typeclass):
 
 
 def reduction_identity(dtype: typeclass, red: ReductionType) -> Any:
-    """ 
-    Returns known identity values (which we can safely reset transients to) 
+    """
+    Returns known identity values (which we can safely reset transients to)
     for built-in reduction types.
     :param dtype: Input type.
     :param red: Reduction type.
@@ -765,6 +788,30 @@ class struct(typeclass):
         )
 
 
+class constant:
+    """
+    Data descriptor type hint signalling that argument evaluation is
+    deferred to call time.
+
+    Example usage::
+
+        @dace.program
+        def example(A: dace.float64[20], constant: dace.constant):
+            if constant == 0:
+                return A + 1
+            else:
+                return A + 2
+
+
+    In the above code, ``constant`` will be replaced with its value at call time
+    during parsing.
+    """
+    @staticmethod
+    def __descriptor__():
+        raise ValueError('All constant arguments must be provided in order '
+                         'to compile the SDFG ahead-of-time.')
+
+
 ####### Utility function ##############
 def ptrtonumpy(ptr, inner_ctype, shape):
     import ctypes
@@ -924,6 +971,7 @@ _CONSTANT_TYPES = [
     complex,
     str,
     bool,
+    slice,
     numpy.bool_,
     numpy.intc,
     numpy.intp,
@@ -997,10 +1045,12 @@ DTYPE_TO_TYPECLASS = {
     numpy.int16: int16,
     numpy.int32: int32,
     numpy.int64: int64,
+    numpy.intc: int32,
     numpy.uint8: uint8,
     numpy.uint16: uint16,
     numpy.uint32: uint32,
     numpy.uint64: uint64,
+    numpy.uintc: uint32,
     numpy.float16: float16,
     numpy.float32: float32,
     numpy.float64: float64,
@@ -1236,12 +1286,25 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # Host-only allocation
     if storage in [
             StorageType.CPU_Heap, StorageType.CPU_Pinned,
-            StorageType.CPU_ThreadLocal, StorageType.FPGA_Global,
-            StorageType.GPU_Global
+            StorageType.CPU_ThreadLocal
     ]:
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
             ScheduleType.MPI
+        ]
+
+    # GPU-global memory
+    if storage is StorageType.GPU_Global:
+        return schedule in [
+            ScheduleType.CPU_Multicore, ScheduleType.Sequential,
+            ScheduleType.MPI, ScheduleType.GPU_Default
+        ]
+
+    # FPGA-global memory
+    if storage is StorageType.FPGA_Global:
+        return schedule in [
+            ScheduleType.CPU_Multicore, ScheduleType.Sequential,
+            ScheduleType.MPI, ScheduleType.FPGA_Device
         ]
 
     # FPGA-local memory

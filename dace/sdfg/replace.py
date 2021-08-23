@@ -76,6 +76,14 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
                         (properties.RangeProperty, properties.ShapeProperty)):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
+            # Don't replace variables that appear as an input or an output
+            # connector, as this should shadow the outer declaration.
+            if hasattr(node, 'in_connectors'):
+                if name in node.in_connectors:
+                    continue
+            if hasattr(node, 'out_connectors'):
+                if name in node.out_connectors:
+                    continue
             if isinstance(propval.code, str):
                 if str(name) != str(new_name):
                     lang = propval.language
@@ -98,5 +106,14 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
               and pname == 'symbol_mapping'):
             # Symbol mappings for nested SDFGs
             for symname, sym_mapping in propval.items():
-                propval[symname] = symbolic.pystr_to_symbolic(sym_mapping).subs(
-                    symrepl)
+                propval[symname] = symbolic.pystr_to_symbolic(
+                    str(sym_mapping)).subs(symrepl)
+
+
+def replace_properties_dict(node: Any, symrepl: Dict[symbolic.SymbolicType,
+                                                     symbolic.SymbolicType]):
+    for k, v in symrepl.items():
+        replace_properties(
+            node,
+            {symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)},
+            str(k), str(v))

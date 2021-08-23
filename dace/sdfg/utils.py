@@ -9,8 +9,8 @@ import networkx as nx
 import dace.sdfg.nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.nodes import Node
-from dace.sdfg.state import SDFGState
+from dace.sdfg.nodes import Node, NestedSDFG
+from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
@@ -589,7 +589,7 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
 
 def get_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
     """
-    Given a view access node, returns the viewed access node 
+    Given a view access node, returns the viewed access node
     if existent, else None
     """
     view_edge = get_view_edge(state, view)
@@ -604,7 +604,7 @@ def get_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
 def get_view_edge(state: SDFGState,
                   view: nd.AccessNode) -> gr.MultiConnectorEdge[mm.Memlet]:
     """
-    Given a view access node, returns the 
+    Given a view access node, returns the
     incoming/outgoing edge which points to the viewed access node.
     See the ruleset in the documentation of ``dace.data.View``.
 
@@ -738,6 +738,34 @@ def find_output_arraynode(graph, edge):
     return result.dst
 
 
+def weakly_connected_component(dfg,
+                               node_in_component: Node) -> StateSubgraphView:
+    """
+    Returns a subgraph of all nodes that form the weakly connected component in
+    `dfg` that contains `node_in_component`.
+    """
+    seen = set()
+    to_search = [node_in_component]
+    while to_search:
+        node = to_search.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        for succ in dfg.successors(node):
+            to_search.append(succ)
+    to_search = [node_in_component]
+    seen.remove(node_in_component)
+    while to_search:
+        node = to_search.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        for succ in dfg.predecessors(node):
+            to_search.append(succ)
+    subgraph = StateSubgraphView(dfg, seen)
+    return subgraph
+
+
 def concurrent_subgraphs(graph):
     """ Finds subgraphs of an SDFGState or ScopeSubgraphView that can
         run concurrently. """
@@ -845,15 +873,33 @@ def separate_maps(state, dfg, schedule):
     return result
 
 
-def _transients_in_scope(sdfg, scope, scope_dict):
-    return set(
-        node.data for node in scope_dict[scope.entry if scope else scope]
-        if isinstance(node, nd.AccessNode) and sdfg.arrays[node.data].transient)
+def _transients_in_scope(sdfg, outer_scope, scope_dict, include_nested):
+    scopes = [outer_scope.entry]
+    transients = set()
+    while scopes:
+        scope = scopes.pop()
+        for node in scope_dict[scope]:
+            if (isinstance(node, nd.AccessNode)
+                    and sdfg.arrays[node.data].transient):
+                transients.add(node.data)
+            if (isinstance(node, nd.EntryNode) and node is not scope
+                    and include_nested):
+                # "Recurse" into nested scopes
+                scopes.append(node)
+        if not include_nested:
+            # Only run the first iteration of the while loop
+            break
+    return transients
 
 
-def local_transients(sdfg, dfg, entry_node):
-    """ Returns transients local to the scope defined by the specified entry
-        node in the dataflow graph. """
+def local_transients(sdfg, dfg, entry_node, include_nested=False):
+    """
+    Returns transients local to the scope defined by the specified entry node in
+    the dataflow graph.
+    :param entry_node: The entry node that opens the scope. If `None`, the
+                       top-level scope is used.
+    :param include_nested: Include transients defined in nested scopes.
+    """
     state: SDFGState = dfg._graph
     scope_children = state.scope_children()
     scope_tree = state.scope_tree()
@@ -863,13 +909,14 @@ def local_transients(sdfg, dfg, entry_node):
     defined_transients = set(sdfg.shared_transients())
 
     # Get access nodes in current scope
-    transients = _transients_in_scope(sdfg, current_scope, scope_children)
+    transients = _transients_in_scope(sdfg, current_scope, scope_children,
+                                      include_nested)
 
     # Add transients defined in parent scopes
     while current_scope.parent is not None:
         current_scope = current_scope.parent
         defined_transients.update(
-            _transients_in_scope(sdfg, current_scope, scope_children))
+            _transients_in_scope(sdfg, current_scope, scope_children, False))
 
     return sorted(list(transients - defined_transients))
 
@@ -949,15 +996,25 @@ def trace_nested_access(
     return list(reversed(trace))
 
 
-def fuse_states(sdfg: SDFG) -> int:
+def fuse_states(sdfg: SDFG, strict: bool = True, progress: bool = False) -> int:
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs) using an optimized
     routine that uses the structure of the StateFusion transformation.
     :param sdfg: The SDFG to transform.
+    :param strict: If True (default), operates in strict mode.
+    :param progress: If True, prints out a progress bar of fusion (may be
+                     inaccurate, requires ``tqdm``)
     :return: The total number of states fused.
     """
     from dace.transformation.interstate import StateFusion  # Avoid import loop
     counter = 0
+    if progress:
+        from tqdm import tqdm
+        fusible_states = 0
+        for sd in sdfg.all_sdfgs_recursive():
+            fusible_states += sd.number_of_edges()
+        pbar = tqdm(total=fusible_states)
+
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
         while True:
@@ -972,16 +1029,67 @@ def fuse_states(sdfg: SDFG) -> int:
                     StateFusion.second_state: v
                 }
                 sf = StateFusion(id, -1, candidate, 0, override=True)
-                if sf.can_be_applied(sd, candidate, 0, sd, strict=True):
+                if sf.can_be_applied(sd, candidate, 0, sd, strict=strict):
                     sf.apply(sd)
                     applied += 1
                     counter += 1
+                    if progress:
+                        pbar.update(1)
                     skip_nodes.add(u)
                     skip_nodes.add(v)
             if applied == 0:
                 break
+    if progress:
+        pbar.close()
     if config.Config.get_bool('debugprint'):
         print(f'Applied {counter} State Fusions')
+    return counter
+
+
+def inline_sdfgs(sdfg: SDFG,
+                 strict: bool = True,
+                 progress: bool = False) -> int:
+    """
+    Inlines all possible nested SDFGs (or sub-SDFGs) using an optimized
+    routine that uses the structure of the SDFG hierarchy.
+    :param sdfg: The SDFG to transform.
+    :param strict: If True (default), operates in strict mode.
+    :param progress: If True, prints out a progress bar of inlining (may be
+                     inaccurate, requires ``tqdm``)
+    :return: The total number of SDFGs inlined.
+    """
+    from dace.transformation.interstate import InlineSDFG  # Avoid import loop
+    counter = 0
+    sdfgs = list(sdfg.all_sdfgs_recursive())
+    if progress:
+        from tqdm import tqdm
+        pbar = tqdm(total=len(sdfgs))
+
+    for sd in reversed(sdfgs):
+        id = sd.sdfg_id
+        for state_id, state in enumerate(sd.nodes()):
+            for node in state.nodes():
+                if not isinstance(node, NestedSDFG):
+                    continue
+                # We have to reevaluate every time due to changing IDs
+                node_id = state.node_id(node)
+                candidate = {
+                    InlineSDFG._nested_sdfg: node_id,
+                }
+                inliner = InlineSDFG(id, state_id, candidate, 0, override=True)
+                if inliner.can_be_applied(state,
+                                          candidate,
+                                          0,
+                                          sd,
+                                          strict=strict):
+                    inliner.apply(sd)
+                    counter += 1
+                    if progress:
+                        pbar.update(1)
+    if progress:
+        pbar.close()
+    if config.Config.get_bool('debugprint'):
+        print(f'Inlined {counter} SDFGs')
     return counter
 
 
@@ -1007,7 +1115,7 @@ def load_precompiled_sdfg(folder: str):
 def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
     """
     From the given state, return the next set of states that are reachable
-    in the SDFG, skipping empty states. Traversal stops at the non-empty 
+    in the SDFG, skipping empty states. Traversal stops at the non-empty
     state.
     This function is used to determine whether synchronization should happen
     at the end of a GPU state.

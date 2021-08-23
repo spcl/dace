@@ -36,7 +36,8 @@ def cuda_helper():
                                               targets.cuda.CUDACodeGen,
                                               "CudaDummy")
 
-    BUILD_PATH = os.path.join('.dacecache', "cuda_helper")
+    build_folder = dace.Config.get('default_build_folder')
+    BUILD_PATH = os.path.join(build_folder, "cuda_helper")
     compiler.generate_program_folder(None, [program, dummy_cuda_target],
                                      BUILD_PATH)
     compiler.configure_and_compile(BUILD_PATH)
@@ -91,7 +92,8 @@ def test_preallocate_transients_in_state_struct(cuda_helper):
     state_struct = compiledsdfg.get_state_struct()
 
     # copy the B array into the transient ptr
-    cuda_helper.host_to_gpu(state_struct.persistent_transient, B.copy())
+    ptr = getattr(state_struct, f'__{sdfg.sdfg_id}_persistent_transient')
+    cuda_helper.host_to_gpu(ptr, B.copy())
     result = np.zeros_like(B)
     compiledsdfg(A=A, __return=result)
 

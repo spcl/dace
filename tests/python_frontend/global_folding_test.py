@@ -40,8 +40,7 @@ A = 5
 
 @dace.program
 def instantiated_global(A):
-    A[cfg.q] = (A[cfg.get_parameter()] * MyConfiguration.get_random_number() +
-                cfg.p) + val
+    A[cfg.q] = (A[cfg.p // 2] * 4 + cfg.p) + val
 
 
 def test_instantiated_global():
@@ -50,10 +49,28 @@ def test_instantiated_global():
     """
     A = np.random.rand(10)
     reg_A = np.copy(A)
-    reg_A[cfg.q] = (reg_A[cfg.get_parameter()] *
-                    MyConfiguration.get_random_number() + cfg.p) + val
+    reg_A[cfg.q] = (reg_A[cfg.p // 2] * 4 + cfg.p) + val
 
     instantiated_global(A)
+
+    assert np.allclose(A, reg_A)
+
+
+@dace.program(constant_functions=True)
+def instantiated_global_with_funcs(A):
+    A[cfg.q] = (A[cfg.get_parameter()] * MyConfiguration.get_random_number() +
+                cfg.p) + val
+
+
+def test_instantiated_global_resolve_functions():
+    """
+    Tests constant/symbolic values with predetermined global values.
+    """
+    A = np.random.rand(10)
+    reg_A = np.copy(A)
+    reg_A[cfg.q] = (reg_A[cfg.p // 2] * 4 + cfg.p) + val
+
+    instantiated_global_with_funcs(A)
 
     assert np.allclose(A, reg_A)
 
@@ -158,39 +175,11 @@ def test_dead_code_elimination_unreachable():
     assert '3' in parsed_code and '2' in parsed_code  # Reachable code
 
 
-# TODO: dace.constant should signal that argument evaluation is deferred to
-#       (nested) call time
-# dace.constant = lambda x: None
-# def test_constant_parameter():
-#     """
-#     Tests nested functions with constant parameters passed in as arguments.
-#     """
-#     @dace.program
-#     def nested_func(cfg: dace.constant(MyConfiguration), A: dace.float64[20]):
-#         return A[cfg.p]
-
-#     @dace.program
-#     def constant_parameter(
-#             cfg: dace.constant(MyConfiguration),
-#             cfg2: dace.constant(MyConfiguration), A: dace.float64[20]):
-#         A[cfg.q] = nested_func(cfg, A)
-#         A[MyConfiguration.get_random_number()] = nested_func(cfg2, A)
-
-#     cfg1 = MyConfiguration(3)
-#     cfg2 = MyConfiguration(4)
-#     A = np.random.rand(20)
-#     reg_A = np.copy(A)
-#     reg_A[12] = reg_A[6]
-#     reg_A[4] = reg_A[8]
-
-#     constant_parameter(cfg1, cfg2, A)
-#     assert np.allclose(A, reg_A)
-
 if __name__ == '__main__':
     test_instantiated_global()
+    test_instantiated_global_resolve_functions()
     test_nested_globals()
     test_dead_code_elimination_if()
     test_dead_code_elimination_ifexp()
     test_dead_code_elimination_noelse()
     test_dead_code_elimination_unreachable()
-    # test_constant_parameter()

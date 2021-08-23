@@ -1,11 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Explicitly distributed Gemm sample with block-cyclic distribution."""
-import numpy as np
 import dace as dc
+import numpy as np
+import os
 import timeit
+from dace.sdfg.utils import load_precompiled_sdfg
 from mpi4py import MPI
-
-from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
 
 lNI = dc.symbol('lNI', dtype=dc.int64, integer=True, positive=True)
 lNJ = dc.symbol('lNJ', dtype=dc.int64, integer=True, positive=True)
@@ -22,14 +22,14 @@ NK = lNKa * Py  # == lNKb * Px
 
 
 def relerr(ref, val):
-    return np.linalg.norm(ref-val) / np.linalg.norm(ref)
+    return np.linalg.norm(ref - val) / np.linalg.norm(ref)
 
 
 @dc.program
 def gemm_shared(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
                 A: dc.float64[NI, NK], B: dc.float64[NK, NJ]):
 
-    C[:] = alpha * A @ B + beta * C 
+    C[:] = alpha * A @ B + beta * C
 
 
 @dc.program
@@ -50,7 +50,7 @@ def gemm_distr(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
     dc.comm.Scatter(B2, lB)
     dc.comm.Scatter(C2, lC)
 
-    tmp  = distr.MatMult(lA, lB, (NI, NJ, NK))
+    tmp = distr.MatMult(lA, lB, (NI, NJ, NK))
 
     lC[:] = alpha * tmp + beta * lC
 
@@ -62,7 +62,7 @@ def gemm_distr(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
 def gemm_distr2(alpha: dc.float64, beta: dc.float64, C: dc.float64[lNI, lNJ],
                 A: dc.float64[lNI, lNKa], B: dc.float64[lNKb, lNJ]):
 
-    tmp  = distr.MatMult(A, B, (lNI * Px, lNJ * Py, NK))
+    tmp = distr.MatMult(A, B, (lNI * Px, lNJ * Py, NK))
     C[:] = alpha * tmp + beta * C
 
 
@@ -70,7 +70,7 @@ def gemm_distr2(alpha: dc.float64, beta: dc.float64, C: dc.float64[lNI, lNJ],
 def gemm_distr3(alpha: dc.float64, beta: dc.float64, C: dc.float64[lNI, lNJ],
                 A: dc.float64[lNI, lNKa], B: dc.float64[lNKb, lNJ]):
 
-    tmp  = distr.MatMult(A, B, (lNI * Px, lNJ * Py, NK), (Bx, By), (Bx, By))
+    tmp = distr.MatMult(A, B, (lNI * Px, lNJ * Py, NK), (Bx, By), (Bx, By))
     C[:] = alpha * tmp + beta * C
 
 
@@ -80,8 +80,8 @@ def init_data(NI, NJ, NK, datatype):
     beta = datatype(1.2)
     rng = np.random.default_rng(42)
     C = np.zeros((NI, NJ), dtype=datatype)
-    A = np.arange(0, NI*NK, dtype=datatype).reshape(NI, NK)
-    B = np.arange(NI*NK, NI*NK+NK*NJ, dtype=datatype).reshape(NK, NJ)
+    A = np.arange(0, NI * NK, dtype=datatype).reshape(NI, NK)
+    B = np.arange(NI * NK, NI * NK + NK * NJ, dtype=datatype).reshape(NK, NJ)
 
     return alpha, beta, C, A, B
 
@@ -90,14 +90,7 @@ def time_to_ms(raw):
     return int(round(raw * 1000))
 
 
-grid = {
-    1: (1, 1),
-    2: (2, 1),
-    4: (2, 2),
-    8: (4, 2),
-    16: (4, 4)
-}
-
+grid = {1: (1, 1), 2: (2, 1), 4: (2, 2), 8: (4, 2), 16: (4, 4)}
 
 if __name__ == "__main__":
 
@@ -123,9 +116,8 @@ if __name__ == "__main__":
         if rank == 0:
             return init_data(NI, NJ, NK, np.float64)
         else:
-            return (
-                1.5, 1.2, None, None, None)
-    
+            return (1.5, 1.2, None, None, None)
+
     alpha, beta, C, A, B = setup_func(rank)
 
     lA = np.empty((lNI, lNKa), dtype=np.float64)
@@ -140,27 +132,30 @@ if __name__ == "__main__":
             for pj in range(Py):
                 for li in range(BI):
                     for lj in range(BKa):
-                        si = (pi + li*Px)*Bx
-                        sj = (pj + lj*Py)*By
-                        A2[pi, pj, li*Bx:li*Bx+Bx, lj*By:lj*By+By] = A[si:si+Bx, sj:sj+By]
+                        si = (pi + li * Px) * Bx
+                        sj = (pj + lj * Py) * By
+                        A2[pi, pj, li * Bx:li * Bx + Bx,
+                           lj * By:lj * By + By] = A[si:si + Bx, sj:sj + By]
 
         B2 = np.empty((Px, Py, lNKb, lNJ), dtype=np.float64)
         for pi in range(Px):
             for pj in range(Py):
                 for li in range(BKb):
                     for lj in range(BJ):
-                        si = (pi + li*Px)*Bx
-                        sj = (pj + lj*Py)*By
-                        B2[pi, pj, li*Bx:li*Bx+Bx, lj*By:lj*By+By] = B[si:si+Bx, sj:sj+By]
-        
+                        si = (pi + li * Px) * Bx
+                        sj = (pj + lj * Py) * By
+                        B2[pi, pj, li * Bx:li * Bx + Bx,
+                           lj * By:lj * By + By] = B[si:si + Bx, sj:sj + By]
+
         C2 = np.empty((Px, Py, lNI, lNJ), dtype=np.float64)
         for pi in range(Px):
             for pj in range(Py):
                 for li in range(BI):
                     for lj in range(BJ):
-                        si = (pi + li*Px)*Bx
-                        sj = (pj + lj*Py)*By
-                        C2[pi, pj, li*Bx:li*Bx+Bx, lj*By:lj*By+By] = C[si:si+Bx, sj:sj+By]
+                        si = (pi + li * Px) * Bx
+                        sj = (pj + lj * Py) * By
+                        C2[pi, pj, li * Bx:li * Bx + Bx,
+                           lj * By:lj * By + By] = C[si:si + Bx, sj:sj + By]
 
     comm.Scatter(A2, lA)
     comm.Scatter(B2, lB)
@@ -175,20 +170,30 @@ if __name__ == "__main__":
         mpi_func = mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:
-        mpi_sdfg = dc.SDFG.from_file(".dacecache/{n}/program.sdfg".format(
-            n=gemm_distr3.name))
-        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
-            ".dacecache/{n}/build/lib{n}.so".format(n=gemm_distr3.name),
-            gemm_distr3.name))
+        build_folder = dc.Config.get('default_build_folder')
+        mpi_func = load_precompiled_sdfg(
+            os.path.join(build_folder, gemm_distr3.name))
 
     ldict = locals()
-    
+
     comm.Barrier()
 
-    mpi_func(A=lA, B=lB, C=tC, alpha=alpha, beta=beta,
-             NI=NI, NJ=NJ, NK=NK,
-             lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb,
-             Px=Px, Py=Py, Bx=Bx, By=By)
+    mpi_func(A=lA,
+             B=lB,
+             C=tC,
+             alpha=alpha,
+             beta=beta,
+             NI=NI,
+             NJ=NJ,
+             NK=NK,
+             lNI=lNI,
+             lNJ=lNJ,
+             lNKa=lNKa,
+             lNKb=lNKb,
+             Px=Px,
+             Py=Py,
+             Bx=Bx,
+             By=By)
 
     comm.Gather(tC, C2)
     if rank == 0:
@@ -196,9 +201,11 @@ if __name__ == "__main__":
             for pj in range(Py):
                 for li in range(BI):
                     for lj in range(BJ):
-                        si = (pi + li*Px)*Bx
-                        sj = (pj + lj*Py)*By
-                        C[si:si+Bx, sj:sj+By] = C2[pi, pj, li*Bx:li*Bx+Bx, lj*By:lj*By+By]
+                        si = (pi + li * Px) * Bx
+                        sj = (pj + lj * Py) * By
+                        C[si:si + Bx,
+                          sj:sj + By] = C2[pi, pj, li * Bx:li * Bx + Bx,
+                                           lj * By:lj * By + By]
 
     comm.Barrier()
 
@@ -223,11 +230,21 @@ if __name__ == "__main__":
 
         alpha, beta, refC, refA, refB = init_data(NI, NJ, NK, np.float64)
         shared_sdfg = gemm_shared.compile()
-        shared_sdfg(A=refA, B=refB, C=refC, alpha=alpha, beta=beta,
-                    NI=NI, NJ=NJ, NK=NK,
-                    lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb,
-                    Px=Px, Py=Py)
+        shared_sdfg(A=refA,
+                    B=refB,
+                    C=refC,
+                    alpha=alpha,
+                    beta=beta,
+                    NI=NI,
+                    NJ=NJ,
+                    NK=NK,
+                    lNI=lNI,
+                    lNJ=lNJ,
+                    lNKa=lNKa,
+                    lNKb=lNKb,
+                    Px=Px,
+                    Py=Py)
 
         print("=======Validation=======")
-        assert(np.allclose(C, refC))
+        assert (np.allclose(C, refC))
         print("OK")

@@ -53,6 +53,9 @@ class MyTestCallAttributesClass:
 
             return call.__sdfg__(*args)
 
+        def __sdfg_signature__(self):
+            return ['A'], []
+
     def __init__(self, n=5) -> None:
         self.n = n
         self.call_me = MyTestCallAttributesClass.SDFGMethodTestClass()
@@ -159,7 +162,7 @@ def someprog_indirection(a):
 
 
 def test_decorator():
-    @dace.program
+    @dace.program(constant_functions=True)
     def otherprog(A: dace.float64[20]):
         res = np.empty_like(A)
         someprog_indirection(3)(A=A, __return=res)

@@ -11,8 +11,9 @@ from dace.sdfg.graph import (OrderedMultiDiConnectorGraph, MultiConnectorEdge,
                              SubgraphView)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
-from dace.properties import (EnumProperty, Property, DictProperty, SubsetProperty,
-                             SymbolicProperty, CodeBlock, make_properties)
+from dace.properties import (EnumProperty, Property, DictProperty,
+                             SubsetProperty, SymbolicProperty, CodeBlock,
+                             make_properties)
 from inspect import getframeinfo, stack
 import itertools
 from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple,
@@ -31,6 +32,22 @@ def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
 
     caller = getframeinfo(stack()[2][0])
     return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
+
+
+def _make_iterators(ndrange):
+    # Input can either be a dictionary or a list of pairs
+    if isinstance(ndrange, list):
+        params = [k for k, v in ndrange]
+        ndrange = {k: v for k, v in ndrange}
+    else:
+        params = list(ndrange.keys())
+
+    if ndrange and isinstance(next(iter(ndrange.values())), tuple):
+        map_range = sbs.Range([ndrange[p] for p in params])
+    else:
+        map_range = SubsetProperty.from_string(", ".join(
+            [ndrange[p] for p in params]))
+    return params, map_range
 
 
 class StateGraphView(object):
@@ -712,8 +729,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
     instrument = EnumProperty(
         dtype=dtypes.InstrumentationType,
         desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation
-    )
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "
@@ -1162,21 +1178,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
 
         return s
 
-    def _make_iterators(self, ndrange):
-        # Input can either be a dictionary or a list of pairs
-        if isinstance(ndrange, list):
-            params = [k for k, v in ndrange]
-            ndrange = {k: v for k, v in ndrange}
-        else:
-            params = list(ndrange.keys())
-
-        if ndrange and isinstance(next(iter(ndrange.values())), tuple):
-            map_range = sbs.Range([ndrange[p] for p in params])
-        else:
-            map_range = SubsetProperty.from_string(", ".join(
-                [ndrange[p] for p in params]))
-        return params, map_range
-
     def add_map(
         self,
         name,
@@ -1196,7 +1197,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         """
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
         map = nd.Map(name,
-                     *self._make_iterators(ndrange),
+                     *_make_iterators(ndrange),
                      schedule=schedule,
                      unroll=unroll,
                      debuginfo=debuginfo)
@@ -1311,7 +1312,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             debuginfo=debuginfo,
         )
         map = nd.Map(map_name,
-                     *self._make_iterators(map_ranges),
+                     *_make_iterators(map_ranges),
                      schedule=schedule,
                      unroll=unroll_map,
                      debuginfo=debuginfo)
@@ -1325,8 +1326,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         if external_edges:
             input_nodes = input_nodes or {}
             output_nodes = output_nodes or {}
-            input_data = set(memlet.data for memlet in inputs.values())
-            output_data = set(memlet.data for memlet in outputs.values())
+            input_data = dtypes.deduplicate(
+                [memlet.data for memlet in inputs.values()])
+            output_data = dtypes.deduplicate(
+                [memlet.data for memlet in outputs.values()])
             for inp in input_data:
                 if inp in input_nodes:
                     inpdict[inp] = input_nodes[inp]
@@ -1338,13 +1341,15 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                 else:
                     outdict[out] = self.add_write(out)
 
+        edges = []
+
         # Connect inputs from map to tasklet
         tomemlet = {}
         for name, memlet in inputs.items():
             # Set memlet local name
             memlet.name = name
             # Add internal memlet edge
-            self.add_edge(map_entry, None, tasklet, name, memlet)
+            edges.append(self.add_edge(map_entry, None, tasklet, name, memlet))
             tomemlet[memlet.data] = memlet
 
         # If there are no inputs, add empty memlet
@@ -1359,8 +1364,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                                                     map_entry, True)
                 else:
                     outer_memlet = tomemlet[inp]
-                self.add_edge(inpnode, None, map_entry, "IN_" + inp,
-                              outer_memlet)
+                edges.append(
+                    self.add_edge(inpnode, None, map_entry, "IN_" + inp,
+                                  outer_memlet))
 
                 # Add connectors to internal edges
                 for e in self.out_edges(map_entry):
@@ -1377,7 +1383,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             # Set memlet local name
             memlet.name = name
             # Add internal memlet edge
-            self.add_edge(tasklet, name, map_exit, None, memlet)
+            edges.append(self.add_edge(tasklet, name, map_exit, None, memlet))
             tomemlet[memlet.data] = memlet
 
         # If there are no outputs, add empty memlet
@@ -1392,8 +1398,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                                                     map_exit, True)
                 else:
                     outer_memlet = tomemlet[out]
-                self.add_edge(map_exit, "OUT_" + out, outnode, None,
-                              outer_memlet)
+                edges.append(
+                    self.add_edge(map_exit, "OUT_" + out, outnode, None,
+                                  outer_memlet))
 
                 # Add connectors to internal edges
                 for e in self.in_edges(map_exit):
@@ -1403,6 +1410,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                 # Add connectors to map entry
                 map_exit.add_in_connector("IN_" + out)
                 map_exit.add_out_connector("OUT_" + out)
+
+        # Try to initialize memlets
+        for edge in edges:
+            edge.data.try_initialize(self.parent, self, edge)
 
         return tasklet, map_entry, map_exit
 
@@ -1470,7 +1481,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         """
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
         pipeline = nd.Pipeline(name,
-                               *self._make_iterators(ndrange),
+                               *_make_iterators(ndrange),
                                init_size=init_size,
                                init_overlap=init_overlap,
                                drain_size=drain_size,
@@ -1587,6 +1598,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                 external_connector,
                 external_memlet,
             )
+
+        # Try to initialize memlets
+        iedge.data.try_initialize(self.parent, self, iedge)
+        eedge.data.try_initialize(self.parent, self, eedge)
 
         return (iedge, eedge)
 

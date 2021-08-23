@@ -19,10 +19,7 @@ def view(sdfg, filename=None):
        :param filename: the filename to write the HTML to. If `None`, a temporary file will be created.
     """
     if type(sdfg) is dace.SDFG:
-        old_meta = dace.serialize.JSON_STORE_METADATA
-        dace.serialize.JSON_STORE_METADATA = False
         sdfg = dace.serialize.dumps(sdfg.to_json())
-        dace.serialize.JSON_STORE_METADATA = old_meta
 
     basepath = os.path.dirname(os.path.realpath(diode.__file__))
     template_loader = jinja2.FileSystemLoader(

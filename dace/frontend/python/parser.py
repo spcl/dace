@@ -1,81 +1,41 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ DaCe Python parsing functionality and entry point to Python frontend. """
-from __future__ import print_function
-import collections
+from dataclasses import dataclass
 import inspect
+import itertools
 import copy
 import os
 import sympy
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Sequence, Tuple
+import warnings
 
 from dace import symbolic, dtypes
 from dace.config import Config
-from dace.frontend.python import newast
+from dace.frontend.python import newast, common as pycommon, cached_program
 from dace.sdfg import SDFG
 from dace.data import create_datadescriptor, Data
 
 ArgTypes = Dict[str, Data]
 
 
-def get_type_annotations(f,
-                         f_argnames,
-                         decorator_args,
-                         method: bool = False) -> ArgTypes:
-    """ Obtains types from decorator or from type annotations in a function. 
-    """
-    type_annotations = {}
-    if hasattr(f, '__annotations__'):
-        type_annotations.update(f.__annotations__)
-
-    # Type annotation conditions
-    has_args = len(decorator_args) > 0
-    has_annotations = len(type_annotations) > 0
-
-    # Set __return* arrays from return type annotations
-    if 'return' in type_annotations:
-        rettype = type_annotations['return']
-        if isinstance(rettype, tuple):
-            for i, subrettype in enumerate(rettype):
-                type_annotations[f'__return_{i}'] = subrettype
-        else:
-            type_annotations['__return'] = rettype
-        del type_annotations['return']
-
-    # If both arguments and annotations are given, annotations take precedence
-    if has_args and has_annotations:
-        has_args = False
-
-    # Alert if there are any discrepancies between annotations and arguments
-    if has_args:
-        # Make sure all arguments are annotated
-        if len(decorator_args) != len(f_argnames):
-            raise SyntaxError('Decorator arguments must match number of DaCe ' +
-                              'program parameters (expecting ' +
-                              str(len(f_argnames)) + ')')
-        # Return arguments and their matched decorator annotation
-        return {
-            k: create_datadescriptor(v)
-            for k, v in zip(f_argnames, decorator_args)
-        }
-    elif has_annotations:
-        # Make sure all arguments are annotated
-        filtered = {
-            a
-            for a in type_annotations.keys() if not a.startswith('__return')
-        }
-        if len(filtered) != len(f_argnames):
-            raise SyntaxError(
-                'Either none or all DaCe program parameters must ' +
-                'have type annotations')
-    return {k: create_datadescriptor(v) for k, v in type_annotations.items()}
-
-
-def _get_argnames(f):
+def _get_argnames(f) -> List[str]:
     """ Returns a Python function's argument names. """
     try:
-        return inspect.getfullargspec(f).args
+        return list(inspect.signature(f).parameters.keys())
     except AttributeError:
         return inspect.getargspec(f).args
+
+
+def _is_empty(val: Any) -> bool:
+    """ Helper function to deal with inspect._empty. """
+    return val is inspect._empty
+
+
+def _get_cell_contents_or_none(cell):
+    try:
+        return cell.cell_contents
+    except ValueError:  # Empty cell
+        return None
 
 
 def _get_locals_and_globals(f):
@@ -89,8 +49,9 @@ def _get_locals_and_globals(f):
     if f.__closure__ is not None:
         result.update({
             k: v
-            for k, v in zip(f.__code__.co_freevars,
-                            [x.cell_contents for x in f.__closure__])
+            for k, v in
+            zip(f.__code__.co_freevars,
+                [_get_cell_contents_or_none(x) for x in f.__closure__])
         })
 
     return result
@@ -167,16 +128,24 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
     return {str(k)[8:]: v for k, v in result.items()}
 
 
-class DaceProgram:
+class DaceProgram(pycommon.SDFGConvertible):
     """ A data-centric program object, obtained by decorating a function with
         ``@dace.program``. """
-    def __init__(self, f, args, kwargs, auto_optimize, device, method=False):
+    def __init__(self,
+                 f,
+                 args,
+                 kwargs,
+                 auto_optimize,
+                 device,
+                 constant_functions=False,
+                 method=False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
         self.dec_args = args
         self.dec_kwargs = kwargs
         self.name = f.__name__
+        self.resolve_functions = constant_functions
         self.argnames = _get_argnames(f)
         if method:
             self.objname = self.argnames[0]
@@ -186,15 +155,42 @@ class DaceProgram:
         self.auto_optimize = auto_optimize
         self.device = device
         self._methodobj: Any = None  #: Object whose method this program is
+        self.validate: bool = True  #: Whether to validate on code generation
 
         self.global_vars = _get_locals_and_globals(f)
+        self.signature = inspect.signature(f)
+        self.default_args = {
+            pname: pval.default
+            for pname, pval in self.signature.parameters.items()
+            if not _is_empty(pval.default)
+        }
+        self.symbols = set(k for k, v in self.global_vars.items()
+                           if isinstance(v, symbolic.symbol))
+        self.closure_arg_mapping: Dict[str, str] = {}
+
+        # Add type annotations from decorator arguments (DEPRECATED)
+        if self.dec_args:
+            warnings.warn(
+                'Using decorator arguments for types is deprecated. '
+                'Please use type hints on function arguments instead.')
+            for arg, pval in zip(self.dec_args,
+                                 self.signature.parameters.values()):
+                pval._annotation = arg
+
+        # Keep a set of constant arguments to ignore
+        self.constant_args = set(
+            pname for pname, pval in self.signature.parameters.items()
+            if pval.annotation is dtypes.constant)
 
         if self.argnames is None:
             self.argnames = []
 
-        # Cache SDFG with last used arguments
-        self._cache: Tuple[ArgTypes, SDFG,
-                           compiled_sdfg.CompiledSDFG] = (None, None, None)
+        # Cache SDFGs with last used arguments
+        self._cache = cached_program.DaceProgramCache(self._eval_closure)
+        # These sets fill up after the first parsing of the program and stay
+        # the same unless the argument types change
+        self.closure_array_keys: Set[str] = set()
+        self.closure_constant_keys: Set[str] = set()
 
     def _auto_optimize(self,
                        sdfg: SDFG,
@@ -204,33 +200,35 @@ class DaceProgram:
         from dace.transformation.auto import auto_optimize as autoopt
         return autoopt.auto_optimize(sdfg, self.device, symbols=symbols)
 
-    def to_sdfg(self, *args, strict=None, save=False) -> SDFG:
+    def to_sdfg(self,
+                *args,
+                strict=None,
+                save=False,
+                validate=False,
+                **kwargs) -> SDFG:
         """ Parses the DaCe function into an SDFG. """
-        return self.parse(*args, strict=strict, save=save)
+        return self._parse(args,
+                           kwargs,
+                           strict=strict,
+                           save=save,
+                           validate=validate)[0]
 
-    def __sdfg__(self, *args) -> SDFG:
-        return self.parse(*args, strict=None, save=False)
+    def __sdfg__(self, *args, **kwargs) -> SDFG:
+        return self._parse(args,
+                           kwargs,
+                           strict=None,
+                           save=False,
+                           validate=False)[0]
 
-    def compile(self, *args, strict=None, save=False):
+    def compile(self, *args, strict=None, save=False, **kwargs):
         """ Convenience function that parses and compiles a DaCe program. """
-        sdfg = self.parse(*args, strict=strict, save=save)
+        sdfg = self._parse(args, kwargs, strict=strict, save=save)[0]
 
         # Invoke auto-optimization as necessary
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
             sdfg = self._auto_optimize(sdfg)
 
-        return sdfg.compile()
-
-    def is_cached(self, argtypes: ArgTypes) -> bool:
-        """
-        Returns True if the given arguments exist in the compiled SDFG cache.
-        """
-        if self._cache[0] is None or self._cache[0].keys() != argtypes.keys():
-            return False
-        for k, v in self._cache[0].items():
-            if not v.is_equivalent(argtypes[k]):
-                return False
-        return True
+        return sdfg.compile(validate=self.validate)
 
     @property
     def methodobj(self) -> Any:
@@ -239,51 +237,91 @@ class DaceProgram:
     @methodobj.setter
     def methodobj(self, new_obj: Any):
         self._methodobj = new_obj
-        # Clear cache upon changing parent object
-        del self._cache
-        self._cache = (None, None, None)
+
+    def __sdfg_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
+        return self.argnames, self.constant_args
+
+    def __sdfg_closure__(
+            self,
+            reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """ 
+        Returns the closure arrays of the SDFG represented by the dace 
+        program as a mapping between array name and the corresponding value.
+        :param reevaluate: If given, re-evaluates closure elements based on the
+                           input mapping (keys: array names, values: expressions
+                           to evaluate). Otherwise, re-evaluates 
+                           ``self.closure_arg_mapping``.
+        :return: A dictionary mapping between a name in the closure and the 
+                 currently evaluated value.
+        """
+        mapping = self.closure_arg_mapping if reevaluate is None else reevaluate
+        return {
+            k: eval(v, self.global_vars) if isinstance(v, str) else v
+            for k, v in mapping.items()
+        }
+
+    def _eval_closure(self,
+                      arg: str,
+                      extra_constants: Optional[Dict[str, Any]] = None) -> Any:
+        extra_constants = extra_constants or {}
+        if arg in self.closure_arg_mapping:
+            return self.closure_arg_mapping[arg]
+        return eval(arg, self.global_vars, extra_constants)
+
+    def _create_sdfg_args(self, sdfg: SDFG, args: Tuple[Any],
+                          kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        # Start with default arguments, then add other arguments
+        result = {**self.default_args}
+        # Reconstruct keyword arguments
+        result.update({aname: arg for aname, arg in zip(self.argnames, args)})
+        result.update(kwargs)
+
+        # Add closure arguments to the call
+        result.update(self.__sdfg_closure__())
+
+        # Update arguments with symbols in data shapes
+        result.update(
+            infer_symbols_from_datadescriptor(
+                sdfg, {
+                    k: create_datadescriptor(v)
+                    for k, v in result.items() if k not in self.constant_args
+                }))
+        return result
 
     def __call__(self, *args, **kwargs):
         """ Convenience function that parses, compiles, and runs a DaCe 
             program. """
-        # Check if SDFG with these argument types and shapes is cached
+        # Update global variables with current closure
+        self.global_vars = _get_locals_and_globals(self.f)
+
+        # Move "self" from an argument into the closure
         if self.methodobj is not None:
             self.global_vars[self.objname] = self.methodobj
 
-        argtypes = get_type_annotations(self.f, self.argnames, args,
-                                        self.methodobj is not None)
-        if self.is_cached(argtypes):
-            self._cache[2].clear_return_values()
-            # Reconstruct keyword arguments
-            kwargs.update(
-                {aname: arg
-                 for aname, arg in zip(self.argnames, args)})
-            kwargs.update(
-                infer_symbols_from_datadescriptor(self._cache[1], kwargs))
-            return self._cache[2](**kwargs)
+        argtypes, arg_mapping, constant_args = self._get_type_annotations(
+            args, kwargs)
+
+        # Cache key
+        cachekey = self._cache.make_key(argtypes, self.closure_array_keys,
+                                        self.closure_constant_keys,
+                                        constant_args)
+
+        if self._cache.has(cachekey):
+            entry = self._cache.get(cachekey)
+            kwargs.update(arg_mapping)
+            entry.compiled_sdfg.clear_return_values()
+            return entry.compiled_sdfg(
+                **self._create_sdfg_args(entry.sdfg, args, kwargs))
 
         # Clear cache to enforce deletion and closure of compiled program
-        del self._cache
-
-        # Add classes (that are not defined yet when the method is) to closure
-        local_vars = _get_locals_and_globals(self.f)
-        self.global_vars.update({
-            k: v
-            for k, v in local_vars.items()
-            if k not in self.global_vars and isinstance(v, type)
-        })
+        # self._cache.pop()
 
         # Parse SDFG
-        sdfg = self.parse(*args)
+        sdfg, self.closure_arg_mapping = self._parse(args, kwargs)
 
         # Add named arguments to the call
-        kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
-
-        # Update arguments with symbols in data shapes
-        kwargs.update(
-            infer_symbols_from_datadescriptor(
-                sdfg, {k: create_datadescriptor(v)
-                       for k, v in kwargs.items()}))
+        kwargs.update(arg_mapping)
+        sdfg_args = self._create_sdfg_args(sdfg, args, kwargs)
 
         # Allow CLI to prompt for optimizations
         if Config.get_bool('optimizer', 'transform_on_call'):
@@ -291,30 +329,41 @@ class DaceProgram:
 
         # Invoke auto-optimization as necessary
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
-            sdfg = self._auto_optimize(sdfg, symbols=kwargs)
+            sdfg = self._auto_optimize(sdfg, symbols=sdfg_args)
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
-        binaryobj = sdfg.compile()
+        binaryobj = sdfg.compile(validate=self.validate)
 
-        self._cache = (argtypes, sdfg, binaryobj)
+        # Recreate key and add to cache
+        cachekey = self._cache.make_key(argtypes, self.closure_array_keys,
+                                        self.closure_constant_keys,
+                                        constant_args)
+        self._cache.add(cachekey, sdfg, binaryobj)
 
         # Call SDFG
-        result = binaryobj(**kwargs)
+        result = binaryobj(**sdfg_args)
 
         return result
 
-    def parse(self, *compilation_args, strict=None, save=False) -> SDFG:
+    def _parse(self,
+               args,
+               kwargs,
+               strict=None,
+               save=False,
+               validate=False) -> SDFG:
         """ 
         Try to parse a DaceProgram object and return the `dace.SDFG` object
         that corresponds to it.
         :param function: DaceProgram object (obtained from the ``@dace.program``
                         decorator).
-        :param compilation_args: Various compilation arguments e.g. dtypes.
+        :param args: The given arguments to the function.
+        :param kwargs: The given keyword arguments to the function.
         :param strict: Whether to apply strict transformations or not (None
                        uses configuration-defined value). 
         :param save: If True, saves the generated SDFG to 
                     ``_dacegraphs/program.sdfg`` after parsing.
+        :param validate: If True, validates the resulting SDFG after creation.
         :return: The generated SDFG object.
         """
         # Avoid import loop
@@ -322,10 +371,7 @@ class DaceProgram:
         from dace.transformation import helpers as xfh
 
         # Obtain DaCe program as SDFG
-        sdfg = self.generate_pdp(*compilation_args, strict=strict)
-
-        # Set argument names
-        sdfg.arg_names = self.argnames
+        sdfg, arg_mapping = self._generate_pdp(args, kwargs, strict=strict)
 
         # Apply strict transformations automatically
         if (strict == True or (strict is None and Config.get_bool(
@@ -349,13 +395,162 @@ class DaceProgram:
             sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
         # Validate SDFG
-        sdfg.validate()
+        if validate:
+            sdfg.validate()
 
-        return sdfg
+        return sdfg, arg_mapping
 
-    def generate_pdp(self, *compilation_args, strict=None):
+    def _get_type_annotations(
+        self, given_args: Tuple[Any], given_kwargs: Dict[str, Any]
+    ) -> Tuple[ArgTypes, Dict[str, Any], Dict[str, Any]]:
+        """ 
+        Obtains types from decorator and/or from type annotations in a function.
+        :param given_args: The call-site arguments to the dace.program.
+        :param given_kwargs: The call-site keyword arguments to the program.
+        :return: A 3-tuple containing (argument type mapping, extra argument 
+                 mapping, extra global variable mapping)
+        """
+        types: ArgTypes = {}
+        arg_mapping: Dict[str, Any] = {}
+        gvar_mapping: Dict[str, Any] = {}
+
+        # Filter symbols out of given keyword arguments
+        given_kwargs = {
+            k: v
+            for k, v in given_kwargs.items() if k not in self.symbols
+        }
+
+        # Make argument mapping to either type annotation, given argument,
+        # default argument, or ignore (symbols and constants).
+        nargs = len(given_args)
+        arg_ind = 0
+        for i, (aname, sig_arg) in enumerate(self.signature.parameters.items()):
+            if self.objname is not None and aname == self.objname:
+                # Skip "self" argument
+                continue
+
+            ann = sig_arg.annotation
+
+            # Variable-length arguments: obtain from the remainder of given_*
+            if sig_arg.kind is sig_arg.VAR_POSITIONAL:
+                vargs = given_args[arg_ind:]
+
+                # If an annotation is given but the argument list is empty, fail
+                if not _is_empty(ann) and len(vargs) == 0:
+                    raise SyntaxError(
+                        'Cannot compile DaCe program with type-annotated '
+                        'variable-length (starred) arguments and no given '
+                        'parameters. Please compile the program with arguments, '
+                        'call it without annotations, or remove the starred '
+                        f'arguments (invalid argument name: "{aname}").')
+
+                types.update({
+                    f'__arg{j}': create_datadescriptor(varg)
+                    for j, varg in enumerate(vargs)
+                })
+                arg_mapping.update(
+                    {f'__arg{j}': varg
+                     for j, varg in enumerate(vargs)})
+                gvar_mapping[aname] = tuple(f'__arg{j}'
+                                            for j in range(len(vargs)))
+                # Shift arg_ind to the end
+                arg_ind = len(given_args)
+            elif sig_arg.kind is sig_arg.VAR_KEYWORD:
+                vargs = {
+                    k: create_datadescriptor(v)
+                    for k, v in given_kwargs.items() if k not in types
+                }
+                # If an annotation is given but the argument list is empty, fail
+                if not _is_empty(ann) and len(vargs) == 0:
+                    raise SyntaxError(
+                        'Cannot compile DaCe program with type-annotated '
+                        'variable-length (starred) keyword arguments and no given '
+                        'parameters. Please compile the program with arguments, '
+                        'call it without annotations, or remove the starred '
+                        f'arguments (invalid argument name: "{aname}").')
+                types.update({f'__kwarg_{k}': v for k, v in vargs.items()})
+                arg_mapping.update(
+                    {f'__kwarg_{k}': given_kwargs[k]
+                     for k in vargs.keys()})
+                gvar_mapping[aname] = {k: f'__kwarg_{k}' for k in vargs.keys()}
+            # END OF VARIABLE-LENGTH ARGUMENTS
+            else:
+                # Regular arguments (annotations take precedence)
+                curarg = None
+                is_constant = False
+                if not _is_empty(ann):
+                    # If constant, use given argument
+                    if ann is dtypes.constant:
+                        curarg = None
+                        is_constant = True
+                    else:
+                        curarg = ann
+
+                # If no annotation is provided, use given arguments
+                if sig_arg.kind is sig_arg.POSITIONAL_ONLY:
+                    if arg_ind >= nargs:
+                        if curarg is None and not _is_empty(sig_arg.default):
+                            curarg = sig_arg.default
+                        elif curarg is None:
+                            raise SyntaxError(
+                                'Not enough arguments given to program (missing '
+                                f'argument: "{aname}").')
+                    else:
+                        if curarg is None:
+                            curarg = given_args[arg_ind]
+                        arg_ind += 1
+                elif sig_arg.kind is sig_arg.POSITIONAL_OR_KEYWORD:
+                    if arg_ind >= nargs:
+                        if aname not in given_kwargs:
+                            if curarg is None and not _is_empty(
+                                    sig_arg.default):
+                                curarg = sig_arg.default
+                            elif curarg is None:
+                                raise SyntaxError(
+                                    'Not enough arguments given to program (missing '
+                                    f'argument: "{aname}").')
+                        elif curarg is None:
+                            curarg = given_kwargs[aname]
+                    else:
+                        if curarg is None:
+                            curarg = given_args[arg_ind]
+                        arg_ind += 1
+                elif sig_arg.kind is sig_arg.KEYWORD_ONLY:
+                    if aname not in given_kwargs:
+                        if curarg is None and not _is_empty(sig_arg.default):
+                            curarg = sig_arg.default
+                        elif curarg is None:
+                            raise SyntaxError(
+                                'Not enough arguments given to program (missing '
+                                f'argument: "{aname}").')
+                    elif curarg is None:
+                        curarg = given_kwargs[aname]
+
+                if is_constant:
+                    gvar_mapping[aname] = curarg
+                    continue  # Skip argument
+
+                # Set type
+                types[aname] = create_datadescriptor(curarg)
+
+        # Set __return* arrays from return type annotations
+        rettype = self.signature.return_annotation
+        if not _is_empty(rettype):
+            if isinstance(rettype, tuple):
+                for i, subrettype in enumerate(rettype):
+                    types[f'__return_{i}'] = create_datadescriptor(subrettype)
+            else:
+                types['__return'] = create_datadescriptor(rettype)
+
+        return types, arg_mapping, gvar_mapping
+
+    def _generate_pdp(self,
+                      args,
+                      kwargs,
+                      strict=None) -> Tuple[SDFG, Dict[str, str]]:
         """ Generates the parsed AST representation of a DaCe program.
-            :param compilation_args: Various compilation arguments e.g., dtypes.
+            :param args: The given arguments to the program.
+            :param kwargs: The given keyword arguments to the program.
             :param strict: Whether to apply strict transforms when parsing 
                            nested dace programs.
             :return: A 2-tuple of (program, modules), where `program` is a
@@ -365,41 +560,59 @@ class DaceProgram:
                      import aliases).
         """
         dace_func = self.f
-        args = self.dec_args
 
         # If exist, obtain type annotations (for compilation)
-        argtypes = get_type_annotations(dace_func, self.argnames, args,
-                                        self.methodobj is not None)
+        argtypes, _, gvars = self._get_type_annotations(args, kwargs)
+
+        # Move "self" from an argument into the closure
+        if self.methodobj is not None:
+            self.global_vars[self.objname] = self.methodobj
 
         # Parse argument types from call
-        if len(inspect.getfullargspec(dace_func).args) > 0:
+        if len(self.argnames) > 0:
             if not argtypes:
-                if not compilation_args:
+                if not args and not kwargs:
                     raise SyntaxError(
                         'Compiling DaCe programs requires static types. '
                         'Please provide type annotations on the function, '
                         'or add sample arguments to the compilation call.')
 
                 # Parse compilation arguments
-                if len(compilation_args) != len(self.argnames):
-                    raise SyntaxError(
-                        'Number of keyword arguments must match parameters '
-                        '(expecting %d)' % len(self.argnames))
                 argtypes = {
                     k: create_datadescriptor(v)
-                    for k, v in zip(self.argnames, compilation_args)
+                    for k, v in itertools.chain(self.default_args.items(
+                    ), zip(self.argnames, args), kwargs.items())
                 }
+                if len(argtypes) != len(self.argnames):
+                    raise SyntaxError(
+                        'Number of arguments must match parameters '
+                        f'(expecting {self.argnames}, got {list(argtypes.keys())})'
+                    )
+
         for k, v in argtypes.items():
             if v.transient:  # Arguments to (nested) SDFGs cannot be transient
                 v_cpy = copy.deepcopy(v)
                 v_cpy.transient = False
                 argtypes[k] = v_cpy
+
         #############################################
 
         # Parse allowed global variables
         # (for inferring types and values in the DaCe program)
         global_vars = copy.copy(self.global_vars)
 
+        # Remove None arguments and make into globals that can be folded
+        removed_args = set()
+        for k, v in argtypes.items():
+            if v.dtype.type is None:
+                global_vars[k] = None
+                removed_args.add(k)
+        argtypes = {
+            k: v
+            for k, v in argtypes.items() if v.dtype.type is not None
+        }
+
+        # Set module aliases to point to their actual names
         modules = {
             k: v.__name__
             for k, v in global_vars.items() if dtypes.ismodule(v)
@@ -409,25 +622,43 @@ class DaceProgram:
         # Add symbols as globals with their actual names (sym_0 etc.)
         global_vars.update({
             v.name: v
-            for k, v in global_vars.items() if isinstance(v, symbolic.symbol)
+            for _, v in global_vars.items() if isinstance(v, symbolic.symbol)
         })
         for argtype in argtypes.values():
             global_vars.update({v.name: v for v in argtype.free_symbols})
 
-        # Allow SDFGs and DaceProgram objects
-        # NOTE: These are the globals AT THE TIME OF INVOCATION, NOT DEFINITION
-        other_sdfgs = {
-            k: v
-            for k, v in _get_locals_and_globals(dace_func).items()
-            if isinstance(v, (SDFG, DaceProgram))
-        }
+        # Add constant arguments to global_vars
+        global_vars.update(gvars)
 
         # Parse AST to create the SDFG
-        return newast.parse_dace_program(dace_func,
-                                         self.name,
-                                         argtypes,
-                                         global_vars,
-                                         modules,
-                                         other_sdfgs,
-                                         self.dec_kwargs,
-                                         strict=strict)
+        sdfg, closure = newast.parse_dace_program(
+            dace_func,
+            self.name,
+            argtypes,
+            global_vars,
+            modules,
+            self.dec_kwargs,
+            strict=strict,
+            resolve_functions=self.resolve_functions)
+
+        # Set SDFG argument names, filtering out constants
+        sdfg.arg_names = [a for a in self.argnames if a in argtypes]
+
+        # Create new argument mapping from closure arrays
+        arg_mapping = {
+            v: k
+            for k, (v, _) in closure.closure_arrays.items()
+            if isinstance(v, str)
+        }
+        arg_mapping.update({
+            k: v
+            for k, (v, _) in closure.closure_arrays.items()
+            if not isinstance(v, str)
+        })
+        self.closure_arg_mapping = arg_mapping
+        self.closure_array_keys = set(
+            closure.closure_arrays.keys()) - removed_args
+        self.closure_constant_keys = set(
+            closure.closure_constants.keys()) - removed_args
+
+        return sdfg, arg_mapping
