@@ -118,17 +118,9 @@ class RTLCodeGen(target.TargetCodeGenerator):
                     dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                     edge.src.data)
         elif isinstance(edge.src, nodes.MapEntry) and isinstance(edge.dst, nodes.Tasklet) and edge.src.map.unroll:
-            # TODO it would be best to do it here, rather than xilinx?
-            #if self.hardware_target:
-            #    rtl_name = "{}_{}_{}_{}".format(edge.dst.name, sdfg.sdfg_id,
-            #                                    state_id,
-            #                                    dfg.node_id(edge.dst))
-            #    self._multiple_kernels[rtl_name] = symbolic.evaluate(edge.src.map.range[0][1]+1, sdfg.constants)
-            #else:
-            #    raise NotImplementedError(
-            #            'Copy from map in software not implemented')
             # TODO works for one kernel, but might break with several.
             self.n_unrolled = symbolic.evaluate(edge.src.map.range[0][1]+1, sdfg.constants)
+            # TODO properly implement for software target
             line: str = '// Copy from map handled in xilinx codegen'
         else:
             raise RuntimeError(
@@ -162,6 +154,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
                     src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
                     edge.dst.data)
         elif isinstance(edge.src, nodes.Tasklet) and isinstance(edge.dst, nodes.MapExit) and edge.dst.map.unroll:
+            # TODO properly implement for software target
             line: str = '// Copy to map handled in xilinx codegen'
         else:
             raise RuntimeError(
