@@ -1,11 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import dace
 import dace.library
 
 from .cpu import ExpandStencilCPU
+from .intel_fpga import ExpandStencilIntelFPGA
+# from .xilinx import ExpandStencilXilinx
 
 
 @dace.library.node
@@ -44,7 +46,11 @@ class Stencil(dace.library.LibraryNode):
     This will use iterators _i0 and _i2 for accessing b.
     """
 
-    implementations = {"pure": ExpandStencilCPU}
+    implementations = {
+        "pure": ExpandStencilCPU,
+        "intel_fpga": ExpandStencilIntelFPGA,
+        # "xilinx": ExpandStencilXilinx
+    }
     default_implementation = "pure"
 
     code = dace.properties.CodeProperty(
