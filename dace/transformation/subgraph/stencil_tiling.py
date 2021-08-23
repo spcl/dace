@@ -93,6 +93,8 @@ class StencilTiling(transformation.SubgraphTransformation):
 
         # look at inner memlets at map entry
         for e in graph.out_edges(map_entry):
+            if not e.data.subset:
+                continue
             if outer_range:
                 # get subset
                 min_element = [
@@ -220,9 +222,12 @@ class StencilTiling(transformation.SubgraphTransformation):
             return False
 
         # get intermediate_nodes, out_nodes from SubgraphFusion Transformation
-        node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph,
-                                                        map_entries)
-        (_, intermediate_nodes, out_nodes) = node_config
+        try:
+            node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph,
+                                                            map_entries)
+            (_, intermediate_nodes, out_nodes) = node_config
+        except NotImplementedError:
+            return False
 
         # 1.4: check topological feasibility
         if not SubgraphFusion.check_topo_feasibility(

@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-
 import dace
+from dace.fpga_testing import xilinx_test
 import numpy as np
 
 
@@ -183,25 +183,25 @@ def make_sdfg(veclen=8):
 # add symbol
 N = dace.symbol('N')
 
-if __name__ == '__main__':
+
+@xilinx_test()
+def test_hardware():
     N.set(4096)
     veclen = 16
     sdfg = make_sdfg(veclen)
     a = np.random.randint(0, 100, N.get()).astype(np.float32)
     b = np.random.rand(1)[0].astype(np.float32)
     c = np.zeros((N.get(), )).astype(np.float32)
-    print(a.shape, b.shape, c.shape)
-
-    # show initial values
-    print("a={}, b={}".format(a, b))
 
     # call program
     sdfg(A=a, B=b, C=c, N=N)
 
-    # show result
-    print("a={}, b={}, c={}".format(a, b, c))
-
     expected = a + b
     diff = np.linalg.norm(expected - c) / N.get()
-    print("Difference:", diff)
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+    return sdfg
+
+
+if __name__ == '__main__':
+    test_hardware(None)

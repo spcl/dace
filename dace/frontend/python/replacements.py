@@ -358,6 +358,116 @@ def _numpy_copy(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
     return name
 
 
+@oprepo.replaces('numpy.flip')
+def _numpy_flip(pv: 'ProgramVisitor',
+                sdfg: SDFG,
+                state: SDFGState,
+                arr: str,
+                axis=None):
+    """ Reverse the order of elements in an array along the given axis.
+        The shape of the array is preserved, but the elements are reordered.
+    """
+
+    if arr not in sdfg.arrays.keys():
+        raise mem_parser.DaceSyntaxError(
+            pv, None, "Prototype argument {a} is not SDFG data!".format(a=arr))
+    desc = sdfg.arrays[arr]
+    if isinstance(desc, data.Stream):
+        raise mem_parser.DaceSyntaxError(pv, None, "Streams are not supported!")
+    if isinstance(desc, data.Scalar):
+        return arr
+
+    ndim = len(desc.shape)
+    if axis is None:
+        axis = [True] * ndim
+    else:
+        if not isinstance(axis, (list, tuple)):
+            axis = [axis]
+        axis = [a if a >= 0 else a + ndim for a in axis]
+        axis = [True if i in axis else False for i in range(ndim)]
+
+    # TODO: The following code assumes that code generation resolves an inverted copy.
+    # sset = ','.join([f'{s}-1:-1:-1' if a else f'0:{s}:1'
+    #                  for a, s in zip(axis, desc.shape)])
+    # dset = ','.join([f'0:{s}:1' for s in desc.shape])
+
+    # view = _ndarray_reshape(pv, sdfg, state, arr, desc.shape)
+    # acpy, _ = sdfg.add_temp_transient(desc.shape, desc.dtype, desc.storage)
+    # vnode = state.add_read(view)
+    # anode = state.add_read(acpy)
+    # state.add_edge(vnode, None, anode, None, Memlet(f'{view}[{sset}] -> {dset}'))
+
+    arr_copy, _ = sdfg.add_temp_transient(desc.shape, desc.dtype, desc.storage)
+    inpidx = ','.join([f'__i{i}' for i in range(ndim)])
+    outidx = ','.join([
+        f'{s} - __i{i} - 1' if a else f'__i{i}'
+        for i, (a, s) in enumerate(zip(axis, desc.shape))
+    ])
+    state.add_mapped_tasklet(
+        name="_numpy_flip_",
+        map_ranges={f'__i{i}': f'0:{s}:1'
+                    for i, s in enumerate(desc.shape)},
+        inputs={'__inp': Memlet(f'{arr}[{inpidx}]')},
+        code='__out = __inp',
+        outputs={'__out': Memlet(f'{arr_copy}[{outidx}]')},
+        external_edges=True)
+
+    return arr_copy
+
+
+@oprepo.replaces('numpy.rot90')
+def _numpy_rot90(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 arr: str,
+                 k=1,
+                 axes=(0, 1)):
+    """ Rotate an array by 90 degrees in the plane specified by axes.
+        Rotation direction is from the first towards the second axis.
+    """
+
+    if arr not in sdfg.arrays.keys():
+        raise mem_parser.DaceSyntaxError(
+            pv, None, "Prototype argument {a} is not SDFG data!".format(a=arr))
+    desc = sdfg.arrays[arr]
+    if not isinstance(desc, (data.Array, data.View)):
+        raise mem_parser.DaceSyntaxError(pv, None,
+                                         "Only Arrays and Views supported!")
+
+    ndim = len(desc.shape)
+    axes = tuple(axes)
+    if len(axes) != 2:
+        raise ValueError("len(axes) must be 2.")
+
+    if axes[0] == axes[1] or abs(axes[0] - axes[1]) == ndim:
+        raise ValueError("Axes must be different.")
+
+    if (axes[0] >= ndim or axes[0] < -ndim or axes[1] >= ndim
+            or axes[1] < -ndim):
+        raise ValueError("Axes={} out of range for array of ndim={}.".format(
+            axes, ndim))
+
+    k %= 4
+
+    if k == 0:
+        return arr
+    if k == 2:
+        return _numpy_flip(pv, sdfg, state,
+                           _numpy_flip(pv, sdfg, state, arr, axes[0]), axes[1])
+
+    axes_list = list(range(ndim))
+    (axes_list[axes[0]], axes_list[axes[1]]) = (axes_list[axes[1]],
+                                                axes_list[axes[0]])
+
+    if k == 1:
+        return _transpose(pv, sdfg, state,
+                          _numpy_flip(pv, sdfg, state, arr, axes[1]), axes_list)
+    else:
+        # k == 3
+        return _numpy_flip(pv, sdfg, state,
+                           _transpose(pv, sdfg, state, arr, axes_list), axes[1])
+
+
 @oprepo.replaces('elementwise')
 @oprepo.replaces('dace.elementwise')
 def _elementwise(pv: 'ProgramVisitor',
@@ -548,6 +658,12 @@ def _imag(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'imag', _complex_to_scalar(inptype))
 
 
+@oprepo.replaces('abs')
+def _abs(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+         input: Union[str, Number, symbolic.symbol]):
+    return _simple_call(sdfg, state, input, 'abs')
+
+
 @oprepo.replaces('transpose')
 @oprepo.replaces('dace.transpose')
 @oprepo.replaces('numpy.transpose')
@@ -661,8 +777,13 @@ def _min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
                    identity=dtypes.max_value(sdfg.arrays[a].dtype))
 
 
-def _min2(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, b: str):
-    """ Implements the min function with 2 scalar arguments. """
+def _minmax2(pv: 'ProgramVisitor',
+             sdfg: SDFG,
+             state: SDFGState,
+             a: str,
+             b: str,
+             ismin=True):
+    """ Implements the min or max function with 2 scalar arguments. """
 
     in_conn = set()
     out_conn = {'__out'}
@@ -696,8 +817,9 @@ def _min2(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, b: str):
         arg_b = "{cb}({in2})".format(cb=str(cast_b).replace('::', '.'),
                                      in2=conn_b)
 
-    tasklet = nodes.Tasklet('__min2', in_conn, out_conn,
-                            "__out = min({a}, {b})".format(a=arg_a, b=arg_b))
+    func = 'min' if ismin else 'max'
+    tasklet = nodes.Tasklet(f'__{func}2', in_conn, out_conn,
+                            f'__out = {func}({arg_a}, {arg_b})')
 
     c = _define_local_scalar(pv, sdfg, state, dtype_c)
     desc_c = sdfg.arrays[c]
@@ -714,6 +836,22 @@ def _min2(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, b: str):
     return c
 
 
+# NOTE: We support only the version of Python max that takes scalar arguments.
+# For iterable arguments one must use the equivalent NumPy methods.
+@oprepo.replaces('max')
+def _pymax(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+           a: Union[str, Number, symbolic.symbol], *args):
+    left_arg = a
+    current_state = state
+    for i, b in enumerate(args):
+        if i > 0:
+            pv._add_state('__min2_%d' % i)
+            pv.last_state.set_default_lineinfo(pv.current_lineinfo)
+            current_state = pv.last_state
+        left_arg = _minmax2(pv, sdfg, current_state, left_arg, b, ismin=False)
+    return left_arg
+
+
 # NOTE: We support only the version of Python min that takes scalar arguments.
 # For iterable arguments one must use the equivalent NumPy methods.
 @oprepo.replaces('min')
@@ -726,8 +864,13 @@ def _pymin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
             pv._add_state('__min2_%d' % i)
             pv.last_state.set_default_lineinfo(pv.current_lineinfo)
             current_state = pv.last_state
-        left_arg = _min2(pv, sdfg, current_state, left_arg, b)
+        left_arg = _minmax2(pv, sdfg, current_state, left_arg, b)
     return left_arg
+
+
+@oprepo.replaces('slice')
+def _slice(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, *args, **kwargs):
+    return (slice(*args, **kwargs), )
 
 
 @oprepo.replaces('numpy.argmax')
@@ -879,30 +1022,44 @@ def _argminmax(pv: 'ProgramVisitor',
         nest(_elementwise)("lambda x: x.idx", reduced_structs, out_array=out)
         return nest, out
 
+
 @oprepo.replaces('numpy.where')
-def _array_array_where(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
-                       cond_operand: str, left_operand: str = None, right_operand: str = None):
+def _array_array_where(visitor: 'ProgramVisitor',
+                       sdfg: SDFG,
+                       state: SDFGState,
+                       cond_operand: str,
+                       left_operand: str = None,
+                       right_operand: str = None):
     if left_operand is None or right_operand is None:
-        raise ValueError('numpy.where is only supported for the case where x and y are given')
+        raise ValueError(
+            'numpy.where is only supported for the case where x and y are given'
+        )
 
     cond_arr = sdfg.arrays[cond_operand]
     left_arr = sdfg.arrays.get(left_operand, None)
     right_arr = sdfg.arrays.get(right_operand, None)
 
-    left_type = left_arr.dtype if left_arr else dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
-    right_type = right_arr.dtype if right_arr else dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+    left_type = left_arr.dtype if left_arr else dtypes.DTYPE_TO_TYPECLASS[type(
+        left_operand)]
+    right_type = right_arr.dtype if right_arr else dtypes.DTYPE_TO_TYPECLASS[
+        type(right_operand)]
 
     # Implicit Python coversion implemented as casting
     arguments = [cond_arr, left_arr or left_type, right_arr or right_type]
-    tasklet_args = ['__incond', '__in1' if left_arr else left_operand, '__in2' if right_arr else right_operand]
+    tasklet_args = [
+        '__incond', '__in1' if left_arr else left_operand,
+        '__in2' if right_arr else right_operand
+    ]
     result_type, casting = _result_type(arguments[1:])
     left_cast = casting[0]
     right_cast = casting[1]
 
     if left_cast is not None:
-        tasklet_args[0] = "{}(__in1)".format(str(left_cast).replace('::', '.'))
+        tasklet_args[
+            1] = f"{str(left_cast).replace('::', '.')}({tasklet_args[1]})"
     if right_cast is not None:
-        tasklet_args[1] = "{}(__in2)".format(str(right_cast).replace('::', '.'))
+        tasklet_args[
+            2] = f"{str(right_cast).replace('::', '.')}({tasklet_args[2]})"
 
     left_shape = left_arr.shape if left_arr else [1]
     right_shape = right_arr.shape if right_arr else [1]
@@ -944,18 +1101,19 @@ def _array_array_where(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
                        dace.Memlet.from_array(out_operand, out_arr))
     else:
         inputs = {}
-        inputs['__incond'] = Memlet.simple(cond_operand, left_idx if left_arr else right_idx)
+        inputs['__incond'] = Memlet.simple(cond_operand,
+                                           left_idx if left_arr else right_idx)
         if left_arr:
             inputs['__in1'] = Memlet.simple(left_operand, left_idx)
         if right_arr:
             inputs['__in2'] = Memlet.simple(right_operand, right_idx)
-        state.add_mapped_tasklet(
-            "_where_",
-            all_idx_dict, inputs,
-            '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1],
-                                                        i2=tasklet_args[2]),
-            {'__out': Memlet.simple(out_operand, out_idx)},
-            external_edges=True)
+        state.add_mapped_tasklet("_where_",
+                                 all_idx_dict,
+                                 inputs,
+                                 '__out = {i1} if __incond else {i2}'.format(
+                                     i1=tasklet_args[1], i2=tasklet_args[2]),
+                                 {'__out': Memlet.simple(out_operand, out_idx)},
+                                 external_edges=True)
 
     return out_operand
 
@@ -2305,6 +2463,13 @@ ufuncs = dict(
                   code="__out = abs(__in1)",
                   reduce=None,
                   initial=np.absolute.identity),
+    abs=dict(name="_numpy_abs_",
+             operator="Abs",
+             inputs=["__in1"],
+             outputs=["__out"],
+             code="__out = abs(__in1)",
+             reduce=None,
+             initial=np.abs.identity),
     fabs=dict(name="_numpy_fabs_",
               operator="Fabs",
               inputs=["__in1"],
@@ -4209,6 +4374,15 @@ def view(pv: 'ProgramVisitor',
     return newarr
 
 
+@oprepo.replaces_attribute('Array', 'size')
+@oprepo.replaces_attribute('Scalar', 'size')
+@oprepo.replaces_attribute('View', 'size')
+def size(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> Size:
+    desc = sdfg.arrays[arr]
+    totalsize = data._prod(desc.shape)
+    return totalsize
+
+
 @oprepo.replaces_attribute('Array', 'flat')
 @oprepo.replaces_attribute('Scalar', 'flat')
 @oprepo.replaces_attribute('View', 'flat')
@@ -4563,7 +4737,7 @@ def dot(pv: 'ProgramVisitor',
     arr_a = sdfg.arrays[op_a]
     arr_b = sdfg.arrays[op_b]
 
-    if len(arr_a.shape) == 2 and len(arr_b.shape == 2):
+    if len(arr_a.shape) == 2 and len(arr_b.shape) == 2:
         # Matrix multiplication
         # TODO: `If op_out`, then this is not correct. We need np.matmult,
         # but it is not implemented yet

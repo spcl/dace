@@ -6,7 +6,6 @@ from typing import List
 import dace
 from dace import dtypes
 from dace import data
-from dace import sourcemap
 from dace.sdfg import SDFG
 from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
@@ -91,15 +90,15 @@ int main(int argc, char **argv) {{
 '''
 
 
-def generate_code(sdfg) -> List[CodeObject]:
+def generate_code(sdfg, validate=True) -> List[CodeObject]:
     """ Generates code as a list of code objects for a given SDFG.
         :param sdfg: The SDFG to use
+        :param validate: If True, validates the SDFG before generating the code.
         :return: List of code objects that correspond to files to compile.
     """
     # Before compiling, validate SDFG correctness
-    sdfg.validate()
-
-    sourcemap.create_py_map(sdfg)
+    if validate:
+        sdfg.validate()
 
     if Config.get_bool('testing', 'serialization'):
         from dace.sdfg import SDFG
@@ -185,7 +184,8 @@ def generate_code(sdfg) -> List[CodeObject]:
                    'cpp',
                    cpu.CPUCodeGen,
                    'Frame',
-                   environments=used_environments)
+                   environments=used_environments,
+                   sdfg=sdfg)
     ]
 
     # Create code objects for each target

@@ -691,9 +691,12 @@ class MapEntry(EntryNode):
             except KeyError:
                 # Backwards compatibility
                 nid = int(json_obj['scope_exits'][0])
+            except TypeError:
+                nid = None
 
-            exit_node = context['sdfg_state'].node(nid)
-            exit_node.map = m
+            if nid is not None:
+                exit_node = context['sdfg_state'].node(nid)
+                exit_node.map = m
         except IndexError:  # Exit node has a higher node ID
             # Connection of the scope nodes handled in MapExit
             pass
@@ -764,7 +767,8 @@ class MapExit(ExitNode):
                 json_obj['scope_entry']))
 
             ret = cls(map=entry_node.map)
-        except IndexError:  # Entry node has a higher ID than exit node
+        except (IndexError, TypeError):
+            # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in MapEntry
             ret = cls(cls.map_type()('_', [], []))
 
@@ -897,9 +901,12 @@ class ConsumeEntry(EntryNode):
             except KeyError:
                 # Backwards compatibility
                 nid = int(json_obj['scope_exits'][0])
+            except TypeError:
+                nid = None
 
-            exit_node = context['sdfg_state'].node(nid)
-            exit_node.consume = c
+            if nid is not None:
+                exit_node = context['sdfg_state'].node(nid)
+                exit_node.consume = c
         except IndexError:  # Exit node has a higher node ID
             # Connection of the scope nodes handled in ConsumeExit
             pass
@@ -969,7 +976,8 @@ class ConsumeExit(ExitNode):
             entry_node = context['sdfg_state'].node(int(
                 json_obj['scope_entry']))
             ret = ConsumeExit(consume=entry_node.consume)
-        except IndexError:  # Entry node has a higher ID than exit node
+        except (IndexError, TypeError):
+            # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in ConsumeEntry
             ret = ConsumeExit(Consume("", ['i', 1], None))
 
@@ -1230,10 +1238,11 @@ class LibraryNode(CodeNode):
         default=dtypes.ScheduleType.Default)
     debuginfo = DebugInfoProperty()
 
-    def __init__(self, name, *args, **kwargs):
+    def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name
         self.label = name
+        self.schedule = schedule or dtypes.ScheduleType.Default
 
     # Overrides subclasses to return LibraryNode as their JSON type
     @property

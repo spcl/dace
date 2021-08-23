@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from dace import registry, properties, nodes, dtypes, symbolic
+from dace.sdfg.graph import SubgraphView
+from dace import registry, properties, nodes, dtypes, subsets, symbolic
 from dace import Memlet, SDFG, SDFGState
 from dace.frontend.operations import detect_reduction_type
 from dace.transformation import transformation as xf, helpers as xfh
@@ -70,7 +71,7 @@ class WarpTiling(xf.Transformation):
                 nsdfg_node.symbol_mapping['__tid'] = __tid
                 if '__tid' not in nsdfg.symbols:
                     nsdfg.add_symbol('__tid', dtypes.int32)
-            nmap.range[-1] = (nmap.range[-1][0], nmap.range[-1][1],
+            nmap.range[-1] = (nmap.range[-1][0], nmap.range[-1][1] - __tid,
                               nmap.range[-1][2] * self.warp_size)
             subgraph = nstate.scope_subgraph(nmap)
             subgraph.replace(nmap.params[-1], f'{nmap.params[-1]} + __tid')
@@ -124,11 +125,29 @@ class WarpTiling(xf.Transformation):
                     credtype = ('dace::ReductionType::' +
                                 str(redtype)[str(redtype).find('.') + 1:])
 
-                    # Add local access between thread-locan and warp reduction
-                    newnode = nstate.add_access(out_edge.data.data)
+                    # Add local access between thread-local and warp reduction
+                    name = nsdfg._find_new_name(out_edge.data.data)
+                    nsdfg.add_scalar(name,
+                                     nsdfg.arrays[out_edge.data.data].dtype,
+                                     transient=True)
+
+                    # Initialize thread-local to global value
+                    read = nstate.add_read(out_edge.data.data)
+                    write = nstate.add_write(name)
+                    edge = nstate.add_nedge(read, write,
+                                            copy.deepcopy(out_edge.data))
+                    edge.data.wcr = None
+                    xfh.state_fission(nsdfg,
+                                      SubgraphView(nstate, [read, write]))
+
+                    newnode = nstate.add_access(name)
                     nstate.remove_edge(out_edge)
-                    nstate.add_edge(out_edge.src, out_edge.src_conn, newnode,
-                                    None, copy.deepcopy(out_edge.data))
+                    edge = nstate.add_edge(out_edge.src, out_edge.src_conn,
+                                           newnode, None,
+                                           copy.deepcopy(out_edge.data))
+                    for e in nstate.memlet_path(edge):
+                        e.data.data = name
+                        e.data.subset = subsets.Range([(0, 0, 1)])
 
                     if out_edge.data.subset.num_elements(
                     ) == 1:  # One element: tasklet
@@ -136,8 +155,7 @@ class WarpTiling(xf.Transformation):
                             'warpreduce', {'__a'}, {'__out'},
                             f'__out = dace::warpReduce<{credtype}, {ctype}>::reduce(__a);',
                             dtypes.Language.CPP)
-                        nstate.add_edge(newnode, None, wrt, '__a',
-                                        Memlet(out_edge.data.data))
+                        nstate.add_edge(newnode, None, wrt, '__a', Memlet(name))
                         out_edge.data.wcr = None
                         nstate.add_edge(wrt, '__out', out_edge.dst, None,
                                         out_edge.data)

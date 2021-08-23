@@ -15,9 +15,9 @@ from dace.memlet import Memlet
 from dace.dtypes import AllocationLifetime, ScheduleType, StorageType, Language
 from dace.properties import CodeProperty
 
-W = dace.symbol('W')
-H = dace.symbol('H')
-nnz = dace.symbol('nnz')
+cols = dace.symbol("cols")
+rows = dace.symbol("rows")
+nnz = dace.symbol("nnz")
 itype = dace.dtypes.uint32
 dtype = dace.dtypes.float32
 
@@ -26,8 +26,8 @@ def make_pre_state(sdfg):
 
     state = sdfg.add_state("pre_state")
 
-    a_row_host = state.add_array("A_row", (H + 1, ), itype)
-    a_row_device = state.add_array("A_row_device", (H + 1, ),
+    a_row_host = state.add_array("A_row", (rows + 1, ), itype)
+    a_row_device = state.add_array("A_row_device", (rows + 1, ),
                                    itype,
                                    transient=True,
                                    storage=StorageType.FPGA_Global)
@@ -44,8 +44,8 @@ def make_pre_state(sdfg):
                                    transient=True,
                                    storage=StorageType.FPGA_Global)
 
-    x_host = state.add_array("x", (W, ), dtype)
-    x_device = state.add_array("x_device", (W, ),
+    x_host = state.add_array("x", (cols, ), dtype)
+    x_device = state.add_array("x_device", (cols, ),
                                dtype,
                                transient=True,
                                storage=StorageType.FPGA_Global)
@@ -53,7 +53,7 @@ def make_pre_state(sdfg):
     state.add_memlet_path(a_row_host,
                           a_row_device,
                           memlet=dace.memlet.Memlet.simple(
-                              a_row_device, "0:H+1"))
+                              a_row_device, "0:rows+1"))
 
     state.add_memlet_path(a_col_host,
                           a_col_device,
@@ -67,7 +67,7 @@ def make_pre_state(sdfg):
 
     state.add_memlet_path(x_host,
                           x_device,
-                          memlet=dace.memlet.Memlet.simple(x_device, "0:W"))
+                          memlet=dace.memlet.Memlet.simple(x_device, "0:cols"))
 
     return state
 
@@ -76,15 +76,15 @@ def make_post_state(sdfg):
 
     state = sdfg.add_state("post_state")
 
-    b_device = state.add_array("b_device", (H, ),
+    b_device = state.add_array("b_device", (rows, ),
                                dtype,
                                transient=True,
                                storage=StorageType.FPGA_Global)
-    b_host = state.add_array("b", (H, ), dtype)
+    b_host = state.add_array("b", (rows, ), dtype)
 
     state.add_memlet_path(b_device,
                           b_host,
-                          memlet=dace.memlet.Memlet.simple(b_host, "0:H"))
+                          memlet=dace.memlet.Memlet.simple(b_host, "0:rows"))
 
     return state
 
@@ -103,19 +103,21 @@ def make_write_sdfg():
     sdfg.add_edge(
         entry, state,
         InterstateEdge(condition=CodeProperty.from_string(
-            "h < H", language=Language.Python)))
+            "h < rows", language=Language.Python)))
 
     sdfg.add_edge(
         entry, end,
         InterstateEdge(condition=CodeProperty.from_string(
-            "h >= H", language=Language.Python)))
+            "h >= rows", language=Language.Python)))
 
     sdfg.add_edge(state, entry, InterstateEdge(assignments={"h": "h + 1"}))
 
     result_to_write_in = state.add_stream("b_pipe",
                                           dtype,
                                           storage=StorageType.FPGA_Local)
-    b = state.add_array("b_mem", (H, ), dtype, storage=StorageType.FPGA_Global)
+    b = state.add_array("b_mem", (rows, ),
+                        dtype,
+                        storage=StorageType.FPGA_Global)
 
     state.add_memlet_path(result_to_write_in, b, memlet=Memlet.simple(b, "h"))
 
@@ -148,11 +150,11 @@ def make_iteration_space(sdfg):
     sdfg.add_edge(
         rows_entry, shift_rowptr,
         InterstateEdge(condition=CodeProperty.from_string(
-            "h < H", language=Language.Python)))
+            "h < rows", language=Language.Python)))
     sdfg.add_edge(
         rows_entry, rows_end,
         InterstateEdge(condition=CodeProperty.from_string(
-            "h >= H", language=Language.Python)))
+            "h >= rows", language=Language.Python)))
 
     sdfg.add_edge(shift_rowptr, read_rowptr, InterstateEdge())
     sdfg.add_edge(read_rowptr, cols_begin, InterstateEdge())
@@ -352,7 +354,7 @@ def make_read_x():
 
     pre_state, body, post_state = make_iteration_space(sdfg)
 
-    x_mem = body.add_array("x_mem", (W, ),
+    x_mem = body.add_array("x_mem", (cols, ),
                            dtype,
                            storage=StorageType.FPGA_Global)
     col_pipe = body.add_stream("col_pipe",
@@ -368,7 +370,7 @@ def make_read_x():
     body.add_memlet_path(x_mem,
                          tasklet,
                          dst_conn="x_in",
-                         memlet=Memlet.simple(x_mem, "0:W"))
+                         memlet=Memlet.simple(x_mem, "0:cols"))
     body.add_memlet_path(col_pipe,
                          tasklet,
                          dst_conn="col_in",
@@ -450,14 +452,14 @@ def make_read_row():
     sdfg.add_edge(
         entry, body,
         InterstateEdge(condition=CodeProperty.from_string(
-            "h < H + 1", language=Language.Python)))
+            "h < rows + 1", language=Language.Python)))
     sdfg.add_edge(
         entry, end,
         InterstateEdge(condition=CodeProperty.from_string(
-            "h >= H + 1", language=Language.Python)))
+            "h >= rows + 1", language=Language.Python)))
     sdfg.add_edge(body, entry, InterstateEdge(assignments={"h": "h + 1"}))
 
-    a_row_mem = body.add_array("A_row_mem", (H + 1, ),
+    a_row_mem = body.add_array("A_row_mem", (rows + 1, ),
                                itype,
                                storage=StorageType.FPGA_Global)
     to_val_pipe = body.add_stream("to_val_pipe",
@@ -509,7 +511,7 @@ def make_main_state(sdfg):
     state = sdfg.add_state("spmv")
 
     # Read row pointers and send to value and column readers
-    a_row = state.add_array("A_row_device", (H + 1, ),
+    a_row = state.add_array("A_row_device", (rows + 1, ),
                             itype,
                             transient=True,
                             storage=StorageType.FPGA_Global)
@@ -535,7 +537,7 @@ def make_main_state(sdfg):
         {"to_val_pipe", "to_col_pipe", "to_x_pipe", "to_compute_pipe"})
     state.add_memlet_path(a_row,
                           read_row_tasklet,
-                          memlet=dace.memlet.Memlet.simple(a_row, "0:H+1"),
+                          memlet=dace.memlet.Memlet.simple(a_row, "0:rows+1"),
                           dst_conn="A_row_mem")
     state.add_memlet_path(read_row_tasklet,
                           row_to_val_out,
@@ -631,7 +633,7 @@ def make_main_state(sdfg):
                                                            num_accesses=-1))
 
     # Read values of x using column pointers and send to compute
-    x = state.add_array("x_device", (W, ),
+    x = state.add_array("x_device", (cols, ),
                         dtype,
                         transient=True,
                         storage=StorageType.FPGA_Global)
@@ -654,7 +656,7 @@ def make_main_state(sdfg):
     state.add_memlet_path(x,
                           read_x_tasklet,
                           dst_conn="x_mem",
-                          memlet=dace.memlet.Memlet.simple(x, "0:W"))
+                          memlet=dace.memlet.Memlet.simple(x, "0:cols"))
     state.add_memlet_path(col_to_x_in,
                           read_x_tasklet,
                           dst_conn="col_pipe",
@@ -725,7 +727,7 @@ def make_main_state(sdfg):
                                           dtype,
                                           transient=True,
                                           storage=StorageType.FPGA_Local)
-    b = state.add_array("b_device", (H, ),
+    b = state.add_array("b_device", (rows, ),
                         dtype,
                         transient=True,
                         storage=StorageType.FPGA_Global)
@@ -741,7 +743,7 @@ def make_main_state(sdfg):
     state.add_memlet_path(write_tasklet,
                           b,
                           src_conn="b_mem",
-                          memlet=dace.memlet.Memlet.simple(b, "0:H"))
+                          memlet=dace.memlet.Memlet.simple(b, "0:rows"))
 
     return state
 
@@ -750,7 +752,7 @@ def make_nested_compute_state(sdfg):
 
     state = sdfg.add_state("spmv")
 
-    row_entry, row_exit = state.add_map("compute_row", {"i": "0:H"},
+    row_entry, row_exit = state.add_map("compute_row", {"i": "0:rows"},
                                         schedule=ScheduleType.FPGA_Device)
 
     rowptr = state.add_scalar("rowptr",
@@ -782,7 +784,7 @@ def make_nested_compute_state(sdfg):
                           row_entry,
                           rowend,
                           memlet=dace.memlet.Memlet.simple(
-                              rowend, '0', other_subset_str='i + 1'))
+                              rowend, "0", other_subset_str="i + 1"))
     state.add_memlet_path(rowend,
                           nested_sdfg_tasklet,
                           dst_conn="row_end",
@@ -798,7 +800,7 @@ def make_nested_compute_state(sdfg):
                           row_entry,
                           nested_sdfg_tasklet,
                           dst_conn="x_read",
-                          memlet=dace.memlet.Memlet.simple(x, "0:W"))
+                          memlet=dace.memlet.Memlet.simple(x, "0:cols"))
 
     state.add_memlet_path(a_col,
                           row_entry,
@@ -818,7 +820,8 @@ def make_nested_compute_state(sdfg):
 def make_sdfg(specialize):
 
     if specialize:
-        name = "spmv_fpga_stream_{}x{}x{}".format(H.get(), W.get(), nnz.get())
+        name = "spmv_fpga_stream_{}x{}x{}".format(rows.get(), cols.get(),
+                                                  nnz.get())
     else:
         name = "spmv_fpga_stream"
     sdfg = dace.SDFG(name)
@@ -833,74 +836,71 @@ def make_sdfg(specialize):
     return sdfg
 
 
-if __name__ == "__main__":
+def run_spmv(size_w, size_h, num_nonzero, specialize):
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("W", type=int)
-    parser.add_argument("H", type=int)
-    parser.add_argument("nnz", type=int)
-    parser.add_argument("-specialize",
-                        default=False,
-                        action="store_true",
-                        help="Fix all symbols at compile time/in hardware")
-    args = vars(parser.parse_args())
-
-    W.set(args["W"])
-    H.set(args["H"])
-    nnz.set(args["nnz"])
+    cols.set(size_w)
+    rows.set(size_h)
+    nnz.set(num_nonzero)
 
     print("Sparse Matrix-Vector Multiplication {}x{} "
           "({} non-zero elements, {}specialized)".format(
-              W.get(), H.get(), nnz.get(),
-              "not " if not args["specialize"] else ""))
+              cols.get(), rows.get(), nnz.get(),
+              "not " if not specialize else ""))
 
-    A_row = dace.ndarray([H + 1], dtype=itype)
+    A_row = dace.ndarray([rows + 1], dtype=itype)
     A_col = dace.ndarray([nnz], dtype=itype)
     A_val = dace.ndarray([nnz], dtype=dtype)
 
-    x = dace.ndarray([W], dtype)
-    b = dace.ndarray([H], dtype)
+    x = dace.ndarray([cols], dtype)
+    b = dace.ndarray([rows], dtype)
 
     # Assuming uniform sparsity distribution across rows
-    nnz_per_row = nnz.get() // H.get()
-    nnz_last_row = nnz_per_row + (nnz.get() % H.get())
-    if nnz_last_row > W.get():
-        print('Too many nonzeros per row')
+    nnz_per_row = nnz.get() // rows.get()
+    nnz_last_row = nnz_per_row + (nnz.get() % rows.get())
+    if nnz_last_row > cols.get():
+        print("Too many nonzeros per row")
         exit(1)
 
     # RANDOMIZE SPARSE MATRIX
     A_row[0] = itype(0)
-    A_row[1:H.get()] = itype(nnz_per_row)
+    A_row[1:rows.get()] = itype(nnz_per_row)
     A_row[-1] = itype(nnz_last_row)
     A_row = np.cumsum(A_row, dtype=itype.type)
 
     # Fill column data
-    for i in range(H.get() - 1):
+    for i in range(rows.get() - 1):
         A_col[nnz_per_row*i:nnz_per_row*(i+1)] = \
-            np.sort(np.random.choice(W.get(), nnz_per_row, replace=False))
+            np.sort(np.random.choice(cols.get(), nnz_per_row, replace=False))
     # Fill column data for last row
-    A_col[nnz_per_row * (H.get() - 1):] = np.sort(
-        np.random.choice(W.get(), nnz_last_row, replace=False))
+    A_col[nnz_per_row * (rows.get() - 1):] = np.sort(
+        np.random.choice(cols.get(), nnz_last_row, replace=False))
 
     A_val[:] = np.random.rand(nnz.get()).astype(dtype.type)
     #########################
 
-    x[:] = np.random.rand(W.get()).astype(dtype.type)
+    x[:] = np.random.rand(cols.get()).astype(dtype.type)
     #b[:] = dtype(0)
 
     # Setup regression
     A_sparse = scipy.sparse.csr_matrix((A_val, A_col, A_row),
-                                       shape=(H.get(), W.get()))
+                                       shape=(rows.get(), cols.get()))
 
-    spmv = make_sdfg(args["specialize"])
-    if args["specialize"]:
-        spmv.specialize(dict(H=H, W=W, nnz=nnz))
-    spmv(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=H, W=W, nnz=nnz)
+    spmv = make_sdfg(specialize)
+    if specialize:
+        spmv.specialize(dict(rows=rows, cols=cols, nnz=nnz))
+    spmv(A_row=A_row,
+         A_col=A_col,
+         A_val=A_val,
+         x=x,
+         b=b,
+         rows=rows,
+         cols=cols,
+         nnz=nnz)
 
-    if dace.Config.get_bool('profiling'):
-        dace.timethis('spmv', 'scipy', 0, A_sparse.dot, x)
+    if dace.Config.get_bool("profiling"):
+        dace.timethis("spmv", "scipy", 0, A_sparse.dot, x)
 
-    diff = np.linalg.norm(A_sparse.dot(x) - b) / float(H.get())
+    diff = np.linalg.norm(A_sparse.dot(x) - b) / float(rows.get())
     print("Difference:", diff)
     if diff >= 1e-5:
         print("Validation failed.")
@@ -917,4 +917,22 @@ if __name__ == "__main__":
         else:
             print("Exiting...")
     print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    if diff > 1e-5:
+        raise RuntimeError("Validation failed.")
+
+    return spmv
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("cols", type=int)
+    parser.add_argument("rows", type=int)
+    parser.add_argument("nnz", type=int)
+    parser.add_argument("-specialize",
+                        default=False,
+                        action="store_true",
+                        help="Fix all symbols at compile time/in hardware")
+    args = parser.parse_args()
+
+    run_spmv(args.cols, args.rows, args.nnz, args.specialize)
