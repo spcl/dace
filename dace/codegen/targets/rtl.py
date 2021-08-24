@@ -117,9 +117,11 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 line: str = "{}* {} = &{}[0];".format(
                     dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                     edge.src.data)
-        elif isinstance(edge.src, nodes.MapEntry) and isinstance(edge.dst, nodes.Tasklet) and edge.src.map.unroll:
+        elif isinstance(edge.src, nodes.MapEntry) and isinstance(
+                edge.dst, nodes.Tasklet) and edge.src.map.unroll:
             # TODO works for one kernel, but might break with several.
-            self.n_unrolled = symbolic.evaluate(edge.src.map.range[0][1]+1, sdfg.constants)
+            self.n_unrolled = symbolic.evaluate(edge.src.map.range[0][1] + 1,
+                                                sdfg.constants)
             # TODO properly implement for software target
             line: str = '// Copy from map handled in xilinx codegen'
         else:
@@ -153,7 +155,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 line: str = "{}* {} = &{}[0];".format(
                     src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
                     edge.dst.data)
-        elif isinstance(edge.src, nodes.Tasklet) and isinstance(edge.dst, nodes.MapExit) and edge.dst.map.unroll:
+        elif isinstance(edge.src, nodes.Tasklet) and isinstance(
+                edge.dst, nodes.MapExit) and edge.dst.map.unroll:
             # TODO properly implement for software target
             line: str = '// Copy to map handled in xilinx codegen'
         else:
