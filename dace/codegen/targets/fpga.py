@@ -746,7 +746,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 for node in subgraph.nodes()
                 if isinstance(node, dace.sdfg.nodes.AccessNode)
             })
-            rtl_subgraph = any([isinstance(node, nodes.RTLTasklet) for node in subgraph.nodes()])
+            rtl_subgraph = any([
+                isinstance(node, nodes.RTLTasklet) for node in subgraph.nodes()
+            ])
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]

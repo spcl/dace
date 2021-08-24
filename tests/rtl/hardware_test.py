@@ -3,6 +3,7 @@ import dace
 from dace.fpga_testing import xilinx_test
 import numpy as np
 
+
 def make_vadd_sdfg(N, veclen=8):
     # add sdfg
     sdfg = dace.SDFG('floating_point_vector_plus_scalar')
@@ -178,6 +179,7 @@ def make_vadd_sdfg(N, veclen=8):
 
     return sdfg
 
+
 def make_vadd_multi_sdfg(N, M):
     # add sdfg
     sdfg = dace.SDFG('integer_vector_plus_42_multiple_kernels')
@@ -186,26 +188,30 @@ def make_vadd_multi_sdfg(N, M):
     state = sdfg.add_state('device_state')
 
     # add arrays
-    sdfg.add_array('A', [N], dtype=dace.int32, storage=dace.StorageType.CPU_Heap)
-    sdfg.add_array('B', [N], dtype=dace.int32, storage=dace.StorageType.CPU_Heap)
+    sdfg.add_array('A', [N],
+                   dtype=dace.int32,
+                   storage=dace.StorageType.CPU_Heap)
+    sdfg.add_array('B', [N],
+                   dtype=dace.int32,
+                   storage=dace.StorageType.CPU_Heap)
     sdfg.add_array('fpga_A', [N],
-                dtype=dace.int32,
-                transient=True,
-                storage=dace.StorageType.FPGA_Global)
+                   dtype=dace.int32,
+                   transient=True,
+                   storage=dace.StorageType.FPGA_Global)
     sdfg.add_array('fpga_B', [N],
-                dtype=dace.int32,
-                transient=True,
-                storage=dace.StorageType.FPGA_Global)
+                   dtype=dace.int32,
+                   transient=True,
+                   storage=dace.StorageType.FPGA_Global)
 
-    print (N.get(), M.get())
+    print(N.get(), M.get())
     # add streams
     sdfg.add_stream('A_stream',
-                    shape=(int(N.get()/M.get()),),
+                    shape=(int(N.get() / M.get()), ),
                     dtype=dace.int32,
                     transient=True,
                     storage=dace.StorageType.FPGA_Local)
     sdfg.add_stream('B_stream',
-                    shape=(int(N.get()/M.get()),),
+                    shape=(int(N.get() / M.get()), ),
                     dtype=dace.int32,
                     transient=True,
                     storage=dace.StorageType.FPGA_Local)
@@ -260,73 +266,77 @@ def make_vadd_multi_sdfg(N, M):
 
     # add read and write maps
     read_a_entry, read_a_exit = state.add_map(
-        'read_a_map', dict(i='0:N//M', j='0:M'), schedule=dace.ScheduleType.FPGA_Device)
+        'read_a_map',
+        dict(i='0:N//M', j='0:M'),
+        schedule=dace.ScheduleType.FPGA_Device)
     write_b_entry, write_b_exit = state.add_map(
-        'write_b_map', dict(i='0:N//M', j='0:M'), schedule=dace.ScheduleType.FPGA_Device)
+        'write_b_map',
+        dict(i='0:N//M', j='0:M'),
+        schedule=dace.ScheduleType.FPGA_Device)
     compute_entry, compute_exit = state.add_map(
-        'compute_map', dict(i='0:N//M'), schedule=dace.ScheduleType.FPGA_Device, unroll=True)
+        'compute_map',
+        dict(i='0:N//M'),
+        schedule=dace.ScheduleType.FPGA_Device,
+        unroll=True)
 
     # add read_a memlets and access nodes
     read_a_inp = state.add_read('fpga_A')
     read_a_out = state.add_write('A_stream')
     state.add_memlet_path(read_a_inp,
-                        read_a_entry,
-                        read_a,
-                        dst_conn='inp',
-                        memlet=dace.Memlet('fpga_A[i*M+j]'))
+                          read_a_entry,
+                          read_a,
+                          dst_conn='inp',
+                          memlet=dace.Memlet('fpga_A[i*M+j]'))
     state.add_memlet_path(read_a,
-                        read_a_exit,
-                        read_a_out,
-                        src_conn='out',
-                        memlet=dace.Memlet('A_stream[i]'))
+                          read_a_exit,
+                          read_a_out,
+                          src_conn='out',
+                          memlet=dace.Memlet('A_stream[i]'))
 
     # add tasklet memlets
     A = state.add_read('A_stream')
     B = state.add_write('B_stream')
     state.add_memlet_path(A,
-                        compute_entry,
-                        rtl_tasklet,
-                        dst_conn='a',
-                        memlet=dace.Memlet('A_stream[i]'))
+                          compute_entry,
+                          rtl_tasklet,
+                          dst_conn='a',
+                          memlet=dace.Memlet('A_stream[i]'))
     state.add_memlet_path(rtl_tasklet,
-                        compute_exit,
-                        B,
-                        src_conn='b',
-                        memlet=dace.Memlet('B_stream[i]'))
+                          compute_exit,
+                          B,
+                          src_conn='b',
+                          memlet=dace.Memlet('B_stream[i]'))
 
     # add write_b memlets and access nodes
     write_b_inp = state.add_read('B_stream')
     write_b_out = state.add_write('fpga_B')
     state.add_memlet_path(write_b_inp,
-                        write_b_entry,
-                        write_b,
-                        dst_conn='inp',
-                        memlet=dace.Memlet('B_stream[i]'))
+                          write_b_entry,
+                          write_b,
+                          dst_conn='inp',
+                          memlet=dace.Memlet('B_stream[i]'))
     state.add_memlet_path(write_b,
-                        write_b_exit,
-                        write_b_out,
-                        src_conn='out',
-                        memlet=dace.Memlet('fpga_B[i*M+j]'))
+                          write_b_exit,
+                          write_b_out,
+                          src_conn='out',
+                          memlet=dace.Memlet('fpga_B[i*M+j]'))
 
     # add copy to device state
     copy_to_device = sdfg.add_state('copy_to_device')
     cpu_a = copy_to_device.add_read('A')
     dev_a = copy_to_device.add_write('fpga_A')
-    copy_to_device.add_memlet_path(cpu_a,
-                                dev_a,
-                                memlet=dace.Memlet('A[0:N]'))
+    copy_to_device.add_memlet_path(cpu_a, dev_a, memlet=dace.Memlet('A[0:N]'))
     sdfg.add_edge(copy_to_device, state, dace.InterstateEdge())
 
     # add copy to host state
     copy_to_host = sdfg.add_state('copy_to_host')
     dev_b = copy_to_host.add_read('fpga_B')
     cpu_b = copy_to_host.add_write('B')
-    copy_to_host.add_memlet_path(dev_b,
-                                cpu_b,
-                                memlet=dace.Memlet('B[0:N]'))
+    copy_to_host.add_memlet_path(dev_b, cpu_b, memlet=dace.Memlet('B[0:N]'))
     sdfg.add_edge(state, copy_to_host, dace.InterstateEdge())
 
     return sdfg
+
 
 @xilinx_test()
 def test_hardware_vadd():
@@ -348,18 +358,19 @@ def test_hardware_vadd():
 
     return sdfg
 
+
 @xilinx_test()
 def test_hardware_add42_single():
     N = dace.symbol('N')
     M = dace.symbol('M')
 
     # init data structures
-    N.set(4096) # elements
-    M.set(4096) # elements per kernel
+    N.set(4096)  # elements
+    M.set(4096)  # elements per kernel
     a = np.random.randint(0, 100, N.get()).astype(np.int32)
     b = np.zeros((N.get(), )).astype(np.int32)
     sdfg = make_vadd_multi_sdfg(N, M)
-    sdfg.specialize(dict(N=N,M=M))
+    sdfg.specialize(dict(N=N, M=M))
 
     # call program
     sdfg(A=a, B=b)
@@ -369,19 +380,20 @@ def test_hardware_add42_single():
         assert b[i] == a[i] + 42
 
     return sdfg
-    
+
+
 @xilinx_test()
 def test_hardware_add42_multi():
     N = dace.symbol('N')
     M = dace.symbol('M')
 
     # init data structures
-    N.set(4096) # elements
-    M.set(32) # elements per kernel
+    N.set(4096)  # elements
+    M.set(32)  # elements per kernel
     a = np.random.randint(0, 100, N.get()).astype(np.int32)
     b = np.zeros((N.get(), )).astype(np.int32)
     sdfg = make_vadd_multi_sdfg(N, M)
-    sdfg.specialize(dict(N=N,M=M))
+    sdfg.specialize(dict(N=N, M=M))
 
     # call program
     sdfg(A=a, B=b)
@@ -392,7 +404,8 @@ def test_hardware_add42_multi():
 
     return sdfg
 
+
 if __name__ == '__main__':
-    #test_hardware_vadd(None)
-    #test_hardware_add42_single(None)
+    test_hardware_vadd(None)
+    test_hardware_add42_single(None)
     test_hardware_add42_multi(None)
