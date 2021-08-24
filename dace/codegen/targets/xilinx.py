@@ -702,7 +702,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             for node in subgraph.source_nodes():
                 if isinstance(sdfg.arrays[node.data], dt.Stream):
                     # TODO multiple readers accessing a single stream should fail
-                    dst = subgraph.out_edges(node)[0]
+                    dst = subgraph.out_edges(node)[0].dst
                     if isinstance(dst, dace.nodes.MapEntry) and dst.map.unroll:
                         unrolled_map_range = dace.symbolic.evaluate(dst.map.range[0][1]+1, sdfg.constants)
                     else:
@@ -724,7 +724,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             for node in subgraph.sink_nodes():
                 if isinstance(sdfg.arrays[node.data], dt.Stream):
                     # TODO multiple writers accessing a single stream should fail
-                    src = subgraph.in_edges(node)[0]
+                    src = subgraph.in_edges(node)[0].src
                     if (isinstance(src, dace.nodes.MapExit) and src.map.unroll):
                         unrolled_map_range = dace.symbolic.evaluate(src.map.range[0][1]+1, sdfg.constants)
                     else:
