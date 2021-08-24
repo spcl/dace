@@ -393,6 +393,6 @@ def test_hardware_add42_multi():
     return sdfg
 
 if __name__ == '__main__':
-    #test_hardware_vadd(None)
-    #test_hardware_add42_single(None)
+    test_hardware_vadd(None)
+    test_hardware_add42_single(None)
     test_hardware_add42_multi(None)
