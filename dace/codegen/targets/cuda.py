@@ -1512,6 +1512,28 @@ void  *{kname}_args[] = {{ {kargs} }};
         if instr is not None:
             callsite_stream.write(outer_stream.getvalue())
 
+    def get_tb_maps_recursive(self, subgraph):
+        res = []
+        for node in subgraph.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                for state in node.sdfg.states():
+                    tbmaps = self.get_tb_maps_recursive(state)
+                    for map, sym_map in tbmaps:
+                        for k in sym_map.values():
+                            for kk, vv in node.symbol_mapping.items():
+                                sym_map[k] = sym_map[k].subs(
+                                    dace.symbol(kk), vv)
+                        res.append((map, sym_map))
+            elif isinstance(node, nodes.MapEntry) and node.schedule in (
+                    dtypes.ScheduleType.GPU_ThreadBlock,
+                    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+            ):
+                res.append((node.map, {
+                    dace.symbol(k): dace.symbol(k)
+                    for k in node.map.range.free_symbols
+                }))
+        return res
+
     def get_kernel_dimensions(self, dfg_scope):
         """ Determines a GPU kernel's grid/block dimensions from map
             scopes.
@@ -1548,37 +1570,22 @@ void  *{kname}_args[] = {{ {kargs} }};
         # Extend to 3 dimensions if necessary
         grid_size = grid_size + [1] * (3 - len(grid_size))
 
-        # Obtain thread-block maps for case (2)
-        subgraph = dfg_scope.scope_subgraph(kernelmap_entry)
-        tb_maps = [
-            node.map for node in subgraph.nodes()
-            if isinstance(node, nodes.EntryNode) and node.schedule in (
-                dtypes.ScheduleType.GPU_ThreadBlock,
-                dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
-        ]
-        # Append thread-block maps from nested SDFGs
-        for node in subgraph.nodes():
-            if isinstance(node, nodes.NestedSDFG):
-                tb_maps.extend([
-                    n.map for n, _ in node.sdfg.all_nodes_recursive()
-                    if isinstance(n, nodes.MapEntry) and n.schedule in (
-                        dtypes.ScheduleType.GPU_ThreadBlock,
-                        dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
-                ])
+        # Obtain thread-block maps from nested SDFGs
+        tb_maps_sym_map = self.get_tb_maps_recursive(subgraph)
 
         has_dtbmap = len([
-            tbmap for tbmap in tb_maps
+            tbmap for tbmap, _ in tb_maps_sym_map
             if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
         ]) > 0
 
         # keep only thread-block maps
-        tb_maps = [
-            tbmap for tbmap in tb_maps
+        tb_maps_sym_map = [
+            (tbmap, sym_map) for tbmap, sym_map in tb_maps_sym_map
             if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock
         ]
 
         # Case (1): no thread-block maps
-        if len(tb_maps) == 0:
+        if len(tb_maps_sym_map) == 0:
 
             if has_dtbmap:
                 if (Config.get('compiler', 'cuda',
@@ -1619,8 +1626,10 @@ void  *{kname}_args[] = {{ {kargs} }};
         # Find all thread-block maps to determine overall block size
         block_size = [1, 1, 1]
         detected_block_sizes = [block_size]
-        for tbmap in tb_maps:
-            tbsize = tbmap.range.size()[::-1]
+        for tbmap, sym_map in tb_maps_sym_map:
+            tbsize = [
+                s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]
+            ]
 
             # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
             # The partial trailing thread-block is emitted as an if-condition
