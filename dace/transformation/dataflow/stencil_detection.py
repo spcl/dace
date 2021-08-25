@@ -19,10 +19,16 @@ class StencilDetection(pm.Transformation):
     """
 
     map_entry = pm.PatternNode(nodes.MapEntry)
+    tasklet = pm.PatternNode(nodes.Tasklet)
+    map_exit = pm.PatternNode(nodes.MapExit)
 
     @staticmethod
     def expressions():
-        return [sdutil.node_path_graph(StencilDetection.map_entry)]
+        return [
+            sdutil.node_path_graph(StencilDetection.map_entry,
+                                   StencilDetection.tasklet,
+                                   StencilDetection.map_exit)
+        ]
 
     @staticmethod
     def can_be_applied(graph: dace.SDFGState,
@@ -32,7 +38,13 @@ class StencilDetection(pm.Transformation):
                        strict: bool = False):
 
         map_entry = graph.node(candidate[StencilDetection.map_entry])
-        map_exit = graph.exit_node(map_entry)
+        map_exit = graph.node(candidate[StencilDetection.map_exit])
+
+        # Match Map scopes with only one Tasklet
+        map_scope = graph.scope_subgraph(map_entry)
+        if len(map_scope.nodes()) > 3:
+            return False
+
         params = [dace.symbol(p) for p in map_entry.map.params]
 
         inputs = dict()
@@ -115,10 +127,6 @@ class StencilDetection(pm.Transformation):
             else:
                 return False
 
-        map_scope = graph.scope_subgraph(map_entry)
-        if len(map_scope.nodes()) > 3:
-            return False
-
         return stencil_found
 
     @staticmethod
@@ -135,7 +143,7 @@ class StencilDetection(pm.Transformation):
         tasklet = next(n for n in map_scope.nodes()
                        if isinstance(n, nodes.Tasklet))
 
-        # For each Map paremeter, go over the output edge subsets and find the 
+        # For each Map paremeter, go over the output edge subsets and find the
         # ranges or indices that use this parameter. Substitute the parameter
         # with 0. Gather the ranges or index expressions that become constant
         # integers after the substitution and find the minimum. This number
@@ -211,12 +219,16 @@ class StencilDetection(pm.Transformation):
             # TODO: Assume for now that all arrays have as many dimensions as
             # the stencil Map and that all the dimension are involved in the
             # stencil pattern.
-            iterator_mapping={c: tuple([True] * len(map_entry.map.params))
-                              for c in in_conns | out_conns},
+            iterator_mapping={
+                c: tuple([True] * len(map_entry.map.params))
+                for c in in_conns | out_conns
+            },
             # TODO: Assume for now that all outputs have 'shrink' boundary
             # conditions
-            boundary_conditions={c: {'btype': 'shrink'} for c in out_conns}
-        )
+            boundary_conditions={c: {
+                'btype': 'shrink'
+            }
+                                 for c in out_conns})
         state.add_node(stencil_node)
 
         inputs = {}
