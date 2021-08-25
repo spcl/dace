@@ -59,6 +59,62 @@ class EndStateElimination(transformation.Transformation):
         sdfg.remove_node(state)
 
 
+@registry.autoregister_params(strict=False)
+class StartStateElimination(transformation.Transformation):
+    """
+    Start-state elimination removes a redundant state that has one outgoing edge
+    and no contents. This transformation applies only to nested SDFGs.
+    """
+
+    start_state = sdfg.SDFGState()
+
+    @staticmethod
+    def expressions():
+        return [sdutil.node_path_graph(StartStateElimination.start_state)]
+
+    @staticmethod
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        state = graph.nodes()[candidate[StartStateElimination.start_state]]
+
+        # The transformation applies only to nested SDFGs
+        if not graph.parent:
+            return False
+
+        out_edges = graph.out_edges(state)
+        in_edges = graph.in_edges(state)
+
+        # If this is a start state, there are no incoming edges
+        if len(in_edges) != 0:
+            return False
+
+        # We only match start states with one sink and no conditions
+        if len(out_edges) != 1:
+            return False
+        edge = out_edges[0]
+        if not edge.data.is_unconditional():
+            return False
+
+        # Only empty states can be eliminated
+        if state.number_of_nodes() > 0:
+            return False
+
+        return True
+
+    @staticmethod
+    def match_to_str(graph, candidate):
+        state = graph.nodes()[candidate[StartStateElimination.start_state]]
+        return state.label
+
+    def apply(self, sdfg):
+        state = sdfg.nodes()[self.subgraph[StartStateElimination.start_state]]
+        # Move assignments to the nested SDFG node's symbol mappings
+        node = sdfg.parent_nsdfg_node
+        edge = sdfg.out_edges(state)[0]
+        for k, v in edge.data.assignments.items():
+            node.symbol_mapping[k] = v
+        sdfg.remove_node(state)
+
+
 def _assignments_to_consider(sdfg, edge):
     assignments_to_consider = {}
     for var, assign in edge.data.assignments.items():
