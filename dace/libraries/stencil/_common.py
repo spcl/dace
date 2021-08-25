@@ -150,6 +150,8 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
                     term = f"_i{i} < {str(-offset)}"
                 elif offset > 0:
                     term = f"_i{i} >= {str(shape[i] - offset)}"
+                else:
+                    continue
                 cond.add(term)
             if len(cond) == 0:
                 boundary_code += "{} = _{}\n".format(memlet_name, memlet_name)
