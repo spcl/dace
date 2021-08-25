@@ -21,22 +21,20 @@ def make_sdfg_1d(implementation: str):
     a = state.add_read("a")
     res = state.add_write("res")
 
-    stencil_node = Stencil(
-        "stencil_test", """\
+    stencil_node = Stencil("stencil_test",
+                           """\
 tmp0 = (a[0] + a[1])
 tmp1 = (tmp0 + a[2])
-res[1] = (dace.float32(0.3333) * tmp1)""")
+res[1] = (dace.float32(0.3333) * tmp1)""",
+                           inputs={"a"},
+                           outputs={"res"})
     stencil_node.implementation = implementation
     state.add_node(stencil_node)
 
-    state.add_memlet_path(a,
-                          stencil_node,
-                          dst_conn="a",
-                          memlet=dace.Memlet.from_array("a", a_desc))
-    state.add_memlet_path(stencil_node,
-                          res,
-                          src_conn="res",
-                          memlet=dace.Memlet.from_array("res", res_desc))
+    state.add_edge(a, None, stencil_node, "a",
+                   dace.Memlet.from_array("a", a_desc))
+    state.add_edge(stencil_node, "res", res, None,
+                   dace.Memlet.from_array("res", res_desc))
 
     return sdfg
 
