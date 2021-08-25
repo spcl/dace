@@ -135,7 +135,14 @@ class StencilDetection(pm.Transformation):
         tasklet = next(n for n in map_scope.nodes()
                        if isinstance(n, nodes.Tasklet))
 
-        # Find offsets
+        # For each Map paremeter, go over the output edge subsets and find the 
+        # ranges or indices that use this parameter. Substitute the parameter
+        # with 0. Gather the ranges or index expressions that become constant
+        # integers after the substitution and find the minimum. This number
+        # will be used to offset all output stencil indices, so that there is
+        # always a zero-index.
+        # NOTE: This will work properly only with default-dtype parameters due
+        # to the known issues with symbolic substitution.
         offsets = [None] * len(map_entry.map.params)
         for i, p in enumerate(map_entry.map.params):
             sp = symbolic.pystr_to_symbolic(p)
@@ -147,6 +154,7 @@ class StencilDetection(pm.Transformation):
                         assert (rng[0] == rng[1])
                         if sp in rng[0].free_symbols:
                             nval = rng[0].subs(sp, 0)
+                            # Attempt to convert to integer
                             try:
                                 nval = int(str(nval))
                                 values.add(nval)
@@ -156,6 +164,7 @@ class StencilDetection(pm.Transformation):
                     for idx in sset:
                         if sp in idx.free_symbols:
                             nval = idx.subs(sp, 0)
+                            # Attempt to convert to integer
                             try:
                                 nval = int(str(nval))
                                 values.add(nval)
@@ -163,9 +172,8 @@ class StencilDetection(pm.Transformation):
                                 pass
             if len(values) > 0:
                 offsets[i] = min(values)
-        print(offsets)
 
-        # Get initial replacement dictionary
+        # Get replacement dictionary
         rdict = {}
         for i, (p,
                 r) in enumerate(zip(map_entry.map.params, map_entry.map.range)):
@@ -184,38 +192,30 @@ class StencilDetection(pm.Transformation):
         out_conns = set()
 
         for e in state.in_edges(tasklet):
-            print(e.data)
-            sset = e.data.subset
-            sset.replace(rdict)
-            print(e.data)
+            e.data.subset.replace(rdict)
             conn = f'__{e.data.data}'
             in_conns.add(conn)
             in_data[e.data.data] = conn
-            code = code.replace(e.dst_conn, f'{conn}[{sset}]')
+            code = code.replace(e.dst_conn, f'{conn}[{e.data.subset}]')
 
         for e in state.out_edges(tasklet):
-            print(e.data)
-            sset = e.data.subset
-            sset.replace(rdict)
-            print(e.data)
+            e.data.subset.replace(rdict)
             conn = f'__{e.data.data}'
             out_conns.add(conn)
             out_data[e.data.data] = conn
-            code = code.replace(e.src_conn, f'{conn}[{sset}]')
+            code = code.replace(e.src_conn, f'{conn}[{e.data.subset}]')
 
         stencil_node = Stencil(
             f'{map_entry.label}_stencil',
             code,
-            # TODO: Generalize this
-            iterator_mapping={
-                '__A': (True, ),
-                'B': (True, )
-            },
-            boundary_conditions={'__B': {
-                'btype': 'shrink'
-            }},
-            # in_connectors=in_conns,
-            # out_connectors=out_conns
+            # TODO: Assume for now that all arrays have as many dimensions as
+            # the stencil Map and that all the dimension are involved in the
+            # stencil pattern.
+            iterator_mapping={c: tuple([True] * len(map_entry.map.params))
+                              for c in in_conns | out_conns},
+            # TODO: Assume for now that all outputs have 'shrink' boundary
+            # conditions
+            boundary_conditions={c: {'btype': 'shrink'} for c in out_conns}
         )
         state.add_node(stencil_node)
 
