@@ -25,7 +25,7 @@ def vector_reduce(x: dace.float32[N], s: dace.scalar(dace.float32)):
     dace.reduce(lambda a, b: a + b, tmp, s, axis=(0), identity=0)
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test()
 def test_vector_reduce():
 
     N.set(24)

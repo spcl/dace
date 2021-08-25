@@ -51,12 +51,12 @@ def run_dot(n, tile_first):
     return sdfg
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test()
 def test_dot_tile_first():
     return run_dot(64, True)
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test()
 def test_dot_fpga_transform_first():
     return run_dot(64, False)
 

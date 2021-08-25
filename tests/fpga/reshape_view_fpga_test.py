@@ -144,7 +144,7 @@ def test_reshape_dst_explicit():
     return sdfg
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test()
 def test_view_slice():
     """
         In this test we use slice. In this case a view is used to access

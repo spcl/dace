@@ -137,7 +137,7 @@ def create_gemm_sdfg(sdfg_name,
     return sdfg
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test()
 def test_naive_matmul_fpga():
     matmul = import_sample(Path("simple") / "matmul.py")
     sdfg = matmul.matmul.to_sdfg()

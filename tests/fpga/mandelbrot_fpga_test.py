@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 # TODO: Pipeline control flow while-loop?
-@fpga_test(assert_ii_1=False)
+@fpga_test()
 def test_mandelbrot_fpga():
     mandelbrot = import_sample(Path("simple") / "mandelbrot.py")
     h, w, max_iterations = 64, 64, 1000

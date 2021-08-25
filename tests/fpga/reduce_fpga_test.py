@@ -84,7 +84,7 @@ def create_reduce_sdfg(wcr_str, reduction_axis, sdfg_name, input_data,
     return sdfg
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test()
 def test_reduce_sum_one_axis():
     A = np.random.rand(8, 8).astype(np.float32)
     B = np.random.rand(8).astype(np.float32)
@@ -126,7 +126,7 @@ def test_reduce_sum_4D():
     return sdfg
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test()
 def test_reduce_max():
     A = np.random.rand(4, 4).astype(np.float32)
     B = np.random.rand(4).astype(np.float32)
