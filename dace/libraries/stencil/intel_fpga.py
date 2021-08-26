@@ -1,3 +1,4 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import astunparse
 import collections
@@ -43,10 +44,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
                 converter.convert(field, center_index)
 
         # Replace accesses in the code
-        code = node.code.as_string
-        new_ast = converter.visit(ast.parse(code))
-        code = astunparse.unparse(new_ast)
-        field_accesses = converter.mapping
+        code, field_accesses = parse_accesses(node.code.as_string, outputs)
 
         iterator_mapping = make_iterator_mapping(node, field_accesses, shape)
         vector_length = validate_vector_lengths(vector_lengths,
@@ -371,12 +369,12 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             iterator_str = pipeline.iterator_str()
             if iterator_str not in nested_sdfg.symbols:
                 nested_sdfg.add_symbol(iterator_str, dace.int64)
-            update_state.add_memlet_path(update_read,
-                                         update_tasklet,
-                                         memlet=dace.Memlet(
-                                             f"{update_read.data}[{field_index}]",
-                                             dynamic=True),
-                                         dst_conn="wavefront_in")
+            update_state.add_memlet_path(
+                update_read,
+                update_tasklet,
+                memlet=dace.Memlet(f"{update_read.data}[{field_index}]",
+                                   dynamic=True),
+                dst_conn="wavefront_in")
             subset = f"{size} - {vector_length}:{size}" if size > 1 else "0"
             update_state.add_memlet_path(update_tasklet,
                                          update_write,
