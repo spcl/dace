@@ -876,6 +876,31 @@ def contained_in(state: SDFGState, node: nodes.Node,
     return False
 
 
+def get_parent_map(
+    state: SDFGState,
+    node: Optional[nodes.Node] = None
+) -> Optional[Tuple[nodes.EntryNode, SDFGState]]:
+    """
+    Returns the map in which the state (and node) are contained in, or None if
+    it is free.
+    :param state: The state to test or parent of the node to test.
+    :param node: The node to test (optional).
+    :return: A tuple of (entry node, state) or None.
+    """
+    cursdfg = state.parent
+    curstate = state
+    curscope = node
+    while cursdfg is not None:
+        if curscope is not None:
+            curscope = curstate.entry_node(curscope)
+            if curscope is not None:
+                return curscope, curstate
+        curstate = cursdfg.parent
+        curscope = cursdfg.parent_nsdfg_node
+        cursdfg = cursdfg.parent_sdfg
+    return None
+
+
 def redirect_edge(
         state: SDFGState,
         edge: graph.MultiConnectorEdge[Memlet],
