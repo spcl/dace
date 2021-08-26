@@ -164,9 +164,10 @@ def parse_dace_program(name: str,
         # Check if the same array is already passed as part of a nested closure
         if id(arr) in closure.array_mapping:
             existing_name = closure.array_mapping[id(arr)]
-            del sdfg.arrays[name]
-            for state in sdfg.nodes():
-                state.replace(name, existing_name)
+            if name != existing_name:
+                del sdfg.arrays[name]
+                for state in sdfg.nodes():
+                    state.replace(name, existing_name)
 
     # We save information in a tmp file for improved source mapping.
     if save:

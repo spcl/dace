@@ -146,11 +146,11 @@ class SDFGClosure:
 
                 # Check if the same array is already passed as part of a
                 # nested closure
-                # arr = evaluator()
-                # if id(arr) in self.array_mapping:
-                #     continue
+                arr = evaluator()
+                if id(arr) in self.array_mapping:
+                    continue
 
                 new_name = data.find_new_name(arrname,
                                               self.closure_arrays.keys())
                 self.closure_arrays[new_name] = (arrname, desc, evaluator, True)
-                # self.array_mapping[id(arr)] = new_name
+                self.array_mapping[id(arr)] = new_name

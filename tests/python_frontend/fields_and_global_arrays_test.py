@@ -574,6 +574,35 @@ def test_method_allconstants():
     assert np.allclose(7.0, ns.A)
 
 
+def test_same_global_array():
+    A = {'a': np.random.rand(20), 'b': np.zeros([20]), 'c': np.zeros([20])}
+
+    @dace.program
+    def proga():
+        A['b'] += A['a'] + 1
+
+    @dace.program
+    def progb():
+        A['c'][:] = A['b'] + 1
+
+    @dace.program
+    def caller():
+        proga()
+        progb()
+
+    # Check result
+    caller()
+    assert np.allclose(A['b'], A['a'] + 1)
+    assert np.allclose(A['c'], A['a'] + 2)
+
+    # Check validity of closure
+    assert len(caller.resolver.closure_arrays) == 3
+
+    # Ensure only three globals are created
+    sdfg = caller.to_sdfg()
+    assert len([k for k in sdfg.arrays if '__g' in k]) == 3
+
+
 if __name__ == '__main__':
     test_bad_closure()
     test_dynamic_closure()
@@ -602,3 +631,4 @@ if __name__ == '__main__':
     test_array_closure_cache_nested()
     test_allconstants()
     test_method_allconstants()
+    test_same_global_array()
