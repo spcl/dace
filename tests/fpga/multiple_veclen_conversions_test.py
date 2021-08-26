@@ -288,7 +288,7 @@ def make_sdfg(dtype=dace.float32, vec_width=4):
     return sdfg
 
 
-@fpga_test()
+@fpga_test(assert_ii_1=False)
 def test_multiple_veclen_conversions_test():
 
     parser = argparse.ArgumentParser()

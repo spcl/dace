@@ -12,7 +12,7 @@ from dace.transformation.interstate import InlineSDFG
 # Checks multiple interfaces attached to the same HBM-bank.
 
 
-@xilinx_test()
+@xilinx_test(assert_ii_1=False)
 def test_3_interface_to_2_banks():
     sdfg = SDFG("test_4_interface_to_2_banks")
     state = sdfg.add_state()
