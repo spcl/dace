@@ -152,7 +152,8 @@ class StencilDetection(pm.Transformation):
         # NOTE: This will work properly only with default-dtype parameters due
         # to the known issues with symbolic substitution.
         offsets = [None] * len(map_entry.map.params)
-        for i, p in enumerate(map_entry.map.params):
+        for i, (p, r) in enumerate(zip(map_entry.map.params,
+                                       map_entry.map.range)):
             sp = symbolic.pystr_to_symbolic(p)
             values = set()
             for e in state.out_edges(tasklet):
@@ -161,7 +162,7 @@ class StencilDetection(pm.Transformation):
                     for rng in sset:
                         assert (rng[0] == rng[1])
                         if sp in rng[0].free_symbols:
-                            nval = rng[0].subs(sp, 0)
+                            nval = rng[0].subs(sp, r[0])
                             # Attempt to convert to integer
                             try:
                                 nval = int(str(nval))
@@ -171,7 +172,7 @@ class StencilDetection(pm.Transformation):
                 elif isinstance(sset, subsets.Indices):
                     for idx in sset:
                         if sp in idx.free_symbols:
-                            nval = idx.subs(sp, 0)
+                            nval = idx.subs(sp, r[0])
                             # Attempt to convert to integer
                             try:
                                 nval = int(str(nval))
