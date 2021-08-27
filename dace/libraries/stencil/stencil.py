@@ -75,8 +75,9 @@ class Stencil(dace.library.LibraryNode):
                  label: str,
                  code: str = "",
                  iterator_mapping: Dict[str, Tuple[int]] = {},
-                 boundary_conditions: Dict[str, Dict] = {}):
-        super().__init__(label)
+                 boundary_conditions: Dict[str, Dict] = {},
+                 **kwargs):
+        super().__init__(label, **kwargs)
         self.code = type(self).code.from_string(code,
                                                 dace.dtypes.Language.Python)
         self.iterator_mapping = iterator_mapping
