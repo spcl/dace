@@ -1571,6 +1571,7 @@ void  *{kname}_args[] = {{ {kargs} }};
         grid_size = grid_size + [1] * (3 - len(grid_size))
 
         # Obtain thread-block maps from nested SDFGs
+        subgraph = dfg_scope.scope_subgraph(kernelmap_entry)
         tb_maps_sym_map = self.get_tb_maps_recursive(subgraph)
 
         has_dtbmap = len([
