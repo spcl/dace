@@ -48,53 +48,100 @@ def make_vadd_sdfg(N, veclen=8):
                                     inputs={'a', 'b'},
                                     outputs={'c'},
                                     code='''
-        wire ap_aresetn = ~ap_areset;
-        reg [31:0] b_local;
-        reg b_valid = 0;
-        wire [VECLEN-1:0] a_tready;
-        wire [VECLEN-1:0] c_tvalid;
-
         assign ap_done = 1;
-        assign s_axis_a_tready = &a_tready;
-        assign m_axis_c_tvalid = &c_tvalid;
+        wire ap_aresetn = ~ap_areset;
+
+        wire [VECLEN-1:0]       a_tvalid;
+        wire [VECLEN-1:0][31:0] a_tdata;
+        wire [VECLEN-1:0]       a_tready;
+
+        reg [31:0] b_local = 0;
+        reg        b_valid = 0;
+
+        wire [VECLEN-1:0]       c_tvalid;
+        wire [VECLEN-1:0][31:0] c_tdata;
+        wire [VECLEN-1:0]       c_tready;
 
         always @(posedge ap_aclk) begin
             if (ap_areset) begin
-                b_local = 0;
                 b_valid = 0;
-            end else if (ap_start) begin
-                b_local = b;
-                b_valid = 1;
+
+            end else begin
+                if (ap_start)
+                    b_valid = 1;
+                b_local = b_local | b;
             end
         end
+
+        axis_broadcaster_0 ab0(
+            .aclk    (ap_aclk),
+            .aresetn (ap_aresetn),
+
+            .s_axis_tvalid (s_axis_a_tvalid),
+            .s_axis_tdata  (s_axis_a_tdata),
+            .s_axis_tready (s_axis_a_tready),
+
+            .m_axis_tvalid (a_tvalid),
+            .m_axis_tdata  (a_tdata),
+            .m_axis_tready (a_tready)
+        );
 
         genvar i;
         generate
             for (i = 0; i < VECLEN; i = i + 1) begin
                 floating_point_add add(
-                    .aclk(ap_aclk),
-                    .aresetn(ap_aresetn),
+                    .aclk    (ap_aclk),
+                    .aresetn (ap_aresetn),
 
-                    .s_axis_a_tvalid(s_axis_a_tvalid),
-                    .s_axis_a_tdata(s_axis_a_tdata[i]),
-                    .s_axis_a_tready(a_tready[i]),
+                    .s_axis_a_tvalid (a_tvalid[i]),
+                    .s_axis_a_tdata  (a_tdata[i]),
+                    .s_axis_a_tready (a_tready[i]),
 
-                    .s_axis_b_tvalid(b_valid),
-                    .s_axis_b_tdata(b_local),
+                    .s_axis_b_tvalid (b_valid),
+                    .s_axis_b_tdata  (b_local),
 
-                    .m_axis_result_tvalid(c_tvalid[i]),
-                    .m_axis_result_tdata(m_axis_c_tdata[i]),
-                    .m_axis_result_tready(m_axis_c_tready)
+                    .m_axis_result_tvalid (c_tvalid[i]),
+                    .m_axis_result_tdata  (c_tdata[i]),
+                    .m_axis_result_tready (c_tready[i])
                 );
             end
         endgenerate
+
+        axis_combiner_0 ac0(
+            .aclk    (ap_aclk),
+            .aresetn (ap_aresetn),
+
+            .s_axis_tvalid (c_tvalid),
+            .s_axis_tdata  (c_tdata),
+            .s_axis_tready (c_tready),
+
+            .m_axis_tvalid (m_axis_c_tvalid),
+            .m_axis_tdata  (m_axis_c_tdata),
+            .m_axis_tready (m_axis_c_tready)
+        );
         ''',
                                     language=dace.Language.SystemVerilog)
 
     rtl_tasklet.add_ip_core('floating_point_add', 'floating_point',
                             'xilinx.com', '7.1', {
                                 'CONFIG.Add_Sub_Value': 'Add',
-                                'CONFIG.Has_ARESETn': 'true'
+                                'CONFIG.Has_ARESETn': 'true',
+                                'CONFIG.Axi_Optimize_Goal': 'Performance',
+                                'CONFIG.C_Latency': '14'
+                            })
+    rtl_tasklet.add_ip_core('axis_broadcaster_0', 'axis_broadcaster',
+                            'xilinx.com', '1.1', dict({
+                                'CONFIG.NUM_MI': '16',
+                                'CONFIG.M_TDATA_NUM_BYTES': '4',
+                                'CONFIG.S_TDATA_NUM_BYTES': '64'
+                            }, **{
+                                f'CONFIG.M{i:02}_TDATA_REMAP': f'tdata[{((i+1)*32)-1}:{i*32}]'
+                                for i in range(veclen)
+                            }))
+    rtl_tasklet.add_ip_core('axis_combiner_0', 'axis_combiner',
+                            'xilinx.com', '1.1', {
+                                'CONFIG.TDATA_NUM_BYTES': '4',
+                                'CONFIG.NUM_SI': '16'
                             })
 
     # add read and write tasklets
@@ -342,11 +389,11 @@ def make_vadd_multi_sdfg(N, M):
 def test_hardware_vadd():
     # add symbol
     N = dace.symbol('N')
-    N.set(4096)
+    N.set(256)
     veclen = 16
     sdfg = make_vadd_sdfg(N, veclen)
     a = np.random.randint(0, 100, N.get()).astype(np.float32)
-    b = np.random.rand(1)[0].astype(np.float32)
+    b = np.random.randint(1, 100, 1)[0].astype(np.float32)
     c = np.zeros((N.get(), )).astype(np.float32)
 
     # call program
