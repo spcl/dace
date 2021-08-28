@@ -275,6 +275,10 @@ class InlineMultistateSDFG(transformation.Transformation):
             for k, v in itertools.chain(inputs.items(), outputs.items())
         })
 
+        symbolic.safe_replace(repldict,
+                              nsdfg.replace_dict,
+                              value_as_string=True)
+
         # Add views whenever reshapes are necessary
         # for dname in reshapes:
         #     desc = nsdfg.arrays[dname]
@@ -296,17 +300,6 @@ class InlineMultistateSDFG(transformation.Transformation):
         #                                may_alias=desc.may_alias,
         #                                find_new_name=True)
         #     repldict[dname] = newname
-
-        orig_data: Dict[Union[nodes.AccessNode, MultiConnectorEdge], str] = {}
-        for nstate in nsdfg.nodes():
-            for node in nstate.nodes():
-                if isinstance(node, nodes.AccessNode) and node.data in repldict:
-                    orig_data[node] = node.data
-                    node.data = repldict[node.data]
-            for edge in nstate.edges():
-                if edge.data.data in repldict:
-                    orig_data[edge] = edge.data.data
-                    edge.data.data = repldict[edge.data.data]
 
         # Add extra access nodes for out/in view nodes
         # inv_reshapes = {repldict[r]: r for r in reshapes}

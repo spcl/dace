@@ -9,26 +9,26 @@ N = dace.symbol('N')
 
 def _runtest(sdfg: dace.SDFG, n: int, add_symbol: bool = True):
     A = np.random.rand(n).astype(np.float32)
-    out = np.zeros([1], dtype=np.float32)
+    output = np.zeros([1], dtype=np.float32)
     if add_symbol:
-        sdfg(A=A, out=out, N=n)
+        sdfg(A=A, output=output, N=n)
     else:
-        sdfg(A=A, out=out)
-    assert np.allclose(out, np.sum(A))
+        sdfg(A=A, output=output)
+    assert np.allclose(output, np.sum(A))
 
 
 def _runtest2d(sdfg: dace.SDFG, n: int, m: int):
     A = np.random.rand(n, m).astype(np.float32)
-    out = np.zeros([m], dtype=np.float32)
-    sdfg(A=A, out=out, N=n)
-    assert np.allclose(out, np.sum(A, axis=0))
+    output = np.zeros([m], dtype=np.float32)
+    sdfg(A=A, output=output, N=n)
+    assert np.allclose(output, np.sum(A, axis=0))
 
 
 def test_shortmap():
     @dace.program
-    def sum(A: dace.float32[4], out: dace.float32[1]):
+    def sum(A: dace.float32[4], output: dace.float32[1]):
         for i in dace.map[0:4]:
-            out += A[i]
+            output += A[i]
 
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
@@ -39,9 +39,9 @@ def test_shortmap():
 
 def test_symmap():
     @dace.program
-    def sum(A: dace.float32[N], out: dace.float32[1]):
+    def sum(A: dace.float32[N], output: dace.float32[1]):
         for i in dace.map[0:N]:
-            out += A[i]
+            output += A[i]
 
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
@@ -53,8 +53,8 @@ def test_symmap():
 
 def test_libnode():
     @dace.program
-    def sum(A: dace.float32[N], out: dace.float32[1]):
-        dace.reduce(lambda a, b: a + b, A, out, identity=0)
+    def sum(A: dace.float32[N], output: dace.float32[1]):
+        dace.reduce(lambda a, b: a + b, A, output, identity=0)
 
     sdfg = sum.to_sdfg()
     sdfg.expand_library_nodes()
@@ -67,9 +67,9 @@ def test_libnode():
 
 def test_block_reduction():
     @dace.program
-    def sum(A: dace.float32[N, N], out: dace.float32[N]):
+    def sum(A: dace.float32[N, N], output: dace.float32[N]):
         for i, j in dace.map[0:N, 0:N]:
-            out[j] += A[i, j]
+            output[j] += A[i, j]
 
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
@@ -82,9 +82,9 @@ def test_block_reduction():
 
 def test_block_reduction_short():
     @dace.program
-    def sum(A: dace.float32[N, 2], out: dace.float32[2]):
+    def sum(A: dace.float32[N, 2], output: dace.float32[2]):
         for i, j in dace.map[0:N, 0:2]:
-            out[j] += A[i, j]
+            output[j] += A[i, j]
 
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
