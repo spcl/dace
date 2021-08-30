@@ -30,4 +30,4 @@ jobs:
         coverage report
         coverage xml
         codecov
-        killall -9 xsim xsimk
+        killall -9 xsim xsimk || true
