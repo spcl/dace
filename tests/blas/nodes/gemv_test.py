@@ -62,11 +62,11 @@ def pure_graph(dtype,
     return sdfg
 
 
-def fpga_graph(dtype, transposed, expansion, veclen, alpha, beta, tile_size_x,
-               tile_size_y):
+def fpga_graph(dtype, transposed, expansion, veclen, alpha, beta, tile_size_row,
+               tile_size_cols):
     sdfg = pure_graph(dtype, transposed, expansion, veclen, alpha, beta, {
-        "tile_size_x": tile_size_x,
-        "tile_size_y": tile_size_y
+        "tile_size_N": tile_size_row,
+        "tile_size_M": tile_size_cols
     })
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
 
@@ -85,8 +85,8 @@ def run_gemv(target: str,
              alpha: float = 1,
              transposed: bool = False,
              vectorize: int = 1,
-             tile_size_x: int = 32,
-             tile_size_y: int = 32):
+             tile_size_row: int = 32,
+             tile_size_cols: int = 32):
 
     beta = 0  # TODO: GEMV is not currently implemented for beta != 0
     if target == "pure":
@@ -102,8 +102,8 @@ def run_gemv(target: str,
                           vectorize,
                           alpha,
                           beta,
-                          tile_size_x=tile_size_x,
-                          tile_size_y=tile_size_y)
+                          tile_size_row=tile_size_row,
+                          tile_size_cols=tile_size_cols)
     elif target == "accumulate":
         sdfg = fpga_graph(dace.float32,
                           transposed,
@@ -111,8 +111,8 @@ def run_gemv(target: str,
                           vectorize,
                           alpha,
                           beta,
-                          tile_size_x=tile_size_x,
-                          tile_size_y=tile_size_y)
+                          tile_size_row=tile_size_row,
+                          tile_size_cols=tile_size_cols)
     elif target == "transposed_tiles_by_row":
         sdfg = fpga_graph(dace.float32,
                           transposed,
@@ -120,8 +120,8 @@ def run_gemv(target: str,
                           vectorize,
                           alpha,
                           beta,
-                          tile_size_x=tile_size_x,
-                          tile_size_y=tile_size_y)
+                          tile_size_row=tile_size_row,
+                          tile_size_cols=tile_size_cols)
     else:
         raise ValueError("Unsupported target")
 
@@ -155,6 +155,7 @@ def test_gemv_fpga_tiles_by_column():
 def test_gemv_fpga_accumulate():
     return run_gemv("accumulate", 256, 512, vectorize=4)
 
+
 @fpga_test()
 def test_gemv_fpga_transposed_tiles_by_row():
     return run_gemv("transposed_tiles_by_row", 512, 256, vectorize=4)
@@ -162,8 +163,16 @@ def test_gemv_fpga_transposed_tiles_by_row():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("M", type=int, nargs="?", default=256)
-    parser.add_argument("N", type=int, nargs="?", default=512)
+    parser.add_argument("M",
+                        type=int,
+                        nargs="?",
+                        default=256,
+                        help="Number of rows in matrix A")
+    parser.add_argument("N",
+                        type=int,
+                        nargs="?",
+                        default=512,
+                        help="Number of columns in matrix A")
     parser.add_argument("alpha", type=int, nargs="?", default=1)
     # parser.add_argument("beta", type=int, nargs="?", default=0)
     parser.add_argument("--transposed",
@@ -172,10 +181,16 @@ if __name__ == "__main__":
                         help="Compute GEMV with transposed matrix")
     parser.add_argument("--target", dest="target", default="pure")
     parser.add_argument("--vectorize", dest="vectorize", default=1, type=int)
-    parser.add_argument("--tile-size-x", type=int, default=32)
-    parser.add_argument("--tile-size-y", type=int, default=32)
+    parser.add_argument("--tile-size-M",
+                        type=int,
+                        default=32,
+                        help="Tiling along A rows")
+    parser.add_argument("--tile-size-N",
+                        type=int,
+                        default=32,
+                        help="Tiling along A columns")
 
     args = parser.parse_args()
 
     run_gemv(args.target, args.N, args.M, args.alpha, args.transposed,
-             args.vectorize, args.tile_size_x, args.tile_size_y)
+             args.vectorize, args.tile_size_M, args.tile_size_N)

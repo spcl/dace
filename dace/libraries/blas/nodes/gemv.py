@@ -140,10 +140,23 @@ class ExpandGemvPure(ExpandTransformation):
 @dace.library.expansion
 class ExpandGemvFpgaAccumulate(ExpandTransformation):
     """
-    This FPGA-oriented expansion iterates over the input matrix A in simple
-    row-major order, with optional tiling in both dimensions, where the tiles
-    are also traversed in simple row-major order. This means that y is only
-    written once, but x is read for every tile in the y-dimension.
+    where the NxM matrix A is read in Column-Major order. The matrix can be optionally tiled,
+            and the tiles will be traversed in Column-Major order.
+            x is an M-elements vector, while y  is an N-element vector.
+
+    This FPGA-oriented expansion computes:
+
+      -   y := alpha*A*x + beta*y,
+            where the N x M matrix A is read in Row-Major order. The matrix can be optionally tiled:
+            tiles have size tile_size_N x tile_size_M, and are traversed in Row-Major order.
+            x is an M-elements vector, while y is an N-element vector
+
+      -   or  y := alpha*A**T*x + beta*y,
+            where the N x M matrix A is read in Column-Major order. The matrix can be optionally tiled:
+            tiles have size tile_size_N x tile_size_M and are traversed in Column-Major order.
+            x is an N-element vector, while y is an M-element vector
+
+    In both cases, y is only written once, but x is read for every tile in they y-dimension.
 
     The implementation requires accumulation on the output, and does NOT assume
     native accumulation for the given data type. Instead it uses multiple
@@ -161,19 +174,17 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
     def expansion(node,
                   parent_state,
                   parent_sdfg,
-                  tile_size_x=None,
-                  tile_size_y=None,
+                  tile_size_N=None,
+                  tile_size_M=None,
                   num_partial_sums=16):
         """
         :param node: Node to expand.
         :param parent_state: State that the node is in.
         :param parent_sdfg: SDFG that the node is in.
-        :param tile_size_x: Tile size along the dimension of the vector x. If
-                            set to None, no tiling is used, corresponding to
-                            setting the tile size equal to the full size of x.
-        :param tile_size_y: Tile size along the dimension of the vector y. If
-                            set to None, no tiling is used, corresponding to
-                            setting the tile size equal to the full size of y.
+        :param tile_size_N: Tile size along the rows of matrix A. If set to None, no tiling is used,
+                            corresponding to setting the tile size equal to the number of rows of A.
+        :param tile_size_M: Tile size along the columns of matrix A. If set to None, no tiling is used,
+                            corresponding to  setting the tile size equal to the number of columns of A.
         :param num_partial_sums: The number of distinct registers to accumulate
                                  contributions to the final sum into. Should be
                                  a power of two, and should be higher than the
@@ -221,35 +232,39 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
         write_y = state.add_write("_y")
 
         # These sizes already account for vectorization
+        size_N = desc_a.shape[0]
+        size_M = desc_a.shape[1]
         size_x = desc_x.shape[0]
         size_y = desc_y.shape[0]
-        if tile_size_x is None:
-            tile_size_x = size_x
-        if tile_size_y is None:
-            tile_size_y = size_y
+        if tile_size_N is None:
+            tile_size_N = size_N
+        if tile_size_M is None:
+            tile_size_y = size_M
 
-        num_tiles_y = f"ceiling({size_y}/{tile_size_y})"
-        num_tiles_x = f"ceiling({size_x}/{tile_size_x})"
+        tile_size_x = tile_size_N if node.transA else tile_size_M
+        tile_size_y = tile_size_M if node.transA else tile_size_N
+        num_tiles_y = f"ceiling({size_y}/{tile_size_x})"
+        num_tiles_x = f"ceiling({size_x}/{tile_size_y})"
 
         # TODO: Support tiles sizes that do not evenly divide the matrix size
 
-        # Correctness check (TMP):
+        # Correctness check (TMP, waiting for tiling full support ):
         # - tile size must evenly divide the matrix size
         # - tile size can not be greater than the matrix size
         # If tile and x size are known, check these conditions
-        size_x_constant = dace.symbolic.resolve_symbol_to_constant(
-            size_x, parent_sdfg)
+        size_N_constant = dace.symbolic.resolve_symbol_to_constant(
+            size_N, parent_sdfg)
         tile_size_constant = dace.symbolic.resolve_symbol_to_constant(
-            tile_size_x, parent_sdfg)
+            tile_size_N, parent_sdfg)
 
-        if size_x_constant is not None and tile_size_constant is not None:
-            if tile_size_constant > size_x_constant:
+        if size_N_constant is not None and tile_size_constant is not None:
+            if tile_size_constant > size_N_constant:
                 raise ValueError(
-                    f"Tile size {tile_size_constant} must be smaller than size {size_x_constant}."
+                    f"Tile size {tile_size_constant} must be smaller than size {size_N_constant}."
                 )
-            if size_x_constant % tile_size_constant != 0:
+            if size_N_constant % tile_size_constant != 0:
                 raise ValueError(
-                    f"Tile size {tile_size_constant} does not divide size {size_x_constant}."
+                    f"Tile size {tile_size_constant} does not divide size {size_N_constant}."
                 )
 
         veclen = desc_a.dtype.veclen
@@ -519,32 +534,38 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
     order, such that consecutive values are accumulated into different
     registers, avoiding a loop-carried dependency due to accumulation.
 
-    The matrix can optionally be tiled, where the tiles will be traversed in
-    row-major order in order to bound the size of the output buffer to the tile
-    size. The tile size on y must be larger than the latency of addition for
-    the given data type.
+    It computes:
+
+    -   y := alpha*A*x + beta*y,
+            where the NxM matrix A is read in Column-major order. The matrix can be optionally tiled:
+            tiles have size tile_size_N x tile_size_M and are traverse in Row-Major order.
+            x is an M-elements vector, while y is an N-element vector
+
+    -   or  y := alpha*A**T*x + beta*y,
+            where the NxM matrix A is read in Row-Major order. The matrix can be optionally tiled:
+            tiles have size tile_size_N x tile_size_M, and are traversed in Column-Major order.
+            x is an N-element vector, while y is an M-element vector
+
+    The tile size on y must be larger than the latency of addition for the given data type.
 
     This expansion supports both transposed A and non-transposed A, but
     vectorization is only implemented for transposed A.
     """
-    # This corresponds to gemv_v2 in FBLAS
-    # - A non-trasposed, Tiles in Row-Major order, elements in Column-Major order
-    # - A transposed, Tiles in  Column-Major order, elements in  Row-Major order
 
     environments = []
 
     @staticmethod
-    def expansion(node, state, sdfg, tile_size_x=None, tile_size_y=None):
+    def expansion(node, state, sdfg, tile_size_N=None, tile_size_M=None):
         """
         :param node: Node to expand.
         :param parent_state: State that the node is in.
         :param parent_sdfg: SDFG that the node is in.
-        :param tile_size_x: Tile size along the dimension of the vector x. If
+        :param tile_size_N: Tile size along the rows of A. If
                             set to None, no tiling is used, corresponding to
-                            setting the tile size equal to the full size of x.
-        :param tile_size_y: Tile size along the dimension of the vector y. If
+                            setting the tile size equal to the number of rows of A.
+        :param tile_size_y: Tile size along the columns of A. If
                             set to None, no tiling is used, corresponding to
-                            setting the tile size equal to the full size of y.
+                            setting the tile size equal to the number of columns of A.
         """
         node.validate(sdfg, state)
 
@@ -586,12 +607,16 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
         write_y = state.add_write("_y")
 
         # These sizes already account for vectorization
+        size_N = desc_a.shape[0]
+        size_M = desc_a.shape[1]
         size_x = desc_x.shape[0]
         size_y = desc_y.shape[0]
-        if tile_size_x is None:
-            tile_size_x = size_x
-        if tile_size_y is None:
-            tile_size_y = size_y
+        if tile_size_N is None:
+            tile_size_N = size_N
+        if tile_size_M is None:
+            tile_size_y = size_M
+        tile_size_x = tile_size_M if not node.transA else tile_size_N
+        tile_size_y = tile_size_N if not node.transA else tile_size_M
         num_tiles_y = f"ceiling({size_y}/{tile_size_y})"
         num_tiles_x = f"ceiling({size_x}/{tile_size_x})"
 
@@ -758,22 +783,18 @@ class ExpandGemvFpgaTransposedTilesByRow(ExpandTransformation):
     """
     FPGA-oriented expansion that computes:
     -   y := alpha*A*x + beta*y,
-            where the NxM matrix A is read in Column-Major order. The matrix can be optionally tiled,
-            and the tiles will be traversed in Column-Major order.
+            where the NxM matrix A is read in Column-Major order. The matrix can be optionally tiled:
+            tiles have size tile_size_N x tile_size_M, and will be traversed in Column-Major order.
             x is an M-elements vector, while y  is an N-element vector.
 
-            In this case:
-            - A is vectorized along the row
-            - y is vectorized by the same vect. width
-            - x is not vectorized
 
     -   or  y := alpha*A**T*x + beta*y,
-            where the NxM matrix A is read in Row-Major order. The matrix can be optionally tiled,
-            and the tiles will be traverse in Row-Major order.  x is an N-element vector, while y
-            is an M-element vector.
+            where the NxM matrix A is read in Row-Major order. The matrix can be optionally tiled:
+            tiles have size tile_size_N x tile_size_M, and will be traversed in Row-Major order.
+            x is an N-element vector, while y is an M-element vector.
 
     This expansion supports both transposed A and non-transposed A, but
-    vectorization is only implemented for transposed A.
+    vectorization is only implemented for transposed A (A is vectorized along columns).
     The number of elements in a tile of y must be larger than the latency of a multiply-and-add
     for the given data type.
 
@@ -785,17 +806,15 @@ class ExpandGemvFpgaTransposedTilesByRow(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node, state, sdfg, tile_size_x=None, tile_size_y=None):
+    def expansion(node, state, sdfg, tile_size_N=None, tile_size_M=None):
         """
         :param node: Node to expand.
         :param parent_state: State that the node is in.
         :param parent_sdfg: SDFG that the node is in.
-        :param tile_size_x: Tile size along the dimension of the vector x. If
-                            set to None, no tiling is used, corresponding to
-                            setting the tile size equal to the full size of x.
-        :param tile_size_y: Tile size along the dimension of the vector y. If
-                            set to None, no tiling is used, corresponding to
-                            setting the tile size equal to the full size of y.
+        :param tile_size_N: Tile size along the rows of A. If set to None, no tiling is used,
+                            corresponding to setting the tile size equal to the number of rows of A.
+        :param tile_size_M: Tile size along the columns of A. If set to None, no tiling is used,
+                            corresponding to setting the tile size equal to the full size of y.
         """
         node.validate(sdfg, state)
 
@@ -836,12 +855,17 @@ class ExpandGemvFpgaTransposedTilesByRow(ExpandTransformation):
         write_y = state.add_write("_y")
 
         # These sizes already account for vectorization
+        size_N = desc_a.shape[0]
+        size_M = desc_a.shape[1]
         size_x = desc_x.shape[0]
         size_y = desc_y.shape[0]
-        if tile_size_x is None:
-            tile_size_x = size_x
-        if tile_size_y is None:
-            tile_size_y = size_y
+        if tile_size_N is None:
+            tile_size_N = size_N
+        if tile_size_M is None:
+            tile_size_M = size_M
+
+        tile_size_x = tile_size_M if not node.transA else tile_size_N
+        tile_size_y = tile_size_N if not node.transA else tile_size_M
         num_tiles_y = f"ceiling({size_y}/{tile_size_y})"
         num_tiles_x = f"ceiling({size_x}/{tile_size_x})"
 
