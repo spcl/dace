@@ -1,4 +1,4 @@
-name: FPGA CI
+name: FPGA Tests
 
 on:
   push:

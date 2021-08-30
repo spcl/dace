@@ -1,4 +1,4 @@
-name: Heterogeneous CI
+name: Heterogeneous Tests
 
 on:
   push:

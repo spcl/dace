@@ -1,4 +1,4 @@
-name: GPU CI
+name: GPU Tests
 
 on:
   push:
