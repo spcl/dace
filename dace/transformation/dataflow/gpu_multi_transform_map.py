@@ -22,26 +22,32 @@ class GPUMultiTransformMap(transformation.Transformation):
     """ Implements the GPUMultiTransformMap transformation.
 
         Tiles a single map into 2 maps. The outer map is of schedule 
-        GPU_Multidevice and loops over the gpus, while the inner map
+        GPU_Multidevice and loops over the GPUs, while the inner map
         is a GPU-scheduled map. It also creates GPU transient arrays
         between the two maps.
     """
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
+    dim_idx = Property(dtype=int,
+                       default=-1,
+                       desc="Index of dimension to be distributed.")
 
     new_dim_prefix = Property(dtype=str,
                               default="gpu",
                               allow_none=True,
                               desc="Prefix for new dimension name")
+
     new_transient_prefix = Property(dtype=str,
-                                    default="gpu_multi_",
+                                    default="gpu_multi",
                                     allow_none=True,
                                     desc="Prefix for the transient name")
+
     skip_scalar = Property(
         dtype=bool,
         default=True,
         allow_none=True,
         desc="If True: skips the scalar data nodes. "
         "If False: creates localstorage for scalar transients.")
+
     number_of_gpus = SymbolicProperty(
         default=None,
         allow_none=True,
@@ -58,28 +64,19 @@ class GPUMultiTransformMap(transformation.Transformation):
         return [sdutil.node_path_graph(GPUMultiTransformMap._map_entry)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph: SDFGState,
+                       candidate,
+                       expr_index,
+                       sdfg,
+                       strict=False):
         map_entry = graph.nodes()[candidate[GPUMultiTransformMap._map_entry]]
 
         # Check if there is more than one GPU available:
         if (Config.get("compiler", "cuda", "max_number_gpus") < 2):
             return False
 
-        # Check if the map is one-dimensional
-        if map_entry.map.range.dims() != 1:
-            return False
-
-        # We cannot transform a map which is already on a GPU or FPGA
-        if map_entry.map.schedule in dtypes.GPU_SCHEDULES + [
-                dtypes.ScheduleType.GPU_Default, dtypes.ScheduleType.FPGA_Device
-        ]:
-            return False
-
-        # We cannot transform a map which is already inside a GPU map, or on
-        # another device
-        schedule_whitelist = [
-            dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential
-        ]
+        # Only accept maps with a default schedule
+        schedule_whitelist = [dtypes.ScheduleType.Default]
         sdict = graph.scope_dict()
         parent = sdict[map_entry]
         while parent is not None:
@@ -90,6 +87,12 @@ class GPUMultiTransformMap(transformation.Transformation):
         # Dynamic map ranges not supported
         if has_dynamic_map_inputs(graph, map_entry):
             return False
+
+        # Library nodes inside the scope are not supported
+        scope_subgraph = graph.scope_subgraph(map_entry)
+        for node in scope_subgraph.nodes():
+            if isinstance(node, nodes.LibraryNode):
+                return False
 
         # Custom reductions can not have an accumulate transient, as the
         # reduction would have to be split up for the ingoing memlet of the
@@ -128,6 +131,14 @@ class GPUMultiTransformMap(transformation.Transformation):
                                                   OutLocalStorage,
                                                   AccumulateTransient)
 
+        # The user has responsibility for the implementation of a Library node.
+        scope_subgraph = graph.scope_subgraph(inner_map_entry)
+        for node in scope_subgraph.nodes():
+            if isinstance(node, nodes.LibraryNode):
+                warnings.warn(
+                    'Node %s is a library node, make sure to manually set the '
+                    'implementation to a GPU compliant specialization.' % node)
+
         # Tile map into number_of_gpus tiles
         outer_map: nodes.Map = StripMining.apply_to(
             sdfg,
@@ -148,10 +159,10 @@ class GPUMultiTransformMap(transformation.Transformation):
         # Add transient Data leading to the inner map
         prefix = self.new_transient_prefix
         for node in graph.predecessors(outer_map_entry):
-            # Skip scalar data
-            if isinstance(node, nodes.AccessNode):
-                if self.skip_scalar and isinstance(node.desc(sdfg), Scalar):
-                    continue
+            # Only AccessNodes are relevant
+            if (isinstance(node, nodes.AccessNode)
+                    and not (self.skip_scalar
+                             and isinstance(node.desc(sdfg), Scalar))):
                 in_data_node = InLocalStorage.apply_to(sdfg,
                                                        dict(array=node.data,
                                                             prefix=prefix),
@@ -160,21 +171,10 @@ class GPUMultiTransformMap(transformation.Transformation):
                                                        node_a=outer_map_entry,
                                                        node_b=inner_map_entry)
 
-        for node in graph.successors(inner_map_entry):
-            if isinstance(node, nodes.NestedSDFG):
-                map_syms = inner_map_entry.range.free_symbols
-                for sym in map_syms:
-                    symname = str(sym)
-                    if symname not in node.symbol_mapping.keys():
-                        node.symbol_mapping[symname] = sym
-                        node.sdfg.symbols[symname] = graph.symbols_defined_at(
-                            node)[symname]
-
         wcr_data: Dict[str, Any] = {}
         # Add transient Data leading to the outer map
         for edge in graph.out_edges(outer_map_exit):
             node = edge.dst
-            # skip scalar data
             if isinstance(node, nodes.AccessNode):
                 data_name = node.data
                 # Transients with write-conflict resolution need to be
@@ -193,9 +193,10 @@ class GPUMultiTransformMap(transformation.Transformation):
                         continue
                     identity = dtypes.reduction_identity(dtype, redtype)
                     wcr_data[data_name] = identity
-                elif not isinstance(node.desc(sdfg), Scalar):
+                elif (not isinstance(node.desc(sdfg), Scalar)
+                      or not self.skip_scalar):
                     # Transients without write-conflict resolution
-                    if prefix + data_name in sdfg.arrays:
+                    if prefix + '_' + data_name in sdfg.arrays:
                         create_array = False
                     else:
                         create_array = True
@@ -209,12 +210,24 @@ class GPUMultiTransformMap(transformation.Transformation):
                         node_a=inner_map_exit,
                         node_b=outer_map_exit)
 
+        # Add Transients for write-conflict resolution
         if len(wcr_data) != 0:
             nsdfg = AccumulateTransient.apply_to(
                 sdfg,
                 options=dict(array_identity_dict=wcr_data, prefix=prefix),
                 map_exit=inner_map_exit,
                 outer_map_exit=outer_map_exit)
+
+        # Add the parameter of the outer map
+        for node in graph.successors(inner_map_entry):
+            if isinstance(node, nodes.NestedSDFG):
+                map_syms = inner_map_entry.range.free_symbols
+                for sym in map_syms:
+                    symname = str(sym)
+                    if symname not in node.symbol_mapping.keys():
+                        node.symbol_mapping[symname] = sym
+                        node.sdfg.symbols[symname] = graph.symbols_defined_at(
+                            node)[symname]
 
         # Remove the parameter of the outer_map from the sdfg symbols,
         # as it got added as a symbol in StripMining.
