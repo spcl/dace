@@ -915,7 +915,8 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
 
 def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType,
                                                                str]],
-                 replace_callback: Callable[[Dict[str, str]], None]) -> None:
+                 replace_callback: Callable[[Dict[str, str]], None],
+                 value_as_string: bool = False) -> None:
     """
     Safely replaces symbolic expressions that may clash with each other via a
     two-step replacement. For example, the mapping ``{M: N, N: M}`` would be
@@ -925,6 +926,8 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType,
     :param replace_callback: A callable function that receives a replacement
                              dictionary and performs the replacement (can be 
                              unsafe).
+    :param value_as_string: Replacement values are replaced as strings rather 
+                            than symbols.
     """
     # First, filter out direct (to constants) and degenerate (N -> N) replacements
     repl = {}
@@ -936,7 +939,8 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType,
 
         # Not symbolic
         try:
-            v = pystr_to_symbolic(v)
+            if not value_as_string:
+                v = pystr_to_symbolic(v)
         except (TypeError, ValueError, AttributeError, sympy.SympifyError):
             repl[k] = v
             continue

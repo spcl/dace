@@ -1,11 +1,15 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
+import astunparse
 import collections
 import copy
 import functools
 import numpy as np
 import operator
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import dace
+from .subscript_converter import SubscriptConverter
 
 
 def dim_to_abs_val(input, _dimensions, sdfg):
@@ -105,6 +109,43 @@ def parse_connectors(node, state, sdfg):
             vector_lengths)
 
 
+def parse_accesses(code, outputs: List[str]):
+    """
+    Runs the subscript converter to extract accesses of the format a[0, -1] into
+    their accesses tuple (0, -1) and a generated memlet name a_0_m1.
+    If an offset is found on the output, all indices are adjusted accordingly,
+    such that the output is written at the central index.
+    """
+
+    # Run subscript converter
+    converter = SubscriptConverter()
+    new_ast = converter.visit(ast.parse(code))
+    field_accesses: Dict[str, List[Tuple[int]]] = converter.mapping
+
+    # Check that there's only one write to the output
+    offset = None
+    for output in outputs:
+        if len(field_accesses[output]) > 1:
+            raise ValueError(
+                f"Stencil {node.label} can only write {output} once.")
+        _offset = next(iter(field_accesses[output].keys()))
+        if offset is None:
+            offset = _offset
+        else:
+            if _offset != offset:
+                raise ValueError(f"Inconsistent output offset for "
+                                 f"{node.label}: {offset} and {_offset}")
+
+    # If the offset is non-zero, rerun the converter to adjust
+    if offset is not None and any(o != 0 for o in offset):
+        converter = SubscriptConverter(offset=tuple(-o for o in offset))
+        new_ast = converter.visit(ast.parse(code))
+        field_accesses = converter.mapping
+    new_code = astunparse.unparse(new_ast)
+
+    return new_code, field_accesses
+
+
 def make_iterator_mapping(node, field_accesses, shape) -> Dict[str, Tuple[int]]:
     """
     Builds a complete iterator mapping dictionary for all data, including both
@@ -150,6 +191,8 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
                     term = f"_i{i} < {str(-offset)}"
                 elif offset > 0:
                     term = f"_i{i} >= {str(shape[i] - offset)}"
+                else:
+                    continue
                 cond.add(term)
             if len(cond) == 0:
                 boundary_code += "{} = _{}\n".format(memlet_name, memlet_name)

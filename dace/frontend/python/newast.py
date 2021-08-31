@@ -4279,6 +4279,7 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 tmp, tmparr = self.sdfg.add_temp_transient(
                     other_subset.size(), arrobj.dtype, arrobj.storage)
+            self.variables[tmp] = tmp
             wnode = self.last_state.add_write(tmp,
                                               debuginfo=self.current_lineinfo)
             self.last_state.add_nedge(
