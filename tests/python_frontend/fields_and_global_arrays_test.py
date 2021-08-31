@@ -603,6 +603,37 @@ def test_same_global_array():
     assert len([k for k in sdfg.arrays if '__g' in k]) == 3
 
 
+def test_two_inner_methods():
+    class Inner:
+        def __init__(self, scalar):
+            self._tmp = np.full(fill_value=7.0, shape=(10, 10, 10))
+            self.scalar = scalar
+
+        @dace.method
+        def __call__(self, A):
+            A[...] = self._tmp + self.scalar
+
+    class Outer:
+        def __init__(self):
+            self.inner1 = Inner(3.0)
+            self.inner2 = Inner(4.0)
+
+        @dace.method
+        def __call__(self, A, B):
+            self.inner1(A)
+            self.inner1(B)
+            self.inner2(A)
+
+    A = np.ones((10, 10, 10))
+    B = np.ones((10, 10, 10))
+
+    outer = Outer()
+    outer(A, B)
+
+    assert np.allclose(11.0, A)
+    assert np.allclose(10.0, B)
+
+
 if __name__ == '__main__':
     test_bad_closure()
     test_dynamic_closure()
@@ -632,3 +663,4 @@ if __name__ == '__main__':
     test_allconstants()
     test_method_allconstants()
     test_same_global_array()
+    test_two_inner_methods()

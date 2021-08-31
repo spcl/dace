@@ -160,14 +160,26 @@ def parse_dace_program(name: str,
     sdfg.set_sourcecode(preprocessed_ast.src, 'python')
 
     # Combine nested closures with the current one
+    nested_closure_replacements: Dict[str, str] = {}
     for name, (arr, _) in visitor.nested_closure_arrays.items():
         # Check if the same array is already passed as part of a nested closure
         if id(arr) in closure.array_mapping:
             existing_name = closure.array_mapping[id(arr)]
             if name != existing_name:
-                del sdfg.arrays[name]
-                for state in sdfg.nodes():
-                    state.replace(name, existing_name)
+                nested_closure_replacements[name] = existing_name
+
+    # Make safe replacements
+    def repl_callback(repldict):
+        for state in sdfg.nodes():
+            for name, new_name in repldict.items():
+                state.replace(name, new_name)
+        for name, new_name in repldict.items():
+            sdfg.arrays[new_name] = sdfg.arrays[name]
+            del sdfg.arrays[name]
+
+    symbolic.safe_replace(nested_closure_replacements,
+                          repl_callback,
+                          value_as_string=True)
 
     # We save information in a tmp file for improved source mapping.
     if save:
