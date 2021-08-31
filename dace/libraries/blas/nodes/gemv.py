@@ -159,8 +159,8 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
     In both cases, y is only written once, but x is read for every tile in they y-dimension.
 
     The implementation requires accumulation on the output, and does NOT assume
-    native accumulation for the given data type. Instead it uses multiple
-    partial sums to ensure that II=1, and only writes the final accumulated
+    native accumulation for the given data type: if this is available, it is exploited. Otherwise,
+    it uses multiple partial sums to ensure that II=1, and only writes the final accumulated
     value once it has been combined from the partial sums.
 
     This works for both transposed and non-transposed A, but vectorization is
@@ -249,6 +249,11 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
         # Compute the number of tiles considering vectorization
         num_tiles_y = f"ceiling({size_y}/{tile_size_y})"
         num_tiles_x = f"ceiling({size_x}/{tile_size_x})"
+
+        # Get FPGA_vendor and precision
+        is_intel_fpga = dace.config.Config.get("compiler",
+                                               "fpga_vendor") == "intel_fpga"
+        single_precision = desc_y.dtype == dace.dtypes.float32
 
         # TODO: Support tiles sizes that do not evenly divide the matrix size
 
@@ -412,89 +417,149 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
                               src_conn="acc_out",
                               memlet=dace.Memlet(f"accumulate_product[0]"))
 
-        # Partial sums
-        sdfg.add_array("partial_sums", (num_partial_sums, ),
-                       desc_y.dtype,
-                       storage=dace.StorageType.FPGA_Registers,
-                       transient=True)
-        partial_sum_read = state.add_read("partial_sums")
-        partial_sum_write = state.add_access("partial_sums")
-
         # Output array
         sdfg.add_array("y_local", (tile_size_y, ),
                        desc_y.dtype,
                        storage=dace.StorageType.FPGA_Local,
                        transient=True)
 
-        # Now we need to actually accumulate into a local register of y
         y_local_read = state.add_read("y_local")
         y_local_write = state.add_read("y_local")
-        update_y_tasklet = state.add_tasklet(
-            "update_y", {"y_in", "acc_in"}, {"acc_out"}, f"""\
+        # create the buffer
+        state.add_memlet_path(y_tile_entry, y_local_read, memlet=dace.Memlet())
+
+        if not (is_intel_fpga and single_precision):
+
+            # If we don't have single clock cycle accumulation in hardware,
+            # we need to accumulate on a separate array to guarantee II = 1
+
+            # Partial sums
+            sdfg.add_array("partial_sums", (num_partial_sums, ),
+                           desc_y.dtype,
+                           storage=dace.StorageType.FPGA_Registers,
+                           transient=True)
+            partial_sum_read = state.add_read("partial_sums")
+            partial_sum_write = state.add_access("partial_sums")
+
+            update_y_tasklet = state.add_tasklet(
+                "update_y", {"y_in", "acc_in"}, {"acc_out"}, f"""\
 prev = acc_in if ix >= {num_partial_sums} else 0
 acc_out = prev + y_in""")
-        state.add_memlet_path(accumulate_product_write,
-                              update_y_tasklet,
-                              dst_conn="y_in",
-                              memlet=dace.Memlet(f"accumulate_product[0]"))
-        state.add_memlet_path(
-            partial_sum_read,
-            x_entry,
-            update_y_tasklet,
-            dst_conn="acc_in",
-            memlet=dace.Memlet(f"partial_sums[ix%{num_partial_sums}]"))
-        state.add_memlet_path(y_tile_entry, y_local_read, memlet=dace.Memlet())
-        state.add_memlet_path(y_entry, partial_sum_read, memlet=dace.Memlet())
-        state.add_memlet_path(
-            update_y_tasklet,
-            x_exit,
-            partial_sum_write,
-            src_conn="acc_out",
-            memlet=dace.Memlet(f"partial_sums[ix%{num_partial_sums}]"))
+            state.add_memlet_path(accumulate_product_write,
+                                  update_y_tasklet,
+                                  dst_conn="y_in",
+                                  memlet=dace.Memlet(f"accumulate_product[0]"))
+            state.add_memlet_path(
+                partial_sum_read,
+                x_entry,
+                update_y_tasklet,
+                dst_conn="acc_in",
+                memlet=dace.Memlet(f"partial_sums[ix%{num_partial_sums}]"))
 
-        # Reduce the partial sums
-        reduce_sums_entry, reduce_sums_exit = state.add_map(
-            "reduce_partial_sums", {"u": f"0:{num_partial_sums}"},
-            schedule=dace.ScheduleType.FPGA_Device,
-            unroll=True)
-        reduce_sums_tasklet = state.add_tasklet(
-            "reduce_partial_sums", {"sum_in", "val_in"}, {"sum_out"}, """
+            state.add_memlet_path(y_entry,
+                                  partial_sum_read,
+                                  memlet=dace.Memlet())
+            state.add_memlet_path(
+                update_y_tasklet,
+                x_exit,
+                partial_sum_write,
+                src_conn="acc_out",
+                memlet=dace.Memlet(f"partial_sums[ix%{num_partial_sums}]"))
+
+            # Reduce the partial sums
+            reduce_sums_entry, reduce_sums_exit = state.add_map(
+                "reduce_partial_sums", {"u": f"0:{num_partial_sums}"},
+                schedule=dace.ScheduleType.FPGA_Device,
+                unroll=True)
+            reduce_sums_tasklet = state.add_tasklet(
+                "reduce_partial_sums", {"sum_in", "val_in"}, {"sum_out"}, """
 prev = sum_in if u > 0 else 0
 sum_out = prev + val_in""")
-        sdfg.add_array("accumulate_sum", (1, ),
-                       desc_y.dtype,
-                       transient=True,
-                       storage=dace.StorageType.FPGA_Local)
-        accumulate_sum_read = state.add_access("accumulate_sum")
-        accumulate_sum_write = state.add_access("accumulate_sum")
-        state.add_memlet_path(y_entry,
-                              accumulate_sum_read,
-                              memlet=dace.Memlet())
-        state.add_memlet_path(accumulate_sum_read,
-                              reduce_sums_entry,
-                              reduce_sums_tasklet,
-                              dst_conn="sum_in",
-                              memlet=dace.Memlet("accumulate_sum[0]"))
-        state.add_memlet_path(reduce_sums_tasklet,
-                              reduce_sums_exit,
-                              accumulate_sum_write,
-                              src_conn="sum_out",
-                              memlet=dace.Memlet("accumulate_sum[0]"))
-        state.add_memlet_path(partial_sum_write,
-                              reduce_sums_entry,
-                              reduce_sums_tasklet,
-                              dst_conn="val_in",
-                              memlet=dace.Memlet("partial_sums[u]"))
+            sdfg.add_array("accumulate_sum", (1, ),
+                           desc_y.dtype,
+                           transient=True,
+                           storage=dace.StorageType.FPGA_Local)
+            accumulate_sum_read = state.add_access("accumulate_sum")
+            accumulate_sum_write = state.add_access("accumulate_sum")
+            state.add_memlet_path(y_entry,
+                                  accumulate_sum_read,
+                                  memlet=dace.Memlet())
+            state.add_memlet_path(accumulate_sum_read,
+                                  reduce_sums_entry,
+                                  reduce_sums_tasklet,
+                                  dst_conn="sum_in",
+                                  memlet=dace.Memlet("accumulate_sum[0]"))
+            state.add_memlet_path(reduce_sums_tasklet,
+                                  reduce_sums_exit,
+                                  accumulate_sum_write,
+                                  src_conn="sum_out",
+                                  memlet=dace.Memlet("accumulate_sum[0]"))
+            state.add_memlet_path(partial_sum_write,
+                                  reduce_sums_entry,
+                                  reduce_sums_tasklet,
+                                  dst_conn="val_in",
+                                  memlet=dace.Memlet("partial_sums[u]"))
+        else:
+
+            # Otherwise we can just accumulate
+            sdfg.add_array("partial_result", (1, ),
+                           desc_y.dtype,
+                           storage=dace.StorageType.FPGA_Registers,
+                           transient=True)
+            partial_result_read = state.add_read("partial_result")
+            partial_result_write = state.add_access("partial_result")
+
+            # Initialize it to zero
+            init_partial_result_tasklet = state.add_tasklet(
+                "init_partial_result", {}, {"acc_out"}, "acc_out = 0")
+            # state.add_memlet_path(y_entry, partial_result_read, memlet=dace.Memlet())
+
+            state.add_memlet_path(y_entry,
+                                  init_partial_result_tasklet,
+                                  memlet=dace.Memlet())
+            state.add_memlet_path(init_partial_result_tasklet,
+                                  partial_result_read,
+                                  src_conn="acc_out",
+                                  memlet=dace.Memlet(f"partial_result[0]"))
+
+            update_partial_result_tasklet = state.add_tasklet(
+                "update_partial_result", {"acc_in", "y_in"}, {"acc_out"}, f"""\
+acc_out = acc_in + y_in""")
+            state.add_memlet_path(accumulate_product_write,
+                                  update_partial_result_tasklet,
+                                  dst_conn="y_in",
+                                  memlet=dace.Memlet(f"accumulate_product[0]"))
+
+            state.add_memlet_path(partial_result_read,
+                                  x_entry,
+                                  update_partial_result_tasklet,
+                                  dst_conn="acc_in",
+                                  memlet=dace.Memlet(f"partial_result[0]"))
+            state.add_memlet_path(update_partial_result_tasklet,
+                                  x_exit,
+                                  partial_result_write,
+                                  src_conn="acc_out",
+                                  memlet=dace.Memlet(f"partial_result[0]"))
 
         # Combine with y buffer
         combine_tasklet = state.add_tasklet(
             "combine_y", {"val", "buffer_in"}, {"buffer_out"}, """\
 prev = buffer_in if tx > 0 else 0
 buffer_out = prev + val""")
-        state.add_memlet_path(accumulate_sum_write,
-                              combine_tasklet,
-                              dst_conn="val",
-                              memlet=dace.Memlet("accumulate_sum[0]"))
+
+        if is_intel_fpga and single_precision:
+            # take the result of the reduction over partial result
+            state.add_memlet_path(partial_result_write,
+                                  combine_tasklet,
+                                  dst_conn="val",
+                                  memlet=dace.Memlet("partial_result[0]"))
+
+        else:
+            # take the result of the reduction over partial sum
+            state.add_memlet_path(accumulate_sum_write,
+                                  combine_tasklet,
+                                  dst_conn="val",
+                                  memlet=dace.Memlet("accumulate_sum[0]"))
         state.add_memlet_path(y_local_read,
                               x_tile_entry,
                               y_entry,
@@ -514,6 +579,7 @@ buffer_out = prev + val""")
         write_y_entry, write_y_exit = state.add_map(
             "write_y", {"iy": f"0:{tile_size_y}"},
             schedule=dace.ScheduleType.FPGA_Device)
+
         write_y_tasklet = state.add_tasklet("write_y", {"y_buffer"},
                                             {"y_memory"}, "y_memory = y_buffer")
         state.add_memlet_path(y_local_write,
@@ -521,6 +587,7 @@ buffer_out = prev + val""")
                               write_y_tasklet,
                               dst_conn="y_buffer",
                               memlet=dace.Memlet(f"y_local[iy]"))
+
         state.add_memlet_path(write_y_tasklet,
                               write_y_exit,
                               y_tile_exit,
