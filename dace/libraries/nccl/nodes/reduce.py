@@ -68,9 +68,17 @@ class ExpandReduceNCCL(ExpandTransformation):
 
         code = f"""ncclReduce(_inbuffer, _outbuffer, {count_str}, {nccl_dtype_str}, {wcr_str}, {rootstr}, __state->ncclCommunicators->at(__dace_cuda_device),  __dace_current_stream)"""
         if Config.get('compiler', 'build_type') == 'Debug':
-            code = '''DACE_NCCL_CHECK(''' + code + ''');\n'''
+            '''DACE_NCCL_CHECK(''' + code + ''');\n'''
+
         else:
             code = code + ''';\n'''
+
+        if Config.get_bool('debugprint'):
+            code = (
+                f'''printf("{str(node)}: begin;  dev,peer: %d, %d\\n", __dace_cuda_device, {rootstr});\n'''
+                + code +
+                f'''printf("{str(node)}: end;  dev,peer: %d, %d\\n\\n", __dace_cuda_device, {rootstr});\n'''
+            )
 
         group_handle_conn = '_group_handle'
         if group_handle_conn in node.in_connectors:
