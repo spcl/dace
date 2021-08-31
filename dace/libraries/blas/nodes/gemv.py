@@ -183,8 +183,10 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
         :param parent_sdfg: SDFG that the node is in.
         :param tile_size_N: Tile size along the rows of matrix A. If set to None, no tiling is used,
                             corresponding to setting the tile size equal to the number of rows of A.
+                            If vectorization is used, it refers to vectorized elements.
         :param tile_size_M: Tile size along the columns of matrix A. If set to None, no tiling is used,
                             corresponding to  setting the tile size equal to the number of columns of A.
+                            If vectorization is used, it refers to vectorized elements.
         :param num_partial_sums: The number of distinct registers to accumulate
                                  contributions to the final sum into. Should be
                                  a power of two, and should be higher than the
@@ -243,8 +245,10 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
 
         tile_size_x = tile_size_N if node.transA else tile_size_M
         tile_size_y = tile_size_M if node.transA else tile_size_N
-        num_tiles_y = f"ceiling({size_y}/{tile_size_x})"
-        num_tiles_x = f"ceiling({size_x}/{tile_size_y})"
+
+        # Compute the number of tiles considering vectorization
+        num_tiles_y = f"ceiling({size_y}/{tile_size_y})"
+        num_tiles_x = f"ceiling({size_x}/{tile_size_x})"
 
         # TODO: Support tiles sizes that do not evenly divide the matrix size
 
@@ -563,9 +567,11 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
         :param tile_size_N: Tile size along the rows of A. If
                             set to None, no tiling is used, corresponding to
                             setting the tile size equal to the number of rows of A.
+                            If vectorization is used, it refers to vectorized elements.
         :param tile_size_y: Tile size along the columns of A. If
                             set to None, no tiling is used, corresponding to
                             setting the tile size equal to the number of columns of A.
+                            If vectorization is used, it refers to vectorized elements.
         """
         node.validate(sdfg, state)
 
@@ -813,8 +819,10 @@ class ExpandGemvFpgaTransposedTilesByRow(ExpandTransformation):
         :param parent_sdfg: SDFG that the node is in.
         :param tile_size_N: Tile size along the rows of A. If set to None, no tiling is used,
                             corresponding to setting the tile size equal to the number of rows of A.
+                            It takes into account vectorization, if any.
         :param tile_size_M: Tile size along the columns of A. If set to None, no tiling is used,
                             corresponding to setting the tile size equal to the full size of y.
+                            It takes into account vectorization, if any.
         """
         node.validate(sdfg, state)
 
