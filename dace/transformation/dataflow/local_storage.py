@@ -47,7 +47,7 @@ class LocalStorage(xf.Transformation, ABC):
     def annotates_memlets():
         # Skip memlet propagation for now
         return True
-        
+
     @staticmethod
     def expressions():
         return [
@@ -93,19 +93,25 @@ class LocalStorage(xf.Transformation, ABC):
                 break
         if invariant_memlet is None:
             raise NameError('Array %s not found!' % array)
-        if self.create_array:
+        transient_name = prefix + '_' + invariant_memlet.data
+        # If a transient is selected for reuse, check that it's size is equal
+        # to the one of the invarient memlet
+        if (self.create_array or transient_name not in sdfg.arrays
+                or sdfg.arrays[transient_name].total_size !=
+                invariant_memlet.volume):
             # Add transient array
             new_data, _ = sdfg.add_transient(
-                            name = prefix + invariant_memlet.data,
-                            shape = [
-                                symbolic.overapproximate(r).simplify()
-                                for r in invariant_memlet.bounding_box_size()
-                                    ],
-                            dtype = sdfg.arrays[invariant_memlet.data].dtype,
-                            find_new_name=True)
+                name=transient_name,
+                shape=[
+                    symbolic.overapproximate(r).simplify()
+                    for r in invariant_memlet.bounding_box_size()
+                ],
+                dtype=sdfg.arrays[invariant_memlet.data].dtype,
+                find_new_name=True)
 
         else:
-            new_data = prefix + invariant_memlet.data
+            # Reuse transient
+            new_data = transient_name
         data_node = nodes.AccessNode(new_data)
         # Store as fields so that other transformations can use them
         self._local_name = new_data
