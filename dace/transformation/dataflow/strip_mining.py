@@ -333,7 +333,7 @@ class StripMining(transformation.Transformation):
             td_from_new_exact = symbolic.pystr_to_symbolic(
                 'max(%s,%s + %s * %s - %s)' %
                 (symbolic.symstr(td_from), symbolic.symstr(td_from),
-                 symbolic.symstrtr(tile_stride), symbolic.symstr(new_dim),
+                 symbolic.symstr(tile_stride), symbolic.symstr(new_dim),
                  symbolic.symstr(offset)))
             td_from_new_approx = symbolic.pystr_to_symbolic(
                 '%s + %s * %s - %s ' %
@@ -389,12 +389,13 @@ class StripMining(transformation.Transformation):
         dimsym = dace.symbolic.pystr_to_symbolic(new_dim)
         td_from_new = (dimsym * size) // number_of_tiles
         if divides_evenly:
-            td_to_new = ((dimsym + 1) * size) // number_of_tiles  - 1
+            td_to_new = ((dimsym + 1) * size) // number_of_tiles - 1
         else:
             if isinstance(td_to, dace.symbolic.SymExpr):
                 td_to = td_to.expr
             td_to_new = dace.symbolic.SymExpr(
-                sympy.Min(((dimsym + 1) * size) // number_of_tiles, td_to+1)-1,
+                sympy.Min(
+                    ((dimsym + 1) * size) // number_of_tiles, td_to + 1) - 1,
                 ((dimsym + 1) * size) // number_of_tiles - 1)
         td_step_new = td_step
         return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
