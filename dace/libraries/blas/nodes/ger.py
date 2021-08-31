@@ -148,8 +148,9 @@ class ExpandGerFpga(ExpandTransformation):
         sdfg.add_datadesc("_x", desc_x)
         sdfg.add_datadesc("_y", desc_y)
 
-        m = m or node.m
-        n = n or node.n
+        m = m or desc_a_in.shape[0] # number of rows of A
+        n = n or desc_a_in.shape[1] # number of cols of A
+
         alpha = node.alpha
         veclen = desc_y.dtype.veclen
 
@@ -305,7 +306,6 @@ class Ger(LibraryNode):
 
         self.n = n
         self.m = m
-
         self.alpha = alpha
 
     def compare(self, other):
