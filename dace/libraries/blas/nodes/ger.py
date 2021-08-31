@@ -112,17 +112,17 @@ class ExpandGerFpga(ExpandTransformation):
                   sdfg,
                   m=None,
                   n=None,
-                  tile_size_x=None,
-                  tile_size_y=None):
+                  tile_size_M=None,
+                  tile_size_N=None):
         """
         :param node: Node to expand.
         :param state: State that the node is in.
         :param sdfg: SDFG that the node is in.
         :param m: Override the number of rows.
         :param n: Override the number of columns.
-        :param tile_size_x: Tile size along the M-dimension (rows of A, size of
+        :param tile_size_M: Tile size along the M-dimension (rows of A, size of
                             vector x).
-        :param tile_size_x: Tile size along the N-dimension (columns of A,
+        :param tile_size_N: Tile size along the N-dimension (columns of A,
                             size of vector y).
         """
 
@@ -156,14 +156,14 @@ class ExpandGerFpga(ExpandTransformation):
         size_x = m
         size_y = n / veclen
 
-        num_tiles_x = f"{size_x} / {tile_size_x}"
-        num_tiles_y = f"{size_y} / {tile_size_y}"
+        num_tiles_x = f"{size_x} / {tile_size_N}"
+        num_tiles_y = f"{size_y} / {tile_size_M}"
 
         y_tile_entry, y_tile_exit = state.add_map(
             "y_tiles", {"ty": f"0:{num_tiles_y}"},
             schedule=dace.ScheduleType.FPGA_Device)
 
-        sdfg.add_array("y_local", (tile_size_y, ),
+        sdfg.add_array("y_local", (tile_size_N, ),
                        desc_y.dtype,
                        transient=True,
                        storage=dace.StorageType.FPGA_Local)
@@ -172,9 +172,9 @@ class ExpandGerFpga(ExpandTransformation):
         # Load y buffer
         read_y = state.add_read("_y")
         subset = ("0" if isinstance(desc_y, dace.data.Stream) else
-                  f"ty*{tile_size_y}+iy")
+                  f"ty*{tile_size_N}+iy")
         read_y_entry, read_y_exit = state.add_map(
-            "read_y", {"iy": f"0:{tile_size_y}"},
+            "read_y", {"iy": f"0:{tile_size_N}"},
             schedule=dace.ScheduleType.FPGA_Device)
         read_y_tasklet = state.add_tasklet("read_y", {"y_memory"}, {"y_buffer"},
                                            "y_buffer = y_memory")
@@ -194,7 +194,7 @@ class ExpandGerFpga(ExpandTransformation):
             "x_tiles", {"tx": f"0:{num_tiles_x}"},
             schedule=dace.ScheduleType.FPGA_Device)
 
-        x_entry, x_exit = state.add_map("x", {"ix": f"0:{tile_size_x}"},
+        x_entry, x_exit = state.add_map("x", {"ix": f"0:{tile_size_M}"},
                                         schedule=dace.ScheduleType.FPGA_Device)
 
         # Load x
@@ -205,7 +205,7 @@ class ExpandGerFpga(ExpandTransformation):
                        storage=dace.StorageType.FPGA_Local)
         x_local = state.add_access("x_local")
         subset = ("0" if isinstance(desc_x, dace.data.Stream) else
-                  f"tx*{tile_size_x} + ix")
+                  f"tx*{tile_size_M} + ix")
         state.add_memlet_path(read_x,
                               y_tile_entry,
                               x_tile_entry,
@@ -214,7 +214,7 @@ class ExpandGerFpga(ExpandTransformation):
                               memlet=dace.Memlet(f"_x[{subset}]",
                                                  other_subset="0"))
 
-        y_entry, y_exit = state.add_map("y", {"iy": f"0:{tile_size_y}"},
+        y_entry, y_exit = state.add_map("y", {"iy": f"0:{tile_size_N}"},
                                         schedule=dace.ScheduleType.FPGA_Device)
 
         # Actual computation
@@ -225,7 +225,7 @@ class ExpandGerFpga(ExpandTransformation):
         # Stream in A
         read_a = state.add_read("_A")
         subset_a = ("0" if isinstance(desc_a_in, dace.data.Stream) else
-                    f"tx*{tile_size_x} + ix, ty*{tile_size_y} + iy")
+                    f"tx*{tile_size_M} + ix, ty*{tile_size_N} + iy")
         state.add_memlet_path(read_a,
                               y_tile_entry,
                               x_tile_entry,
