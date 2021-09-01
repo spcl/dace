@@ -6,7 +6,7 @@ import copy
 import itertools
 import sympy as sp
 import networkx as nx
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from dace import dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
 from dace.properties import Property, make_properties, CodeBlock
@@ -50,26 +50,31 @@ def _check_range(subset, a, itersym, b, step):
     return found
 
 
-def _sanitize_subset(itervar: str, subset: subsets.Subset) -> subsets.Range:
-    """ Removes indices and ranges from subsets that do not depend on the
-        iteration variable.
+def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
+    """ Finds the indices or ranges of a subset that depend on the iteration
+        variable. Returns their index in the subset's indices/ranges list.
     """
     if isinstance(subset, subsets.Indices):
-        new_subset = subsets.Range([
-            (idx, idx, 1) for idx in subset
-            if symbolic.issymbolic(idx) and
-            itervar in {str(s) for s in idx.free_symbols}
-        ])
+        return {
+            i
+            for i, idx in enumerate(subset) if symbolic.issymbolic(idx)
+            and itervar in {str(s)
+                            for s in idx.free_symbols}
+        }
     else:
-        new_subset = subsets.Range([
-            rng for rng in subset
-            if any(
-                symbolic.issymbolic(t) and
-                itervar in {str(s) for s in t.free_symbols}
-                for t in rng
-            )
-        ])
-    return new_subset
+        return {
+            i
+            for i, rng in enumerate(subset) if any(
+                symbolic.issymbolic(t)
+                and itervar in {str(s)
+                                for s in t.free_symbols} for t in rng)
+        }
+
+
+def _sanitize_by_index(indices: Set[int],
+                       subset: subsets.Subset) -> subsets.Range:
+    """ Keeps the indices or ranges of subsets that are in `indices`. """
+    return type(subset)([t for i, t in enumerate(subset) if i in indices])
 
 
 @registry.autoregister
@@ -102,8 +107,7 @@ class LoopToMap(DetectLoop):
             return False
 
         # If loop cannot be detected, fail
-        found = find_for_loop(graph, guard, begin,
-                              itervar=self.itervar)
+        found = find_for_loop(graph, guard, begin, itervar=self.itervar)
         if not found:
             return False
 
@@ -166,7 +170,8 @@ class LoopToMap(DetectLoop):
                         # variable. The iteration variable must be used.
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
-                            if not _check_range(dst_subset, a, itersym, b, step):
+                            if not _check_range(dst_subset, a, itersym, b,
+                                                step):
                                 return False
                         # End of check
 
@@ -185,7 +190,8 @@ class LoopToMap(DetectLoop):
                     for e in state.out_edges(dn):
                         # If the same container is both read and written, only match if
                         # it read and written at locations that will not create data races
-                        if e.data.dynamic and e.data.src_subset.num_elements() != 1:
+                        if (e.data.dynamic
+                                and e.data.src_subset.num_elements() != 1):
                             # If pointers are involved, give up
                             return False
                         src_subset = e.data.get_src_subset(e, state)
@@ -193,24 +199,35 @@ class LoopToMap(DetectLoop):
                             return False
 
                         pread = propagate_subset([e.data], sdfg.arrays[data],
-                                                [itervar],
-                                                subsets.Range([(start, end, step)
-                                                                ]))
-                        read = _sanitize_subset(itervar, e.data.subset)
-                        pread = _sanitize_subset(itervar, pread.subset)
+                                                 [itervar],
+                                                 subsets.Range([(start, end,
+                                                                 step)]))
                         for candidate in write_memlets[data]:
                             # Simple case: read and write are in the same subset
-                            write = _sanitize_subset(itervar, candidate.subset)
+                            read = e.data.subset
+                            write = candidate.subset
                             if read == write:
-                                break
+                                continue
+                            ridx = _dependent_indices(itervar, read)
+                            widx = _dependent_indices(itervar, write)
+                            indices = set(ridx) | set(widx)
+                            if not indices:
+                                indices = set(range(len(read)))
+                            read = _sanitize_by_index(indices, read)
+                            write = _sanitize_by_index(indices, write)
+                            if read == write:
+                                continue
                             # Propagated read does not overlap with propagated write
                             pwrite = propagate_subset([candidate],
-                                                    sdfg.arrays[data], [itervar],
-                                                    subsets.Range([(start, end,
-                                                                    step)]))
-                            pwrite = _sanitize_subset(itervar, pwrite.subset)
-                            if subsets.intersects(pread, pwrite) is False:
-                                break
+                                                      sdfg.arrays[data],
+                                                      [itervar],
+                                                      subsets.Range([
+                                                          (start, end, step)
+                                                      ]))
+                            t_pread = _sanitize_by_index(indices, pread.subset)
+                            pwrite = _sanitize_by_index(indices, pwrite.subset)
+                            if subsets.intersects(t_pread, pwrite) is False:
+                                continue
                             return False
 
         # Check that the iteration variable is not used on other edges or states
@@ -252,8 +269,11 @@ class LoopToMap(DetectLoop):
         after: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
 
         # Obtain iteration variable, range, and stride
-        itervar, (start, end, step), (_, body_end) = find_for_loop(
-            sdfg, guard, body, itervar=self.itervar)
+        itervar, (start, end,
+                  step), (_, body_end) = find_for_loop(sdfg,
+                                                       guard,
+                                                       body,
+                                                       itervar=self.itervar)
 
         # Find all loop-body states
         states = set([body_end])
@@ -295,16 +315,24 @@ class LoopToMap(DetectLoop):
                     if state in states:
                         continue
                     for node in state.nodes():
-                        if (isinstance(node, nodes.AccessNode) and
-                                node.data == name):
+                        if (isinstance(node, nodes.AccessNode)
+                                and node.data == name):
                             found = True
                             break
                 if not found:
                     unique_set.add(name)
 
             # Find NestedSDFG's connectors
-            read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
-            write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
+            read_set = {
+                n
+                for n in read_set
+                if n not in unique_set or not sdfg.arrays[n].transient
+            }
+            write_set = {
+                n
+                for n in write_set
+                if n not in unique_set or not sdfg.arrays[n].transient
+            }
 
             # Create NestedSDFG and add all loop-body states and edges
             # Also, find defined symbols in NestedSDFG
@@ -324,7 +352,10 @@ class LoopToMap(DetectLoop):
                 if state is body:
                     continue
                 for src, dst, data in sdfg.in_edges(state):
-                    nsymbols.update({s: sdfg.symbols[s] for s in data.assignments.keys() if s in sdfg.symbols})
+                    nsymbols.update({
+                        s: sdfg.symbols[s]
+                        for s in data.assignments.keys() if s in sdfg.symbols
+                    })
                     nsdfg.add_edge(src, dst, data)
             nsdfg.add_edge(body_end, exit_state, InterstateEdge())
 
@@ -334,13 +365,13 @@ class LoopToMap(DetectLoop):
             # Move body_end -> guard edge to new_body -> guard
             for src, dst, data in sdfg.edges_between(body_end, guard):
                 sdfg.add_edge(new_body, dst, data)
-            
+
             # Delete loop-body states and edges from parent SDFG
             for state in states:
                 for e in sdfg.all_edges(state):
                     sdfg.remove_edge(e)
                 sdfg.remove_node(state)
-            
+
             # Add NestedSDFG arrays
             for name in read_set | write_set:
                 nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
@@ -348,7 +379,7 @@ class LoopToMap(DetectLoop):
             for name in unique_set:
                 nsdfg.arrays[name] = sdfg.arrays[name]
                 del sdfg.arrays[name]
-            
+
             # Add NestedSDFG node
             cnode = new_body.add_nested_sdfg(nsdfg, None, read_set, write_set)
             if sdfg.parent:
