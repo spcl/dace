@@ -993,15 +993,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # stack gets popped, the same CUDA stream can be used.
         visited: Set[nodes.Node] = set()
         current_path: int = 0
-        for node in sources:
-            if node in visited:
+        for source in sources:
+            if source in visited:
                 # Only visit every node once
                 continue
-            stack = [(None, iter([node]))]
+            stack = [(None, iter([source]))]
             while stack:
                 parent, children = stack[-1]
                 try:
-                    child = next(children)
+                    node = next(children)
                 except StopIteration:
                     # the current node has no more children, so we remove it from
                     # the stack and increment the current_path
@@ -1009,9 +1009,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     current_path += 1
                     continue
 
-                if child not in visited:
+                if node not in visited:
                     # Only visit every node once
-                    visited.add(child)
+                    visited.add(node)
 
                     # Special Case:
                     # Skip subgraph of a MapEntry or ConsumeEntry that
@@ -1024,32 +1024,32 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     # subgraph. So we also can skip the nodes inside the
                     # subgraph, as they will be handled by the recursive
                     # call.
-                    if (isinstance(child, nodes.EntryNode)
-                            and child.schedule in dtypes.GPU_SCHEDULES):
-                        # Child is either a MapEntry or ConsumeEntry that
+                    if (isinstance(node, nodes.EntryNode)
+                            and node.schedule in dtypes.GPU_SCHEDULES):
+                        # Node is either a MapEntry or ConsumeEntry that
                         # either runs on a GPU or distributes its scope
                         # over multiple GPUs.
 
                         # Skip nodes of the subgraph
                         scope_subgraph = graph.scope_subgraph(
-                            child, include_exit=False)
+                            node, include_exit=False)
                         visited.update(scope_subgraph.nodes())
 
                         # Add exit node to the stack
-                        exit_node = graph.exit_node(child)
+                        exit_node = graph.exit_node(node)
                         stack.append(
                             (exit_node, graph.successors(exit_node).__iter__()))
 
-                        if child.schedule == dtypes.ScheduleType.GPU_Multidevice:
+                        if node.schedule == dtypes.ScheduleType.GPU_Multidevice:
                             # Scope is distributed over multiple GPUs.
 
                             # Get symbolic GPU id, representing a range of GPUs.
-                            if isinstance(child, nodes.MapEntry):
+                            if isinstance(node, nodes.MapEntry):
                                 param = symbolic.pystr_to_symbolic(
-                                    child.params[0])
+                                    node.params[0])
                             else:
                                 param = symbolic.pystr_to_symbolic(
-                                    child.pe_index)
+                                    node.pe_index)
 
                             # Get maximal stream of the represented GPUs and
                             # the GPU that reaches the maximal stream.
@@ -1061,7 +1061,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             increment_max_numeric_stream = max_numeric_stream
 
                             # Check if one of the GPUs that have the maximal
-                            # stream get used on a new path.
+                            # stream gets used on a new path.
                             # If they do, increment the maximal stream.
                             for a_max_gpu in arg_max_gpus:
                                 if (a_max_gpu in gpu_ids_used
@@ -1088,7 +1088,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                             # Compute CUDA streams on the scopesubgraph
                             subgraph_max_streams, subgraph_current_streams, subgraph_unused_streams, subgraph_max_events = self._compute_cudastreams_graph(
-                                scope_subgraph, graph.successors(child),
+                                scope_subgraph, graph.successors(node),
                                 max_streams, current_streams, unused_streams,
                                 max_events)
                             max_streams.update(subgraph_max_streams)
@@ -1098,13 +1098,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             continue
                     else:
                         # Add the successors of the current child to the stack.
-                        stack.append(
-                            (child, graph.successors(child).__iter__()))
+                        stack.append((node, graph.successors(node).__iter__()))
 
                     # Annotate the child with a CUDA stream.
                     max_streams, current_streams, unused_streams, max_events = self._compute_cudastreams_node(
                         graph,
-                        child,
+                        node,
                         parent,
                         current_path,
                         gpu_id_last_path,
