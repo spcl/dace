@@ -1,0 +1,33 @@
+name: FPGA Tests
+
+on:
+  push:
+    branches: [ master, ci-fix ]
+  pull_request:
+    branches: [ master, ci-fix ]
+
+jobs:
+  test-fpga:
+    runs-on: [self-hosted, linux, intel-fpga, xilinx-fpga]
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: 'recursive'
+    - name: Install dependencies
+      run: |
+        rm -f ~/.dace.conf
+        rm -rf .dacecache tests/.dacecache
+        . /opt/setupenv
+        python -m pip install --upgrade pip
+        pip install pytest-xdist flake8 coverage codecov
+        pip uninstall -y dace
+        pip install -e ".[testing]"
+
+    - name: Run FPGA Tests
+      run: |
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "fpga"
+        coverage report
+        coverage xml
+        codecov
+        killall -9 xsim xsimk || true

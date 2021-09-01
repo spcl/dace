@@ -61,6 +61,8 @@ class IntelMKL:
                 return [libfile]
 
         path = ctypes.util.find_library('mkl_rt')
+        if not path:
+            path = ctypes.util.find_library('mkl_rt.1')
         if path:
             # Attempt to link on Windows
             if path.endswith('.dll'):
