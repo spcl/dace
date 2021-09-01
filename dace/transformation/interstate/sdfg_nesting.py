@@ -15,7 +15,7 @@ import copy
 
 from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
-from dace.sdfg import nodes, propagation
+from dace.sdfg import nodes, propagation, utils
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types, propagation
@@ -70,22 +70,14 @@ class InlineSDFG(transformation.Transformation):
         :return: True if all strides match, False otherwise.
         """
         # Replace all inner symbols based on symbol mapping
-        repldict = {
-            symbolic.pystr_to_symbolic(k):
-            symbolic.pystr_to_symbolic('__dacesym_' + str(v))
-            for k, v in nested_sdfg.symbol_mapping.items()
-        }
-        # need two dicts to avoid clashes
-        repldict_inv = {
-            symbolic.pystr_to_symbolic('__dacesym_' + str(v)):
-            symbolic.pystr_to_symbolic(v)
-            for v in nested_sdfg.symbol_mapping.values()
-        }
+        istrides = list(inner_strides)
 
-        istrides = [
-            istr.subs(repldict).subs(repldict_inv)
-            if symbolic.issymbolic(istr) else istr for istr in inner_strides
-        ]
+        def replfunc(mapping):
+            for i, s in enumerate(istrides):
+                if symbolic.issymbolic(s):
+                    istrides[i] = s.subs(mapping)
+
+        symbolic.safe_replace(nested_sdfg.symbol_mapping, replfunc)
 
         if istrides == list(outer_strides):
             return True
@@ -128,14 +120,18 @@ class InlineSDFG(transformation.Transformation):
             if (edge.data.is_empty()
                     and not isinstance(edge.src, nodes.EntryNode)):
                 return False
-            in_connectors.add(edge.dst_conn)
+            # NOTE: Empty memlets do not attach to connectors
+            if edge.dst_conn or not edge.data.is_empty():
+                in_connectors.add(edge.dst_conn)
         for edge in graph.out_edges(nested_sdfg):
             if edge.src_conn in out_connectors:
                 return False
             if (edge.data.is_empty()
                     and not isinstance(edge.dst, nodes.ExitNode)):
                 return False
-            out_connectors.add(edge.src_conn)
+            # NOTE: Empty memlets do not attach to connectors
+            if edge.src_conn or not edge.data.is_empty():
+                out_connectors.add(edge.src_conn)
 
         # Ensure output connectors have no additional outputs (if in a scope),
         # and ensure no two connectors are directly connected to each other
@@ -305,6 +301,10 @@ class InlineSDFG(transformation.Transformation):
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
 
+        # Replace symbols using invocation symbol mapping
+        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
+        symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
+
         # Access nodes that need to be reshaped
         reshapes: Set(str) = set()
         for aname, array in nsdfg.arrays.items():
@@ -325,15 +325,6 @@ class InlineSDFG(transformation.Transformation):
                     array.strides, sdfg.arrays[edge.data.data].strides,
                     edge.data, nsdfg_node):
                 reshapes.add(aname)
-
-        # Replace symbols using invocation symbol mapping
-        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        for symname, symvalue in nsdfg_node.symbol_mapping.items():
-            if str(symname) != str(symvalue):
-                nsdfg.replace(symname, '__dacesym_' + symname)
-        for symname, symvalue in nsdfg_node.symbol_mapping.items():
-            if str(symname) != str(symvalue):
-                nsdfg.replace('__dacesym_' + symname, symvalue)
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
@@ -427,11 +418,12 @@ class InlineSDFG(transformation.Transformation):
                 edge.data.data = repldict[edge.data.data]
 
         # Add extra access nodes for out/in view nodes
+        inv_reshapes = {repldict[r]: r for r in reshapes}
         for node in nstate.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data in reshapes:
+            if isinstance(node, nodes.AccessNode) and node.data in inv_reshapes:
                 if nstate.in_degree(node) > 0 and nstate.out_degree(node) > 0:
                     # Such a node has to be in the output set
-                    edge = outputs[node.data]
+                    edge = outputs[inv_reshapes[node.data]]
 
                     # Redirect outgoing edges through access node
                     out_edges = list(nstate.out_edges(node))
@@ -552,6 +544,10 @@ class InlineSDFG(transformation.Transformation):
                     '(reconnecting inputs)')
             state.add_edge(edge.src, edge.src_conn, node, edge.dst_conn,
                            edge.data)
+            # Fission state if necessary
+            cc = utils.weakly_connected_component(state, node)
+            if not any(n in cc for n in subgraph.nodes()):
+                helpers.state_fission(state.parent, cc)
         for edge in removed_out_edges:
             # Find last access node that refers to this edge
             try:
@@ -564,6 +560,11 @@ class InlineSDFG(transformation.Transformation):
                     '(reconnecting outputs)')
             state.add_edge(node, edge.src_conn, edge.dst, edge.dst_conn,
                            edge.data)
+            # Fission state if necessary
+            cc = utils.weakly_connected_component(state, node)
+            if not any(n in cc for n in subgraph.nodes()):
+                cc2 = SubgraphView([n for n in state.nodes() if n not in cc])
+                state = helpers.state_fission(sdfg, cc2)
 
         #######################################################
         # Remove nested SDFG node

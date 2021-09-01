@@ -348,14 +348,12 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
             ({dtype}*)_c, {ldc});'''
 
         code = (call_prefix + call.format_map(opt) + call_suffix)
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-            location=node.location
-        )
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP,
+                                          location=node.location)
 
         # If buffers are not on the GPU, copy them
         if any(desc.storage not in
@@ -464,10 +462,11 @@ class ExpandGemmPBLAS(ExpandTransformation):
         def _gemm_pblas(_a: dtype[M, K], _b: dtype[K, N], _c: dtype[M, N]):
             lA = np.empty((M // Px, K // Py), dtype=_a.dtype)
             lB = np.empty((K // Px, N // Py), dtype=_b.dtype)
-            dace.comm.BCScatter(_a, lA, (M//Px, K//Py))
-            dace.comm.BCScatter(_b, lB, (K//Px, N//Py))
-            lC = distr.MatMult(_a, _b, lA, lB, (M//Px, K//Py), (K//Px, N//Py))
-            dace.comm.BCGather(lC, _c, (M//Px, N//Py))
+            dace.comm.BCScatter(_a, lA, (M // Px, K // Py))
+            dace.comm.BCScatter(_b, lB, (K // Px, N // Py))
+            lC = distr.MatMult(_a, _b, lA, lB, (M // Px, K // Py),
+                               (K // Px, N // Py))
+            dace.comm.BCGather(lC, _c, (M // Px, N // Py))
 
         return _gemm_pblas.to_sdfg()
 
@@ -1070,11 +1069,11 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                  alpha=1,
                  beta=0,
                  cin=True):
-        super().__init__(
-            name,
-            location=location,
-            inputs=({"_a", "_b", "_cin"} if beta!=0 and cin else {"_a", "_b"}),
-            outputs={"_c"})
+        super().__init__(name,
+                         location=location,
+                         inputs=({"_a", "_b", "_cin"}
+                                 if beta != 0 and cin else {"_a", "_b"}),
+                         outputs={"_c"})
         self.transA = transA
         self.transB = transB
         self.alpha = alpha
@@ -1132,7 +1131,8 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.gemm')
 @oprepo.replaces('dace.libraries.blas.Gemm')
-def gemv_libnode(sdfg: SDFG,
+def gemv_libnode(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
                  state: SDFGState,
                  A,
                  B,

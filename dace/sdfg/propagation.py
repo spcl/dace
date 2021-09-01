@@ -260,6 +260,10 @@ class AffineSMemlet(SeparableMemletPattern):
         result_begin = rb.subs(self.param, node_rb).expand()
         result_end = re.subs(self.param, node_re).expand()
 
+        # Special case: multiplier < 0
+        if (self.multiplier < 0) == True:
+            result_begin, result_end = result_end, result_begin
+
         # Special case: i:i+stride for a begin:end:stride range
         if (node_rb == result_begin and (re - rb + 1) == node_rs and rs == 1
                 and rt == 1):
@@ -463,7 +467,7 @@ class GenericSMemlet(SeparableMemletPattern):
                 raise NotImplementedError
 
             if (node_rs < 0) == True:
-                node_rb, node_re, node_rs = node_re, node_rb, - node_rs
+                node_rb, node_re, node_rs = node_re, node_rb, -node_rs
 
             # Get true range end
             pos_firstindex = node_rb
@@ -1342,8 +1346,8 @@ def propagate_memlet(dfg_state,
                              if not conn.startswith('IN_'))
     defined_vars = [
         symbolic.pystr_to_symbolic(s)
-        for s in dfg_state.symbols_defined_at(entry_node).keys()
-        if s not in scope_node_symbols
+        for s in (dfg_state.symbols_defined_at(entry_node).keys()
+                  | sdfg.constants.keys()) if s not in scope_node_symbols
     ]
 
     # Find other adjacent edges within the connected to the scope node
@@ -1487,10 +1491,10 @@ def propagate_subset(memlets: List[Memlet],
     # number of accesses times the size of the map range set (unbounded dynamic)
 
     # if there is an intersection between params and free symbols of a memlet
-    # we need to substitute the params with the range values in the volume of 
+    # we need to substitute the params with the range values in the volume of
     # the memlet
     # if any(str(fs) in params for m in memlets for fs in m.volume.free_symbols):
-    #     # generator that maps each parameter to its corresponding range element, 
+    #     # generator that maps each parameter to its corresponding range element,
     #     # enables sympy's subs method.
     #     # Format: [..., (parameter[i], index[i]), ...]
     #     substitution_generator = (list(

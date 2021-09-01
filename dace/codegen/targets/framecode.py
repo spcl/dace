@@ -842,7 +842,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             generated_code = callsite_stream.getvalue()
 
         # Clean up generated code
-        gotos = re.findall(r'goto (.*);', generated_code)
+        gotos = re.findall(r'goto (.*?);', generated_code)
         clean_code = ''
         for line in generated_code.split('\n'):
             # Empty line with semicolon

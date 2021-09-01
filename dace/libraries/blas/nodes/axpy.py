@@ -59,8 +59,9 @@ class ExpandAxpyVectorized(ExpandTransformation):
         y_in = axpy_state.add_read("_y")
         z_out = axpy_state.add_write("_res")
 
-        vec_map_entry, vec_map_exit = axpy_state.add_map(
-            "axpy", {"i": f"0:{n}"}, schedule=schedule)
+        vec_map_entry, vec_map_exit = axpy_state.add_map("axpy",
+                                                         {"i": f"0:{n}"},
+                                                         schedule=schedule)
 
         axpy_tasklet = axpy_state.add_tasklet(
             "axpy", ["x_conn", "y_conn"], ["z_conn"],
@@ -187,7 +188,8 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.axpy')
 @oprepo.replaces('dace.libraries.blas.Axpy')
-def axpy_libnode(sdfg: SDFG, state: SDFGState, a, x, y, result):
+def axpy_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a, x, y,
+                 result):
     # Add nodes
     x_in, y_in = (state.add_read(name) for name in (x, y))
     res = state.add_write(result)

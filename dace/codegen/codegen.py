@@ -90,13 +90,15 @@ int main(int argc, char **argv) {{
 '''
 
 
-def generate_code(sdfg) -> List[CodeObject]:
+def generate_code(sdfg, validate=True) -> List[CodeObject]:
     """ Generates code as a list of code objects for a given SDFG.
         :param sdfg: The SDFG to use
+        :param validate: If True, validates the SDFG before generating the code.
         :return: List of code objects that correspond to files to compile.
     """
     # Before compiling, validate SDFG correctness
-    sdfg.validate()
+    if validate:
+        sdfg.validate()
 
     if Config.get_bool('testing', 'serialization'):
         from dace.sdfg import SDFG

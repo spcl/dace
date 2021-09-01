@@ -2900,6 +2900,15 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 sdfg, state_id, scope_entry)
 
             outer_scope = sdfg.nodes()[state_id].entry_node(scope_entry)
+            current_sdfg = sdfg
+            while not outer_scope and current_sdfg:
+                current_state = current_sdfg.parent
+                nsdfg_node = current_sdfg.parent_nsdfg_node
+                outer_scope = current_state.entry_node(nsdfg_node)
+                current_sdfg = current_state.parent
+            if not outer_scope:
+                raise ValueError(
+                    f'Failed to find the outer scope of {scope_entry}')
             callsite_stream.write(
                 'if ({} < {}) {{'.format(
                     outer_scope.map.params[0],

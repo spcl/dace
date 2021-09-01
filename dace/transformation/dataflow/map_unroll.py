@@ -1,8 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-
-from dace import dtypes, registry, symbolic, SDFG
+from dace import data as dt, dtypes, registry, symbolic, SDFG
 from dace.sdfg import nodes, utils as sdutil
-from dace.sdfg.state import StateSubgraphView
 from dace.transformation import transformation
 from dace.properties import make_properties
 import copy
@@ -68,10 +66,12 @@ class MapUnroll(transformation.Transformation):
                 nested_sdfgs[node.sdfg] = node.sdfg.to_json()
 
         # Check for local memories that need to be replicated
-        local_memories = sdutil.local_transients(sdfg,
-                                                 subgraph,
-                                                 entry_node=None,
-                                                 include_nested=True)
+        local_memories = [
+            name for name in sdutil.local_transients(
+                sdfg, subgraph, entry_node=map_entry, include_nested=True)
+            if not isinstance(sdfg.arrays[name], dt.Stream)
+            and not isinstance(sdfg.arrays[name], dt.View)
+        ]
 
         params = map_entry.map.params
         ranges = map_entry.map.range.ranges

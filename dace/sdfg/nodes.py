@@ -1268,10 +1268,11 @@ class LibraryNode(CodeNode):
         default=dtypes.ScheduleType.Default)
     debuginfo = DebugInfoProperty()
 
-    def __init__(self, name, *args, **kwargs):
+    def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name
         self.label = name
+        self.schedule = schedule or dtypes.ScheduleType.Default
 
     # Overrides subclasses to return LibraryNode as their JSON type
     @property

@@ -4,7 +4,7 @@ import re, json
 import copy as cp
 import sympy as sp
 import numpy
-from typing import Set
+from typing import Set, Sequence
 
 import dace.dtypes as dtypes
 from dace.codegen import cppunparse
@@ -52,6 +52,26 @@ def create_datadescriptor(obj):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))
     return Scalar(dtypes.typeclass(type(obj)))
+
+
+def find_new_name(name: str, existing_names: Sequence[str]) -> str:
+    """
+    Returns a name that matches the given ``name`` as a prefix, but does not
+    already exist in the given existing name set. The behavior is typically
+    to append an underscore followed by a unique (increasing) number. If the
+    name does not already exist in the set, it is returned as-is.
+    :param name: The given name to find.
+    :param existing_names: The set of existing names.
+    :return: A new name that is not in existing_names.
+    """
+    if name not in existing_names:
+        return name
+    cur_offset = 0
+    new_name = name + '_' + str(cur_offset)
+    while new_name in existing_names:
+        cur_offset += 1
+        new_name = name + '_' + str(cur_offset)
+    return new_name
 
 
 @make_properties
@@ -133,7 +153,7 @@ class Data(object):
                 result |= set(s.free_symbols)
         # Add symbolic location values
         result.update(*(symbolic.pystr_to_symbolic(v).free_symbols
-                for v in self.location.values()))
+                        for v in self.location.values()))
         return result
 
     def __repr__(self):
@@ -176,8 +196,6 @@ class Scalar(Data):
         ret = Scalar(dtypes.int8)
         serialize.set_properties_from_json(ret, json_obj, context=context)
 
-        # Check validity now
-        ret.validate()
         return ret
 
     def __repr__(self):
@@ -492,8 +510,6 @@ class Stream(Data):
         ret = cls(dtypes.int8, 1)
         serialize.set_properties_from_json(ret, json_obj, context=context)
 
-        # Check validity now
-        ret.validate()
         return ret
 
     def __repr__(self):

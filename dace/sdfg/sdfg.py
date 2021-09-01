@@ -54,7 +54,7 @@ def _arrays_from_json(obj, context=None):
 def _replace_dict(d, old, new):
     if old in d:
         if new in d:
-            raise FileExistsError('"%s" already exists in SDFG' % new)
+            warnings.warn('"%s" already exists in SDFG' % new)
         d[new] = d[old]
         del d[old]
 
@@ -320,14 +320,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """ Serializes this object to JSON format.
             :return: A string representing the JSON-serialized SDFG.
         """
+        # Location in the SDFG list (only for root SDFG)
+        if self.parent_sdfg is None:
+            self.reset_sdfg_list()
+
         tmp = super().to_json()
 
         # Ensure properties are serialized correctly
         tmp['attributes']['constants_prop'] = json.loads(
             dace.serialize.dumps(tmp['attributes']['constants_prop']))
 
-        # Location in the SDFG list
-        self.reset_sdfg_list()
         tmp['sdfg_list_id'] = int(self.sdfg_id)
         tmp['start_state'] = self._start_state
 
@@ -467,6 +469,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Replace in states
         for state in self.nodes():
             state.replace(name, new_name)
+
+    def replace_dict(self, repldict: Dict[str, str]) -> None:
+        """
+        Replaces all occurrences of keys in the given dictionary with the mapped
+        values.
+        :param repldict: The replacement dictionary.
+        :param replace_keys: If False, skips replacing assignment keys.
+        """
+        for k, v in repldict.items():
+            self.replace(k, v)
 
     def add_symbol(self, name, stype):
         """ Adds a symbol to the SDFG.
@@ -734,17 +746,20 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             for state in self.nodes():
                 for node in state.nodes():
                     if isinstance(node, nd.AccessNode) and node.data == name:
-                        raise ValueError("Data descriptor %s is already used "
-                                         "in node %s, state %s" %
-                                         (name, node, state))
+                        raise ValueError(f"Cannot remove data descriptor "
+                                         f"{name}: it is accessed by node "
+                                         f"{node} in state {state}.")
 
         del self._arrays[name]
 
     def reset_sdfg_list(self):
         if self.parent_sdfg is not None:
-            self._sdfg_list = self.parent_sdfg.reset_sdfg_list()
+            return self.parent_sdfg.reset_sdfg_list()
         else:
-            self._sdfg_list = list(self.all_sdfgs_recursive())
+            # Propagate new SDFG list to all children
+            all_sdfgs = list(self.all_sdfgs_recursive())
+            for sd in all_sdfgs:
+                sd._sdfg_list = all_sdfgs
         return self._sdfg_list
 
     def update_sdfg_list(self, sdfg_list):
@@ -1088,10 +1103,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if not isnotebook():
             result = preamble()
 
-        # Make sure to not store metadata (saves space)
-        old_meta = dace.serialize.JSON_STORE_METADATA
-        dace.serialize.JSON_STORE_METADATA = False
-
         # Create renderer canvas and load SDFG
         result += """
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
@@ -1104,9 +1115,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             # recursively
             sdfg=dace.serialize.dumps(dace.serialize.dumps(self.to_json())),
             uid=random.randint(0, sys.maxsize - 1))
-
-        # Reset metadata state
-        dace.serialize.JSON_STORE_METADATA = old_meta
 
         return result
 
@@ -1185,16 +1193,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def save(self,
              filename: str,
              use_pickle=False,
-             with_metadata=False,
              hash=None,
              exception=None) -> Optional[str]:
         """ Save this SDFG to a file.
             :param filename: File name to save to.
             :param use_pickle: Use Python pickle as the SDFG format (default:
                                JSON).
-            :param with_metadata: Save property metadata (e.g. name,
-                                  description). False or True override current
-                                  option, whereas None keeps default.
             :param hash: By default, saves the hash if SDFG is JSON-serialized.
                          Otherwise, if True, saves the hash along with the SDFG.
             :param exception: If not None, stores error information along with
@@ -1213,16 +1217,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 return self.hash_sdfg()
         else:
             hash = True if hash is None else hash
-            if with_metadata is not None:
-                old_meta = dace.serialize.JSON_STORE_METADATA
-                dace.serialize.JSON_STORE_METADATA = with_metadata
             with open(filename, "w") as fp:
                 json_output = self.to_json(hash=hash)
                 if exception:
                     json_output['error'] = exception.to_json()
                 fp.write(dace.serialize.dumps(json_output))
-            if with_metadata is not None:
-                dace.serialize.JSON_STORE_METADATA = old_meta
             if hash and 'hash' in json_output['attributes']:
                 return json_output['attributes']['hash']
 
@@ -1344,24 +1343,36 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return name + ('_%d' % index)
 
-    def add_array(
-        self,
-        name: str,
-        shape,
-        dtype,
-        storage=dtypes.StorageType.Default,
-        transient=False,
-        strides=None,
-        offset=None,
-        lifetime=dace.dtypes.AllocationLifetime.Scope,
-        debuginfo=None,
-        allow_conflicts=False,
-        total_size=None,
-        find_new_name=False,
-        alignment=0,
-        may_alias=False,
-        location={},
-    ) -> Tuple[str, dt.Array]:
+    def find_new_symbol(self, name: str):
+        """
+        Tries to find a new symbol name by adding an underscore and a number.
+        """
+        symbols = self.symbols
+        if name not in symbols:
+            return name
+
+        index = 0
+        while (name + ('_%d' % index)) in symbols:
+            index += 1
+
+        return name + ('_%d' % index)
+
+    def add_array(self,
+                  name: str,
+                  shape,
+                  dtype,
+                  storage=dtypes.StorageType.Default,
+                  transient=False,
+                  strides=None,
+                  offset=None,
+                  lifetime=dace.dtypes.AllocationLifetime.Scope,
+                  debuginfo=None,
+                  allow_conflicts=False,
+                  total_size=None,
+                  find_new_name=False,
+                  alignment=0,
+                  may_alias=False,
+                  location={}) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1750,21 +1761,25 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None) -> \
+    def compile(self, output_file=None, validate=True) -> \
             'dace.codegen.compiler.CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
             :param output_file: If not None, copies the output library file to
                                 the specified path.
+            :param validate: If True, validates the SDFG prior to generating 
+                             code.
             :return: A callable CompiledSDFG object.
         """
 
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
 
+        # Compute build folder path before running codegen
+        build_folder = self.build_folder
+
         if Config.get_bool('compiler', 'use_cache'):
             # Try to see if a cached version of the binary exists
-            binary_filename = compiler.get_binary_name(self.build_folder,
-                                                       self.name)
+            binary_filename = compiler.get_binary_name(build_folder, self.name)
             if os.path.isfile(binary_filename):
                 return compiler.load_from_file(self, binary_filename)
 
@@ -1773,6 +1788,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Clone SDFG as the other modules may modify its contents
         sdfg = copy.deepcopy(self)
+        # Fix the build folder name on the copied SDFG to avoid it changing
+        # if the codegen modifies the SDFG (thereby changing its hash)
+        sdfg.build_folder = build_folder
 
         # Rename SDFG to avoid runtime issues with clashing names
         index = 0
@@ -1787,11 +1805,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         sdfg.fill_scope_connectors()
 
         # Generate code for the program by traversing the SDFG state by state
-        program_objects = codegen.generate_code(sdfg)
+        program_objects = codegen.generate_code(sdfg, validate=validate)
 
         # Generate the program folder and write the source files
         program_folder = compiler.generate_program_folder(
-            sdfg, program_objects, sdfg.build_folder)
+            sdfg, program_objects, build_folder)
 
         # Compile the code and get the shared library path
         shared_library = compiler.configure_and_compile(program_folder,
@@ -1808,8 +1826,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # it to the generating code and storing command line arguments that
         # were provided.
         if sys.argv is not None and len(sys.argv) > 0:
-            os.makedirs(sdfg.build_folder, exist_ok=True)
-            with open(os.path.join(sdfg.build_folder, 'program.sdfgl'),
+            os.makedirs(build_folder, exist_ok=True)
+            with open(os.path.join(build_folder, 'program.sdfgl'),
                       'w') as launchfiles_file:
                 launchfiles_file.write(
                     'name,SDFG_intermediate,SDFG,source,' +
@@ -1817,7 +1835,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                               for i in range(len(sys.argv))]) + '\n')
                 launchfiles_file.write(
                     sdfg.name + ',' + os.path.abspath(
-                        os.path.join(sdfg.build_folder, 'program.sdfg')) + ',' +
+                        os.path.join(build_folder, 'program.sdfg')) + ',' +
                     os.path.abspath(os.path.join('_dacegraphs', 'program.sdfg'))
                     + ',' + os.path.abspath(sys.argv[0]) + ',' +
                     ','.join([str(el) for el in sys.argv]))

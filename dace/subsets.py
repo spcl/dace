@@ -222,26 +222,30 @@ class Range(Subset):
 
     def size(self, for_codegen=False):
         """ Returns the number of elements in each dimension. """
+        offset = [-1 if (s < 0) == True else 1 for _, _, s in self.ranges]
+
         if for_codegen == True:
             int_ceil = sp.Function('int_ceil')
             return [
                 ts * int_ceil(
                     ((iMax.approx if isinstance(iMax, symbolic.SymExpr) else
-                      iMax) + 1 - (iMin.approx if isinstance(
+                      iMax) + off - (iMin.approx if isinstance(
                           iMin, symbolic.SymExpr) else iMin)),
                     (step.approx
                      if isinstance(step, symbolic.SymExpr) else step))
-                for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
+                for (iMin, iMax,
+                     step), off, ts in zip(self.ranges, offset, self.tile_sizes)
             ]
         else:
             return [
                 ts * sp.ceiling(
                     ((iMax.approx
-                      if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
+                      if isinstance(iMax, symbolic.SymExpr) else iMax) + off -
                      (iMin.approx if isinstance(iMin, symbolic.SymExpr) else
                       iMin)) / (step.approx if isinstance(
                           step, symbolic.SymExpr) else step))
-                for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
+                for (iMin, iMax,
+                     step), off, ts in zip(self.ranges, offset, self.tile_sizes)
             ]
 
     def size_exact(self):
@@ -401,7 +405,10 @@ class Range(Subset):
             dres = _simplified_str(d[0])
             if d[1] is not None:
                 if d[1] - d[0] != 0:
-                    dres += ':' + _simplified_str(d[1] + 1)
+                    off = 1
+                    if d[2] is not None and (d[2] < 0) == True:
+                        off = -1
+                    dres += ':' + _simplified_str(d[1] + off)
             if d[2] != 1:
                 if d[1] is None:
                     dres += ':'
@@ -620,9 +627,10 @@ class Range(Subset):
                              rs * other[idx][2], rt))
                     else:
                         new_subset.append(rb + rs * other[idx])
-        elif (other.data_dims() == 0 and
-                all([r == (0, 0, 1) if isinstance(other, Range) else r == 0
-                for r in other])):
+        elif (other.data_dims() == 0 and all([
+                r == (0, 0, 1) if isinstance(other, Range) else r == 0
+                for r in other
+        ])):
             # NOTE: This is a special case where the other subset is the
             # (potentially multidimensional) index zero.
             # For example, A[i, j] -> tmp[0]. The result of such a

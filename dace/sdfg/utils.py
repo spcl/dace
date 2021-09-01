@@ -9,7 +9,7 @@ import networkx as nx
 import dace.sdfg.nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.nodes import Node
+from dace.sdfg.nodes import Node, NestedSDFG
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
@@ -996,15 +996,25 @@ def trace_nested_access(
     return list(reversed(trace))
 
 
-def fuse_states(sdfg: SDFG) -> int:
+def fuse_states(sdfg: SDFG, strict: bool = True, progress: bool = False) -> int:
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs) using an optimized
     routine that uses the structure of the StateFusion transformation.
     :param sdfg: The SDFG to transform.
+    :param strict: If True (default), operates in strict mode.
+    :param progress: If True, prints out a progress bar of fusion (may be
+                     inaccurate, requires ``tqdm``)
     :return: The total number of states fused.
     """
     from dace.transformation.interstate import StateFusion  # Avoid import loop
     counter = 0
+    if progress:
+        from tqdm import tqdm
+        fusible_states = 0
+        for sd in sdfg.all_sdfgs_recursive():
+            fusible_states += sd.number_of_edges()
+        pbar = tqdm(total=fusible_states)
+
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
         while True:
@@ -1019,16 +1029,67 @@ def fuse_states(sdfg: SDFG) -> int:
                     StateFusion.second_state: v
                 }
                 sf = StateFusion(id, -1, candidate, 0, override=True)
-                if sf.can_be_applied(sd, candidate, 0, sd, strict=True):
+                if sf.can_be_applied(sd, candidate, 0, sd, strict=strict):
                     sf.apply(sd)
                     applied += 1
                     counter += 1
+                    if progress:
+                        pbar.update(1)
                     skip_nodes.add(u)
                     skip_nodes.add(v)
             if applied == 0:
                 break
+    if progress:
+        pbar.close()
     if config.Config.get_bool('debugprint'):
         print(f'Applied {counter} State Fusions')
+    return counter
+
+
+def inline_sdfgs(sdfg: SDFG,
+                 strict: bool = True,
+                 progress: bool = False) -> int:
+    """
+    Inlines all possible nested SDFGs (or sub-SDFGs) using an optimized
+    routine that uses the structure of the SDFG hierarchy.
+    :param sdfg: The SDFG to transform.
+    :param strict: If True (default), operates in strict mode.
+    :param progress: If True, prints out a progress bar of inlining (may be
+                     inaccurate, requires ``tqdm``)
+    :return: The total number of SDFGs inlined.
+    """
+    from dace.transformation.interstate import InlineSDFG  # Avoid import loop
+    counter = 0
+    sdfgs = list(sdfg.all_sdfgs_recursive())
+    if progress:
+        from tqdm import tqdm
+        pbar = tqdm(total=len(sdfgs))
+
+    for sd in reversed(sdfgs):
+        id = sd.sdfg_id
+        for state_id, state in enumerate(sd.nodes()):
+            for node in state.nodes():
+                if not isinstance(node, NestedSDFG):
+                    continue
+                # We have to reevaluate every time due to changing IDs
+                node_id = state.node_id(node)
+                candidate = {
+                    InlineSDFG._nested_sdfg: node_id,
+                }
+                inliner = InlineSDFG(id, state_id, candidate, 0, override=True)
+                if inliner.can_be_applied(state,
+                                          candidate,
+                                          0,
+                                          sd,
+                                          strict=strict):
+                    inliner.apply(sd)
+                    counter += 1
+                    if progress:
+                        pbar.update(1)
+    if progress:
+        pbar.close()
+    if config.Config.get_bool('debugprint'):
+        print(f'Inlined {counter} SDFGs')
     return counter
 
 
@@ -1094,8 +1155,9 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
     return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(
         state.node_id(node))
 
+
 def get_gpu_location(sdfg: Union[SDFG, SDFGState, ScopeSubgraphView],
-                     node_or_array: Union[dt.Data, nd.Node]): 
+                     node_or_array: Union[dt.Data, nd.Node]):
     """ 
     Returns the symbolic GPU location of the node or array. If the 
     node or array is not located on a GPU it returns None.

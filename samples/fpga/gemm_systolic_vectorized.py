@@ -1,15 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-# Computes C = AB + C
-# This sample build on matrix_multiplication_systolic by adding
-# vectorization. The systolic arrays used data type depends on the used vectorization width
-# (e.g., float16 for vec_width = 16)
+"""
+Computes C = AB + C
 
-import argparse
+This sample build on matrix_multiplication_systolic by adding vectorization.
+The systolic arrays used data type depends on the used vectorization width
+(e.g., float16 for vec_width = 16).
+"""
+
+import click
 import dace
 import numpy as np
-import pdb
-import select
-import sys
 
 N = dace.symbol("N")
 K = dace.symbol("K")
@@ -17,7 +17,7 @@ M = dace.symbol("M")
 P = dace.symbol("P")
 
 
-def make_copy_to_fpga_state(sdfg, vec_width = 1):
+def make_copy_to_fpga_state(sdfg, vec_width=1):
 
     ###########################################################################
     # Copy data to FPGA, from plain to vectorized data type if needed
@@ -27,8 +27,8 @@ def make_copy_to_fpga_state(sdfg, vec_width = 1):
 
     #host data has plain data types
     sdfg.add_array("A", [N, K], dtype=dace.float32)
-    sdfg.add_array("B", [K,  M/vec_width], dtype=vec_type)
-    sdfg.add_array("C", [N,  M/vec_width], dtype=vec_type)
+    sdfg.add_array("B", [K, M / vec_width], dtype=vec_type)
+    sdfg.add_array("C", [N, M / vec_width], dtype=vec_type)
     A_host = state.add_read("A")
     B_host = state.add_read("B")
     C_host = state.add_read("C")
@@ -40,11 +40,11 @@ def make_copy_to_fpga_state(sdfg, vec_width = 1):
                    dtype=dace.float32,
                    transient=True,
                    storage=dace.dtypes.StorageType.FPGA_Global)
-    sdfg.add_array("B_device", [K, M/vec_width],
+    sdfg.add_array("B_device", [K, M / vec_width],
                    dtype=vec_type,
                    transient=True,
                    storage=dace.dtypes.StorageType.FPGA_Global)
-    sdfg.add_array("C_device", [N, M/vec_width],
+    sdfg.add_array("C_device", [N, M / vec_width],
                    dtype=vec_type,
                    transient=True,
                    storage=dace.dtypes.StorageType.FPGA_Global)
@@ -57,10 +57,12 @@ def make_copy_to_fpga_state(sdfg, vec_width = 1):
                           memlet=dace.Memlet("A_device[0:N, 0:K]"))
     state.add_memlet_path(B_host,
                           B_device,
-                          memlet=dace.Memlet("B_device[0:K, 0:M/{}]".format(vec_width)))
+                          memlet=dace.Memlet(
+                              "B_device[0:K, 0:M/{}]".format(vec_width)))
     state.add_memlet_path(C_host,
                           C_device,
-                          memlet=dace.Memlet("C_device[0:N, 0:M/{}]".format(vec_width)))
+                          memlet=dace.Memlet(
+                              "C_device[0:N, 0:M/{}]".format(vec_width)))
 
     return state
 
@@ -75,7 +77,10 @@ def make_copy_to_host_state(sdfg, vec_width=1):
     C_device = state.add_read("C_device")
     C_host = state.add_write("C")
 
-    state.add_memlet_path(C_device, C_host, memlet=dace.Memlet("C[0:N, 0:M/{}]".format(vec_width)))
+    state.add_memlet_path(C_device,
+                          C_host,
+                          memlet=dace.Memlet(
+                              "C[0:N, 0:M/{}]".format(vec_width)))
 
     return state
 
@@ -147,9 +152,9 @@ def make_write_C(state, sdfg, vec_width=1):
     },
                                         schedule=dace.ScheduleType.FPGA_Device)
 
-
     # write in memory by adding itthen we copy that to memory
-    tasklet = state.add_tasklet("write_C", {"from_kernel", "prev_c"}, {"to_memory"},
+    tasklet = state.add_tasklet("write_C", {"from_kernel", "prev_c"},
+                                {"to_memory"},
                                 "to_memory = from_kernel + prev_c")
     state.add_memlet_path(pipe,
                           entry_map,
@@ -161,15 +166,14 @@ def make_write_C(state, sdfg, vec_width=1):
                           entry_map,
                           tasklet,
                           dst_conn="prev_c",
-                          memlet=dace.Memlet("C_device[n, m]".format(vec_width)))
+                          memlet=dace.Memlet(
+                              "C_device[n, m]".format(vec_width)))
 
     state.add_memlet_path(tasklet,
                           exit_map,
                           mem,
                           src_conn="to_memory",
-                          memlet=dace.Memlet(
-                              "C_device[n, m]"))
-
+                          memlet=dace.Memlet("C_device[n, m]"))
 
 
 def make_compute(sdfg, state, vec_width=1):
@@ -286,7 +290,6 @@ if p < P - 1:
                           src_conn="c_out")
     state.add_memlet_path(C_buffer_out, exit_n0, memlet=dace.Memlet())
 
-
     write_c_tasklet = state.add_tasklet(
         "write_c", {"buffer_in", "forward_in"}, {"c_out"}, """\
 if n1 <= p:
@@ -354,14 +357,9 @@ def make_fpga_state(sdfg, vec_width=1):
     return state
 
 
-def make_sdfg(specialized, vec_width):
+def make_sdfg(name, vec_width):
 
-    if specialized:
-        sdfg = dace.SDFG("gemm_fpga_systolic_vectorized_d{}_w{}_{}x{}x{}".format(
-            P.get(), vec_width, N.get(), K.get(), M.get()))
-    else:
-        sdfg = dace.SDFG("gemm_fpga_systolic_vectorized_d{}_w{}_NxKx{}".format(
-            P.get(), vec_width, M.get()))
+    sdfg = dace.SDFG(name)
 
     pre_state = make_copy_to_fpga_state(sdfg, vec_width)
     compute_state = make_fpga_state(sdfg, vec_width)
@@ -372,61 +370,69 @@ def make_sdfg(specialized, vec_width):
     return sdfg
 
 
-if __name__ == "__main__":
+@click.command()
+@click.argument("size_n", type=int)
+@click.argument("size_k", type=int)
+@click.argument("size_m", type=int)
+@click.argument("num-processing-elements", type=int)
+@click.argument("vector-width", type=int)
+@click.option("--specialize/--no-specialize",
+              default=False,
+              help="Fix all loop bounds at compile time/in hardware")
+def cli(size_n, size_k, size_m, num_processing_elements, vector_width,
+        specialize):
+
     print("==== Program start ====")
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int)
-    parser.add_argument("K", type=int)
-    parser.add_argument("M", type=int)
-    parser.add_argument("P", type=int, help="Number of processing elements")
-    parser.add_argument("W", type=int, help="Vectorization width")
-    parser.add_argument("-specialize",
-                        default=False,
-                        action="store_true",
-                        help="Fix all loop bounds at compile time/in hardware")
-    args = vars(parser.parse_args())
-    vec_width = args["W"]
-    if not args["specialize"]:
-        P.set(args["P"])
-        M.set(args["M"])
-        # M must always be specialized, as it's used for the static buffer size
-        sdfg = make_sdfg(False, vec_width)
-        sdfg.specialize(dict(P=P, M=M))
-        N.set(args["N"])
-        K.set(args["K"])
+    if specialize:
+        name = (f"gemm_fpga_systolic_vectorized_d{num_processing_elements}_"
+                f"w{vector_width}_{size_n}x{size_k}x{size_m}")
     else:
-        P.set(args["P"])
-        M.set(args["M"])
-        N.set(args["N"])
-        K.set(args["K"])
-        sdfg = make_sdfg(True, vec_width)
-        sdfg.specialize(dict(P=P, M=M, N=N, K=K))
+        name = (f"gemm_fpga_systolic_vectorized_d{num_processing_elements}_"
+                f"w{vector_width}_NxKx{size_m}")
+    sdfg = make_sdfg(name, vector_width)
+    if not specialize:
+        P.set(num_processing_elements)
+        M.set(size_m)
+        # M must always be specialized, as it's used for the static buffer size
+        sdfg.specialize(dict(P=P, M=M))
+        N.set(size_n)
+        K.set(size_k)
+    else:
+        P.set(num_processing_elements)
+        M.set(size_m)
+        N.set(size_n)
+        K.set(size_k)
+        sdfg.specialize(
+            dict(P=num_processing_elements, M=size_m, N=size_n, K=size_k))
 
-    print("Matrix multiplication {}x{}x{} with {} PEs and vectorization width {} ({}specialized)".format(
-        N.get(), K.get(), M.get(), P.get(), args["W"],
-        "" if args["specialize"] else "not "))
+    print(f"Matrix multiplication {size_n}x{size_k}x{size_m} "
+          f"with {num_processing_elements} PEs and vectorization width "
+          f"{vector_width} ({'' if specialize else 'not '}specialized)")
 
     # Initialize arrays: Randomize A and B, zero C
-    A = np.ndarray([N.get(), K.get()], dtype=dace.float32.type)
-    B = np.ndarray([K.get(), M.get()], dtype=dace.float32.type)
-    C = np.ndarray([N.get(), M.get()], dtype=dace.float32.type)
-    A[:] = np.random.rand(N.get(), K.get()).astype(dace.float32.type)
-    B[:] = np.random.rand(K.get(), M.get()).astype(dace.float32.type)
-    C[:] = np.random.rand(N.get(), M.get()).astype(dace.float32.type)
+    A = np.ndarray([size_n, size_k], dtype=dace.float32.type)
+    B = np.ndarray([size_k, size_m], dtype=dace.float32.type)
+    C = np.ndarray([size_n, size_m], dtype=dace.float32.type)
+    A[:] = np.random.rand(size_n, size_k).astype(dace.float32.type)
+    B[:] = np.random.rand(size_k, size_m).astype(dace.float32.type)
+    C[:] = np.random.rand(size_n, size_m).astype(dace.float32.type)
 
-    C_regression = np.ndarray([N.get(), M.get()], dtype=np.float32)
+    C_regression = np.ndarray([size_n, size_m], dtype=np.float32)
 
     # compute ground truth
-    C_regression = A@B +C
+    C_regression = A @ B + C
 
-
-    if args["specialize"]:
+    if specialize:
         sdfg(A=A, B=B, C=C)
     else:
-        sdfg(A=A, B=B, C=C, N=N, K=K)
-    diff = np.linalg.norm(C_regression - C) / float(N.get() * M.get())
+        sdfg(A=A, B=B, C=C, N=size_n, K=size_k)
+    diff = np.linalg.norm(C_regression - C) / float(size_n * size_m)
     if diff > 1e-6:
         raise ValueError(f"Verification failed, difference: {diff}")
     else:
         print("Results successfully verified.")
+
+
+if __name__ == "__main__":
+    cli()
