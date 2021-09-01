@@ -50,6 +50,28 @@ def _check_range(subset, a, itersym, b, step):
     return found
 
 
+def _sanitize_subset(itervar: str, subset: subsets.Subset) -> subsets.Range:
+    """ Removes indices and ranges from subsets that do not depend on the
+        iteration variable.
+    """
+    if isinstance(subset, subsets.Indices):
+        new_subset = subsets.Range([
+            (idx, idx, 1) for idx in subset
+            if symbolic.issymbolic(idx) and
+            itervar in {str(s) for s in idx.free_symbols}
+        ])
+    else:
+        new_subset = subsets.Range([
+            rng for rng in subset
+            if any(
+                symbolic.issymbolic(t) and
+                itervar in {str(s) for s in t.free_symbols}
+                for t in rng
+            )
+        ])
+    return new_subset
+
+
 @registry.autoregister
 @make_properties
 class LoopToMap(DetectLoop):
@@ -174,17 +196,20 @@ class LoopToMap(DetectLoop):
                                                 [itervar],
                                                 subsets.Range([(start, end, step)
                                                                 ]))
+                        read = _sanitize_subset(itervar, e.data.subset)
+                        pread = _sanitize_subset(itervar, pread.subset)
                         for candidate in write_memlets[data]:
                             # Simple case: read and write are in the same subset
-                            if e.data.subset == candidate.subset:
+                            write = _sanitize_subset(itervar, candidate.subset)
+                            if read == write:
                                 break
                             # Propagated read does not overlap with propagated write
                             pwrite = propagate_subset([candidate],
                                                     sdfg.arrays[data], [itervar],
                                                     subsets.Range([(start, end,
                                                                     step)]))
-                            if subsets.intersects(pread.subset,
-                                                pwrite.subset) is False:
+                            pwrite = _sanitize_subset(itervar, pwrite.subset)
+                            if subsets.intersects(pread, pwrite) is False:
                                 break
                             return False
 
