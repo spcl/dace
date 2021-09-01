@@ -156,6 +156,17 @@ class GPUMultiTransformMap(transformation.Transformation):
         inner_map_entry.map.schedule = dtypes.ScheduleType.GPU_Device
         outer_map.schedule = dtypes.ScheduleType.GPU_Multidevice
 
+        # Add the parameter of the outer map
+        for node in graph.successors(inner_map_entry):
+            if isinstance(node, nodes.NestedSDFG):
+                map_syms = inner_map_entry.range.free_symbols
+                for sym in map_syms:
+                    symname = str(sym)
+                    if symname not in node.symbol_mapping.keys():
+                        node.symbol_mapping[symname] = sym
+                        node.sdfg.symbols[symname] = graph.symbols_defined_at(
+                            node)[symname]
+
         # Add transient Data leading to the inner map
         prefix = self.new_transient_prefix
         for node in graph.predecessors(outer_map_entry):
@@ -173,8 +184,8 @@ class GPUMultiTransformMap(transformation.Transformation):
 
         wcr_data: Dict[str, Any] = {}
         # Add transient Data leading to the outer map
-        for edge in graph.out_edges(outer_map_exit):
-            node = edge.dst
+        for edge in graph.in_edges(outer_map_exit):
+            node = graph.memlet_path(edge)[-1].dst
             if isinstance(node, nodes.AccessNode):
                 data_name = node.data
                 # Transients with write-conflict resolution need to be
@@ -217,17 +228,6 @@ class GPUMultiTransformMap(transformation.Transformation):
                 options=dict(array_identity_dict=wcr_data, prefix=prefix),
                 map_exit=inner_map_exit,
                 outer_map_exit=outer_map_exit)
-
-        # Add the parameter of the outer map
-        for node in graph.successors(inner_map_entry):
-            if isinstance(node, nodes.NestedSDFG):
-                map_syms = inner_map_entry.range.free_symbols
-                for sym in map_syms:
-                    symname = str(sym)
-                    if symname not in node.symbol_mapping.keys():
-                        node.symbol_mapping[symname] = sym
-                        node.sdfg.symbols[symname] = graph.symbols_defined_at(
-                            node)[symname]
 
         # Remove the parameter of the outer_map from the sdfg symbols,
         # as it got added as a symbol in StripMining.
