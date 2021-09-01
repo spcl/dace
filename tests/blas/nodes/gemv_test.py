@@ -75,7 +75,6 @@ def fpga_graph(dtype, transposed, expansion, veclen, alpha, beta, tile_size_row,
     #     [InlineSDFG, StreamingMemory], [{}, {
     #         "storage": dace.StorageType.FPGA_Local
     #     }])
-    sdfg.save('/tmp/out.sdfg')
     return sdfg
 
 
@@ -158,7 +157,7 @@ def test_gemv_fpga_accumulate():
 
 @fpga_test()
 def test_gemv_fpga_transposed_tiles_by_row():
-    return run_gemv("transposed_tiles_by_row", 512, 256, vectorize=4)
+    return run_gemv("transposed_tiles_by_row", 512, 256, vectorize=4, transposed=True)
 
 
 if __name__ == "__main__":
