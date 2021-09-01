@@ -635,7 +635,7 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
                             set to None, no tiling is used, corresponding to
                             setting the tile size equal to the number of rows of A.
                             If vectorization is used, it refers to vectorized elements.
-        :param tile_size_y: Tile size along the columns of A. If
+        :param tile_size_M: Tile size along the columns of A. If
                             set to None, no tiling is used, corresponding to
                             setting the tile size equal to the number of columns of A.
                             If vectorization is used, it refers to vectorized elements.
