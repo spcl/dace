@@ -1067,9 +1067,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                 if (a_max_gpu in gpu_ids_used
                                         and gpu_id_last_path[a_max_gpu] !=
                                         current_path):
-                                    increment_max_numeric_stream = (
-                                        max_numeric_stream +
-                                        1) % self._concurrent_streams
+                                    if self._concurrent_streams > 0:
+                                        increment_max_numeric_stream = (
+                                            max_numeric_stream +
+                                            1) % self._concurrent_streams
+                                    else:
+                                        increment_max_numeric_stream = (
+                                            max_numeric_stream + 1)
                                     max_streams[
                                         a_max_gpu] = increment_max_numeric_stream
 
