@@ -120,16 +120,16 @@ class LoopToMap(DetectLoop):
                 return False
 
         # Find all loop-body states
-        states = set([body_end])
+        states = set()
         to_visit = [begin]
         while to_visit:
             state = to_visit.pop(0)
-            if state is body_end:
-                continue
-            for _, dst, _ in graph.out_edges(state):
-                if dst not in states:
+            for _, dst, _ in sdfg.out_edges(state):
+                if dst not in states and dst is not guard:
                     to_visit.append(dst)
             states.add(state)
+
+        assert(body_end in states)
 
         write_set = set()
         for state in states:
@@ -276,14 +276,12 @@ class LoopToMap(DetectLoop):
                                                        itervar=self.itervar)
 
         # Find all loop-body states
-        states = set([body_end])
+        states = set()
         to_visit = [body]
         while to_visit:
             state = to_visit.pop(0)
-            if state is body_end:
-                continue
             for _, dst, _ in sdfg.out_edges(state):
-                if dst not in states:
+                if dst not in states and dst is not guard:
                     to_visit.append(dst)
             states.add(state)
 
