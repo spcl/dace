@@ -62,8 +62,8 @@ def fpga_graph(dtype, veclen, tile_size_x, tile_size_y, alpha: float = 1):
     ger_node, state, sdfg = pure_graph("FPGA", dtype, veclen, alpha=alpha)
     ger_node.expand(sdfg,
                     state,
-                    tile_size_M=tile_size_x,
-                    tile_size_N=tile_size_y)
+                    tile_size_N=tile_size_x,
+                    tile_size_M=tile_size_y)
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
     sdfg.expand_library_nodes()
     sdfg.apply_transformations_repeated(
