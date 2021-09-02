@@ -102,6 +102,12 @@ class ExpandGerFpga(ExpandTransformation):
     """
     FPGA-specific expansion of GER with support for vectorization and tiling
     in both dimensions.
+
+    The M x N matrix A is read in Row-Major order. The matrix can be optionally tiled:
+    tiles have size tile_size_M x tile_size_N, and are traversed in Columns-Major order.
+    x is an M-elements vector, while y is an N-element vector.
+
+    NOTE: If tiling is used, tile sizes must perfectly divide the matrix sizes.
     """
 
     environments = []
@@ -152,13 +158,13 @@ class ExpandGerFpga(ExpandTransformation):
         n = n or desc_a_in.shape[1] # number of cols of A
 
         alpha = node.alpha
-        veclen = desc_y.dtype.veclen
 
+        # These sizes already account for vectorization
         size_x = m
-        size_y = n / veclen
+        size_y = n
 
-        num_tiles_x = f"{size_x} / {tile_size_N}"
-        num_tiles_y = f"{size_y} / {tile_size_M}"
+        num_tiles_x = f"ceiling({size_x} / {tile_size_M})"
+        num_tiles_y = f"ceiling({size_y} / {tile_size_N})"
 
         y_tile_entry, y_tile_exit = state.add_map(
             "y_tiles", {"ty": f"0:{num_tiles_y}"},

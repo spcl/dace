@@ -16,7 +16,7 @@ from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.interstate.fpga_transform_sdfg import FPGATransformSDFG
 
 
-def pure_graph(implementation, dtype, veclen):
+def pure_graph(implementation, dtype, veclen, alpha = 1):
 
     m = dace.symbol("m")
     n = dace.symbol("n")
@@ -38,7 +38,7 @@ def pure_graph(implementation, dtype, veclen):
     A = state.add_read("A")
     res = state.add_write("res")
 
-    ger_node = blas.Ger(name="ger")
+    ger_node = blas.Ger(name="ger", alpha =alpha)
     ger_node.implementation = implementation
 
     state.add_memlet_path(x, ger_node, dst_conn="_x", memlet=Memlet("x[0:m]"))
@@ -58,8 +58,8 @@ def pure_graph(implementation, dtype, veclen):
     return ger_node, state, sdfg
 
 
-def fpga_graph(dtype, veclen, tile_size_x, tile_size_y):
-    ger_node, state, sdfg = pure_graph("FPGA", dtype, veclen)
+def fpga_graph(dtype, veclen, tile_size_x, tile_size_y, alpha: float = 1):
+    ger_node, state, sdfg = pure_graph("FPGA", dtype, veclen, alpha=alpha)
     ger_node.expand(sdfg,
                     state,
                     tile_size_M=tile_size_x,
@@ -85,12 +85,15 @@ def run_test(ger, target):
     y[:] = np.random.rand(n).astype(np.float32)
     A[:] = np.random.rand(m, n).astype(np.float32)
 
+
     ger(alpha=alpha, x=x, y=y, A=A, res=res, m=m, n=n)
 
     ref = scipy.linalg.blas.sger(alpha=alpha, x=x, y=y, a=A)
 
     diff = np.linalg.norm(np.subtract(res, ref))
     if diff >= args.eps * n * m:
+        print(ref)
+        print(A)
         raise RuntimeError(
             "Unexpected result returned from ger rank 1 operation: "
             "got:\n{}\nexpected:\n{} on {}".format(A, ref, target))
@@ -112,7 +115,7 @@ def run_ger(target: str,
         ger_node.expand(sdfg, state)
         sdfg.apply_transformations_repeated([InlineSDFG])
     elif target == "fpga":
-        sdfg = fpga_graph(dace.float32, veclen, tile_size_x, tile_size_y)
+        sdfg = fpga_graph(dace.float32, veclen, tile_size_x, tile_size_y, alpha)
     else:
         raise ValueError("Unsupported target")
 
@@ -122,6 +125,7 @@ def run_ger(target: str,
                         alignment=4 * veclen)
     A = aligned_ndarray(np.random.rand(m, n).astype(np.float32),
                         alignment=4 * veclen)
+
     res = aligned_ndarray(np.empty(A.shape, dtype=A.dtype),
                           alignment=4 * veclen)
     ref = aligned_ndarray(np.empty(A.shape, dtype=A.dtype),
@@ -144,6 +148,8 @@ def run_ger(target: str,
 
     diff = np.linalg.norm(res - ref)
     if diff >= eps * n * m:
+        print(ref)
+        print(A)
         raise RuntimeError(f"Validation failed: {diff}")
     else:
         print("Validation successful.")
@@ -165,9 +171,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int, nargs="?", default=256)
     parser.add_argument("M", type=int, nargs="?", default=512)
-    parser.add_argument("tile_size_x", type=int, nargs="?", default=16)
-    parser.add_argument("tile_size_y", type=int, nargs="?", default=32)
-    parser.add_argument("alpha", type=np.float32, nargs="?", default=1.0)
+    parser.add_argument("--tile_size_x", type=int, nargs="?", default=16)
+    parser.add_argument("--tile_size_y", type=int, nargs="?", default=32)
+    parser.add_argument("--alpha", type=np.float32, nargs="?", default=1.0)
     parser.add_argument("--target", dest="target", default="pure")
     parser.add_argument("--veclen", type=int, default=8)
     parser.add_argument("--eps", type=float, default=1e-6)
