@@ -212,6 +212,7 @@ def parse_dace_program(f,
                 state.replace(name, existing_name)
         else:
             # Only supported in JIT mode
+            closure_resolver.array_mapping[id(arr)] = name
             closure_resolver.closure_arrays[name] = (arr, desc)
 
     # We save information in a tmp file for improved source mapping.
@@ -3974,14 +3975,10 @@ class ProgramVisitor(ExtNodeVisitor):
                                          lambda *args: {})()
                 for aname, arr in closure_arrays.items():
                     desc = data.create_datadescriptor(arr)
-                    # if not (aname.startswith('__g_self') and
-                    #         aname in self.sdfg.arrays):
                     outer_name = self.sdfg.add_datadesc(aname,
                                                         desc,
                                                         find_new_name=True)
                     self.nested_closure_arrays[outer_name] = (arr, desc)
-                    # else:
-                    #     outer_name = aname
                     # Add closure arrays as function arguments
                     args.append((aname, outer_name))
                     required_args.append(aname)
