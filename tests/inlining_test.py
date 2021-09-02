@@ -131,6 +131,8 @@ def test_multistate_inline():
         nested(A)
 
     sdfg = outerprog.to_sdfg(strict=True)
+    from dace.transformation.interstate import InlineMultistateSDFG
+    sdfg.apply_transformations(InlineMultistateSDFG)
     assert sdfg.number_of_nodes() in (4, 5)
 
     A = np.random.rand(20)
@@ -153,6 +155,8 @@ def test_multistate_inline_samename():
             nested(A)
 
     sdfg = outerprog.to_sdfg(strict=True)
+    from dace.transformation.interstate import InlineMultistateSDFG
+    sdfg.apply_transformations(InlineMultistateSDFG)
     assert sdfg.number_of_nodes() in (7, 8)
 
     A = np.random.rand(20)
