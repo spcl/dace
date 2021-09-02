@@ -296,6 +296,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Compute array size
         arrsize = nodedesc.total_size
+        arrsize_bytes = None
         if not isinstance(nodedesc.dtype, dtypes.opaque):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
@@ -376,9 +377,9 @@ class CPUCodeGen(TargetCodeGenerator):
         elif (
                 nodedesc.storage == dtypes.StorageType.CPU_Heap or
             (nodedesc.storage == dtypes.StorageType.Register and
-             ((symbolic.issymbolic(arrsize, sdfg.constants)) or
+             ((symbolic.issymbolic(arrsize, sdfg.constants)) or (arrsize_bytes and
               ((arrsize_bytes > Config.get("compiler", "max_stack_array_size"))
-               == True)))):
+               == True))))):
 
             if nodedesc.storage == dtypes.StorageType.Register:
 
