@@ -509,7 +509,8 @@ def auto_optimize(sdfg: SDFG,
     while transformed:
         sdfg.apply_strict_transformations(validate=False,
                                           validate_all=validate_all)
-        xfh.split_interstate_edges(sdfg)
+        for s in sdfg.sdfg_list:
+            xfh.split_interstate_edges(s)
         l2ms = sdfg.apply_transformations_repeated(LoopToMap,
                                                    strict=True,
                                                    validate=False,
