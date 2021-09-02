@@ -3974,15 +3974,14 @@ class ProgramVisitor(ExtNodeVisitor):
                                          lambda *args: {})()
                 for aname, arr in closure_arrays.items():
                     desc = data.create_datadescriptor(arr)
-                    new_name = True
-                    if not (aname.startswith('__g_self') and
-                            aname in self.sdfg.arrays):
-                        outer_name = self.sdfg.add_datadesc(aname,
-                                                            desc,
-                                                            find_new_name=True)
-                        self.nested_closure_arrays[outer_name] = (arr, desc)
-                    else:
-                        outer_name = aname
+                    # if not (aname.startswith('__g_self') and
+                    #         aname in self.sdfg.arrays):
+                    outer_name = self.sdfg.add_datadesc(aname,
+                                                        desc,
+                                                        find_new_name=True)
+                    self.nested_closure_arrays[outer_name] = (arr, desc)
+                    # else:
+                    #     outer_name = aname
                     # Add closure arrays as function arguments
                     args.append((aname, outer_name))
                     required_args.append(aname)
