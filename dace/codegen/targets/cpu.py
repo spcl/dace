@@ -377,9 +377,10 @@ class CPUCodeGen(TargetCodeGenerator):
         elif (
                 nodedesc.storage == dtypes.StorageType.CPU_Heap or
             (nodedesc.storage == dtypes.StorageType.Register and
-             ((symbolic.issymbolic(arrsize, sdfg.constants)) or (arrsize_bytes and
-              ((arrsize_bytes > Config.get("compiler", "max_stack_array_size"))
-               == True))))):
+             ((symbolic.issymbolic(arrsize, sdfg.constants)) or
+              (arrsize_bytes and
+               ((arrsize_bytes > Config.get("compiler", "max_stack_array_size"))
+                == True))))):
 
             if nodedesc.storage == dtypes.StorageType.Register:
 
@@ -678,8 +679,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         stream.write(
                             "{s}.push({arr});".format(
                                 s=cpp.ptr(dst_node.data, dst_nodedesc, sdfg),
-                                arr=cpp.ptr(src_node.data, src_nodedesc, sdfg)
-                            ),
+                                arr=cpp.ptr(src_node.data, src_nodedesc, sdfg)),
                             sdfg,
                             state_id,
                             [src_node, dst_node],
@@ -1039,15 +1039,9 @@ class CPUCodeGen(TargetCodeGenerator):
                             array_expr = cpp.cpp_array_expr(sdfg,
                                                             memlet,
                                                             with_brackets=False)
-                            ptr_str = fpga.fpga_ptr( # we are on fpga, since this is array interface
-                                memlet.data,
-                                desc,
-                                sdfg,
-                                memlet.subset,
-                                True,
-                                None,
-                                None,
-                                True)
+                            ptr_str = fpga.fpga_ptr(  # we are on fpga, since this is array interface
+                                memlet.data, desc, sdfg, memlet.subset, True,
+                                None, None, True)
                             write_expr = (f"*({ptr_str} + {array_expr}) "
                                           f"= {in_local_name};")
                         else:
