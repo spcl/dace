@@ -76,8 +76,8 @@ def calc_set_image_range(map_idx, map_set, array_range):
                 step = new_range[2].approx
             else:
                 step = new_range[2]
-            descending = start > stop
-            posstep = step > 0
+            descending = (start > stop) == True
+            posstep = (step > 0) == True
             if descending and posstep:
                 new_range[0], new_range[1] = new_range[1], new_range[0]
         image.append(new_range)
