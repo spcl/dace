@@ -635,12 +635,21 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             return
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            callsite_stream.write('%sFree(%s);\n' % (self.backend, dataname),
-                                  sdfg, state_id, node)
-        elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
+            if self._debugprint:
+                debug_print = f'printf("device free: {dataname} \\n");\n'
+            else:
+                debug_print = ''
             callsite_stream.write(
-                '%sFreeHost(%s);\n' % (self.backend, dataname), sdfg, state_id,
-                node)
+                (f'{self.backend}Free({dataname});\n' + debug_print), sdfg,
+                state_id, node)
+        elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
+            if self._debugprint:
+                debug_print = f'printf("pinned free: {dataname} \\n");\n'
+            else:
+                debug_print = ''
+            callsite_stream.write(
+                (f'{self.backend}FreeHost({dataname});\n' + debug_print), sdfg,
+                state_id, node)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
              nodedesc.storage == dtypes.StorageType.Register:
             pass  # Do nothing
@@ -1301,11 +1310,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         for i, state in enumerate(sdfg.nodes()):
             events = state_subsdfg_events[i]
             for e in state.edges():
-                if hasattr(e, '_cuda_event'):
-                    # Continue if the edge already has a CUDA event.
-                    continue
-                if hasattr(e.src, '_cuda_stream') and not isinstance(
-                        e.src, nodes.EntryNode):
+                # Continue if the edge already has a CUDA event.
+                if (not hasattr(e, '_cuda_event')
+                        and (hasattr(e.src, '_cuda_stream')
+                             and not isinstance(e.src, nodes.EntryNode))):
                     # If there are two or more CUDA streams involved in this
                     # edge or the memlet_path leads to a node that has a
                     # different CUDA stream
@@ -1828,10 +1836,8 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
                     self.backend, dst_expr, src_expr, copysize, self.backend,
                     src_location, dst_location, cudastream)
                 if self._debugprint:
-                    callsite_stream.write(
-                        f"printf(\"MemcpyAsync : {src_node.data} -> {dst_node.data}\\n\");",
-                        sdfg, state_id, [src_node, dst_node])
                     code = '''DACE_CUDA_CHECK(''' + code + ''');\n'''
+                    code += f"printf(\"MemcpyAsync : {src_node.data} -> {dst_node.data}\\n\");"
                 else:
                     code = code + ''';\n'''
                 callsite_stream.write(code, sdfg, state_id,
@@ -2068,6 +2074,12 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
         else:
             # Active streams found. Generate state normally and sync with the
             # streams in the end
+            if self._debugprint:
+                debug_print = f'printf("{state} start\\n");'
+            else:
+                debug_print = ''
+            callsite_stream.write(debug_print)
+
             self._frame.generate_state(sdfg,
                                        state,
                                        function_stream,
@@ -2130,7 +2142,11 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
                                           sdfg.node_id(state))
 
             # After synchronizing streams, generate state footer normally
-            callsite_stream.write('\n')
+            if self._debugprint:
+                debug_print = f'\nprintf("{state} end\\n");\n'
+            else:
+                debug_print = '\n'
+            callsite_stream.write(debug_print)
 
             # Emit internal transient array deallocation
             self._frame.deallocate_arrays_in_scope(sdfg, state, function_stream,
