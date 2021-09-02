@@ -77,7 +77,8 @@ def calc_set_image_range(map_idx, map_set, array_range):
             else:
                 step = new_range[2]
             descending = start > stop
-            if descending and not step < 0:
+            posstep = step > 0
+            if descending and posstep:
                 new_range[0], new_range[1] = new_range[1], new_range[0]
         image.append(new_range)
     return subsets.Range(image)
