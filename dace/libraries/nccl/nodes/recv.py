@@ -55,7 +55,7 @@ class ExpandRecvNCCL(ExpandTransformation):
 
         code = f"""ncclRecv(_outbuffer, {count_str}, {nccl_dtype_str}, {peerstr}, __state->ncclCommunicators->at(__dace_cuda_device),  __dace_current_stream)"""
         if Config.get('compiler', 'build_type') == 'Debug':
-            '''DACE_NCCL_CHECK(''' + code + ''');\n'''
+            code = '''DACE_NCCL_CHECK(''' + code + ''');\n'''
 
         else:
             code = code + ''';\n'''
