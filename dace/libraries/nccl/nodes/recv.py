@@ -90,7 +90,6 @@ class ExpandRecvNCCL(ExpandTransformation):
                     out_gh_node = edge.dst
             if not state.successors(out_gh_node):
                 code += """ncclGroupEnd();"""
-                # code += """\ncudaStreamSynchronize(__dace_current_stream);"""
                 out_gh_data = out_gh_node.data
                 state.remove_edge_and_connectors(out_gh_edge)
                 state.remove_node(out_gh_node)
@@ -99,6 +98,7 @@ class ExpandRecvNCCL(ExpandTransformation):
                 except ValueError as ex:
                     warnings.warn(str(ex))
             node.remove_out_connector(group_handle_conn)
+        code += """\ncudaStreamSynchronize(__dace_current_stream);"""
 
         tasklet = nodes.Tasklet(str(node),
                                 node.in_connectors,

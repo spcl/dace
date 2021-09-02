@@ -111,6 +111,7 @@ class ExpandReduceNCCL(ExpandTransformation):
                 except ValueError as ex:
                     warnings.warn(str(ex))
             node.remove_out_connector(group_handle_conn)
+        code += """\ncudaStreamSynchronize(__dace_current_stream);"""
 
         tasklet = nodes.Tasklet(str(node),
                                 node.in_connectors,
