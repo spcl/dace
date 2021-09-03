@@ -99,7 +99,7 @@ def _method(sdfg: SDFG, sample_data: data.Scalar, dtype: dtypes.typeclass):
 
 @specifies_datatype(datatype=data.Array)
 def _method(sdfg: SDFG, sample_data: data.Array, dtype):
-    name, new_data = sdfg.add_temp_transient(sample_data.shape, dtype)
+    name, new_data = sdfg.add_temp_transient_like(sample_data, dtype=dtype)
     return name, new_data
 
 

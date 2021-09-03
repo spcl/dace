@@ -1566,6 +1566,25 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                               total_size=total_size,
                               may_alias=may_alias)
 
+    def add_temp_transient_like(self, desc: dt.Array, dtype=None, debuginfo=None):
+        """ Convenience function to add a transient array with a temporary name to the data
+            descriptor store. """
+        debuginfo = debuginfo or desc.debuginfo
+        dtype = dtype or desc.dtype
+        return self.add_array(self.temp_data_name(),
+                              desc.shape,
+                              desc.dtype,
+                              desc.storage,
+                              True,
+                              desc.strides,
+                              desc.offset,
+                              lifetime=desc.lifetime,
+                              alignment=desc.alignment,
+                              debuginfo=debuginfo,
+                              allow_conflicts=desc.allow_conflicts,
+                              total_size=desc.total_size,
+                              may_alias=desc.may_alias)
+
     def add_datadesc(self,
                      name: str,
                      datadesc: dt.Data,
