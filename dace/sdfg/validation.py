@@ -127,7 +127,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                     "Undefined symbols in edge: %s" % undef_syms, sdfg, eid)
 
             # Validate inter-state edge names
-            issyms = edge.data.new_symbols(symbols)
+            issyms = edge.data.new_symbols(sdfg, symbols)
             if any(not dtypes.validate_name(s) for s in issyms):
                 invalid = next(s for s in issyms if not dtypes.validate_name(s))
                 eid = sdfg.edge_id(edge)

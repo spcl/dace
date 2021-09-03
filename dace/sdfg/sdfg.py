@@ -164,14 +164,21 @@ class InterstateEdge(object):
         if newc != condition:
             self.condition.as_string = newc
 
-    def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
+    def new_symbols(self, sdfg, symbols) -> Dict[str, dtypes.typeclass]:
         """
         Returns a mapping between symbols defined by this edge (i.e.,
         assignments) to their type.
         """
         from dace.codegen.tools.type_inference import infer_expr_type
+
+        if sdfg is not None:
+            alltypes = copy.copy(symbols)
+            alltypes.update({k: v.dtype for k, v in sdfg.arrays.items()})
+        else:
+            alltypes = symbols
+
         return {
-            k: infer_expr_type(v, symbols)
+            k: infer_expr_type(v, alltypes)
             for k, v in self.assignments.items()
         }
 
@@ -987,7 +994,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Add free inter-state symbols
         for e in self.edges():
-            defined_syms |= set(e.data.new_symbols({}).keys())
+            defined_syms |= set(e.data.new_symbols(self, {}).keys())
             free_syms |= e.data.free_symbols
 
         defined_syms |= set(self.constants.keys())

@@ -1275,7 +1275,7 @@ class NestSDFG(transformation.Transformation):
             defined_syms.add(name)
 
         for e in nested_sdfg.edges():
-            defined_syms |= set(e.data.new_symbols({}).keys())
+            defined_syms |= set(e.data.new_symbols(sdfg, {}).keys())
 
         defined_syms |= set(nested_sdfg.constants.keys())
 
