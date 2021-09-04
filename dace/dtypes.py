@@ -1289,6 +1289,8 @@ def can_access(schedule: ScheduleType, storage: StorageType):
             StorageType.GPU_Global, StorageType.GPU_Shared,
             StorageType.CPU_Pinned
         ]
+    elif schedule in [ScheduleType.GPU_Multidevice]:
+        return storage in [StorageType.GPU_Global, StorageType.CPU_Pinned]
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore]:
         return storage in [
             StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned,
