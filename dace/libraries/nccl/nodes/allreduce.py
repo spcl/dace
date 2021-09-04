@@ -185,8 +185,8 @@ def nccl_allreduce(pv: 'ProgramVisitor',
                    sdfg: SDFG,
                    state: SDFGState,
                    redfunction: Callable[[Any, Any], Any],
-                   in_array: str,
-                   out_array: Union[str, None] = None,
+                   in_buffer: str,
+                   out_buffer: Union[str, None] = None,
                    group_handle: str = None):
 
     inputs = {"_inbuffer"}
@@ -214,16 +214,16 @@ def nccl_allreduce(pv: 'ProgramVisitor',
             state.add_edge(gh_in, None, libnode, "_group_handle", gh_memlet)
         state.add_edge(libnode, "_group_handle", gh_out, None, gh_memlet)
 
-    # If out_array is not specified, the operation will be in-place.
-    if out_array is None:
-        out_array = in_array
+    # If out_buffer is not specified, the operation will be in-place.
+    if out_buffer is None:
+        out_buffer = in_buffer
 
     # Add nodes
-    in_node = state.add_read(in_array)
-    out_node = state.add_write(out_array)
+    in_node = state.add_read(in_buffer)
+    out_node = state.add_write(out_buffer)
 
     # Connect nodes
-    state.add_edge(in_node, None, libnode, '_inbuffer', Memlet(in_array))
-    state.add_edge(libnode, '_outbuffer', out_node, None, Memlet(out_array))
+    state.add_edge(in_node, None, libnode, '_inbuffer', Memlet(in_buffer))
+    state.add_edge(libnode, '_outbuffer', out_node, None, Memlet(out_buffer))
 
     return []
