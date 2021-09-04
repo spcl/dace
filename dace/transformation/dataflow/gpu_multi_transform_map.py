@@ -48,6 +48,14 @@ class GPUMultiTransformMap(transformation.Transformation):
         desc="If True: skips the scalar data nodes. "
         "If False: creates localstorage for scalar transients.")
 
+    use_p2p = Property(
+        dtype=bool,
+        default=False,
+        allow_none=True,
+        desc="If True: uses peer-to-peer access if a data container is already "
+        "located on a GPU. "
+        "If False: creates transient localstorage for data located on GPU.")
+
     number_of_gpus = SymbolicProperty(
         default=None,
         allow_none=True,
@@ -102,6 +110,24 @@ class GPUMultiTransformMap(transformation.Transformation):
         for edge in graph.out_edges(map_exit):
             if edge.data.wcr is not None and operations.detect_reduction_type(
                     edge.data.wcr) == dtypes.ReductionType.Custom:
+                return False
+
+        storage_whitelist = [
+            dtypes.StorageType.Default,
+            dtypes.StorageType.CPU_Pinned,
+            dtypes.StorageType.CPU_Heap,
+            dtypes.StorageType.GPU_Global,
+        ]
+        for node in graph.predecessors(map_entry):
+            if not isinstance(node, nodes.AccessNode):
+                return False
+            if node.desc(graph).storage not in storage_whitelist:
+                return False
+
+        for node in graph.successors(map_exit):
+            if not isinstance(node, nodes.AccessNode):
+                return False
+            if node.desc(graph).storage not in storage_whitelist:
                 return False
 
         return True
@@ -174,6 +200,10 @@ class GPUMultiTransformMap(transformation.Transformation):
             if (isinstance(node, nodes.AccessNode)
                     and not (self.skip_scalar
                              and isinstance(node.desc(sdfg), Scalar))):
+                if self.use_p2p and node.desc(
+                        sdfg).storage is dtypes.StorageType.GPU_Global:
+                    continue
+
                 in_data_node = InLocalStorage.apply_to(sdfg,
                                                        dict(array=node.data,
                                                             prefix=prefix),
@@ -206,6 +236,9 @@ class GPUMultiTransformMap(transformation.Transformation):
                     wcr_data[data_name] = identity
                 elif (not isinstance(node.desc(sdfg), Scalar)
                       or not self.skip_scalar):
+                    if self.use_p2p and node.desc(
+                            sdfg).storage is dtypes.StorageType.GPU_Global:
+                        continue
                     # Transients without write-conflict resolution
                     if prefix + '_' + data_name in sdfg.arrays:
                         create_array = False
