@@ -14,7 +14,7 @@ dtype = dace.float64
 np_dtype = np.float64
 
 # @dace.program
-# def sum(A: dtype[N]):
+# def Sum(A: dtype[N]):
 #     redA = dace.ndarray([1], dtype, storage=dace.StorageType.CPU_Pinned)
 #     out = dace.ndarray([1], dtype)
 #     for j in dace.map[0:N]:
@@ -23,7 +23,7 @@ np_dtype = np.float64
 #     return out
 
 # @dace.program
-# def prod(A: dtype[N]):
+# def Prod(A: dtype[N]):
 #     redA = dace.ndarray([1], dtype, storage=dace.StorageType.CPU_Pinned)
 #     out = dace.ndarray([1], dtype)
 #     for j in dace.map[0:N]:
@@ -33,7 +33,7 @@ np_dtype = np.float64
 
 
 @dace.program
-def sum(A: dtype[N]):
+def Sum(A: dtype[N]):
     redA = dace.ndarray([1], dtype, storage=dace.StorageType.CPU_Pinned)
     out = dace.ndarray([1], dtype)
     for j in dace.map[0:N]:
@@ -46,7 +46,7 @@ def sum(A: dtype[N]):
 
 
 @dace.program
-def prod(A: dtype[N]):
+def Prod(A: dtype[N]):
     redA = dace.ndarray([1], dtype, storage=dace.StorageType.CPU_Pinned)
     out = dace.ndarray([1], dtype)
     for j in dace.map[0:N]:
@@ -59,7 +59,7 @@ def prod(A: dtype[N]):
 
 
 @dace.program
-def max(A: dtype[N]):
+def Max(A: dtype[N]):
     redA = dace.ndarray([1], dtype, storage=dace.StorageType.CPU_Pinned)
     out = dace.ndarray([1], dtype)
     for j in dace.map[0:N]:
@@ -72,7 +72,7 @@ def max(A: dtype[N]):
 
 
 @dace.program
-def custom(A: dtype[N]):
+def Custom(A: dtype[N]):
     redA = dace.ndarray([1], dtype, storage=dace.StorageType.CPU_Pinned)
     out = dace.ndarray([1], dtype)
     for j in dace.map[0:N]:
@@ -97,13 +97,13 @@ def find_access_node(sdfg: dace.SDFG, name: str) -> dace.nodes.MapEntry:
 
 
 def infer_result_function(reduction_type):
-    res_func_dict = {sum: np.sum, prod: np.prod, max: np.max, custom: np_custom}
+    res_func_dict = {Sum: np.sum, Prod: np.prod, Max: np.max, Custom: np_custom}
     return res_func_dict[reduction_type]
 
 
 def wrapper_test_multi_gpu_reduction(reduction_type=None):
     if reduction_type is None:
-        reduction_type = sum
+        reduction_type = Sum
     test_multi_gpu_reduction(reduction_type)
 
 
@@ -112,10 +112,10 @@ def np_custom(arr):
 
 
 @pytest.mark.parametrize("reduction_type", [
-    pytest.param(sum, marks=pytest.mark.multigpu),
-    pytest.param(prod, marks=pytest.mark.multigpu),
-    pytest.param(max, marks=pytest.mark.multigpu),
-    pytest.param(custom, marks=pytest.mark.multigpu),
+    pytest.param(Sum, marks=pytest.mark.multigpu),
+    pytest.param(Prod, marks=pytest.mark.multigpu),
+    pytest.param(Max, marks=pytest.mark.multigpu),
+    pytest.param(Custom, marks=pytest.mark.multigpu),
 ])
 def test_multi_gpu_reduction(reduction_type):
     sdfg: dace.SDFG = reduction_type.to_sdfg(strict=True)
@@ -123,9 +123,9 @@ def test_multi_gpu_reduction(reduction_type):
     map_entry = find_map_by_param(sdfg, 'j')
     GPUMultiTransformMap.apply_to(
         sdfg,
-        verify=False if reduction_type == custom else True,
+        verify=False if reduction_type == Custom else True,
         _map_entry=map_entry)
-    if reduction_type == custom:
+    if reduction_type == Custom:
         redA = find_access_node(sdfg, 'redA')
         redA.setzero = True
 
@@ -148,7 +148,7 @@ def test_multi_gpu_reduction(reduction_type):
 
 
 if __name__ == "__main__":
-    wrapper_test_multi_gpu_reduction(sum)
-    wrapper_test_multi_gpu_reduction(prod)
-    wrapper_test_multi_gpu_reduction(max)
-    wrapper_test_multi_gpu_reduction(custom)
+    wrapper_test_multi_gpu_reduction(Sum)
+    wrapper_test_multi_gpu_reduction(Prod)
+    wrapper_test_multi_gpu_reduction(Max)
+    wrapper_test_multi_gpu_reduction(Custom)
