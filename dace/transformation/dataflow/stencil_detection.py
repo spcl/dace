@@ -6,10 +6,10 @@ from numbers import Number
 from typing import Dict, List
 import dace
 import sympy
-from dace import data, dtypes, registry, subsets, symbolic
+from dace import data, registry, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import transformation as pm
+from dace.transformation import helpers, transformation as pm
 
 
 @registry.autoregister_params(singlestate=True)
@@ -194,7 +194,8 @@ class StencilDetection(pm.Transformation):
 
         from dace.libraries.stencil import Stencil
 
-        code = tasklet.code.as_string
+        # code = tasklet.code.as_string
+        repldict = {}
         in_data = {}
         in_conns = set()
         out_data = {}
@@ -208,10 +209,10 @@ class StencilDetection(pm.Transformation):
             in_data[e.data.data] = conn
             desc = sdfg.arrays[e.data.data]
             if isinstance(desc, (data.Array, data.View)):
-                code = code.replace(e.dst_conn, f'{conn}[{e.data.subset}]')
+                repldict[e.dst_conn] = f'{conn}[{e.data.subset}]'
                 itmapping[conn] = [True] * len(map_entry.map.params)
             else:
-                code = code.replace(e.dst_conn, f'{conn}')
+                repldict[e.dst_conn] = f'{conn}'
                 itmapping[conn] = [False] * len(map_entry.map.params)
 
         for e in state.out_edges(tasklet):
@@ -221,11 +222,14 @@ class StencilDetection(pm.Transformation):
             out_data[e.data.data] = conn
             desc = sdfg.arrays[e.data.data]
             if isinstance(desc, (data.Array, data.View)):
-                code = code.replace(e.src_conn, f'{conn}[{e.data.subset}]')
+                repldict[e.src_conn] = f'{conn}[{e.data.subset}]'
                 itmapping[conn] = [True] * len(map_entry.map.params)
             else:
-                code = code.replace(e.src_conn, f'{conn}')
+                repldict[e.src_conn] = f'{conn}'
                 itmapping[conn] = [False] * len(map_entry.map.params)
+
+        helpers.rename_connectors(tasklet, repldict)
+        code = tasklet.code.as_string
 
         stencil_node = Stencil(
             f'{map_entry.label}_stencil',
