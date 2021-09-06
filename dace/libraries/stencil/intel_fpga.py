@@ -44,7 +44,9 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
                 converter.convert(field, center_index)
 
         # Replace accesses in the code
-        code, field_accesses = parse_accesses(node.code.as_string, outputs)
+        # code, field_accesses = parse_accesses(node.code.as_string, outputs)
+        code, field_accesses, scalar_data = parse_accesses(
+            parent_sdfg, parent_state, node, outputs)
 
         iterator_mapping = make_iterator_mapping(node, field_accesses, shape)
         vector_length = validate_vector_lengths(vector_lengths,

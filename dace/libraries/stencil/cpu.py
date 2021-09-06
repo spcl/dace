@@ -26,20 +26,12 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         # Tasklet code generation
         #######################################################################
 
-        code = node.code.as_string
+        # code = node.code.as_string
 
         # Replace relative indices with memlet names
-        code, field_accesses = parse_accesses(code, outputs)
-        # Add scalar data accesses (NOTE: supporting only scalar input)
-        scalar_data = set()
-        for c in node.in_connectors:
-            if c not in field_accesses:
-                e = list(parent_state.in_edges_by_connector(node, c))[0]
-                name = dace.sdfg.find_input_arraynode(parent_state, e).data
-                desc = parent_sdfg.data(name)
-                if isinstance(desc, dace.data.Scalar):
-                    field_accesses[c] = {tuple(): c}
-                    scalar_data.add(c)
+        # code, field_accesses = parse_accesses(code, outputs)
+        code, field_accesses, scalar_data = parse_accesses(
+            parent_sdfg, parent_state, node, outputs)
         iterator_mapping = make_iterator_mapping(node, field_accesses, shape)
         validate_vector_lengths(vector_lengths, iterator_mapping)
 
