@@ -8,23 +8,7 @@ import re
 from dace import dtypes, registry
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import transformation as pm
-
-
-class ConnectorRenamer(ast.NodeTransformer):
-    """ Renames connector names in Tasklet code.
-    """
-    def __init__(self, repl_dict: Dict[str, str]) -> None:
-        """ Initializes AST transformer.
-            :param repl_dict: Replacement dictionary.
-        """
-        self.repl_dict = repl_dict
-
-    def visit_Name(self, node: ast.Name) -> Any:
-        # Rename connector
-        if node.id in self.repl_dict:
-            node.id = self.repl_dict[node.id]
-        return self.generic_visit(node)
+from dace.transformation import helpers, transformation as pm
 
 
 class PythonLHSExtractor(ast.NodeVisitor):
@@ -178,18 +162,6 @@ class SimpleTaskletFusion(pm.Transformation):
                 i += 1
             return f'{pre}{i}'
 
-        def replace(tasklet, repl_dict):
-            """ Renames connectors based on the input replacement dictionary.
-            """
-            if tasklet.language is dtypes.Language.Python:
-                repl = ConnectorRenamer(repl_dict)
-                for stmt in tasklet.code.code:
-                    repl.visit(stmt)
-            elif tasklet.language is dtypes.Language.CPP:
-                for old, new in repl_dict.items():
-                    tasklet.code.code = re.sub(r'\b%s\b' % re.escape(old), new,
-                                               tasklet.code.as_string)
-
         def replace_lhs(tasklet, repl_dict):
             """ Replaces assignments' LHS based on the input replacement
                 dictionary. This is used only on CPP tasklets.
@@ -241,7 +213,7 @@ class SimpleTaskletFusion(pm.Transformation):
                 t2_names.remove(name)
                 t2_names.add(newname)
         if rdict:
-            replace(t2, rdict)
+            helpers.rename_connectors(t2, rdict)
 
         # Handle input edges.
         inconn = {}
@@ -272,7 +244,7 @@ class SimpleTaskletFusion(pm.Transformation):
 
         # Rename in-out connectors.
         if rdict_inout:
-            replace(t2, rdict_inout)
+            helpers.rename_connectors(t2, rdict_inout)
 
         # Update t1 connectors and code.
         t1.in_connectors = inconn
