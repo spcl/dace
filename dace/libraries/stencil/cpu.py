@@ -30,6 +30,16 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
 
         # Replace relative indices with memlet names
         code, field_accesses = parse_accesses(code, outputs)
+        # Add scalar data accesses (NOTE: supporting only scalar input)
+        scalar_data = set()
+        for c in node.in_connectors:
+            if c not in field_accesses:
+                e = list(parent_state.in_edges_by_connector(node, c))[0]
+                name = dace.sdfg.find_input_arraynode(parent_state, e).data
+                desc = parent_sdfg.data(name)
+                if isinstance(desc, dace.data.Scalar):
+                    field_accesses[c] = {tuple(): c}
+                    scalar_data.add(c)
         iterator_mapping = make_iterator_mapping(node, field_accesses, shape)
         validate_vector_lengths(vector_lengths, iterator_mapping)
 
@@ -58,8 +68,8 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         input_connectors = sum(
             [
                 [f"_{c}" for c in field_accesses[k].values()] for k in inputs
-                # Don't include scalar variables
-                if sum(iterator_mapping[k], 0) > 0
+                # Don't include scalar symbols but include scalar data
+                if sum(iterator_mapping[k], 0) > 0 or k in scalar_data
             ],
             [])
         output_connectors = sum([[f"_{c}" for c in field_accesses[k].values()]
@@ -99,6 +109,7 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
             for indices, connector in field_accesses[field].items():
                 access_str = ", ".join(
                     f"{p} + ({i})" for p, i in zip(field_parameters, indices))
+                access_str = access_str or '0'
                 memlet = dace.Memlet(f"{field}[{access_str}]", dynamic=True)
                 memlet.allow_oob = True
                 state.add_memlet_path(read_node,
@@ -125,7 +136,7 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
 
         # Add scalars as symbols
         for field_name, mapping in iterator_mapping.items():
-            if not any(mapping):
+            if field_name not in scalar_data and not any(mapping):
                 sdfg.add_symbol(field_name, parent_sdfg.symbols[field_name])
 
         #######################################################################
