@@ -94,7 +94,8 @@ def parse_connectors(node, state, sdfg):
         field_to_desc[field] = desc
         field_to_edge[field] = e
         vector_lengths[field] = desc.veclen
-        shape = check_stencil_shape(shape, desc.shape)
+        if not isinstance(desc, dace.data.Scalar):
+            shape = check_stencil_shape(shape, desc.shape)
     for e in state.out_edges(node):
         field = e.src_conn
         outputs.append(field)
