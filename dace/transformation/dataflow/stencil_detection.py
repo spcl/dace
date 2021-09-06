@@ -199,20 +199,33 @@ class StencilDetection(pm.Transformation):
         in_conns = set()
         out_data = {}
         out_conns = set()
+        itmapping = {}
 
         for e in state.in_edges(tasklet):
             e.data.subset.replace(rdict)
             conn = f'__{e.data.data}'
             in_conns.add(conn)
             in_data[e.data.data] = conn
-            code = code.replace(e.dst_conn, f'{conn}[{e.data.subset}]')
+            desc = sdfg.arrays[e.data.data]
+            if isinstance(desc, (data.Array, data.View)):
+                code = code.replace(e.dst_conn, f'{conn}[{e.data.subset}]')
+                itmapping[conn] = [True] * len(map_entry.map.params)
+            else:
+                code = code.replace(e.dst_conn, f'{conn}')
+                itmapping[conn] = [False] * len(map_entry.map.params)
 
         for e in state.out_edges(tasklet):
             e.data.subset.replace(rdict)
             conn = f'__{e.data.data}'
             out_conns.add(conn)
             out_data[e.data.data] = conn
-            code = code.replace(e.src_conn, f'{conn}[{e.data.subset}]')
+            desc = sdfg.arrays[e.data.data]
+            if isinstance(desc, (data.Array, data.View)):
+                code = code.replace(e.src_conn, f'{conn}[{e.data.subset}]')
+                itmapping[conn] = [True] * len(map_entry.map.params)
+            else:
+                code = code.replace(e.src_conn, f'{conn}')
+                itmapping[conn] = [False] * len(map_entry.map.params)
 
         stencil_node = Stencil(
             f'{map_entry.label}_stencil',
@@ -220,10 +233,7 @@ class StencilDetection(pm.Transformation):
             # TODO: Assume for now that all arrays have as many dimensions as
             # the stencil Map and that all the dimension are involved in the
             # stencil pattern.
-            iterator_mapping={
-                c: tuple([True] * len(map_entry.map.params))
-                for c in in_conns | out_conns
-            },
+            iterator_mapping=itmapping,
             # TODO: Assume for now that all outputs have 'shrink' boundary
             # conditions
             boundary_conditions={c: {
