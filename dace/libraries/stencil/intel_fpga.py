@@ -59,7 +59,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
         for field_name in inputs:
             relative = field_accesses[field_name]
             dim_mask = iterator_mapping[field_name]
-            if not any(dim_mask):
+            if not any(dim_mask) and not field_name in scalar_data:
                 # This is a scalar, no buffer needed. Instead, the SDFG must
                 # take this as a symbol
                 scalars[field_name] = parent_sdfg.symbols[field_name]
@@ -120,7 +120,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             nested_sdfg,
             sdfg,
             # Input connectors
-            [k + "_in" for k in inputs if any(iterator_mapping[k])] +
+            [k + "_in" for k in inputs if any(iterator_mapping[k]) or k in scalar_data] +
             [name + "_buffer_in" for name, _ in buffer_sizes.items()],
             # Output connectors
             [k + "_out" for k in outputs] +
@@ -186,7 +186,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
         compute_inputs = list(
             itertools.chain.from_iterable(
                 [["_" + v for v in field_accesses[f].values()] for f in inputs
-                 if any(iterator_mapping[f])]))
+                 if any(iterator_mapping[f]) or f in scalar_data]))
         compute_tasklet = compute_state.add_tasklet(
             node.label + "_compute",
             compute_inputs, {name + "_inner_out"
