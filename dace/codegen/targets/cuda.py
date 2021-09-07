@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from platform import node
-from typing import Union, Sequence, Dict, List, Set, Tuple, Iterable
+from typing import Union, Sequence, Dict, List, Set, Tuple, Iterable, Type, Iterator
 import collections
 from six import StringIO
 import ast
@@ -997,6 +997,22 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         if not isinstance(sources, list):
             sources = [sources]
 
+        topo_ordered_graph = list(
+            sdutil.dfs_topological_sort(graph, graph.source_nodes()))
+
+        def topo_sort_nodes(
+            nodes: Iterable[nodes.Node],
+            topo_ordered_graph: List[nodes.Node] = topo_ordered_graph
+        ) -> Iterator[nodes.Node]:
+            """
+            Sorts a given list of Nodes after their occurence in a topologically
+            sorted graph.
+            :param nodes: The list of nodes to sort.
+            :param topo_ordered_graph: The topologically sorted graph
+            :return: generator object of the sorted nodes
+            """
+            return (node for node in topo_ordered_graph if node in nodes)
+
         # DFS of the graph, starting from the sources.
         # As long as DFS stays on the same path, meaning no element of the
         # stack gets popped, the same CUDA stream can be used.
@@ -1047,8 +1063,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         # Add exit node to the stack
                         exit_node = graph.exit_node(node)
                         stack.append(
-                            (exit_node, graph.successors(exit_node).__iter__()))
-
+                            (exit_node,
+                             topo_sort_nodes(graph.successors(exit_node))))
                         if node.schedule == dtypes.ScheduleType.GPU_Multidevice:
                             # Scope is distributed over multiple GPUs.
 
@@ -1111,7 +1127,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             continue
                     else:
                         # Add the successors of the current child to the stack.
-                        stack.append((node, graph.successors(node).__iter__()))
+                        stack.append(
+                            (node, topo_sort_nodes(graph.successors(node))))
 
                     # Annotate the child with a CUDA stream.
                     max_streams, current_streams, unused_streams, max_events = self._compute_cudastreams_node(
@@ -1226,13 +1243,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # If the parent is a CUDA kernel or a CodeNode with a CUDA stream
             # located on same GPU, the node must have the parent's CUDA stream.
             parent_gpu_id = sdutil.get_gpu_location(graph, parent)
-            if (hasattr(parent, '_cuda_stream')
+            if (hasattr(parent, '_cuda_stream') and parent_gpu_id == node_gpu_id
                     and ((isinstance(parent, nodes.ExitNode)
                           and graph.entry_node(parent).schedule in [
                               dtypes.ScheduleType.GPU_Device,
                               dtypes.ScheduleType.GPU_Persistent
-                          ]) or isinstance(parent, nodes.CodeNode))
-                    and parent_gpu_id == node_gpu_id):
+                          ]) or isinstance(parent, nodes.CodeNode))):
                 node._cuda_stream = {
                     node_gpu_id: parent._cuda_stream[node_gpu_id]
                 }
@@ -1297,13 +1313,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                      for each state. Used for NSDFGs.
         :return: A dict for the number of events per GPU to create.
         """
-        gpu_ids = self._gpus
+        gpu_id_map = self._gpus
         gpu_values = self._gpu_values
 
         # For tracking the number of CUDA events for each GPU over the states
         max_events: Dict[symbolic.SymbolicType,
                          int] = {k: 0
-                                 for k in gpu_values | set(gpu_ids)}
+                                 for k in gpu_values | set(gpu_id_map)}
 
         # Compute maximal number of events per GPU by counting edges (within the
         # same state) that point from one stream to another
@@ -1332,7 +1348,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         # the max event of all the GPUs that are represented
                         # by the symbolic GPU id.
                         event = max(events[gpu_id]
-                                    for gpu_id in gpu_ids[src_gpu])
+                                    for gpu_id in gpu_id_map[src_gpu])
                         for mpe in memlet_path:
                             # Annotate every memlet path edge with the event
                             mpe._cuda_event = event
@@ -1343,7 +1359,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                 mpe.data.debuginfo = dtypes.DebugInfo(
                                     'cuda_events: ' + str(mpe._cuda_event))
 
-                        for gpu_id in gpu_ids[src_gpu]:
+                        for gpu_id in gpu_id_map[src_gpu]:
                             # Increment the number of events
                             events[gpu_id] = event + 1
 
