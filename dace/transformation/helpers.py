@@ -3,6 +3,7 @@
 import ast
 import copy
 import itertools
+import re
 from networkx import MultiDiGraph
 
 from dace.subsets import Range, Subset, union
