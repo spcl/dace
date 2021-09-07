@@ -6,7 +6,7 @@ import dace
 import dace.libraries.nccl as nccl
 from dace.libraries.standard import Reduce
 from dace.transformation.interstate import GPUTransformSDFG
-from dace.transformation.dataflow import RedundantSecondArray, RedundantArray
+from dace.transformation.dataflow import RedundantSecondArray, RedundantArray, MapFusion
 from dace.sdfg.infer_types import (
     set_default_schedule_storage_types_and_location, infer_connector_types)
 
@@ -51,28 +51,21 @@ def batchnorm2d_data_parallelism(x: dc_dtype[N, H, W, C]):
         x_mean = dace.ndarray([H, W, C], dtype=dc_dtype)
         x_std = dace.ndarray([H, W, C], dtype=dc_dtype)
         dace.reduce(lambda a, b: a + b, x_gpu, x_mean, axis=(0), identity=0)
-<<<<<<< HEAD
-<<<<<<< HEAD
+        # dace.comm.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
+        # fn = np.float32(N)
+        # x_mean[:] = x_mean[:] / fn
+        # x_gpu[:] = x_gpu - x_mean
+        # x_tmp[:] = x_gpu * x_gpu
+        # dace.reduce(lambda a, b: a + b, x_tmp, x_std, axis=(0), identity=0)
+        # dace.comm.nccl.allreduce(lambda a, b: a + b, x_std, x_std)
+        # x_std[:] = np.sqrt(x_std / fn)
         dace.comm.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
-        fn = np.float32(N)
-        x_mean[:] = x_mean[:] / fn
-        x_gpu[:] = x_gpu - x_mean
-        x_tmp[:] = x_gpu * x_gpu
-        dace.reduce(lambda a, b: a + b, x_tmp, x_std, axis=(0), identity=0)
-        dace.comm.nccl.allreduce(lambda a, b: a + b, x_std, x_std)
-        x_std[:] = np.sqrt(x_std / fn)
-=======
-        dace.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
-=======
-        dace.comm.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
->>>>>>> 2a79869f... cleanup
         x_mean[:] = x_mean[:] / NN
         x_gpu[:] = x_gpu - x_mean
         x_tmp[:] = x_gpu * x_gpu
         dace.reduce(lambda a, b: a + b, x_tmp, x_std, axis=(0), identity=0)
         dace.comm.nccl.allreduce(lambda a, b: a + b, x_std, x_std)
         x_std[:] = np.sqrt(x_std / NN)
->>>>>>> 65cb7934... batchnormalization: Fix
         x_gpu[:] = x_gpu / np.sqrt(x_std + 1e-5)
         x_pinned[N_gpu * gpu_id:N_gpu * (gpu_id + 1)] = x_gpu[:]
     x[:] = x_pinned[:]
@@ -121,8 +114,8 @@ def find_library_nodes(
 
 @pytest.mark.multigpu
 def test_batchnorm2d_data_parallelism():
-    # n, h, w, c = 16, 128, 128, 64
-    n, h, w, c = 16, 4, 4, 8
+    n, h, w, c = 16, 128, 128, 64
+    # n, h, w, c = 16, 4, 4, 8
     ng = 4
 
     sdfg: dace.SDFG = batchnorm2d_data_parallelism.to_sdfg(strict=True)
@@ -143,6 +136,7 @@ def test_batchnorm2d_data_parallelism():
              NN=np.float32(n)))
     set_default_schedule_storage_types_and_location(sdfg, None)
     sdfg.expand_library_nodes()
+    sdfg.apply_transformations_repeated([MapFusion])
     sdfg.apply_transformations_repeated([RedundantSecondArray, RedundantArray])
     sdfg.apply_strict_transformations()
 
@@ -167,6 +161,7 @@ def test_batchnorm2d_data_parallelism():
     assert np.allclose(X, res), f'\ndiff: {np.linalg.norm(X-res)}'
     # , f'\nout:\n{X[0][0][0]}\nres:\n{res[0][0][0]}\n'
 
+    # sdfg.name += '_topo'
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
     # out_path = '.dacecache/local/batchnorm/' + sdfg.name

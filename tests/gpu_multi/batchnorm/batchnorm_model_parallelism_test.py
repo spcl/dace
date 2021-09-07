@@ -5,7 +5,7 @@ import dace
 
 import dace.libraries.nccl as nccl
 from dace.libraries.standard import Reduce
-from dace.transformation.dataflow import RedundantSecondArray, RedundantArray
+from dace.transformation.dataflow import RedundantSecondArray, RedundantArray, MapFusion
 from dace.sdfg.infer_types import (
     set_default_schedule_storage_types_and_location, infer_connector_types)
 
@@ -126,13 +126,14 @@ def test_batchnorm2d_model_parallelism():
              NN=np.float32(n)))
     set_default_schedule_storage_types_and_location(sdfg, None)
     sdfg.expand_library_nodes()
+    sdfg.apply_transformations_repeated([MapFusion])
     sdfg.apply_transformations_repeated([RedundantSecondArray, RedundantArray])
     sdfg.apply_strict_transformations()
 
     np.random.seed(0)
-    # X = np.ndarray(shape=[n, h, w, c], dtype=np_dtype)
-    # X[:] = np.random.rand(n, h, w, c)[:]
-    X = np.arange(size, dtype=np_dtype).reshape(shape)
+    X = np.ndarray(shape=[n, h, w, c], dtype=np_dtype)
+    X[:] = np.random.rand(n, h, w, c)[:]
+    # X = np.copy(np.arange(size, dtype=np_dtype).reshape(shape))
     Z = np.copy(X)
 
     print('GPU')
@@ -151,6 +152,7 @@ def test_batchnorm2d_model_parallelism():
     assert np.allclose(X, res), f'\ndiff: {np.linalg.norm(X-res)}'
     # , f'\nout:\n{repr(X[:,0,0,0])}\n{repr(X[:,-1,-1,-1])}\nres:\n{repr(res[:,0,0,0])}\n{repr(res[:,-1,-1,-1])}\n'
 
+    # sdfg.name = sdfg.name + '_topo'
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
     # out_path = '.dacecache/local/batchnorm/' + sdfg.name
@@ -177,6 +179,7 @@ def test_batchnorm2d_model_parallelism_numpy():
              NN=np.float32(n)))
     set_default_schedule_storage_types_and_location(sdfg, None)
     sdfg.expand_library_nodes()
+    sdfg.apply_transformations_repeated([MapFusion])
     sdfg.apply_transformations_repeated([RedundantSecondArray, RedundantArray])
     sdfg.apply_strict_transformations()
 
