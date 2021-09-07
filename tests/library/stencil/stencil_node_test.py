@@ -41,7 +41,7 @@ res[1] = (dace.float32(0.3333) * tmp1)""",
 
 def make_sdfg_1d_with_scalar(implementation: str):
 
-    sdfg = dace.SDFG("stencil_node_test_1d")
+    sdfg = dace.SDFG("stencil_node_test_1d_with_scalar")
     _, a_desc = sdfg.add_array("a", (SIZE, ), dtype=DTYPE)
     _, scal_desc = sdfg.add_scalar("scal", dtype=DTYPE)
     _, res_desc = sdfg.add_array("res", (SIZE, ), dtype=DTYPE)
@@ -64,7 +64,7 @@ res[1] = (scal * tmp1)""",
     state.add_edge(a, None, stencil_node, "a",
                    dace.Memlet.from_array("a", a_desc))
     state.add_edge(scal, None, stencil_node, "scal",
-                   dace.Memlet.from_array("scal", a_desc))
+                   dace.Memlet.from_array("scal", scal_desc))
     state.add_edge(stencil_node, "res", res, None,
                    dace.Memlet.from_array("res", res_desc))
 
@@ -154,7 +154,7 @@ def test_stencil_node_1d_with_scalar_fpga_array():
     sdfg = make_sdfg_1d_with_scalar(dace.Config.get("compiler", "fpga_vendor"))
     assert sdfg.apply_transformations(FPGATransformSDFG) == 1
     assert sdfg.apply_transformations(InlineSDFG) == 1
-    run_stencil_1d(sdfg, 32)
+    run_stencil_1d_with_scalar(sdfg, 32)
     return sdfg
 
 
