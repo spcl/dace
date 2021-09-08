@@ -69,13 +69,14 @@ class ExpandRecvNCCL(ExpandTransformation):
 
         code = nutil.aggregate_calls(sdfg, state, node, code)
 
-        tasklet = nodes.Tasklet(str(node),
+        tasklet = nodes.Tasklet(node.name,
                                 node.in_connectors,
                                 node.out_connectors,
                                 code,
                                 location=node.location,
                                 language=dtypes.Language.CPP,
-                                library_expansion_symbols=set([str(peer)]))
+                                library_expansion_symbols=set(
+                                    map(str, peer.free_symbols)))
 
         return tasklet
 

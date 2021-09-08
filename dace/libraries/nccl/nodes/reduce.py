@@ -88,7 +88,8 @@ class ExpandReduceNCCL(ExpandTransformation):
                                 code,
                                 location=node.location,
                                 language=dtypes.Language.CPP,
-                                library_expansion_symbols=set([str(root)]))
+                                library_expansion_symbols=set(
+                                    map(str, root.free_symbols)))
 
         return tasklet
 
