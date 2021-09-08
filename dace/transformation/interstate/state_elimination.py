@@ -213,10 +213,11 @@ class StateAssignElimination(transformation.Transformation):
             else:
                 # If removed assignment does not appear in any other edge,
                 # replace and remove symbol
-                if assignments_to_consider[varname] in sdfg.symbols:
-                    repl_dict[varname] = assignments_to_consider[varname]
                 if varname in sdfg.symbols:
                     sdfg.remove_symbol(varname)
+                # if assignments_to_consider[varname] in sdfg.symbols:
+                if varname in sdfg.free_symbols:
+                    repl_dict[varname] = assignments_to_consider[varname]
         
         def _str_repl(s, d):
             for k, v in d.items():
