@@ -255,6 +255,29 @@ class StencilDetection(pm.Transformation):
             if e.data.data in out_data:
                 outputs[e.data.data] = e.dst
 
+        # Fix output size
+        offsets = {}
+        max_size = map_entry.map.range.size()
+        for d in in_data:
+            desc = sdfg.arrays[d]
+            for i, c in enumerate(itmapping[in_data[d]]):
+                if c and (desc.shape[i] > max_size[i]) == True:
+                    max_size[i] = desc.shape[i]
+        for d in out_data:
+            desc = sdfg.arrays[d]
+            if not desc.transient:
+                continue
+            off = [0] * len(desc.shape)
+            new_shape = list(desc.shape)
+            for i, c in enumerate(itmapping[out_data[d]]):
+                if c and (desc.shape[i] < max_size[i]) == True:
+                    off[i] = (max_size[i] - desc.shape[i]) // 2
+                    new_shape[i] = max_size[i]
+            if any((o > 0) == True for o in off):
+                sdfg.arrays[d] = type(desc)(desc.dtype, new_shape, transient=True)
+                offsets[d] = subsets.Range([(o, o, 1) for o in off])
+            
+
         state.remove_nodes_from(map_scope.nodes())
         for d, c in in_data.items():
             state.add_memlet_path(inputs[d],
@@ -268,3 +291,13 @@ class StencilDetection(pm.Transformation):
                                   memlet=dace.Memlet.from_array(
                                       d, sdfg.arrays[d]),
                                   src_conn=c)
+        
+        for d, off in offsets.items():
+            node = outputs[d]
+            edges = set()
+            for e in state.out_edges(node):
+                for e2 in state.memlet_path(e):
+                    if e2 not in edges:
+                        subset = e2.data.get_src_subset(e2, state)
+                        subset.offset(off, False)
+                        edges.add(e2)

@@ -121,7 +121,6 @@ def test_jacobi1d_with_scalar():
     assert (np.allclose(B, refB))
 
 
-
 nx, ny = (dace.symbol(s) for s in ('nx', 'ny'))
 
 
@@ -204,6 +203,7 @@ def test_CFD_pressure_poisson():
     sdfg = pressure_poisson.to_sdfg(strict=True)
     sdfg.apply_transformations_repeated(MapFusion)
     sdfg.apply_transformations_repeated(SimpleTaskletFusion)
+    sdfg.save('test.sdfg')
     num = sdfg.apply_transformations_repeated(StencilDetection)
     assert (num == 1)
     sdfg(nit=nit, p=p, dx=dx, dy=dy, b=b, nx=nx, ny=ny)
@@ -215,6 +215,6 @@ if __name__ == '__main__':
     # test_stencil1d()
     # test_jacobi1d()
     # test_jacobi2d()
-    test_jacobi1d_with_scalar()
+    # test_jacobi1d_with_scalar()
     # test_CFD_build_up_b()
-    # test_CFD_pressure_poisson()
+    test_CFD_pressure_poisson()
