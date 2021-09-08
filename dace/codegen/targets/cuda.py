@@ -1246,26 +1246,34 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         if node_gpu_id in gpu_ids:
             # This node needs to be annotated
 
+            parent_gpu_id = sdutil.get_gpu_location(graph, parent)
             # If the parent is a CUDA kernel or a CodeNode with a CUDA stream
             # located on same GPU, the node must have the parent's CUDA stream.
-            # If the parent node is an AccessNode and the node is also an AccessNode
-            # of a view of the parent and the node only has one successor that has a
-            # CUDA stream equal to the parent's CUDA stream, the node must have the
-            # parent's CUDA stream.
-            parent_gpu_id = sdutil.get_gpu_location(graph, parent)
             if (hasattr(parent, '_cuda_stream') and parent_gpu_id == node_gpu_id
-                    and (((isinstance(parent, nodes.ExitNode)
-                           and graph.entry_node(parent).schedule in [
-                               dtypes.ScheduleType.GPU_Device,
-                               dtypes.ScheduleType.GPU_Persistent
-                           ]) or isinstance(parent, nodes.CodeNode))) or
-                ((isinstance(node, nodes.AccessNode)
-                  and isinstance(node.desc(graph), dt.View)
-                  and len(graph.successors(node)) == 1)
-                 and getattr(graph.successors(node)[0], '_cuda_stream',
-                             None) == parent._cuda_stream)):
+                    and (isinstance(parent, nodes.ExitNode)
+                         and graph.entry_node(parent).schedule in [
+                             dtypes.ScheduleType.GPU_Device,
+                             dtypes.ScheduleType.GPU_Persistent
+                         ]) or isinstance(parent, nodes.CodeNode)):
                 node._cuda_stream = {
                     node_gpu_id: parent._cuda_stream[node_gpu_id]
+                }
+            # If the parent node represents an Array and the node represents a
+            # View to that Array the node only has one successor that has a
+            # CUDA stream and the same GPU ID as the parent, the node must have
+            # the parent's CUDA stream.
+            elif (hasattr(parent, '_cuda_stream')
+                  and parent_gpu_id == node_gpu_id
+                  and (isinstance(node, nodes.AccessNode)
+                       and isinstance(node.desc(graph), dt.View)
+                       and len(graph.successors(node)) == 1)
+                  and hasattr(graph.successors(node)[0], '_cuda_stream')
+                  and (sdutil.get_gpu_location(graph,
+                                               graph.successors(node)[0])
+                       == parent_gpu_id and parent._cuda_stream)):
+                node._cuda_stream = {
+                    node_gpu_id:
+                    graph.successors(node)[0]._cuda_stream[node_gpu_id]
                 }
             else:
                 # If this GPU has been used in the past paths and the GPU's last
@@ -1349,7 +1357,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     # different CUDA stream
                     src_gpu = sdutil.get_gpu_location(state, e.src)
                     memlet_path = state.memlet_path(e)
-
                     if ((hasattr(e.dst, '_cuda_stream')
                          and e.src._cuda_stream != e.dst._cuda_stream)
                             or (e.dst != memlet_path[-1].dst
