@@ -1469,6 +1469,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
         self.views: Dict[str, str] = {}  # Keeps track of views
+        self.sliced_views: Dict[str, Tuple[str, Memlet]] = {}
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
 
         # Keep track of map symbols from upper scopes
@@ -1603,6 +1604,28 @@ class ProgramVisitor(ExtNodeVisitor):
                         arr = self.sdfg.arrays[aname]
                         w = state.add_write(aname)
                         state.add_nedge(vnode, w, Memlet.from_array(aname, arr))
+                    else:
+                        raise ValueError(f'View "{vnode.data}" already has'
+                                         'both incoming and outgoing edges')
+        
+        # Map (sliced) view access nodes to their respective data
+        for state in self.sdfg.nodes():
+            for vnode in list(state.data_nodes()):
+                if vnode.data in self.sliced_views:
+                    if state.in_degree(vnode) == 0:
+                        aname, (s, o, v, w) = self.sliced_views[vnode.data]
+                        arr = self.sdfg.arrays[aname]
+                        r = state.add_read(aname)
+                        state.add_nedge(
+                            r, vnode,
+                            Memlet(f'{aname}[{s}]->{o}', volume=v, wcr=w))
+                    elif state.out_degree(vnode) == 0:
+                        aname, (s, o, v, w) = self.sliced_views[vnode.data]
+                        arr = self.sdfg.arrays[aname]
+                        w = state.add_write(aname)
+                        state.add_nedge(
+                            vnode, w,
+                            Memlet(f'{aname}[{s}]->{o}', volume=v, wcr=w))
                     else:
                         raise ValueError(f'View "{vnode.data}" already has'
                                          'both incoming and outgoing edges')
@@ -4707,9 +4730,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Add slicing state
         self._add_state('slice_%s_%d' % (array, node.lineno))
-        rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
         if has_array_indirection:
             # Make copy slicing state
+            rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
             return self._array_indirection_subgraph(rnode, expr)
         else:
             other_subset = copy.deepcopy(expr.subset)
@@ -4731,16 +4754,24 @@ class ProgramVisitor(ExtNodeVisitor):
                                                    arrobj.storage,
                                                    transient=True)
             else:
-                tmp, tmparr = self.sdfg.add_temp_transient(
-                    other_subset.size(), arrobj.dtype, arrobj.storage)
+                tmp, tmparr = self.sdfg.add_view(array,
+                                                 other_subset.size(),
+                                                 arrobj.dtype,
+                                                 arrobj.storage,
+                                                 find_new_name=True)
+                self.sliced_views[tmp] = (array, (expr.subset, other_subset,
+                                                  expr.accesses, expr.wcr))
             self.variables[tmp] = tmp
-            wnode = self.last_state.add_write(tmp,
-                                              debuginfo=self.current_lineinfo)
-            self.last_state.add_nedge(
-                rnode, wnode,
-                Memlet(f'{array}[{expr.subset}]->{other_subset}',
-                       volume=expr.accesses,
-                       wcr=expr.wcr))
+            if not isinstance(tmparr, data.View):
+                rnode = self.last_state.add_read(
+                    array, debuginfo=self.current_lineinfo)
+                wnode = self.last_state.add_write(
+                    tmp, debuginfo=self.current_lineinfo)
+                self.last_state.add_nedge(
+                    rnode, wnode,
+                    Memlet(f'{array}[{expr.subset}]->{other_subset}',
+                        volume=expr.accesses,
+                        wcr=expr.wcr))
             return tmp
 
     def _parse_subscript_slice(
