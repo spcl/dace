@@ -613,6 +613,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
     def deallocate_stream(self, sdfg, dfg, state_id, node, nodedesc,
                           function_stream, callsite_stream):
         dataname = cpp.ptr(node.data, nodedesc, sdfg)
+        self._set_gpu_device(sdfg, state_id, nodedesc, callsite_stream)
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if is_array_stream_view(sdfg, dfg, node):
                 callsite_stream.write(
@@ -626,8 +627,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                          function_stream, callsite_stream):
         dataname = cpp.ptr(node.data, nodedesc, sdfg)
 
-        self._set_gpu_device(sdfg, state_id, nodedesc, callsite_stream)
-
         if isinstance(nodedesc, dace.data.Stream):
             return self.deallocate_stream(sdfg, dfg, state_id, node, nodedesc,
                                           function_stream, callsite_stream)
@@ -635,6 +634,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             return
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
+            self._set_gpu_device(sdfg, state_id, nodedesc, callsite_stream)
             if self._debugprint:
                 debug_print = f'printf("device free: {dataname} \\n");\n'
             else:
