@@ -1612,24 +1612,51 @@ class ProgramVisitor(ExtNodeVisitor):
                     else:
                         raise ValueError(f'View "{vnode.data}" already has'
                                          'both incoming and outgoing edges')
-        
-        # Map (sliced) view access nodes to their respective data
-        for state in self.sdfg.nodes():
-            for vnode in list(state.data_nodes()):
+
+        def _views_to_data(
+                state: SDFGState, nodes: List[dace.nodes.AccessNode]
+        ) -> List[dace.nodes.AccessNode]:
+            new_nodes = []
+            for vnode in nodes:
                 if vnode.data in self.sliced_views:
                     if state.in_degree(vnode) == 0:
                         aname, m = self.sliced_views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         r = state.add_read(aname)
                         state.add_nedge(r, vnode, copy.deepcopy(m))
+                        new_nodes.append(r)
                     elif state.out_degree(vnode) == 0:
                         aname, m = self.sliced_views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         w = state.add_write(aname)
                         state.add_nedge(vnode, w, copy.deepcopy(m))
+                        new_nodes.append(w)
                     else:
                         raise ValueError(f'View "{vnode.data}" already has'
                                          'both incoming and outgoing edges')
+            return new_nodes
+
+        # Map (sliced) view access nodes to their respective data
+        for state in self.sdfg.nodes():
+            # NOTE: We need to support views of views
+            nodes = list(state.data_nodes())
+            while nodes:
+                nodes = _views_to_data(state, nodes)
+            # for vnode in list(state.data_nodes()):
+            #     if vnode.data in self.sliced_views:
+            #         if state.in_degree(vnode) == 0:
+            #             aname, m = self.sliced_views[vnode.data]
+            #             arr = self.sdfg.arrays[aname]
+            #             r = state.add_read(aname)
+            #             state.add_nedge(r, vnode, copy.deepcopy(m))
+            #         elif state.out_degree(vnode) == 0:
+            #             aname, m = self.sliced_views[vnode.data]
+            #             arr = self.sdfg.arrays[aname]
+            #             w = state.add_write(aname)
+            #             state.add_nedge(vnode, w, copy.deepcopy(m))
+            #         else:
+            #             raise ValueError(f'View "{vnode.data}" already has'
+            #                             'both incoming and outgoing edges')
 
         # Try to replace transients with their python-assigned names
         for pyname, arrname in self.variables.items():
@@ -4739,7 +4766,8 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_state('slice_%s_%d' % (array, node.lineno))
         if has_array_indirection:
             # Make copy slicing state
-            rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
+            rnode = self.last_state.add_read(array,
+                                             debuginfo=self.current_lineinfo)
             return self._array_indirection_subgraph(rnode, expr)
         else:
             other_subset = copy.deepcopy(expr.subset)
@@ -4777,9 +4805,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.sliced_views[tmp] = (
                     array,
                     Memlet(f'{array}[{expr.subset}]->{other_subset}',
-                        volume=expr.accesses,
-                        wcr=expr.wcr)
-                )
+                           volume=expr.accesses,
+                           wcr=expr.wcr))
             self.variables[tmp] = tmp
             if not isinstance(tmparr, data.View):
                 rnode = self.last_state.add_read(
@@ -4789,8 +4816,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.last_state.add_nedge(
                     rnode, wnode,
                     Memlet(f'{array}[{expr.subset}]->{other_subset}',
-                        volume=expr.accesses,
-                        wcr=expr.wcr))
+                           volume=expr.accesses,
+                           wcr=expr.wcr))
             return tmp
 
     def _parse_subscript_slice(
