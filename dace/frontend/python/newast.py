@@ -1613,19 +1613,15 @@ class ProgramVisitor(ExtNodeVisitor):
             for vnode in list(state.data_nodes()):
                 if vnode.data in self.sliced_views:
                     if state.in_degree(vnode) == 0:
-                        aname, (s, o, v, w) = self.sliced_views[vnode.data]
+                        aname, m = self.sliced_views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         r = state.add_read(aname)
-                        state.add_nedge(
-                            r, vnode,
-                            Memlet(f'{aname}[{s}]->{o}', volume=v, wcr=w))
+                        state.add_nedge(r, vnode, copy.deepcopy(m))
                     elif state.out_degree(vnode) == 0:
-                        aname, (s, o, v, w) = self.sliced_views[vnode.data]
+                        aname, m = self.sliced_views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         w = state.add_write(aname)
-                        state.add_nedge(
-                            vnode, w,
-                            Memlet(f'{aname}[{s}]->{o}', volume=v, wcr=w))
+                        state.add_nedge(vnode, w, copy.deepcopy(m))
                     else:
                         raise ValueError(f'View "{vnode.data}" already has'
                                          'both incoming and outgoing edges')
@@ -4736,13 +4732,20 @@ class ProgramVisitor(ExtNodeVisitor):
             return self._array_indirection_subgraph(rnode, expr)
         else:
             other_subset = copy.deepcopy(expr.subset)
+            strides = list(arrobj.strides)
 
             # Make new axes and squeeze for scalar subsets (as per numpy behavior)
             # For example: A[0, np.newaxis, 5:7] results in a 1x2 ndarray
             new_axes = []
             if expr.new_axes:
                 new_axes = other_subset.unsqueeze(expr.new_axes)
-            other_subset.squeeze(ignore_indices=new_axes)
+                for i in new_axes:
+                    strides.insert(i, 1)
+            length = len(other_subset)
+            nsqz = other_subset.squeeze(ignore_indices=new_axes)
+            sqz = [i for i in range(length) if i not in nsqz]
+            for i in reversed(sqz):
+                strides.pop(i)
 
             # NOTE: This is fixing azimint_hist (issue is `if x == a_max`)
             # TODO: Follow Numpy, i.e. slicing with indices returns scalar but
@@ -4757,10 +4760,15 @@ class ProgramVisitor(ExtNodeVisitor):
                 tmp, tmparr = self.sdfg.add_view(array,
                                                  other_subset.size(),
                                                  arrobj.dtype,
-                                                 arrobj.storage,
+                                                 storage=arrobj.storage,
+                                                 strides=strides,
                                                  find_new_name=True)
-                self.sliced_views[tmp] = (array, (expr.subset, other_subset,
-                                                  expr.accesses, expr.wcr))
+                self.sliced_views[tmp] = (
+                    array,
+                    Memlet(f'{array}[{expr.subset}]->{other_subset}',
+                        volume=expr.accesses,
+                        wcr=expr.wcr)
+                )
             self.variables[tmp] = tmp
             if not isinstance(tmparr, data.View):
                 rnode = self.last_state.add_read(
