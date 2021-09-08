@@ -1562,6 +1562,9 @@ class ProgramVisitor(ExtNodeVisitor):
             if vname.startswith('__return'):
                 if isinstance(self.sdfg.arrays[arrname], data.View):
                     # In case of a view, make a copy
+                    # NOTE: If we are at the top level SDFG (not always clear),
+                    # and it is a View of an input array, can we return a NumPy
+                    # View directly?
                     desc = self.sdfg.arrays[arrname]
                     return_state = self._add_state()
                     r = return_state.add_read(arrname)
@@ -1573,7 +1576,9 @@ class ProgramVisitor(ExtNodeVisitor):
                             desc.dtype,
                             storage=desc.storage,
                             transient=False,
-                            strides=desc.strides,
+                            # NOTE: It seems that NumPy doesn't support creating
+                            # non-contiguous arrays directly.
+                            # strides=desc.strides,
                             offset=desc.offset,
                             debuginfo=desc.debuginfo,
                             total_size=desc.total_size,
@@ -3534,7 +3539,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, target,
                     'Variable "{}" used before definition'.format(name))
 
-            new_data = None
+            new_data, rng = None, None
             dtype_keys = tuple(dtypes.DTYPE_TO_TYPECLASS.keys())
             if not (symbolic.issymbolic(result) or isinstance(
                     result, dtype_keys) or result in self.sdfg.arrays):
@@ -3571,6 +3576,12 @@ class ProgramVisitor(ExtNodeVisitor):
                             [1], result_data.dtype)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
+                    # elif (name.startswith('__return')
+                    #         and isinstance(result_data, data.View)):
+                    #     assert (result in self.sliced_views)
+                    #     true_name, m = self.sliced_views[result]
+                    #     new_data = self.sdfg.arrays[true_name]
+                    #     rng = m.subset
                     elif not result_data.transient:
                         true_name, new_data = _add_transient_data(
                             self.sdfg, result_data, dtype)
@@ -3583,7 +3594,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             boolarr = None
             if new_data:
-                rng = dace.subsets.Range.from_array(new_data)
+                rng = rng or dace.subsets.Range.from_array(new_data)
             else:
                 true_target = copy.deepcopy(target)
                 if isinstance(target, ast.Name):
