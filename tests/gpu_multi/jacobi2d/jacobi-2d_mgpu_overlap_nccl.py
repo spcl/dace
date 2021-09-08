@@ -39,7 +39,7 @@ def jacobi_2d_shared(A: dace.float64[Ny, N], B: dace.float64[Ny, N]):
 
 
 @dace.program
-def jacobi_2d_mgpu_overlap(A: d_float[Ny, N], B: d_float[Ny, N]):
+def j2d_overlap_nccl(A: d_float[Ny, N], B: d_float[Ny, N]):
     for rank in dace.map[0:size]:
         # Local extended domain
         lA = np.zeros((lNy + 2, N), dtype=A.dtype)
@@ -225,7 +225,7 @@ def find_data_desc(sdfg: dace.SDFG, name: str) -> dace.nodes.MapEntry:
 if __name__ == "__main__":
     ts, n = 1, 16
     number_of_gpus = 4
-    sdfg = jacobi_2d_mgpu_overlap.to_sdfg(strict=True)
+    sdfg = j2d_overlap_nccl.to_sdfg(strict=True)
     gpu_map = find_map_by_param(sdfg, 'rank')
     gpu_map.schedule = dace.ScheduleType.GPU_Multidevice
     sdfg.specialize(

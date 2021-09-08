@@ -6,7 +6,7 @@ import os
 import timeit
 from typing import List
 
-from dace.transformation.dataflow import MapFusion
+from dace.transformation.dataflow import MapFusion, RedundantSecondArray, RedundantArray
 from dace.transformation.interstate import InlineSDFG, StateFusion
 from dace.sdfg import nodes, infer_types
 from dace import dtypes
@@ -37,63 +37,6 @@ def jacobi_2d_shared(A: dace.float64[Ny, N], B: dace.float64[Ny, N]):
 
 
 @dace.program
-def exchange(arr: d_float[lNy + 2, N], rank: d_int):
-    group_handle = dace.define_local_scalar(d_int)
-    if rank == 0:
-        # send South
-        dace.comm.nccl.Send(arr[-2], peer=rank + 1, group_handle=group_handle)
-        # recv South
-        dace.comm.nccl.Recv(arr[-1], peer=rank + 1, group_handle=group_handle)
-    elif rank == size - 1:
-        # send North
-        dace.comm.nccl.Send(arr[1], peer=rank - 1, group_handle=group_handle)
-        # recv North
-        dace.comm.nccl.Recv(arr[0], peer=rank - 1, group_handle=group_handle)
-    else:
-        # send North
-        dace.comm.nccl.Send(arr[1], peer=rank - 1, group_handle=group_handle)
-        # recv South
-        dace.comm.nccl.Recv(arr[-1], peer=rank + 1, group_handle=group_handle)
-        # send South
-        dace.comm.nccl.Send(arr[-2], peer=rank + 1, group_handle=group_handle)
-        # recv North
-        dace.comm.nccl.Recv(arr[0], peer=rank - 1, group_handle=group_handle)
-
-
-@dace.program
-def comp(in_arr: d_float[lNy + 2, N], out_arr: d_float[lNy + 2, N],
-         rank: d_int):
-    if rank == 0:
-        # noff = 1
-        # soff = 0
-        # out_arr[1 + noff:-1,
-        #         1:-1] = 0.2 * (in_arr[1 + noff:-1, 1:-1] +
-        #                        in_arr[1 + noff:-1, :-2] +
-        #                        in_arr[1 + noff:-1, 2:] +
-        #                        in_arr[2 + noff:, 1:-1] + in_arr[noff:-2, 1:-1])
-        out_arr[2:-1, 1:-1] = 0.2 * (in_arr[2:-1, 1:-1] + in_arr[2:-1, :-2] +
-                                     in_arr[2:-1, 2:] + in_arr[3:, 1:-1] +
-                                     in_arr[1:-2, 1:-1])
-    elif rank == size - 1:
-        # soff = 1
-        # noff = 0
-        # out_arr[1:-1 - soff,
-        #         1:-1] = 0.2 * (in_arr[1:-1 - soff, 1:-1] +
-        #                        in_arr[1:-1 - soff, :-2] +
-        #                        in_arr[1:-1 - soff, 2:] + in_arr[2:-soff, 1:-1] +
-        #                        in_arr[:-2 - soff, 1:-1])
-        out_arr[1:-2, 1:-1] = 0.2 * (in_arr[1:-2, 1:-1] + in_arr[1:-2, :-2] +
-                                     in_arr[1:-2, 2:] + in_arr[2:-1, 1:-1] +
-                                     in_arr[:-3, 1:-1])
-    else:
-        # soff = 0
-        # noff = 0
-        out_arr[1:-1, 1:-1] = 0.2 * (in_arr[1:-1, 1:-1] + in_arr[1:-1, :-2] +
-                                     in_arr[1:-1, 2:] + in_arr[2:, 1:-1] +
-                                     in_arr[:-2, 1:-1])
-
-
-@dace.program
 def jacobi_2d_mgpu(A: d_float[Ny, N], B: d_float[Ny, N]):
 
     for rank in dace.map[0:size]:
@@ -103,25 +46,104 @@ def jacobi_2d_mgpu(A: d_float[Ny, N], B: d_float[Ny, N]):
 
         lA[1:-1, :] = A[rank * lNy:(rank + 1) * lNy, :]
         lB[1:-1, :] = B[rank * lNy:(rank + 1) * lNy, :]
-        # if rank == 0:
-        #     noff, soff = 1, 0
-        # elif rank == size - 1:
-        #     noff, soff = 0, 1
-        # else:
-        #     noff, soff = 0, 0
+
         for t in range(1, TSTEPS):
-            exchange(lA, rank=rank, size=size)
-            comp(lA, lB, rank=rank, size=size)
-            # lB[1 + noff:-1 - soff, 1:-1] = 0.2 * (
-            #     lA[1 + noff:-1 - soff, 1:-1] + lA[1 + noff:-1 - soff, :-2] +
-            #     lA[1 + noff:-1 - soff, 2:] + lA[2 + noff:-soff, 1:-1] +
-            #     lA[noff:-2 - soff, 1:-1])
-            exchange(lB, rank=rank, size=size)
-            comp(lB, lA, rank=rank, size=size)
-            # lA[1 + noff:-1 - soff, 1:-1] = 0.2 * (
-            #     lB[1 + noff:-1 - soff, 1:-1] + lB[1 + noff:-1 - soff, :-2] +
-            #     lB[1 + noff:-1 - soff, 2:] + lB[2 + noff:-soff, 1:-1] +
-            #     lB[noff:-2 - soff, 1:-1])
+            group_handle_0 = dace.define_local_scalar(d_int)
+            group_handle_1 = dace.define_local_scalar(d_int)
+            group_handle_2 = dace.define_local_scalar(d_int)
+            group_handle_3 = dace.define_local_scalar(d_int)
+            if rank == 0:
+                # send South
+                dace.comm.nccl.Send(lA[-2],
+                                    peer=rank + 1,
+                                    group_handle=group_handle_0)
+                # recv South
+                dace.comm.nccl.Recv(lA[-1],
+                                    peer=rank + 1,
+                                    group_handle=group_handle_0)
+                lB[2:-1,
+                   1:-1] = 0.2 * (lA[2:-1, 1:-1] + lA[2:-1, :-2] +
+                                  lA[2:-1, 2:] + lA[3:, 1:-1] + lA[1:-2, 1:-1])
+                # send South
+                dace.comm.nccl.Send(lB[-2],
+                                    peer=rank + 1,
+                                    group_handle=group_handle_1)
+                # recv South
+                dace.comm.nccl.Recv(lB[-1],
+                                    peer=rank + 1,
+                                    group_handle=group_handle_1)
+
+                lA[2:-1,
+                   1:-1] = 0.2 * (lB[2:-1, 1:-1] + lB[2:-1, :-2] +
+                                  lB[2:-1, 2:] + lB[3:, 1:-1] + lB[1:-2, 1:-1])
+
+            elif rank == size - 1:
+                # send North
+                dace.comm.nccl.Send(lA[1],
+                                    peer=rank - 1,
+                                    group_handle=group_handle_0)
+                # recv North
+                dace.comm.nccl.Recv(lA[0],
+                                    peer=rank - 1,
+                                    group_handle=group_handle_0)
+
+                lB[1:-2,
+                   1:-1] = 0.2 * (lA[1:-2, 1:-1] + lA[1:-2, :-2] +
+                                  lA[1:-2, 2:] + lA[2:-1, 1:-1] + lA[:-3, 1:-1])
+                # send North
+                dace.comm.nccl.Send(lB[1],
+                                    peer=rank - 1,
+                                    group_handle=group_handle_1)
+                # recv North
+                dace.comm.nccl.Recv(lB[0],
+                                    peer=rank - 1,
+                                    group_handle=group_handle_1)
+
+                lA[1:-2,
+                   1:-1] = 0.2 * (lB[1:-2, 1:-1] + lB[1:-2, :-2] +
+                                  lB[1:-2, 2:] + lB[2:-1, 1:-1] + lB[:-3, 1:-1])
+            else:
+                # send North
+                dace.comm.nccl.Send(lA[1],
+                                    peer=rank - 1,
+                                    group_handle=group_handle_0)
+                # recv South
+                dace.comm.nccl.Recv(lA[-1],
+                                    peer=rank + 1,
+                                    group_handle=group_handle_0)
+                # send South
+                dace.comm.nccl.Send(lA[-2],
+                                    peer=rank + 1,
+                                    group_handle=group_handle_1)
+                # recv North
+                dace.comm.nccl.Recv(lA[0],
+                                    peer=rank - 1,
+                                    group_handle=group_handle_1)
+
+                lB[1:-1,
+                   1:-1] = 0.2 * (lA[1:-1, 1:-1] + lA[1:-1, :-2] +
+                                  lA[1:-1, 2:] + lA[2:, 1:-1] + lA[:-2, 1:-1])
+
+                # send North
+                dace.comm.nccl.Send(lB[1],
+                                    peer=rank - 1,
+                                    group_handle=group_handle_2)
+                # recv South
+                dace.comm.nccl.Recv(lB[-1],
+                                    peer=rank + 1,
+                                    group_handle=group_handle_2)
+                # send South
+                dace.comm.nccl.Send(lB[-2],
+                                    peer=rank + 1,
+                                    group_handle=group_handle_3)
+                # recv North
+                dace.comm.nccl.Recv(lB[0],
+                                    peer=rank - 1,
+                                    group_handle=group_handle_3)
+
+                lA[1:-1,
+                   1:-1] = 0.2 * (lB[1:-1, 1:-1] + lB[1:-1, :-2] +
+                                  lB[1:-1, 2:] + lB[2:, 1:-1] + lB[:-2, 1:-1])
 
         A[rank * lNy:(rank + 1) * lNy] = lA[1:-1, :]
         B[rank * lNy:(rank + 1) * lNy] = lB[1:-1, :]
@@ -155,9 +177,9 @@ def find_data_desc(sdfg: dace.SDFG, name: str) -> dace.nodes.MapEntry:
 
 
 if __name__ == "__main__":
-    ts, n = 100, 280
+    ts, n = 100, 4096
     number_of_gpus = 4
-    sdfg = jacobi_2d_mgpu.to_sdfg(strict=False)
+    sdfg = jacobi_2d_mgpu.to_sdfg(strict=True)
     gpu_map = find_map_by_param(sdfg, 'rank')
     gpu_map.schedule = dace.ScheduleType.GPU_Multidevice
     sdfg.specialize(
@@ -166,11 +188,11 @@ if __name__ == "__main__":
              lNy=n // number_of_gpus,
              TSTEPS=ts,
              N=n))
-    sdfg.apply_strict_transformations()
+
     sdfg.apply_transformations_repeated(MapFusion)
+    sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray])
     sdfg.apply_strict_transformations()
 
-    # sdfg.name += '_correct'
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
     # out_path = '.dacecache/local/jacobi/' + sdfg.name
