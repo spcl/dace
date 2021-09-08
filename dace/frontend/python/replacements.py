@@ -1266,6 +1266,14 @@ def _makeunop(op, opcode):
             op1: str,
             op2=None):
         return _unop(sdfg, state, op1, opcode, op)
+    
+    @oprepo.replaces_operator('View', op)
+    def _op(visitor: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: str,
+            op2=None):
+        return _unop(sdfg, state, op1, opcode, op)
 
     @oprepo.replaces_operator('Scalar', op)
     def _op(visitor: 'ProgramVisitor',
@@ -2134,8 +2142,33 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('View', op, otherclass='Scalar')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
+    @oprepo.replaces_operator('View', op, otherclass='NumConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
+    @oprepo.replaces_operator('View', op, otherclass='BoolConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
+    @oprepo.replaces_operator('View', op, otherclass='symbol')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Array')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('Scalar', op, otherclass='View')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
@@ -2164,6 +2197,11 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('NumConstant', op, otherclass='View')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='Scalar')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
@@ -2189,6 +2227,11 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('BoolConstant', op, otherclass='View')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='Scalar')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
@@ -2211,6 +2254,11 @@ def _makebinop(op, opcode):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='Array')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('symbol', op, otherclass='View')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
