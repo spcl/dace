@@ -430,7 +430,7 @@ class RedundantArray(pm.Transformation):
         if (isinstance(in_desc, data.View) and isinstance(out_desc, data.View)):
             for e in graph.in_edges(in_array):
                 new_memlet = copy.deepcopy(e.data)
-                e.dst_subset = b_subset
+                new_memlet.dst_subset = b_subset
                 graph.add_edge(e.src, e.src_conn, out_array,
                                e.dst_conn, new_memlet)
             graph.remove_node(in_array)
