@@ -191,6 +191,25 @@ class StateFusion(transformation.Transformation):
                     return False
 
         if strict:
+
+            # NOTE: This is quick fix for MPI Waitall (probably also needed for
+            # Wait), until we have a better SDFG representation of the buffer
+            # dependencies.
+            try:
+                from dace.libraries.mpi import Waitall
+                next(node for node in first_state.nodes()
+                     if isinstance(node, Waitall) or node.label == '_Waitall_')
+                return False
+            except StopIteration:
+                pass
+            try:
+                from dace.libraries.mpi import Waitall
+                next(node for node in second_state.nodes()
+                     if isinstance(node, Waitall) or node.label == '_Waitall_')
+                return False
+            except StopIteration:
+                pass
+
             # If second state has other input edges, there might be issues
             # Exceptions are when none of the states contain dataflow, unless
             # the first state is an initial state (in which case the new initial
