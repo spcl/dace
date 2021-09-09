@@ -409,6 +409,8 @@ def _subset_has_indirection(subset, pvisitor: 'ProgramVisitor' = None):
         if not isinstance(dim, tuple):
             dim = [dim]
         for r in dim:
+            if not symbolic.issymbolic(r):
+                continue
             if symbolic.contains_sympy_functions(r):
                 return True
             if pvisitor:
@@ -1172,7 +1174,7 @@ class TaskletTransformer(ExtNodeTransformer):
             arr_type = type(parent_array)
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
-        elif arr_type == data.Array:
+        elif arr_type in (data.Array, data.View):
             self.sdfg.add_array(var_name, shape, dtype, strides=strides)
         elif arr_type == data.Stream:
             self.sdfg.add_stream(var_name, dtype)
@@ -1272,6 +1274,9 @@ class TaskletTransformer(ExtNodeTransformer):
         else:
             raise NotImplementedError
 
+        if isinstance(rng, subsets.Indices):
+            rng = subsets.Range.from_indices(rng)
+
         return rng
 
     def _update_names(self,
@@ -1324,12 +1329,19 @@ class TaskletTransformer(ExtNodeTransformer):
                     if squeezed_rng is not None:
                         # TODO: Fix for `contains_sympy_functions`
                         # not liking ints
-                        memlet.subset = subsets.Range([
-                            (symbolic.pystr_to_symbolic(b),
-                             symbolic.pystr_to_symbolic(e),
-                             symbolic.pystr_to_symbolic(s))
-                            for b, e, s in squeezed_rng.ranges
-                        ])
+                        if isinstance(squeezed_rng, subsets.Indices):
+                            memlet.subset = subsets.Range([
+                                (symbolic.pystr_to_symbolic(i),
+                                 symbolic.pystr_to_symbolic(i), 1)
+                                for i in squeezed_rng.indices
+                            ]) 
+                        else:   
+                            memlet.subset = subsets.Range([
+                                (symbolic.pystr_to_symbolic(b),
+                                symbolic.pystr_to_symbolic(e),
+                                symbolic.pystr_to_symbolic(s))
+                                for b, e, s in squeezed_rng.ranges
+                            ])
                     if self.nested and _subset_has_indirection(rng):
                         memlet = dace.Memlet.simple(memlet.data, rng)
                     if connector in self.inputs or connector in self.outputs:
@@ -1360,12 +1372,19 @@ class TaskletTransformer(ExtNodeTransformer):
                     if squeezed_rng is not None:
                         # TODO: Fix for `contains_sympy_functions`
                         # not liking ints
-                        memlet.subset = subsets.Range([
-                            (symbolic.pystr_to_symbolic(b),
-                             symbolic.pystr_to_symbolic(e),
-                             symbolic.pystr_to_symbolic(s))
-                            for b, e, s in squeezed_rng.ranges
-                        ])
+                        if isinstance(squeezed_rng, subsets.Indices):
+                            memlet.subset = subsets.Range([
+                                (symbolic.pystr_to_symbolic(i),
+                                 symbolic.pystr_to_symbolic(i), 1)
+                                for i in squeezed_rng.indices
+                            ]) 
+                        else:   
+                            memlet.subset = subsets.Range([
+                                (symbolic.pystr_to_symbolic(b),
+                                symbolic.pystr_to_symbolic(e),
+                                symbolic.pystr_to_symbolic(s))
+                                for b, e, s in squeezed_rng.ranges
+                            ])
                     if self.nested and _subset_has_indirection(rng):
                         memlet = dace.Memlet.simple(memlet.data, rng)
                     if self.nested and name in self.sdfg_outputs:
@@ -3410,7 +3429,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 arr_type = data.Scalar
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
-        elif arr_type == data.Array:
+        elif arr_type in (data.Array, data.View):
             if non_squeezed:
                 strides = [parent_array.strides[d] for d in non_squeezed]
             else:
@@ -3603,12 +3622,18 @@ class ProgramVisitor(ExtNodeVisitor):
                             [1], result_data.dtype)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
-                    # elif (name.startswith('__return')
-                    #         and isinstance(result_data, data.View)):
-                    #     assert (result in self.sliced_views)
-                    #     true_name, m = self.sliced_views[result]
-                    #     new_data = self.sdfg.arrays[true_name]
-                    #     rng = m.subset
+                    elif (not name.startswith('__return') and (
+                            isinstance(result_data, data.View) or (
+                                not result_data.transient and
+                                isinstance(result_data, data.Array)))):
+                        true_name, new_data = self.sdfg.add_view(
+                            result, result_data.shape, result_data.dtype,
+                            result_data.storage, result_data.strides,
+                            result_data.offset, find_new_name=True)
+                        self.sliced_views[true_name] = (result, Memlet.from_array(result, result_data))
+                        self.variables[name] = true_name
+                        defined_vars[name] = true_name
+                        continue
                     elif not result_data.transient:
                         true_name, new_data = _add_transient_data(
                             self.sdfg, result_data, dtype)
@@ -3641,6 +3666,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 expr: MemletExpr = ParseMemlet(self, defined_arrays,
                                                true_target, nslice)
                 rng = expr.subset
+                if isinstance(rng, subsets.Indices):
+                    rng = subsets.Range.from_indices(rng)
 
                 # Figure out whether the target subcript is an array-index
                 # indirection or a boolean array
@@ -4388,6 +4415,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         **self.sdfg.arrays,
                         **self.defined
                     }, arg)
+                    if isinstance(expr.subset, subsets.Indices):
+                        expr.subset = subsets.Range.from_indices(expr.subset)
                     name = rname(arg)
                     if name in self.variables.keys():
                         name = self.variables[name]
@@ -4441,6 +4470,10 @@ class ProgramVisitor(ExtNodeVisitor):
             state = self._add_state('globalmemlet_%d' % node.lineno)
             src_expr = ParseMemlet(self, self.defined, src)
             dst_expr = ParseMemlet(self, self.defined, dst)
+            if isinstance(src_expr.subset, subsets.Indices):
+                src_expr.subset = subsets.Range.from_indices(src_expr.subset)
+            if isinstance(dst_expr.subset, subsets.Indices):
+                dst_expr.subset = subsets.Range.from_indices(dst_expr.subset)
             if src_expr.arrdims or dst_expr.arrdims:
                 raise NotImplementedError(
                     'Copying with array indices only allowed through assignment '
@@ -4770,7 +4803,12 @@ class ProgramVisitor(ExtNodeVisitor):
                                              debuginfo=self.current_lineinfo)
             return self._array_indirection_subgraph(rnode, expr)
         else:
-            other_subset = copy.deepcopy(expr.subset)
+            is_index = False
+            if isinstance(expr.subset, subsets.Indices):
+                is_index = True
+                other_subset = subsets.Range([(i, i, 1) for i in expr.subset])
+            else:
+                other_subset = copy.deepcopy(expr.subset)
             strides = list(arrobj.strides)
 
             # Make new axes and squeeze for scalar subsets (as per numpy behavior)
@@ -4785,11 +4823,10 @@ class ProgramVisitor(ExtNodeVisitor):
             sqz = [i for i in range(length) if i not in nsqz]
             for i in reversed(sqz):
                 strides.pop(i)
+            if not strides:
+                strides = None
 
-            # NOTE: This is fixing azimint_hist (issue is `if x == a_max`)
-            # TODO: Follow Numpy, i.e. slicing with indices returns scalar but
-            # slicing with a range of (squeezed) size 1 returns array/view.
-            if all(s == 1 for s in other_subset.size()):
+            if is_index:
                 tmp = self.sdfg.temp_data_name()
                 tmp, tmparr = self.sdfg.add_scalar(tmp,
                                                    arrobj.dtype,
@@ -4917,6 +4954,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node,
                                                nslice)
                 rng = expr.subset
+                if isinstance(rng, subsets.Indices):
+                    rng = subsets.Range.from_indices(rng)
                 new_name, new_rng = self._add_read_access(name, rng, node)
                 new_arr = self.sdfg.arrays[new_name]
                 full_rng = subsets.Range.from_array(new_arr)
