@@ -299,8 +299,7 @@ class CompiledSDFG(object):
                     for arg, arr in initital_args.items():
                         print('- ', arg, ': ', arr)
 
-                    if not compiledSdfg._lib.is_loaded():
-                        compiledSdfg._lib.load()
+                    compiledSdfg._lib.load()
                     compiledSdfg.initialize(*initargtuple)
                     compiledSdfg._cfunc(compiledSdfg._libhandle, *argtuple)
 
@@ -308,8 +307,7 @@ class CompiledSDFG(object):
                 elif mode == 'profile':
                     try:
                         compiledSdfg._lib.load()
-                        if compiledSdfg._initialized is False:
-                            compiledSdfg.initialize(*initargtuple)
+                        compiledSdfg.initialize(*initargtuple)
 
                         hasInstr = vscode.sdfg_has_instrumentation(
                             compiledSdfg._sdfg)
