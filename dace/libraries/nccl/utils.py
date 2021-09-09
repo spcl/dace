@@ -61,8 +61,8 @@ def aggregate_calls(sdfg: dace.SDFG, state: dace.SDFGState,
             except ValueError as ex:
                 warnings.warn(str(ex))
         lib_node.remove_out_connector(group_handle_conn)
-    if sync:
-        code += """\ncudaStreamSynchronize(__dace_current_stream);"""
+    # if sync:
+    #     code += """\ncudaStreamSynchronize(__dace_current_stream);"""
     return code
 
 
