@@ -293,7 +293,19 @@ class CompiledSDFG(object):
                 compiledSdfg._init = None
                 argtuple, initargtuple = compiledSdfg._construct_args(
                     initital_args)
-                if mode == 'profile':
+
+                if mode == 'run':
+                    print('Arguments:')
+                    for arg, arr in initital_args.items():
+                        print('- ', arg, ': ', arr)
+
+                    if not compiledSdfg._lib.is_loaded():
+                        compiledSdfg._lib.load()
+                    compiledSdfg.initialize(*initargtuple)
+                    compiledSdfg._cfunc(compiledSdfg._libhandle, *argtuple)
+
+                    print('Results:\n', compiledSdfg._return_arrays)
+                elif mode == 'profile':
                     try:
                         compiledSdfg._lib.load()
                         if compiledSdfg._initialized is False:
@@ -379,11 +391,12 @@ class CompiledSDFG(object):
                             array.lifetime = dtypes.AllocationLifetime.Persistent
                     # Crete an Accuracy instrumentation for each SDFG State to
                     # retrieve the data
+                    # If the Accessnode is not accessable from the CPU
+                    # then create an AN on the CPU and create an edge between
                     for node, _ in sdfg.all_nodes_recursive():
                         if isinstance(node, state.SDFGState):
                             node.instrument = dtypes.InstrumentationType.Accuracy
 
-                            state_id = sdfg.node_id(node)
                             for an in node.data_nodes():
                                 name = an.data
                                 array = sdfg.data(name)
@@ -441,14 +454,14 @@ class CompiledSDFG(object):
                                 if isinstance(arg_type, dt.Scalar):
                                     arr = np.load(fileName, allow_pickle=True)
                                     print(aname, ': ', arr)
-                                    kwargs.update({aname: arr[0]})
+                                    initital_args.update({aname: arr[0]})
                                 elif isinstance(arg_type, dt.Array):
-                                    kwargs.update({
+                                    initital_args.update({
                                         aname:
                                         np.load(fileName, allow_pickle=True)
                                     })
                             argtuple, initargtuple = newCompiledSdfg._construct_args(
-                                kwargs)
+                                initital_args)
 
                     try:
                         if not newCompiledSdfg._lib.is_loaded():
@@ -482,17 +495,6 @@ class CompiledSDFG(object):
                         if new_sdfg is not None:
                             compiledSdfg._lib.unload()
                             compiledSdfg = new_sdfg.compile(cmake_target=False)
-                elif mode == 'run':
-                    print('Arguments:')
-                    for arg, arr in initital_args.items():
-                        print('- ', arg, ': ', arr)
-
-                    if not compiledSdfg._lib.is_loaded():
-                        compiledSdfg._lib.load()
-                    compiledSdfg.initialize(*initargtuple)
-                    compiledSdfg._cfunc(compiledSdfg._libhandle, *argtuple)
-
-                    print('Results:\n', compiledSdfg._return_arrays)
 
                 response = vscode.send_bp_recv({'type': 'sdfgEditMode'})
                 mode = response['mode']
