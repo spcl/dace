@@ -68,4 +68,3 @@ class AccuracyProvider(InstrumentationProvider):
         if state.instrument == dtypes.InstrumentationType.Accuracy:
             self.on_save_value('State %s' % state.label, local_stream, sdfg,
                                state)
-        sdfg.save(os.path.abspath('.dacecache/accuracy.sdfg'))
