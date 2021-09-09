@@ -429,6 +429,11 @@ class RedundantArray(pm.Transformation):
         # View connected to a view: simple case
         if (isinstance(in_desc, data.View) and isinstance(out_desc, data.View)):
             for e in graph.in_edges(in_array):
+                for e2 in graph.memlet_tree(e):
+                    if e2 is e:
+                        continue
+                    if e2.data.data == in_array.data:
+                        e2.data.data = out_array.data
                 new_memlet = copy.deepcopy(e.data)
                 if new_memlet.data == in_array.data:
                     new_memlet.data = out_array.data
