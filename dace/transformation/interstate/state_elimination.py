@@ -56,7 +56,14 @@ class EndStateElimination(transformation.Transformation):
 
     def apply(self, sdfg):
         state = sdfg.nodes()[self.subgraph[EndStateElimination._end_state]]
+        # Handle orphan symbols (due to the deletion the incoming edge)
+        edge = sdfg.in_edges(state)[0]
+        sym_assign = edge.data.assignments.keys()
         sdfg.remove_node(state)
+        # Remove orphan symbols
+        for sym in sym_assign:
+            if sym in sdfg.free_symbols:
+                sdfg.remove_symbol(sym)
 
 
 @registry.autoregister_params(strict=False)
