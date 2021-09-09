@@ -54,7 +54,6 @@ def stop_and_transform(sdfg):
     })
     # Continues as soon as vscode sends an answer
     sdfg = dace.SDFG.from_file(filename)
-    sdfg.name = sdfg.name + '_t'
     return sdfg
 
 
@@ -174,7 +173,6 @@ def create_report(parent_sdfg: dace.sdfg.SDFG, sdfg_name: str, foldername1: str,
         sdfg_id = int(filename_split[-2])
 
         # Search for the corresponding array in the sdfg
-        # TODO: Improve by passing array once and creating a map
         curr_array = None
         access_node_id = None
         for sdfg, name, array in all_arrays:
@@ -231,10 +229,18 @@ def create_report(parent_sdfg: dace.sdfg.SDFG, sdfg_name: str, foldername1: str,
             print(nparray1)
             print('---------------------------')
 
-    filename = os.path.abspath(os.path.join(sdfg.build_folder, 'program.sdfg'))
+    filename = os.path.abspath(
+        os.path.join(parent_sdfg.build_folder, 'program.sdfg'))
     send_bp_recv({
         'type': 'correctness_report',
         'sdfgName': sdfg_name,
         'filename': filename,
         'reports': reports
     })
+
+    # Load the new SDFG if it has been changed
+    new_sdfg = dace.SDFG.from_file(filename)
+    if new_sdfg.hash_sdfg() != parent_sdfg.hash_sdfg():
+        print('Not same')
+        return new_sdfg
+    return None

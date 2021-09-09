@@ -243,10 +243,10 @@ def configure_and_compile(program_folder,
 
     # Compile and link
     try:
-        if cmake_target:
+        if cmake_target and False:
             _run_liveoutput(
-                "cmake --build . --config %s --target %s" %
-                (Config.get('compiler', 'build_type'), program_name),
+                "cmake --build . --config %s --target CopyDLL" %
+                (Config.get('compiler', 'build_type')),  #, program_name),
                 shell=True,
                 cwd=build_folder,
                 output_stream=output_stream)

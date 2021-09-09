@@ -374,9 +374,9 @@ class MapPython:
         for dbinfo_source in self.debuginfo:
             db_sorted.append(
                 sorted(dbinfo_source,
-                       key=lambda n: (n['debuginfo']['start_line'], n[
-                           'debuginfo']['start_column'], n['debuginfo'][
-                               'end_line'], n['debuginfo']['end_column'])))
+                       key=lambda n: (n['debuginfo']['end_line'] - n[
+                           'debuginfo']['start_line'], n['debuginfo'][
+                               'end_column'] - n['debuginfo']['start_column'])))
         return db_sorted
 
     def make_info(self, debuginfo, node_id: int, state_id: int,
