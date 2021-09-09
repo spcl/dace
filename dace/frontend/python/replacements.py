@@ -4353,19 +4353,21 @@ def reshape(pv: 'ProgramVisitor',
     else:
         strides = [data._prod(newshape[i + 1:]) for i in range(len(newshape))]
 
-    newarr, _ = sdfg.add_view(arr,
-                              newshape,
-                              desc.dtype,
-                              storage=desc.storage,
-                              strides=strides,
-                              allow_conflicts=desc.allow_conflicts,
-                              total_size=desc.total_size,
-                              may_alias=desc.may_alias,
-                              alignment=desc.alignment,
-                              find_new_name=True)
+    newarr, newdesc = sdfg.add_view(arr,
+                                    newshape,
+                                    desc.dtype,
+                                    storage=desc.storage,
+                                    strides=strides,
+                                    allow_conflicts=desc.allow_conflicts,
+                                    total_size=desc.total_size,
+                                    may_alias=desc.may_alias,
+                                    alignment=desc.alignment,
+                                    find_new_name=True)
 
     # Register view with DaCe program visitor
-    pv.views[newarr] = arr
+    aset = subsets.Range.from_array(desc)
+    vset = subsets.Range.from_array(newdesc)
+    pv.views[newarr] = (arr, Memlet(f'{arr}[{aset}]->{vset}'))
 
     return newarr
 
@@ -4417,7 +4419,10 @@ def view(pv: 'ProgramVisitor',
                               find_new_name=True)
 
     # Register view with DaCe program visitor
-    pv.views[newarr] = arr
+    # NOTE: We do not create here a Memlet of the form `A[subset] -> osubset`
+    # because the View can be of a different dtype. Adding `other_subset` in
+    # such cases will trigger validation error.
+    pv.views[newarr] = (arr, Memlet.from_array(arr, desc))
 
     return newarr
 
@@ -4458,17 +4463,19 @@ def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
         w = state.add_write(newarr)
         state.add_nedge(r, w, Memlet(data=arr))
     else:
-        newarr, _ = sdfg.add_view(arr, [totalsize],
-                                  desc.dtype,
-                                  storage=desc.storage,
-                                  strides=[1],
-                                  allow_conflicts=desc.allow_conflicts,
-                                  total_size=totalsize,
-                                  may_alias=desc.may_alias,
-                                  alignment=desc.alignment,
-                                  find_new_name=True)
+        newarr, newdesc = sdfg.add_view(arr, [totalsize],
+                                        desc.dtype,
+                                        storage=desc.storage,
+                                        strides=[1],
+                                        allow_conflicts=desc.allow_conflicts,
+                                        total_size=totalsize,
+                                        may_alias=desc.may_alias,
+                                        alignment=desc.alignment,
+                                        find_new_name=True)
         # Register view with DaCe program visitor
-        pv.views[newarr] = arr
+        aset = subsets.Range.from_array(desc)
+        vset = subsets.Range.from_array(newdesc)
+        pv.views[newarr] = (arr, Memlet(f'{arr}[{aset}]->{vset}'))
 
     return newarr
 

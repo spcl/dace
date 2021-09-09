@@ -1487,8 +1487,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.numbers = dict()  # Dict[str, str]
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
-        self.views: Dict[str, str] = {}  # Keeps track of views
-        self.sliced_views: Dict[str, Tuple[str, Memlet]] = {}
+        self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
 
         # Keep track of map symbols from upper scopes
@@ -1614,38 +1613,20 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.outputs[arrname] = Memlet.from_array(arrname, arr)
         ####
 
-        # Map view access nodes to their respective data
-        for state in self.sdfg.nodes():
-            for vnode in list(state.data_nodes()):
-                if vnode.data in self.views:
-                    if state.in_degree(vnode) == 0:
-                        aname = self.views[vnode.data]
-                        arr = self.sdfg.arrays[aname]
-                        r = state.add_read(aname)
-                        state.add_nedge(r, vnode, Memlet.from_array(aname, arr))
-                    elif state.out_degree(vnode) == 0:
-                        aname = self.views[vnode.data]
-                        arr = self.sdfg.arrays[aname]
-                        w = state.add_write(aname)
-                        state.add_nedge(vnode, w, Memlet.from_array(aname, arr))
-                    else:
-                        raise ValueError(f'View "{vnode.data}" already has'
-                                         'both incoming and outgoing edges')
-
         def _views_to_data(
                 state: SDFGState, nodes: List[dace.nodes.AccessNode]
         ) -> List[dace.nodes.AccessNode]:
             new_nodes = []
             for vnode in nodes:
-                if vnode.data in self.sliced_views:
+                if vnode.data in self.views:
                     if state.in_degree(vnode) == 0:
-                        aname, m = self.sliced_views[vnode.data]
+                        aname, m = self.views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         r = state.add_read(aname)
                         state.add_nedge(r, vnode, copy.deepcopy(m))
                         new_nodes.append(r)
                     elif state.out_degree(vnode) == 0:
-                        aname, m = self.sliced_views[vnode.data]
+                        aname, m = self.views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         w = state.add_write(aname)
                         state.add_nedge(vnode, w, copy.deepcopy(m))
@@ -1655,27 +1636,12 @@ class ProgramVisitor(ExtNodeVisitor):
                                          'both incoming and outgoing edges')
             return new_nodes
 
-        # Map (sliced) view access nodes to their respective data
+        # Map view access nodes to their respective data
         for state in self.sdfg.nodes():
             # NOTE: We need to support views of views
             nodes = list(state.data_nodes())
             while nodes:
                 nodes = _views_to_data(state, nodes)
-            # for vnode in list(state.data_nodes()):
-            #     if vnode.data in self.sliced_views:
-            #         if state.in_degree(vnode) == 0:
-            #             aname, m = self.sliced_views[vnode.data]
-            #             arr = self.sdfg.arrays[aname]
-            #             r = state.add_read(aname)
-            #             state.add_nedge(r, vnode, copy.deepcopy(m))
-            #         elif state.out_degree(vnode) == 0:
-            #             aname, m = self.sliced_views[vnode.data]
-            #             arr = self.sdfg.arrays[aname]
-            #             w = state.add_write(aname)
-            #             state.add_nedge(vnode, w, copy.deepcopy(m))
-            #         else:
-            #             raise ValueError(f'View "{vnode.data}" already has'
-            #                             'both incoming and outgoing edges')
 
         # Try to replace transients with their python-assigned names
         for pyname, arrname in self.variables.items():
@@ -3630,7 +3596,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             result, result_data.shape, result_data.dtype,
                             result_data.storage, result_data.strides,
                             result_data.offset, find_new_name=True)
-                        self.sliced_views[true_name] = (result, Memlet.from_array(result, result_data))
+                        self.views[true_name] = (result, Memlet.from_array(result, result_data))
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
                         continue
@@ -4839,7 +4805,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                                  storage=arrobj.storage,
                                                  strides=strides,
                                                  find_new_name=True)
-                self.sliced_views[tmp] = (
+                self.views[tmp] = (
                     array,
                     Memlet(f'{array}[{expr.subset}]->{other_subset}',
                            volume=expr.accesses,
