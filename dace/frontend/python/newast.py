@@ -212,6 +212,7 @@ def parse_dace_program(f,
                 state.replace(name, existing_name)
         else:
             # Only supported in JIT mode
+            closure_resolver.array_mapping[id(arr)] = name
             closure_resolver.closure_arrays[name] = (arr, desc)
 
     # We save information in a tmp file for improved source mapping.

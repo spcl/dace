@@ -3,7 +3,7 @@ from dace.fpga_testing import fpga_test, import_sample
 from pathlib import Path
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test()
 def test_gemv_fpga():
     gemv = import_sample(Path("fpga") / "gemv_fpga.py")
     return gemv.run_gemv(1024, 1024, False)
