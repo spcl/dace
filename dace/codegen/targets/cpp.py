@@ -4,6 +4,7 @@ Helper functions for C++ code generation.
 NOTE: The C++ code generator is currently located in cpu.py.
 """
 import ast
+from collections import defaultdict
 import copy
 import functools
 import itertools
@@ -858,9 +859,9 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
         max_streams = int(
             Config.get("compiler", "cuda", "max_concurrent_streams"))
         gpu_id = sdutils.get_gpu_location(sdfg, node)
-        if not is_devicelevel_gpu(sdfg, state_dfg, node) and (
-                hasattr(node, "_cuda_stream")
-                or connected_to_gpu_memory(node, state_dfg, sdfg)):
+        if (not is_devicelevel_gpu(sdfg, state_dfg, node)
+                and (hasattr(node, "_cuda_stream")
+                     or connected_to_gpu_memory(node, state_dfg, sdfg))):
             if max_streams >= 0:
                 callsite_stream.write(
                     '''\
@@ -1361,6 +1362,40 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
                 state_id,
                 [e.src, e.dst],
             )
+
+
+# TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
+def postsynchronize_streams_node(sdfg, dfg, state_id, node, callsite_stream):
+    state_dfg = sdfg.nodes()[state_id]
+    if is_devicelevel_gpu(sdfg, state_dfg, node):
+        return
+    backend = Config.get('compiler', 'cuda', 'backend')
+    node_stream = getattr(node, '_cuda_stream', None)
+    node_gpu_id = sdutils.get_gpu_location(sdfg, node)
+    if (node_stream is not None):
+        sync_stream = f"__state->gpu_context->at({node_gpu_id}).streams[{node._cuda_stream[node_gpu_id]}]"
+        events = defaultdict(set)
+        ldst = None
+        for e in state_dfg.out_edges(node):
+            dst = e.dst
+            gpu_id = sdutils.get_gpu_location(sdfg, dst)
+            if (isinstance(dst, nodes.AccessNode)
+                    and isinstance(sdfg.arrays[dst.data], data.View)):
+                if hasattr(e, '_cuda_event'):
+                    dst_gpu_id = sdutils.get_gpu_location(sdfg, e.dst)
+                    events[gpu_id].add(
+                        ((dst_gpu_id, e.dst._cuda_stream[dst_gpu_id]),
+                         e._cuda_event))
+                    ldst = dst
+
+        for gpu_id, stream_event_set in events.items():
+            sync_string = f'''\n{backend}SetDevice({gpu_id});\n'''
+            for gpu_stream, event in stream_event_set:
+                sync_event = f'__state->gpu_context->at({gpu_id}).events[{event}]'
+                sync_string += f'''{backend}EventRecord({sync_event}, {sync_stream});\n'''
+                to_sync_stream = f"__state->gpu_context->at({gpu_stream[0]}).streams[{gpu_stream[1]}]"
+                sync_string += f'''{backend}StreamWaitEvent({to_sync_stream}, {sync_event}, 0);\n'''
+            callsite_stream.write(sync_string, sdfg, state_id, [ldst])
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
