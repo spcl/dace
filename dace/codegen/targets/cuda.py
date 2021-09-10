@@ -1404,7 +1404,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                          dfg: ScopeSubgraphView, input_node: nodes.AccessNode,
                          output_node: nodes.AccessNode,
                          reduction_type: dtypes.ReductionType,
-                         wcr_expression: str):
+                         wcr_expression: str, memlet: dace.Memlet):
         """
         Wraps system wide atomics call in a kernel.
         """
@@ -1428,6 +1428,16 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             input_node.data: input_data,
             output_node.data: output_data
         }
+        in_out_free_symbols = set()
+        in_out_free_symbols.update(input_data.free_symbols,
+                                   output_data.free_symbols)
+        in_out_free_symbols.discard(input_data.location.get('gpu', None))
+        in_out_free_symbols.discard(output_data.location.get('gpu', None))
+        dfg_args = dfg.arglist()
+        if str(input_data.location.get('gpu', None)) in memlet.free_symbols:
+            kernel_args[str(input_data.location['gpu'])] = dt.Scalar(dace.int32)
+        for sym in in_out_free_symbols:
+            kernel_args[str(sym)] = dfg_args[str(sym)]
 
         kernel_args_typed = [
             ('const ' if k == const_params else '') + v.as_arg(name=k)
@@ -1482,9 +1492,11 @@ __global__ void {id}({fargs})
             f"""
 DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
         """, sdfg, state_id, [input_node, output_node])
-
+        kernel_call_parameters = ', '.join(
+            ['__state'] +
+            [cpp.ptr(aname, arg, sdfg) for aname, arg in kernel_args.items()])
         sdfg.append_global_code(host_globalcode.getvalue())
-        wcr_expression = f'__dace_runkernel_{kernel_name}(__state, {input_node.data}, {output_node.data}, {cudastream});'
+        wcr_expression = f'__dace_runkernel_{kernel_name}({kernel_call_parameters}, {cudastream});'
         if self._debugprint:
             wcr_expression = f'''printf("__dace_runkernel_{kernel_name}\\n");\n''' + wcr_expression
 
@@ -1532,7 +1544,8 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
         # Wrap system wide atomics call into a kernel
         if atomic == '_atomic_system':
             return self._kernel_wrap_wcr(sdfg, state_id, dfg, input_node,
-                                         output_node, redtype, wcr_expression)
+                                         output_node, redtype, wcr_expression,
+                                         memlet)
         else:
             return wcr_expression
 
