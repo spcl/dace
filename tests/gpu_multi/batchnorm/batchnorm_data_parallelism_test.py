@@ -7,6 +7,7 @@ import dace.libraries.nccl as nccl
 from dace.libraries.standard import Reduce
 from dace.transformation.interstate import GPUTransformSDFG
 from dace.transformation.dataflow import RedundantSecondArray, RedundantArray, MapFusion
+from dace.transformation.subgraph import SubgraphFusion
 from dace.sdfg.infer_types import (
     set_default_schedule_storage_types_and_location, infer_connector_types)
 
@@ -37,38 +38,22 @@ def batchnorm2d_data_parallelism_gpu(x_gpu: dc_dtype[N_gpu, H, W, C],
 
 @dace.program
 def batchnorm2d_data_parallelism(x: dc_dtype[N, H, W, C]):
-    x_pinned = dace.ndarray([N, H, W, C],
-                            dc_dtype,
-                            storage=dace.StorageType.CPU_Pinned)
-    x_pinned[:] = x[:]
     for gpu_id in dace.map[0:number_of_gpus]:
         x_gpu = dace.ndarray([N_gpu, H, W, C],
                              dtype=dc_dtype,
                              storage=dace.StorageType.GPU_Global)
-        x_gpu[:] = x_pinned[N_gpu * gpu_id:N_gpu * (gpu_id + 1)]
-        # batchnorm2d_data_parallelism_gpu(x_gpu, N)
+        x_gpu[:] = x[N_gpu * gpu_id:N_gpu * (gpu_id + 1)]
         x_tmp = dace.ndarray([N_gpu, H, W, C], dtype=dc_dtype)
         x_mean = dace.ndarray([H, W, C], dtype=dc_dtype)
         x_std = dace.ndarray([H, W, C], dtype=dc_dtype)
         dace.reduce(lambda a, b: a + b, x_gpu, x_mean, axis=(0), identity=0)
-        # dace.comm.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
-        # fn = np.float32(N)
-        # x_mean[:] = x_mean[:] / fn
-        # x_gpu[:] = x_gpu - x_mean
-        # x_tmp[:] = x_gpu * x_gpu
-        # dace.reduce(lambda a, b: a + b, x_tmp, x_std, axis=(0), identity=0)
-        # dace.comm.nccl.allreduce(lambda a, b: a + b, x_std, x_std)
-        # x_std[:] = np.sqrt(x_std / fn)
         dace.comm.nccl.allreduce(lambda a, b: a + b, x_mean, x_mean)
-        x_mean[:] = x_mean[:] / NN
-        x_gpu[:] = x_gpu - x_mean
+        x_gpu[:] = x_gpu - x_mean / NN
         x_tmp[:] = x_gpu * x_gpu
         dace.reduce(lambda a, b: a + b, x_tmp, x_std, axis=(0), identity=0)
         dace.comm.nccl.allreduce(lambda a, b: a + b, x_std, x_std)
-        x_std[:] = np.sqrt(x_std / NN)
-        x_gpu[:] = x_gpu / np.sqrt(x_std + 1e-5)
-        x_pinned[N_gpu * gpu_id:N_gpu * (gpu_id + 1)] = x_gpu[:]
-    x[:] = x_pinned[:]
+        x_gpu[:] = x_gpu / np.sqrt(np.sqrt(x_std / NN) + 1e-5)
+        x[N_gpu * gpu_id:N_gpu * (gpu_id + 1)] = x_gpu[:]
 
 
 @pytest.mark.skip
