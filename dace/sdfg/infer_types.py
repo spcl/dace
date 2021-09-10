@@ -371,4 +371,4 @@ def _set_default_gpu_location_in_scope(
             if (child.schedule in dtypes.GPU_SCHEDULES
                     and 'gpu' not in child.location and parent_gpu_id != None):
                 child.location['gpu'] = parent_gpu_id
-            _set_default_gpu_location(child.sdfg, parent_gpu_id)
+            _set_default_gpu_location(child.sdfg, child.location['gpu'])
