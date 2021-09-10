@@ -3388,28 +3388,31 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         self._cpu_codegen._generate_NestedSDFG(sdfg, dfg, state_id, node,
                                                function_stream, callsite_stream)
-        # synchronization
-        node_stream = getattr(node, '_cuda_stream', None)
-        node_gpu_id = sdutil.get_gpu_location(sdfg, node)
-        sync_stream = f"__state->gpu_context->at({node_gpu_id}).streams[{node._cuda_stream[node_gpu_id]}]"
-        if (node_stream is not None):
-            events = collections.defaultdict(set)
-            for e in dfg.out_edges(node):
-                dst = e.dst
-                gpu_id = sdutil.get_gpu_location(sdfg, dst)
-                if hasattr(e, '_cuda_event'):
-                    dst_gpu_id = sdutil.get_gpu_location(sdfg, e.dst)
-                    events[gpu_id].add(
-                        ((dst_gpu_id, e.dst._cuda_stream[dst_gpu_id]),
-                         e._cuda_event))
-            for gpu_id, stream_event_set in events.items():
-                sync_string = f'''\n{self.backend}SetDevice({gpu_id});\n'''
-                for gpu_stream, event in stream_event_set:
-                    sync_event = f'__state->gpu_context->at({gpu_id}).events[{event}]'
-                    sync_string += f'''{self.backend}EventRecord({sync_event}, {sync_stream});\n'''
-                    to_sync_stream = f"__state->gpu_context->at({gpu_stream[0]}).streams[{gpu_stream[1]}]"
-                    sync_string += f'''{self.backend}StreamWaitEvent({to_sync_stream}, {sync_event}, 0);\n'''
-                callsite_stream.write(sync_string, sdfg, state_id, [node])
+
+        cpp.synchronize_streams(sdfg, dfg, state_id, node, node,
+                                callsite_stream)
+        # # synchronization
+        # node_stream = getattr(node, '_cuda_stream', None)
+        # node_gpu_id = sdutil.get_gpu_location(sdfg, node)
+        # sync_stream = f"__state->gpu_context->at({node_gpu_id}).streams[{node._cuda_stream[node_gpu_id]}]"
+        # if (node_stream is not None):
+        #     events = collections.defaultdict(set)
+        #     for e in dfg.out_edges(node):
+        #         dst = e.dst
+        #         gpu_id = sdutil.get_gpu_location(sdfg, dst)
+        #         if hasattr(e, '_cuda_event'):
+        #             dst_gpu_id = sdutil.get_gpu_location(sdfg, e.dst)
+        #             events[gpu_id].add(
+        #                 ((dst_gpu_id, e.dst._cuda_stream[dst_gpu_id]),
+        #                  e._cuda_event))
+        #     for gpu_id, stream_event_set in events.items():
+        #         sync_string = f'''\n{self.backend}SetDevice({gpu_id});\n'''
+        #         for gpu_stream, event in stream_event_set:
+        #             sync_event = f'__state->gpu_context->at({gpu_id}).events[{event}]'
+        #             sync_string += f'''{self.backend}EventRecord({sync_event}, {sync_stream});\n'''
+        #             to_sync_stream = f"__state->gpu_context->at({gpu_stream[0]}).streams[{gpu_stream[1]}]"
+        #             sync_string += f'''{self.backend}StreamWaitEvent({to_sync_stream}, {sync_event}, 0);\n'''
+        #         callsite_stream.write(sync_string, sdfg, state_id, [node])
 
         self._cpu_codegen.calling_codegen = old_codegen
         self._toplevel_schedule = old_schedule
