@@ -1,13 +1,13 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains the GPUMultiTransformMap transformation. """
-
+import dace
 from dace import dtypes, registry
 from dace.data import Scalar
-from dace.sdfg import has_dynamic_map_inputs
 from dace.sdfg import utils as sdutil
 from dace.sdfg import nodes, SDFG, SDFGState, infer_types
 from dace.properties import make_properties, Property, SymbolicProperty
 from dace.transformation import transformation
+from dace.sdfg import has_dynamic_map_inputs
 from dace.properties import make_properties
 from dace.config import Config
 from dace.symbolic import SymbolicType
@@ -83,6 +83,10 @@ class GPUMultiTransformMap(transformation.Transformation):
         if (Config.get("compiler", "cuda", "max_number_gpus") < 2):
             return False
 
+        # Dynamic map ranges not supported
+        if has_dynamic_map_inputs(graph, map_entry):
+            return False
+
         # Only accept maps with a default schedule
         schedule_whitelist = [dtypes.ScheduleType.Default]
         sdict = graph.scope_dict()
@@ -91,10 +95,6 @@ class GPUMultiTransformMap(transformation.Transformation):
             if parent.map.schedule not in schedule_whitelist:
                 return False
             parent = sdict[parent]
-
-        # Dynamic map ranges not supported
-        if has_dynamic_map_inputs(graph, map_entry):
-            return False
 
         # Library nodes inside the scope are not supported
         scope_subgraph = graph.scope_subgraph(map_entry)
@@ -266,3 +266,6 @@ class GPUMultiTransformMap(transformation.Transformation):
         # as it got added as a symbol in StripMining.
         if outer_map.params[0] in sdfg.free_symbols:
             sdfg.remove_symbol(outer_map.params[0])
+
+        # infer types inside the sdfg
+        infer_types.set_default_schedule_storage_types_and_location(sdfg)
