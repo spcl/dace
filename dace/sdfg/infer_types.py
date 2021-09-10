@@ -160,12 +160,12 @@ def _scopes_with_tbmaps(state: SDFGState, scopes: List[nodes.EntryNode]):
     return scopes_with_tbmaps
 
 
-def _set_default_schedule_in_scope(parent_node: nodes.Node,
+def _set_default_schedule_in_scope(state: SDFGState,
+                                   parent_node: nodes.Node,
                                    parent_schedule: dtypes.ScheduleType,
                                    reverse_scope_dict: Dict[nodes.Node,
                                                             List[nodes.Node]],
-                                   use_parent_schedule: bool = False,
-                                   state: SDFGState = None):
+                                   use_parent_schedule: bool = False):
     for node in reverse_scope_dict[parent_node]:
         if use_parent_schedule:
             child_schedule = parent_schedule
@@ -183,14 +183,14 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
             if node.map.schedule is dtypes.ScheduleType.Default:
                 node.map.schedule = child_schedule
             # Also traverse children (recursively)
-            _set_default_schedule_in_scope(node, node.map.schedule,
+            _set_default_schedule_in_scope(state, node, node.map.schedule,
                                            reverse_scope_dict)
         elif isinstance(node, nodes.ConsumeEntry):
             if node.consume.schedule is dtypes.ScheduleType.Default:
                 node.consume.schedule = child_schedule
 
             # Also traverse children (recursively)
-            _set_default_schedule_in_scope(node, node.consume.schedule,
+            _set_default_schedule_in_scope(state, node, node.consume.schedule,
                                            reverse_scope_dict)
         elif isinstance(node, nodes.NestedSDFG):
             # Nested SDFGs retain same schedule as their parent scope
@@ -213,9 +213,8 @@ def _set_default_schedule_types(sdfg: SDFG,
         reverse_scope_dict = state.scope_children()
 
         # Start with top-level nodes and call recursively
-        _set_default_schedule_in_scope(None, toplevel_schedule,
-                                       reverse_scope_dict, use_parent_schedule,
-                                       state)
+        _set_default_schedule_in_scope(state, None, toplevel_schedule,
+                                       reverse_scope_dict, use_parent_schedule)
 
 
 def _set_default_storage_types(sdfg: SDFG,
