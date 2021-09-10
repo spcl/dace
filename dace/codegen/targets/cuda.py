@@ -2176,6 +2176,10 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
                 # ignoring guard states) use ONLY the same streams as the
                 # current state does, and there is only one such stream,
                 # then we can skip synchronization.
+                # 3. If this state is the the last state in a nested SDFG and
+                # there is only one stream to sync and that stream is the same
+                # as the stream of the nested SDFG, then we can skip
+                # synchronization.
                 next_states = sdutil.get_next_nonempty_states(sdfg, state)
                 if len(streams_to_sync) == 1:
                     # Could be nested SDFG, so we check the parent state.
@@ -2184,6 +2188,11 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
                         nsdfg_node = sdfg.parent_nsdfg_node
                         p_sdfg = sdfg.parent_sdfg
                         p_state = p_sdfg.find_parent_state(nsdfg_node)
+                        stream_to_sync = next(iter(streams_to_sync))
+                        if (hasattr(nsdfg_node, '_cuda_stream')
+                                and nsdfg_node._cuda_stream[stream_to_sync[0]]
+                                == stream_to_sync[1]):
+                            streams_to_sync = set()
                         for child_node in p_state.dfs_nodes(nsdfg_node):
                             if hasattr(child_node, '_cuda_stream'
                                        ) and not child_node._cuda_stream.items(
