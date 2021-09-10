@@ -74,7 +74,7 @@ class ExpandAllreduceNCCL(ExpandTransformation):
                 f'''printf("{str(node)}: end;  dev: %d\\n\\n", __dace_cuda_device);\n'''
             )
 
-        code = nutil.aggregate_calls(sdfg, state, node, code)
+        code += """\ncudaStreamSynchronize(__dace_current_stream);"""
 
         tasklet = nodes.Tasklet(node.name + "_" + wcr_str,
                                 node.in_connectors,
