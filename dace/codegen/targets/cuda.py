@@ -1383,6 +1383,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         for gpu_id in gpu_id_map[src_gpu]:
                             # Increment the number of events
                             events[gpu_id] = event + 1
+                        if (isinstance(e.dst, nodes.AccessNode) and isinstance(
+                                sdfg.arrays[e.dst.data], dt.View)):
+                            for src_e in state.out_edges(e.src):
+                                if ((isinstance(src_e.dst, nodes.AccessNode)
+                                     and isinstance(sdfg.arrays[src_e.dst.data],
+                                                    dt.View)) and
+                                        getattr(src_e.dst, '_cuda_stream',
+                                                None) == e.dst._cuda_stream):
+                                    src_e._cuda_event = event
 
             # Update state_events
             for gpu in gpu_values:
@@ -1697,23 +1706,19 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
                 return  # Do nothing (handled by ArrayStreamView)
 
             syncwith = {}  # Dictionary of {stream: event}
-            is_sync = False
+            is_sync = None
             max_streams = self._concurrent_streams
-            if hasattr(src_node,
-                       '_cuda_stream') and src_gpuid in src_node._cuda_stream:
+            if hasattr(src_node, '_cuda_stream'):
                 cudastream = src_node._cuda_stream[src_gpuid]
-                if not hasattr(dst_node, '_cuda_stream'
-                               ) or not dst_gpuid in dst_node._cuda_stream:
+                if not hasattr(dst_node, '_cuda_stream'):
                     # Copy after which data is needed by the host
                     is_sync = True
-                elif dst_node._cuda_stream[dst_gpuid] != src_node._cuda_stream[
-                        src_gpuid]:
+                elif dst_node._cuda_stream != src_node._cuda_stream:
                     syncwith[
                         dst_node._cuda_stream[dst_gpuid]] = edge._cuda_event
                 else:
                     pass  # Otherwise, no need to synchronize
-            elif hasattr(dst_node,
-                         '_cuda_stream') and dst_gpuid in dst_node._cuda_stream:
+            elif hasattr(dst_node, '_cuda_stream'):
                 cudastream = dst_node._cuda_stream[dst_gpuid]
             else:
                 if max_streams >= 0:
@@ -1727,13 +1732,13 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
                 for e in state_dfg.out_edges(dst_node):
                     if isinstance(e.dst, nodes.AccessNode):
                         continue
-                    if not hasattr(e.dst, '_cuda_stream'
-                                   ) or not dst_gpuid in e.dst._cuda_stream:
-                        is_sync = True
-                    elif not hasattr(e, '_cuda_event'):
+                    if (is_sync is not False
+                            and (not hasattr(e.dst, '_cuda_stream')
+                                 and not hasattr(e, '_cuda_event'))):
                         is_sync = True
                     elif e.dst._cuda_stream[dst_gpuid] != cudastream:
                         syncwith[e.dst._cuda_stream[dst_gpuid]] = e._cuda_event
+                        is_sync = False
 
                 if cudastream != 'nullptr':
                     cudastream = '__state->gpu_context->at(%s).streams[%d]' % (
@@ -2168,6 +2173,24 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
                             for ns in next_states):
                         # Relax synchronization
                         streams_to_sync = set()
+                # If there is only one reachable state and all its used CUDA
+                # streams are a subset of the streams we have to sink, we can
+                # remove the streams of the source nodes of the following state.
+                elif len(next_states) == 1:
+                    next_state = next(iter(next_states))
+                    src_nodes_cuda_streams = set()
+                    next_state_cuda_streams = set()
+                    for source in next_state.source_nodes():
+                        if hasattr(source, '_cuda_stream'):
+                            src_nodes_cuda_streams.update(
+                                source._cuda_stream.items())
+                    for node in next_state.nodes():
+                        if hasattr(node, '_cuda_stream'):
+                            next_state_cuda_streams.update(
+                                node._cuda_stream.items())
+                    if next_state_cuda_streams.issubset(streams_to_sync):
+                        streams_to_sync.difference_update(
+                            src_nodes_cuda_streams)
 
                 # Synchronize CUDA streams
                 for stream in streams_to_sync:
