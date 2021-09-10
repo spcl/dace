@@ -1245,16 +1245,28 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Check if the node needs to be annotated with a CUDA stream.
         if node_gpu_id in gpu_ids:
             # This node needs to be annotated
-
+            # If the node is a source of the state and has only one successor
+            # that resides on the same GPU and already has a CUDA stream, this
+            # node can have the same CUDA stream as its successor.
             parent_gpu_id = sdutil.get_gpu_location(graph, parent)
+            if (parent is None and
+                ((len(graph.successors(node)) == 1 and sdutil.get_gpu_location(
+                    graph,
+                    graph.successors(node)[0]) == node_gpu_id)
+                 and hasattr(graph.successors(node)[0], '_cuda_stream'))):
+                node._cuda_stream = {
+                    node_gpu_id:
+                    graph.successors(node)[0]._cuda_stream[node_gpu_id]
+                }
             # If the parent is a CUDA kernel or a CodeNode with a CUDA stream
             # located on same GPU, the node must have the parent's CUDA stream.
-            if (hasattr(parent, '_cuda_stream') and parent_gpu_id == node_gpu_id
-                    and (isinstance(parent, nodes.ExitNode)
-                         and graph.entry_node(parent).schedule in [
-                             dtypes.ScheduleType.GPU_Device,
-                             dtypes.ScheduleType.GPU_Persistent
-                         ]) or isinstance(parent, nodes.CodeNode)):
+            elif (hasattr(parent, '_cuda_stream')
+                  and parent_gpu_id == node_gpu_id
+                  and ((isinstance(parent, nodes.ExitNode)
+                        and graph.entry_node(parent).schedule in [
+                            dtypes.ScheduleType.GPU_Device,
+                            dtypes.ScheduleType.GPU_Persistent
+                        ]) or isinstance(parent, nodes.CodeNode))):
                 node._cuda_stream = {
                     node_gpu_id: parent._cuda_stream[node_gpu_id]
                 }
