@@ -4,7 +4,7 @@ from dace.codegen.tools import type_inference
 from dace.config import Config
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import nodes
-from dace.sdfg.utils import dfs_topological_sort
+from dace.sdfg.utils import dfs_topological_sort, has_dynamic_map_inputs
 from dace.symbolic import SymbolicType, pystr_to_symbolic, symbol
 from typing import Dict, List, Union
 
@@ -164,7 +164,8 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
                                    parent_schedule: dtypes.ScheduleType,
                                    reverse_scope_dict: Dict[nodes.Node,
                                                             List[nodes.Node]],
-                                   use_parent_schedule: bool = False):
+                                   use_parent_schedule: bool = False,
+                                   state: SDFGState = None):
     for node in reverse_scope_dict[parent_node]:
         if use_parent_schedule:
             child_schedule = parent_schedule
@@ -176,6 +177,9 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
             child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
         # Set default schedule type
         if isinstance(node, nodes.MapEntry):
+            if (parent_schedule is dtypes.ScheduleType.GPU_Device
+                    and has_dynamic_map_inputs(state, node)):
+                node.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
             if node.map.schedule is dtypes.ScheduleType.Default:
                 node.map.schedule = child_schedule
             # Also traverse children (recursively)
@@ -210,7 +214,8 @@ def _set_default_schedule_types(sdfg: SDFG,
 
         # Start with top-level nodes and call recursively
         _set_default_schedule_in_scope(None, toplevel_schedule,
-                                       reverse_scope_dict, use_parent_schedule)
+                                       reverse_scope_dict, use_parent_schedule,
+                                       state)
 
 
 def _set_default_storage_types(sdfg: SDFG,
