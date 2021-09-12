@@ -484,4 +484,5 @@ class MapPython:
                                     if str(line_after) in src_map:
                                         src_map[str(line)] = src_map[str(
                                             line_after)]
+                                        break
                 self.map[src_file] = src_map
