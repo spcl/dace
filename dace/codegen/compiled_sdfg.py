@@ -417,7 +417,7 @@ class CompiledSDFG(object):
                                             dtypes.ScheduleType.Default,
                                             array.storage):
                                         arr_name, _ = sdfg.add_array(
-                                            name + '_cpu',
+                                            name + '__cpu',
                                             array.shape,
                                             array.dtype,
                                             lifetime=dtypes.AllocationLifetime.

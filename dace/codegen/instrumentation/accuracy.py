@@ -30,9 +30,14 @@ class AccuracyProvider(InstrumentationProvider):
             if (isinstance(array, data.Array)
                     and array.storage != dtypes.StorageType.Register):
 
-                # The file path the data will be saved to
+                # The file path the data will be saved to.
+                # If the array is the cpu version of a gpu array, then use
+                # for the filename the array of the gpu array
+                arr_name = name
+                if name.endswith('__cpu'):
+                    arr_name = name.split[:-5]
                 filepath = os.path.join(
-                    folderpath, name + '_' + str(sdfg.sdfg_id) + '_' +
+                    folderpath, arr_name + '_' + str(sdfg.sdfg_id) + '_' +
                     str(state_id) + '.bin').replace('\\', '/')
 
                 # Array length calculation as string, example: W * H
@@ -44,7 +49,7 @@ class AccuracyProvider(InstrumentationProvider):
                                          array.storage):
                     continue
 
-                if not array.transient:
+                elif not array.transient:
                     array_access = name
                 else:
                     array_access = '''__state->__{sdfg_id}_{arrayname}'''.format(
