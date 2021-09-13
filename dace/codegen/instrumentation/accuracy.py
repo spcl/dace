@@ -31,7 +31,6 @@ class AccuracyProvider(InstrumentationProvider):
                     and array.storage != dtypes.StorageType.Register):
 
                 # The file path the data will be saved to
-
                 filepath = os.path.join(
                     folderpath, name + '_' + str(sdfg.sdfg_id) + '_' +
                     str(state_id) + '.bin').replace('\\', '/')

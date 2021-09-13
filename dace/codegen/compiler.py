@@ -102,8 +102,7 @@ def generate_program_folder(sdfg,
 
 def configure_and_compile(program_folder,
                           program_name=None,
-                          output_stream=None,
-                          cmake_target=False):
+                          output_stream=None):
     """ Configures and compiles a DaCe program in the specified folder into a
         shared library file.
 
@@ -243,19 +242,11 @@ def configure_and_compile(program_folder,
 
     # Compile and link
     try:
-        if cmake_target and False:
-            _run_liveoutput(
-                "cmake --build . --config %s --target CopyDLL" %
-                (Config.get('compiler', 'build_type')),  #, program_name),
-                shell=True,
-                cwd=build_folder,
-                output_stream=output_stream)
-        else:
-            _run_liveoutput("cmake --build . --config %s" %
-                            (Config.get('compiler', 'build_type')),
-                            shell=True,
-                            cwd=build_folder,
-                            output_stream=output_stream)
+        _run_liveoutput("cmake --build . --config %s" %
+                        (Config.get('compiler', 'build_type')),
+                        shell=True,
+                        cwd=build_folder,
+                        output_stream=output_stream)
     except subprocess.CalledProcessError as ex:
         # If unsuccessful, print results
         if Config.get_bool('debugprint'):

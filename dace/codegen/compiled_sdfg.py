@@ -295,6 +295,8 @@ class CompiledSDFG(object):
                     initital_args)
 
                 if mode == 'run':
+                    # Runs the SDFG program once.
+                    # Prints all arguments and results.
                     print('Arguments:')
                     for arg, arr in initital_args.items():
                         print('- ', arg, ': ', arr)
@@ -305,6 +307,7 @@ class CompiledSDFG(object):
 
                     print('Results:\n', compiledSdfg._return_arrays)
                 elif mode == 'profile':
+                    # Profiles the current SDFG version
                     try:
                         compiledSdfg._lib.load()
                         compiledSdfg.initialize(*initargtuple)
@@ -323,9 +326,7 @@ class CompiledSDFG(object):
                             compiler.generate_program_folder(
                                 sdfg, program_objects, sdfg.build_folder)
                             compiler.configure_and_compile(
-                                sdfg.build_folder,
-                                program_name=sdfg.name,
-                                cmake_target=False)
+                                sdfg.build_folder, program_name=sdfg.name)
 
                         operations.timethis(compiledSdfg._sdfg,
                                             compiledSdfg._sdfg.name, 0,
@@ -345,20 +346,29 @@ class CompiledSDFG(object):
                         compiledSdfg._lib.unload()
                         raise
                 elif mode == 'load':
+                    # Loads a new SDFG if its different to the current one
                     sdfg = vscode.stop_and_load()
                     if (sdfg and
                             sdfg.hash_sdfg() != compiledSdfg._sdfg.hash_sdfg()):
                         compiledSdfg = sdfg.compile()
                 elif mode == 'save':
+                    # Saves the current SDFG to location specified by the user
                     vscode.stop_and_save(compiledSdfg._sdfg)
                 elif mode == 'transform':
+                    # Renders the SDFG in VSCode and loads the new SDFG
                     sdfg = vscode.stop_and_transform(compiledSdfg._sdfg)
                     if sdfg.hash_sdfg() != compiledSdfg._sdfg.hash_sdfg():
+                        # Rename to mitigate the library LINK ERROR
                         sdfg.name = sdfg.name + '_t'
                         compiledSdfg._lib.unload()
-                        compiledSdfg = sdfg.compile(cmake_target=False)
+                        compiledSdfg = sdfg.compile()
                 elif mode == 'report' or (mode == 'verification'
                                           and 'foldername' in response):
+                    # REPORT:   Create a report of the SDFG by dumping intermidiate
+                    #           results to an accuracy file
+                    # VERIFICATION: Creates a report with the same initial args
+                    #           as the referenced report. Computes the difference
+                    #           of the intermidiate results between both reports.
                     if mode == 'verification':
                         refReportFolder = response['foldername']
                         # Check if the folder is a accuracy report folder
@@ -389,12 +399,13 @@ class CompiledSDFG(object):
                             array.lifetime = dtypes.AllocationLifetime.Persistent
                     # Crete an Accuracy instrumentation for each SDFG State to
                     # retrieve the data
-                    # If the Accessnode is not accessable from the CPU
-                    # then create an AN on the CPU and create an edge between
                     for node, _ in sdfg.all_nodes_recursive():
                         if isinstance(node, state.SDFGState):
                             node.instrument = dtypes.InstrumentationType.Accuracy
 
+                            # If an Accessnode is not accessable from the CPU
+                            # then create an AN on the CPU and create an edge
+                            # between both AN
                             for an in node.data_nodes():
                                 name = an.data
                                 array = sdfg.data(name)
@@ -402,7 +413,6 @@ class CompiledSDFG(object):
                                 if (isinstance(array, dt.Array)
                                         and array.storage !=
                                         dtypes.StorageType.Register):
-
                                     if not dtypes.can_access(
                                             dtypes.ScheduleType.Default,
                                             array.storage):
@@ -419,9 +429,10 @@ class CompiledSDFG(object):
                                                       mm)
 
                     compiledSdfg._lib.unload()
-                    newCompiledSdfg = sdfg.compile(cmake_target=False)
+                    newCompiledSdfg = sdfg.compile()
 
                     # Write the function arguments to the report file
+                    # so that in a future comparison the sam args are used
                     currentReportFolder = os.path.abspath(
                         os.path.join(newCompiledSdfg._sdfg.build_folder,
                                      'accuracy',
@@ -451,7 +462,6 @@ class CompiledSDFG(object):
                                     continue
                                 if isinstance(arg_type, dt.Scalar):
                                     arr = np.load(fileName, allow_pickle=True)
-                                    print(aname, ': ', arr)
                                     initital_args.update({aname: arr[0]})
                                 elif isinstance(arg_type, dt.Array):
                                     initital_args.update({
@@ -480,10 +490,9 @@ class CompiledSDFG(object):
                             KeyError, cgx.DuplicateDLLError, ReferenceError):
                         newCompiledSdfg._lib.unload()
                         raise
-                    # Change back to the normal code
+                    # Change back to the initial code
                     compiledSdfg._lib.unload()
-                    compiledSdfg = compiledSdfg._sdfg.compile(
-                        cmake_target=False)
+                    compiledSdfg = compiledSdfg._sdfg.compile()
 
                     if mode == 'verification' and refReportFolder:
                         new_sdfg = vscode.create_report(compiledSdfg._sdfg,
@@ -492,7 +501,7 @@ class CompiledSDFG(object):
                                                         refReportFolder)
                         if new_sdfg is not None:
                             compiledSdfg._lib.unload()
-                            compiledSdfg = new_sdfg.compile(cmake_target=False)
+                            compiledSdfg = new_sdfg.compile()
 
                 response = vscode.send_bp_recv({'type': 'sdfgEditMode'})
                 mode = response['mode']
