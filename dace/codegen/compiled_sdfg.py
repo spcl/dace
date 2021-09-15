@@ -399,7 +399,7 @@ class CompiledSDFG(object):
                             array.lifetime = dtypes.AllocationLifetime.Persistent
                     # Crete an Accuracy instrumentation for each SDFG State to
                     # retrieve the data
-                    for node, _ in sdfg.all_nodes_recursive():
+                    for node, nested_sdfg in sdfg.all_nodes_recursive():
                         if isinstance(node, state.SDFGState):
                             node.instrument = dtypes.InstrumentationType.Accuracy
 
@@ -408,7 +408,7 @@ class CompiledSDFG(object):
                             # between both AN
                             for an in node.data_nodes():
                                 name = an.data
-                                array = sdfg.data(name)
+                                array = nested_sdfg.data(name)
 
                                 if (isinstance(array, dt.Array)
                                         and array.storage !=
@@ -416,7 +416,7 @@ class CompiledSDFG(object):
                                     if not dtypes.can_access(
                                             dtypes.ScheduleType.Default,
                                             array.storage):
-                                        arr_name, _ = sdfg.add_array(
+                                        arr_name, _ = nested_sdfg.add_array(
                                             name + '__cpu',
                                             array.shape,
                                             array.dtype,
