@@ -1356,7 +1356,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 pass
                             else:
                                 max_kernels = increment(max_kernels)
-            self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel
+            self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel or max_kernels
 
         # do another pass and track dependencies among Kernels
         for node in state.nodes():
