@@ -11,7 +11,7 @@ import functools
 
 @registry.autoregister_params(singlestate=True)
 @properties.make_properties
-class HbmBankSplit(transformation.Transformation):
+class BankSplit(transformation.Transformation):
     """
     A transformation that allow splitting an array and distribute it on another
     array with one dimension more, or vice versa. Works with arbitrary arrays,
@@ -53,7 +53,7 @@ class HbmBankSplit(transformation.Transformation):
         "where the k-th number describes how many times dimension k is split. "
         "If the k-th number is 1 this means that the array is not split in "
         "the k-th dimension at all. "
-        "If None, then the transform will split the first dimension."
+        "If None, then the transform will split the first dimension exactly shape[0] times."
     )
 
     default_to_storage = properties.Property(
@@ -81,8 +81,8 @@ class HbmBankSplit(transformation.Transformation):
     def can_be_applied(graph: Union[SDFG, SDFGState],
                        candidate: Dict['PatternNode', int], expr_index: int,
                        sdfg: SDFG, strict: bool) -> bool:
-        src = graph.nodes()[candidate[HbmBankSplit._src_node]]
-        dst = graph.nodes()[candidate[HbmBankSplit._dst_node]]
+        src = graph.nodes()[candidate[BankSplit._src_node]]
+        dst = graph.nodes()[candidate[BankSplit._dst_node]]
         src_array = sdfg.arrays[src.data]
         dst_array = sdfg.arrays[dst.data]
 
@@ -111,16 +111,13 @@ class HbmBankSplit(transformation.Transformation):
 
     @staticmethod
     def expressions():
-        return [
-            utils.node_path_graph(HbmBankSplit._src_node,
-                                  HbmBankSplit._dst_node)
-        ]
+        return [utils.node_path_graph(BankSplit._src_node, BankSplit._dst_node)]
 
     def apply(self, sdfg: SDFG) -> Union[Any, None]:
         # Load/parse infos from the SDFG
         graph = sdfg.nodes()[self.state_id]
-        src = graph.nodes()[self.subgraph[HbmBankSplit._src_node]]
-        dst = graph.nodes()[self.subgraph[HbmBankSplit._dst_node]]
+        src = graph.nodes()[self.subgraph[BankSplit._src_node]]
+        dst = graph.nodes()[self.subgraph[BankSplit._dst_node]]
         src_array = sdfg.arrays[src.data]
         dst_array = sdfg.arrays[dst.data]
         collect_src = len(src_array.shape) - 1 == len(

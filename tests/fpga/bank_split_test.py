@@ -1,27 +1,29 @@
 import dace
 from hbm_copy_fpga_test import mkc
 from dace.dtypes import StorageType
-from dace.transformation.dataflow import HbmBankSplit
+from dace.transformation.dataflow import BankSplit
 from dace.transformation import optimizer
 import numpy as np
+
 
 def test_simple_split():
     sdfg = dace.SDFG("hbm_bank_split_first_dim")
     _, b, a = mkc(sdfg, None, "b", "a", StorageType.CPU_Heap,
-        StorageType.CPU_Heap, [4, 10, 10], [40, 10], "b")
+                  StorageType.CPU_Heap, [4, 10, 10], [40, 10], "b")
     for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
-            patterns=HbmBankSplit):
+            patterns=BankSplit):
         xform.apply(sdfg)
     sdfg(a=a, b=b)
     assert np.allclose(b[1], a[10:20, :])
     assert np.allclose(b[3], a[30:40, :])
+
 
 def test_even_split_3d():
     sdfg = dace.SDFG("hbm_bank_split_even_split_3d")
     s, b, a = mkc(sdfg, None, "b", "a", StorageType.CPU_Heap,
                   StorageType.CPU_Heap, [8, 50, 50, 50], [100, 100, 100], "b")
     for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
-            patterns=HbmBankSplit):
+            patterns=BankSplit):
         xform.split_array_info = [2, 2, 2]
         xform.apply(sdfg)
     b = np.random.uniform(0, 100, [8, 50, 50, 50]).astype(np.int32)
@@ -36,7 +38,7 @@ def test_second_dim_split_2d():
     s, a, b = mkc(sdfg, None, "a", "b", StorageType.CPU_Heap,
                   StorageType.CPU_Heap, [10, 100], [10, 10, 10], "b")
     for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
-            patterns=HbmBankSplit):
+            patterns=BankSplit):
         xform.split_array_info = [1, 10]
         xform.apply(sdfg)
     a = np.random.uniform(0, 10, [10, 100]).astype(np.int32)
@@ -50,7 +52,7 @@ def test_explicit_split_3d():
     s, a, b = mkc(sdfg, None, "a", "b", StorageType.CPU_Heap,
                   StorageType.CPU_Heap, [120, 100, 100], [24, 40, 50, 25])
     for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
-            patterns=HbmBankSplit):
+            patterns=BankSplit):
         xform.split_array_info = [3, 2, 4]
         xform.apply(sdfg)
     a = np.random.uniform(0, 100, [120, 100, 100]).astype(np.int32)
