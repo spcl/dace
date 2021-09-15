@@ -1347,7 +1347,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         # Trace this edge forward: if it finds something that has a kernel id and
                         # there is at least one local buffer along the way, then reuse that kernel id
                         only_global, kern = self._trace_forward_edge(e, state)
-                        if not only_global:
+                        if not only_global and kern is not None:
                             kernel = kern
                         else:
                             kernel = max_kernels
@@ -1703,26 +1703,33 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                     or dst_node.desc(sdfg).storage
                                     == dtypes.StorageType.FPGA_Registers)
 
-            num_loops = len([dim for dim in copy_shape if dim != 1])
-            if num_loops > 0:
-                if not register_to_register:
-                    # Language-specific
-                    self.generate_pipeline_loop_pre(callsite_stream, sdfg,
-                                                    state_id, dst_node)
+            num_loops = sum((d != 1 for d in copy_shape), 0)
+            has_pipelined_loops = (num_loops > 0 and not register_to_register)
+
+            # Determine data that should have dependency pragmas injected
+            dependency_pragma_nodes = []
+            for node in ((src_node, ) if src_node.data == dst_node.data else
+                         (src_node, dst_node)):
+                if (isinstance(node.desc(sdfg), dt.Array)
+                        and node.desc(sdfg).storage in [
+                            dtypes.StorageType.FPGA_Local,
+                            dace.StorageType.FPGA_Registers
+                        ]):
+                    dependency_pragma_nodes.append(node)
+
+            if has_pipelined_loops:
+                # Language-specific
+                self.generate_pipeline_loop_pre(callsite_stream, sdfg, state_id,
+                                                dst_node)
                 if len(copy_shape) > 1:
                     # Language-specific
                     self.generate_flatten_loop_pre(callsite_stream, sdfg,
                                                    state_id, dst_node)
-                for node in [src_node, dst_node]:
-                    if (isinstance(node.desc(sdfg), dt.Array)
-                            and node.desc(sdfg).storage in [
-                                dtypes.StorageType.FPGA_Local,
-                                dace.StorageType.FPGA_Registers
-                            ]):
-                        # Language-specific
-                        self.generate_no_dependence_pre(callsite_stream, sdfg,
-                                                        state_id, dst_node,
-                                                        node.data)
+                for node in dependency_pragma_nodes:
+                    # Inject dependence pragmas
+                    self.generate_no_dependence_pre(callsite_stream, sdfg,
+                                                    state_id, dst_node,
+                                                    node.data)
 
             # Loop intro
             for i, copy_dim in enumerate(copy_shape):
@@ -1731,24 +1738,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         # Language-specific
                         self.generate_unroll_loop_pre(callsite_stream, None,
                                                       sdfg, state_id, dst_node)
-                    # If we are copying from a container to itself, and the memlet subsets do not intersect,
-                    # then we can safely ignore loop carried dependencies
 
-                    ignore_dependencies = src_node.data == dst_node.data and not dace.subsets.intersects(
-                        memlet.src_subset, memlet.dst_subset)
-                    if ignore_dependencies:
-                        self.generate_no_dependence_pre(callsite_stream, sdfg,
-                                                        state_id, dst_node)
                     callsite_stream.write(
                         "for (int __dace_copy{} = 0; __dace_copy{} < {}; "
                         "++__dace_copy{}) {{".format(i, i,
                                                      cpp.sym2cpp(copy_dim), i),
                         sdfg, state_id, dst_node)
-
-                    if ignore_dependencies:
-                        self.generate_no_dependence_post(
-                            callsite_stream, sdfg, state_id, dst_node,
-                            dst_node.data, memlet.dst_subset)
 
                     if register_to_register:
                         # Language-specific
@@ -1756,15 +1751,17 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                                        sdfg, state_id, dst_node)
 
             # Pragmas
-            if num_loops > 0:
-                if not register_to_register:
-                    # Language-specific
-                    self.generate_pipeline_loop_post(callsite_stream, sdfg,
-                                                     state_id, dst_node)
-                if len(copy_shape) > 1:
-                    # Language-specific
-                    self.generate_flatten_loop_post(callsite_stream, sdfg,
-                                                    state_id, dst_node)
+            if has_pipelined_loops:
+                # Language-specific
+                self.generate_pipeline_loop_post(callsite_stream, sdfg,
+                                                 state_id, dst_node)
+                self.generate_flatten_loop_post(callsite_stream, sdfg, state_id,
+                                                dst_node)
+                # Inject dependence pragmas
+                for node in dependency_pragma_nodes:
+                    self.generate_no_dependence_post(callsite_stream, sdfg,
+                                                     state_id, dst_node,
+                                                     node.data)
 
             src_def_type, _ = self._dispatcher.defined_vars.get(src_node.data)
             dst_def_type, _ = self._dispatcher.defined_vars.get(dst_node.data)
@@ -1803,18 +1800,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                              is_unpack, packing_factor)
 
             callsite_stream.write(write_expr)
-
-            # Inject dependence pragmas (DACE semantics implies no conflict)
-            for node in [src_node, dst_node]:
-                if (isinstance(node.desc(sdfg), dt.Array)
-                        and node.desc(sdfg).storage in [
-                            dtypes.StorageType.FPGA_Local,
-                            dace.StorageType.FPGA_Registers
-                        ]):
-                    # Language-specific
-                    self.generate_no_dependence_post(callsite_stream, sdfg,
-                                                     state_id, dst_node,
-                                                     node.data)
 
             # Loop outtro
             for _ in range(num_loops):
