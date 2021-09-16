@@ -81,4 +81,3 @@ if __name__ == '__main__':
     test_set_by_view_2()
     test_set_by_view_3()
     test_is_a_copy()
-    
