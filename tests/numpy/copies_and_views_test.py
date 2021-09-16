@@ -1,3 +1,4 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -80,3 +81,4 @@ if __name__ == '__main__':
     test_set_by_view_2()
     test_set_by_view_3()
     test_is_a_copy()
+    
