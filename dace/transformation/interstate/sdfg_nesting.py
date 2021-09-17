@@ -295,29 +295,33 @@ class InlineSDFG(transformation.Transformation):
         for e in state.in_edges(nsdfg_node):
             inputs[e.dst_conn] = e
             input_set[e.data.data] = e.dst_conn
-            if isinstance(sdfg.arrays[e.data.data], data.View):
-                ve = sdutil.get_view_edge(state, e.src)
-                arr = ve.src.data
-                srcset = ve.data.src_subset
-                dstset = ve.data.dst_subset
-                mem = dc(ve.data)
-                mem.data = arr
-                mem.subset = srcset
-                mem.other_subset = dstset
-                views[e.data.data] = (arr, mem)
+            if isinstance(e.src, nodes.AccessNode):
+                d = e.src.data
+                if d in sdfg.arrays and isinstance(sdfg.arrays[d], data.View):
+                    ve = sdutil.get_view_edge(state, e.src)
+                    arr = ve.src.data
+                    srcset = ve.data.src_subset
+                    dstset = ve.data.dst_subset
+                    mem = dc(ve.data)
+                    mem.data = arr
+                    mem.subset = srcset
+                    mem.other_subset = dstset
+                    views[d] = (arr, mem)
         for e in state.out_edges(nsdfg_node):
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
-            if isinstance(sdfg.arrays[e.data.data], data.View):
-                ve = sdutil.get_view_edge(state, e.dst)
-                arr = ve.dst.data
-                srcset = ve.data.src_subset
-                dstset = ve.data.dst_subset
-                mem = dc(ve.data)
-                mem.data = arr
-                mem.subset = dstset
-                mem.other_subset = srcset
-                views[e.data.data] = (arr, mem)
+            if isinstance(e.dst, nodes.AccessNode):
+                d = e.dst.data
+                if d in sdfg.arrays and isinstance(sdfg.arrays[d], data.View):
+                    ve = sdutil.get_view_edge(state, e.dst)
+                    arr = ve.dst.data
+                    srcset = ve.data.src_subset
+                    dstset = ve.data.dst_subset
+                    mem = dc(ve.data)
+                    mem.data = arr
+                    mem.subset = dstset
+                    mem.other_subset = srcset
+                    views[d] = (arr, mem)
 
         # Replace symbols using invocation symbol mapping
         # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
