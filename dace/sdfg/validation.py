@@ -272,10 +272,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             # Verify View references
             if isinstance(arr, dt.View):
                 if sdutil.get_view_edge(state, node) is None:
-                    for e in state.in_edges(node):
-                        print(f'In-edge from {e.src} to {e.dst}: {e.data}')
-                    for e in state.out_edges(node):
-                        print(f'In-edge from {e.src} to {e.dst}: {e.data}')
+                    for n in state.nodes():
+                        print(f'{type(node)}: {n}')
+                    for e in state.edges():
+                        print(f'Edge from {e.src} to {e.dst}: {e.data}')
                     raise InvalidSDFGNodeError(
                         "Ambiguous or invalid edge to/from a View access node",
                         sdfg, state_id, nid)
