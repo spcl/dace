@@ -1266,7 +1266,7 @@ def _makeunop(op, opcode):
             op1: str,
             op2=None):
         return _unop(sdfg, state, op1, opcode, op)
-    
+
     @oprepo.replaces_operator('View', op)
     def _op(visitor: 'ProgramVisitor',
             sdfg: SDFG,
@@ -2142,7 +2142,7 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('View', op, otherclass='Scalar')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
@@ -2167,7 +2167,7 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('Scalar', op, otherclass='View')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
@@ -2197,7 +2197,7 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('NumConstant', op, otherclass='View')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
@@ -2227,7 +2227,7 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('BoolConstant', op, otherclass='View')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
@@ -2257,7 +2257,7 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('symbol', op, otherclass='View')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
@@ -4367,7 +4367,7 @@ def reshape(pv: 'ProgramVisitor',
     # Register view with DaCe program visitor
     aset = subsets.Range.from_array(desc)
     vset = subsets.Range.from_array(newdesc)
-    pv.views[newarr] = (arr, Memlet(f'{arr}[{aset}]->{vset}'))
+    pv.views[newarr] = (arr, Memlet(data=arr, subset=aset, other_subset=vset))
 
     return newarr
 
@@ -4475,7 +4475,9 @@ def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
         # Register view with DaCe program visitor
         aset = subsets.Range.from_array(desc)
         vset = subsets.Range.from_array(newdesc)
-        pv.views[newarr] = (arr, Memlet(f'{arr}[{aset}]->{vset}'))
+        pv.views[newarr] = (arr, Memlet(data=arr,
+                                        subset=aset,
+                                        other_subset=vset))
 
     return newarr
 
