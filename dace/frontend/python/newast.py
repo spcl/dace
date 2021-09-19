@@ -1597,14 +1597,18 @@ class ProgramVisitor(ExtNodeVisitor):
                             # NOTE: It seems that NumPy doesn't support creating
                             # non-contiguous arrays directly.
                             # strides=desc.strides,
-                            offset=desc.offset,
+                            # offset=desc.offset,
                             debuginfo=desc.debuginfo,
-                            total_size=desc.total_size,
+                            # total_size=desc.total_size,
                             allow_conflicts=desc.allow_conflicts)
                     return_state.add_nedge(r, w, Memlet(vname))
                 else:
                     # Other cases can be replaced with return value directly
                     self.sdfg.replace(arrname, vname)
+                    for k, (v, m) in self.views.items():
+                        if v == arrname:
+                            m.data = vname
+                            self.views[k] = (vname, m)
 
         # Return values become non-transient (accessible by the outside)
         for arrname, arr in self.sdfg.arrays.items():
