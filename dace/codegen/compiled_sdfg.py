@@ -346,7 +346,7 @@ class CompiledSDFG(object):
                         compiled_sdfg._lib.unload()
                         raise
                 elif mode == 'load':
-                    # Loads a new SDFG if its different to the current one
+                    # Loads a new SDFG if it is different from the current one
                     sdfg = vscode.stop_and_load()
                     if (sdfg and sdfg.hash_sdfg() !=
                             compiled_sdfg._sdfg.hash_sdfg()):
@@ -358,17 +358,17 @@ class CompiledSDFG(object):
                     # Renders the SDFG in VSCode and loads the new SDFG
                     sdfg = vscode.stop_and_transform(compiled_sdfg._sdfg)
                     if sdfg.hash_sdfg() != compiled_sdfg._sdfg.hash_sdfg():
-                        # Rename to mitigate the library LINK ERROR
+                        # Rename to mitigate the library link error
                         sdfg.name = sdfg.name + '_t'
                         compiled_sdfg._lib.unload()
                         compiled_sdfg = sdfg.compile()
                 elif mode == 'report' or (mode == 'verification'
                                           and 'foldername' in response):
-                    # REPORT:   Create a report of the SDFG by dumping intermidiate
-                    #           results to an accuracy file
+                    # REPORT:   Create a report of the SDFG by dumping intermediate
+                    #           results to a file
                     # VERIFICATION: Creates a report with the same initial args
                     #           as the referenced report. Computes the difference
-                    #           of the intermidiate results between both reports.
+                    #           of the intermediate results between both reports.
                     if mode == 'verification':
                         ref_report_folder = response['foldername']
                         # Check if the folder is a accuracy report folder
@@ -397,15 +397,14 @@ class CompiledSDFG(object):
                     for _, _, array in sdfg.arrays_recursive():
                         if array.storage != dtypes.StorageType.Register:
                             array.lifetime = dtypes.AllocationLifetime.Persistent
-                    # Crete an Accuracy instrumentation for each SDFG State to
+                    # Create an accuracy instrumentation for each SDFG state to
                     # retrieve the data
                     for node, nested_sdfg in sdfg.all_nodes_recursive():
                         if isinstance(node, state.SDFGState):
                             node.instrument = dtypes.InstrumentationType.Accuracy
 
                             # If an Accessnode is not accessable from the CPU
-                            # then create an AN on the CPU and create an edge
-                            # between both AN
+                            # then create a copy on the CPU and create an edge
                             for an in node.data_nodes():
                                 name = an.data
                                 array = nested_sdfg.data(name)
@@ -432,7 +431,7 @@ class CompiledSDFG(object):
                     new_compiled_sdfg = sdfg.compile()
 
                     # Write the function arguments to the report file
-                    # so that in a future comparison the sam args are used
+                    # so that in a future comparison the same args are used
                     currentReportFolder = os.path.abspath(
                         os.path.join(new_compiled_sdfg._sdfg.build_folder,
                                      'accuracy',
@@ -477,7 +476,7 @@ class CompiledSDFG(object):
                         if new_compiled_sdfg._initialized is False:
                             new_compiled_sdfg.initialize(*initargtuple)
 
-                        # Run the program so the arrays get saved
+                        # Run the program so the arrays are saved
                         new_compiled_sdfg._cfunc(new_compiled_sdfg._libhandle,
                                                  *argtuple)
 

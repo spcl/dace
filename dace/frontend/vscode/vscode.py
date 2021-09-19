@@ -222,12 +222,6 @@ def create_report(parent_sdfg: dace.sdfg.SDFG, sdfg_name: str, foldername1: str,
             'diff': str(diff),
             'msg': msg
         })
-        if False:
-            print(array_name)
-            print('dtype: ', dtype.type)
-            print('diff: ', diff)
-            print(nparray1)
-            print('---------------------------')
 
     filename = os.path.abspath(
         os.path.join(parent_sdfg.build_folder, 'program.sdfg'))
@@ -241,6 +235,5 @@ def create_report(parent_sdfg: dace.sdfg.SDFG, sdfg_name: str, foldername1: str,
     # Load the new SDFG if it has been changed
     new_sdfg = dace.SDFG.from_file(filename)
     if new_sdfg.hash_sdfg() != parent_sdfg.hash_sdfg():
-        print('Not same')
         return new_sdfg
     return None
