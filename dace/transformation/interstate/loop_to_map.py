@@ -294,6 +294,18 @@ class LoopToMap(DetectLoop):
                 rset, wset = state.read_and_write_sets()
                 read_set |= rset
                 write_set |= wset
+                # Add to write set also scalars between tasklets
+                for src_node in state.nodes():
+                    if not isinstance(src_node, nodes.Tasklet):
+                        continue
+                    for dst_node in state.nodes():
+                        if src_node is dst_node:
+                            continue
+                        if not isinstance(dst_node, nodes.Tasklet):
+                            continue
+                        for e in state.edges_between(src_node, dst_node):
+                            if e.data.data:
+                                write_set.add(sdfg.arrays[e.data.data])
                 # Add data from edges
                 for src in states:
                     for dst in states:
