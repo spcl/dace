@@ -304,8 +304,8 @@ class LoopToMap(DetectLoop):
                         if not isinstance(dst_node, nodes.Tasklet):
                             continue
                         for e in state.edges_between(src_node, dst_node):
-                            if e.data.data:
-                                write_set.add(sdfg.arrays[e.data.data])
+                            if e.data.data and e.data.data in sdfg.arrays:
+                                write_set.add(e.data.data)
                 # Add data from edges
                 for src in states:
                     for dst in states:
