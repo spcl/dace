@@ -428,25 +428,31 @@ class RedundantArray(pm.Transformation):
 
         # View connected to a view: simple case
         if (isinstance(in_desc, data.View) and isinstance(out_desc, data.View)):
+            simple_case = True
             for e in graph.in_edges(in_array):
-                for e2 in graph.memlet_tree(e):
-                    if e2 is e:
-                        continue
-                    if e2.data.data == in_array.data:
-                        e2.data.data = out_array.data
-                new_memlet = copy.deepcopy(e.data)
-                if new_memlet.data == in_array.data:
-                    new_memlet.data = out_array.data
-                new_memlet.dst_subset = b_subset
-                graph.add_edge(e.src, e.src_conn, out_array,
-                               e.dst_conn, new_memlet)
-            graph.remove_node(in_array)
-            try:
-                if in_array.data in sdfg.arrays:
-                    sdfg.remove_data(in_array.data)
-            except ValueError:  # Used somewhere else
-                pass
-            return
+                if a1_subset != e.data.dst_subset:
+                    simple_case = False
+                    break
+            if simple_case:
+                for e in graph.in_edges(in_array):
+                    for e2 in graph.memlet_tree(e):
+                        if e2 is e:
+                            continue
+                        if e2.data.data == in_array.data:
+                            e2.data.data = out_array.data
+                    new_memlet = copy.deepcopy(e.data)
+                    if new_memlet.data == in_array.data:
+                        new_memlet.data = out_array.data
+                    new_memlet.dst_subset = b_subset
+                    graph.add_edge(e.src, e.src_conn, out_array,
+                                e.dst_conn, new_memlet)
+                graph.remove_node(in_array)
+                try:
+                    if in_array.data in sdfg.arrays:
+                        sdfg.remove_data(in_array.data)
+                except ValueError:  # Used somewhere else
+                    pass
+                return
 
 
         # Find extraneous A or B subset dimensions
