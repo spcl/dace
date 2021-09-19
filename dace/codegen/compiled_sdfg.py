@@ -364,7 +364,7 @@ class CompiledSDFG(object):
                         compiledSdfg = sdfg.compile()
                 elif mode == 'report' or (mode == 'verification'
                                           and 'foldername' in response):
-                    # REPORT:   Create a report of the SDFG by dumping intermidiate
+                    # REPORT:   Create a report of the SDFG by dumping intermediate
                     #           results to an accuracy file
                     # VERIFICATION: Creates a report with the same initial args
                     #           as the referenced report. Computes the difference
