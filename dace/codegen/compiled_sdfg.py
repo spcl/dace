@@ -358,7 +358,7 @@ class CompiledSDFG(object):
                     # Renders the SDFG in VSCode and loads the new SDFG
                     sdfg = vscode.stop_and_transform(compiledSdfg._sdfg)
                     if sdfg.hash_sdfg() != compiledSdfg._sdfg.hash_sdfg():
-                        # Rename to mitigate the library LINK ERROR
+                        # Rename to mitigate the library link error
                         sdfg.name = sdfg.name + '_t'
                         compiledSdfg._lib.unload()
                         compiledSdfg = sdfg.compile()
