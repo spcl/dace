@@ -316,7 +316,7 @@ class CompiledSDFG(object):
                             compiledSdfg._sdfg)
 
                         if hasInstr:
-                            # Create a deep copy as we dont want to
+                            # Create a deep copy as we do not want to
                             # modify the real sdfg
                             sdfg = copy.deepcopy(compiledSdfg._sdfg)
                             vscode.sdfg_remove_instrumentations(sdfg)
