@@ -404,7 +404,7 @@ class CompiledSDFG(object):
                             node.instrument = dtypes.InstrumentationType.Accuracy
 
                             # If an Accessnode is not accessable from the CPU
-                            # then create an AN on the CPU and create an edge
+                            # then create a copy on the CPU and create an edge
                             # between both AN
                             for an in node.data_nodes():
                                 name = an.data
