@@ -346,7 +346,7 @@ class CompiledSDFG(object):
                         compiledSdfg._lib.unload()
                         raise
                 elif mode == 'load':
-                    # Loads a new SDFG if its different to the current one
+                    # Loads a new SDFG if it is different from the current one
                     sdfg = vscode.stop_and_load()
                     if (sdfg and
                             sdfg.hash_sdfg() != compiledSdfg._sdfg.hash_sdfg()):
