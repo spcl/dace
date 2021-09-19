@@ -368,7 +368,7 @@ class CompiledSDFG(object):
                     #           results to a file
                     # VERIFICATION: Creates a report with the same initial args
                     #           as the referenced report. Computes the difference
-                    #           of the intermidiate results between both reports.
+                    #           of the intermediate results between both reports.
                     if mode == 'verification':
                         refReportFolder = response['foldername']
                         # Check if the folder is a accuracy report folder
