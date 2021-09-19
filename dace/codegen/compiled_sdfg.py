@@ -397,7 +397,7 @@ class CompiledSDFG(object):
                     for _, _, array in sdfg.arrays_recursive():
                         if not array.storage is dtypes.StorageType.Register:
                             array.lifetime = dtypes.AllocationLifetime.Persistent
-                    # Crete an Accuracy instrumentation for each SDFG State to
+                    # Create an accuracy instrumentation for each SDFG state to
                     # retrieve the data
                     for node, nested_sdfg in sdfg.all_nodes_recursive():
                         if isinstance(node, state.SDFGState):
