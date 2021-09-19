@@ -365,7 +365,7 @@ class CompiledSDFG(object):
                 elif mode == 'report' or (mode == 'verification'
                                           and 'foldername' in response):
                     # REPORT:   Create a report of the SDFG by dumping intermediate
-                    #           results to an accuracy file
+                    #           results to a file
                     # VERIFICATION: Creates a report with the same initial args
                     #           as the referenced report. Computes the difference
                     #           of the intermidiate results between both reports.
