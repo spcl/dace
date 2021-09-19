@@ -476,7 +476,7 @@ class CompiledSDFG(object):
                         if newCompiledSdfg._initialized is False:
                             newCompiledSdfg.initialize(*initargtuple)
 
-                        # Run the program so the arrays get saved
+                        # Run the program so the arrays are saved
                         newCompiledSdfg._cfunc(newCompiledSdfg._libhandle,
                                                *argtuple)
 
