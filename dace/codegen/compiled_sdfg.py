@@ -281,44 +281,44 @@ class CompiledSDFG(object):
         if vscode.is_available() and vscode.sdfg_edit():
             response = vscode.send_bp_recv({'type': 'sdfgEditMode'})
             mode = response['mode']
-            compiledSdfg = self
+            compiled_sdfg = self
 
             while mode != 'continue':
                 # unload lib as the sdfg might change
-                if compiledSdfg._lib.is_loaded():
-                    compiledSdfg._lib.unload()
+                if compiled_sdfg._lib.is_loaded():
+                    compiled_sdfg._lib.unload()
 
                 # Create a deepcopy as the args could change after an execution
-                initital_args = copy.deepcopy(kwargs)
-                compiledSdfg._init = None
-                argtuple, initargtuple = compiledSdfg._construct_args(
-                    initital_args)
+                initial_args = copy.deepcopy(kwargs)
+                compiled_sdfg._init = None
+                argtuple, initargtuple = compiled_sdfg._construct_args(
+                    initial_args)
 
                 if mode == 'run':
                     # Runs the SDFG program once.
                     # Prints all arguments and results.
                     print('Arguments:')
-                    for arg, arr in initital_args.items():
+                    for arg, arr in initial_args.items():
                         print('- ', arg, ': ', arr)
 
-                    compiledSdfg._lib.load()
-                    compiledSdfg.initialize(*initargtuple)
-                    compiledSdfg._cfunc(compiledSdfg._libhandle, *argtuple)
+                    compiled_sdfg._lib.load()
+                    compiled_sdfg.initialize(*initargtuple)
+                    compiled_sdfg._cfunc(compiled_sdfg._libhandle, *argtuple)
 
-                    print('Results:\n', compiledSdfg._return_arrays)
+                    print('Results:\n', compiled_sdfg._return_arrays)
                 elif mode == 'profile':
                     # Profiles the current SDFG version
                     try:
-                        compiledSdfg._lib.load()
-                        compiledSdfg.initialize(*initargtuple)
+                        compiled_sdfg._lib.load()
+                        compiled_sdfg.initialize(*initargtuple)
 
-                        hasInstr = vscode.sdfg_has_instrumentation(
-                            compiledSdfg._sdfg)
+                        has_instr = vscode.sdfg_has_instrumentation(
+                            compiled_sdfg._sdfg)
 
-                        if hasInstr:
+                        if has_instr:
                             # Create a deep copy as we dont want to
                             # modify the real sdfg
-                            sdfg = copy.deepcopy(compiledSdfg._sdfg)
+                            sdfg = copy.deepcopy(compiled_sdfg._sdfg)
                             vscode.sdfg_remove_instrumentations(sdfg)
 
                             # Create the code without instrumenation
@@ -328,40 +328,40 @@ class CompiledSDFG(object):
                             compiler.configure_and_compile(
                                 sdfg.build_folder, program_name=sdfg.name)
 
-                        operations.timethis(compiledSdfg._sdfg,
-                                            compiledSdfg._sdfg.name, 0,
-                                            compiledSdfg._cfunc,
-                                            compiledSdfg._libhandle, *argtuple)
+                        operations.timethis(compiled_sdfg._sdfg,
+                                            compiled_sdfg._sdfg.name, 0,
+                                            compiled_sdfg._cfunc,
+                                            compiled_sdfg._libhandle, *argtuple)
 
-                        if hasInstr:
+                        if has_instr:
                             # Change back to the code without instrumentation
                             program_objects = codegen.generate_code(
-                                compiledSdfg._sdfg)
+                                compiled_sdfg._sdfg)
                             compiler.generate_program_folder(
-                                compiledSdfg._sdfg, program_objects,
-                                compiledSdfg._sdfg.build_folder)
+                                compiled_sdfg._sdfg, program_objects,
+                                compiled_sdfg._sdfg.build_folder)
 
                     except (RuntimeError, TypeError, UnboundLocalError,
                             KeyError, cgx.DuplicateDLLError, ReferenceError):
-                        compiledSdfg._lib.unload()
+                        compiled_sdfg._lib.unload()
                         raise
                 elif mode == 'load':
                     # Loads a new SDFG if its different to the current one
                     sdfg = vscode.stop_and_load()
-                    if (sdfg and
-                            sdfg.hash_sdfg() != compiledSdfg._sdfg.hash_sdfg()):
-                        compiledSdfg = sdfg.compile()
+                    if (sdfg and sdfg.hash_sdfg() !=
+                            compiled_sdfg._sdfg.hash_sdfg()):
+                        compiled_sdfg = sdfg.compile()
                 elif mode == 'save':
                     # Saves the current SDFG to location specified by the user
-                    vscode.stop_and_save(compiledSdfg._sdfg)
+                    vscode.stop_and_save(compiled_sdfg._sdfg)
                 elif mode == 'transform':
                     # Renders the SDFG in VSCode and loads the new SDFG
-                    sdfg = vscode.stop_and_transform(compiledSdfg._sdfg)
-                    if sdfg.hash_sdfg() != compiledSdfg._sdfg.hash_sdfg():
+                    sdfg = vscode.stop_and_transform(compiled_sdfg._sdfg)
+                    if sdfg.hash_sdfg() != compiled_sdfg._sdfg.hash_sdfg():
                         # Rename to mitigate the library LINK ERROR
                         sdfg.name = sdfg.name + '_t'
-                        compiledSdfg._lib.unload()
-                        compiledSdfg = sdfg.compile()
+                        compiled_sdfg._lib.unload()
+                        compiled_sdfg = sdfg.compile()
                 elif mode == 'report' or (mode == 'verification'
                                           and 'foldername' in response):
                     # REPORT:   Create a report of the SDFG by dumping intermidiate
@@ -370,10 +370,10 @@ class CompiledSDFG(object):
                     #           as the referenced report. Computes the difference
                     #           of the intermidiate results between both reports.
                     if mode == 'verification':
-                        refReportFolder = response['foldername']
+                        ref_report_folder = response['foldername']
                         # Check if the folder is a accuracy report folder
                         is_report = True
-                        for filename in os.listdir(refReportFolder):
+                        for filename in os.listdir(ref_report_folder):
                             if (not filename.endswith('.bin')
                                     and not filename.endswith('.npy')):
                                 is_report = False
@@ -388,14 +388,14 @@ class CompiledSDFG(object):
 
                     # Create a deep copy as we dont want to
                     # modify the real sdfg
-                    sdfg = copy.deepcopy(compiledSdfg._sdfg)
-                    hasInstr = vscode.sdfg_has_instrumentation(sdfg)
-                    if hasInstr:
+                    sdfg = copy.deepcopy(compiled_sdfg._sdfg)
+                    has_instr = vscode.sdfg_has_instrumentation(sdfg)
+                    if has_instr:
                         vscode.sdfg_remove_instrumentations(sdfg)
 
                     # Make every array persistent so that we can access the data
                     for _, _, array in sdfg.arrays_recursive():
-                        if not array.storage is dtypes.StorageType.Register:
+                        if array.storage != dtypes.StorageType.Register:
                             array.lifetime = dtypes.AllocationLifetime.Persistent
                     # Crete an Accuracy instrumentation for each SDFG State to
                     # retrieve the data
@@ -428,16 +428,16 @@ class CompiledSDFG(object):
                                         node.add_edge(an, None, arr_node, None,
                                                       mm)
 
-                    compiledSdfg._lib.unload()
-                    newCompiledSdfg = sdfg.compile()
+                    compiled_sdfg._lib.unload()
+                    new_compiled_sdfg = sdfg.compile()
 
                     # Write the function arguments to the report file
                     # so that in a future comparison the sam args are used
                     currentReportFolder = os.path.abspath(
-                        os.path.join(newCompiledSdfg._sdfg.build_folder,
+                        os.path.join(new_compiled_sdfg._sdfg.build_folder,
                                      'accuracy',
-                                     newCompiledSdfg._sdfg.hash_sdfg()))
-                    for a, b in initital_args.items():
+                                     new_compiled_sdfg._sdfg.hash_sdfg()))
+                    for a, b in initial_args.items():
                         arg_file = os.path.join(currentReportFolder,
                                                 '__dace_args_' + a + '.npy')
                         if isinstance(self._typedict.get(a), dt.Scalar):
@@ -448,11 +448,11 @@ class CompiledSDFG(object):
                         # Get initial args of the reportfile to compare with
                         # We make sure to use the same initial arguments as
                         # the report to be compared with
-                        if initital_args is not None:
-                            for aname in initital_args.keys():
+                        if initial_args is not None:
+                            for aname in initial_args.keys():
                                 arg_type = self._typedict.get(aname)
                                 fileName = os.path.join(
-                                    refReportFolder,
+                                    ref_report_folder,
                                     '__dace_args_' + aname + '.npy')
                                 if not os.path.exists(fileName):
                                     print(
@@ -462,52 +462,52 @@ class CompiledSDFG(object):
                                     continue
                                 if isinstance(arg_type, dt.Scalar):
                                     arr = np.load(fileName, allow_pickle=True)
-                                    initital_args.update({aname: arr[0]})
+                                    initial_args.update({aname: arr[0]})
                                 elif isinstance(arg_type, dt.Array):
-                                    initital_args.update({
+                                    initial_args.update({
                                         aname:
                                         np.load(fileName, allow_pickle=True)
                                     })
-                            argtuple, initargtuple = newCompiledSdfg._construct_args(
-                                initital_args)
+                            argtuple, initargtuple = new_compiled_sdfg._construct_args(
+                                initial_args)
 
                     try:
-                        if not newCompiledSdfg._lib.is_loaded():
-                            newCompiledSdfg._lib.load()
-                        if newCompiledSdfg._initialized is False:
-                            newCompiledSdfg.initialize(*initargtuple)
+                        if not new_compiled_sdfg._lib.is_loaded():
+                            new_compiled_sdfg._lib.load()
+                        if new_compiled_sdfg._initialized is False:
+                            new_compiled_sdfg.initialize(*initargtuple)
 
                         # Run the program so the arrays get saved
-                        newCompiledSdfg._cfunc(newCompiledSdfg._libhandle,
-                                               *argtuple)
+                        new_compiled_sdfg._cfunc(new_compiled_sdfg._libhandle,
+                                                 *argtuple)
 
                         vscode.send({
                             'type': 'accuracy_report',
                             'reportFolder': currentReportFolder,
-                            'sdfgName': newCompiledSdfg._sdfg.name
+                            'sdfgName': new_compiled_sdfg._sdfg.name
                         })
                     except (RuntimeError, TypeError, UnboundLocalError,
                             KeyError, cgx.DuplicateDLLError, ReferenceError):
-                        newCompiledSdfg._lib.unload()
+                        new_compiled_sdfg._lib.unload()
                         raise
                     # Change back to the initial code
-                    compiledSdfg._lib.unload()
-                    compiledSdfg = compiledSdfg._sdfg.compile()
+                    compiled_sdfg._lib.unload()
+                    compiled_sdfg = compiled_sdfg._sdfg.compile()
 
-                    if mode == 'verification' and refReportFolder:
-                        new_sdfg = vscode.create_report(compiledSdfg._sdfg,
-                                                        compiledSdfg.sdfg.name,
+                    if mode == 'verification' and ref_report_folder:
+                        new_sdfg = vscode.create_report(compiled_sdfg._sdfg,
+                                                        compiled_sdfg.sdfg.name,
                                                         currentReportFolder,
-                                                        refReportFolder)
+                                                        ref_report_folder)
                         if new_sdfg is not None:
-                            compiledSdfg._lib.unload()
-                            compiledSdfg = new_sdfg.compile()
+                            compiled_sdfg._lib.unload()
+                            compiled_sdfg = new_sdfg.compile()
 
                 response = vscode.send_bp_recv({'type': 'sdfgEditMode'})
                 mode = response['mode']
 
             # set the variables back to their initial values
-            self = compiledSdfg
+            self = compiled_sdfg
             self._init = None
             self._initialized = False
             if self._lib.is_loaded():

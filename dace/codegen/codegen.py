@@ -9,7 +9,6 @@ from dace import data
 from dace.sdfg import SDFG
 from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
-from dace.frontend.vscode import vscode
 from dace.config import Config
 from dace.sdfg import infer_types
 
