@@ -431,7 +431,7 @@ class CompiledSDFG(object):
                     newCompiledSdfg = sdfg.compile()
 
                     # Write the function arguments to the report file
-                    # so that in a future comparison the sam args are used
+                    # so that in a future comparison the same args are used
                     currentReportFolder = os.path.abspath(
                         os.path.join(newCompiledSdfg._sdfg.build_folder,
                                      'accuracy',
