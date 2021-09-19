@@ -222,12 +222,6 @@ def create_report(parent_sdfg: dace.sdfg.SDFG, sdfg_name: str, foldername1: str,
             'diff': str(diff),
             'msg': msg
         })
-        if False:
-            print(array_name)
-            print('dtype: ', dtype.type)
-            print('diff: ', diff)
-            print(nparray1)
-            print('---------------------------')
 
     filename = os.path.abspath(
         os.path.join(parent_sdfg.build_folder, 'program.sdfg'))
