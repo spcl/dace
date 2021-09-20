@@ -78,7 +78,7 @@ class FPGATransformState(transformation.Transformation):
 
             if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage
                     not in (dtypes.StorageType.Default,
-                            dtypes.dtypes.StorageType.Register)):
+                            dtypes.StorageType.Register)):
                 return False
 
             if not isinstance(node, nodes.MapEntry):
