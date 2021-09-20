@@ -1024,15 +1024,15 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         
         # Non-free symbol dependent Arrays/Views due to their shape
         dependent_shape = (
-            isinstance(nodedesc, data.Array) and any(
+            isinstance(nodedesc, dt.Array) and any(
                 str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
                 for s in nodedesc.free_symbols
             )
         )
         # Non-free symbol dependent Views due to their "offset"
         dependent_offset = False
-        if isinstance(nodedesc, data.View):
-            edge = sdutils.get_view_edge(dfg, node)
+        if isinstance(nodedesc, dt.View):
+            edge = utils.get_view_edge(dfg, node)
             dependent_offset = any(
                 str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
                 for s in edge.data.src_subset.free_symbols

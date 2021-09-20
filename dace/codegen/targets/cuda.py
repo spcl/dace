@@ -337,15 +337,15 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         
         # Non-free symbol dependent Arrays/Views due to their shape
         dependent_shape = (
-            isinstance(nodedesc, data.Array) and any(
+            isinstance(nodedesc, dt.Array) and any(
                 str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
                 for s in nodedesc.free_symbols
             )
         )
         # Non-free symbol dependent Views due to their "offset"
         dependent_offset = False
-        if isinstance(nodedesc, data.View):
-            edge = sdutils.get_view_edge(dfg, node)
+        if isinstance(nodedesc, dt.View):
+            edge = sdutil.get_view_edge(dfg, node)
             dependent_offset = any(
                 str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
                 for s in edge.data.src_subset.free_symbols
