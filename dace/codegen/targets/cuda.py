@@ -334,16 +334,26 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc,
                       function_stream, declaration_stream):
-
-        if not (isinstance(nodedesc, dt.Array)
-                and not isinstance(nodedesc, dt.View) and any(
-                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in nodedesc.free_symbols)):
+        
+        # Non-free symbol dependent Arrays/Views due to their shape
+        dependent_shape = (
+            isinstance(nodedesc, data.Array) and any(
+                str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                for s in nodedesc.free_symbols
+            )
+        )
+        # Non-free symbol dependent Views due to their "offset"
+        dependent_offset = False
+        if isinstance(nodedesc, data.View):
+            edge = sdutils.get_view_edge(dfg, node)
+            dependent_offset = any(
+                str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                for s in edge.data.src_subset.free_symbols
+            )
+        if not (dependent_shape or dependent_offset):
             raise NotImplementedError(
                 "The declare_array method should only be used for variables "
-                "that must have their declaration and allocation separate. "
-                "Currently, we support only Arrays (not Views) depedent on "
-                "non-free SDFG symbols.")
+                "that must have their declaration and allocation separate.")
 
         # Check if array is already declared
         if self._dispatcher.declared_arrays.has(node.data):

@@ -247,7 +247,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if not (dependent_shape or dependent_offset):
             raise NotImplementedError(
                 "The declare_array method should only be used for variables "
-                "that must have their declaration and allocation separate. ")
+                "that must have their declaration and allocation separate.")
 
         name = node.data
 
