@@ -342,9 +342,9 @@ class ExpandGemmCuBLAS(ExpandTransformation):
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
                                      alpha, beta, cdtype, func)
+        opt['arr_prefix'] = arr_prefix = ''
         if needs_copy:
-            opt['x'] = '_conn' + opt['x']
-            opt['y'] = '_conn' + opt['y']
+            opt['arr_prefix'] = arr_prefix = '_conn'
 
         # Matrix multiplication
         if (node.compute_type is None and node.accumulator_type is None
@@ -353,10 +353,10 @@ class ExpandGemmCuBLAS(ExpandTransformation):
                 CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
                 {M}, {N}, {K},
                 {alpha},
-                ({dtype}*){x}, {lda},
-                ({dtype}*){y}, {ldb},
+                ({dtype}*){arr_prefix}{x}, {lda},
+                ({dtype}*){arr_prefix}{y}, {ldb},
                 {beta},
-                ({dtype}*)_c, {ldc});'''.format_map(opt)
+                ({dtype}*){arr_prefix}_c, {ldc});'''.format_map(opt)
         else:
             if node.compute_type is not None:
                 acctype = node.compute_type
@@ -375,14 +375,14 @@ class ExpandGemmCuBLAS(ExpandTransformation):
                 CUBLAS_OP_{opt['ta']}, CUBLAS_OP_{opt['tb']},
                 {opt['M']}, {opt['N']}, {opt['K']},
                 {alpha},
-                {opt['x']},
+                {arr_prefix}{opt['x']},
                 {dtype_to_cudadatatype(opt['xdtype'])},
                 {opt['lda']},
-                {opt['y']},
+                {arr_prefix}{opt['y']},
                 {dtype_to_cudadatatype(opt['ydtype'])},
                 {opt['ldb']},
                 {beta},
-                _c,
+                {arr_prefix}_c,
                 {dtype_to_cudadatatype(opt['cdtype'])},
                 {opt['ldc']},
                 {acctype},
