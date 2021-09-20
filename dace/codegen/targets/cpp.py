@@ -59,11 +59,15 @@ def copy_expr(
     is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
                                        dtypes.AllocationLifetime.Persistent)
     defined_types = None
+    # Non-free symbol dependent Arrays/Views due to their shape
+    dependent_shape = (
+        isinstance(data_desc, data.Array) and any(
+            str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+            for s in data_desc.free_symbols
+        )
+    )
     try:
-        if (isinstance(data_desc, data.Array)
-                and not isinstance(data_desc, data.View) and any(
-                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in data_desc.free_symbols)):
+        if dependent_shape or isinstance(data_desc, data.View):
             defined_types = dispatcher.declared_arrays.get(data_name,
                                                            is_global=is_global)
     except KeyError:
