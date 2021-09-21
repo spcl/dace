@@ -4157,6 +4157,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 # isinput = memlet in inputs.values()
                 isinput = False
                 for other in inputs.values():
+                    if not isinstance(other, dace.Memlet):
+                        continue
                     if memlet == other and memlet.data == other.data:
                         isinput = True
                         break
