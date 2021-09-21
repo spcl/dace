@@ -4147,40 +4147,50 @@ class ProgramVisitor(ExtNodeVisitor):
                     inputs[k] = v
             # Unset parent inputs/read accesses that
             # turn out to be outputs/write accesses.
-            # TODO: Is there a case where some data is both input and output?
-            # TODO: If yes, is it a problem?
             for memlet in outputs.values():
                 aname = memlet.data
                 rng = memlet.subset
                 access_value = (aname, rng)
                 access_key = inverse_dict_lookup(self.accesses, access_value)
+                # NOTE: `memlet in inputs.values()` doesn't work because
+                # it only looks at the subset and not the data
+                # isinput = memlet in inputs.values()
+                isinput = False
+                for other in inputs.values():
+                    if not isinstance(other, dace.Memlet):
+                        continue
+                    if memlet == other and memlet.data == other.data:
+                        isinput = True
+                        break
                 if access_key:
                     # Delete read access and create write access and output
                     vname = aname[:-1] + 'w'
                     name, rng, atype = access_key
                     if atype == 'r':
-                        del self.accesses[access_key]
+                        if not isinput:
+                            del self.accesses[access_key]
                         access_value = self._add_write_access(name,
                                                               rng,
                                                               node,
                                                               new_name=vname)
                         memlet.data = vname
                     # Delete the old read descriptor
-                    conn_used = False
-                    for s in self.sdfg.nodes():
-                        for n in s.data_nodes():
-                            if n.data == aname:
-                                conn_used = True
+                    if not isinput:
+                        conn_used = False
+                        for s in self.sdfg.nodes():
+                            for n in s.data_nodes():
+                                if n.data == aname:
+                                    conn_used = True
+                                    break
+                            if conn_used:
                                 break
-                        if conn_used:
-                            break
-                    if not conn_used:
-                        del self.sdfg.arrays[aname]
-                if aname in self.inputs.keys():
+                        if not conn_used:
+                            del self.sdfg.arrays[aname]
+                if not isinput and aname in self.inputs.keys():
                     # Delete input
                     del self.inputs[aname]
                 # Delete potential input slicing
-                if slice_state:
+                if not isinput and slice_state:
                     for n in slice_state.nodes():
                         if isinstance(n, nodes.AccessNode) and n.data == aname:
                             for e in slice_state.in_edges(n):
