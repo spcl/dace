@@ -334,24 +334,27 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc,
                       function_stream, declaration_stream):
-        
+
         # Non-free symbol dependent Arrays due to their shape
-        dependent_shape = (
-            isinstance(nodedesc, dt.Array) and not
-            isinstance(nodedesc, dt.View) and any(
+        dependent_shape = (isinstance(
+            nodedesc, dt.Array) and not isinstance(nodedesc, dt.View) and any(
                 str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                for s in nodedesc.free_symbols
-            )
-        )
+                for s in nodedesc.free_symbols))
         # Non-free symbol dependent Views due to their "offset"
         dependent_offset = False
         if isinstance(nodedesc, dt.View):
             edge = sdutil.get_view_edge(dfg, node)
             if edge.data:
+                src_subset = edge.data.get_src_subset(edge, dfg)
+                dst_subset = edge.data.get_dst_subset(edge, dfg)
+                free_symbols = set()
+                if src_subset:
+                    free_symbols |= src_subset.free_symbols
+                if dst_subset:
+                    free_symbols |= dst_subset.free_symbols
                 dependent_offset = any(
                     str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in edge.data.src_subset.free_symbols
-                )
+                    for s in free_symbols)
         if not (dependent_shape or dependent_offset):
             raise NotImplementedError(
                 "The declare_array method should only be used for variables "
@@ -1362,7 +1365,32 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         self._dispatcher.defined_vars.enter_scope(scope_entry)
         for aname, arg in kernel_args.items():
             if aname in const_params:
-                defined_type, ctype = self._dispatcher.defined_vars.get(aname)
+                defined_type, ctype = None, None
+                if aname in sdfg.arrays:
+                    data_desc = sdfg.arrays[aname]
+                    is_global = data_desc.lifetime in (
+                        dtypes.AllocationLifetime.Global,
+                        dtypes.AllocationLifetime.Persistent)
+                    # Non-free symbol dependent Arrays due to their shape
+                    dependent_shape = (isinstance(data_desc, dt.Array)
+                                       and not isinstance(data_desc, dt.View)
+                                       and any(
+                                           str(s) not in sdfg.free_symbols.
+                                           union(sdfg.constants.keys())
+                                           for s in data_desc.free_symbols))
+                    try:
+                        # NOTE: It is hard to get access to the view-edge here,
+                        # so always check the declared-arrays dictionary for
+                        # Views.
+                        if dependent_shape or isinstance(data_desc, dt.View):
+                            defined_type, ctype = (
+                                self._dispatcher.declared_arrays.get(
+                                    aname, is_global=is_global))
+                    except KeyError:
+                        pass
+                if not defined_type:
+                    defined_type, ctype = self._dispatcher.defined_vars.get(
+                        aname)
                 self._dispatcher.defined_vars.add(aname,
                                                   defined_type,
                                                   'const %s' % ctype,

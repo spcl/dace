@@ -182,7 +182,7 @@ class CPUCodeGen(TargetCodeGenerator):
         nodedesc = node.desc(sdfg)
         if self._dispatcher.defined_vars.has(name):
             return  # View was already allocated
-        
+
         # Check if array is already declared
         declared = self._dispatcher.declared_arrays.has(name)
 
@@ -231,12 +231,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Non-free symbol dependent Arrays due to their shape
         dependent_shape = (
-            isinstance(nodedesc, data.Array) and not
-            isinstance(nodedesc, data.View) and any(
+            isinstance(nodedesc, data.Array)
+            and not isinstance(nodedesc, data.View) and any(
                 str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                for s in nodedesc.free_symbols
-            )
-        )
+                for s in nodedesc.free_symbols))
         # Non-free symbol dependent Views due to their "offset"
         dependent_offset = False
         if isinstance(nodedesc, data.View):
@@ -250,9 +248,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 if dst_subset:
                     free_symbols |= dst_subset.free_symbols
                 dependent_offset = any(
-                    str(s) not in sdfg.free_symbols.union(
-                        sdfg.constants.keys()) for s in free_symbols
-                )
+                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                    for s in free_symbols)
         if not (dependent_shape or dependent_offset):
             raise NotImplementedError(
                 "The declare_array method should only be used for variables "
@@ -1235,13 +1232,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
         types = None
         # Non-free symbol dependent Arrays due to their shape
-        dependent_shape = (
-            isinstance(desc, data.Array) and not
-            isinstance(desc, data.View) and any(
+        dependent_shape = (isinstance(
+            desc, data.Array) and not isinstance(desc, data.View) and any(
                 str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                for s in desc.free_symbols
-            )
-        )
+                for s in desc.free_symbols))
         try:
             # NOTE: It is hard to get access to the view-edge here, so always
             # check the declared-arrays dictionary for Views.
