@@ -92,6 +92,11 @@ def set_by_view_5(A: dace.float64[10]):
 def test_set_by_view_5():
     A = np.ones((10,), dtype=np.float64)
 
+    sdfg = set_by_view_5.to_sdfg(strict=False)
+    from dace.transformation.interstate import InlineSDFG, StateFusion
+    sdfg.apply_transformations_repeated(StateFusion)
+    sdfg.apply_transformations(InlineSDFG)
+    sdfg.save('test.sdfg')
     set_by_view_5(A)
 
     assert np.all(A[1:-2] == 2.0)
