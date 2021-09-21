@@ -1022,9 +1022,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc,
                       function_stream, declaration_stream):
         
-        # Non-free symbol dependent Arrays/Views due to their shape
+        # Non-free symbol dependent Arrays due to their shape
         dependent_shape = (
-            isinstance(nodedesc, dt.Array) and any(
+            isinstance(nodedesc, dt.Array) and not
+            isinstance(nodedesc, dt.View) and any(
                 str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
                 for s in nodedesc.free_symbols
             )
@@ -1033,10 +1034,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         dependent_offset = False
         if isinstance(nodedesc, dt.View):
             edge = utils.get_view_edge(dfg, node)
-            dependent_offset = any(
-                str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                for s in edge.data.src_subset.free_symbols
-            )
+            if edge.data:
+                dependent_offset = any(
+                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                    for s in edge.data.src_subset.free_symbols
+                )
         if not (dependent_shape or dependent_offset):
             raise NotImplementedError(
                 "The declare_array method should only be used for variables "

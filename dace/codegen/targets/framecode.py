@@ -635,9 +635,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
             # Check if Array/View is dependent on non-free SDFG symbols
             # NOTE: Tuple is (SDFG, State, Node, declare, allocate, deallocate)
-            # Non-free symbol dependent Arrays/Views due to their shape
+            # Non-free symbol dependent Arrays due to their shape
             dependent_shape = (
                 isinstance(desc, data.Array) and not
+                isinstance(desc, data.View) and not
                 isinstance(curscope, nodes.EntryNode) and any(
                     str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
                     for s in desc.free_symbols
@@ -647,13 +648,14 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             dependent_offset = False
             if isinstance(desc, data.View):
                 edge = utils.get_view_edge(alloc_state, first_node_instance)
-                dependent_offset = (
-                    not isinstance(curscope, nodes.EntryNode) and any(
-                        str(s) not in sdfg.free_symbols.union(
-                            sdfg.constants.keys())
-                        for s in edge.data.src_subset.free_symbols
+                if edge.data:
+                    dependent_offset = (
+                        not isinstance(curscope, nodes.EntryNode) and any(
+                            str(s) not in sdfg.free_symbols.union(
+                                sdfg.constants.keys())
+                            for s in edge.data.src_subset.free_symbols
+                        )
                     )
-                )
             if dependent_shape or dependent_offset:
                 # Declare in current (SDFG) scope
                 self.to_allocate[curscope].append(
