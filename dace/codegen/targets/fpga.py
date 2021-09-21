@@ -349,7 +349,10 @@ class FPGACodeGen(TargetCodeGenerator):
                                               [dtypes.StorageType.Register]):
                 if (storage_from == dtypes.StorageType.Register
                         and storage_to == dtypes.StorageType.Register):
-                    continue
+                    # register this as copy dispatcher only if the destination is scheduled on FPGA
+                    self._dispatcher.register_copy_dispatcher(
+                        storage_from, storage_to,
+                        dtypes.ScheduleType.FPGA_Device, self)
                 self._dispatcher.register_copy_dispatcher(
                     storage_from, storage_to, None, self)
         self._dispatcher.register_copy_dispatcher(
