@@ -202,6 +202,23 @@ class RedundantArray(pm.Transformation):
         e1 = graph.edges_between(in_array, out_array)[0]
         a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
 
+        # Find the true in desc (in case in_array is a view).
+        true_in_array = in_array
+        true_in_desc = in_desc
+        if isinstance(in_desc, data.View):
+            true_in_array = sdutil.get_last_view_node(graph, in_array)
+            if not true_in_array:
+                return False
+            true_in_desc = sdfg.arrays[true_in_array.data]
+        # Find the true out_desc (in case out_array is a view).
+        true_out_array = out_array
+        true_out_desc = out_desc
+        if isinstance(out_desc, data.View):
+            true_out_array = sdutil.get_last_view_node(graph, out_array)
+            if not true_out_array:
+                return False
+            true_out_desc = sdfg.arrays[true_out_array.data]
+
         if strict:
             # In strict mode, make sure the memlet covers the removed array
             subset = copy.deepcopy(e1.data.subset)
@@ -218,13 +235,19 @@ class RedundantArray(pm.Transformation):
             # to out_desc being both input and output of the library node.
             # We do not know if this is safe.
 
-            # First find the true out_desc (in case out_array is a view).
-            true_out_desc = out_desc
-            if isinstance(out_desc, data.View):
-                e = sdutil.get_view_edge(graph, out_array)
-                if not e:
-                    return False
-                true_out_desc = sdfg.arrays[e.src.data]
+            # # First find the true out_desc (in case out_array is a view).
+            # true_out_array = out_array
+            # true_out_desc = out_desc
+            # if isinstance(out_desc, data.View):
+            #     true_out_array = sdutil.get_last_view_node(graph, out_array)
+            #     if not true_out_array:
+            #         return False
+            #     true_out_desc = sdfg.arrays[true_out_array.data]
+            # if isinstance(out_desc, data.View):
+            #     e = sdutil.get_view_edge(graph, out_array)
+            #     if not e:
+            #         return False
+            #     true_out_desc = sdfg.arrays[e.src.data]
 
             if not isinstance(in_desc, data.View):
 
@@ -243,10 +266,14 @@ class RedundantArray(pm.Transformation):
                             if isinstance(b.src, nodes.AccessNode):
                                 desc = sdfg.arrays[b.src.data]
                                 if isinstance(desc, data.View):
-                                    e = sdutil.get_view_edge(graph, b.src)
-                                    if not e:
+                                    # e = sdutil.get_view_edge(graph, b.src)
+                                    # if not e:
+                                    #     return False
+                                    # desc = sdfg.arrays[e.src.data]
+                                    n = sdutil.get_last_view_node(graph. b.src)
+                                    if not n:
                                         return False
-                                    desc = sdfg.arrays[e.src.data]
+                                    desc = sdfg.arrays[n.data]
                                     if desc is true_out_desc:
                                         return False
 
@@ -255,7 +282,7 @@ class RedundantArray(pm.Transformation):
             # write access. Therefore, there might be a RW, WR, or WW dependency.
             accesses = [
                 n for n in graph.nodes() if isinstance(n, nodes.AccessNode)
-                and n.desc(sdfg) == out_desc and n is not out_array
+                and n.desc(sdfg) == true_out_desc and n is not true_out_array
             ]
             if len(accesses) > 0:
                 # We need to ensure that a data race will not happen if we
@@ -265,13 +292,13 @@ class RedundantArray(pm.Transformation):
                 # Loop over the accesses
                 for a in accesses:
                     try:
-                        has_bward_path = nx.has_path(G, a, out_array)
+                        has_bward_path = nx.has_path(G, a, true_out_array)
                     except NodeNotFound:
-                        has_bward_path = nx.has_path(graph.nx, a, out_array)
+                        has_bward_path = nx.has_path(graph.nx, a, true_out_array)
                     try:
-                        has_fward_path = nx.has_path(G, out_array, a)
+                        has_fward_path = nx.has_path(G, true_out_array, a)
                     except NodeNotFound:
-                        has_fward_path = nx.has_path(graph.nx, out_array, a)
+                        has_fward_path = nx.has_path(graph.nx, true_out_array, a)
                     # If there is no path between the access nodes (disconnected
                     # components), then it is definitely possible to have data
                     # races. Abort.
