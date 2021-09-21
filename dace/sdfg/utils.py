@@ -601,6 +601,21 @@ def get_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
         return view_edge.dst
 
 
+def get_last_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
+    """
+    Given a view access node, returns the last viewed access node
+    if existent, else None
+    """
+    sdfg = state.parent
+    node = view
+    desc = sdfg.arrays[node.data]
+    while isinstance(desc, dt.View):
+        node = get_view_node(state, node)
+        if node is None or not isinstance(node, nd.AccessNode):
+            return None
+        desc = sdfg.arrays[node.data]
+
+
 def get_view_edge(state: SDFGState,
                   view: nd.AccessNode) -> gr.MultiConnectorEdge[mm.Memlet]:
     """
