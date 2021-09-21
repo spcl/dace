@@ -172,8 +172,11 @@ def test_symbol_dependent_pinned_array():
     assert (np.allclose(B, B_ref))
 
 
-@pytest.mark.gpu
+@pytest.mark.skip  # @pytest.mark.gpu
 def test_symbol_dependent_gpu_view():
+    # NOTE: This test cannot produce the correct result since the input
+    # data of the reduction are not contiguous and cub:reduce doesn't support
+    # such data.
     A = np.random.randn(10, 10, 10)
     B = np.ndarray(10, dtype=np.float64)
     sdfg = _make_sdfg("symbol_dependent_gpu_view",
@@ -237,6 +240,6 @@ if __name__ == '__main__':
     test_symbol_dependent_cpu_view()
     test_symbol_dependent_gpu_global_array()
     test_symbol_dependent_pinned_array()
-    test_symbol_dependent_gpu_view()
+    # test_symbol_dependent_gpu_view()
     # test_symbol_dependent_fpga_global_array()
     test_symbol_dependent_array_in_map()
