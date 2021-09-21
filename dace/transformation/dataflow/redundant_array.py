@@ -194,12 +194,6 @@ class RedundantArray(pm.Transformation):
         if graph.out_degree(in_array) != 1:
             return False
 
-        if (isinstance(in_desc, data.View) and any(isinstance(e.src, nodes.CodeNode)
-                                                    for e in graph.in_edges(in_array))):
-            # If going directly to e.g., C++ tasklet
-            return False
-
-        
         # Make sure that the candidate is a transient variable
         if not in_desc.transient:
             return False
@@ -589,11 +583,6 @@ class RedundantSecondArray(pm.Transformation):
         if graph.in_degree(out_array) != 1:
             return False
 
-        if (isinstance(out_desc, data.View) and any(isinstance(e.dst, nodes.CodeNode)
-                                                    for e in graph.out_edges(out_array))):
-            # If coming directly from e.g., C++ tasklet
-            return False
-        
         # Make sure that the candidate is a transient variable
         if not out_desc.transient:
             return False
@@ -950,8 +939,6 @@ class SqueezeViewRemove(pm.Transformation):
         vedge = state.out_edges(out_array)[0]
         if vedge.data.data != out_array.data:  # Ensures subset comes from view
             return False
-        if isinstance(vedge.dst, nodes.CodeNode):
-            return False
         view_subset = copy.deepcopy(vedge.data.subset)
 
         aedge = state.edges_between(in_array, out_array)[0]
@@ -1044,8 +1031,6 @@ class UnsqueezeViewRemove(pm.Transformation):
 
         vedge = state.in_edges(in_array)[0]
         if vedge.data.data != in_array.data:  # Ensures subset comes from view
-            return False
-        if isinstance(vedge.src, nodes.CodeNode): # If coming directly from e.g., C++ tasklet
             return False
         view_subset = copy.deepcopy(vedge.data.subset)
 
