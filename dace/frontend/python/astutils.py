@@ -65,6 +65,8 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     """
     if not isinstance(node, ast.AST):
         return node
+    if isinstance(node, ast.Num):  # For compatibility
+        return node.n
     try:
         # Ensure context is load so eval works (e.g., when using value as lhs)
         if not isinstance(getattr(node, 'ctx', False), ast.Load):
