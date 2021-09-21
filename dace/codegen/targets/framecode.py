@@ -489,13 +489,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 if first_node_instance is None:
                     continue
 
-                # TODO: The change below was done so that test_alloc_persistent
-                # passes (tests/codegen/allocation_lifetime_test.py)
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
-                # definition = desc.as_arg(name=f'{name}') + ';'
                 self.statestruct.append(definition)
 
-                self.to_allocate[top_sdfg].append(
+                self.to_allocate[sdfg].append(
                     (sdfg, first_state_instance, first_node_instance, True,
                      True, True))
                 continue
@@ -779,7 +776,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             isvar = data.Scalar(isvarType)
             callsite_stream.write(
                 '%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
-            self.dispatcher.defined_vars.add(isvarName, isvarType,
+            self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar,
                                              isvarType.ctype)
 
         callsite_stream.write('\n', sdfg)

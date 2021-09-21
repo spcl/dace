@@ -180,8 +180,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         name = node.data
         nodedesc = node.desc(sdfg)
-        if self._dispatcher.defined_vars.has(name):
-            return  # View was already allocated
 
         # Check directionality of view (referencing dst or src)
         edge = sdutils.get_view_edge(dfg, node)
