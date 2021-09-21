@@ -1334,12 +1334,12 @@ class TaskletTransformer(ExtNodeTransformer):
                                 (symbolic.pystr_to_symbolic(i),
                                  symbolic.pystr_to_symbolic(i), 1)
                                 for i in squeezed_rng.indices
-                            ]) 
-                        else:   
+                            ])
+                        else:
                             memlet.subset = subsets.Range([
                                 (symbolic.pystr_to_symbolic(b),
-                                symbolic.pystr_to_symbolic(e),
-                                symbolic.pystr_to_symbolic(s))
+                                 symbolic.pystr_to_symbolic(e),
+                                 symbolic.pystr_to_symbolic(s))
                                 for b, e, s in squeezed_rng.ranges
                             ])
                     if self.nested and _subset_has_indirection(rng):
@@ -1377,12 +1377,12 @@ class TaskletTransformer(ExtNodeTransformer):
                                 (symbolic.pystr_to_symbolic(i),
                                  symbolic.pystr_to_symbolic(i), 1)
                                 for i in squeezed_rng.indices
-                            ]) 
-                        else:   
+                            ])
+                        else:
                             memlet.subset = subsets.Range([
                                 (symbolic.pystr_to_symbolic(b),
-                                symbolic.pystr_to_symbolic(e),
-                                symbolic.pystr_to_symbolic(s))
+                                 symbolic.pystr_to_symbolic(e),
+                                 symbolic.pystr_to_symbolic(s))
                                 for b, e, s in squeezed_rng.ranges
                             ])
                     if self.nested and _subset_has_indirection(rng):
@@ -3592,15 +3592,21 @@ class ProgramVisitor(ExtNodeVisitor):
                             [1], result_data.dtype)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
-                    elif (not name.startswith('__return') and (
-                            isinstance(result_data, data.View) or (
-                                not result_data.transient and
-                                isinstance(result_data, data.Array)))):
+                    elif (not name.startswith('__return')
+                          and (isinstance(result_data, data.View) or
+                               (not result_data.transient
+                                and isinstance(result_data, data.Array)))):
                         true_name, new_data = self.sdfg.add_view(
-                            result, result_data.shape, result_data.dtype,
-                            result_data.storage, result_data.strides,
-                            result_data.offset, find_new_name=True)
-                        self.views[true_name] = (result, Memlet.from_array(result, result_data))
+                            result,
+                            result_data.shape,
+                            result_data.dtype,
+                            result_data.storage,
+                            result_data.strides,
+                            result_data.offset,
+                            find_new_name=True)
+                        self.views[true_name] = (result,
+                                                 Memlet.from_array(
+                                                     result, result_data))
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
                         continue
@@ -4100,6 +4106,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Change connector names
             updated_args = []
+            arrays_before = list(sdfg.arrays.items())
             for i, (conn, arg) in enumerate(args):
                 if (conn in self.scope_vars.keys()
                         or conn in self.sdfg.arrays.keys()
@@ -4112,6 +4119,13 @@ class ProgramVisitor(ExtNodeVisitor):
                                   "{n}".format(c=conn, n=new_conn))
                     sdfg.replace(conn, new_conn)
                     updated_args.append((new_conn, arg))
+                    # Rename the connector's Views
+                    for arrname, array in arrays_before:
+                        if (isinstance(array, data.View)
+                                and len(arrname) > len(conn)
+                                and arrname[:len(conn) + 1] == f'{conn}_'):
+                            new_name = f'{new_conn}{arrname[len(conn):]}'
+                            sdfg.replace(arrname, new_name)
                 else:
                     updated_args.append((conn, arg))
             args = updated_args
