@@ -352,7 +352,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     # register this as copy dispatcher only if the destination is scheduled on FPGA
                     self._dispatcher.register_copy_dispatcher(
                         storage_from, storage_to,
-                        dtypes.ScheduleType.FPGA_Device)
+                        dtypes.ScheduleType.FPGA_Device, self)
                 else:
                     self._dispatcher.register_copy_dispatcher(
                         storage_from, storage_to, None, self)
