@@ -62,6 +62,44 @@ def test_set_by_view_3():
 
 
 @dace.program
+def set_by_view_4(A: dace.float64[10]):
+    B = A[1:-1]
+    B[...] = 2.0
+    B += 1.0
+
+
+def test_set_by_view_4():
+    A = np.ones((10,), dtype=np.float64)
+
+    set_by_view_4(A)
+
+    assert np.all(A[1:-1] == 3.0)
+    assert A[0] == 1.0
+    assert A[-1] == 1.0
+
+
+@dace.program
+def inner(A: dace.float64[8]):
+    tmp = 2 * A[1:]
+    A[:-1] = tmp
+
+
+@dace.program
+def set_by_view_5(A: dace.float64[10]):
+    inner(A[1:-1])
+
+
+def test_set_by_view_5():
+    A = np.ones((10,), dtype=np.float64)
+
+    set_by_view_5(A)
+
+    assert np.all(A[1:-2] == 2.0)
+    assert A[0] == 1.0
+    assert np.all(A[-2:] == 1.0)
+
+
+@dace.program
 def is_a_copy(A: dace.int64[10]):
     v = A[4]
     v += 1
@@ -80,4 +118,6 @@ if __name__ == '__main__':
     test_set_by_view_1()
     test_set_by_view_2()
     test_set_by_view_3()
+    test_set_by_view_4()
+    test_set_by_view_5()
     test_is_a_copy()
