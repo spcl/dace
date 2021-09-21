@@ -242,9 +242,16 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, data.View):
             edge = sdutils.get_view_edge(dfg, node)
             if edge.data:
+                src_subset = edge.data.get_src_subset(edge, dfg)
+                dst_subset = edge.data.get_dst_subset(edge, dfg)
+                free_symbols = set()
+                if src_subset:
+                    free_symbols |= src_subset.free_symbols
+                if dst_subset:
+                    free_symbols |= dst_subset.free_symbols
                 dependent_offset = any(
-                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in edge.data.src_subset.free_symbols
+                    str(s) not in sdfg.free_symbols.union(
+                        sdfg.constants.keys()) for s in free_symbols
                 )
         if not (dependent_shape or dependent_offset):
             raise NotImplementedError(

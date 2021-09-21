@@ -646,15 +646,20 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             )
             # Non-free symbol dependent Views due to their "offset"
             dependent_offset = False
-            if isinstance(desc, data.View):
+            if (isinstance(desc, data.View) and not
+                    isinstance(curscope, nodes.EntryNode)):
                 edge = utils.get_view_edge(alloc_state, first_node_instance)
                 if edge.data:
-                    dependent_offset = (
-                        not isinstance(curscope, nodes.EntryNode) and any(
-                            str(s) not in sdfg.free_symbols.union(
-                                sdfg.constants.keys())
-                            for s in edge.data.src_subset.free_symbols
-                        )
+                    src_subset = edge.data.get_src_subset(edge, alloc_state)
+                    dst_subset = edge.data.get_dst_subset(edge, alloc_state)
+                    free_symbols = set()
+                    if src_subset:
+                        free_symbols |= src_subset.free_symbols
+                    if dst_subset:
+                        free_symbols |= dst_subset.free_symbols
+                    dependent_offset = any(
+                        str(s) not in sdfg.free_symbols.union(
+                            sdfg.constants.keys()) for s in free_symbols
                     )
             if dependent_shape or dependent_offset:
                 # Declare in current (SDFG) scope
