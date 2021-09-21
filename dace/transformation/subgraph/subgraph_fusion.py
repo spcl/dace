@@ -697,7 +697,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # create new transient at exit replacing the array
             # and redirect all traffic
             data_ref = sdfg.data(node.data)
+
             out_trans_data_name = node.data + '_OUT'
+            out_trans_data_name = sdfg._find_new_name(out_trans_data_name)
             data_trans = sdfg.add_transient(name=out_trans_data_name,
                                             shape=dcpy(data_ref.shape),
                                             dtype=dcpy(data_ref.dtype),
@@ -723,9 +725,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         return transients_created
 
     def determine_invariant_dimensions(
-        self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
-        intermediate_nodes: List[nodes.AccessNode],
-        map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit]):
+            self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
+            intermediate_nodes: List[nodes.AccessNode],
+            map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit]):
         ''' Determines the invariant dimensions for each node -- dimensions in 
             which the access set of the memlets propagated through map entries and 
             exits does not change.
@@ -1142,7 +1144,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 for edge in chain(transient_in_edges, transient_out_edges):
                     for e in graph.memlet_tree(edge):
                         if e.data.data == node.data:
-                            e.data.data += '_OUT'
+                            e.data.data = transients_created[node].data
 
             # memlets of all in between transients:
             # offset memlets if array has been compressed

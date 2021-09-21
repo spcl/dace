@@ -94,7 +94,7 @@ def infer_connector_types(sdfg: SDFG):
             # If there are any remaining uninferable connectors, fail
             for e in state.out_edges(node):
                 cname = e.src_conn
-                if cname and node.out_connectors[cname].type is None:
+                if cname and node.out_connectors[cname] is None:
                     raise TypeError('Ambiguous or uninferable type in'
                                     ' connector "%s" of node "%s"' %
                                     (cname, node))
