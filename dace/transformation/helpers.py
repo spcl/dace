@@ -450,6 +450,7 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
     new_nodes = []
     new_entry = None
     new_exit = None
+    to_find_new_names: Set[nodes.AccessNode] = set()
     for node in scope.nodes():
         node_copy = copy.deepcopy(node)
         if node == scope.entry:
@@ -457,6 +458,10 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
         elif node == exit_node:
             new_exit = node_copy
 
+        if (isinstance(node, nodes.AccessNode)
+                and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope
+                and node.desc(sdfg).transient):
+            to_find_new_names.add(node_copy)
         state.add_node(node_copy)
         new_nodes.append(node_copy)
 
@@ -476,6 +481,17 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
 
     # Set the exit node's map to match the entry node
     new_exit.map = new_entry.map
+
+    # Replicate all temporary transients within scope
+    for node in to_find_new_names:
+        desc = node.desc(sdfg)
+        new_name = sdfg.add_datadesc(node.data,
+                                     copy.deepcopy(desc),
+                                     find_new_name=True)
+        node.data = new_name
+        for edge in state.all_edges(node):
+            for e in state.memlet_tree(edge):
+                e.data.data = new_name
 
     return ScopeSubgraphView(state, new_nodes, new_entry)
 
@@ -749,7 +765,6 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry,
     else:
         extracted_map = map_entry
         map_to_collapse = map_entry
-
 
     return extracted_map, map_to_collapse
 
