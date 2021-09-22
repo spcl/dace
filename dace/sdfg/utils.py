@@ -614,6 +614,7 @@ def get_last_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
         if node is None or not isinstance(node, nd.AccessNode):
             return None
         desc = sdfg.arrays[node.data]
+    return node
 
 
 def get_view_edge(state: SDFGState,
