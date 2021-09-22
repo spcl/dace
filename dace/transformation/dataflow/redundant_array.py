@@ -205,19 +205,23 @@ class RedundantArray(pm.Transformation):
         # Find the true in desc (in case in_array is a view).
         true_in_array = in_array
         true_in_desc = in_desc
+        true_in_subset = a1_subset
         if isinstance(in_desc, data.View):
             true_in_array = sdutil.get_last_view_node(graph, in_array)
             if not true_in_array:
                 return False
             true_in_desc = sdfg.arrays[true_in_array.data]
+            # true_in_subset = sdutil.get_view_subset(graph, in_array, a1_subset)
         # Find the true out_desc (in case out_array is a view).
         true_out_array = out_array
         true_out_desc = out_desc
+        true_out_subset = b_subset
         if isinstance(out_desc, data.View):
             true_out_array = sdutil.get_last_view_node(graph, out_array)
             if not true_out_array:
                 return False
             true_out_desc = sdfg.arrays[true_out_array.data]
+            # true_out_subset = sdutil.get_view_subset(graph, out_array, b_subset)
 
         if strict:
             # In strict mode, make sure the memlet covers the removed array
@@ -270,7 +274,7 @@ class RedundantArray(pm.Transformation):
                 # We need to ensure that a data race will not happen if we
                 # remove in_array.
                 # First, we simplify the graph
-                G = helpers.simplify_state(graph)
+                G = helpers.simplify_state(graph, remove_views=True)
                 # Loop over the accesses
                 for a in accesses:
                     try:
@@ -288,9 +292,9 @@ class RedundantArray(pm.Transformation):
                     # races. Abort.
                     if not (has_bward_path or has_fward_path):
                         return False
-                    # If there is a forward path then a must not be a direct
-                    # successor of in_array.
-                    if has_bward_path and true_out_array in G.successors(a):
+                    # If there is a backward path then the (true) in_array must
+                    # not be a direct successor of a.
+                    if has_bward_path and true_in_array in G.successors(a):
                         return False
 
         # Make sure that both arrays are using the same storage location
