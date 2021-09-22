@@ -110,26 +110,26 @@ def test_mGPU_GPU0_reduction(reduction_type):
         redA = find_access_node(sdfg, 'redA')
         redA.setzero = True
 
-    # np.random.seed(0)
-    # A = np.ndarray(shape=n, dtype=np_dtype)
-    # Aa = np.random.rand(n)
-    # A[:] = Aa[:]
+    np.random.seed(0)
+    A = np.ndarray(shape=n, dtype=np_dtype)
+    Aa = np.random.rand(n)
+    A[:] = Aa[:]
 
-    # out = sdfg(A=A, N=n)
-    # result_function = infer_result_function(reduction_type)
-    # res = result_function(A)
-    # assert np.isclose(out[0], res, atol=0,
-    #                   rtol=1e-7), f'\ngot: {out[0]}\nres: {res}'
+    out = sdfg(A=A, N=n)
+    result_function = infer_result_function(reduction_type)
+    res = result_function(A)
+    assert np.isclose(out[0], res, atol=0,
+                      rtol=1e-7), f'\ngot: {out[0]}\nres: {res}'
 
-    program_objects = sdfg.generate_code()
-    from dace.codegen import compiler
-    out_path = '.dacecache/local/reductions/' + sdfg.name
-    program_folder = compiler.generate_program_folder(sdfg, program_objects,
-                                                      out_path)
+    # program_objects = sdfg.generate_code()
+    # from dace.codegen import compiler
+    # out_path = '.dacecache/local/reductions/' + sdfg.name
+    # program_folder = compiler.generate_program_folder(sdfg, program_objects,
+    #                                                   out_path)
 
 
 if __name__ == "__main__":
     wrapper_test_mGPU_GPU0_reduction(Sum)
-    # wrapper_test_mGPU_GPU0_reduction(Prod)
-    # wrapper_test_mGPU_GPU0_reduction(Max)
-    # wrapper_test_mGPU_GPU0_reduction(Custom)
+    wrapper_test_mGPU_GPU0_reduction(Prod)
+    wrapper_test_mGPU_GPU0_reduction(Max)
+    wrapper_test_mGPU_GPU0_reduction(Custom)

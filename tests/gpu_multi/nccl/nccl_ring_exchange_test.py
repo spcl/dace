@@ -37,8 +37,7 @@ def nccl_ring_exchange():
             ring_sum[i] = 0
 
         # Ring Exchange
-        group_handle = dace.define_local_scalar(
-            dace.int32, storage=dace.StorageType.GPU_Global)
+        group_handle = dace.define_local_scalar(dace.int32)
         for i in range(num_gpus):
             if gpu_id == 0:
                 dace.comm.nccl.Send(send_buffer, gpu_id + 1, group_handle)
