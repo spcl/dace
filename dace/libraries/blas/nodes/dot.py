@@ -128,9 +128,25 @@ class ExpandDotCuBLAS(ExpandTransformation):
         if veclen != 1:
             n /= veclen
 
-        code = (environments.cublas.cuBLAS.handle_setup_code(node) +
-                f"""cublas{func}(__dace_cublas_handle, {n}, _x, {stride_x}, _y, 
-                             {stride_y}, _result);""")
+        code = environments.cublas.cuBLAS.handle_setup_code(node)
+        if node.accumulator_type is None:
+            code += f"""cublas{func}(__dace_cublas_handle, {n}, _x, {stride_x}, _y,
+                             {stride_y}, _result);"""
+        else:
+            code += f"""
+            cublasDotEx(
+                __dace_cublas_handle,
+                {n},
+                _x,
+                {blas_helpers.dtype_to_cudadatatype(dtype)},
+                {stride_x},
+                _y,
+                {blas_helpers.dtype_to_cudadatatype(desc_y.dtype)},
+                {stride_y},
+                _result,
+                {blas_helpers.dtype_to_cudadatatype(desc_res.dtype)},
+                {blas_helpers.dtype_to_cudadatatype(node.accumulator_type)});
+            """
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -562,13 +578,19 @@ class Dot(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    accumulator_type = dace.properties.TypeClassProperty(
+        default=None,
+        choices=dtypes.Typeclasses,
+        allow_none=True,
+        desc="Accumulator or intermediate storage type")
 
-    def __init__(self, name, n=None, *args, **kwargs):
+    def __init__(self, name, n=None, accumulator_type=None, **kwargs):
         super().__init__(name,
-                         *args,
                          inputs={"_x", "_y"},
                          outputs={"_result"},
                          **kwargs)
+        self.n = n
+        self.accumulator_type = accumulator_type
 
     def validate(self, sdfg, state):
         """
@@ -627,12 +649,12 @@ class Dot(dace.sdfg.nodes.LibraryNode):
 @oprepo.replaces('dace.libraries.blas.dot')
 @oprepo.replaces('dace.libraries.blas.Dot')
 def dot_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, y,
-                result):
+                result, acctype=None):
     # Add nodes
     x_in, y_in = (state.add_read(name) for name in (x, y))
     res = state.add_write(result)
 
-    libnode = Dot('dot', n=sdfg.arrays[x].shape[0])
+    libnode = Dot('dot', n=sdfg.arrays[x].shape[0], accumulator_type=acctype)
     state.add_node(libnode)
 
     # Connect nodes

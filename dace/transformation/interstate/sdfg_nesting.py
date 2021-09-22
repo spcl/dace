@@ -285,6 +285,10 @@ class InlineSDFG(transformation.Transformation):
             else:
                 sdfg.add_constant(cstname, cstval)
 
+        # Collect isolated nodes before inlining
+        isolated_nodes = set(n for n in state.data_nodes()
+                             if state.degree(n) == 0)
+
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
         inputs: Dict[str, MultiConnectorEdge] = {}
@@ -544,10 +548,10 @@ class InlineSDFG(transformation.Transformation):
             try:
                 node = next(n for n in order if n.data == edge.data.data)
             except StopIteration:
-                raise NameError(
-                    f'Access node with data "{edge.data.data}" not found in'
-                    f' nested SDFG "{nsdfg.name}" while inlining '
-                    '(reconnecting inputs)')
+                continue
+                # raise NameError(f'Access node with data "{edge.data.data}" not found in'
+                #                 f' nested SDFG "{nsdfg.name}" while inlining '
+                #                 '(reconnecting inputs)')
             state.add_edge(edge.src, edge.src_conn, node, edge.dst_conn,
                            edge.data)
             # Fission state if necessary
@@ -560,10 +564,10 @@ class InlineSDFG(transformation.Transformation):
                 node = next(n for n in reversed(order)
                             if n.data == edge.data.data)
             except StopIteration:
-                raise NameError(
-                    f'Access node with data "{edge.data.data}" not found in'
-                    f' nested SDFG "{nsdfg.name}" while inlining '
-                    '(reconnecting outputs)')
+                continue
+                # raise NameError(f'Access node with data "{edge.data.data}" not found in'
+                #                 f' nested SDFG "{nsdfg.name}" while inlining '
+                #                 '(reconnecting outputs)')
             state.add_edge(node, edge.src_conn, edge.dst, edge.dst_conn,
                            edge.data)
             # Fission state if necessary
@@ -575,6 +579,11 @@ class InlineSDFG(transformation.Transformation):
         #######################################################
         # Remove nested SDFG node
         state.remove_node(nsdfg_node)
+
+        # Remove newly-generated isolated nodes if exist
+        for dnode in state.data_nodes():
+            if state.degree(dnode) == 0 and dnode not in isolated_nodes:
+                state.remove_node(dnode)
 
     def _modify_access_to_access(
         self,

@@ -428,6 +428,8 @@ def set_fast_implementations(sdfg: SDFG,
         if isinstance(node, nodes.LibraryNode):
             for impl in implementation_prio:
                 if impl in node.implementations:
+                    if isinstance(node, dace.libraries.standard.nodes.reduce.Reduce) and node.implementation == 'CUDA (block)':
+                        continue
                     node.implementation = impl
                     break
 
@@ -509,7 +511,8 @@ def auto_optimize(sdfg: SDFG,
     while transformed:
         sdfg.apply_strict_transformations(validate=False,
                                           validate_all=validate_all)
-        xfh.split_interstate_edges(sdfg)
+        for s in sdfg.sdfg_list:
+            xfh.split_interstate_edges(s)
         l2ms = sdfg.apply_transformations_repeated(LoopToMap,
                                                    strict=True,
                                                    validate=False,

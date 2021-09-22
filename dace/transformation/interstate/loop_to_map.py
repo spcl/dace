@@ -6,7 +6,7 @@ import copy
 import itertools
 import sympy as sp
 import networkx as nx
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from dace import dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
 from dace.properties import Property, make_properties, CodeBlock
@@ -50,6 +50,33 @@ def _check_range(subset, a, itersym, b, step):
     return found
 
 
+def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
+    """ Finds the indices or ranges of a subset that depend on the iteration
+        variable. Returns their index in the subset's indices/ranges list.
+    """
+    if isinstance(subset, subsets.Indices):
+        return {
+            i
+            for i, idx in enumerate(subset) if symbolic.issymbolic(idx)
+            and itervar in {str(s)
+                            for s in idx.free_symbols}
+        }
+    else:
+        return {
+            i
+            for i, rng in enumerate(subset) if any(
+                symbolic.issymbolic(t)
+                and itervar in {str(s)
+                                for s in t.free_symbols} for t in rng)
+        }
+
+
+def _sanitize_by_index(indices: Set[int],
+                       subset: subsets.Subset) -> subsets.Range:
+    """ Keeps the indices or ranges of subsets that are in `indices`. """
+    return type(subset)([t for i, t in enumerate(subset) if i in indices])
+
+
 @registry.autoregister
 @make_properties
 class LoopToMap(DetectLoop):
@@ -80,8 +107,7 @@ class LoopToMap(DetectLoop):
             return False
 
         # If loop cannot be detected, fail
-        found = find_for_loop(graph, guard, begin,
-                              itervar=self.itervar)
+        found = find_for_loop(graph, guard, begin, itervar=self.itervar)
         if not found:
             return False
 
@@ -94,16 +120,16 @@ class LoopToMap(DetectLoop):
                 return False
 
         # Find all loop-body states
-        states = set([body_end])
+        states = set()
         to_visit = [begin]
         while to_visit:
             state = to_visit.pop(0)
-            if state is body_end:
-                continue
-            for _, dst, _ in graph.out_edges(state):
-                if dst not in states:
+            for _, dst, _ in sdfg.out_edges(state):
+                if dst not in states and dst is not guard:
                     to_visit.append(dst)
             states.add(state)
+
+        assert(body_end in states)
 
         write_set = set()
         for state in states:
@@ -164,8 +190,8 @@ class LoopToMap(DetectLoop):
                     for e in state.out_edges(dn):
                         # If the same container is both read and written, only match if
                         # it read and written at locations that will not create data races
-                        if e.data.dynamic and e.data.src_subset.num_elements(
-                        ) != 1:
+                        if (e.data.dynamic
+                                and e.data.src_subset.num_elements() != 1):
                             # If pointers are involved, give up
                             return False
                         src_subset = e.data.get_src_subset(e, state)
@@ -178,19 +204,30 @@ class LoopToMap(DetectLoop):
                                                                  step)]))
                         for candidate in write_memlets[data]:
                             # Simple case: read and write are in the same subset
-                            if src_subset == candidate.dst_subset:
-                                break
+                            read = src_subset
+                            write = candidate.dst_subset
+                            if read == write:
+                                continue
+                            ridx = _dependent_indices(itervar, read)
+                            widx = _dependent_indices(itervar, write)
+                            indices = set(ridx) | set(widx)
+                            if not indices:
+                                indices = set(range(len(read)))
+                            read = _sanitize_by_index(indices, read)
+                            write = _sanitize_by_index(indices, write)
+                            if read == write:
+                                continue
                             # Propagated read does not overlap with propagated write
                             pwrite = propagate_subset([candidate],
                                                       sdfg.arrays[data],
                                                       [itervar],
                                                       subsets.Range([
                                                           (start, end, step)
-                                                      ]),
-                                                      use_dst=True)
-                            if subsets.intersects(pread.src_subset,
-                                                  pwrite.dst_subset) is False:
-                                break
+                                                      ]), use_dst=True)
+                            t_pread = _sanitize_by_index(indices, pread.src_subset)
+                            pwrite = _sanitize_by_index(indices, pwrite.dst_subset)
+                            if subsets.intersects(t_pread, pwrite) is False:
+                                continue
                             return False
 
         # Check that the iteration variable is not used on other edges or states
@@ -232,18 +269,19 @@ class LoopToMap(DetectLoop):
         after: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
 
         # Obtain iteration variable, range, and stride
-        itervar, (start, end, step), (_, body_end) = find_for_loop(
-            sdfg, guard, body, itervar=self.itervar)
+        itervar, (start, end,
+                  step), (_, body_end) = find_for_loop(sdfg,
+                                                       guard,
+                                                       body,
+                                                       itervar=self.itervar)
 
         # Find all loop-body states
-        states = set([body_end])
+        states = set()
         to_visit = [body]
         while to_visit:
             state = to_visit.pop(0)
-            if state is body_end:
-                continue
             for _, dst, _ in sdfg.out_edges(state):
-                if dst not in states:
+                if dst not in states and dst is not guard:
                     to_visit.append(dst)
             states.add(state)
 
