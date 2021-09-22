@@ -252,7 +252,7 @@ class RedundantArray(pm.Transformation):
                             if isinstance(b.src, nodes.AccessNode):
                                 desc = sdfg.arrays[b.src.data]
                                 if isinstance(desc, data.View):
-                                    n = sdutil.get_last_view_node(graph. b.src)
+                                    n = sdutil.get_last_view_node(graph, b.src)
                                     if not n:
                                         return False
                                     desc = sdfg.arrays[n.data]
