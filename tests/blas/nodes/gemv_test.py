@@ -134,7 +134,7 @@ def run_gemv(target: str,
 
     ref = scipy.linalg.blas.sgemv(alpha, A, x, beta, y_copy, trans=transposed)
 
-    diff = np.linalg.norm(y - ref) / (m if transposed else n)
+    diff = np.linalg.norm(y - ref) / np.linalg.norm(ref)
     if diff >= 1e-5:
         raise RuntimeError("Validation failed.")
 
