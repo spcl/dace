@@ -1441,8 +1441,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             output_node.data: output_data
         }
         in_out_free_symbols = set()
-        in_out_free_symbols.update(input_data.free_symbols,
-                                   output_data.free_symbols)
+        in_out_free_symbols.update(map(str, input_data.free_symbols))
+        in_out_free_symbols.update(map(str, output_data.free_symbols))
         in_out_free_symbols.discard(input_data.location.get('gpu', None))
         in_out_free_symbols.discard(output_data.location.get('gpu', None))
         dfg_args = dfg.arglist()
