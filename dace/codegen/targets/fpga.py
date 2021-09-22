@@ -349,9 +349,13 @@ class FPGACodeGen(TargetCodeGenerator):
                                               [dtypes.StorageType.Register]):
                 if (storage_from == dtypes.StorageType.Register
                         and storage_to == dtypes.StorageType.Register):
-                    continue
-                self._dispatcher.register_copy_dispatcher(
-                    storage_from, storage_to, None, self)
+                    # register this as copy dispatcher only if the destination is scheduled on FPGA
+                    self._dispatcher.register_copy_dispatcher(
+                        storage_from, storage_to,
+                        dtypes.ScheduleType.FPGA_Device, self)
+                else:
+                    self._dispatcher.register_copy_dispatcher(
+                        storage_from, storage_to, None, self)
         self._dispatcher.register_copy_dispatcher(
             dtypes.StorageType.FPGA_Global, dtypes.StorageType.CPU_Heap, None,
             self)
@@ -1347,7 +1351,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         # Trace this edge forward: if it finds something that has a kernel id and
                         # there is at least one local buffer along the way, then reuse that kernel id
                         only_global, kern = self._trace_forward_edge(e, state)
-                        if not only_global:
+                        if not only_global and kern is not None:
                             kernel = kern
                         else:
                             kernel = max_kernels
@@ -1719,8 +1723,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if has_pipelined_loops:
                 # Language-specific
-                self.generate_pipeline_loop_pre(callsite_stream, sdfg,
-                                                state_id, dst_node)
+                self.generate_pipeline_loop_pre(callsite_stream, sdfg, state_id,
+                                                dst_node)
                 if len(copy_shape) > 1:
                     # Language-specific
                     self.generate_flatten_loop_pre(callsite_stream, sdfg,
@@ -1760,7 +1764,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # Inject dependence pragmas
                 for node in dependency_pragma_nodes:
                     self.generate_no_dependence_post(callsite_stream, sdfg,
-                                                     state_id, dst_node, node.data)
+                                                     state_id, dst_node,
+                                                     node.data)
 
             src_def_type, _ = self._dispatcher.defined_vars.get(src_node.data)
             dst_def_type, _ = self._dispatcher.defined_vars.get(dst_node.data)

@@ -606,6 +606,9 @@ class pointer(typeclass):
         if json_obj['type'] != 'pointer':
             raise TypeError("Invalid type for pointer")
 
+        if json_obj['dtype'] is None:
+            return pointer(typeclass(None))
+
         return pointer(json_to_typeclass(json_obj['dtype'], context))
 
     def as_ctypes(self):
@@ -1337,8 +1340,9 @@ def is_array(obj: Any) -> bool:
     try:
         if hasattr(obj, '__cuda_array_interface__'):
             return True
-    except RuntimeError:
-        # In PyTorch, accessing this attribute throws a runtime error for variables that require grad
+    except (KeyError, RuntimeError):
+        # In PyTorch, accessing this attribute throws a runtime error for 
+        # variables that require grad, or KeyError when a boolean array is used
         return True
     if hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__'):
         return hasattr(obj, 'shape') and len(obj.shape) > 0

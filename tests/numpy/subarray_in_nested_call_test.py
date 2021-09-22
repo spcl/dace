@@ -26,5 +26,26 @@ def test():
     assert np.allclose(c.transpose(), d)
 
 
+@dace.program
+def pb(a, i):
+    a[i] = a[20 - i]
+
+
+@dace.program
+def pa(a):
+    for i in dace.map[0:5]:
+        pb(a, i)
+
+
+def test_inout_connector():
+    a = np.random.rand(20)
+    ref = a.copy()
+    pa(a)
+    pa.f(ref)
+    assert (np.allclose(a, ref))
+
+
+
 if __name__ == '__main__':
     test()
+    test_inout_connector()
