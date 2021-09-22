@@ -294,3 +294,5 @@ class AccumulateTransient(transformation.Transformation):
                 external_edges=True)
 
         # TODO: use trivial map elimintation here when it will be merged to remove map if it has trivial ranges
+
+        return nested_sdfg
