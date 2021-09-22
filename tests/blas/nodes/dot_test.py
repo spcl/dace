@@ -126,4 +126,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     size = args.N
 
-    run_test(target, size, vector_length)
+    run_test(args.target, size, args.vector_length)
