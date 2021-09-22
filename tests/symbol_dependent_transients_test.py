@@ -21,8 +21,8 @@ def _make_sdfg(name, storage=dace.dtypes.StorageType.CPU_Heap, isview=False):
                                 strides=A.strides)
     else:
         _, tmp1 = sdfg.add_transient('tmp1', [N - 4, N - 4, N - i],
-                                    dtype=dace.float64,
-                                    storage=storage)
+                                     dtype=dace.float64,
+                                     storage=storage)
     _, tmp2 = sdfg.add_transient('tmp2', [1],
                                  dtype=dace.float64,
                                  storage=storage)
@@ -180,7 +180,8 @@ def test_symbol_dependent_gpu_view():
     A = np.random.randn(10, 10, 10)
     B = np.ndarray(10, dtype=np.float64)
     sdfg = _make_sdfg("symbol_dependent_gpu_view",
-                      storage=dace.dtypes.StorageType.GPU_Global, isview=True)
+                      storage=dace.dtypes.StorageType.GPU_Global,
+                      isview=True)
     # Compile manually to avoid strict transformations
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
@@ -210,15 +211,14 @@ def test_symbol_dependent_fpga_global_array():
 
 
 def test_symbol_dependent_array_in_map():
-
     @dace.program
     def symbol_dependent_array_in_map(A: dace.float32[10]):
         out = np.ndarray(10, dtype=np.float32)
         for i in dace.map[0:10]:
-            tmp = A[0:i+1]
+            tmp = A[0:i + 1]
             out[i] = np.sum(tmp)
         return out
-    
+
     # Compile manually to avoid strict transformations
     sdfg = symbol_dependent_array_in_map.to_sdfg(strict=False)
     sdfg.apply_transformations_repeated(interstate.StateFusion)

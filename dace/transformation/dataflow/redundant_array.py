@@ -276,11 +276,13 @@ class RedundantArray(pm.Transformation):
                     try:
                         has_bward_path = nx.has_path(G, a, true_out_array)
                     except NodeNotFound:
-                        has_bward_path = nx.has_path(graph.nx, a, true_out_array)
+                        has_bward_path = nx.has_path(graph.nx, a,
+                                                     true_out_array)
                     try:
                         has_fward_path = nx.has_path(G, true_out_array, a)
                     except NodeNotFound:
-                        has_fward_path = nx.has_path(graph.nx, true_out_array, a)
+                        has_fward_path = nx.has_path(graph.nx, true_out_array,
+                                                     a)
                     # If there is no path between the access nodes (disconnected
                     # components), then it is definitely possible to have data
                     # races. Abort.
@@ -453,8 +455,8 @@ class RedundantArray(pm.Transformation):
                     if new_memlet.data == in_array.data:
                         new_memlet.data = out_array.data
                     new_memlet.dst_subset = b_subset
-                    graph.add_edge(e.src, e.src_conn, out_array,
-                                e.dst_conn, new_memlet)
+                    graph.add_edge(e.src, e.src_conn, out_array, e.dst_conn,
+                                   new_memlet)
                 graph.remove_node(in_array)
                 try:
                     if in_array.data in sdfg.arrays:
@@ -462,7 +464,6 @@ class RedundantArray(pm.Transformation):
                 except ValueError:  # Used somewhere else
                     pass
                 return
-
 
         # Find extraneous A or B subset dimensions
         a_dims_to_pop = []
@@ -700,8 +701,8 @@ class RedundantSecondArray(pm.Transformation):
                             subsets_intersect = False
                             for e in graph.in_edges(a):
                                 _, subset = _validate_subsets(e,
-                                                            sdfg.arrays,
-                                                            dst_name=a.data)
+                                                              sdfg.arrays,
+                                                              dst_name=a.data)
                                 res = subsets.intersects(a_subset, subset)
                                 if res == True or res is None:
                                     subsets_intersect = True
@@ -711,11 +712,13 @@ class RedundantSecondArray(pm.Transformation):
                         try:
                             has_bward_path = nx.has_path(G, a, true_in_array)
                         except NodeNotFound:
-                            has_bward_path = nx.has_path(graph.nx, a, true_in_array)
+                            has_bward_path = nx.has_path(
+                                graph.nx, a, true_in_array)
                         try:
                             has_fward_path = nx.has_path(G, true_in_array, a)
                         except NodeNotFound:
-                            has_fward_path = nx.has_path(graph.nx, true_in_array, a)
+                            has_fward_path = nx.has_path(
+                                graph.nx, true_in_array, a)
                         # If there is no path between the access nodes
                         # (disconnected components), then it is definitely
                         # possible to have data races. Abort.

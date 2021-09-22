@@ -229,29 +229,7 @@ class CPUCodeGen(TargetCodeGenerator):
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc,
                       function_stream, declaration_stream):
 
-        fsymbols =  sdfg.free_symbols.union(sdfg.constants.keys())
-        # # Non-free symbol dependent Arrays due to their shape
-        # dependent_shape = (
-        #     isinstance(nodedesc, data.Array)
-        #     and not isinstance(nodedesc, data.View) and any(
-        #         str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-        #         for s in nodedesc.free_symbols))
-        # # Non-free symbol dependent Views due to their "offset"
-        # dependent_offset = False
-        # if isinstance(nodedesc, data.View):
-        #     edge = sdutils.get_view_edge(dfg, node)
-        #     if edge.data:
-        #         src_subset = edge.data.get_src_subset(edge, dfg)
-        #         dst_subset = edge.data.get_dst_subset(edge, dfg)
-        #         free_symbols = set()
-        #         if src_subset:
-        #             free_symbols |= src_subset.free_symbols
-        #         if dst_subset:
-        #             free_symbols |= dst_subset.free_symbols
-        #         dependent_offset = any(
-        #             str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-        #             for s in free_symbols)
-        # if not (dependent_shape or dependent_offset):
+        fsymbols = sdfg.free_symbols.union(sdfg.constants.keys())
         if not sdutils.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError(
                 "The declare_array method should only be used for variables "
@@ -504,8 +482,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if self._dispatcher.declared_arrays.has(node.data):
             is_global = nodedesc.lifetime in (
                 dtypes.AllocationLifetime.Global,
-                dtypes.AllocationLifetime.Persistent
-            )
+                dtypes.AllocationLifetime.Persistent)
             self._dispatcher.declared_arrays.remove(node.data,
                                                     is_global=is_global)
 

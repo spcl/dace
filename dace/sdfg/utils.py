@@ -1172,7 +1172,8 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
         state.node_id(node))
 
 
-def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGState, fsymbols: Set[str]) -> bool:
+def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data,
+                             state: SDFGState, fsymbols: Set[str]) -> bool:
     """
     Checks whether the Array or View descriptor is non-free symbol dependent.
     An Array is non-free symbol dependent when its attributes (e.g., shape)
