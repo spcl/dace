@@ -140,7 +140,7 @@ def _run_fpga_test(vendor: str,
                     print_status(f"{base_name} [Xilinx]: Running high-level "
                                  f"synthesis for {sdfg.name}.")
                     try:
-                        proc = sp.Popen(["make", "xilinx_synthesis"],
+                        proc = sp.Popen(["make", "synthesis"],
                                         cwd=build_folder,
                                         stdout=sp.PIPE,
                                         stderr=sp.PIPE,
