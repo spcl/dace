@@ -119,6 +119,45 @@ class DefinedMemlets:
                             type(name).__name__)
 
         self._scopes[0][1][name] = (dtype, ctype)
+    
+    def remove(self,
+               name: str,
+               ancestor: int = 0,
+               is_global: bool = False) -> Tuple[DefinedType, str]:
+        last_visited_scope = None
+        for parent, scope, can_access_parent in reversed(self._scopes):
+            last_parent = parent
+            last_visited_scope = scope
+            if ancestor > 0:
+                ancestor -= 1
+                continue
+            if name in scope:
+                del scope[name]
+                return
+            if not can_access_parent:
+                break
+
+        # Search among globally defined variables (top scope), if not already visited
+        # TODO: The following change makes it so we look in all top scopes, not
+        # just the very top-level one. However, ft we are in a nested SDFG,
+        # then we must limit the search to that SDFG only. There is one
+        # exception, when the data has Global or Persistent allocation lifetime.
+        # Then, we expect it to be only in the very top-level scope.
+        # if last_visited_scope != self._scopes[0]:
+        #     if name in self._scopes[0][1]:
+        #         return self._scopes[0][1][name]
+        if is_global:
+            last_parent = None
+        if last_parent:
+            if isinstance(last_parent, SDFGState):
+                last_parent = last_parent.parent
+        for parent, scope, _ in self._scopes:
+            if not last_parent or parent == last_parent:
+                if name in scope:
+                    del scope[name]
+                    return
+
+        raise KeyError("Variable {} has not been defined".format(name))
 
 
 #############################################################################
