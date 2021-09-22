@@ -1063,15 +1063,21 @@ def _array_array_where(visitor: 'ProgramVisitor',
 
     left_shape = left_arr.shape if left_arr else [1]
     right_shape = right_arr.shape if right_arr else [1]
+    cond_shape = cond_arr.shape if cond_arr else [1]
 
     (out_shape, all_idx_dict, out_idx, left_idx,
      right_idx) = _broadcast_together(left_shape, right_shape)
+
+    # Broadcast condition with broadcasted left+right
+    _, _, _, cond_idx, _ = _broadcast_together(cond_shape, out_shape)
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):
         left_idx = subsets.Range([(0, 0, 1)])
     if isinstance(right_arr, data.Scalar):
         right_idx = subsets.Range([(0, 0, 1)])
+    if isinstance(cond_arr, data.Scalar):
+        cond_idx = subsets.Range([(0, 0, 1)])
 
     if left_arr is None and right_arr is None:
         raise ValueError('Both x and y cannot be scalars in numpy.where')
@@ -1101,8 +1107,7 @@ def _array_array_where(visitor: 'ProgramVisitor',
                        dace.Memlet.from_array(out_operand, out_arr))
     else:
         inputs = {}
-        inputs['__incond'] = Memlet.simple(cond_operand,
-                                           left_idx if left_arr else right_idx)
+        inputs['__incond'] = Memlet.simple(cond_operand, cond_idx)
         if left_arr:
             inputs['__in1'] = Memlet.simple(left_operand, left_idx)
         if right_arr:
