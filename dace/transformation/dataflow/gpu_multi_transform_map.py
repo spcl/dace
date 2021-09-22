@@ -182,6 +182,8 @@ class GPUMultiTransformMap(transformation.Transformation):
         inner_map_entry.map.schedule = dtypes.ScheduleType.GPU_Device
         outer_map.schedule = dtypes.ScheduleType.GPU_Multidevice
 
+        symbolic_gpu_id = outer_map.params[0]
+
         # Add the parameter of the outer map
         for node in graph.successors(inner_map_entry):
             if isinstance(node, nodes.NestedSDFG):
@@ -211,6 +213,8 @@ class GPUMultiTransformMap(transformation.Transformation):
                                                        save=False,
                                                        node_a=outer_map_entry,
                                                        node_b=inner_map_entry)
+                in_data_node.desc(sdfg).location['gpu'] = symbolic_gpu_id
+                in_data_node.desc(sdfg).storage = dtypes.StorageType.GPU_Global
 
         wcr_data: Dict[str, Any] = {}
         # Add transient Data leading to the outer map
@@ -253,6 +257,9 @@ class GPUMultiTransformMap(transformation.Transformation):
                         save=False,
                         node_a=inner_map_exit,
                         node_b=outer_map_exit)
+                    out_data_node.desc(sdfg).location['gpu'] = symbolic_gpu_id
+                    out_data_node.desc(
+                        sdfg).storage = dtypes.StorageType.GPU_Global
 
         # Add Transients for write-conflict resolution
         if len(wcr_data) != 0:
@@ -261,11 +268,23 @@ class GPUMultiTransformMap(transformation.Transformation):
                 options=dict(array_identity_dict=wcr_data, prefix=prefix),
                 map_exit=inner_map_exit,
                 outer_map_exit=outer_map_exit)
+            nsdfg.schedule = dtypes.ScheduleType.GPU_Multidevice
+            nsdfg.location['gpu'] = symbolic_gpu_id
+            for transient_node in graph.successors(nsdfg):
+                if isinstance(transient_node, nodes.AccessNode):
+                    transient_node.desc(sdfg).location['gpu'] = symbolic_gpu_id
+                    transient_node.desc(
+                        sdfg).storage = dtypes.StorageType.GPU_Global
+                    nsdfg.sdfg.arrays[
+                        transient_node.label].location['gpu'] = symbolic_gpu_id
+                    nsdfg.sdfg.arrays[
+                        transient_node.
+                        label].storage = dtypes.StorageType.GPU_Global
+            infer_types.set_default_schedule_storage_types_and_location(
+                nsdfg.sdfg, dtypes.ScheduleType.GPU_Multidevice,
+                symbolic_gpu_id)
 
         # Remove the parameter of the outer_map from the sdfg symbols,
         # as it got added as a symbol in StripMining.
         if outer_map.params[0] in sdfg.free_symbols:
             sdfg.remove_symbol(outer_map.params[0])
-
-        # infer types inside the sdfg
-        infer_types.set_default_schedule_storage_types_and_location(sdfg)
