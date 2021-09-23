@@ -202,6 +202,32 @@ class RedundantArray(pm.Transformation):
         e1 = graph.edges_between(in_array, out_array)[0]
         a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
 
+        # Find the true in desc (in case in_array is a view).
+        true_in_array = in_array
+        true_in_desc = in_desc
+        if isinstance(in_desc, data.View):
+            true_in_array = sdutil.get_last_view_node(graph, in_array)
+            if not true_in_array:
+                return False
+            true_in_desc = sdfg.arrays[true_in_array.data]
+        # Find the true out_desc (in case out_array is a view).
+        true_out_array = out_array
+        true_out_desc = out_desc
+        true_out_subsets = [b_subset]
+        if isinstance(out_desc, data.View):
+            true_out_array = sdutil.get_last_view_node(graph, out_array)
+            if not true_out_array:
+                return False
+            true_out_desc = sdfg.arrays[true_out_array.data]
+            true_out_subsets = [e.data.get_dst_subset(e, graph)
+                                for e in graph.in_edges(true_out_array)]
+        
+        # Fail in the case of A -> V(A) or V(A) -> A
+        is_array_to_view = (isinstance(in_desc, data.View) ^
+                            isinstance(out_desc, data.View))
+        if true_in_array is true_out_array and is_array_to_view:
+            return False
+
         if strict:
             # In strict mode, make sure the memlet covers the removed array
             subset = copy.deepcopy(e1.data.subset)
@@ -217,14 +243,6 @@ class RedundantArray(pm.Transformation):
             # The reason is that the application of the transformation will lead
             # to out_desc being both input and output of the library node.
             # We do not know if this is safe.
-
-            # First find the true out_desc (in case out_array is a view).
-            true_out_desc = out_desc
-            if isinstance(out_desc, data.View):
-                e = sdutil.get_view_edge(graph, out_array)
-                if not e:
-                    return False
-                true_out_desc = sdfg.arrays[e.src.data]
 
             if not isinstance(in_desc, data.View):
 
@@ -243,10 +261,10 @@ class RedundantArray(pm.Transformation):
                             if isinstance(b.src, nodes.AccessNode):
                                 desc = sdfg.arrays[b.src.data]
                                 if isinstance(desc, data.View):
-                                    e = sdutil.get_view_edge(graph, b.src)
-                                    if not e:
+                                    n = sdutil.get_last_view_node(graph, b.src)
+                                    if not n:
                                         return False
-                                    desc = sdfg.arrays[e.src.data]
+                                    desc = sdfg.arrays[n.data]
                                     if desc is true_out_desc:
                                         return False
 
@@ -255,31 +273,47 @@ class RedundantArray(pm.Transformation):
             # write access. Therefore, there might be a RW, WR, or WW dependency.
             accesses = [
                 n for n in graph.nodes() if isinstance(n, nodes.AccessNode)
-                and n.desc(sdfg) == out_desc and n is not out_array
+                and n.desc(sdfg) == true_out_desc and n is not true_out_array
             ]
             if len(accesses) > 0:
                 # We need to ensure that a data race will not happen if we
                 # remove in_array.
                 # First, we simplify the graph
-                G = helpers.simplify_state(graph)
+                G = helpers.simplify_state(graph, remove_views=True)
                 # Loop over the accesses
                 for a in accesses:
+                    subsets_intersect = False
+                    for e in graph.out_edges(a):
+                        subset, _ = _validate_subsets(e,
+                                                      sdfg.arrays,
+                                                      src_name=a.data)
+                        for oset in true_out_subsets:
+                            res = subsets.intersects(oset, subset)
+                            if res == True or res is None:
+                                subsets_intersect = True
+                                break
+                        if subsets_intersect:
+                            break
+                    if not subsets_intersect:
+                        continue
                     try:
-                        has_bward_path = nx.has_path(G, a, out_array)
+                        has_bward_path = nx.has_path(G, a, true_out_array)
                     except NodeNotFound:
-                        has_bward_path = nx.has_path(graph.nx, a, out_array)
+                        has_bward_path = nx.has_path(graph.nx, a,
+                                                     true_out_array)
                     try:
-                        has_fward_path = nx.has_path(G, out_array, a)
+                        has_fward_path = nx.has_path(G, true_out_array, a)
                     except NodeNotFound:
-                        has_fward_path = nx.has_path(graph.nx, out_array, a)
+                        has_fward_path = nx.has_path(graph.nx, true_out_array,
+                                                     a)
                     # If there is no path between the access nodes (disconnected
                     # components), then it is definitely possible to have data
                     # races. Abort.
                     if not (has_bward_path or has_fward_path):
                         return False
-                    # If there is a forward path then a must not be a direct
-                    # successor of in_array.
-                    if has_bward_path and out_array in G.successors(a):
+                    # If there is a backward path then the (true) in_array must
+                    # not be a direct successor of a.
+                    if has_bward_path and true_in_array in G.successors(a):
                         return False
 
         # Make sure that both arrays are using the same storage location
@@ -428,16 +462,31 @@ class RedundantArray(pm.Transformation):
 
         # View connected to a view: simple case
         if (isinstance(in_desc, data.View) and isinstance(out_desc, data.View)):
+            simple_case = True
             for e in graph.in_edges(in_array):
-                new_memlet = copy.deepcopy(e.data)
-                e.dst_subset = b_subset
-                graph.add_edge(e.src, e.src_conn, out_array,
-                               e.dst_conn, new_memlet)
-            graph.remove_node(in_array)
-            if in_array.data in sdfg.arrays:
-                del sdfg.arrays[in_array.data]
-            return
-
+                if a1_subset != e.data.dst_subset:
+                    simple_case = False
+                    break
+            if simple_case:
+                for e in graph.in_edges(in_array):
+                    for e2 in graph.memlet_tree(e):
+                        if e2 is e:
+                            continue
+                        if e2.data.data == in_array.data:
+                            e2.data.data = out_array.data
+                    new_memlet = copy.deepcopy(e.data)
+                    if new_memlet.data == in_array.data:
+                        new_memlet.data = out_array.data
+                    new_memlet.dst_subset = b_subset
+                    graph.add_edge(e.src, e.src_conn, out_array, e.dst_conn,
+                                   new_memlet)
+                graph.remove_node(in_array)
+                try:
+                    if in_array.data in sdfg.arrays:
+                        sdfg.remove_data(in_array.data)
+                except ValueError:  # Used somewhere else
+                    pass
+                return
 
         # Find extraneous A or B subset dimensions
         a_dims_to_pop = []
@@ -591,6 +640,32 @@ class RedundantSecondArray(pm.Transformation):
         e1 = graph.edges_between(in_array, out_array)[0]
         a_subset, b1_subset = _validate_subsets(e1, sdfg.arrays)
 
+        # Find the true in desc (in case in_array is a view).
+        true_in_array = in_array
+        true_in_desc = in_desc
+        true_in_subsets = [a_subset]
+        if isinstance(in_desc, data.View):
+            true_in_array = sdutil.get_last_view_node(graph, in_array)
+            if not true_in_array:
+                return False
+            true_in_desc = sdfg.arrays[true_in_array.data]
+            true_in_subsets = [e.data.get_src_subset(e, graph)
+                                for e in graph.out_edges(true_in_array)]
+        # Find the true out_desc (in case out_array is a view).
+        true_out_array = out_array
+        true_out_desc = out_desc
+        if isinstance(out_desc, data.View):
+            true_out_array = sdutil.get_last_view_node(graph, out_array)
+            if not true_out_array:
+                return False
+            true_out_desc = sdfg.arrays[true_out_array.data]
+
+        # Fail in the case of A -> V(A) or V(A) -> A
+        is_array_to_view = (isinstance(in_desc, data.View) ^
+                            isinstance(out_desc, data.View))
+        if true_in_array is true_out_array and is_array_to_view:
+            return False
+
         if strict:
             # In strict mode, make sure the memlet covers the removed array
             if not b1_subset:
@@ -609,14 +684,6 @@ class RedundantSecondArray(pm.Transformation):
             # to in_desc being both input and output of the library node.
             # We do not know if this is safe.
 
-            # First find the true in_desc (in case in_array is a view).
-            true_in_desc = in_desc
-            if isinstance(in_desc, data.View):
-                e = sdutil.get_view_edge(graph, in_array)
-                if not e:
-                    return False
-                true_in_desc = sdfg.arrays[e.dst.data]
-
             if not isinstance(out_desc, data.View):
 
                 edges_to_check = []
@@ -634,10 +701,10 @@ class RedundantSecondArray(pm.Transformation):
                             if isinstance(b.dst, nodes.AccessNode):
                                 desc = sdfg.arrays[b.dst.data]
                                 if isinstance(desc, data.View):
-                                    e = sdutil.get_view_edge(graph, b.dst)
-                                    if not e:
+                                    n = sdutil.get_last_view_node(graph, b.dst)
+                                    if not n:
                                         return False
-                                    desc = sdfg.arrays[e.dst.data]
+                                    desc = sdfg.arrays[n.data]
                                     if desc is true_in_desc:
                                         return False
 
@@ -646,15 +713,15 @@ class RedundantSecondArray(pm.Transformation):
             # might be a RW, WR, or WW dependency.
             accesses = [
                 n for n in graph.nodes() if isinstance(n, nodes.AccessNode)
-                and n.desc(sdfg) == in_desc and n is not in_array
+                and n.desc(sdfg) == true_in_desc and n is not true_in_array
             ]
             if len(accesses) > 0:
-                if (graph.in_degree(in_array) > 0
+                if (graph.in_degree(true_in_array) > 0
                         or any(graph.in_degree(a) > 0 for a in accesses)):
                     # We need to ensure that a data race will not happen if we
                     # remove in_array.
                     # First, we simplify the graph
-                    G = helpers.simplify_state(graph)
+                    G = helpers.simplify_state(graph, remove_views=True)
                     # Loop over the accesses
                     for a in accesses:
                         subsets_intersect = False
@@ -662,35 +729,34 @@ class RedundantSecondArray(pm.Transformation):
                             _, subset = _validate_subsets(e,
                                                           sdfg.arrays,
                                                           dst_name=a.data)
-                            res = subsets.intersects(a_subset, subset)
-                            if res == True or res is None:
-                                subsets_intersect = True
+                            for iset in true_in_subsets:
+                                res = subsets.intersects(iset, subset)
+                                if res == True or res is None:
+                                    subsets_intersect = True
+                                    break
+                            if subsets_intersect:
                                 break
                         if not subsets_intersect:
                             continue
                         try:
-                            has_bward_path = nx.has_path(G, a, in_array)
+                            has_bward_path = nx.has_path(G, a, true_in_array)
                         except NodeNotFound:
-                            has_bward_path = nx.has_path(graph.nx, a, in_array)
+                            has_bward_path = nx.has_path(
+                                graph.nx, a, true_in_array)
                         try:
-                            has_fward_path = nx.has_path(G, in_array, a)
+                            has_fward_path = nx.has_path(G, true_in_array, a)
                         except NodeNotFound:
-                            has_fward_path = nx.has_path(graph.nx, in_array, a)
+                            has_fward_path = nx.has_path(
+                                graph.nx, true_in_array, a)
                         # If there is no path between the access nodes
                         # (disconnected components), then it is definitely
                         # possible to have data races. Abort.
                         if not (has_bward_path or has_fward_path):
                             return False
                         # If there is a forward path then a must not be a direct
-                        # successor of in_array.
-                        if has_fward_path and a in G.successors(in_array):
-                            for src, _ in G.in_edges(a):
-                                if src is in_array:
-                                    continue
-                                if (nx.has_path(G, in_array, src)
-                                        and src != out_array):
-                                    continue
-                                return False
+                        # successor of the (true) out_array.
+                        if has_fward_path and a in G.successors(true_out_array):
+                            return False
 
         # Make sure that both arrays are using the same storage location
         # and are of the same type (e.g., Stream->Stream)
@@ -1078,6 +1144,8 @@ class UnsqueezeViewRemove(pm.Transformation):
         # Modify data and subset on all outgoing edges
         for e in state.memlet_tree(vedge):
             e.data.data = out_array.data
+            # Offset subset, then unsqueeze
+            e.data.subset.offset(aedge.data.subset, False)
             e.data.subset.unsqueeze(asqdims_mirror)
             for i in asqdims_mirror:
                 e.data.subset.ranges[i] = aedge.data.subset.ranges[i]

@@ -8,7 +8,7 @@ from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
 from typing import Dict, List, Optional, Tuple, Set, Union
 
-from dace import dtypes, symbolic
+from dace import data, dtypes, symbolic
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
@@ -646,7 +646,7 @@ def constant_symbols(sdfg: SDFG) -> Set[str]:
     return set(sdfg.symbols) - interstate_symbols
 
 
-def simplify_state(state: SDFGState) -> MultiDiGraph:
+def simplify_state(state: SDFGState, remove_views: bool = False) -> MultiDiGraph:
     """
     Returns a networkx MultiDiGraph object that contains all the access nodes
     and corresponding edges of an SDFG state. The removed code nodes and map
@@ -655,6 +655,8 @@ def simplify_state(state: SDFGState) -> MultiDiGraph:
     :param state: The input SDFG state.
     :return: The MultiDiGraph object.
     """
+
+    sdfg = state.parent
 
     # Copy the whole state
     G = MultiDiGraph()
@@ -674,7 +676,7 @@ def simplify_state(state: SDFGState) -> MultiDiGraph:
     # wcr edges and connect their predecessors and successors
     for n in state.nodes():
         if n in G.nodes():
-            if not isinstance(n, nodes.AccessNode):
+            if (not isinstance(n, nodes.AccessNode) or (remove_views and isinstance(sdfg.arrays[n.data], data.View))):
                 for p in G.predecessors(n):
                     for c in G.successors(n):
                         G.add_edge(p, c)

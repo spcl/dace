@@ -1026,15 +1026,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc,
                       function_stream, declaration_stream):
 
-        if not (isinstance(nodedesc, dt.Array)
-                and not isinstance(nodedesc, dt.View) and any(
-                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in nodedesc.free_symbols)):
+        fsymbols = sdfg.free_symbols.union(sdfg.constants.keys())
+        if not utils.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError(
                 "The declare_array method should only be used for variables "
-                "that must have their declaration and allocation separate. "
-                "Currently, we support only Arrays (not Views) depedent on "
-                "non-free SDFG symbols.")
+                "that must have their declaration and allocation separate.")
 
         result_decl = StringIO()
         arrsize = nodedesc.total_size

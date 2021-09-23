@@ -585,9 +585,20 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             dst_expr = (e.data.dst_subset.num_elements() *
                         sdfg.arrays[dst_node.data].veclen)
             if symbolic.inequal_symbols(src_expr, dst_expr):
-                raise InvalidSDFGEdgeError(
+                error = InvalidSDFGEdgeError(
                     'Dimensionality mismatch between src/dst subsets', sdfg,
                     state_id, eid)
+                # NOTE: Make an exception for Views
+                from dace.sdfg import utils
+                if (isinstance(sdfg.arrays[src_node.data], dt.View) and
+                        utils.get_view_edge(state, src_node) is e):
+                    warnings.warn(error.message)
+                    continue
+                if (isinstance(sdfg.arrays[dst_node.data], dt.View) and
+                        utils.get_view_edge(state, dst_node) is e):
+                    warnings.warn(error.message)
+                    continue
+                raise error
 
     ########################################
 
