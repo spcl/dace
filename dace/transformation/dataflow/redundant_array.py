@@ -221,7 +221,11 @@ class RedundantArray(pm.Transformation):
             true_out_desc = sdfg.arrays[true_out_array.data]
             true_out_subsets = [e.data.get_dst_subset(e, graph)
                                 for e in graph.in_edges(true_out_array)]
-        if true_in_array is true_out_array:
+        
+        # Fail in the case of A -> V(A) or V(A) -> A
+        is_array_to_view = (isinstance(in_desc, data.View) ^
+                            isinstance(out_desc, data.View))
+        if true_in_array is true_out_array and is_array_to_view:
             return False
 
         if strict:
@@ -655,7 +659,11 @@ class RedundantSecondArray(pm.Transformation):
             if not true_out_array:
                 return False
             true_out_desc = sdfg.arrays[true_out_array.data]
-        if true_in_array is true_out_array:
+
+        # Fail in the case of A -> V(A) or V(A) -> A
+        is_array_to_view = (isinstance(in_desc, data.View) ^
+                            isinstance(out_desc, data.View))
+        if true_in_array is true_out_array and is_array_to_view:
             return False
 
         if strict:
