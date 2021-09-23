@@ -1347,7 +1347,7 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
     backend = Config.get('compiler', 'cuda', 'backend')
     for e in state_dfg.in_edges(node):
         gpu_id = sdutils.get_gpu_location(sdfg, e.src)
-        if hasattr(e.src, "_cuda_stream") and gpu_id in e.src._cuda_stream:
+        if hasattr(e.src, "_cuda_stream"):
             cudastream = "__state->gpu_context->at(%s).streams[%d]" % (
                 gpu_id,
                 e.src._cuda_stream[gpu_id],
@@ -1393,6 +1393,8 @@ def postsynchronize_streams_node(sdfg, dfg, state_id, node, callsite_stream):
             for gpu_stream, event in stream_event_set:
                 sync_event = f'__state->gpu_context->at({gpu_id}).events[{event}]'
                 sync_string += f'''{backend}EventRecord({sync_event}, {sync_stream});\n'''
+                if gpu_stream[0] != gpu_id:
+                    sync_string += f'''\n{backend}SetDevice({gpu_stream[0]});\n'''
                 to_sync_stream = f"__state->gpu_context->at({gpu_stream[0]}).streams[{gpu_stream[1]}]"
                 sync_string += f'''{backend}StreamWaitEvent({to_sync_stream}, {sync_event}, 0);\n'''
             callsite_stream.write(sync_string, sdfg, state_id, [ldst])
@@ -1414,7 +1416,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
         for edge in dfg.out_edges(scope_exit):
             # Synchronize end of kernel with output data (multiple kernels
             # lead to same data node)
-            if (isinstance(edge.dst, nodes.AccessNode)
+            if ((isinstance(edge.dst, nodes.AccessNode)
+                 and hasattr(edge.dst, '_cuda_stream'))
                     and edge.dst._cuda_stream != node._cuda_stream):
                 sync_string = ''''''
 

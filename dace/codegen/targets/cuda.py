@@ -1511,7 +1511,6 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
         wcr_expression = f'__dace_runkernel_{kernel_name}({kernel_call_parameters}, {cudastream});'
         if self._debugprint:
             wcr_expression = f'''printf("__dace_runkernel_{kernel_name}\\n");\n''' + wcr_expression
-
         return wcr_expression
 
     def _emit_wcr(self,
@@ -1589,6 +1588,11 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
         src_gpuid = sdutil.get_gpu_location(state_dfg, src_node)
         dst_gpuid = sdutil.get_gpu_location(state_dfg, dst_node)
         gpuid = src_gpuid if src_gpuid is not None else dst_gpuid
+
+        multi_device_scope = False
+        if isinstance(dfg, dace.sdfg.ScopeSubgraphView):
+            multi_device_scope = (dfg.entry.schedule is
+                                  dtypes.ScheduleType.GPU_Multidevice)
 
         # inter GPU copy
         if (isinstance(src_node, nodes.AccessNode)
@@ -1714,6 +1718,10 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
                     '''.format(gpu_id=current_device, backend=self.backend)
                 sync_string += '''{backend}StreamSynchronize({stream});\n'''.format(
                     stream=stream, backend=self.backend)
+
+            if memlet.wcr is not None and multi_device_scope:
+                sync_string += '\n#pragma omp barrier\n'
+
             callsite_stream.write(sync_string, sdfg, state_id,
                                   [src_node, dst_node])
         # CPU -> GPU, GPU -> CPU copies and itra GPU copies that are not in device code
@@ -1753,14 +1761,16 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
                 if cudastream == 'nullptr':
                     cudastream = dst_cudastream
             else:
-                is_sync = True
+                if not multi_device_scope:
+                    is_sync = True
+                else:
+                    stream_wait[src_gpuid] = src_cudastream
                 dst_cudastream = 'nullptr'
             if hasattr(edge, '_cuda_event'):
                 event = '__state->gpu_context->at(%s).events[%d]' % (
                     src_gpuid, edge._cuda_event)
                 syncwith[event, src_cudastream,
                          src_gpuid] = (dst_cudastream, dst_gpuid)
-
             # Handle case of impending kernel/tasklet on another stream
             if max_streams >= 0 and is_sync is None:
                 for next_edge in state_dfg.out_edges(dst_node):
@@ -1773,7 +1783,7 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
                             and (not hasattr(next_dst, '_cuda_stream')
                                  and not hasattr(next_edge, '_cuda_event'))):
                         is_sync = True
-                    elif next_dst._cuda_stream != dst_cudastream and hasattr(
+                    elif next_dst._cuda_stream != dst_node._cuda_stream and hasattr(
                             next_edge, '_cuda_event'):
                         dst_cudastream = '__state->gpu_context->at(%s).streams[%d]' % (
                             dst_gpuid, dst_node._cuda_stream[dst_gpuid])
@@ -2028,6 +2038,8 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
                         '''.format(gpu_id=current_device, backend=self.backend)
                     sync_string += '''{backend}StreamSynchronize({stream});\n'''.format(
                         stream=stream, backend=self.backend)
+                if memlet.wcr is not None and multi_device_scope:
+                    sync_string += '\n#pragma omp barrier\n'
                 callsite_stream.write(sync_string, sdfg, state_id,
                                       [src_node, dst_node])
             self._emit_sync(callsite_stream)
@@ -3426,28 +3438,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         cpp.synchronize_streams(sdfg, dfg, state_id, node, node,
                                 callsite_stream)
-        # # synchronization
-        # node_stream = getattr(node, '_cuda_stream', None)
-        # node_gpu_id = sdutil.get_gpu_location(sdfg, node)
-        # sync_stream = f"__state->gpu_context->at({node_gpu_id}).streams[{node._cuda_stream[node_gpu_id]}]"
-        # if (node_stream is not None):
-        #     events = collections.defaultdict(set)
-        #     for e in dfg.out_edges(node):
-        #         dst = e.dst
-        #         gpu_id = sdutil.get_gpu_location(sdfg, dst)
-        #         if hasattr(e, '_cuda_event'):
-        #             dst_gpu_id = sdutil.get_gpu_location(sdfg, e.dst)
-        #             events[gpu_id].add(
-        #                 ((dst_gpu_id, e.dst._cuda_stream[dst_gpu_id]),
-        #                  e._cuda_event))
-        #     for gpu_id, stream_event_set in events.items():
-        #         sync_string = f'''\n{self.backend}SetDevice({gpu_id});\n'''
-        #         for gpu_stream, event in stream_event_set:
-        #             sync_event = f'__state->gpu_context->at({gpu_id}).events[{event}]'
-        #             sync_string += f'''{self.backend}EventRecord({sync_event}, {sync_stream});\n'''
-        #             to_sync_stream = f"__state->gpu_context->at({gpu_stream[0]}).streams[{gpu_stream[1]}]"
-        #             sync_string += f'''{self.backend}StreamWaitEvent({to_sync_stream}, {sync_event}, 0);\n'''
-        #         callsite_stream.write(sync_string, sdfg, state_id, [node])
 
         self._cpu_codegen.calling_codegen = old_codegen
         self._toplevel_schedule = old_schedule
@@ -3467,19 +3457,58 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         elif node.map.schedule == dtypes.ScheduleType.GPU_Multidevice:
             # Synchronize streams at the end of GPU_Multidevice
             already_synced = set()
-            for pre_node in dfg.graph.predecessors(node):
-                if hasattr(pre_node, '_cuda_stream'):
-                    gpu_id = sdutil.get_gpu_location(sdfg, pre_node)
-                    if (gpu_id, pre_node._cuda_stream[gpu_id]
-                        ) not in already_synced:
-                        cudastream = f'__state->gpu_context->at({gpu_id}).streams[{pre_node._cuda_stream[gpu_id]}]'
-                        already_synced.add(
-                            (gpu_id, pre_node._cuda_stream[gpu_id]))
-                        if self._debugprint:
-                            write_expr = f'\nDACE_CUDA_CHECK({self.backend}StreamSynchronize({cudastream}));\n'
-                        else:
-                            write_expr = f'\n{self.backend}StreamSynchronize({cudastream});\n'
-                        callsite_stream.write(write_expr, sdfg, state_id, node)
+            graph = dfg.graph
+            current_device = None
+            sync_string = ''
+            for edge in graph.in_edges(node):
+                src = edge.src
+                gpu_id = sdutil.get_gpu_location(sdfg, src)
+                sync_stream = f'__state->gpu_context->at({gpu_id}).streams[{src._cuda_stream[gpu_id]}]'
+                mpe = dfg.memlet_path(edge)
+                actual_dst = mpe[-1].dst
+                actual_dst_gpu_id = sdutil.get_gpu_location(sdfg, actual_dst)
+                if isinstance(src, nodes.MapExit):
+                    if hasattr(edge, '_cuda_event'):
+                        if current_device != gpu_id:
+                            current_device = gpu_id
+                            sync_string += '''\n{backend}SetDevice({gpu_id});
+                            '''.format(gpu_id=current_device,
+                                       backend=self.backend)
+                        sync_event = f'__state->gpu_context->at({gpu_id}).events[{edge._cuda_event}]'
+                        sync_string += f'''{self.backend}EventRecord({sync_event}, {sync_stream});\n'''
+                        if current_device != actual_dst_gpu_id:
+                            current_device = actual_dst_gpu_id
+                            sync_string += '''\n{backend}SetDevice({gpu_id});
+                            '''.format(gpu_id=current_device,
+                                       backend=self.backend)
+                        to_sync_stream = f"__state->gpu_context->at({actual_dst_gpu_id}).streams[{actual_dst._cuda_stream[actual_dst_gpu_id]}]"
+                        sync_string += f'''{self.backend}StreamWaitEvent({to_sync_stream}, {sync_event}, 0);\n'''
+
+                    elif isinstance(actual_dst, nodes.AccessNode):
+                        desc = actual_dst.desc(sdfg)
+                        if desc.storage not in [
+                                dtypes.StorageType.GPU_Global,
+                                dtypes.StorageType.GPU_Shared,
+                        ]:
+                            if (gpu_id, src._cuda_stream[gpu_id]
+                                ) not in already_synced:
+                                if current_device != gpu_id:
+                                    current_device = gpu_id
+                                    sync_string += '''\n{backend}SetDevice({gpu_id});
+                                    '''.format(gpu_id=current_device,
+                                               backend=self.backend)
+                                cudastream = f'__state->gpu_context->at({gpu_id}).streams[{src._cuda_stream[gpu_id]}]'
+                                already_synced.add(
+                                    (gpu_id, src._cuda_stream[gpu_id]))
+                                if self._debugprint:
+                                    sync_string += f'DACE_CUDA_CHECK({self.backend}StreamSynchronize({cudastream}));\n'
+                                else:
+                                    sync_string += f'{self.backend}StreamSynchronize({cudastream});\n'
+
+                    if edge.data.wcr is not None:
+                        sync_string += '\n#pragma omp barrier\n'
+            callsite_stream.write(sync_string, sdfg, state_id, node)
+
         self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node,
                                             function_stream, callsite_stream)
 
