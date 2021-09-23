@@ -137,15 +137,6 @@ class DefinedMemlets:
             if not can_access_parent:
                 break
 
-        # Search among globally defined variables (top scope), if not already visited
-        # TODO: The following change makes it so we look in all top scopes, not
-        # just the very top-level one. However, ft we are in a nested SDFG,
-        # then we must limit the search to that SDFG only. There is one
-        # exception, when the data has Global or Persistent allocation lifetime.
-        # Then, we expect it to be only in the very top-level scope.
-        # if last_visited_scope != self._scopes[0]:
-        #     if name in self._scopes[0][1]:
-        #         return self._scopes[0][1][name]
         if is_global:
             last_parent = None
         if last_parent:
