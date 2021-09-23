@@ -3466,15 +3466,20 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             return
         elif node.map.schedule == dtypes.ScheduleType.GPU_Multidevice:
             # Synchronize streams at the end of GPU_Multidevice
+            already_synced = set()
             for pre_node in dfg.graph.predecessors(node):
                 if hasattr(pre_node, '_cuda_stream'):
                     gpu_id = sdutil.get_gpu_location(sdfg, pre_node)
-                    cudastream = f'__state->gpu_context->at({gpu_id}).streams[{pre_node._cuda_stream[gpu_id]}]'
-                    if self._debugprint:
-                        write_expr = f'\nDACE_CUDA_CHECK({self.backend}StreamSynchronize({cudastream}));\n'
-                    else:
-                        write_expr = f'\n{self.backend}StreamSynchronize({cudastream});\n'
-                    callsite_stream.write(write_expr, sdfg, state_id, node)
+                    if (gpu_id, pre_node._cuda_stream[gpu_id]
+                        ) not in already_synced:
+                        cudastream = f'__state->gpu_context->at({gpu_id}).streams[{pre_node._cuda_stream[gpu_id]}]'
+                        already_synced.add(
+                            (gpu_id, pre_node._cuda_stream[gpu_id]))
+                        if self._debugprint:
+                            write_expr = f'\nDACE_CUDA_CHECK({self.backend}StreamSynchronize({cudastream}));\n'
+                        else:
+                            write_expr = f'\n{self.backend}StreamSynchronize({cudastream});\n'
+                        callsite_stream.write(write_expr, sdfg, state_id, node)
         self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node,
                                             function_stream, callsite_stream)
 
