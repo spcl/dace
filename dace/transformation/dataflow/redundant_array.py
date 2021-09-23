@@ -205,23 +205,24 @@ class RedundantArray(pm.Transformation):
         # Find the true in desc (in case in_array is a view).
         true_in_array = in_array
         true_in_desc = in_desc
-        true_in_subset = a1_subset
         if isinstance(in_desc, data.View):
             true_in_array = sdutil.get_last_view_node(graph, in_array)
             if not true_in_array:
                 return False
             true_in_desc = sdfg.arrays[true_in_array.data]
-            # true_in_subset = sdutil.get_view_subset(graph, in_array, a1_subset)
         # Find the true out_desc (in case out_array is a view).
         true_out_array = out_array
         true_out_desc = out_desc
-        true_out_subset = b_subset
+        true_out_subsets = [b_subset]
         if isinstance(out_desc, data.View):
             true_out_array = sdutil.get_last_view_node(graph, out_array)
             if not true_out_array:
                 return False
             true_out_desc = sdfg.arrays[true_out_array.data]
-            # true_out_subset = sdutil.get_view_subset(graph, out_array, b_subset)
+            true_out_subsets = [e.data.get_dst_subset(e, graph)
+                                for e in graph.in_edges(true_out_array)]
+        if true_in_array is true_out_array:
+            return False
 
         if strict:
             # In strict mode, make sure the memlet covers the removed array
@@ -277,6 +278,20 @@ class RedundantArray(pm.Transformation):
                 G = helpers.simplify_state(graph, remove_views=True)
                 # Loop over the accesses
                 for a in accesses:
+                    subsets_intersect = False
+                    for e in graph.out_edges(a):
+                        subset, _ = _validate_subsets(e,
+                                                      sdfg.arrays,
+                                                      src_name=a.data)
+                        for oset in true_out_subsets:
+                            res = subsets.intersects(oset, subset)
+                            if res == True or res is None:
+                                subsets_intersect = True
+                                break
+                        if subsets_intersect:
+                            break
+                    if not subsets_intersect:
+                        continue
                     try:
                         has_bward_path = nx.has_path(G, a, true_out_array)
                     except NodeNotFound:
@@ -624,11 +639,14 @@ class RedundantSecondArray(pm.Transformation):
         # Find the true in desc (in case in_array is a view).
         true_in_array = in_array
         true_in_desc = in_desc
+        true_in_subsets = [a_subset]
         if isinstance(in_desc, data.View):
             true_in_array = sdutil.get_last_view_node(graph, in_array)
             if not true_in_array:
                 return False
             true_in_desc = sdfg.arrays[true_in_array.data]
+            true_in_subsets = [e.data.get_src_subset(e, graph)
+                                for e in graph.out_edges(true_in_array)]
         # Find the true out_desc (in case out_array is a view).
         true_out_array = out_array
         true_out_desc = out_desc
@@ -637,6 +655,8 @@ class RedundantSecondArray(pm.Transformation):
             if not true_out_array:
                 return False
             true_out_desc = sdfg.arrays[true_out_array.data]
+        if true_in_array is true_out_array:
+            return False
 
         if strict:
             # In strict mode, make sure the memlet covers the removed array
@@ -693,26 +713,23 @@ class RedundantSecondArray(pm.Transformation):
                     # We need to ensure that a data race will not happen if we
                     # remove in_array.
                     # First, we simplify the graph
-                    G = helpers.simplify_state(graph)
+                    G = helpers.simplify_state(graph, remove_views=True)
                     # Loop over the accesses
                     for a in accesses:
-                        if in_array is true_in_array:
-                            # NOTE: This check makes sense only if `in_array`
-                            # is not a View. If it is, then we have to compose
-                            # all the intermediate subsets in order to find
-                            # the correct subsets. This is currently not
-                            # implemented so we just skip the check.
-                            subsets_intersect = False
-                            for e in graph.in_edges(a):
-                                _, subset = _validate_subsets(e,
-                                                              sdfg.arrays,
-                                                              dst_name=a.data)
-                                res = subsets.intersects(a_subset, subset)
+                        subsets_intersect = False
+                        for e in graph.in_edges(a):
+                            _, subset = _validate_subsets(e,
+                                                          sdfg.arrays,
+                                                          dst_name=a.data)
+                            for iset in true_in_subsets:
+                                res = subsets.intersects(iset, subset)
                                 if res == True or res is None:
                                     subsets_intersect = True
                                     break
-                            if not subsets_intersect:
-                                continue
+                            if subsets_intersect:
+                                break
+                        if not subsets_intersect:
+                            continue
                         try:
                             has_bward_path = nx.has_path(G, a, true_in_array)
                         except NodeNotFound:
@@ -729,15 +746,9 @@ class RedundantSecondArray(pm.Transformation):
                         if not (has_bward_path or has_fward_path):
                             return False
                         # If there is a forward path then a must not be a direct
-                        # successor of in_array.
-                        if has_fward_path and a in G.successors(true_in_array):
-                            for src, _ in G.in_edges(a):
-                                if src is true_in_array:
-                                    continue
-                                if (nx.has_path(G, in_array, src)
-                                        and src != out_array):
-                                    continue
-                                return False
+                        # successor of the (true) out_array.
+                        if has_fward_path and a in G.successors(true_out_array):
+                            return False
 
         # Make sure that both arrays are using the same storage location
         # and are of the same type (e.g., Stream->Stream)
