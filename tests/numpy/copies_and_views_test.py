@@ -92,11 +92,6 @@ def set_by_view_5(A: dace.float64[10]):
 def test_set_by_view_5():
     A = np.ones((10, ), dtype=np.float64)
 
-    sdfg = set_by_view_5.to_sdfg(strict=False)
-    from dace.transformation.interstate import InlineSDFG, StateFusion
-    sdfg.apply_transformations_repeated(StateFusion)
-    sdfg.apply_transformations(InlineSDFG)
-    sdfg.save('test.sdfg')
     set_by_view_5(A)
 
     assert np.all(A[1:-2] == 2.0)
@@ -119,10 +114,10 @@ def test_is_a_copy():
 
 
 if __name__ == '__main__':
-    test_set_by_view()
-    test_set_by_view_1()
-    test_set_by_view_2()
-    test_set_by_view_3()
-    test_set_by_view_4()
+    # test_set_by_view()
+    # test_set_by_view_1()
+    # test_set_by_view_2()
+    # test_set_by_view_3()
+    # test_set_by_view_4()
     test_set_by_view_5()
     test_is_a_copy()
