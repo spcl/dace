@@ -3,9 +3,10 @@
 
 from typing import Any, Dict, Set
 import ast
+import copy
 import dace
 import re
-from dace import dtypes, registry
+from dace import data, dtypes, registry
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers, transformation as pm
@@ -103,11 +104,15 @@ class SimpleTaskletFusion(pm.Transformation):
 
     t1 = pm.PatternNode(nodes.Tasklet)
     t2 = pm.PatternNode(nodes.Tasklet)
+    acc = pm.PatternNode(nodes.AccessNode)
 
     @staticmethod
     def expressions():
         return [
             sdutil.node_path_graph(SimpleTaskletFusion.t1,
+                                   SimpleTaskletFusion.t2),
+            sdutil.node_path_graph(SimpleTaskletFusion.t1,
+                                   SimpleTaskletFusion.acc,
                                    SimpleTaskletFusion.t2)
         ]
 
@@ -125,14 +130,48 @@ class SimpleTaskletFusion(pm.Transformation):
         if t1.language != t2.language:
             return False
 
-        # Avoid cycles
-        t1_dst = set()
-        for e in graph.out_edges(t1):
-            t1_dst.add(e.dst)
-        t2_src = set()
-        for e in graph.in_edges(t2):
-            t2_src.add(e.src)
-        if len(t1_dst.intersection(t2_src)):
+        if expr_index == 0:
+            # Avoid cycles
+            t1_dst = set()
+            for e in graph.out_edges(t1):
+                t1_dst.add(e.dst)
+            t2_src = set()
+            for e in graph.in_edges(t2):
+                t2_src.add(e.src)
+            if len(t1_dst.intersection(t2_src)):
+                return False
+        elif expr_index == 1:
+            acc = graph.node(candidate[SimpleTaskletFusion.acc])
+            if not isinstance(sdfg.arrays[acc.data], data.Scalar):
+                return False
+            if len(graph.in_edges(acc)) != 1 or len(graph.out_edges(acc)) != 1:
+                return False
+            # Avoid cycles
+            t1_dst = set()
+            boundary = set([t1])
+            while boundary:
+                new_boundary = set()
+                for n in boundary:
+                    for e in graph.out_edges(n):
+                        if isinstance(e.dst, nodes.AccessNode):
+                            new_boundary.add(e.dst)
+                        else:
+                            t1_dst.add(e.dst)
+                boundary = new_boundary
+            t2_src = set()
+            boundary = set([t2])
+            while boundary:
+                new_boundary = set()
+                for n in boundary:
+                    for e in graph.in_edges(n):
+                        if isinstance(e.src, nodes.AccessNode):
+                            new_boundary.add(e.src)
+                        else:
+                            t2_src.add(e.src)
+                boundary = new_boundary
+            if len(t1_dst.intersection(t2_src)):
+                return False
+        else:
             return False
 
         return True
@@ -148,6 +187,16 @@ class SimpleTaskletFusion(pm.Transformation):
         graph = sdfg.nodes()[self.state_id]
         t1 = graph.nodes()[self.subgraph[self.t1]]
         t2 = graph.nodes()[self.subgraph[self.t2]]
+
+        if self.acc in self.subgraph:
+            acc = graph.nodes()[self.subgraph[self.acc]]
+            in_edge = graph.in_edges(acc)[0]
+            out_edge = graph.out_edges(acc)[0]
+            graph.remove_edge(in_edge)
+            graph.remove_edge(out_edge)
+            graph.remove_node(acc)
+            graph.add_edge(t1, in_edge.src_conn, t2, out_edge.dst_conn,
+                           in_edge.data)
 
         def rename_conn(conn: str, names: Set[str]) -> str:
             """ Renames connector so that it doesn't clash with names.
