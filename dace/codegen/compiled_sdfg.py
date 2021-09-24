@@ -13,8 +13,6 @@ import numpy as np
 import sympy as sp
 
 from dace import data as dt, dtypes, symbolic
-from dace import memlet
-from dace.sdfg import state
 from dace.codegen import exceptions as cgx
 from dace.codegen import codegen, compiler
 from dace.config import Config
@@ -288,9 +286,8 @@ class CompiledSDFG(object):
                 if compiled_sdfg._lib.is_loaded():
                     compiled_sdfg._lib.unload()
 
-                # Create a deepcopy as the args could change after an execution
+                # Create a deepcopy as the args could change after a run
                 initial_args = copy.deepcopy(kwargs)
-                compiled_sdfg._init = None
                 argtuple, initargtuple = compiled_sdfg._construct_args(
                     initial_args)
 
@@ -374,8 +371,7 @@ class CompiledSDFG(object):
                         # Check if the folder is a accuracy report folder
                         is_report = True
                         for filename in os.listdir(ref_report_folder):
-                            if (not filename.endswith('.bin')
-                                    and not filename.endswith('.npy')):
+                            if (not filename.endswith('.bin')):
                                 is_report = False
                                 break
                         if not is_report:
@@ -389,86 +385,22 @@ class CompiledSDFG(object):
                     # Create a deep copy as we dont want to
                     # modify the real sdfg
                     sdfg = copy.deepcopy(compiled_sdfg._sdfg)
-                    has_instr = vscode.sdfg_has_instrumentation(sdfg)
-                    if has_instr:
-                        vscode.sdfg_remove_instrumentations(sdfg)
+                    vscode.pre_report(sdfg)
 
-                    # Make every array persistent so that we can access the data
-                    for _, _, array in sdfg.arrays_recursive():
-                        if array.storage != dtypes.StorageType.Register:
-                            array.lifetime = dtypes.AllocationLifetime.Persistent
-                    # Create an accuracy instrumentation for each SDFG state to
-                    # retrieve the data
-                    for node, nested_sdfg in sdfg.all_nodes_recursive():
-                        if isinstance(node, state.SDFGState):
-                            node.instrument = dtypes.InstrumentationType.Accuracy
-
-                            # If an Accessnode is not accessable from the CPU
-                            # then create a copy on the CPU and create an edge
-                            for an in node.data_nodes():
-                                name = an.data
-                                array = nested_sdfg.data(name)
-
-                                if (isinstance(array, dt.Array)
-                                        and array.storage !=
-                                        dtypes.StorageType.Register):
-                                    if not dtypes.can_access(
-                                            dtypes.ScheduleType.Default,
-                                            array.storage):
-                                        arr_name, _ = nested_sdfg.add_array(
-                                            name + '__cpu',
-                                            array.shape,
-                                            array.dtype,
-                                            lifetime=dtypes.AllocationLifetime.
-                                            Persistent)
-
-                                        arr_node = node.add_access(arr_name)
-                                        mm = memlet.Memlet(data=an.data)
-                                        node.add_edge(an, None, arr_node, None,
-                                                      mm)
-
+                    # Rename sdfg, so that the program code isn't overwritten
+                    sdfg.name = sdfg.name + '_r'
                     compiled_sdfg._lib.unload()
                     new_compiled_sdfg = sdfg.compile()
 
-                    # Write the function arguments to the report file
-                    # so that in a future comparison the same args are used
+                    # Overwrite sdfg, as it has been overwritten by the report
+                    compiled_sdfg._sdfg.save(
+                        os.path.join(compiled_sdfg._sdfg.build_folder,
+                                     'program.sdfg'))
+
                     currentReportFolder = os.path.abspath(
-                        os.path.join(new_compiled_sdfg._sdfg.build_folder,
+                        os.path.join(compiled_sdfg._sdfg.build_folder,
                                      'accuracy',
                                      new_compiled_sdfg._sdfg.hash_sdfg()))
-                    for a, b in initial_args.items():
-                        arg_file = os.path.join(currentReportFolder,
-                                                '__dace_args_' + a + '.npy')
-                        if isinstance(self._typedict.get(a), dt.Scalar):
-                            b = np.array([b])
-                        np.save(arg_file, b)
-
-                    if mode == 'verification':
-                        # Get initial args of the reportfile to compare with
-                        # We make sure to use the same initial arguments as
-                        # the report to be compared with
-                        if initial_args is not None:
-                            for aname in initial_args.keys():
-                                arg_type = self._typedict.get(aname)
-                                fileName = os.path.join(
-                                    ref_report_folder,
-                                    '__dace_args_' + aname + '.npy')
-                                if not os.path.exists(fileName):
-                                    print(
-                                        '''Could not find a report file for the argument {aname}.
-                                        File: {fileName}'''.format(
-                                            aname=aname, fileName=fileName))
-                                    continue
-                                if isinstance(arg_type, dt.Scalar):
-                                    arr = np.load(fileName, allow_pickle=True)
-                                    initial_args.update({aname: arr[0]})
-                                elif isinstance(arg_type, dt.Array):
-                                    initial_args.update({
-                                        aname:
-                                        np.load(fileName, allow_pickle=True)
-                                    })
-                            argtuple, initargtuple = new_compiled_sdfg._construct_args(
-                                initial_args)
 
                     try:
                         if not new_compiled_sdfg._lib.is_loaded():
@@ -483,21 +415,17 @@ class CompiledSDFG(object):
                         vscode.send({
                             'type': 'accuracy_report',
                             'reportFolder': currentReportFolder,
-                            'sdfgName': new_compiled_sdfg._sdfg.name
+                            'sdfgName': compiled_sdfg._sdfg.name
                         })
                     except (RuntimeError, TypeError, UnboundLocalError,
                             KeyError, cgx.DuplicateDLLError, ReferenceError):
                         new_compiled_sdfg._lib.unload()
                         raise
-                    # Change back to the initial code
-                    compiled_sdfg._lib.unload()
-                    compiled_sdfg = compiled_sdfg._sdfg.compile()
 
                     if mode == 'verification' and ref_report_folder:
-                        new_sdfg = vscode.create_report(compiled_sdfg._sdfg,
-                                                        compiled_sdfg.sdfg.name,
-                                                        currentReportFolder,
-                                                        ref_report_folder)
+                        new_sdfg = vscode.create_report(
+                            compiled_sdfg._sdfg, compiled_sdfg._sdfg.name,
+                            currentReportFolder, ref_report_folder)
                         if new_sdfg is not None:
                             compiled_sdfg._lib.unload()
                             compiled_sdfg = new_sdfg.compile()
@@ -507,7 +435,6 @@ class CompiledSDFG(object):
 
             # set the variables back to their initial values
             self = compiled_sdfg
-            self._init = None
             self._initialized = False
             if self._lib.is_loaded():
                 self._lib.unload()

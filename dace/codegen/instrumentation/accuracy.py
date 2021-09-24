@@ -23,9 +23,14 @@ class AccuracyProvider(InstrumentationProvider):
         if not os.path.exists(folderpath):
             os.makedirs(folderpath, exist_ok=True)
 
+        arrays_checked = []
         for an in state.data_nodes():
             name = an.data
             array = sdfg.data(name)
+
+            if array in arrays_checked:
+                continue
+            arrays_checked.append(array)
 
             if (isinstance(array, data.Array)
                     and array.storage != dtypes.StorageType.Register):

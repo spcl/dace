@@ -4,6 +4,10 @@ import json
 import socket
 import numpy as np
 import dace
+from dace.sdfg import state as st
+from dace.sdfg import nodes as nd
+from dace import memlet
+from dace import data as dt, dtypes, symbolic
 
 
 def is_available() -> bool:
@@ -122,6 +126,9 @@ def send_bp_recv(data: json) -> json:
 
 
 def sdfg_remove_instrumentations(sdfg: dace.sdfg.SDFG):
+    ''' Removed the instrumentations set on the sdfg
+        :param sdfg: The sdfg from which the instrumentsation is removed
+    '''
     sdfg.instrument = dace.dtypes.InstrumentationType.No_Instrumentation
     for state in sdfg.nodes():
         state.instrument = dace.dtypes.InstrumentationType.No_Instrumentation
@@ -132,41 +139,53 @@ def sdfg_remove_instrumentations(sdfg: dace.sdfg.SDFG):
 
 
 def sdfg_has_instrumentation(sdfg: dace.sdfg.SDFG) -> bool:
+    ''' Checks if the SDFG has instrumentation set on it
+        :param sdfg: The sdfg to check for instrumentation
+        :return: True if the sdfg has instrumentation set on it
+    '''
     if sdfg.instrument != dace.dtypes.InstrumentationType.No_Instrumentation:
         return True
-    for state in sdfg.nodes():
-        if state.instrument != dace.dtypes.InstrumentationType.No_Instrumentation:
+
+    for node in sdfg.all_nodes_recursive():
+        if (hasattr(node, 'instrument') and node.instrument !=
+                dace.dtypes.InstrumentationType.No_Instrumentation):
             return True
-        for node in state.nodes():
-            if (hasattr(node, 'instrument') and node.instrument !=
-                    dace.dtypes.InstrumentationType.No_Instrumentation):
-                return True
-            if isinstance(node, dace.sdfg.nodes.NestedSDFG):
-                return sdfg_has_instrumentation(node.sdfg)
     return False
 
 
-def AN_of_Array(graph, array_name: str,
-                state_id: int) -> [dace.sdfg.nodes.AccessNode, int]:
-    for i, node in enumerate(graph.nodes()):
-        if isinstance(node, dace.sdfg.nodes.AccessNode):
-            if node.label == array_name:
-                return (node, i)
-        if isinstance(node, dace.sdfg.state.SDFGState):
-            if i == state_id:
-                return AN_of_Array(node, array_name, state_id)
-    return (None, None)
+def an_of_array(nested_sdfg: dace.sdfg.SDFG, array_name: str,
+                state_id: int) -> [int]:
+    ''' Gets all access node IDs that use the array in a specific state
+        :param graph: The SDFG to check for the access node
+        :param array_name: The name of the array to search for the access node
+        :param state_id: The state ID in which the access node is located
+        :return: An array of IDs of access nodes in the state that use the array
+    '''
+    ids = []
+    for i, state in enumerate(nested_sdfg.nodes()):
+        if i == state_id:
+            for n_id, n in enumerate(state.nodes()):
+                if isinstance(n, nd.AccessNode) and n.label == array_name:
+                    ids.append(n_id)
+            break
+    return ids
 
 
 def create_report(parent_sdfg: dace.sdfg.SDFG, sdfg_name: str, foldername1: str,
-                  foldername2: str):
+                  foldername2: str) -> dace.sdfg.SDFG:
+    ''' Compare all matching arrays between both reports and send the 
+        the comparisions to VSCode
+        :param parent_sdfg: The parent SDFG of the second report
+        :param sdfg_name: The sdfg name of the second report
+        :param foldername1: The folder path of the referenced report
+        :param foldername2: The folder path of the current report
+        :return: The new sdfg if it has been modified, otherwise None
+    '''
     reports = []
 
     all_arrays = [i for i in parent_sdfg.arrays_recursive()]
 
     for filename in os.listdir(foldername1):
-        if filename.endswith('.npy'):
-            continue
         filename_split = filename.split('.')[0].split('_')
         array_name = '_'.join(filename_split[:-2])
         state_id = int(filename_split[-1])
@@ -174,19 +193,16 @@ def create_report(parent_sdfg: dace.sdfg.SDFG, sdfg_name: str, foldername1: str,
 
         # Search for the corresponding array in the sdfg
         curr_array = None
-        access_node_id = None
+        access_node_ids = []
         for sdfg, name, array in all_arrays:
             if name == array_name:
                 if sdfg.sdfg_id == sdfg_id:
                     curr_array = array
-                    _, access_node_id = AN_of_Array(sdfg, array_name, state_id)
+                    access_node_ids = an_of_array(sdfg, array_name, state_id)
                     break
 
-        if curr_array is None:
-            print('The array ' + array_name + ' does not belong to this SDFG')
-            continue
-
-        if access_node_id is None:
+        # Skip this array if it is not part of the SDFG anymore
+        if curr_array is None or len(access_node_ids) == 0:
             continue
 
         dtype = curr_array.dtype
@@ -214,14 +230,15 @@ def create_report(parent_sdfg: dace.sdfg.SDFG, sdfg_name: str, foldername1: str,
                            state_id=state_id,
                            sdfg_id=sdfg_id)
 
-        reports.append({
-            'array_name': array_name,
-            'sdfg_id': sdfg_id,
-            'state_id': state_id,
-            'node_id': access_node_id,
-            'diff': str(diff),
-            'msg': msg
-        })
+        for an_id in access_node_ids:
+            reports.append({
+                'array_name': array_name,
+                'sdfg_id': sdfg_id,
+                'state_id': state_id,
+                'node_id': an_id,
+                'diff': str(diff),
+                'msg': msg
+            })
 
     filename = os.path.abspath(
         os.path.join(parent_sdfg.build_folder, 'program.sdfg'))
@@ -237,3 +254,42 @@ def create_report(parent_sdfg: dace.sdfg.SDFG, sdfg_name: str, foldername1: str,
     if new_sdfg.hash_sdfg() != parent_sdfg.hash_sdfg():
         return new_sdfg
     return None
+
+
+def pre_report(sdfg: dace.sdfg.SDFG):
+    ''' Prepare the sdfg and arrays to run and create the report
+        :param sdfg: SDFG to prepare for report
+    '''
+    if sdfg_has_instrumentation(sdfg):
+        sdfg_remove_instrumentations(sdfg)
+
+    # Make every array persistent so that we can access the data
+    for _, _, array in sdfg.arrays_recursive():
+        if array.storage != dtypes.StorageType.Register:
+            array.lifetime = dtypes.AllocationLifetime.Persistent
+
+    for node, nested_sdfg in sdfg.all_nodes_recursive():
+        # Create an accuracy instrumentation for each SDFG state to
+        # retrieve the data
+        if isinstance(node, st.SDFGState):
+            node.instrument = dtypes.InstrumentationType.Accuracy
+
+            # If an Accessnode is not accessable from the CPU
+            # then create a copy on the CPU and create an edge
+            for an in node.data_nodes():
+                name = an.data
+                array = nested_sdfg.data(name)
+
+                if (isinstance(array, dt.Array)
+                        and array.storage != dtypes.StorageType.Register):
+                    if not dtypes.can_access(dtypes.ScheduleType.Default,
+                                             array.storage):
+                        arr_name, _ = nested_sdfg.add_array(
+                            name + '__cpu',
+                            array.shape,
+                            array.dtype,
+                            lifetime=dtypes.AllocationLifetime.Persistent)
+
+                        arr_node = node.add_access(arr_name)
+                        mm = memlet.Memlet(data=an.data)
+                        node.add_edge(an, None, arr_node, None, mm)
