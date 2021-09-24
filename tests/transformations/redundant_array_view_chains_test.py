@@ -43,14 +43,12 @@ def _make_sdfg_1(succeed: bool = True):
 
 def test_redundant_array_success():
     sdfg = _make_sdfg_1(succeed=True)
-    sdfg.save('test2.sdfg')
     num = sdfg.apply_transformations(RedundantArray, strict=True)
     assert (num == 1)
 
 
 def test_redundant_array_failure():
     sdfg = _make_sdfg_1(succeed=False)
-    sdfg.save('test2.sdfg')
     num = sdfg.apply_transformations(RedundantArray, strict=True)
     assert (num == 0)
 
@@ -95,14 +93,12 @@ def _make_sdfg_2(succeed: bool = True):
 
 def test_redundant_second_array_success():
     sdfg = _make_sdfg_2(succeed=True)
-    sdfg.save('test2.sdfg')
     num = sdfg.apply_transformations(RedundantSecondArray, strict=True)
     assert (num == 1)
 
 
 def test_redundant_second_array_failure():
     sdfg = _make_sdfg_2(succeed=False)
-    sdfg.save('test2.sdfg')
     num = sdfg.apply_transformations(RedundantSecondArray, strict=True)
     assert (num == 0)
 
