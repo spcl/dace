@@ -12,6 +12,7 @@ from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.memlet import Memlet
 from dace.frontend.common import op_repository as oprepo
 
+
 def _is_sequential(index_list):
     if not index_list:
         return True
@@ -32,9 +33,8 @@ class EinsumParser(object):
 
         for char in chain(inputs, output):
             if char not in ascii_letters + ',':
-                raise ValueError(
-                    'Invalid einsum string, subscript must contain'
-                    ' letters, commas, and "->".')
+                raise ValueError('Invalid einsum string, subscript must contain'
+                                 ' letters, commas, and "->".')
 
         inputs = inputs.split(',')
 
@@ -122,21 +122,18 @@ def create_batch_gemm_sdfg(dtype, strides):
 
     batched = strides['BATCH'] != 1
 
-    _, xarr = sdfg.add_array(
-        'X',
-        dtype=dtype,
-        shape=[BATCH, M, K] if batched else [M, K],
-        strides=[sAB, sAM, sAK] if batched else [sAM, sAK])
-    _, yarr = sdfg.add_array(
-        'Y',
-        dtype=dtype,
-        shape=[BATCH, K, N] if batched else [K, N],
-        strides=[sBB, sBK, sBN] if batched else [sBK, sBN])
-    _, zarr = sdfg.add_array(
-        'Z',
-        dtype=dtype,
-        shape=[BATCH, M, N] if batched else [M, N],
-        strides=[sCB, sCM, sCN] if batched else [sCM, sCN])
+    _, xarr = sdfg.add_array('X',
+                             dtype=dtype,
+                             shape=[BATCH, M, K] if batched else [M, K],
+                             strides=[sAB, sAM, sAK] if batched else [sAM, sAK])
+    _, yarr = sdfg.add_array('Y',
+                             dtype=dtype,
+                             shape=[BATCH, K, N] if batched else [K, N],
+                             strides=[sBB, sBK, sBN] if batched else [sBK, sBN])
+    _, zarr = sdfg.add_array('Z',
+                             dtype=dtype,
+                             shape=[BATCH, M, N] if batched else [M, N],
+                             strides=[sCB, sCM, sCN] if batched else [sCM, sCN])
 
     gX = state.add_read('X')
     gY = state.add_read('Y')
@@ -182,7 +179,8 @@ def _create_einsum_internal(sdfg: SDFG,
                             dtype: Optional[dtypes.typeclass] = None,
                             optimize: bool = False,
                             output: Optional[str] = None,
-                            nodes: Optional[Dict[str, AccessNode]] = None):
+                            nodes: Optional[Dict[str, AccessNode]] = None,
+                            init_output: bool = None):
     # Infer shapes and strides of input/output arrays
     einsum = EinsumParser(einsum_string)
 
@@ -253,6 +251,11 @@ def _create_einsum_internal(sdfg: SDFG,
     else:
         odesc = sdfg.arrays[output]
         dtype = dtype or odesc.dtype
+        to_init = init_output or True
+
+    is_conflicted = not all(
+        all(indim in einsum.output for indim in inp) for inp in einsum.inputs)
+    if not is_conflicted and init_output is None:
         to_init = False
 
     if not einsum.is_bmm():
@@ -278,6 +281,7 @@ def _create_einsum_internal(sdfg: SDFG,
                 init_state.add_edge(t, 'out_%s' % output, onode, None,
                                     Memlet.simple(output, '0'))
 
+        wcr = 'lambda a,b: a+b' if is_conflicted else None
         # Pure einsum map
         state.add_mapped_tasklet(
             'einsum', {k: '0:%s' % v
@@ -288,8 +292,8 @@ def _create_einsum_internal(sdfg: SDFG,
             'out_%s = %s' % (output, ' * '.join('inp_%s' % arr
                                                 for arr in arrays)),
             {
-                'out_%s' % output:
-                Memlet.simple(output, output_index, wcr_str='lambda a,b: a+b')
+                'out_%s' % output: Memlet.simple(
+                    output, output_index, wcr_str=wcr)
             },
             input_nodes=input_nodes,
             output_nodes={output: c},
@@ -312,18 +316,15 @@ def _create_einsum_internal(sdfg: SDFG,
             N=prod([b_shape[dim] for dim in einsum.b_only]),
             sAM=prod(a_shape[einsum.a_only[-1] + 1:]) if einsum.a_only else 1,
             sAK=prod(a_shape[einsum.a_sum[-1] + 1:]) if einsum.a_sum else 1,
-            sAB=prod(a_shape[einsum.a_batch[-1] +
-                             1:]) if einsum.a_batch else 1,
+            sAB=prod(a_shape[einsum.a_batch[-1] + 1:]) if einsum.a_batch else 1,
             sBK=prod(b_shape[einsum.b_sum[-1] + 1:]) if einsum.b_sum else 1,
             sBN=prod(b_shape[einsum.b_only[-1] + 1:]) if einsum.b_only else 1,
-            sBB=prod(b_shape[einsum.b_batch[-1] +
-                             1:]) if einsum.b_batch else 1,
+            sBB=prod(b_shape[einsum.b_batch[-1] + 1:]) if einsum.b_batch else 1,
             sCM=prod(c_shape[einsum.c_a_only[-1] +
                              1:]) if einsum.c_a_only else 1,
             sCN=prod(c_shape[einsum.c_b_only[-1] +
                              1:]) if einsum.c_b_only else 1,
-            sCB=prod(c_shape[einsum.c_batch[-1] +
-                             1:]) if einsum.c_batch else 1)
+            sCB=prod(c_shape[einsum.c_batch[-1] + 1:]) if einsum.c_batch else 1)
 
         # Complement strides to make matrices as necessary
         if len(a_shape) == 1 and len(einsum.a_sum) == 1:
