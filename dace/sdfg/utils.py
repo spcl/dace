@@ -601,6 +601,22 @@ def get_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
         return view_edge.dst
 
 
+def get_last_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
+    """
+    Given a view access node, returns the last viewed access node
+    if existent, else None
+    """
+    sdfg = state.parent
+    node = view
+    desc = sdfg.arrays[node.data]
+    while isinstance(desc, dt.View):
+        node = get_view_node(state, node)
+        if node is None or not isinstance(node, nd.AccessNode):
+            return None
+        desc = sdfg.arrays[node.data]
+    return node
+
+
 def get_view_edge(state: SDFGState,
                   view: nd.AccessNode) -> gr.MultiConnectorEdge[mm.Memlet]:
     """
@@ -1154,3 +1170,40 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
     state = graph if isinstance(graph, SDFGState) else graph._graph
     return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(
         state.node_id(node))
+
+
+def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data,
+                             state: SDFGState, fsymbols: Set[str]) -> bool:
+    """
+    Checks whether the Array or View descriptor is non-free symbol dependent.
+    An Array is non-free symbol dependent when its attributes (e.g., shape)
+    depend on non-free symbols. A View is non-free symbol dependent when either
+    its adjacent edges or its viewed node depend on non-free symbols.
+    :param node: the access node to check
+    :param desc: the data descriptor to check
+    :param state: the state that contains the node
+    :param fsymbols: the free symbols to check against
+    """
+    if isinstance(desc, dt.View):
+        # Views can be non-free symbol dependent due to the adjacent edges.
+        e = get_view_edge(state, node)
+        if e.data:
+            src_subset = e.data.get_src_subset(e, state)
+            dst_subset = e.data.get_dst_subset(e, state)
+            free_symbols = set()
+            if src_subset:
+                free_symbols |= src_subset.free_symbols
+            if dst_subset:
+                free_symbols |= dst_subset.free_symbols
+            if any(str(s) not in fsymbols for s in free_symbols):
+                return True
+        # If the viewed node/descriptor is non-free symbol dependent, then so
+        # is the View.
+        n = get_view_node(state, node)
+        if n and isinstance(n, nd.AccessNode):
+            d = state.parent.arrays[n.data]
+            return is_nonfree_sym_dependent(n, d, state, fsymbols)
+    elif isinstance(desc, dt.Array):
+        if any(str(s) not in fsymbols for s in desc.free_symbols):
+            return True
+    return False

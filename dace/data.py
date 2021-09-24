@@ -4,7 +4,7 @@ import re, json
 import copy as cp
 import sympy as sp
 import numpy
-from typing import Set, Sequence
+from typing import Set, Sequence, Tuple
 
 import dace.dtypes as dtypes
 from dace.codegen import cppunparse
@@ -52,6 +52,10 @@ def create_datadescriptor(obj):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))
     return Scalar(dtypes.typeclass(type(obj)))
+
+
+def _prod(sequence):
+    return functools.reduce(lambda a, b: a * b, sequence, 1)
 
 
 def find_new_name(name: str, existing_names: Sequence[str]) -> str:
@@ -164,6 +168,69 @@ class Data(object):
     def ctype(self):
         return self.dtype.ctype
 
+    def strides_from_layout(
+        self,
+        *dimensions: int,
+        alignment: symbolic.SymbolicType = 1,
+        only_first_aligned: bool = False,
+    ) -> Tuple[Tuple[symbolic.SymbolicType], symbolic.SymbolicType]:
+        """
+        Returns the absolute strides and total size of this data descriptor,
+        according to the given dimension ordering and alignment.
+        :param dimensions: A sequence of integers representing a permutation
+                           of the descriptor's dimensions.
+        :param alignment: Padding (in elements) at the end, ensuring stride
+                          is a multiple of this number. 1 (default) means no
+                          padding.
+        :param only_first_aligned: If True, only the first dimension is padded
+                                   with ``alignment``. Otherwise all dimensions
+                                   are.
+        :return: A 2-tuple of (tuple of strides, total size).
+        """
+        # Verify dimensions
+        if tuple(sorted(dimensions)) != tuple(range(len(self.shape))):
+            raise ValueError('Every dimension must be given and appear once.')
+        if (alignment < 1) == True or (alignment < 0) == True:
+            raise ValueError('Invalid alignment value')
+
+        strides = [1] * len(dimensions)
+        total_size = 1
+        first = True
+        for dim in dimensions:
+            strides[dim] = total_size
+            if not only_first_aligned or first:
+                dimsize = (((self.shape[dim] + alignment - 1) // alignment) *
+                           alignment)
+            else:
+                dimsize = self.shape[dim]
+            total_size *= dimsize
+            first = False
+
+        return (tuple(strides), total_size)
+
+    def set_strides_from_layout(self,
+                                *dimensions: int,
+                                alignment: symbolic.SymbolicType = 1,
+                                only_first_aligned: bool = False):
+        """
+        Sets the absolute strides and total size of this data descriptor,
+        according to the given dimension ordering and alignment.
+        :param dimensions: A sequence of integers representing a permutation
+                           of the descriptor's dimensions.
+        :param alignment: Padding (in elements) at the end, ensuring stride
+                          is a multiple of this number. 1 (default) means no
+                          padding.
+        :param only_first_aligned: If True, only the first dimension is padded
+                                   with ``alignment``. Otherwise all dimensions
+                                   are.
+        """
+        strides, totalsize = self.strides_from_layout(
+            *dimensions,
+            alignment=alignment,
+            only_first_aligned=only_first_aligned)
+        self.strides = strides
+        self.total_size = totalsize
+
 
 @make_properties
 class Scalar(Data):
@@ -247,10 +314,6 @@ class Scalar(Data):
             #      'If this expression is false, please refine symbol definitions in the program.')
 
         return True
-
-
-def _prod(sequence):
-    return functools.reduce(lambda a, b: a * b, sequence, 1)
 
 
 @make_properties
