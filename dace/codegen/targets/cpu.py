@@ -183,6 +183,9 @@ class CPUCodeGen(TargetCodeGenerator):
         if self._dispatcher.defined_vars.has(name):
             return  # View was already allocated
 
+        # Check if array is already declared
+        declared = self._dispatcher.declared_arrays.has(name)
+
         # Check directionality of view (referencing dst or src)
         edge = sdutils.get_view_edge(dfg, node)
 
@@ -216,27 +219,21 @@ class CPUCodeGen(TargetCodeGenerator):
                                                             nodedesc.dtype),
                                                         ancestor=0,
                                                         is_write=is_write)
-        if declaration_stream == allocation_stream:
-            declaration_stream.write(f'{atype} {aname} = {value};', sdfg,
-                                     state_id, node)
-        else:
+        if not declared:
             declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
-            # Casting is already done in emit_memlet_reference
-            aname = cpp.ptr(aname, nodedesc, sdfg)
-            allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
+            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer,
+                                                 ctypedef)
+        allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
 
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc,
                       function_stream, declaration_stream):
 
-        if not (isinstance(nodedesc, data.Array)
-                and not isinstance(nodedesc, data.View) and any(
-                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in nodedesc.free_symbols)):
+        fsymbols = sdfg.free_symbols.union(sdfg.constants.keys())
+        if not sdutils.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError(
                 "The declare_array method should only be used for variables "
-                "that must have their declaration and allocation separate. "
-                "Currently, we support only Arrays (not Views) depedent on "
-                "non-free SDFG symbols.")
+                "that must have their declaration and allocation separate.")
 
         name = node.data
 
@@ -481,6 +478,13 @@ class CPUCodeGen(TargetCodeGenerator):
                          function_stream, callsite_stream):
         arrsize = nodedesc.total_size
         alloc_name = cpp.ptr(node.data, nodedesc, sdfg)
+
+        if self._dispatcher.declared_arrays.has(node.data):
+            is_global = nodedesc.lifetime in (
+                dtypes.AllocationLifetime.Global,
+                dtypes.AllocationLifetime.Persistent)
+            self._dispatcher.declared_arrays.remove(node.data,
+                                                    is_global=is_global)
 
         if isinstance(nodedesc, data.Scalar):
             return
@@ -1214,11 +1218,15 @@ class CPUCodeGen(TargetCodeGenerator):
         desc = sdfg.arrays[memlet.data]
 
         types = None
+        # Non-free symbol dependent Arrays due to their shape
+        dependent_shape = (isinstance(
+            desc, data.Array) and not isinstance(desc, data.View) and any(
+                str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+                for s in desc.free_symbols))
         try:
-            if (isinstance(desc, data.Array)
-                    and not isinstance(desc, data.View) and any(
-                        str(s) not in sdfg.free_symbols.union(
-                            sdfg.constants.keys()) for s in desc.free_symbols)):
+            # NOTE: It is hard to get access to the view-edge here, so always
+            # check the declared-arrays dictionary for Views.
+            if dependent_shape or isinstance(desc, data.View):
                 types = self._dispatcher.declared_arrays.get(memlet.data)
         except KeyError:
             pass
