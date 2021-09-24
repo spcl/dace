@@ -409,6 +409,8 @@ def _subset_has_indirection(subset, pvisitor: 'ProgramVisitor' = None):
         if not isinstance(dim, tuple):
             dim = [dim]
         for r in dim:
+            if not symbolic.issymbolic(r):
+                continue
             if symbolic.contains_sympy_functions(r):
                 return True
             if pvisitor:
@@ -1172,7 +1174,7 @@ class TaskletTransformer(ExtNodeTransformer):
             arr_type = type(parent_array)
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
-        elif arr_type == data.Array:
+        elif arr_type in (data.Array, data.View):
             self.sdfg.add_array(var_name, shape, dtype, strides=strides)
         elif arr_type == data.Stream:
             self.sdfg.add_stream(var_name, dtype)
@@ -1272,6 +1274,9 @@ class TaskletTransformer(ExtNodeTransformer):
         else:
             raise NotImplementedError
 
+        if isinstance(rng, subsets.Indices):
+            rng = subsets.Range.from_indices(rng)
+
         return rng
 
     def _update_names(self,
@@ -1324,12 +1329,19 @@ class TaskletTransformer(ExtNodeTransformer):
                     if squeezed_rng is not None:
                         # TODO: Fix for `contains_sympy_functions`
                         # not liking ints
-                        memlet.subset = subsets.Range([
-                            (symbolic.pystr_to_symbolic(b),
-                             symbolic.pystr_to_symbolic(e),
-                             symbolic.pystr_to_symbolic(s))
-                            for b, e, s in squeezed_rng.ranges
-                        ])
+                        if isinstance(squeezed_rng, subsets.Indices):
+                            memlet.subset = subsets.Range([
+                                (symbolic.pystr_to_symbolic(i),
+                                 symbolic.pystr_to_symbolic(i), 1)
+                                for i in squeezed_rng.indices
+                            ])
+                        else:
+                            memlet.subset = subsets.Range([
+                                (symbolic.pystr_to_symbolic(b),
+                                 symbolic.pystr_to_symbolic(e),
+                                 symbolic.pystr_to_symbolic(s))
+                                for b, e, s in squeezed_rng.ranges
+                            ])
                     if self.nested and _subset_has_indirection(rng):
                         memlet = dace.Memlet.simple(memlet.data, rng)
                     if connector in self.inputs or connector in self.outputs:
@@ -1360,12 +1372,19 @@ class TaskletTransformer(ExtNodeTransformer):
                     if squeezed_rng is not None:
                         # TODO: Fix for `contains_sympy_functions`
                         # not liking ints
-                        memlet.subset = subsets.Range([
-                            (symbolic.pystr_to_symbolic(b),
-                             symbolic.pystr_to_symbolic(e),
-                             symbolic.pystr_to_symbolic(s))
-                            for b, e, s in squeezed_rng.ranges
-                        ])
+                        if isinstance(squeezed_rng, subsets.Indices):
+                            memlet.subset = subsets.Range([
+                                (symbolic.pystr_to_symbolic(i),
+                                 symbolic.pystr_to_symbolic(i), 1)
+                                for i in squeezed_rng.indices
+                            ])
+                        else:
+                            memlet.subset = subsets.Range([
+                                (symbolic.pystr_to_symbolic(b),
+                                 symbolic.pystr_to_symbolic(e),
+                                 symbolic.pystr_to_symbolic(s))
+                                for b, e, s in squeezed_rng.ranges
+                            ])
                     if self.nested and _subset_has_indirection(rng):
                         memlet = dace.Memlet.simple(memlet.data, rng)
                     if self.nested and name in self.sdfg_outputs:
@@ -1468,7 +1487,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.numbers = dict()  # Dict[str, str]
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
-        self.views: Dict[str, str] = {}  # Keeps track of views
+        self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
 
         # Keep track of map symbols from upper scopes
@@ -1561,6 +1580,9 @@ class ProgramVisitor(ExtNodeVisitor):
             if vname.startswith('__return'):
                 if isinstance(self.sdfg.arrays[arrname], data.View):
                     # In case of a view, make a copy
+                    # NOTE: If we are at the top level SDFG (not always clear),
+                    # and it is a View of an input array, can we return a NumPy
+                    # View directly?
                     desc = self.sdfg.arrays[arrname]
                     return_state = self._add_state()
                     r = return_state.add_read(arrname)
@@ -1572,15 +1594,21 @@ class ProgramVisitor(ExtNodeVisitor):
                             desc.dtype,
                             storage=desc.storage,
                             transient=False,
-                            strides=desc.strides,
-                            offset=desc.offset,
+                            # NOTE: It seems that NumPy doesn't support creating
+                            # non-contiguous arrays directly.
+                            # strides=desc.strides,
+                            # offset=desc.offset,
                             debuginfo=desc.debuginfo,
-                            total_size=desc.total_size,
+                            # total_size=desc.total_size,
                             allow_conflicts=desc.allow_conflicts)
                     return_state.add_nedge(r, w, Memlet(vname))
                 else:
                     # Other cases can be replaced with return value directly
                     self.sdfg.replace(arrname, vname)
+                    for k, (v, m) in self.views.items():
+                        if v == arrname:
+                            m.data = vname
+                            self.views[k] = (vname, m)
 
         # Return values become non-transient (accessible by the outside)
         for arrname, arr in self.sdfg.arrays.items():
@@ -1589,23 +1617,35 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.outputs[arrname] = Memlet.from_array(arrname, arr)
         ####
 
-        # Map view access nodes to their respective data
-        for state in self.sdfg.nodes():
-            for vnode in list(state.data_nodes()):
+        def _views_to_data(
+                state: SDFGState, nodes: List[dace.nodes.AccessNode]
+        ) -> List[dace.nodes.AccessNode]:
+            new_nodes = []
+            for vnode in nodes:
                 if vnode.data in self.views:
                     if state.in_degree(vnode) == 0:
-                        aname = self.views[vnode.data]
+                        aname, m = self.views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         r = state.add_read(aname)
-                        state.add_nedge(r, vnode, Memlet.from_array(aname, arr))
+                        state.add_nedge(r, vnode, copy.deepcopy(m))
+                        new_nodes.append(r)
                     elif state.out_degree(vnode) == 0:
-                        aname = self.views[vnode.data]
+                        aname, m = self.views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         w = state.add_write(aname)
-                        state.add_nedge(vnode, w, Memlet.from_array(aname, arr))
+                        state.add_nedge(vnode, w, copy.deepcopy(m))
+                        new_nodes.append(w)
                     else:
                         raise ValueError(f'View "{vnode.data}" already has'
                                          'both incoming and outgoing edges')
+            return new_nodes
+
+        # Map view access nodes to their respective data
+        for state in self.sdfg.nodes():
+            # NOTE: We need to support views of views
+            nodes = list(state.data_nodes())
+            while nodes:
+                nodes = _views_to_data(state, nodes)
 
         # Try to replace transients with their python-assigned names
         for pyname, arrname in self.variables.items():
@@ -3359,7 +3399,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 arr_type = data.Scalar
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
-        elif arr_type == data.Array:
+        elif arr_type in (data.Array, data.View):
             if non_squeezed:
                 strides = [parent_array.strides[d] for d in non_squeezed]
             else:
@@ -3515,7 +3555,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, target,
                     'Variable "{}" used before definition'.format(name))
 
-            new_data = None
+            new_data, rng = None, None
             dtype_keys = tuple(dtypes.DTYPE_TO_TYPECLASS.keys())
             if not (symbolic.issymbolic(result) or isinstance(
                     result, dtype_keys) or result in self.sdfg.arrays):
@@ -3552,6 +3592,24 @@ class ProgramVisitor(ExtNodeVisitor):
                             [1], result_data.dtype)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
+                    elif (not name.startswith('__return')
+                          and (isinstance(result_data, data.View) or
+                               (not result_data.transient
+                                and isinstance(result_data, data.Array)))):
+                        true_name, new_data = self.sdfg.add_view(
+                            result,
+                            result_data.shape,
+                            result_data.dtype,
+                            result_data.storage,
+                            result_data.strides,
+                            result_data.offset,
+                            find_new_name=True)
+                        self.views[true_name] = (result,
+                                                 Memlet.from_array(
+                                                     result, result_data))
+                        self.variables[name] = true_name
+                        defined_vars[name] = true_name
+                        continue
                     elif not result_data.transient:
                         true_name, new_data = _add_transient_data(
                             self.sdfg, result_data, dtype)
@@ -3564,7 +3622,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             boolarr = None
             if new_data:
-                rng = dace.subsets.Range.from_array(new_data)
+                rng = rng or dace.subsets.Range.from_array(new_data)
             else:
                 true_target = copy.deepcopy(target)
                 if isinstance(target, ast.Name):
@@ -3584,6 +3642,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 expr: MemletExpr = ParseMemlet(self, defined_arrays,
                                                true_target, nslice)
                 rng = expr.subset
+                if isinstance(rng, subsets.Indices):
+                    rng = subsets.Range.from_indices(rng)
 
                 # Figure out whether the target subcript is an array-index
                 # indirection or a boolean array
@@ -4046,6 +4106,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Change connector names
             updated_args = []
+            arrays_before = list(sdfg.arrays.items())
             for i, (conn, arg) in enumerate(args):
                 if (conn in self.scope_vars.keys()
                         or conn in self.sdfg.arrays.keys()
@@ -4058,6 +4119,13 @@ class ProgramVisitor(ExtNodeVisitor):
                                   "{n}".format(c=conn, n=new_conn))
                     sdfg.replace(conn, new_conn)
                     updated_args.append((new_conn, arg))
+                    # Rename the connector's Views
+                    for arrname, array in arrays_before:
+                        if (isinstance(array, data.View)
+                                and len(arrname) > len(conn)
+                                and arrname[:len(conn) + 1] == f'{conn}_'):
+                            new_name = f'{new_conn}{arrname[len(conn):]}'
+                            sdfg.replace(arrname, new_name)
                 else:
                     updated_args.append((conn, arg))
             args = updated_args
@@ -4341,6 +4409,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         **self.sdfg.arrays,
                         **self.defined
                     }, arg)
+                    if isinstance(expr.subset, subsets.Indices):
+                        expr.subset = subsets.Range.from_indices(expr.subset)
                     name = rname(arg)
                     if name in self.variables.keys():
                         name = self.variables[name]
@@ -4394,6 +4464,10 @@ class ProgramVisitor(ExtNodeVisitor):
             state = self._add_state('globalmemlet_%d' % node.lineno)
             src_expr = ParseMemlet(self, self.defined, src)
             dst_expr = ParseMemlet(self, self.defined, dst)
+            if isinstance(src_expr.subset, subsets.Indices):
+                src_expr.subset = subsets.Range.from_indices(src_expr.subset)
+            if isinstance(dst_expr.subset, subsets.Indices):
+                dst_expr.subset = subsets.Range.from_indices(dst_expr.subset)
             if src_expr.arrdims or dst_expr.arrdims:
                 raise NotImplementedError(
                     'Copying with array indices only allowed through assignment '
@@ -4717,40 +4791,64 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Add slicing state
         self._add_state('slice_%s_%d' % (array, node.lineno))
-        rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
         if has_array_indirection:
             # Make copy slicing state
+            rnode = self.last_state.add_read(array,
+                                             debuginfo=self.current_lineinfo)
             return self._array_indirection_subgraph(rnode, expr)
         else:
-            other_subset = copy.deepcopy(expr.subset)
+            is_index = False
+            if isinstance(expr.subset, subsets.Indices):
+                is_index = True
+                other_subset = subsets.Range([(i, i, 1) for i in expr.subset])
+            else:
+                other_subset = copy.deepcopy(expr.subset)
+            strides = list(arrobj.strides)
 
             # Make new axes and squeeze for scalar subsets (as per numpy behavior)
             # For example: A[0, np.newaxis, 5:7] results in a 1x2 ndarray
             new_axes = []
             if expr.new_axes:
                 new_axes = other_subset.unsqueeze(expr.new_axes)
-            other_subset.squeeze(ignore_indices=new_axes)
+                for i in new_axes:
+                    strides.insert(i, 1)
+            length = len(other_subset)
+            nsqz = other_subset.squeeze(ignore_indices=new_axes)
+            sqz = [i for i in range(length) if i not in nsqz]
+            for i in reversed(sqz):
+                strides.pop(i)
+            if not strides:
+                strides = None
 
-            # NOTE: This is fixing azimint_hist (issue is `if x == a_max`)
-            # TODO: Follow Numpy, i.e. slicing with indices returns scalar but
-            # slicing with a range of (squeezed) size 1 returns array/view.
-            if all(s == 1 for s in other_subset.size()):
+            if is_index:
                 tmp = self.sdfg.temp_data_name()
                 tmp, tmparr = self.sdfg.add_scalar(tmp,
                                                    arrobj.dtype,
                                                    arrobj.storage,
                                                    transient=True)
             else:
-                tmp, tmparr = self.sdfg.add_temp_transient(
-                    other_subset.size(), arrobj.dtype, arrobj.storage)
+                tmp, tmparr = self.sdfg.add_view(array,
+                                                 other_subset.size(),
+                                                 arrobj.dtype,
+                                                 storage=arrobj.storage,
+                                                 strides=strides,
+                                                 find_new_name=True)
+                self.views[tmp] = (
+                    array,
+                    Memlet(f'{array}[{expr.subset}]->{other_subset}',
+                           volume=expr.accesses,
+                           wcr=expr.wcr))
             self.variables[tmp] = tmp
-            wnode = self.last_state.add_write(tmp,
-                                              debuginfo=self.current_lineinfo)
-            self.last_state.add_nedge(
-                rnode, wnode,
-                Memlet(f'{array}[{expr.subset}]->{other_subset}',
-                       volume=expr.accesses,
-                       wcr=expr.wcr))
+            if not isinstance(tmparr, data.View):
+                rnode = self.last_state.add_read(
+                    array, debuginfo=self.current_lineinfo)
+                wnode = self.last_state.add_write(
+                    tmp, debuginfo=self.current_lineinfo)
+                self.last_state.add_nedge(
+                    rnode, wnode,
+                    Memlet(f'{array}[{expr.subset}]->{other_subset}',
+                           volume=expr.accesses,
+                           wcr=expr.wcr))
             return tmp
 
     def _parse_subscript_slice(
@@ -4850,6 +4948,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node,
                                                nslice)
                 rng = expr.subset
+                if isinstance(rng, subsets.Indices):
+                    rng = subsets.Range.from_indices(rng)
                 new_name, new_rng = self._add_read_access(name, rng, node)
                 new_arr = self.sdfg.arrays[new_name]
                 full_rng = subsets.Range.from_array(new_arr)
