@@ -1694,7 +1694,9 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
              or defined_type == DefinedType.StreamArray) and memlet.dynamic):
             # Input memlet, we read from channel
             # we should not need mangle here, since we are in a tasklet
-            updated = ast.Name(id="read_channel_intel({})".format(node.id))
+            updated = ast.Call(func=ast.Name(id="read_channel_intel"),
+                               args=[ast.Name(id=node.id)],
+                               keywords=[])
             self.used_streams.append(node.id)
         elif defined_type == DefinedType.Pointer and memlet.dynamic:
             # if this has a variable number of access, it has been declared
