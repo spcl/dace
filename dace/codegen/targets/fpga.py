@@ -1710,11 +1710,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             dependency_pragma_nodes = []
             for node in ((src_node, ) if src_node.data == dst_node.data else
                          (src_node, dst_node)):
-                if (isinstance(node.desc(sdfg), dt.Array)
-                        and node.desc(sdfg).storage in [
-                            dtypes.StorageType.FPGA_Local,
-                            dace.StorageType.FPGA_Registers
-                        ]):
+                desc = node.desc(sdfg)
+                if (isinstance(desc, dt.Array) and desc.storage in [
+                        dtypes.StorageType.FPGA_Local,
+                        dace.StorageType.FPGA_Registers
+                ] and desc.total_size != 1):
                     dependency_pragma_nodes.append(node)
 
             if has_pipelined_loops:
@@ -2042,13 +2042,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     if (isinstance(desc, dt.Array) and
                         (desc.storage == dtypes.StorageType.FPGA_Global
                          or desc.storage == dtypes.StorageType.FPGA_Local)
-                            and memlet.wcr is None):
+                            and memlet.wcr is None and desc.total_size != 1):
                         candidates_out.add(memlet.data)
                     elif memlet.wcr is not None:
                         is_there_a_wcr = True
             in_out_data = candidates_in.intersection(candidates_out)
-
-            # add pragmas
 
             # Generate nested loops
             if not isinstance(node, dace.sdfg.nodes.PipelineEntry):
@@ -2413,7 +2411,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     and (datadesc.storage == dace.StorageType.FPGA_Local
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)
-                    and self._dispatcher.defined_vars.has(edge.src_conn)):
+                    and self._dispatcher.defined_vars.has(edge.src_conn)
+                    and datadesc.total_size != 1):
                 if is_hbm_array_with_distributed_index(datadesc):
                     accessed_subset, _ = get_multibank_ranges_from_subset(
                         edge.data.dst_subset or edge.data.subset, sdfg)
@@ -2421,7 +2420,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     accessed_subset = 0
 
                 self.generate_no_dependence_post(after_memlets_stream, sdfg,
-                                                 state_id, node, edge.src_conn,
+                                                 state_id, node, dataname,
                                                  accessed_subset)
 
     def make_ptr_vector_cast(self, *args, **kwargs):
