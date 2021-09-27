@@ -416,6 +416,10 @@ def _Call(t, symbols, inferred_symbols):
     if module == 'math':
         return dtypes.result_type_of(arg_types[0], *arg_types)
 
+    # Reading from an Intel channel returns the channel type
+    if name == "read_channel_intel":
+        return arg_types[0]
+
     # In any other case simply return None
     return None
 
