@@ -620,8 +620,9 @@ def make_sdfg(name, vtype):
     sdfg.add_edge(pre_state, compute_state, dace.sdfg.InterstateEdge())
     sdfg.add_edge(compute_state, post_state, dace.sdfg.InterstateEdge())
 
-    sdfg.expand_library_nodes()
-    assert sdfg.apply_transformations_repeated(InlineSDFG) == 2
+    if vtype.bytes < 64:
+        sdfg.expand_library_nodes()
+        assert sdfg.apply_transformations_repeated(InlineSDFG) == 2
 
     return sdfg
 

@@ -19,9 +19,10 @@ def test_map_unroll_processing_elements():
     spec.loader.exec_module(gemm)
 
     # Create an SDFG with multiple processing elements
+    veclen = 16
     sdfg = gemm.make_sdfg("map_unroll_processing_elements",
-                          dace.vector(dace.float32, 4))
-    sdfg.specialize({"P": 4, "W": 4, "TN": 4, "TM": 16})
+                          dace.vector(dace.float32, veclen))
+    sdfg.specialize({"P": 4, "W": veclen, "TN": 4, "TM": 4 * veclen})
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.MapEntry) and node.params == ["p"]:
