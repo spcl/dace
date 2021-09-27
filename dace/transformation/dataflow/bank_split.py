@@ -6,6 +6,7 @@ from dace.sdfg import utils
 from dace.transformation import transformation
 from dace.sdfg import nodes as nd
 from dace import SDFG, SDFGState, memlet
+from dace import symbolic
 import functools
 
 
@@ -99,13 +100,13 @@ class BankSplit(transformation.Transformation):
         distribute_dst = len(src_array.shape) + 1 == len(dst_array.shape)
         if collect_src:
             try:
-                tmp = int(src_array.shape[0])
-            except:
+                tmp = symbolic.evaluate(src_array.shape[0], sdfg.constants)
+            except TypeError:
                 return False
         elif distribute_dst:
             try:
-                tmp = int(dst_array.shape[0])
-            except:
+                tmp = symbolic.evaluate(dst_array.shape[0], sdfg.constants)
+            except TypeError:
                 return False
         return collect_src or distribute_dst
 
