@@ -1712,10 +1712,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             for node in ((src_node, ) if src_node.data == dst_node.data else
                          (src_node, dst_node)):
                 desc = node.desc(sdfg)
-                if (isinstance(desc, dt.Array) and desc.storage in [
-                        dtypes.StorageType.FPGA_Local,
-                        dace.StorageType.FPGA_Registers
-                ] and desc.total_size != 1):
+                if (isinstance(desc, dt.Array)
+                        and desc.storage == dtypes.StorageType.FPGA_Local
+                        and desc.total_size != 1):
                     dependency_pragma_nodes.append(node)
 
             if has_pipelined_loops:
@@ -2409,8 +2408,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 continue  # Empty memlet
             datadesc = sdfg.arrays[dataname]
             if (isinstance(datadesc, dt.Array)
-                    and (datadesc.storage == dace.StorageType.FPGA_Local
-                         or datadesc.storage == dace.StorageType.FPGA_Registers)
+                    and datadesc.storage == dace.StorageType.FPGA_Local
                     and not cpp.is_write_conflicted(dfg, edge)
                     and self._dispatcher.defined_vars.has(edge.src_conn)
                     and datadesc.total_size != 1):
