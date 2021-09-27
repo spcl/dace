@@ -1591,7 +1591,7 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
 
         multi_device_scope = False
         if isinstance(dfg, dace.sdfg.ScopeSubgraphView):
-            multi_device_scope = (dfg.entry.schedule is
+            multi_device_scope = (getattr(dfg.entry, 'schedule', None) is
                                   dtypes.ScheduleType.GPU_Multidevice)
 
         # inter GPU copy
