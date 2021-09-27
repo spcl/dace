@@ -1119,7 +1119,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             # Language-specific implementation
             ctype, is_global = self.define_stream(nodedesc.dtype, buffer_size,
                                                   dataname, arrsize,
-                                                  function_stream, result_decl)
+                                                  function_stream, result_decl,
+                                                  sdfg)
 
             # defined type: decide whether this is a stream array or a single stream
             def_type = DefinedType.StreamArray if cpp.sym2cpp(

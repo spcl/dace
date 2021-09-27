@@ -233,13 +233,19 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
         return self.module_mange[module_name][kernel_id]
 
     def define_stream(self, dtype, buffer_size, var_name, array_size,
-                      function_stream, kernel_stream):
+                      function_stream, kernel_stream, sdfg):
         """
         Defines a stream
         :return: a tuple containing the  type of the created variable, and boolean indicating
             whether this is a global variable or not
         """
         vec_type = self.make_vector_type(dtype, False)
+        minimum_depth = Config.get("compiler", "fpga", "minimum_fifo_depth")
+        buffer_size = evaluate(buffer_size, sdfg.constants)
+        if minimum_depth:
+            minimum_depth = int(minimum_depth)
+            if minimum_depth > buffer_size:
+                buffer_size = minimum_depth
         if buffer_size != 1:
             depth_attribute = " __attribute__((depth({})))".format(
                 cpp.sym2cpp(buffer_size))

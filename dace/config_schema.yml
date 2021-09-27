@@ -415,6 +415,20 @@ required:
                         default: ''
 
             #############################################
+            # General FPGA flags
+            fpga:
+                type: dict
+                title: FPGA
+                description: "Common preferences for FPGA compilation."
+                required:
+
+                    minimum_fifo_depth:
+                        type: int
+                        default: ''
+                        title: Minimum depth of FIFOs
+                        description: Sets the minimum depth of any generated FIFO.
+
+            #############################################
             # FPGA (Xilinx) compiler flags
             xilinx:
                 type: dict

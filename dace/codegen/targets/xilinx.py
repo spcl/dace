@@ -211,7 +211,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
     @staticmethod
     def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
-                      kernel_stream):
+                      kernel_stream, sdfg):
         """
            Defines a stream
            :return: a tuple containing the type of the created variable, and boolean indicating
