@@ -123,7 +123,7 @@ def test_mGPU_GPU0_reduction(reduction_type):
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
-    # out_path = '.dacecache/local/reductions/' + sdfg.name
+    # out_path = '.dacecache/local/reductions/mGPU/' + sdfg.name
     # program_folder = compiler.generate_program_folder(sdfg, program_objects,
     #                                                   out_path)
 
