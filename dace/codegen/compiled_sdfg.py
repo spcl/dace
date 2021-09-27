@@ -299,7 +299,8 @@ class CompiledSDFG(object):
                         print('- ', arg, ': ', arr)
 
                     compiled_sdfg._lib.load()
-                    compiled_sdfg.initialize(*initargtuple)
+                    if not compiled_sdfg._initialized:
+                        compiled_sdfg.initialize(*initargtuple)
                     compiled_sdfg._cfunc(compiled_sdfg._libhandle, *argtuple)
 
                     print('Results:\n', compiled_sdfg._return_arrays)
@@ -307,7 +308,8 @@ class CompiledSDFG(object):
                     # Profiles the current SDFG version
                     try:
                         compiled_sdfg._lib.load()
-                        compiled_sdfg.initialize(*initargtuple)
+                        if not compiled_sdfg._initialized:
+                            compiled_sdfg.initialize(*initargtuple)
 
                         has_instr = vscode.sdfg_has_instrumentation(
                             compiled_sdfg._sdfg)
@@ -389,7 +391,6 @@ class CompiledSDFG(object):
 
                     # Rename sdfg, so that the program code isn't overwritten
                     sdfg.name = sdfg.name + '_r'
-                    compiled_sdfg._lib.unload()
                     new_compiled_sdfg = sdfg.compile()
 
                     # Overwrite sdfg, as it has been overwritten by the report
@@ -435,9 +436,6 @@ class CompiledSDFG(object):
 
             # set the variables back to their initial values
             self = compiled_sdfg
-            self._initialized = False
-            if self._lib.is_loaded():
-                self._lib.unload()
 
         try:
             argtuple, initargtuple = self._construct_args(kwargs)
