@@ -1455,6 +1455,15 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                    find_new_name=False) -> Tuple[str, dt.Stream]:
         """ Adds a stream to the SDFG data descriptor store. """
 
+        # Convert to int if possible, otherwise to symbolic
+        _shape = []
+        for s in shape:
+            try:
+                _shape.append(int(s))
+            except:
+                _shape.append(dace.symbolic.pystr_to_symbolic(s))
+        shape = _shape
+
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
@@ -1751,7 +1760,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """ Compiles a runnable binary from this SDFG.
             :param output_file: If not None, copies the output library file to
                                 the specified path.
-            :param validate: If True, validates the SDFG prior to generating 
+            :param validate: If True, validates the SDFG prior to generating
                              code.
             :return: A callable CompiledSDFG object.
         """
