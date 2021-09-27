@@ -1263,6 +1263,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         dependencies = dict()
 
         source_nodes = state.source_nodes()
+        sink_nodes = state.sink_nodes()
+
         max_kernels = default_kernel
         # First step: assign a different Kernel ID
         # to each source node which is not an AccessNode
@@ -1296,11 +1298,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                                                 e.dst)] = kernel
                     continue
 
-                # Does this node need to be in another kernel?
-                # If it is a crossroad node (has more than one predecessor, its predecessors contain some compute, and
-                # no local buffers) then it should be on a separate kernel.
+                # Does this node (e.dst) need to be in another kernel?
+                # If it is a crossroad node (has more than one predecessor, its predecessors contain some compute,
+                # no local buffers, the destination is not a sink) then it should be on a separate kernel.
+
                 if len(list(state.predecessors(e.dst))) > 1 and not isinstance(
-                        e.dst, nodes.ExitNode) and scopes[e.dst] == None:
+                        e.dst, nodes.ExitNode) and e.dst not in sink_nodes and scopes[e.dst] == None:
                     # Loop over all predecessors (except this edge)
                     crossroad_node = False
                     for pred_edge in state.in_edges(e.dst):
@@ -1358,6 +1361,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 pass
                             else:
                                 max_kernels = increment(max_kernels)
+
             self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel
 
         # do another pass and track dependencies among Kernels
