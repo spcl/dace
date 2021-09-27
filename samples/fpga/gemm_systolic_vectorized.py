@@ -22,8 +22,8 @@ def make_copy_to_fpga_state(sdfg, vtype):
 
     state = sdfg.add_state("copy_to_device")
     dtype = vtype.base_type
-    mem_veclen = (64 // dtype.bytes) // vtype.veclen
-    mtype = dace.vector(vtype, mem_veclen)
+    mem_veclen = 64 // dtype.bytes
+    mtype = dace.vector(vtype, mem_veclen // vtype.veclen)
 
     #host data has plain data types
     sdfg.add_array("A", ["N", "K"], dtype=dtype)
@@ -40,11 +40,11 @@ def make_copy_to_fpga_state(sdfg, vtype):
                    dtype=dtype,
                    transient=True,
                    storage=dace.dtypes.StorageType.FPGA_Global)
-    sdfg.add_array("B_device", ["K", f"M/{mem_veclen * vtype.veclen}"],
+    sdfg.add_array("B_device", ["K", f"M//{mem_veclen}"],
                    dtype=mtype,
                    transient=True,
                    storage=dace.dtypes.StorageType.FPGA_Global)
-    sdfg.add_array("C_device", ["N", f"M/{mem_veclen * vtype.veclen}"],
+    sdfg.add_array("C_device", ["N", f"M//{mem_veclen}"],
                    dtype=mtype,
                    transient=True,
                    storage=dace.dtypes.StorageType.FPGA_Global)
@@ -58,11 +58,11 @@ def make_copy_to_fpga_state(sdfg, vtype):
     state.add_memlet_path(
         B_host,
         B_device,
-        memlet=dace.Memlet(f"B_device[0:K, 0:M/{mem_veclen}]"))
+        memlet=dace.Memlet(f"B_device[0:K, 0:M//{mem_veclen}]"))
     state.add_memlet_path(
         C_host,
         C_device,
-        memlet=dace.Memlet(f"C_device[0:N, 0:M/{mem_veclen}]"))
+        memlet=dace.Memlet(f"C_device[0:N, 0:M//{mem_veclen}]"))
 
     return state
 
@@ -86,8 +86,8 @@ def make_read_A(sdfg, state, vtype):
 
     # A is stored with plain data type
     entry, exit = state.add_map("read_A", {
-        "n0": "0:N/TN",
-        "m": "0:M/TM",
+        "n0": "0:N//TN",
+        "m": "0:M//TM",
         "k": "0:K",
         "n1": "0:TN",
     },
@@ -114,14 +114,14 @@ def make_read_B(sdfg, state, vtype):
 
     # Deduce types
     dtype = vtype.base_type
-    mem_veclen = (64 // dtype.bytes) // vtype.veclen
-    mtype = dace.vector(vtype, mem_veclen)
+    mem_veclen = 64 // dtype.bytes
+    mtype = dace.vector(vtype, mem_veclen // vtype.veclen)
 
     entry, exit = state.add_map("read_B", {
-        "n0": "0:N/TN",
-        "m0": "0:M/TM",
+        "n0": "0:N//TN",
+        "m0": "0:M//TM",
         "k": "0:K",
-        "m1": f"0:M/{mem_veclen}"
+        "m1": f"0:TM//{mem_veclen}"
     },
                                 schedule=dace.ScheduleType.FPGA_Device)
 
@@ -134,9 +134,9 @@ def make_read_B(sdfg, state, vtype):
         entry,
         tasklet,
         dst_conn="from_memory",
-        memlet=dace.Memlet(f"B_device[k, m0 * ((M/TM)/{mem_veclen}) + m1]"))
+        memlet=dace.Memlet(f"B_device[k, m0 * (TM//{mem_veclen}) + m1]"))
 
-    if mem_veclen > 1:
+    if mem_veclen > vtype.veclen:
 
         # Data arrives as 512-bit wide vectors, and will be converted to the
         # vector length of the kernel
@@ -155,7 +155,7 @@ def make_read_B(sdfg, state, vtype):
         # Convert 512-bit vectors to whatever width the kernel uses
         to_converter_read = state.add_read("B_to_converter")
         gearbox = Gearbox(
-            f"(N/TN) * (M/TM) * K * (M/{mem_veclen * vtype.veclen})",
+            f"(N//TN) * (M//TM) * K * (TM//{mem_veclen})",
             "convert_B", dace.ScheduleType.FPGA_Device)
         state.add_memlet_path(to_converter_read,
                               gearbox,
@@ -186,15 +186,15 @@ def make_feed_B(sdfg, state, vtype):
     """
 
     entry, exit = state.add_map("feed_B", {
-        "n0": "0:N/TN",
-        "m0": "0:M/TM",
+        "n0": "0:N//TN",
+        "m0": "0:M//TM",
         "k": "0:K",
-        "n1": "0:TN",
-        "m1": "0:TM/W"
+        "n1": "0:TN//P",
+        "m1": "0:TM//W"
     },
                                 schedule=dace.ScheduleType.FPGA_Device)
 
-    sdfg.add_array("feed_B_buffer", ("TM/W", ),
+    sdfg.add_array("feed_B_buffer", ("TM//W", ),
                    vtype,
                    storage=dace.StorageType.FPGA_Local,
                    transient=True)
@@ -237,25 +237,25 @@ def make_write_C(sdfg, state, vtype):
 
     # Deduce types
     dtype = vtype.base_type
-    mem_veclen = (64 // dtype.bytes) // vtype.veclen
-    mtype = dace.vector(vtype, mem_veclen)
+    mem_veclen = 64 // dtype.bytes
+    mtype = dace.vector(vtype, mem_veclen // vtype.veclen)
 
     from_kernel = state.add_read("C_pipe")
     mem_read = state.add_read("C_device")
     mem_write = state.add_write("C_device")
 
-    if mem_veclen > 1:
+    if mem_veclen > vtype.veclen:
 
         # We need to convert from the kernel vectorization length to 512-bit
         # vectors that are written back to memory
 
         gearbox = Gearbox(
-            f"(N/TN) * (M/TM) * TN * (TM/{mem_veclen * vtype.veclen})",
+            f"(N//TN) * (M//TM) * TN * (TM//{mem_veclen})",
             "convert_C",
             schedule=dace.ScheduleType.FPGA_Device)
         sdfg.add_stream("C_from_converter",
                         mtype,
-                        f"TM/{mem_veclen}",
+                        f"TM//{mem_veclen}",
                         storage=dace.StorageType.FPGA_Local,
                         transient=True)
         converter_write = state.add_write("C_from_converter")
@@ -279,10 +279,10 @@ def make_write_C(sdfg, state, vtype):
         to_writer_subset = "C_pipe[0]"
 
     entry, exit = state.add_map("write_C", {
-        "n0": "0:N/TN",
-        "m0": "0:M/TM",
+        "n0": "0:N//TN",
+        "m0": "0:M//TM",
         "n1": "0:TN",
-        "m1": f"0:TM/{mem_veclen * vtype.veclen}"
+        "m1": f"0:TM//{mem_veclen}"
     },
                                 schedule=dace.ScheduleType.FPGA_Device)
 
@@ -322,14 +322,14 @@ def make_compute(sdfg, state, vtype):
     C_pipe_out = state.add_write("C_pipe")
 
     # Instantiate the buffer for A, and initialize it
-    sdfg.add_array("A_buffer", ("2 * (TN/P)", ),
+    sdfg.add_array("A_buffer", ("2 * (TN//P)", ),
                    dtype=dtype,
                    transient=True,
                    storage=dace.dtypes.StorageType.FPGA_Registers)
     init_A = state.add_access("A_buffer")
     init_entry, init_exit = state.add_map(
         "init", {
-            "n0": "0:TN/P",
+            "n0": "0:TN//P",
             "n1": "0:P-p"
         },
         schedule=dace.ScheduleType.FPGA_Device)
@@ -359,8 +359,8 @@ elif p < P - 1:
     # Now instantiate the body of the computation
     outer_entry, outer_exit = state.add_map(
         "tiles", {
-            "n0": "0:N/TN",
-            "m0": "0:M/TM"
+            "n0": "0:N//TN",
+            "m0": "0:M//TM"
         },
         schedule=dace.ScheduleType.FPGA_Device)
 
@@ -374,8 +374,8 @@ elif p < P - 1:
     # Loops over the tile content
     inner_entry, inner_exit = state.add_map(
         "inner", {
-            "n1": "0:TN/P",
-            "m1": "0:TM/W"
+            "n1": "0:TN//P",
+            "m1": "0:TM//W"
         },
         schedule=dace.ScheduleType.FPGA_Device)
 
@@ -400,7 +400,7 @@ if (n0 < (N/TN) - 1 or m0 < (M/TM) - 1 or k < K - 1) and m1 >= p and m1 < P:
                           update_A,
                           src_conn="to_buffer",
                           memlet=dace.Memlet(
-                              f"A_buffer[n1 + (1 - (k % 2)) * (TN/P)]",
+                              f"A_buffer[n1 + (1 - (k % 2)) * (TN//P)]",
                               dynamic=True))
     state.add_memlet_path(buffer_tasklet,
                           inner_exit,
@@ -425,14 +425,14 @@ if p < P - 1:
 c_val = c_in
 if k == 0:
   c_val = 0
-c_out = c_val + a_in + b_in""")
+c_out = c_val + a_in * b_in""")
     C_buffer_read = state.add_read("C_buffer")
     C_buffer_write = state.add_access("C_buffer")
     state.add_memlet_path(
         update_A,
         compute_tasklet,
         dst_conn="a_in",
-        memlet=dace.Memlet(f"A_buffer[n1 + (k % 2) * (TN/P)]"))
+        memlet=dace.Memlet(f"A_buffer[n1 + (k % 2) * (TN//P)]"))
     state.add_memlet_path(B_pipe_in,
                           outer_entry,
                           k_entry,
@@ -463,18 +463,13 @@ c_out = c_val + a_in + b_in""")
 
     # Now we need to write C out after each tile has been processed
     write_entry, write_exit = state.add_map(
-        "write_C", {"n1": "0:TN/P"}, schedule=dace.ScheduleType.FPGA_Device)
+        "write_C", {"n1": "0:TN//P"}, schedule=dace.ScheduleType.FPGA_Device)
 
     # We need to enforce sequentiality between these loops
     write_sdfg = dace.SDFG("write_C")
     write_sdfg_node = state.add_nested_sdfg(write_sdfg, sdfg,
                                             {"buffer_in", "forward_in"},
                                             {"forward_out"})
-    # Propagate symbols
-    write_sdfg.symbols = copy.deepcopy(sdfg.symbols)
-    write_sdfg.add_symbol("p", P.dtype)
-    write_sdfg_node.symbol_mapping = {k: k for k in sdfg.free_symbols}
-    write_sdfg_node.symbol_mapping["p"] = "p"
     state.add_memlet_path(C_buffer_write,
                           write_entry,
                           write_sdfg_node,
@@ -485,16 +480,16 @@ c_out = c_val + a_in + b_in""")
                           write_entry,
                           write_sdfg_node,
                           dst_conn="forward_in",
-                          memlet=dace.Memlet("C_pipe[p]", dynamic=True))
+                          memlet=dace.Memlet("C_pipe[p + 1]", dynamic=True))
     state.add_memlet_path(write_sdfg_node,
                           write_exit,
                           outer_exit,
                           C_pipe_out,
                           src_conn="forward_out",
-                          memlet=dace.Memlet("C_pipe[p + 1]", dynamic=True))
+                          memlet=dace.Memlet("C_pipe[p]", dynamic=True))
     write_sdfg.add_stream("forward_in", vtype, storage=dace.StorageType.FPGA_Local, transient=False)
     write_sdfg.add_stream("forward_out", vtype, storage=dace.StorageType.FPGA_Local, transient=False)
-    write_sdfg.add_array("buffer_in", ("TM/W", ),
+    write_sdfg.add_array("buffer_in", ("TM//W", ),
                          vtype,
                          transient=False,
                          storage=dace.StorageType.FPGA_Local)
@@ -505,7 +500,7 @@ c_out = c_val + a_in + b_in""")
     send_tasklet = send_state.add_tasklet("send_C", {"from_buffer"},
                                           {"to_next"}, "to_next = from_buffer")
     send_entry, send_exit = send_state.add_map(
-        "send_C", {"m1": "0:TM/W"}, schedule=dace.ScheduleType.FPGA_Device)
+        "send_C", {"m1": "0:TM//W"}, schedule=dace.ScheduleType.FPGA_Device)
     send_state.add_memlet_path(send_read,
                                send_entry,
                                send_tasklet,
@@ -525,7 +520,7 @@ c_out = c_val + a_in + b_in""")
 if p < P - 1:
     to_next = from_prev""")
     forward_entry, forward_exit = forward_state.add_map(
-        "forward_C", {"n1": "0:(TN/P) - p - 1"},
+        "forward_C", {"n1": "0:P - p - 1", "m1": "0:TM//W"},
         schedule=dace.ScheduleType.FPGA_Device)
     # These must be dynamic so the compiler can optimize out the write from the
     # last processing element
@@ -557,6 +552,12 @@ if p < P - 1:
     state.add_memlet_path(A_pipe_out, unroll_exit, memlet=dace.memlet.Memlet())
     state.add_memlet_path(B_pipe_out, unroll_exit, memlet=dace.memlet.Memlet())
     state.add_memlet_path(C_pipe_out, unroll_exit, memlet=dace.memlet.Memlet())
+
+    # Propagate symbols
+    write_sdfg.symbols = copy.deepcopy(sdfg.symbols)
+    write_sdfg.add_symbol("p", sdfg.symbols["P"])
+    write_sdfg_node.symbol_mapping = {k: k for k in sdfg.free_symbols}
+    write_sdfg_node.symbol_mapping["p"] = "p"
 
 
 def make_fpga_state(sdfg, vtype):
