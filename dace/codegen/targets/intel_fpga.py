@@ -240,8 +240,9 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
             whether this is a global variable or not
         """
         vec_type = self.make_vector_type(dtype, False)
-        if buffer_size > 1:
-            depth_attribute = " __attribute__((depth({})))".format(buffer_size)
+        if buffer_size != 1:
+            depth_attribute = " __attribute__((depth({})))".format(
+                cpp.sym2cpp(buffer_size))
         else:
             depth_attribute = ""
         if cpp.sym2cpp(array_size) != "1":
@@ -443,7 +444,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
 #pragma unroll
 for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
   {name}[u_{name}] = {name}[u_{name} + {veclen}];
-}}\n""".format(name=var_name, size=arr_size, veclen=dtype.veclen)
+}}\n""".format(name=var_name, size=arr_size, veclen=cpp.sym2cpp(dtype.veclen))
         # Then do write
         res += self.make_write(defined_type, dtype, var_name, write_expr, index,
                                read_expr, wcr, is_unpack, packing_factor)
@@ -1268,6 +1269,8 @@ __kernel void \\
             self._other_codes["converters"] = CodeIOStream()
         converter_stream = self._other_codes["converters"]
 
+        veclen = cpp.sym2cpp(veclen)
+
         if is_unpack:
             converter_name = "unpack_{dtype}{veclen}".format(dtype=ctype,
                                                              veclen=veclen)
@@ -1589,13 +1592,13 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             veclen = veclen_rhs
             ocltype = fpga.vector_element_type_of(dtype).ocltype
             self.width_converters.add((True, ocltype, veclen))
-            unpack_str = "unpack_{}{}".format(ocltype, veclen)
+            unpack_str = "unpack_{}{}".format(ocltype, cpp.sym2cpp(veclen))
 
         if veclen_lhs > veclen_rhs and isinstance(dtype_rhs, dace.pointer):
             veclen = veclen_lhs
             ocltype = fpga.vector_element_type_of(dtype).ocltype
             self.width_converters.add((False, ocltype, veclen))
-            pack_str = "pack_{}{}".format(ocltype, veclen)
+            pack_str = "pack_{}{}".format(ocltype, cpp.sym2cpp(veclen))
             # TODO: Horrible hack to not dereference pointers if we have to
             # unpack it
             if value[0] == "*":
