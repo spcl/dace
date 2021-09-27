@@ -14,6 +14,8 @@ import numpy as np
 from dace.libraries.standard import Gearbox
 from dace.transformation.interstate import InlineSDFG
 
+MINIMUM_CHANNEL_DEPTH = 8
+
 
 def make_copy_to_fpga_state(sdfg, vtype):
 
@@ -143,6 +145,7 @@ def make_read_B(sdfg, state, vtype):
 
         sdfg.add_stream("B_to_converter",
                         dtype=mtype,
+                        buffer_size=MINIMUM_CHANNEL_DEPTH,
                         storage=dace.StorageType.FPGA_Local,
                         transient=True)
         to_converter_write = state.add_write("B_to_converter")
@@ -154,9 +157,8 @@ def make_read_B(sdfg, state, vtype):
 
         # Convert 512-bit vectors to whatever width the kernel uses
         to_converter_read = state.add_read("B_to_converter")
-        gearbox = Gearbox(
-            f"(N//TN) * (M//TM) * K * (TM//{mem_veclen})",
-            "convert_B", dace.ScheduleType.FPGA_Device)
+        gearbox = Gearbox(f"(N//TN) * (M//TM) * K * (TM//{mem_veclen})",
+                          "convert_B", dace.ScheduleType.FPGA_Device)
         state.add_memlet_path(to_converter_read,
                               gearbox,
                               dst_conn="from_memory",
@@ -249,13 +251,12 @@ def make_write_C(sdfg, state, vtype):
         # We need to convert from the kernel vectorization length to 512-bit
         # vectors that are written back to memory
 
-        gearbox = Gearbox(
-            f"(N//TN) * (M//TM) * TN * (TM//{mem_veclen})",
-            "convert_C",
-            schedule=dace.ScheduleType.FPGA_Device)
+        gearbox = Gearbox(f"(N//TN) * (M//TM) * TN * (TM//{mem_veclen})",
+                          "convert_C",
+                          schedule=dace.ScheduleType.FPGA_Device)
         sdfg.add_stream("C_from_converter",
                         mtype,
-                        f"TM//{mem_veclen}",
+                        buffer_size=f"TM//{mem_veclen}",
                         storage=dace.StorageType.FPGA_Local,
                         transient=True)
         converter_write = state.add_write("C_from_converter")
@@ -487,8 +488,16 @@ c_out = c_val + a_in * b_in""")
                           C_pipe_out,
                           src_conn="forward_out",
                           memlet=dace.Memlet("C_pipe[p]", dynamic=True))
-    write_sdfg.add_stream("forward_in", vtype, storage=dace.StorageType.FPGA_Local, transient=False)
-    write_sdfg.add_stream("forward_out", vtype, storage=dace.StorageType.FPGA_Local, transient=False)
+    write_sdfg.add_stream("forward_in",
+                          vtype,
+                          buffer_size=MINIMUM_CHANNEL_DEPTH,
+                          storage=dace.StorageType.FPGA_Local,
+                          transient=False)
+    write_sdfg.add_stream("forward_out",
+                          vtype,
+                          buffer_size=MINIMUM_CHANNEL_DEPTH,
+                          storage=dace.StorageType.FPGA_Local,
+                          transient=False)
     write_sdfg.add_array("buffer_in", ("TM//W", ),
                          vtype,
                          transient=False,
@@ -520,7 +529,10 @@ c_out = c_val + a_in * b_in""")
 if p < P - 1:
     to_next = from_prev""")
     forward_entry, forward_exit = forward_state.add_map(
-        "forward_C", {"n1": "0:P - p - 1", "m1": "0:TM//W"},
+        "forward_C", {
+            "n1": "0:P - p - 1",
+            "m1": "0:TM//W"
+        },
         schedule=dace.ScheduleType.FPGA_Device)
     # These must be dynamic so the compiler can optimize out the write from the
     # last processing element
@@ -574,15 +586,18 @@ def make_fpga_state(sdfg, vtype):
                     vtype,
                     transient=True,
                     shape=("P + 1", ),
+                    buffer_size=MINIMUM_CHANNEL_DEPTH,
                     storage=dace.dtypes.StorageType.FPGA_Local)
     sdfg.add_stream("B_to_feeder",
                     vtype,
                     transient=True,
+                    buffer_size=MINIMUM_CHANNEL_DEPTH,
                     storage=dace.StorageType.FPGA_Local)
     sdfg.add_stream("C_pipe",
                     vtype,
                     transient=True,
                     shape=("P + 1", ),
+                    buffer_size=MINIMUM_CHANNEL_DEPTH,
                     storage=dace.dtypes.StorageType.FPGA_Local)
 
     make_read_A(sdfg, state, vtype)
