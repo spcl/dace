@@ -13,7 +13,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
 from dace.transformation import transformation as pm, helpers
 from dace.config import Config
-from networkx.exception import NodeNotFound
+from networkx.exception import NetworkXError, NodeNotFound
 
 # Helper methods #############################################################
 
@@ -315,7 +315,14 @@ class RedundantArray(pm.Transformation):
                         return False
                     # If there is a backward path then the (true) in_array must
                     # not be a direct successor of a.
-                    if has_bward_path and true_in_array in G.successors(a):
+                    try:
+                        if has_bward_path and true_in_array in G.successors(a):
+                            return False
+                    except NetworkXError:
+                        # The exception occurs when access a is not in G.
+                        # This happens when the access is inside a (Map) scope.
+                        # In such a case, it is dangerous to apply the
+                        # transformation.
                         return False
 
         # Make sure that both arrays are using the same storage location
@@ -1395,6 +1402,12 @@ class RedundantWriteSlice(pm.Transformation):
             return False
         if true_in_array is not out_array:
             return False
+        
+        # If the View receives data from a reduction, fail.
+        from dace.libraries.standard import Reduce
+        for e in graph.in_edges(in_array):
+            if isinstance(e.src, Reduce):
+                return False
 
         # Ensure that the View is a slice of the Array.
         if not _is_slice(out_desc, in_desc):
