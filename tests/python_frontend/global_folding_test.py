@@ -4,9 +4,9 @@ import dace
 import numpy as np
 
 from dace.frontend.python import astutils
-from dace.frontend.python.newast import (GlobalResolver,
-                                         ConditionalCodeResolver,
-                                         DeadCodeEliminator)
+from dace.frontend.python.preprocessing import (GlobalResolver,
+                                                ConditionalCodeResolver,
+                                                DeadCodeEliminator)
 from dace.frontend.python.parser import DaceProgram
 
 
