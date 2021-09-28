@@ -57,7 +57,7 @@ def test_explicit_split_3d():
         xform.apply(sdfg)
     a = np.random.uniform(0, 100, [120, 100, 100]).astype(np.int32)
     sdfg(a=a, b=b)
-    assert np.allclose(a[80:120, 50:100, 75:100], b[23])
+    assert np.allclose(a[80:120, 50:100, 75:100], b[23]) 
     assert np.allclose(a[0:40, 50:100, 75:100], b[7])
     assert np.allclose(a[40:80, 0:50, 25:50], b[9])
 
