@@ -119,6 +119,19 @@ def test_kwarg_none():
     assert res == 1.0
 
 
+def test_conditional_print():
+    @dace.program
+    def inner(do_print: dace.constant = False):
+        if do_print:
+            print("PRINT!")
+
+    @dace.program
+    def func():
+        inner(do_print=False)
+
+    func()
+
+
 if __name__ == '__main__':
     test_none_or_field_call()
     # test_none_or_field_assignment_globalarr()
@@ -127,3 +140,4 @@ if __name__ == '__main__':
     # test_maybe_none_scalar_arg()
     test_default_arg()
     test_kwarg_none()
+    test_conditional_print()

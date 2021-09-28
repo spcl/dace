@@ -489,13 +489,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 if first_node_instance is None:
                     continue
 
-                # TODO: The change below was done so that test_alloc_persistent
-                # passes (tests/codegen/allocation_lifetime_test.py)
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
-                # definition = desc.as_arg(name=f'{name}') + ';'
                 self.statestruct.append(definition)
 
-                self.to_allocate[top_sdfg].append(
+                self.to_allocate[sdfg].append(
                     (sdfg, first_state_instance, first_node_instance, True,
                      True, True))
                 continue
@@ -558,7 +555,15 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 curscope: Union[nodes.EntryNode, SDFGState] = None
                 curstate: SDFGState = None
                 multistate = False
+
+                # Does the array appear in inter-state edges?
+                for isedge in sdfg.edges():
+                    if name in isedge.data.free_symbols:
+                        multistate = True
+
                 for state in sdfg.nodes():
+                    if multistate:
+                        break
                     sdict = state.scope_dict()
                     for node in state.nodes():
                         if not isinstance(node, nodes.AccessNode):
@@ -756,7 +761,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
              for aname, arr in sdfg.arrays.items()})
         interstate_symbols = {}
         for e in sdfg.edges():
-            symbols = e.data.new_symbols(global_symbols)
+            symbols = e.data.new_symbols(sdfg, global_symbols)
             # Inferred symbols only take precedence if global symbol not defined
             symbols = {
                 k: v if k not in global_symbols else global_symbols[k]
@@ -769,7 +774,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             isvar = data.Scalar(isvarType)
             callsite_stream.write(
                 '%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
-            self.dispatcher.defined_vars.add(isvarName, isvarType,
+            self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar,
                                              isvarType.ctype)
 
         callsite_stream.write('\n', sdfg)
