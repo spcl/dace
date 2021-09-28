@@ -7,7 +7,7 @@ from copy import deepcopy as dc
 from dace.frontend.python.ndloop import ndrange
 import itertools
 import networkx as nx
-from typing import Callable, Dict, Iterable, List, Set, Optional, Tuple, Union
+from typing import Callable, Dict, Iterable, List, Set, Tuple, Union
 import warnings
 from functools import reduce
 import operator
@@ -293,14 +293,39 @@ class InlineSDFG(transformation.Transformation):
         # connector, according to match)
         inputs: Dict[str, MultiConnectorEdge] = {}
         outputs: Dict[str, MultiConnectorEdge] = {}
+        views: Dict[str, Tuple[str, Memlet]] = {}
         input_set: Dict[str, str] = {}
         output_set: Dict[str, str] = {}
         for e in state.in_edges(nsdfg_node):
             inputs[e.dst_conn] = e
             input_set[e.data.data] = e.dst_conn
+            if isinstance(e.src, nodes.AccessNode):
+                d = e.src.data
+                if d in sdfg.arrays and isinstance(sdfg.arrays[d], data.View):
+                    ve = sdutil.get_view_edge(state, e.src)
+                    arr = ve.src.data
+                    srcset = ve.data.src_subset
+                    dstset = ve.data.dst_subset
+                    mem = dc(ve.data)
+                    mem.data = arr
+                    mem.subset = srcset
+                    mem.other_subset = dstset
+                    views[d] = (arr, mem)
         for e in state.out_edges(nsdfg_node):
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
+            if isinstance(e.dst, nodes.AccessNode):
+                d = e.dst.data
+                if d in sdfg.arrays and isinstance(sdfg.arrays[d], data.View):
+                    ve = sdutil.get_view_edge(state, e.dst)
+                    arr = ve.dst.data
+                    srcset = ve.data.src_subset
+                    dstset = ve.data.dst_subset
+                    mem = dc(ve.data)
+                    mem.data = arr
+                    mem.subset = dstset
+                    mem.other_subset = srcset
+                    views[d] = (arr, mem)
 
         # Replace symbols using invocation symbol mapping
         # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
@@ -493,6 +518,17 @@ class InlineSDFG(transformation.Transformation):
                         outer_edge = inputs[input_set[node.data]]
                     else:
                         outer_edge = outputs[output_set[node.data]]
+
+                    # In case of Views, add connections
+                    # to the corresponding Arrays
+                    if node.data in views:
+                        nview = state.add_access(node.data)
+                        for e in state.out_edges(node):
+                            helpers.redirect_edge(state, e, nview)
+                        arr, mem = views[node.data]
+                        narr = state.add_access(arr)
+                        state.add_nedge(node, narr, dc(mem))
+                        state.add_nedge(narr, nview, dc(mem))
 
                     for edge in state.all_edges(node):
                         if (edge not in modified_edges

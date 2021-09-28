@@ -56,7 +56,14 @@ class EndStateElimination(transformation.Transformation):
 
     def apply(self, sdfg):
         state = sdfg.nodes()[self.subgraph[EndStateElimination._end_state]]
+        # Handle orphan symbols (due to the deletion the incoming edge)
+        edge = sdfg.in_edges(state)[0]
+        sym_assign = edge.data.assignments.keys()
         sdfg.remove_node(state)
+        # Remove orphan symbols
+        for sym in sym_assign:
+            if sym in sdfg.free_symbols:
+                sdfg.remove_symbol(sym)
 
 
 @registry.autoregister_params(strict=False)
@@ -213,10 +220,11 @@ class StateAssignElimination(transformation.Transformation):
             else:
                 # If removed assignment does not appear in any other edge,
                 # replace and remove symbol
-                if assignments_to_consider[varname] in sdfg.symbols:
-                    repl_dict[varname] = assignments_to_consider[varname]
                 if varname in sdfg.symbols:
                     sdfg.remove_symbol(varname)
+                # if assignments_to_consider[varname] in sdfg.symbols:
+                if varname in sdfg.free_symbols:
+                    repl_dict[varname] = assignments_to_consider[varname]
         
         def _str_repl(s, d):
             for k, v in d.items():

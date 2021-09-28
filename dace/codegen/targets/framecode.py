@@ -14,7 +14,7 @@ from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.targets.cpp import unparse_interstate_edge
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
-from dace.sdfg import nodes
+from dace.sdfg import nodes, utils
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 from dace.sdfg import scope as sdscope
 from dace import dtypes, data, config
@@ -638,14 +638,12 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             if curscope is None:
                 curscope = top_sdfg
 
-            # Check if array shape is dependent on non-free SDFG symbols
-            # NOTE: Only arrays supported now (not Views)
+            # Check if Array/View is dependent on non-free SDFG symbols
             # NOTE: Tuple is (SDFG, State, Node, declare, allocate, deallocate)
-            if (isinstance(desc, data.Array)
-                    and not isinstance(desc, data.View)
-                    and not isinstance(curscope, nodes.EntryNode) and any(
-                        str(s) not in sdfg.free_symbols.union(
-                            sdfg.constants.keys()) for s in desc.free_symbols)):
+            fsymbols = sdfg.free_symbols.union(sdfg.constants.keys())
+            if (not isinstance(curscope, nodes.EntryNode)
+                    and utils.is_nonfree_sym_dependent(
+                        first_node_instance, desc, alloc_state, fsymbols)):
                 # Declare in current (SDFG) scope
                 self.to_allocate[curscope].append(
                     (sdfg, first_state_instance, first_node_instance, True,
