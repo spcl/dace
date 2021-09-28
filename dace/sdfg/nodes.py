@@ -859,7 +859,7 @@ class Map(object):
         return self.label + "[" + ", ".join([
             "{}={}".format(i, r) for i, r in zip(
                 self._params, [sbs.Range.dim_to_string(d) for d in self._range])
-        ]) + "]"
+        ]) + "] (" + str(self.schedule) + ")"
 
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
