@@ -296,26 +296,24 @@ class StateFusion(transformation.Transformation):
                 write_write_candidates = (
                     (fused_cc.first_outputs & fused_cc.second_outputs) -
                     fused_cc.second_inputs)
-                if len(write_write_candidates) > 0:
-                    # If we have potential candidates, check if there is a
-                    # path from the first write to the second write (in that
-                    # case, there is no hazard):
-                    # Find the leaf (topological) instances of the matches
-                    order = [
-                        x for x in reversed(
-                            list(nx.topological_sort(first_state._nx)))
-                        if isinstance(x, nodes.AccessNode)
-                        and x.data in fused_cc.first_outputs
-                    ]
-                    # Those nodes will be the connection points upon fusion
-                    match_nodes = {
-                        next(n for n in order if n.data == match)
-                        for match in (fused_cc.first_outputs
-                                      & fused_cc.second_inputs)
-                    }
-                else:
-                    match_nodes = set()
+                
+                # Find the leaf (topological) instances of the matches
+                order = [
+                    x for x in reversed(
+                        list(nx.topological_sort(first_state._nx)))
+                    if isinstance(x, nodes.AccessNode)
+                    and x.data in fused_cc.first_outputs
+                ]
+                # Those nodes will be the connection points upon fusion
+                match_nodes = {
+                    next(n for n in order if n.data == match)
+                    for match in (fused_cc.first_outputs
+                                    & fused_cc.second_inputs)
+                }
 
+                # If we have potential candidates, check if there is a
+                # path from the first write to the second write (in that
+                # case, there is no hazard):
                 for cand in write_write_candidates:
                     nodes_first = [n for n in first_output if n.data == cand]
                     nodes_second = [n for n in second_output if n.data == cand]
@@ -415,7 +413,7 @@ class StateFusion(transformation.Transformation):
                                 & fused_cc.second_outputs)
                 for inout in second_inout:
                     nodes_first = [
-                        n for n in (first_input | first_output)
+                        n for n in match_nodes
                         if n.data == inout
                     ]
                     if any(first_state.out_degree(n) > 0 for n in nodes_first):
