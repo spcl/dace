@@ -1169,6 +1169,10 @@ class UnsqueezeViewRemove(pm.Transformation):
 
 def _is_slice(adesc: data.Array, vdesc: data.View) -> bool:
     """ Checks whether a View of an Array is a slice or not. """
+    # Explicitly fail in case of Views with more dimensions than the Array.
+    # NOTE: We want to avoid matching slices produced with np.newaxis
+    if len(vdesc.shape) > len(adesc.shape):
+        return False
     try:
         # Iterate over the View's strides.
         for vi, s in enumerate(vdesc.strides):
