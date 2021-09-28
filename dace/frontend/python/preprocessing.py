@@ -743,7 +743,6 @@ def preprocess_dace_program(
     src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
     src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
     src_ast = DeadCodeEliminator().visit(src_ast)
-    src_ast = AugAssignExpander().visit(src_ast)
     CallTreeResolver(closure_resolver.closure, resolved).visit(src_ast)
     used_arrays = ArrayClosureResolver(closure_resolver.closure)
     used_arrays.visit(src_ast)
