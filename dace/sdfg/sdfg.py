@@ -1970,10 +1970,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         # These are imported in order to update the transformation registry
         from dace.transformation import dataflow, interstate
+        from dace.transformation.dataflow import (RedundantReadSlice,
+                                                  RedundantWriteSlice)
         # This is imported here to avoid an import loop
         from dace.transformation.transformation import (Transformation,
                                                         strict_transformations)
 
+        self.apply_transformations_repeated([RedundantReadSlice,
+                                             RedundantWriteSlice],
+                                            validate=validate,
+                                            strict=True,
+                                            validate_all=validate_all)
         self.apply_transformations_repeated(strict_transformations(),
                                             validate=validate,
                                             strict=True,
