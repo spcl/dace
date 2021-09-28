@@ -1161,3 +1161,320 @@ class UnsqueezeViewRemove(pm.Transformation):
             sdfg.remove_data(in_array.data)
         except ValueError:  # Already in use (e.g., with Views)
             pass
+
+
+def _is_slice(adesc: data.Array, vdesc: data.View) -> bool:
+    """ Checks whether a View of an Array is a slice or not. """
+    try:
+        # Iterate over the View's strides.
+        for vi, s in enumerate(vdesc.strides):
+            # All of the View's strides must exist in the Array's strides.
+            # Otherwise, it is not a slice but a reintepretation.
+            ai = adesc.strides.index(s)
+            # If the View's length is not clearly less or equal than
+            # the Array's corresponding length, then we cannot confirm that
+            # the View is a slice.
+            if (vdesc.shape[vi] <= adesc.shape[ai]) == True:
+                continue
+            else:
+                return False
+    except ValueError:  # list.index throws ValueError if a stride is not found
+        return False
+    
+    return True
+
+
+def _sliced_dims(adesc: data.Array, vdesc: data.View) -> typing.List[int]:
+    """ Returns the Array dimensions viewed by a slice-View.
+        NOTE: This method assumes that `_is_slice(adesc, vdesc) == True`.
+    """
+    return [adesc.strides.index(s) for s in vdesc.strides]
+
+
+@registry.autoregister_params(singlestate=True, strict=True)
+class RedundantReadSlice(pm.Transformation):
+    """ Detects patterns of the form Array -> View(Array) and removes
+    the View if it is a slice. """
+
+    in_array = pm.PatternNode(nodes.AccessNode)
+    out_array = pm.PatternNode(nodes.AccessNode)
+
+    @staticmethod
+    def expressions():
+        return [
+            sdutil.node_path_graph(RedundantReadSlice.in_array,
+                                   RedundantReadSlice.out_array)
+        ]
+
+    @staticmethod
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        in_array = graph.nodes()[candidate[RedundantReadSlice.in_array]]
+        out_array = graph.nodes()[candidate[RedundantReadSlice.out_array]]
+
+        in_desc = in_array.desc(sdfg)
+        out_desc = out_array.desc(sdfg)
+
+        # Make sure that both arrays are using the same storage location.
+        if in_desc.storage != out_desc.storage:
+            return False
+
+        # The match must be Array -> View
+        if not(isinstance(in_desc, data.Array) and not
+               isinstance(in_desc, data.View)):
+            return False
+        if not isinstance(out_desc, data.View):
+            return False
+
+        # Ensure in degree is one (only one source, which is in_array)
+        if graph.in_degree(out_array) != 1:
+            return False
+
+        # The match must be Array -> View(Array), i.e.,
+        # the View must point to the Array. Find the true out_desc.
+        true_out_array = sdutil.get_last_view_node(graph, out_array)
+        if not true_out_array:
+            return False
+        if true_out_array is not in_array:
+            return False
+
+        # Ensure that the View is a slice of the Array.
+        if not _is_slice(in_desc, out_desc):
+            return False
+
+        # Get edge e1 and extract subsets for the Array and View
+        e = graph.edges_between(in_array, out_array)[0]
+        a_subset = e.data.get_src_subset(e, graph)
+        v_subset = e.data.get_dst_subset(e, graph)
+
+        # Make sure the memlet covers the removed View.
+        # NOTE: Since we assume that the View is a slice of the Array, the
+        # following must hold:
+        # a_subset.size() == v_subset.size() == out_desc.shape
+        if not (a_subset and v_subset):
+            return False
+        for subset in (a_subset, v_subset):
+            if len(subset) != len(out_desc.shape):
+                return False
+            if any(m != a for m, a in zip(subset.size(), out_desc.shape)):
+                return False
+
+        return True
+
+    @staticmethod
+    def match_to_str(graph, candidate):
+        out_array = graph.nodes()[candidate[RedundantReadSlice.out_array]]
+
+        return "Remove " + str(out_array)
+
+    def apply(self, sdfg):
+        def gnode(nname):
+            return graph.nodes()[self.subgraph[nname]]
+
+        graph = sdfg.nodes()[self.state_id]
+        in_array = gnode(RedundantReadSlice.in_array)
+        out_array = gnode(RedundantReadSlice.out_array)
+        in_desc = sdfg.arrays[in_array.data]
+        out_desc = sdfg.arrays[out_array.data]
+
+        # We assume the following pattern: A -- e1 --> V(A) -- e2 --> others
+
+        # Get edge e1 and extract subsets for the Array and View
+        e1 = graph.edges_between(in_array, out_array)[0]
+        # a_subset, v1_subset = _validate_subsets(e1, sdfg.arrays)
+        a_subset = e1.data.get_src_subset(e1, graph)
+        v1_subset = e1.data.get_dst_subset(e1, graph)
+
+        # Split the dimensions of A to sliced and non-viewed
+        sliced_dims = _sliced_dims(in_desc, out_desc)
+        nviewed_dims = [i for i in range(len(in_desc.shape))
+                        if i not in sliced_dims]
+        aset, popped = pop_dims(a_subset, nviewed_dims)
+
+        # Iterate over the e2 edges and traverse the memlet tree
+        for e2 in graph.out_edges(out_array):
+            path = graph.memlet_tree(e2)
+            wcr = e1.data.wcr
+            wcr_nonatomic = e1.data.wcr_nonatomic
+            for e3 in path:
+                # Extract subsets for view V and others
+                v3_subset, other_subset = _validate_subsets(
+                    e3, sdfg.arrays, src_name=out_array.data)
+                # Modify memlet to match array A. Example:
+                # A -- (0, a:b)/(c:c+b) --> V -- (c+d)/None --> others
+                # A -- (0, a+d)/None --> others
+                e3.data.data = in_array.data
+                # (c+d) - (c:c+b) = (d)
+                v3_subset.offset(v1_subset, negative=True)
+                # (0, a:b)(d) = (0, a+d) (or offset for indices)
+
+                vset = v3_subset
+
+                e3.data.subset = compose_and_push_back(aset, vset,
+                                                       nviewed_dims, popped)
+                # NOTE: This fixes the following case:
+                # A ----> A[subset] ----> ... -----> Tasklet
+                # Tasklet is not data, so it doesn't have an other subset.
+                if isinstance(e3.dst, nodes.AccessNode):
+                    e3.data.other_subset = other_subset
+                else:
+                    e3.data.other_subset = None
+                wcr = wcr or e3.data.wcr
+                wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
+                e3.data.wcr = wcr
+                e3.data.wcr_nonatomic = wcr_nonatomic
+
+            # Remove edge and add new one
+            graph.remove_edge(e2)
+            e2.data.wcr = wcr
+            e2.data.wcr_nonatomic = wcr_nonatomic
+            graph.add_edge(in_array, e2.src_conn, e2.dst, e2.dst_conn, e2.data)
+
+        # Finally, remove out_array node
+        graph.remove_node(out_array)
+        if out_array.data in sdfg.arrays:
+            try:
+                sdfg.remove_data(out_array.data)
+            except ValueError:  # Already in use (e.g., with Views)
+                pass
+
+
+@registry.autoregister_params(singlestate=True, strict=True)
+class RedundantWriteSlice(pm.Transformation):
+    """ Detects patterns of the form View(Array) -> Array and removes
+    the View if it is a slice. """
+
+    in_array = pm.PatternNode(nodes.AccessNode)
+    out_array = pm.PatternNode(nodes.AccessNode)
+
+    @staticmethod
+    def expressions():
+        return [
+            sdutil.node_path_graph(RedundantWriteSlice.in_array,
+                                   RedundantWriteSlice.out_array)
+        ]
+
+    @staticmethod
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        in_array = graph.nodes()[candidate[RedundantWriteSlice.in_array]]
+        out_array = graph.nodes()[candidate[RedundantWriteSlice.out_array]]
+
+        in_desc = in_array.desc(sdfg)
+        out_desc = out_array.desc(sdfg)
+
+        # Make sure that both arrays are using the same storage location.
+        if in_desc.storage != out_desc.storage:
+            return False
+
+        # The match must be View -> Array
+        if not(isinstance(out_desc, data.Array) and not
+               isinstance(out_desc, data.View)):
+            return False
+        if not isinstance(in_desc, data.View):
+            return False
+
+        # Ensure out degree is one (only one target, which is out_array)
+        if graph.out_degree(in_array) != 1:
+            return False
+
+        # The match must be View(Array) -> Array , i.e.,
+        # the View must point to the Array. Find the true in_desc.
+        true_in_array = sdutil.get_last_view_node(graph, in_array)
+        if not true_in_array:
+            return False
+        if true_in_array is not out_array:
+            return False
+
+        # Ensure that the View is a slice of the Array.
+        if not _is_slice(out_desc, in_desc):
+            return False
+
+        # Get edge e1 and extract subsets for the Array and View
+        e = graph.edges_between(in_array, out_array)[0]
+        v_subset = e.data.get_src_subset(e, graph)
+        a_subset = e.data.get_dst_subset(e, graph)
+
+        # Make sure the memlet covers the removed View.
+        # NOTE: Since we assume that the View is a slice of the Array, the
+        # following must hold:
+        # a_subset.size() == v_subset.size() == in_desc.shape
+        if not (a_subset and v_subset):
+            return False
+        for subset in (a_subset, v_subset):
+            if len(subset) != len(in_desc.shape):
+                return False
+            if any(m != a for m, a in zip(subset.size(), in_desc.shape)):
+                return False
+
+        return True
+
+    @staticmethod
+    def match_to_str(graph, candidate):
+        in_array = graph.nodes()[candidate[RedundantWriteSlice.in_array]]
+
+        return "Remove " + str(in_array)
+
+    def apply(self, sdfg):
+        def gnode(nname):
+            return graph.nodes()[self.subgraph[nname]]
+
+        graph = sdfg.nodes()[self.state_id]
+        in_array = gnode(RedundantWriteSlice.in_array)
+        out_array = gnode(RedundantWriteSlice.out_array)
+        in_desc = sdfg.arrays[in_array.data]
+        out_desc = sdfg.arrays[out_array.data]
+
+        # We assume the following pattern: others -- e2 --> V(A) -- e1 --> A
+
+        # Get edge e1 and extract subsets for the Array and View
+        e1 = graph.edges_between(in_array, out_array)[0]
+        v1_subset = e1.data.get_src_subset(e1, graph)
+        a_subset = e1.data.get_dst_subset(e1, graph)
+
+        # Split the dimensions of A to sliced and non-viewed
+        sliced_dims = _sliced_dims(out_desc, in_desc)
+        nviewed_dims = [i for i in range(len(out_desc.shape))
+                        if i not in sliced_dims]
+        aset, popped = pop_dims(a_subset, nviewed_dims)
+
+        # Iterate over the e2 edges and traverse the memlet tree
+        for e2 in graph.in_edges(in_array):
+            path = graph.memlet_tree(e2)
+            wcr = e1.data.wcr
+            wcr_nonatomic = e1.data.wcr_nonatomic
+            for e3 in path:
+                # Extract subsets for view V and others
+                other_subset, v3_subset = _validate_subsets(
+                    e3, sdfg.arrays, dst_name=in_array.data)
+                # Modify memlet to match array A.
+                e3.data.data = out_array.data
+                v3_subset.offset(v1_subset, negative=True)
+
+                vset = v3_subset
+
+                e3.data.subset = compose_and_push_back(aset, vset,
+                                                       nviewed_dims, popped)
+                # NOTE: This fixes the following case:
+                # Tasklet ----> A[subset] ----> ... -----> A
+                # Tasklet is not data, so it doesn't have an other subset.
+                if isinstance(e3.src, nodes.AccessNode):
+                    e3.data.other_subset = other_subset
+                else:
+                    e3.data.other_subset = None
+                wcr = wcr or e3.data.wcr
+                wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
+                e3.data.wcr = wcr
+                e3.data.wcr_nonatomic = wcr_nonatomic
+
+            # Remove edge and add new one
+            graph.remove_edge(e2)
+            e2.data.wcr = wcr
+            e2.data.wcr_nonatomic = wcr_nonatomic
+            graph.add_edge(e2.src, e2.src_conn, out_array, e2.dst_conn, e2.data)
+
+        # Finally, remove in_array node
+        graph.remove_node(in_array)
+        if in_array.data in sdfg.arrays:
+            try:
+                sdfg.remove_data(in_array.data)
+            except ValueError:  # Already in use (e.g., with Views)
+                pass
