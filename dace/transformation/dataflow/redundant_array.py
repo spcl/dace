@@ -766,7 +766,11 @@ class RedundantSecondArray(pm.Transformation):
                             return False
                         # If there is a forward path then a must not be a direct
                         # successor of the (true) out_array.
-                        if has_fward_path and a in G.successors(true_out_array):
+                        try:
+                            if has_fward_path and a in G.successors(
+                                    true_out_array):
+                                return False
+                        except NetworkXError:
                             return False
 
         # Make sure that both arrays are using the same storage location
