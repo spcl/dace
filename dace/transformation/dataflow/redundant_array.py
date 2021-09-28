@@ -219,12 +219,14 @@ class RedundantArray(pm.Transformation):
             if not true_out_array:
                 return False
             true_out_desc = sdfg.arrays[true_out_array.data]
-            true_out_subsets = [e.data.get_dst_subset(e, graph)
-                                for e in graph.in_edges(true_out_array)]
-        
+            true_out_subsets = [
+                e.data.get_dst_subset(e, graph)
+                for e in graph.in_edges(true_out_array)
+            ]
+
         # Fail in the case of A -> V(A) or V(A) -> A
-        is_array_to_view = (isinstance(in_desc, data.View) ^
-                            isinstance(out_desc, data.View))
+        is_array_to_view = (isinstance(in_desc, data.View)
+                            ^ isinstance(out_desc, data.View))
         if true_in_array is true_out_array and is_array_to_view:
             return False
 
@@ -649,8 +651,10 @@ class RedundantSecondArray(pm.Transformation):
             if not true_in_array:
                 return False
             true_in_desc = sdfg.arrays[true_in_array.data]
-            true_in_subsets = [e.data.get_src_subset(e, graph)
-                                for e in graph.out_edges(true_in_array)]
+            true_in_subsets = [
+                e.data.get_src_subset(e, graph)
+                for e in graph.out_edges(true_in_array)
+            ]
         # Find the true out_desc (in case out_array is a view).
         true_out_array = out_array
         true_out_desc = out_desc
@@ -661,8 +665,8 @@ class RedundantSecondArray(pm.Transformation):
             true_out_desc = sdfg.arrays[true_out_array.data]
 
         # Fail in the case of A -> V(A) or V(A) -> A
-        is_array_to_view = (isinstance(in_desc, data.View) ^
-                            isinstance(out_desc, data.View))
+        is_array_to_view = (isinstance(in_desc, data.View)
+                            ^ isinstance(out_desc, data.View))
         if true_in_array is true_out_array and is_array_to_view:
             return False
 
@@ -1180,7 +1184,7 @@ def _is_slice(adesc: data.Array, vdesc: data.View) -> bool:
                 return False
     except ValueError:  # list.index throws ValueError if a stride is not found
         return False
-    
+
     return True
 
 
@@ -1219,8 +1223,8 @@ class RedundantReadSlice(pm.Transformation):
             return False
 
         # The match must be Array -> View
-        if not(isinstance(in_desc, data.Array) and not
-               isinstance(in_desc, data.View)):
+        if not (isinstance(in_desc, data.Array)
+                and not isinstance(in_desc, data.View)):
             return False
         if not isinstance(out_desc, data.View):
             return False
@@ -1248,14 +1252,17 @@ class RedundantReadSlice(pm.Transformation):
 
         # Make sure the memlet covers the removed View.
         # NOTE: Since we assume that the View is a slice of the Array, the
-        # following must hold:
+        # following must hold (after removing unit-sized dimensions):
         # a_subset.size() == v_subset.size() == out_desc.shape
         if not (a_subset and v_subset):
             return False
+        out_shape = [s for s in out_desc.shape if s != 1]
         for subset in (a_subset, v_subset):
-            if len(subset) != len(out_desc.shape):
+            tmp = copy.deepcopy(subset)
+            tmp.squeeze()
+            if len(tmp) != len(out_shape):
                 return False
-            if any(m != a for m, a in zip(subset.size(), out_desc.shape)):
+            if any(m != a for m, a in zip(tmp.size(), out_shape)):
                 return False
 
         return True
@@ -1286,8 +1293,9 @@ class RedundantReadSlice(pm.Transformation):
 
         # Split the dimensions of A to sliced and non-viewed
         sliced_dims = _sliced_dims(in_desc, out_desc)
-        nviewed_dims = [i for i in range(len(in_desc.shape))
-                        if i not in sliced_dims]
+        nviewed_dims = [
+            i for i in range(len(in_desc.shape) - 1, -1) if i not in sliced_dims
+        ]
         aset, popped = pop_dims(a_subset, nviewed_dims)
 
         # Iterate over the e2 edges and traverse the memlet tree
@@ -1309,8 +1317,8 @@ class RedundantReadSlice(pm.Transformation):
 
                 vset = v3_subset
 
-                e3.data.subset = compose_and_push_back(aset, vset,
-                                                       nviewed_dims, popped)
+                e3.data.subset = compose_and_push_back(aset, vset, nviewed_dims,
+                                                       popped)
                 # NOTE: This fixes the following case:
                 # A ----> A[subset] ----> ... -----> Tasklet
                 # Tasklet is not data, so it doesn't have an other subset.
@@ -1366,8 +1374,8 @@ class RedundantWriteSlice(pm.Transformation):
             return False
 
         # The match must be View -> Array
-        if not(isinstance(out_desc, data.Array) and not
-               isinstance(out_desc, data.View)):
+        if not (isinstance(out_desc, data.Array)
+                and not isinstance(out_desc, data.View)):
             return False
         if not isinstance(in_desc, data.View):
             return False
@@ -1399,10 +1407,13 @@ class RedundantWriteSlice(pm.Transformation):
         # a_subset.size() == v_subset.size() == in_desc.shape
         if not (a_subset and v_subset):
             return False
+        in_shape = [s for s in in_desc.shape if s != 1]
         for subset in (a_subset, v_subset):
-            if len(subset) != len(in_desc.shape):
+            tmp = copy.deepcopy(subset)
+            tmp.squeeze()
+            if len(tmp) != len(in_shape):
                 return False
-            if any(m != a for m, a in zip(subset.size(), in_desc.shape)):
+            if any(m != a for m, a in zip(tmp.size(), in_shape)):
                 return False
 
         return True
@@ -1432,8 +1443,10 @@ class RedundantWriteSlice(pm.Transformation):
 
         # Split the dimensions of A to sliced and non-viewed
         sliced_dims = _sliced_dims(out_desc, in_desc)
-        nviewed_dims = [i for i in range(len(out_desc.shape))
-                        if i not in sliced_dims]
+        nviewed_dims = [
+            i for i in range(len(out_desc.shape) - 1, -1)
+            if i not in sliced_dims
+        ]
         aset, popped = pop_dims(a_subset, nviewed_dims)
 
         # Iterate over the e2 edges and traverse the memlet tree
@@ -1451,8 +1464,8 @@ class RedundantWriteSlice(pm.Transformation):
 
                 vset = v3_subset
 
-                e3.data.subset = compose_and_push_back(aset, vset,
-                                                       nviewed_dims, popped)
+                e3.data.subset = compose_and_push_back(aset, vset, nviewed_dims,
+                                                       popped)
                 # NOTE: This fixes the following case:
                 # Tasklet ----> A[subset] ----> ... -----> A
                 # Tasklet is not data, so it doesn't have an other subset.
