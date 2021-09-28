@@ -5,6 +5,7 @@ import numpy as np
 import os
 import timeit
 from typing import List
+import argparse
 
 from dace.transformation.dataflow import MapFusion, RedundantSecondArray, RedundantArray, GPUMultiTransformMap
 from dace.transformation.interstate import InlineSDFG, StateFusion, GPUTransformSDFG
@@ -30,7 +31,7 @@ Ny = Py * lNy
 @dace.program
 def jacobi_2d_shared(A: dace.float64[Ny, N], B: dace.float64[Ny, N]):
 
-    for t in range(1, TSTEPS):
+    for t in range(TSTEPS):
         B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] +
                                A[2:, 1:-1] + A[:-2, 1:-1])
         A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] +
@@ -39,7 +40,7 @@ def jacobi_2d_shared(A: dace.float64[Ny, N], B: dace.float64[Ny, N]):
 
 @dace.program
 def jacobi_2d_sgpu(A: dace.float64[Ny, N], B: dace.float64[Ny, N]):
-    for t in range(1, TSTEPS):
+    for t in range(TSTEPS):
         B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] +
                                A[2:, 1:-1] + A[:-2, 1:-1])
         A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] +
@@ -74,11 +75,19 @@ def find_data_desc(sdfg: dace.SDFG, name: str) -> dace.nodes.MapEntry:
 
 
 if __name__ == "__main__":
-    ts, n = 100, 4096
-    number_of_gpus = 4
+    parser = argparse.ArgumentParser()
+    parser.add_argument("ts", type=int, nargs="?", default=10)
+    parser.add_argument("n", type=int, nargs="?", default=128)
+    parser.add_argument("g", type=int, nargs="?", default=4)
+    args = vars(parser.parse_args())
+
+    ts = args['ts']
+    n = args['n']
+    number_of_gpus = args['g']
     sdfg = jacobi_2d_sgpu.to_sdfg(strict=True)
     sdfg.apply_transformations_repeated(MapFusion)
     sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray])
+
     sdfg.apply_strict_transformations()
     sdfg.apply_transformations(GPUTransformSDFG, options={'gpu_id': 0})
     sdfg.apply_strict_transformations()
