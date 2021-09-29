@@ -1,10 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Computes C = AB + C
+Computes C = A @ B + C.
 
-This sample build on matrix_multiplication_systolic by adding vectorization.
-The systolic arrays used data type depends on the used vectorization width
-(e.g., float16 for vec_width = 16).
+This implementation is based on the HLS implementation from:
+    https://github.com/spcl/gemm_hls
+It uses the compute and I/O optimal strategy described in the FPGA'20 paper:
+    "Flexible Communication Avoiding Matrix Multiplication on FPGA with
+     High-Level Synthesis".
 """
 
 import click
