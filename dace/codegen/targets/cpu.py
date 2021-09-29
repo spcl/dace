@@ -1352,7 +1352,13 @@ class CPUCodeGen(TargetCodeGenerator):
         self._frame._initcode.write(codeblock_to_cpp(node.code_init), sdfg)
         self._frame._exitcode.write(codeblock_to_cpp(node.code_exit), sdfg)
 
-        state_dfg = sdfg.nodes()[state_id]
+        state_dfg: SDFGState = sdfg.nodes()[state_id]
+
+        # Free tasklets need to be presynchronized (e.g., CPU tasklet after
+        # GPU->CPU copy)
+        if state_dfg.entry_node(node) is None:
+            cpp.presynchronize_streams(sdfg, state_dfg, state_id, node,
+                                       callsite_stream)
 
         # Prepare preamble and code for after memlets
         after_memlets_stream = CodeIOStream()
