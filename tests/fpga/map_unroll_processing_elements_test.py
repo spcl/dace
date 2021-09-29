@@ -18,11 +18,18 @@ def test_map_unroll_processing_elements():
     gemm = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gemm)
 
+    N = 128
+    K = 256
+    M = 512
+    P = 8
+    W = 4
+    TN = 32
+    TM = 128
+
     # Create an SDFG with multiple processing elements
-    veclen = 16
     sdfg = gemm.make_sdfg("map_unroll_processing_elements",
-                          dace.vector(dace.float32, veclen))
-    sdfg.specialize({"P": 4, "W": veclen, "TN": 4, "TM": 4 * veclen})
+                          dace.vector(dace.float32, W))
+    sdfg.specialize({"P": P, "W": W, "TN": TN, "TM": TM})
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.MapEntry) and node.params == ["p"]:
@@ -30,18 +37,17 @@ def test_map_unroll_processing_elements():
                 node.schedule = dace.ScheduleType.Unrolled
 
     # Initialize arrays: Randomize A and B, zero C
-    A = np.ndarray([32, 32], dtype=dace.float32.type)
-    B = np.ndarray([32, 32], dtype=dace.float32.type)
-    C = np.ndarray([32, 32], dtype=dace.float32.type)
-    A[:] = np.random.rand(32, 32).astype(dace.float32.type)
-    B[:] = np.random.rand(32, 32).astype(dace.float32.type)
-    C[:] = np.random.rand(32, 32).astype(dace.float32.type)
+    A = np.ndarray([N, K], dtype=dace.float32.type)
+    B = np.ndarray([K, M], dtype=dace.float32.type)
+    C = np.ndarray([N, M], dtype=dace.float32.type)
+    A[:] = np.random.rand(N, K).astype(dace.float32.type)
+    B[:] = np.random.rand(K, M).astype(dace.float32.type)
+    C[:] = np.random.rand(N, M).astype(dace.float32.type)
 
-    C_regression = np.ndarray([32, 32], dtype=np.float32)
     C_regression = A @ B + C
 
-    sdfg(A=A, B=B, C=C, N=32, K=32)
-    diff = np.linalg.norm(C_regression - C) / float(32 * 32)
+    sdfg(A=A, B=B, C=C, N=N, M=M, K=K)
+    diff = np.linalg.norm(C_regression - C) / float(N * M)
     assert diff < 1e-6
 
     return sdfg

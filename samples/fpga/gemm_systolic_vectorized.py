@@ -25,7 +25,7 @@ def make_copy_to_fpga_state(sdfg, vtype):
     state = sdfg.add_state("copy_to_device")
     dtype = vtype.base_type
     mem_veclen = 64 // dtype.bytes
-    mtype = dace.vector(vtype, mem_veclen // vtype.veclen)
+    mtype = dace.vector(dtype, mem_veclen)
 
     #host data has plain data types
     sdfg.add_array("A", ["N", "K"], dtype=dtype)
@@ -117,7 +117,7 @@ def make_read_B(sdfg, state, vtype):
     # Deduce types
     dtype = vtype.base_type
     mem_veclen = 64 // dtype.bytes
-    mtype = dace.vector(vtype, mem_veclen // vtype.veclen)
+    mtype = dace.vector(dtype, mem_veclen)
 
     entry, exit = state.add_map("read_B", {
         "n0": "0:N//TN",
@@ -240,7 +240,7 @@ def make_write_C(sdfg, state, vtype):
     # Deduce types
     dtype = vtype.base_type
     mem_veclen = 64 // dtype.bytes
-    mtype = dace.vector(vtype, mem_veclen // vtype.veclen)
+    mtype = dace.vector(dtype, mem_veclen)
 
     from_kernel = state.add_read("C_pipe")
     mem_read = state.add_read("C_device")
@@ -300,14 +300,14 @@ def make_write_C(sdfg, state, vtype):
         entry,
         tasklet,
         dst_conn="prev",
-        memlet=dace.Memlet(f"C_device[n0 * TN + n1, m0 * TM + m1]"))
+        memlet=dace.Memlet(f"C_device[n0 * TN + n1, m0 * (TM//{mem_veclen}) + m1]"))
 
     state.add_memlet_path(
         tasklet,
         exit,
         mem_write,
         src_conn="to_memory",
-        memlet=dace.Memlet(f"C_device[n0 * TN + n1, m0 * TM + m1]"))
+        memlet=dace.Memlet(f"C_device[n0 * TN + n1, m0 * (TM//{mem_veclen}) + m1]"))
 
 
 def make_compute(sdfg, state, vtype):
