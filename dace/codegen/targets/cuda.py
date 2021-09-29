@@ -3441,9 +3441,9 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         self._cpu_codegen._generate_NestedSDFG(sdfg, dfg, state_id, node,
                                                function_stream, callsite_stream)
-
-        cpp.synchronize_streams(sdfg, dfg, state_id, node, node,
-                                callsite_stream)
+        if not CUDACodeGen._in_device_code:
+            cpp.synchronize_streams(sdfg, dfg, state_id, node, node,
+                                    callsite_stream)
 
         self._cpu_codegen.calling_codegen = old_codegen
         self._toplevel_schedule = old_schedule
