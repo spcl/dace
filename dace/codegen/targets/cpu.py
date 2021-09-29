@@ -180,8 +180,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         name = node.data
         nodedesc = node.desc(sdfg)
-        if self._dispatcher.defined_vars.has(name):
-            return  # View was already allocated
 
         # Check if array is already declared
         declared = self._dispatcher.declared_arrays.has(name)

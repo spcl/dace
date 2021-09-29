@@ -19,11 +19,6 @@ def test_redundant_array_removal():
         reshape(A, A_reshaped)
         return A_reshaped + B
 
-    A = np.arange(9).astype(np.float64)
-    B = np.arange(3).astype(np.float64)
-    result = test_redundant_array_removal(A.copy(), B.copy())
-    assert np.allclose(result, A.reshape(3, 3) + B)
-
     data_accesses = {
         n.data
         for n, _ in test_redundant_array_removal.to_sdfg(
@@ -31,6 +26,11 @@ def test_redundant_array_removal():
         if isinstance(n, dace.nodes.AccessNode)
     }
     assert "A_reshaped" not in data_accesses
+
+    A = np.arange(9).astype(np.float64)
+    B = np.arange(3).astype(np.float64)
+    result = test_redundant_array_removal(A.copy(), B.copy())
+    assert np.allclose(result, A.reshape(3, 3) + B)
 
 
 @pytest.mark.gpu

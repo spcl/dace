@@ -452,20 +452,22 @@ def _numpy_rot90(pv: 'ProgramVisitor',
     if k == 0:
         return arr
     if k == 2:
-        return _numpy_flip(pv, sdfg, state,
-                           _numpy_flip(pv, sdfg, state, arr, axes[0]), axes[1])
+        res = _numpy_flip(pv, sdfg, state, arr, axes[0])
+        state = pv._add_state(state.label + '_b')
+        return _numpy_flip(pv, sdfg, state, res, axes[1])
 
     axes_list = list(range(ndim))
     (axes_list[axes[0]], axes_list[axes[1]]) = (axes_list[axes[1]],
                                                 axes_list[axes[0]])
 
     if k == 1:
-        return _transpose(pv, sdfg, state,
-                          _numpy_flip(pv, sdfg, state, arr, axes[1]), axes_list)
-    else:
-        # k == 3
-        return _numpy_flip(pv, sdfg, state,
-                           _transpose(pv, sdfg, state, arr, axes_list), axes[1])
+        res = _numpy_flip(pv, sdfg, state, arr, axes[1])
+        state = pv._add_state(state.label + '_b')
+        return _transpose(pv, sdfg, state, res, axes_list)
+    else:  # k == 3
+        res = _transpose(pv, sdfg, state, arr, axes_list)
+        state = pv._add_state(state.label + '_b')
+        return _numpy_flip(pv, sdfg, state, res, axes[1])
 
 
 @oprepo.replaces('elementwise')

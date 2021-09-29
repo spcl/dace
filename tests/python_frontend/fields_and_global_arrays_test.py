@@ -6,6 +6,7 @@ import numpy as np
 from dataclasses import dataclass
 import pytest
 import time
+from types import SimpleNamespace
 
 
 def test_bad_closure():
@@ -543,6 +544,96 @@ def test_array_closure_cache_nested():
     assert np.allclose(obj(A), expected)
 
 
+def test_allconstants():
+    some_namespace = SimpleNamespace(A=1.0)
+    A = np.zeros((10, ))
+
+    @dace.program
+    def func(ns: dace.constant):
+        A[...] = ns.A
+
+    func(some_namespace)
+    assert np.allclose(1.0, A)
+
+
+def test_method_allconstants():
+    A = np.ones((10, ))
+    ns = SimpleNamespace(A=A)
+
+    @dace.program
+    def inner(A: dace.float64[10]):
+        A[...] = 7.0
+
+    class Example:
+        @dace.method
+        def __call__(self, ns: dace.constant):
+            inner(ns.A)
+
+    obj = Example()
+    obj(ns)
+    assert np.allclose(7.0, ns.A)
+
+
+def test_same_global_array():
+    A = {'a': np.random.rand(20), 'b': np.zeros([20]), 'c': np.zeros([20])}
+
+    @dace.program
+    def proga():
+        A['b'] += A['a'] + 1
+
+    @dace.program
+    def progb():
+        A['c'][:] = A['b'] + 1
+
+    @dace.program
+    def caller():
+        proga()
+        progb()
+
+    # Check result
+    caller()
+    assert np.allclose(A['b'], A['a'] + 1)
+    assert np.allclose(A['c'], A['a'] + 2)
+
+    # Check validity of closure
+    assert len(caller.resolver.closure_arrays) == 3
+
+    # Ensure only three globals are created
+    sdfg = caller.to_sdfg()
+    assert len([k for k in sdfg.arrays if '__g' in k]) == 3
+
+
+def test_two_inner_methods():
+    class Inner:
+        def __init__(self, scalar):
+            self._tmp = np.full(fill_value=7.0, shape=(10, 10, 10))
+            self.scalar = scalar
+
+        @dace.method
+        def __call__(self, A):
+            A[...] = self._tmp + self.scalar
+
+    class Outer:
+        def __init__(self):
+            self.inner1 = Inner(3.0)
+            self.inner2 = Inner(4.0)
+
+        @dace.method
+        def __call__(self, A, B):
+            self.inner1(A)
+            self.inner1(B)
+            self.inner2(A)
+
+    A = np.ones((10, 10, 10))
+    B = np.ones((10, 10, 10))
+
+    outer = Outer()
+    outer(A, B)
+
+    assert np.allclose(11.0, A)
+    assert np.allclose(10.0, B)
+
+
 if __name__ == '__main__':
     test_bad_closure()
     test_dynamic_closure()
@@ -569,3 +660,7 @@ if __name__ == '__main__':
     test_constant_closure_cache_nested()
     test_array_closure_cache()
     test_array_closure_cache_nested()
+    test_allconstants()
+    test_method_allconstants()
+    test_same_global_array()
+    test_two_inner_methods()
