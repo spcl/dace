@@ -258,14 +258,14 @@ class SymExpr(object):
         if isinstance(other, SymExpr):
             return self.expr == other.expr and self.approx == other.approx
         return self == pystr_to_symbolic(other)
-    
+
     def __lt__(self, other):
         if isinstance(other, sympy.Expr):
             return self.expr < other
         if isinstance(other, SymExpr):
             return self.expr < other.expr
         return self < pystr_to_symbolic(other)
-    
+
     def __gt__(self, other):
         if isinstance(other, sympy.Expr):
             return self.expr > other
@@ -841,8 +841,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return super()._print_Function(expr)
 
     def _print_Mod(self, expr):
-        return '((%s) %% (%s))' % (self._print(
-            expr.args[0]), self._print(expr.args[1]))
+        return '(((%s) + (%s)) %% (%s))' % (self._print(
+            expr.args[0]), self._print(expr.args[1]), self._print(expr.args[1]))
 
     def _print_Equality(self, expr):
         return '((%s) == (%s))' % (self._print(
