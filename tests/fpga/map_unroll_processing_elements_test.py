@@ -1,13 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import dace.sdfg.nodes as nodes
-from dace.fpga_testing import fpga_test
+from dace.fpga_testing import xilinx_test
 import importlib.util
 import numpy as np
 from pathlib import Path
 
 
-@fpga_test()
+@xilinx_test()
 def test_map_unroll_processing_elements():
 
     # Grab the systolic GEMM implementation the samples directory
