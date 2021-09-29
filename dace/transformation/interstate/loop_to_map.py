@@ -170,8 +170,8 @@ class LoopToMap(DetectLoop):
                         # variable. The iteration variable must be used.
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
-                            if not _check_range(dst_subset, a, itersym, b,
-                                                step):
+                            if not (dst_subset and _check_range(
+                                        dst_subset, a, itersym, b, step)):
                                 return False
                         # End of check
 

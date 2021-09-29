@@ -361,6 +361,8 @@ class StateFusion(transformation.Transformation):
                                     nodes_first = [
                                         n for n in first_input if n.data == d
                                     ]
+                                else:
+                                    nodes_first = []
                                 for n2 in nodes_second:
                                     for e in second_state.in_edges(n2):
                                         path = second_state.memlet_path(e)
