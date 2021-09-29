@@ -39,7 +39,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
     language = 'hls'
 
     def __init__(self, *args, **kwargs):
-        fpga_vendor = Config.get("compiler", "fpga_vendor")
+        fpga_vendor = Config.get("compiler", "fpga", "vendor")
         if fpga_vendor.lower() != "xilinx":
             # Don't register this code generator
             return
@@ -57,8 +57,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         target_platform = Config.get("compiler", "xilinx", "platform")
         enable_debugging = ("ON" if Config.get_bool(
             "compiler", "xilinx", "enable_debugging") else "OFF")
-        autobuild = ("ON" if Config.get_bool("compiler", "autobuild_bitstreams")
-                     else "OFF")
+        autobuild = ("ON" if Config.get_bool("compiler", "fpga",
+                                             "autobuild_bitstreams") else "OFF")
         frequency = Config.get("compiler", "xilinx", "frequency").strip()
         options = [
             "-DDACE_XILINX_HOST_FLAGS=\"{}\"".format(host_flags),

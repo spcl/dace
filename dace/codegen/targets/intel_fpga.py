@@ -65,7 +65,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     language = 'hls'
 
     def __init__(self, *args, **kwargs):
-        fpga_vendor = Config.get("compiler", "fpga_vendor")
+        fpga_vendor = Config.get("compiler", "fpga", "vendor")
         if fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return
@@ -89,8 +89,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         target_board = Config.get("compiler", "intel_fpga", "board")
         enable_debugging = ("ON" if Config.get_bool(
             "compiler", "intel_fpga", "enable_debugging") else "OFF")
-        autobuild = ("ON" if Config.get_bool("compiler", "autobuild_bitstreams")
-                     else "OFF")
+        autobuild = ("ON" if Config.get_bool("compiler", "fpga",
+                                             "autobuild_bitstreams") else "OFF")
         options = [
             "-DDACE_INTELFPGA_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_INTELFPGA_KERNEL_FLAGS=\"{}\"".format(kernel_flags),
