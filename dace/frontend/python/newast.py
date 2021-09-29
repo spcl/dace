@@ -103,6 +103,12 @@ def _method(sdfg: SDFG, sample_data: data.Array, dtype):
     return name, new_data
 
 
+@specifies_datatype(datatype=data.View)
+def _method(sdfg: SDFG, sample_data: data.View, dtype):
+    name, new_data = sdfg.add_temp_transient(sample_data.shape, dtype)
+    return name, new_data
+
+
 @specifies_datatype(datatype=data.Stream)
 def _method(sdfg: SDFG, sample_data: data.Stream, dtype):
     name = sdfg.temp_data_name()
