@@ -1310,8 +1310,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 gpu_id_last_path[node_gpu_id] = current_path
 
             # Add CUDA stream to location (usefull for debugging)
-            if self._debugprint:
-                add_cs_to_location(node, graph, node_gpu_id)
+            # if self._debugprint:
+            add_cs_to_location(node, graph, node_gpu_id)
 
         # Recursive call for NestedSDFGs that are not already on a GPU device.
         if isinstance(node, nodes.NestedSDFG):
@@ -1388,9 +1388,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                             # Hacky way to add events to SDFG Viewer:
                             # (for debugging purposes)
-                            if self._debugprint:
-                                mpe.data.debuginfo = dtypes.DebugInfo(
-                                    'cuda_events: ' + str(mpe._cuda_event))
+                            # if self._debugprint:
+                            mpe.data.debuginfo = dtypes.DebugInfo(
+                                'cuda_events: ' + str(mpe._cuda_event))
 
                         for gpu_id in gpu_id_map[src_gpu]:
                             # Increment the number of events
@@ -2189,7 +2189,10 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
             # Active streams found. Generate state normally and sync with the
             # streams in the end
             if self._debugprint:
-                debug_print = f'printf("{state} start\\n");'
+                gpu_str = ''
+                if state.parent.parent_nsdfg_node is not None and 'gpu' in state.parent.parent_nsdfg_node.location:
+                    gpu_str = state.parent.parent_nsdfg_node.location['gpu']
+                debug_print = f'printf("{state}: {gpu_str} start\\n");'
             else:
                 debug_print = ''
             callsite_stream.write(debug_print)
@@ -2284,7 +2287,10 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
 
             # After synchronizing streams, generate state footer normally
             if self._debugprint:
-                debug_print = f'\nprintf("{state} end\\n");\n'
+                gpu_str = ''
+                if state.parent.parent_nsdfg_node is not None and 'gpu' in state.parent.parent_nsdfg_node.location:
+                    gpu_str = state.parent.parent_nsdfg_node.location['gpu']
+                debug_print = f'\nprintf("{state}: {gpu_str} end\\n");\n'
             else:
                 debug_print = '\n'
             callsite_stream.write(debug_print)
