@@ -291,6 +291,11 @@ def test_memory_buffering_library_node_elementwise():
     return memory_buffering(4, True, True)
 
 
+@fpga_test()
+def test_memory_buffering_library_node_elementwise_scalar():
+    return memory_buffering(1, True, True)
+
+
 if __name__ == "__main__":
     test_memory_buffering_manual(None)
     test_memory_buffering_library_node(None)
