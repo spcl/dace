@@ -45,13 +45,13 @@ struct __align__(8) half4 {
     
     DACE_HDFI half4() {}
     DACE_HDFI half4(const half4& other) {
-        #pragma unroll
+        __DACE_UNROLL
         for (int i = 0; i < ELEMS; ++i)
             h[i] = other.h[i];
     }
 
     DACE_HDFI half4& operator=(const half4& other) {
-        #pragma unroll
+        __DACE_UNROLL
         for (int i = 0; i < ELEMS; ++i)
             h[i] = other.h[i];
         return *this;
@@ -78,7 +78,7 @@ struct __align__(8) half4 {
             res.h2<0>() = in;
             res.h2<1>() = in;
         #else
-            #pragma unroll
+            __DACE_UNROLL
             for (int i = 0; i < ELEMS; i++) {
                 res.h[i] = value;
             }
@@ -93,7 +93,7 @@ struct __align__(8) half4 {
         if (stride == 1) {
             res = *(half4*)ptr;
         } else {
-            #pragma unroll
+            __DACE_UNROLL
             for (int i = 0; i < ELEMS; i++) {
                 res.h[i] = ptr[i * stride];
             }
@@ -107,7 +107,7 @@ struct __align__(8) half4 {
         if (stride == 1) {
             *(half4*)ptr = *this;
         } else {
-            #pragma unroll
+            __DACE_UNROLL
             for (int i = 0; i < ELEMS; i++) {
                 ptr[i * stride] = h[i];
             }
@@ -116,7 +116,7 @@ struct __align__(8) half4 {
     
     DACE_DFI
     void sum(float& res) {
-        #pragma unroll
+        __DACE_UNROLL
         for (int k = 0; k < ELEMS; k++) {
             res += __half2float(h[k]);
         }
@@ -234,7 +234,7 @@ struct __align__(16) half8 {
             res.h2<2>() = in;
             res.h2<3>() = in;
         #else
-            #pragma unroll
+            __DACE_UNROLL
             for (int i = 0; i < ELEMS; i++) {
                 res.h[i] = value;
             }
@@ -249,7 +249,7 @@ struct __align__(16) half8 {
         if (stride == 1) {
             res = *(half8*)ptr;
         } else {
-            #pragma unroll
+            __DACE_UNROLL
             for (int i = 0; i < ELEMS; i++) {
                 res.h[i] = ptr[i * stride];
             }
@@ -263,7 +263,7 @@ struct __align__(16) half8 {
         if (stride == 1) {
             *(half8*)ptr = *this;
         } else {
-            #pragma unroll
+            __DACE_UNROLL
             for (int i = 0; i < ELEMS; i++) {
                 ptr[i * stride] = h[i];
             }
@@ -272,7 +272,7 @@ struct __align__(16) half8 {
     
     DACE_DFI
     void sum(float& res) {
-        #pragma unroll
+        __DACE_UNROLL
         for (int k = 0; k < ELEMS; k++) {
             res += __half2float(h[k]);
         }

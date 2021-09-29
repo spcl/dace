@@ -204,8 +204,8 @@ class LoopToMap(DetectLoop):
                                                                  step)]))
                         for candidate in write_memlets[data]:
                             # Simple case: read and write are in the same subset
-                            read = e.data.subset
-                            write = candidate.subset
+                            read = src_subset
+                            write = candidate.dst_subset
                             if read == write:
                                 continue
                             ridx = _dependent_indices(itervar, read)
@@ -223,9 +223,9 @@ class LoopToMap(DetectLoop):
                                                       [itervar],
                                                       subsets.Range([
                                                           (start, end, step)
-                                                      ]))
-                            t_pread = _sanitize_by_index(indices, pread.subset)
-                            pwrite = _sanitize_by_index(indices, pwrite.subset)
+                                                      ]), use_dst=True)
+                            t_pread = _sanitize_by_index(indices, pread.src_subset)
+                            pwrite = _sanitize_by_index(indices, pwrite.dst_subset)
                             if subsets.intersects(t_pread, pwrite) is False:
                                 continue
                             return False

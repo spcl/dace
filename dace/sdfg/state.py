@@ -464,16 +464,22 @@ class StateGraphView(object):
         # Start with SDFG global symbols
         defined_syms = {k: v for k, v in sdfg.symbols.items()}
 
+        def update_if_not_none(dic, update):
+            update = {k: v for k, v in update.items() if v is not None}
+            dic.update(update)
+
         # Add data-descriptor free symbols
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
-                defined_syms[str(sym)] = sym.dtype
+                if sym.dtype is not None:
+                    defined_syms[str(sym)] = sym.dtype
 
         # Add inter-state symbols
         # NOTE: A DFS such as in validate_sdfg can be invoked here, but may
         #       be time consuming.
         for edge in sdfg.edges():
-            defined_syms.update(edge.data.new_symbols(defined_syms))
+            update_if_not_none(defined_syms,
+                               edge.data.new_symbols(sdfg, defined_syms))
 
         # Add scope symbols all the way to the subgraph
         sdict = state.scope_dict()
@@ -485,7 +491,8 @@ class StateGraphView(object):
                 scope_nodes.append(curnode)
 
         for snode in dtypes.deduplicate(list(reversed(scope_nodes))):
-            defined_syms.update(snode.new_symbols(sdfg, state, defined_syms))
+            update_if_not_none(defined_syms,
+                               snode.new_symbols(sdfg, state, defined_syms))
 
         return defined_syms
 
@@ -995,12 +1002,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             start_state = sdfg.start_state
             for path in sdfg.all_simple_paths(start_state, self, as_edges=True):
                 for e in path:
-                    symbols.update(e.data.new_symbols(symbols))
+                    symbols.update(e.data.new_symbols(sdfg, symbols))
         except ValueError:
             # Cannot determine starting state (possibly some inter-state edges
             # do not yet exist)
             for e in sdfg.edges():
-                symbols.update(e.data.new_symbols(symbols))
+                symbols.update(e.data.new_symbols(sdfg, symbols))
 
         # Find scopes this node is situated in
         sdict = self.scope_dict()

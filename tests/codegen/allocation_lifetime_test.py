@@ -273,7 +273,7 @@ def test_alloc_multistate():
     sdfg = dace.SDFG('multistate')
     sdfg.add_array('A', [20], dace.float64)
     sdfg.add_array('B', [20], dace.float64)
-    sdfg.add_transient('tmp', [i+1], dace.float64)
+    sdfg.add_transient('tmp', [i + 1], dace.float64)
 
     init = sdfg.add_state()
     end = sdfg.add_state()
@@ -296,6 +296,49 @@ def test_alloc_multistate():
     assert np.allclose(A[:5], B[:5])
 
 
+def test_nested_view_samename():
+    @dace.program
+    def incall(a, b):
+        tmp = a.reshape([10, 2])
+        tmp[:] += 1
+        return tmp
+
+    @dace.program
+    def top(a: dace.float64[20]):
+        tmp = dace.ndarray([20],
+                           dace.float64,
+                           lifetime=dace.AllocationLifetime.Persistent)
+        return incall(a, tmp)
+
+    sdfg = top.to_sdfg(strict=False)
+
+    a = np.random.rand(20)
+    ref = a.copy()
+    b = sdfg(a)
+    assert np.allclose(b, ref.reshape(10, 2) + 1)
+
+
+def test_nested_persistent():
+    @dace.program
+    def nestpers(a):
+        tmp = np.ndarray([20], np.float64)
+        tmp[:] = a + 1
+        return tmp
+
+    @dace.program
+    def toppers(a: dace.float64[20]):
+        return nestpers(a)
+
+    sdfg = toppers.to_sdfg(strict=False)
+    for _, _, arr in sdfg.arrays_recursive():
+        if arr.transient:
+            arr.lifetime = dace.AllocationLifetime.Persistent
+
+    a = np.random.rand(20)
+    b = sdfg(a)
+    assert np.allclose(b, a + 1)
+
+
 if __name__ == '__main__':
     test_determine_alloc_scope()
     test_determine_alloc_state()
@@ -307,3 +350,5 @@ if __name__ == '__main__':
     test_alloc_persistent()
     test_alloc_persistent_threadlocal()
     test_alloc_multistate()
+    test_nested_view_samename()
+    test_nested_persistent()

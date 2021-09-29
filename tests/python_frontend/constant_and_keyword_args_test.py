@@ -66,14 +66,11 @@ def test_var_args_aot():
 
 
 def test_var_args_empty():
-    # This test is supposed to be unsupported
-    with pytest.raises(SyntaxError):
+    @dace.program
+    def arg_aot(*args):
+        return np.zeros([20])
 
-        @dace.program
-        def arg_aot(*args):
-            return np.zeros([20])
-
-        arg_aot.compile()
+    arg_aot.compile()
 
 
 def test_var_kwargs_jit():
