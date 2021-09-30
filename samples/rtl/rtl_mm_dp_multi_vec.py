@@ -73,15 +73,8 @@ import numpy as np
 N = dace.symbol("N")
 K = dace.symbol("K")
 M = dace.symbol("M")
-twoM = dace.symbol("twoM")
 P = dace.symbol("P")
-twoP = dace.symbol("twoP")
-
-sdfg = dace.SDFG("mm_rtl_dp_systolic_multi_fM_c0_ABC2P")
-
-# vectorization
-veclen = 2
-sdfg.add_constant('VECLEN', veclen)
+W = dace.symbol("W")
 
 def make_copy_to_fpga_state(sdfg):
 
@@ -91,10 +84,10 @@ def make_copy_to_fpga_state(sdfg):
     state = sdfg.add_state("copy_to_device")
 
     sdfg.add_array("A", [N, K], dtype=dace.float32)
-    sdfg.add_array("B", [K, M // veclen],
-                    dtype=dace.vector(dace.float32, veclen))
-    sdfg.add_array("C", [N, M // veclen],
-                    dtype=dace.vector(dace.float32, veclen))
+    sdfg.add_array("B", [K, M // W.get()],
+                    dtype=dace.vector(dace.float32, W.get()))
+    sdfg.add_array("C", [N, M // W.get()],
+                    dtype=dace.vector(dace.float32, W.get()))
     A_host = state.add_read("A")
     B_host = state.add_read("B")
     C_host = state.add_read("C")
@@ -103,12 +96,12 @@ def make_copy_to_fpga_state(sdfg):
                    dtype=dace.float32,
                    transient=True,
                    storage=dace.dtypes.StorageType.FPGA_Global)
-    sdfg.add_array("B_device", [K, M // veclen],
-                   dtype=dace.vector(dace.float32, veclen),
+    sdfg.add_array("B_device", [K, M // W.get()],
+                   dtype=dace.vector(dace.float32, W.get()),
                    transient=True,
                    storage=dace.dtypes.StorageType.FPGA_Global)
-    sdfg.add_array("C_device", [N, M // veclen],
-                   dtype=dace.vector(dace.float32, veclen),
+    sdfg.add_array("C_device", [N, M // W.get()],
+                   dtype=dace.vector(dace.float32, W.get()),
                    transient=True,
                    storage=dace.dtypes.StorageType.FPGA_Global)
     A_device = state.add_write("A_device")
@@ -120,10 +113,10 @@ def make_copy_to_fpga_state(sdfg):
                           memlet=dace.Memlet("A_device[0:N, 0:K]"))
     state.add_memlet_path(B_host,
                           B_device,
-                          memlet=dace.Memlet("B_device[0:K, 0:M//VECLEN]"))
+                          memlet=dace.Memlet("B_device[0:K, 0:M//W]"))
     state.add_memlet_path(C_host,
                           C_device,
-                          memlet=dace.Memlet("C_device[0:N, 0:M//VECLEN]"))
+                          memlet=dace.Memlet("C_device[0:N, 0:M//W]"))
 
     return state
 
@@ -138,7 +131,7 @@ def make_copy_to_host_state(sdfg):
     C_device = state.add_read("C_device")
     C_host = state.add_write("C")
 
-    state.add_memlet_path(C_device, C_host, memlet=dace.Memlet("C[0:N, 0:M//VECLEN]"))
+    state.add_memlet_path(C_device, C_host, memlet=dace.Memlet("C[0:N, 0:M//W]"))
 
     return state
 
@@ -176,7 +169,7 @@ def make_read_B(state):
     entry, exit = state.add_map("read_B", {
         "n": "0:N/P",
         "k": "0:K",
-        "m": "0:M//VECLEN"
+        "m": "0:M//W"
     },
                                 schedule=dace.ScheduleType.FPGA_Device)
 
@@ -205,7 +198,7 @@ def make_write_C(state):
 
     state.add_memlet_path(pipe,
                           mem,
-                          memlet=dace.Memlet("C_device[0:N, 0:M//VECLEN]",
+                          memlet=dace.Memlet("C_device[0:N, 0:M//W]",
                                              other_subset="P - 1"))
 
 # does all preprocessing and forwarding for a
@@ -225,7 +218,7 @@ def make_prep_a(sdfg, state):
                                     schedule=dace.ScheduleType.FPGA_Device)
     entry_a, exit_a = state.add_map("buffer_A", {"n1": "0:P"},
                                     schedule=dace.ScheduleType.FPGA_Device)
-    entry_m, exit_m = state.add_map("m", {"m": "0:M//VECLEN"},
+    entry_m, exit_m = state.add_map("m", {"m": "0:M//W"},
                                     schedule=dace.ScheduleType.FPGA_Device)
 
     # Instantiate buffers
@@ -310,7 +303,7 @@ def make_prep_b(state):
                                       schedule=dace.ScheduleType.FPGA_Device)
     entry_k, exit_k = state.add_map("k", {"k": "0:K"},
                                     schedule=dace.ScheduleType.FPGA_Device)
-    entry_m, exit_m = state.add_map("m", {"m": "0:M//VECLEN"},
+    entry_m, exit_m = state.add_map("m", {"m": "0:M//W"},
                                     schedule=dace.ScheduleType.FPGA_Device)
 
 
@@ -370,15 +363,15 @@ def make_prep_c(state):
                                       schedule=dace.ScheduleType.FPGA_Device)
     entry_k, exit_k = state.add_map("k", {"k": "0:K"},
                                     schedule=dace.ScheduleType.FPGA_Device)
-    entry_m, exit_m = state.add_map("m", {"m": "0:M//VECLEN"},
+    entry_m, exit_m = state.add_map("m", {"m": "0:M//W"},
                                     schedule=dace.ScheduleType.FPGA_Device)
 
     preprocess_tasklet = state.add_tasklet(
         "preprocess_tasklet", {"c_in"}, {"c_out"}, """\
-dace::vec<float, 2> zero_vec;
-zero_vec[0] = 0.0;
-zero_vec[1] = 0.0;
-dace::vec<float, 2> c = k == 0 ? zero_vec : c_in;
+dace::vec<float, W> zero_vec;
+for (int i = 0; i < W; i++)
+    zero_vec[i] = 0.0;
+dace::vec<float, W> c = k == 0 ? zero_vec : c_in;
 comp_C_pipe[p].push(c);
 """,
     language=dace.Language.CPP)
@@ -427,11 +420,11 @@ def make_post_compute(state):
                                       schedule=dace.ScheduleType.FPGA_Device)
     entry_k, exit_k = state.add_map("k", {"k": "0:K"},
                                     schedule=dace.ScheduleType.FPGA_Device)
-    entry_m, exit_m = state.add_map("m", {"m": "0:M//VECLEN"},
+    entry_m, exit_m = state.add_map("m", {"m": "0:M//W"},
                                     schedule=dace.ScheduleType.FPGA_Device)
     entry_c, exit_c = state.add_map("write_C", {
         "n1": "0:P",
-        "m": "0:M//VECLEN"
+        "m": "0:M//W"
     },
                                     schedule=dace.ScheduleType.FPGA_Device)
 
@@ -443,8 +436,8 @@ def make_post_compute(state):
 
 
     # Instantiate buffers
-    C_buffer = state.add_array("C_buffer", [M // veclen],
-                    dtype=dace.vector(dace.float32, veclen),
+    C_buffer = state.add_array("C_buffer", [M // W.get()],
+                    dtype=dace.vector(dace.float32, W.get()),
                     transient=True,
                     storage=dace.dtypes.StorageType.FPGA_Registers)
 
@@ -515,59 +508,30 @@ def make_rtl_compute(sdfg, state):
 
     comp_result_out = state.add_write("comp_result_pipe")
 
-    base_clk_freq = dace.Config.get('compiler', 'xilinx', 'frequency')
-    if base_clk_freq == '':
-        base_clk_freq='300'
-    double_clk_freq = str(2 * int(base_clk_freq))
-
     compute_tasklet = state.add_tasklet(
         name="rtl_dp_ma",
         inputs={"a", "b", "c_in"},
         outputs={"c_out"},
         code='''
     assign ap_done = 1; // free-running
+    wire rstn_sp = ~ap_areset;
+    wire rstn_dp = ~ap_areset_2;
 
-    wire clk_sp;
-    wire clk_dp;
-    wire rstn_sp;
-    wire rstn_dp;
-
-    clk_wiz_0 clock_multiplier (
-        .clk_in1(ap_aclk),
-        .clk_out1(clk_sp),
-        .clk_out2(clk_dp)
-    );
-
-    rst_clk_wiz rst_clk_wiz_sp (
-        .slowest_sync_clk(clk_sp),
-        .ext_reset_in(ap_areset),
-        .peripheral_aresetn(rstn_sp),
-        .aux_reset_in(0),
-        .dcm_locked(1),
-        .mb_debug_sys_rst(0)
-    );
-
-    rst_clk_wiz rst_clk_wiz_dp (
-        .slowest_sync_clk(clk_dp),
-        .ext_reset_in(ap_areset),
-        .peripheral_aresetn(rstn_dp),
-        .aux_reset_in(0),
-        .dcm_locked(1),
-        .mb_debug_sys_rst(0)
-    );
+    wire clk_sp = ap_aclk;
+    wire clk_dp = ap_aclk_2;
 
     wire        axis_a_dpclk_tvalid;
-    wire [63:0] axis_a_dpclk_tdata;
+    wire [31:0] axis_a_dpclk_tdata;
     wire        axis_a_dpclk_tready;
 
-    slow_to_fast_clk clock_sync_a (
+    slow_to_fast_clk_single clock_sync_a (
         .s_axis_aclk(clk_sp),
         .s_axis_aresetn(rstn_sp),
         .m_axis_aclk(clk_dp),
         .m_axis_aresetn(rstn_dp),
 
         .s_axis_tvalid(s_axis_a_tvalid),
-        .s_axis_tdata({s_axis_a_tdata, s_axis_a_tdata}),
+        .s_axis_tdata(s_axis_a_tdata),
         .s_axis_tready(s_axis_a_tready),
 
         .m_axis_tvalid(axis_a_dpclk_tvalid),
@@ -579,12 +543,12 @@ def make_rtl_compute(sdfg, state):
     wire [31:0] axis_a_dp_tdata;
     wire        axis_a_dp_tready;
 
-    slow_to_fast_data data_issue_a (
+    slow_to_fast_data_a data_issue_a (
         .aclk(clk_dp),
         .aresetn(rstn_dp),
 
         .s_axis_tvalid(axis_a_dpclk_tvalid),
-        .s_axis_tdata(axis_a_dpclk_tdata),
+        .s_axis_tdata({2{axis_a_dpclk_tdata}}),
         .s_axis_tready(axis_a_dpclk_tready),
 
         .m_axis_tvalid(axis_a_dp_tvalid),
@@ -592,11 +556,28 @@ def make_rtl_compute(sdfg, state):
         .m_axis_tready(axis_a_dp_tready)
     );
 
-    wire        axis_b_dpclk_tvalid;
-    wire [63:0] axis_b_dpclk_tdata;
-    wire        axis_b_dpclk_tready;
+    wire [(W/2)-1:0]       axis_a_dp_broad_tvalid;
+    wire [(W/2)-1:0][31:0] axis_a_dp_broad_tdata;
+    wire [(W/2)-1:0]       axis_a_dp_broad_tready;
 
-    slow_to_fast_clk clock_sync_b (
+    broadcaster broadcast_a (
+        .aclk(clk_dp),
+        .aresetn(rstn_dp),
+
+        .s_axis_tvalid(axis_a_dp_tvalid),
+        .s_axis_tdata(axis_a_dp_tdata),
+        .s_axis_tready(axis_a_dp_tready),
+
+        .m_axis_tvalid(axis_a_dp_broad_tvalid),
+        .m_axis_tdata(axis_a_dp_broad_tdata),
+        .m_axis_tready(axis_a_dp_broad_tready)
+    );
+
+    wire                    axis_b_dpclk_tvalid;
+    wire [W-1:0][31:0] axis_b_dpclk_tdata;
+    wire                    axis_b_dpclk_tready;
+
+    slow_to_fast_clk_double clock_sync_b (
         .s_axis_aclk(clk_sp),
         .s_axis_aresetn(rstn_sp),
         .m_axis_aclk(clk_dp),
@@ -612,7 +593,7 @@ def make_rtl_compute(sdfg, state):
     );
 
     wire        axis_b_dp_tvalid;
-    wire [31:0] axis_b_dp_tdata;
+    wire [(W/2)-1:0][31:0] axis_b_dp_tdata;
     wire        axis_b_dp_tready;
 
     slow_to_fast_data data_issue_b (
@@ -628,32 +609,53 @@ def make_rtl_compute(sdfg, state):
         .m_axis_tready(axis_b_dp_tready)
     );
 
-    wire        axis_ab_tvalid;
-    wire [31:0] axis_ab_tdata;
-    wire        axis_ab_tready;
+    wire [(W/2)-1:0]       axis_b_dp_broad_tvalid;
+    wire [(W/2)-1:0][31:0] axis_b_dp_broad_tdata;
+    wire [(W/2)-1:0]       axis_b_dp_broad_tready;
 
-    floating_point_mult fl_mult (
+    splitter split_b (
         .aclk(clk_dp),
         .aresetn(rstn_dp),
 
-        .s_axis_a_tvalid(axis_a_dp_tvalid),
-        .s_axis_a_tdata(axis_a_dp_tdata),
-        .s_axis_a_tready(axis_a_dp_tready),
+        .s_axis_tvalid (axis_b_dp_tvalid),
+        .s_axis_tdata  (axis_b_dp_tdata),
+        .s_axis_tready (axis_b_dp_tready),
 
-        .s_axis_b_tvalid(axis_b_dp_tvalid),
-        .s_axis_b_tdata(axis_b_dp_tdata),
-        .s_axis_b_tready(axis_b_dp_tready),
-
-        .m_axis_result_tvalid(axis_ab_tvalid),
-        .m_axis_result_tdata(axis_ab_tdata),
-        .m_axis_result_tready(axis_ab_tready)
+        .m_axis_tvalid (axis_b_dp_broad_tvalid),
+        .m_axis_tdata  (axis_b_dp_broad_tdata),
+        .m_axis_tready (axis_b_dp_broad_tready)
     );
 
-    wire        axis_c_in_dpclk_tvalid;
-    wire [63:0] axis_c_in_dpclk_tdata;
-    wire        axis_c_in_dpclk_tready;
+    wire [(W/2)-1:0]       axis_ab_tvalid;
+    wire [(W/2)-1:0][31:0] axis_ab_tdata;
+    wire [(W/2)-1:0]       axis_ab_tready;
 
-    slow_to_fast_clk clock_sync_c_in (
+    generate
+        for (genvar i=0; i < W/2; i++) begin
+            floating_point_mult fl_mult (
+                .aclk(clk_dp),
+                .aresetn(rstn_dp),
+
+                .s_axis_a_tvalid(axis_a_dp_broad_tvalid[i]),
+                .s_axis_a_tdata(axis_a_dp_broad_tdata[i]),
+                .s_axis_a_tready(axis_a_dp_broad_tready[i]),
+
+                .s_axis_b_tvalid(axis_b_dp_broad_tvalid[i]),
+                .s_axis_b_tdata(axis_b_dp_broad_tdata[i]),
+                .s_axis_b_tready(axis_b_dp_broad_tready[i]),
+
+                .m_axis_result_tvalid(axis_ab_tvalid[i]),
+                .m_axis_result_tdata(axis_ab_tdata[i]),
+                .m_axis_result_tready(axis_ab_tready[i])
+            );
+        end
+    endgenerate
+
+    wire                    axis_c_in_dpclk_tvalid;
+    wire [W-1:0][31:0] axis_c_in_dpclk_tdata;
+    wire                    axis_c_in_dpclk_tready;
+
+    slow_to_fast_clk_double clock_sync_c_in (
         .s_axis_aclk(clk_sp),
         .s_axis_aresetn(rstn_sp),
         .m_axis_aclk(clk_dp),
@@ -669,7 +671,7 @@ def make_rtl_compute(sdfg, state):
     );
 
     wire        axis_c_in_dp_tvalid;
-    wire [31:0] axis_c_in_dp_tdata;
+    wire [(W/2)-1:0][31:0] axis_c_in_dp_tdata;
     wire        axis_c_in_dp_tready;
 
     slow_to_fast_data data_issue_c (
@@ -685,30 +687,68 @@ def make_rtl_compute(sdfg, state):
         .m_axis_tready(axis_c_in_dp_tready)
     );
 
-    wire        axis_c_out_dp_tvalid;
-    wire [31:0] axis_c_out_dp_tdata;
-    wire        axis_c_out_dp_tready;
+    wire [(W/2)-1:0]       axis_c_in_dp_broad_tvalid;
+    wire [(W/2)-1:0][31:0] axis_c_in_dp_broad_tdata;
+    wire [(W/2)-1:0]       axis_c_in_dp_broad_tready;
 
-    floating_point_add fl_add (
+    splitter split_c (
         .aclk(clk_dp),
         .aresetn(rstn_dp),
 
-        .s_axis_a_tvalid(axis_c_in_dp_tvalid),
-        .s_axis_a_tdata(axis_c_in_dp_tdata),
-        .s_axis_a_tready(axis_c_in_dp_tready),
+        .s_axis_tvalid(axis_c_in_dp_tvalid),
+        .s_axis_tdata(axis_c_in_dp_tdata),
+        .s_axis_tready(axis_c_in_dp_tready),
 
-        .s_axis_b_tvalid(axis_ab_tvalid),
-        .s_axis_b_tdata(axis_ab_tdata),
-        .s_axis_b_tready(axis_ab_tready),
-
-        .m_axis_result_tvalid(axis_c_out_dp_tvalid),
-        .m_axis_result_tdata(axis_c_out_dp_tdata),
-        .m_axis_result_tready(axis_c_out_dp_tready)
+        .m_axis_tvalid(axis_c_in_dp_broad_tvalid),
+        .m_axis_tdata(axis_c_in_dp_broad_tdata),
+        .m_axis_tready(axis_c_in_dp_broad_tready)
     );
 
-    wire        axis_c_out_dpclk_tvalid;
-    wire [63:0] axis_c_out_dpclk_tdata;
-    wire        axis_c_out_dpclk_tready;
+    wire [(W/2)-1:0]       axis_c_out_dp_broad_tvalid;
+    wire [(W/2)-1:0][31:0] axis_c_out_dp_broad_tdata;
+    wire [(W/2)-1:0]       axis_c_out_dp_broad_tready;
+
+    generate
+        for (genvar i=0; i < W/2; i++) begin
+            floating_point_add fl_add (
+                .aclk(clk_dp),
+                .aresetn(rstn_dp),
+
+                .s_axis_a_tvalid(axis_c_in_dp_broad_tvalid[i]),
+                .s_axis_a_tdata(axis_c_in_dp_broad_tdata[i]),
+                .s_axis_a_tready(axis_c_in_dp_broad_tready[i]),
+
+                .s_axis_b_tvalid(axis_ab_tvalid[i]),
+                .s_axis_b_tdata(axis_ab_tdata[i]),
+                .s_axis_b_tready(axis_ab_tready[i]),
+
+                .m_axis_result_tvalid(axis_c_out_dp_broad_tvalid[i]),
+                .m_axis_result_tdata(axis_c_out_dp_broad_tdata[i]),
+                .m_axis_result_tready(axis_c_out_dp_broad_tready[i])
+            );
+        end
+    endgenerate
+
+    wire               axis_c_out_dp_tvalid;
+    wire [(W/2)-1:0][31:0] axis_c_out_dp_tdata;
+    wire               axis_c_out_dp_tready;
+
+    combiner combine_c (
+        .aclk(clk_dp),
+        .aresetn(rstn_dp),
+
+        .s_axis_tvalid(axis_c_out_dp_broad_tvalid),
+        .s_axis_tdata(axis_c_out_dp_broad_tdata),
+        .s_axis_tready(axis_c_out_dp_broad_tready),
+
+        .m_axis_tvalid(axis_c_out_dp_tvalid),
+        .m_axis_tdata(axis_c_out_dp_tdata),
+        .m_axis_tready(axis_c_out_dp_tready)
+    );
+
+    wire               axis_c_out_dpclk_tvalid;
+    wire [W-1:0][31:0] axis_c_out_dpclk_tdata;
+    wire               axis_c_out_dpclk_tready;
 
     fast_to_slow_data data_packer_c_out (
         .aclk(clk_dp),
@@ -723,7 +763,7 @@ def make_rtl_compute(sdfg, state):
         .m_axis_tready(axis_c_out_dpclk_tready)
     );
 
-    fast_to_slow_clk clock_sync_result (
+    fast_to_slow_clk_double clock_sync_result (
         .s_axis_aclk(clk_dp),
         .s_axis_aresetn(rstn_dp),
         .m_axis_aclk(clk_sp),
@@ -764,65 +804,64 @@ def make_rtl_compute(sdfg, state):
         "CONFIG.Flow_Control": "Blocking"
     })
 
-    compute_tasklet.add_ip_core(
-        "clk_wiz_0", "clk_wiz", "xilinx.com", "6.0", {
-            "CONFIG.PRIMITIVE": "Auto",
-            "CONFIG.PRIM_IN_FREQ": base_clk_freq,
-            "CONFIG.CLKOUT2_USED": "true",
-            "CONFIG.CLKOUT1_REQUESTED_OUT_FREQ": base_clk_freq,
-            "CONFIG.CLKOUT2_REQUESTED_OUT_FREQ": double_clk_freq,
-            "CONFIG.CLKIN1_JITTER_PS": "33.330000000000005",
-            "CONFIG.CLKOUT1_DRIVES": "Buffer",
-            "CONFIG.CLKOUT2_DRIVES": "Buffer",
-            "CONFIG.CLKOUT3_DRIVES": "Buffer",
-            "CONFIG.CLKOUT4_DRIVES": "Buffer",
-            "CONFIG.CLKOUT5_DRIVES": "Buffer",
-            "CONFIG.CLKOUT6_DRIVES": "Buffer",
-            "CONFIG.CLKOUT7_DRIVES": "Buffer",
-            "CONFIG.FEEDBACK_SOURCE": "FDBK_AUTO",
-            "CONFIG.USE_LOCKED": "false",
-            "CONFIG.USE_RESET": "false",
-            "CONFIG.MMCM_DIVCLK_DIVIDE": "1",
-            "CONFIG.MMCM_BANDWIDTH": "OPTIMIZED",
-            "CONFIG.MMCM_CLKFBOUT_MULT_F": "4",
-            "CONFIG.MMCM_CLKIN1_PERIOD": "3.333",
-            "CONFIG.MMCM_CLKIN2_PERIOD": "10.0",
-            "CONFIG.MMCM_COMPENSATION": "AUTO",
-            "CONFIG.MMCM_CLKOUT0_DIVIDE_F": "4",
-            "CONFIG.MMCM_CLKOUT1_DIVIDE": "2",
-            "CONFIG.NUM_OUT_CLKS": "2",
-            "CONFIG.CLKOUT1_JITTER": "81.814",
-            "CONFIG.CLKOUT1_PHASE_ERROR": "77.836",
-            "CONFIG.CLKOUT2_JITTER": "71.438",
-            "CONFIG.CLKOUT2_PHASE_ERROR": "77.836",
-            "CONFIG.AUTO_PRIMITIVE": "Auto"
-        })
-    
-    compute_tasklet.add_ip_core('rst_clk_wiz', 'proc_sys_reset', 'xilinx.com', '5.0',
-                            {})
-
-    compute_tasklet.add_ip_core('slow_to_fast_clk', 'axis_clock_converter',
+    compute_tasklet.add_ip_core('slow_to_fast_clk_single', 'axis_clock_converter',
                             'xilinx.com', '1.1', {
-                                "CONFIG.TDATA_NUM_BYTES": "8",
-                                "CONFIG.SYNCHRONIZATION_STAGES": "4"
+                                "CONFIG.TDATA_NUM_BYTES": "4",
+                                "CONFIG.SYNCHRONIZATION_STAGES": "8"
                             })
 
-    compute_tasklet.add_ip_core('fast_to_slow_clk', 'axis_clock_converter',
+    compute_tasklet.add_ip_core('slow_to_fast_clk_double', 'axis_clock_converter',
                             'xilinx.com', '1.1', {
-                                "CONFIG.TDATA_NUM_BYTES": "8",
-                                "CONFIG.SYNCHRONIZATION_STAGES": "4"
+                                "CONFIG.TDATA_NUM_BYTES": str(4 * W.get()),
+                                "CONFIG.SYNCHRONIZATION_STAGES": "8"
+                            })
+
+    compute_tasklet.add_ip_core('fast_to_slow_clk_double', 'axis_clock_converter',
+                            'xilinx.com', '1.1', {
+                                "CONFIG.TDATA_NUM_BYTES": str(4 * W.get()),
+                                "CONFIG.SYNCHRONIZATION_STAGES": "8"
                             })
 
     compute_tasklet.add_ip_core('slow_to_fast_data', 'axis_dwidth_converter',
                             'xilinx.com', '1.1', {
-                                "CONFIG.S_TDATA_NUM_BYTES": "8",
-                                "CONFIG.M_TDATA_NUM_BYTES": "4"
+                                "CONFIG.S_TDATA_NUM_BYTES": str(4 * W.get()),
+                                "CONFIG.M_TDATA_NUM_BYTES": str(4 * (W.get() // 2))
+                            })
+
+    compute_tasklet.add_ip_core('slow_to_fast_data_a', 'axis_dwidth_converter',
+                            'xilinx.com', '1.1', {
+                                "CONFIG.S_TDATA_NUM_BYTES": '8',
+                                "CONFIG.M_TDATA_NUM_BYTES": '4'
                             })
 
     compute_tasklet.add_ip_core('fast_to_slow_data', 'axis_dwidth_converter',
                             'xilinx.com', '1.1', {
-                                "CONFIG.S_TDATA_NUM_BYTES": "4",
-                                "CONFIG.M_TDATA_NUM_BYTES": "8"
+                                "CONFIG.S_TDATA_NUM_BYTES": str(4 * (W.get() // 2)),
+                                "CONFIG.M_TDATA_NUM_BYTES": str(4 * W.get())
+                            })
+
+    split_config = {
+        'CONFIG.S_TDATA_NUM_BYTES': str((W.get() // 2) * 4),
+        'CONFIG.M_TDATA_NUM_BYTES': '4',
+        "CONFIG.NUM_MI": str(W.get() // 2)
+    }
+    for i in range(W.get() // 2):
+        split_config[f"CONFIG.M{i:02d}_TDATA_REMAP"] = "tdata[{}:{}]".format((i+1)*32-1, i*32)
+    compute_tasklet.add_ip_core('splitter', 'axis_broadcaster', 'xilinx.com', '1.1', split_config)
+
+    bcast_config = {
+        'CONFIG.S_TDATA_NUM_BYTES': '4',
+        'CONFIG.M_TDATA_NUM_BYTES': '4',
+        "CONFIG.NUM_MI": str(W.get() // 2)
+    }
+    for i in range(W.get() // 2):
+        bcast_config[f"CONFIG.M{i:02d}_TDATA_REMAP"] = "tdata[31:0]"
+    compute_tasklet.add_ip_core('broadcaster', 'axis_broadcaster', 'xilinx.com', '1.1', bcast_config)
+
+
+    compute_tasklet.add_ip_core('combiner', 'axis_combiner', 'xilinx.com', '1.1', {
+                                "CONFIG.NUM_SI": f'{W.get()//2}',
+                                "CONFIG.TDATA_NUM_BYTES": "4",
                             })
 
     # Unroll processing elements
@@ -886,7 +925,7 @@ comp_result_pipe[p].push(c_out);''',
                                       schedule=dace.ScheduleType.FPGA_Device)
     entry_k, exit_k = state.add_map("k", {"k": "0:K"},
                                     schedule=dace.ScheduleType.FPGA_Device)
-    entry_m, exit_m = state.add_map("m", {"m": "0:M//VECLEN"},
+    entry_m, exit_m = state.add_map("m", {"m": "0:M//W"},
                                     schedule=dace.ScheduleType.FPGA_Device)
 
     state.add_memlet_path(comp_A_in,
@@ -930,19 +969,19 @@ def make_fpga_state(sdfg):
                     dace.float32,
                     transient=True,
                     shape=(P + 1, ),
-                    buffer_size="twoP",
+                    #buffer_size="twoP",
                     storage=dace.dtypes.StorageType.FPGA_Local)
     sdfg.add_stream("B_pipe",
-                    dace.vector(dace.float32, veclen),
+                    dace.vector(dace.float32, W.get()),
                     transient=True,
                     shape=(P + 1, ),
-                    buffer_size="twoP",
+                    #buffer_size="twoP",
                     storage=dace.dtypes.StorageType.FPGA_Local)
     sdfg.add_stream("C_pipe",
-                    dace.vector(dace.float32, veclen),
+                    dace.vector(dace.float32, W.get()),
                     transient=True,
                     shape=(P, ),
-                    buffer_size="twoP",
+                    #buffer_size="twoP",
                     storage=dace.dtypes.StorageType.FPGA_Local)
 
     sdfg.add_stream("comp_A_pipe",
@@ -951,23 +990,23 @@ def make_fpga_state(sdfg):
                     shape=(P, ),
                     storage=dace.dtypes.StorageType.FPGA_Local)
     sdfg.add_stream("comp_B_pipe",
-                    dace.vector(dace.float32, veclen),
+                    dace.vector(dace.float32, W.get()),
                     transient=True,
                     shape=(P, ),
                     storage=dace.dtypes.StorageType.FPGA_Local)
     sdfg.add_stream("comp_C_pipe",
-                    dace.vector(dace.float32, veclen),
+                    dace.vector(dace.float32, W.get()),
                     transient=True,
                     shape=(P, ),
                     storage=dace.dtypes.StorageType.FPGA_Local)
     sdfg.add_stream("comp_result_pipe",
-                    dace.vector(dace.float32, veclen),
+                    dace.vector(dace.float32, W.get()),
                     transient=True,
                     shape=(P, ),
                     storage=dace.dtypes.StorageType.FPGA_Local)
 
     sdfg.add_stream("C_feedback",
-                    dace.vector(dace.float32, veclen),
+                    dace.vector(dace.float32, W.get()),
                     transient=True,
                     shape=(P, ),
                     storage=dace.dtypes.StorageType.FPGA_Local,
@@ -986,7 +1025,8 @@ def make_fpga_state(sdfg):
     return state
 
 
-def make_sdfg():
+def make_sdfg(postfix=''):
+    sdfg = dace.SDFG(f"mm_rtl_dp_systolic_multi_fM_c0_ABC2P_{postfix}")
 
     pre_state = make_copy_to_fpga_state(sdfg)
     compute_state = make_fpga_state(sdfg)
@@ -1006,6 +1046,7 @@ if __name__ == "__main__":
     parser.add_argument("N", type=int)
     parser.add_argument("K", type=int)
     parser.add_argument("P", type=int)
+    parser.add_argument("W", type=int)
     parser.add_argument("-specialize",
                         default=False,
                         action="store_true",
@@ -1013,17 +1054,15 @@ if __name__ == "__main__":
     args = vars(parser.parse_args())
 
     P.set(args["P"])
-    twoP.set(2*args["P"])
     M.set(args["M"])
-    twoM.set(2*args["M"])
     N.set(args["N"])
     K.set(args["K"])
     # M must always be specialized, as it's used for the static buffer size
-    sdfg = make_sdfg()
-#    sdfg.specialize(dict(P=P, M=M))
-    sdfg.specialize(dict(P=P, M=M, twoP=twoP, twoM=twoM))
+    W.set(args["W"])
+    sdfg = make_sdfg(f'{M.get()}_{N.get()}_{K.get()}_{P.get()}_{W.get()}')
+    sdfg.specialize(dict(P=P, M=M, N=N, K=K, W=W))
 
-    print("Matrix multiplication {}x{}x{} with {} PEs ({}specialized)".format(
+    print("Matrix multiplication {}x{}x{} with {} PEs (specialized)".format(
         M.get(), N.get(), K.get(), P.get(),
         "" if args["specialize"] else "not "))
 
@@ -1045,8 +1084,8 @@ if __name__ == "__main__":
 #        for j in range(M.get()):
 #            B[i,j] = dace.float32(i*K.get() + j)
 
-    sdfg(A=A, B=B, C=C, N=N, K=K)
-    
+    sdfg(A=A, B=B, C=C)
+
 #    print("=== B 0-10 ===")
 #    print(B[0:10, 0:10])
 #    print("=== C 0-10 ===")
