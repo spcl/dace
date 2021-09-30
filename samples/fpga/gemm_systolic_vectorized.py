@@ -652,11 +652,13 @@ def make_sdfg(name, vtype):
 @click.option("--tile-size-n",
               type=int,
               default=None,
-              help="Must be a multiple of the number of processing elements.")
+              help=("Must be a multiple of the number of processing elements, "
+                    "and must divide the size in N."))
 @click.option("--tile-size-m",
               type=int,
               default=None,
-              help="Must be a multiple of the vector size.")
+              help=("Must be a multiple of the vector size, and must divide"
+                    " the size in M."))
 @click.option("--specialize/--no-specialize",
               default=False,
               help="Fix matrix sizes at compile time.")
