@@ -164,14 +164,21 @@ class InterstateEdge(object):
         if newc != condition:
             self.condition.as_string = newc
 
-    def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
+    def new_symbols(self, sdfg, symbols) -> Dict[str, dtypes.typeclass]:
         """
         Returns a mapping between symbols defined by this edge (i.e.,
         assignments) to their type.
         """
         from dace.codegen.tools.type_inference import infer_expr_type
+
+        if sdfg is not None:
+            alltypes = copy.copy(symbols)
+            alltypes.update({k: v.dtype for k, v in sdfg.arrays.items()})
+        else:
+            alltypes = symbols
+
         return {
-            k: infer_expr_type(v, symbols)
+            k: infer_expr_type(v, alltypes)
             for k, v in self.assignments.items()
         }
 
@@ -625,6 +632,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         initial state of the SDFG to return to and play back the history.
         :param transformation: The transformation to append.
         """
+        if Config.get_bool('store_history') is False:
+            return
         # Make sure the transformation is appended to the root SDFG.
         if self.sdfg_id != 0:
             self.sdfg_list[0].append_transformation(transformation)
@@ -985,7 +994,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Add free inter-state symbols
         for e in self.edges():
-            defined_syms |= set(e.data.new_symbols({}).keys())
+            defined_syms |= set(e.data.new_symbols(self, {}).keys())
             free_syms |= e.data.free_symbols
 
         defined_syms |= set(self.constants.keys())
@@ -1564,6 +1573,25 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                               total_size=total_size,
                               may_alias=may_alias)
 
+    def add_temp_transient_like(self, desc: dt.Array, dtype=None, debuginfo=None):
+        """ Convenience function to add a transient array with a temporary name to the data
+            descriptor store. """
+        debuginfo = debuginfo or desc.debuginfo
+        dtype = dtype or desc.dtype
+        return self.add_array(self.temp_data_name(),
+                              desc.shape,
+                              desc.dtype,
+                              desc.storage,
+                              True,
+                              desc.strides,
+                              desc.offset,
+                              lifetime=desc.lifetime,
+                              alignment=desc.alignment,
+                              debuginfo=debuginfo,
+                              allow_conflicts=desc.allow_conflicts,
+                              total_size=desc.total_size,
+                              may_alias=desc.may_alias)
+
     def add_datadesc(self,
                      name: str,
                      datadesc: dt.Data,
@@ -1970,10 +1998,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         # These are imported in order to update the transformation registry
         from dace.transformation import dataflow, interstate
+        from dace.transformation.dataflow import (RedundantReadSlice,
+                                                  RedundantWriteSlice)
         # This is imported here to avoid an import loop
         from dace.transformation.transformation import (Transformation,
                                                         strict_transformations)
 
+        self.apply_transformations_repeated([RedundantReadSlice,
+                                             RedundantWriteSlice],
+                                            validate=validate,
+                                            strict=True,
+                                            validate_all=validate_all)
         self.apply_transformations_repeated(strict_transformations(),
                                             validate=validate,
                                             strict=True,

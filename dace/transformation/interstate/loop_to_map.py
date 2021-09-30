@@ -170,8 +170,8 @@ class LoopToMap(DetectLoop):
                         # variable. The iteration variable must be used.
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
-                            if not _check_range(dst_subset, a, itersym, b,
-                                                step):
+                            if not (dst_subset and _check_range(
+                                        dst_subset, a, itersym, b, step)):
                                 return False
                         # End of check
 
@@ -204,8 +204,8 @@ class LoopToMap(DetectLoop):
                                                                  step)]))
                         for candidate in write_memlets[data]:
                             # Simple case: read and write are in the same subset
-                            read = e.data.subset
-                            write = candidate.subset
+                            read = src_subset
+                            write = candidate.dst_subset
                             if read == write:
                                 continue
                             ridx = _dependent_indices(itervar, read)
@@ -223,9 +223,9 @@ class LoopToMap(DetectLoop):
                                                       [itervar],
                                                       subsets.Range([
                                                           (start, end, step)
-                                                      ]))
-                            t_pread = _sanitize_by_index(indices, pread.subset)
-                            pwrite = _sanitize_by_index(indices, pwrite.subset)
+                                                      ]), use_dst=True)
+                            t_pread = _sanitize_by_index(indices, pread.src_subset)
+                            pwrite = _sanitize_by_index(indices, pwrite.dst_subset)
                             if subsets.intersects(t_pread, pwrite) is False:
                                 continue
                             return False
@@ -294,6 +294,18 @@ class LoopToMap(DetectLoop):
                 rset, wset = state.read_and_write_sets()
                 read_set |= rset
                 write_set |= wset
+                # Add to write set also scalars between tasklets
+                for src_node in state.nodes():
+                    if not isinstance(src_node, nodes.Tasklet):
+                        continue
+                    for dst_node in state.nodes():
+                        if src_node is dst_node:
+                            continue
+                        if not isinstance(dst_node, nodes.Tasklet):
+                            continue
+                        for e in state.edges_between(src_node, dst_node):
+                            if e.data.data and e.data.data in sdfg.arrays:
+                                write_set.add(e.data.data)
                 # Add data from edges
                 for src in states:
                     for dst in states:

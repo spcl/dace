@@ -335,15 +335,11 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc,
                       function_stream, declaration_stream):
 
-        if not (isinstance(nodedesc, dt.Array)
-                and not isinstance(nodedesc, dt.View) and any(
-                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in nodedesc.free_symbols)):
+        fsymbols = sdfg.free_symbols.union(sdfg.constants.keys())
+        if not sdutil.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError(
                 "The declare_array method should only be used for variables "
-                "that must have their declaration and allocation separate. "
-                "Currently, we support only Arrays (not Views) depedent on "
-                "non-free SDFG symbols.")
+                "that must have their declaration and allocation separate.")
 
         # Check if array is already declared
         if self._dispatcher.declared_arrays.has(node.data):
@@ -553,6 +549,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
     def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc,
                          function_stream, callsite_stream):
         dataname = cpp.ptr(node.data, nodedesc, sdfg)
+
+        if self._dispatcher.declared_arrays.has(node.data):
+            is_global = nodedesc.lifetime in (
+                dtypes.AllocationLifetime.Global,
+                dtypes.AllocationLifetime.Persistent)
+            self._dispatcher.declared_arrays.remove(node.data,
+                                                    is_global=is_global)
 
         if isinstance(nodedesc, dace.data.Stream):
             return self.deallocate_stream(sdfg, dfg, state_id, node, nodedesc,
@@ -1350,7 +1353,32 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         self._dispatcher.defined_vars.enter_scope(scope_entry)
         for aname, arg in kernel_args.items():
             if aname in const_params:
-                defined_type, ctype = self._dispatcher.defined_vars.get(aname)
+                defined_type, ctype = None, None
+                if aname in sdfg.arrays:
+                    data_desc = sdfg.arrays[aname]
+                    is_global = data_desc.lifetime in (
+                        dtypes.AllocationLifetime.Global,
+                        dtypes.AllocationLifetime.Persistent)
+                    # Non-free symbol dependent Arrays due to their shape
+                    dependent_shape = (isinstance(data_desc, dt.Array)
+                                       and not isinstance(data_desc, dt.View)
+                                       and any(
+                                           str(s) not in sdfg.free_symbols.
+                                           union(sdfg.constants.keys())
+                                           for s in data_desc.free_symbols))
+                    try:
+                        # NOTE: It is hard to get access to the view-edge here,
+                        # so always check the declared-arrays dictionary for
+                        # Views.
+                        if dependent_shape or isinstance(data_desc, dt.View):
+                            defined_type, ctype = (
+                                self._dispatcher.declared_arrays.get(
+                                    aname, is_global=is_global))
+                    except KeyError:
+                        pass
+                if not defined_type:
+                    defined_type, ctype = self._dispatcher.defined_vars.get(
+                        aname)
                 self._dispatcher.defined_vars.add(aname,
                                                   defined_type,
                                                   'const %s' % ctype,
@@ -1512,6 +1540,28 @@ void  *{kname}_args[] = {{ {kargs} }};
         if instr is not None:
             callsite_stream.write(outer_stream.getvalue())
 
+    def get_tb_maps_recursive(self, subgraph):
+        res = []
+        for node in subgraph.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                for state in node.sdfg.states():
+                    tbmaps = self.get_tb_maps_recursive(state)
+                    for map, sym_map in tbmaps:
+                        for k in sym_map.values():
+                            for kk, vv in node.symbol_mapping.items():
+                                sym_map[k] = sym_map[k].subs(
+                                    dace.symbol(kk), vv)
+                        res.append((map, sym_map))
+            elif isinstance(node, nodes.MapEntry) and node.schedule in (
+                    dtypes.ScheduleType.GPU_ThreadBlock,
+                    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+            ):
+                res.append((node.map, {
+                    dace.symbol(k): dace.symbol(k)
+                    for k in node.map.range.free_symbols
+                }))
+        return res
+
     def get_kernel_dimensions(self, dfg_scope):
         """ Determines a GPU kernel's grid/block dimensions from map
             scopes.
@@ -1548,37 +1598,23 @@ void  *{kname}_args[] = {{ {kargs} }};
         # Extend to 3 dimensions if necessary
         grid_size = grid_size + [1] * (3 - len(grid_size))
 
-        # Obtain thread-block maps for case (2)
+        # Obtain thread-block maps from nested SDFGs
         subgraph = dfg_scope.scope_subgraph(kernelmap_entry)
-        tb_maps = [
-            node.map for node in subgraph.nodes()
-            if isinstance(node, nodes.EntryNode) and node.schedule in (
-                dtypes.ScheduleType.GPU_ThreadBlock,
-                dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
-        ]
-        # Append thread-block maps from nested SDFGs
-        for node in subgraph.nodes():
-            if isinstance(node, nodes.NestedSDFG):
-                tb_maps.extend([
-                    n.map for n, _ in node.sdfg.all_nodes_recursive()
-                    if isinstance(n, nodes.MapEntry) and n.schedule in (
-                        dtypes.ScheduleType.GPU_ThreadBlock,
-                        dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
-                ])
+        tb_maps_sym_map = self.get_tb_maps_recursive(subgraph)
 
         has_dtbmap = len([
-            tbmap for tbmap in tb_maps
+            tbmap for tbmap, _ in tb_maps_sym_map
             if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
         ]) > 0
 
         # keep only thread-block maps
-        tb_maps = [
-            tbmap for tbmap in tb_maps
+        tb_maps_sym_map = [
+            (tbmap, sym_map) for tbmap, sym_map in tb_maps_sym_map
             if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock
         ]
 
         # Case (1): no thread-block maps
-        if len(tb_maps) == 0:
+        if len(tb_maps_sym_map) == 0:
 
             if has_dtbmap:
                 if (Config.get('compiler', 'cuda',
@@ -1619,8 +1655,10 @@ void  *{kname}_args[] = {{ {kargs} }};
         # Find all thread-block maps to determine overall block size
         block_size = [1, 1, 1]
         detected_block_sizes = [block_size]
-        for tbmap in tb_maps:
-            tbsize = tbmap.range.size()[::-1]
+        for tbmap, sym_map in tb_maps_sym_map:
+            tbsize = [
+                s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]
+            ]
 
             # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
             # The partial trailing thread-block is emitted as an if-condition
