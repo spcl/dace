@@ -48,7 +48,8 @@ def test_map_unroll_processing_elements():
 
     sdfg(A=A, B=B, C=C, N=N, M=M, K=K)
     diff = np.linalg.norm(C_regression - C) / float(N * M)
-    assert diff < 1e-6
+    if not np.allclose(C_regression, C):
+        raise ValueError("Verification failed.")
 
     return sdfg
 
