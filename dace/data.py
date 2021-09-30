@@ -42,7 +42,7 @@ def create_datadescriptor(obj):
         return Array(dtype=dtype,
                      strides=tuple(s // obj.itemsize for s in obj.strides),
                      shape=obj.shape)
-    # special case for torch tensors. Maybe t __array__ could be used here for a more
+    # special case for torch tensors. Maybe __array__ could be used here for a more
     # general solution, but torch doesn't support __array__ for cuda tensors.
     elif type(obj).__module__ == "torch" and type(obj).__name__ == "Tensor":
         try:
