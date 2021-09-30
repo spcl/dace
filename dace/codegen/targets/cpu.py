@@ -1026,7 +1026,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         desc = sdfg.arrays[memlet.data]
 
                         if defined_type == DefinedType.Scalar:
-                            write_expr = f"{memlet.data} = {in_local_name};"
+                            mname = cpp.ptr(memlet.data, desc, sdfg)
+                            write_expr = f"{mname} = {in_local_name};"
                         elif (defined_type == DefinedType.ArrayInterface
                               and not isinstance(desc, data.View)):
                             # Special case: No need to write anything between

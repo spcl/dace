@@ -1038,6 +1038,15 @@ def unparse_interstate_edge(code_ast: Union[ast.AST, str],
     # Convert from code to AST as necessary
     if isinstance(code_ast, str):
         code_ast = ast.parse(code_ast).body[0]
+    else:
+        code_ast = copy.deepcopy(code_ast)
+
+    # Replace values with their code-generated names (for example,
+    # persistent arrays)
+    for stmt in ast.walk(code_ast):
+        if isinstance(stmt, ast.Name) and stmt.id in sdfg.arrays:
+            desc = sdfg.arrays[stmt.id]
+            stmt.id = ptr(stmt.id, desc, sdfg)
 
     strio = StringIO()
     InterstateEdgeUnparser(sdfg, code_ast, strio, symbols)
