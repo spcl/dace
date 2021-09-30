@@ -456,8 +456,8 @@ c_out = c_val + a_in * b_in""")
                           compute_tasklet,
                           dst_conn="b_in",
                           memlet=dace.Memlet("B_pipe[p]"))
-    state.add_memlet_path(outer_entry, C_buffer_read, memlet=dace.Memlet())
     state.add_memlet_path(C_buffer_read,
+                          outer_entry,
                           k_entry,
                           inner_entry,
                           compute_tasklet,
@@ -576,6 +576,7 @@ if p < P - 1:
     state.add_memlet_path(unroll_entry, A_pipe_in, memlet=dace.memlet.Memlet())
     state.add_memlet_path(unroll_entry, B_pipe_in, memlet=dace.memlet.Memlet())
     state.add_memlet_path(unroll_entry, C_pipe_in, memlet=dace.memlet.Memlet())
+    state.add_memlet_path(unroll_entry, C_buffer_read, memlet=dace.memlet.Memlet())
     state.add_memlet_path(A_pipe_out, unroll_exit, memlet=dace.memlet.Memlet())
     state.add_memlet_path(B_pipe_out, unroll_exit, memlet=dace.memlet.Memlet())
     state.add_memlet_path(C_pipe_out, unroll_exit, memlet=dace.memlet.Memlet())
