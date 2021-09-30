@@ -18,18 +18,32 @@ from dace.transformation.interstate import InlineSDFG
 
 MINIMUM_CHANNEL_DEPTH = 8
 
+# Symbols used in this implementation:
+#
+#   N:  Number of rows of A and C.
+#   K:  Number of columns of A and rows of B.
+#   M:  Number of columns of B and C.
+#   TN: The tile size in N, which must divide the size in N.
+#   TM: The tile size in M, which must divide the size in M.
+#   P:  The number of (vertically unrolled) processing elements, and
+#       consequently one of the two degrees of parallelism in the kernel. Must
+#       divide the size in N.
+#   W:  The vectorization width, being the other degree of parallelism. Must
+#       divide the size in M.
 
 def make_copy_to_fpga_state(sdfg, vtype):
-
-    ###########################################################################
-    # Copy data to FPGA, from plain to vectorized data type if needed
+    """
+    Creates the pre-state where the matrices are transferred to the FPGA.
+    """
 
     state = sdfg.add_state("copy_to_device")
     dtype = vtype.base_type
+    # mem_veclen is the vectorization width necessary to create a 512-bit
+    # interface to memory, and mtype is the corresponding type.
     mem_veclen = 64 // dtype.bytes
     mtype = dace.vector(dtype, mem_veclen)
 
-    #host data has plain data types
+    # Host data has plain data types
     sdfg.add_array("A", ["N", "K"], dtype=dtype)
     sdfg.add_array("B", ["K", "M"], dtype=dtype)
     sdfg.add_array("C", ["N", "M"], dtype=dtype)
@@ -37,9 +51,8 @@ def make_copy_to_fpga_state(sdfg, vtype):
     B_host = state.add_read("B")
     C_host = state.add_read("C")
 
-    # On the device, vector B and C will be vectorized along rows.
-    # Matrix A has plain data type
-
+    # On the device, vector B and C will be vectorized along rows. A is read
+    # column-wise, so it is not vectorized.
     sdfg.add_array("A_device", ["N", "K"],
                    dtype=dtype,
                    transient=True,
@@ -72,9 +85,9 @@ def make_copy_to_fpga_state(sdfg, vtype):
 
 
 def make_copy_to_host_state(sdfg, vtype):
-
-    ###########################################################################
-    # Copy data to FPGA
+    """
+    Creates the post-state where C is copied back to the host.
+    """
 
     state = sdfg.add_state("copy_to_host")
 
