@@ -1245,12 +1245,15 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if name not in self.memlets:
             return self.generic_visit(node)
         memlet, nc, wcr, dtype = self.memlets[name]
-        defined_type, _ = self.codegen._dispatcher.defined_vars.get(node.id)
+        try:
+            defined_type, _ = self.codegen._dispatcher.defined_vars.get(node.id)
+        except KeyError:
+            defined_type = None
         if (isinstance(dtype, dtypes.pointer)
                 and memlet.subset.num_elements() == 1):
             return ast.Name(id="(*{})".format(name), ctx=node.ctx)
         elif ((defined_type == DefinedType.Stream
-             or defined_type == DefinedType.StreamArray) and memlet.dynamic):
+               or defined_type == DefinedType.StreamArray) and memlet.dynamic):
             return ast.Name(id=f"{name}.pop()", ctx=node.ctx)
         else:
             return self.generic_visit(node)
