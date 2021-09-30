@@ -213,7 +213,7 @@ _CTYPES = {
     numpy.uint8: "unsigned char",
     numpy.uint16: "unsigned short",
     numpy.uint32: "unsigned int",
-    numpy.uintc:  "unsigned int",
+    numpy.uintc: "unsigned int",
     numpy.uint64: "unsigned long long",
     numpy.float16: "dace::float16",
     numpy.float32: "float",
@@ -1293,7 +1293,7 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     ]:
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
-            ScheduleType.MPI
+            ScheduleType.MPI, ScheduleType.GPU_Default
         ]
 
     # GPU-global memory
@@ -1307,7 +1307,7 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     if storage is StorageType.FPGA_Global:
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
-            ScheduleType.MPI, ScheduleType.FPGA_Device
+            ScheduleType.MPI, ScheduleType.FPGA_Device, ScheduleType.GPU_Default
         ]
 
     # FPGA-local memory
@@ -1341,7 +1341,7 @@ def is_array(obj: Any) -> bool:
         if hasattr(obj, '__cuda_array_interface__'):
             return True
     except (KeyError, RuntimeError):
-        # In PyTorch, accessing this attribute throws a runtime error for 
+        # In PyTorch, accessing this attribute throws a runtime error for
         # variables that require grad, or KeyError when a boolean array is used
         return True
     if hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__'):

@@ -77,10 +77,15 @@ def _define_local_scalar(
         sdfg: SDFG,
         state: SDFGState,
         dtype: dace.typeclass,
-        storage: dtypes.StorageType = dtypes.StorageType.Default):
+        storage: dtypes.StorageType = dtypes.StorageType.Default,
+        lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
-    _, desc = sdfg.add_scalar(name, dtype, transient=True, storage=storage)
+    _, desc = sdfg.add_scalar(name,
+                              dtype,
+                              transient=True,
+                              storage=storage,
+                              lifetime=lifetime)
     pv.variables[name] = name
     return name
 
