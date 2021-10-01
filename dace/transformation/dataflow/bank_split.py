@@ -98,11 +98,8 @@ class BankSplit(transformation.Transformation):
         # same dimensions means HBM-array needs 1 dimension more
         collect_src = len(src_array.shape) - 1 == len(dst_array.shape)
         distribute_dst = len(src_array.shape) + 1 == len(dst_array.shape)
-        if collect_src:
-            try:
-                tmp = symbolic.evaluate(src_array.shape[0], sdfg.constants)
-            except TypeError:
-                return False
+        if collect_src and symbolic.issymbolic(src_array.shape[0], sdfg.constants):
+            return False
         elif distribute_dst:
             try:
                 tmp = symbolic.evaluate(dst_array.shape[0], sdfg.constants)
