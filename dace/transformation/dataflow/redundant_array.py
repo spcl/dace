@@ -1326,21 +1326,22 @@ class RedundantReadSlice(pm.Transformation):
                 # A -- (0, a:b)/(c:c+b) --> V -- (c+d)/None --> others
                 # A -- (0, a+d)/None --> others
                 e3.data.data = in_array.data
+                e3.data._is_data_src = True
                 # (c+d) - (c:c+b) = (d)
                 v3_subset.offset(v1_subset, negative=True)
                 # (0, a:b)(d) = (0, a+d) (or offset for indices)
 
                 vset = v3_subset
 
-                e3.data.subset = compose_and_push_back(aset, vset, nviewed_dims,
-                                                       popped)
+                e3.data.src_subset = compose_and_push_back(
+                    aset, vset, nviewed_dims, popped)
                 # NOTE: This fixes the following case:
                 # A ----> A[subset] ----> ... -----> Tasklet
                 # Tasklet is not data, so it doesn't have an other subset.
                 if isinstance(e3.dst, nodes.AccessNode):
-                    e3.data.other_subset = other_subset
+                    e3.data.dst_subset = other_subset
                 else:
-                    e3.data.other_subset = None
+                    e3.data.dst_subset = None
                 wcr = wcr or e3.data.wcr
                 wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
                 e3.data.wcr = wcr
@@ -1406,7 +1407,7 @@ class RedundantWriteSlice(pm.Transformation):
             return False
         if true_in_array is not out_array:
             return False
-        
+
         # If the View receives data from a reduction, fail.
         from dace.libraries.standard import Reduce
         for e in graph.in_edges(in_array):
@@ -1481,19 +1482,20 @@ class RedundantWriteSlice(pm.Transformation):
                     e3, sdfg.arrays, dst_name=in_array.data)
                 # Modify memlet to match array A.
                 e3.data.data = out_array.data
+                e3.data._is_data_src = False
                 v3_subset.offset(v1_subset, negative=True)
 
                 vset = v3_subset
 
-                e3.data.subset = compose_and_push_back(aset, vset, nviewed_dims,
-                                                       popped)
+                e3.data.dst_subset = compose_and_push_back(
+                    aset, vset, nviewed_dims, popped)
                 # NOTE: This fixes the following case:
                 # Tasklet ----> A[subset] ----> ... -----> A
                 # Tasklet is not data, so it doesn't have an other subset.
                 if isinstance(e3.src, nodes.AccessNode):
-                    e3.data.other_subset = other_subset
+                    e3.data.src_subset = other_subset
                 else:
-                    e3.data.other_subset = None
+                    e3.data.src_subset = None
                 wcr = wcr or e3.data.wcr
                 wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
                 e3.data.wcr = wcr
