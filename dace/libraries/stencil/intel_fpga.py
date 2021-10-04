@@ -92,8 +92,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
         iterator_mask = np.array([s != 0 and s != 1 for s in shape], dtype=bool)
         iterators = make_iterators(
             tuple(s for s, m in zip(shape, iterator_mask) if m),
-            parameters=tuple(s for s, m in zip(parameters, iterator_mask) if m),
-            vector_length=vector_length)
+            parameters=tuple(s for s, m in zip(parameters, iterator_mask) if m))
 
         # Manually add pipeline entry and exit nodes
         pipeline_range = dace.properties.SubsetProperty.from_string(', '.join(
@@ -145,6 +144,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
 
         boundary_code, oob_cond = generate_boundary_conditions(
             node, shape, field_accesses, field_to_desc, iterator_mapping)
+        print(boundary_code, oob_cond)
 
         #######################################################################
         # Only write if we're in bounds
@@ -263,7 +263,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             # size
             begin_reading = (init_size_max - init_size)
             total_size = functools.reduce(operator.mul, shape, 1)
-            end_reading = (total_size / vector_length + init_size_max - init_size)
+            end_reading = total_size + init_size_max - init_size
 
             # Outer memory read
             read_node_outer = state.add_read(data_name_outer)
@@ -385,10 +385,10 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             update_read = update_state.add_read(data_name_inner)
             update_write = update_state.add_write(buffer_name_inner_write)
             subset = f"{size} - {vector_length}:{size}" if size > 1 else "0"
-            update_state.add_memlet_path(update_read,
-                                         update_write,
-                                         memlet=dace.Memlet(
-                                             f"{update_write.data}[{subset}]"))
+            update_state.add_memlet_path(
+                update_read,
+                update_write,
+                memlet=dace.Memlet(f"{update_read.data}", other_subset=f"{subset}"))
 
             # Make compute state
             compute_read = compute_state.add_read(buffer_name_inner_read)
@@ -410,14 +410,15 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
                     memlet=dace.Memlet(f"{compute_read.data}[{offset}]"))
 
         # Tasklet to update iterators
-        update_iterator_tasklet = state.add_tasklet(
-            f"{node.label}_update_iterators", {}, {}, iterator_code)
-        state.add_memlet_path(nested_sdfg_tasklet,
-                              update_iterator_tasklet,
-                              memlet=dace.Memlet())
-        state.add_memlet_path(update_iterator_tasklet,
-                              exit,
-                              memlet=dace.Memlet())
+        if iterator_code:
+            update_iterator_tasklet = state.add_tasklet(
+                f"{node.label}_update_iterators", {}, {}, iterator_code)
+            state.add_memlet_path(nested_sdfg_tasklet,
+                                  update_iterator_tasklet,
+                                  memlet=dace.Memlet())
+            state.add_memlet_path(update_iterator_tasklet,
+                                  exit,
+                                  memlet=dace.Memlet())
 
         for field_name in outputs:
 

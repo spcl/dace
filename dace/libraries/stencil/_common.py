@@ -9,6 +9,7 @@ import operator
 from typing import Dict, List, Tuple
 
 import dace
+from dace.codegen.targets.cpp import sym2cpp
 from .subscript_converter import SubscriptConverter
 
 
@@ -176,7 +177,8 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
     # Loop over each input
     for field_name in node.in_connectors:
         accesses = field_accesses[field_name]
-        dtype = field_to_desc[field_name].dtype.type
+        dtype = field_to_desc[field_name].dtype
+        veclen = dtype.veclen
         iterators = iterator_mapping[field_name]
         num_dims = sum(iterators, 0)
         # Loop over each access to this data
@@ -185,12 +187,23 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
                 raise ValueError(f"Access {field_name}[{indices}] inconsistent "
                                  f"with iterator mapping {iterators}.")
             cond = set()
+            cond_global = set()
             # Loop over each index of this access
             for i, offset in enumerate(indices):
+                if i == len(indices) - 1 and dtype.veclen > 1:
+                    unroll_boundary = " + i_unroll"
+                    unroll_write = " - i_unroll"
+                else:
+                    unroll_boundary = ""
+                    unroll_write = ""
                 if offset < 0:
-                    term = f"_i{i} < {str(-offset)}"
+                    offset = sym2cpp(-offset)
+                    term = f"_i{i}{unroll_boundary} < {offset}"
+                    if offset <= -veclen:
+                        cond_global.add(f"_i{i}{unroll_write} < {offset}")
                 elif offset > 0:
-                    term = f"_i{i} >= {str(shape[i] - offset)}"
+                    offset = sym2cpp(shape[i] - offset)
+                    term = f"_i{i}{unroll_offset} >= {offset}"
                 else:
                     continue
                 cond.add(term)
@@ -210,11 +223,11 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
                 elif btype == "shrink":
                     # We don't need to do anything here, it's up to the
                     # user to not use the junk output
-                    if np.issubdtype(dtype, np.floating):
-                        boundary_val = np.finfo(dtype).min
+                    if np.issubdtype(dtype.type, np.floating):
+                        boundary_val = np.finfo(dtype.type).min
                     else:
                         # If not a float, assume it's some kind of integer
-                        boundary_val = np.iinfo(dtype).min
+                        boundary_val = np.iinfo(dtype.type).min
                     # Add this to the output condition
                     oob_cond |= cond
                 else:
