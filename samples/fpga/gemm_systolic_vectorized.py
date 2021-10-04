@@ -56,14 +56,17 @@ def make_copy_to_fpga_state(sdfg, vtype):
     sdfg.add_array("A_device", ["N", "K"],
                    dtype=dtype,
                    transient=True,
+                   location={"memorytype": "DDR", "bank": 1},
                    storage=dace.dtypes.StorageType.FPGA_Global)
     sdfg.add_array("B_device", ["K", f"M//{mem_veclen}"],
                    dtype=mtype,
                    transient=True,
+                   location={"memorytype": "DDR", "bank": 1},
                    storage=dace.dtypes.StorageType.FPGA_Global)
     sdfg.add_array("C_device", ["N", f"M//{mem_veclen}"],
                    dtype=mtype,
                    transient=True,
+                   location={"memorytype": "DDR", "bank": 1},
                    storage=dace.dtypes.StorageType.FPGA_Global)
     A_device = state.add_write("A_device")
     B_device = state.add_write("B_device")
