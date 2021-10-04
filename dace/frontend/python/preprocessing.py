@@ -2,6 +2,7 @@
 import ast
 import copy
 from dataclasses import dataclass
+import inspect
 import numpy
 import re
 import sympy
@@ -479,6 +480,28 @@ class GlobalResolver(ast.NodeTransformer):
                 self.closure.array_mapping[id(value)] = arrname
 
             newnode = ast.Name(id=arrname, ctx=ast.Load())
+        elif detect_callables and callable(value):
+            # Try parsing the function as a dace function/method
+            try:
+                from dace.frontend.python import parser  # Avoid import loops
+
+                # Try to obtain source code for function (failure will raise a
+                # TypeError that is caught below)
+                astutils.function_to_ast(value)
+
+                parsed = parser.DaceProgram(value, [], {}, False,
+                                            dtypes.DeviceType.CPU)
+                # If method, add the first argument (which disappears due to
+                # being a bound method) and the method's object
+                if hasattr(value, '__self__'):
+                    parsed.methodobj = value.__self__
+                    parsed.objname = inspect.getfullargspec(value).args[0]
+
+                return self.global_value_to_node(parsed, parent_node, qualname,
+                                                 recurse, detect_callables)
+            except (TypeError, SyntaxError):
+                # Parsing failed
+                return None
         else:
             return None
 
@@ -684,6 +707,7 @@ class ArrayClosureResolver(ast.NodeVisitor):
             self.arrays.add(node.id)
         self.generic_visit(node)
 
+
 class AugAssignExpander(ast.NodeTransformer):
     def visit_AugAssign(self, node: ast.AugAssign) -> ast.Assign:
         target = self.generic_visit(node.target)
@@ -693,6 +717,7 @@ class AugAssignExpander(ast.NodeTransformer):
             value)
         return ast.copy_location(ast.Assign(targets=[target], value=newvalue),
                                  node)
+
 
 def preprocess_dace_program(
         f: Callable[..., Any],
