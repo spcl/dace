@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 
-from dace.frontend.python import parser
+from dace import data
 
 
 @dace.program
@@ -113,11 +113,51 @@ def test_is_a_copy():
     assert (np.allclose(val, ref))
 
 
+def test_needs_view():
+    @dace.program
+    def nested(q, i, j):
+        q[3 + j, 4 + i, 0:3] = q[3 - i + 1, 4 + j, 0:3]
+
+    @dace.program
+    def selfcopy(q: dace.float64[128, 128, 80]):
+        for i in range(1, 4):
+            for j in range(1, 4):
+                nested(q, i, j)
+
+    sdfg = selfcopy.to_sdfg()
+    for s in sdfg.all_sdfgs_recursive():
+        assert not any(
+            isinstance(d, data.Array) and d.transient and d.shape == (3,)
+            for d in s.arrays.values())
+
+
+def test_needs_copy():
+    @dace.program
+    def nested(q, i, j):
+        q[3 + j, 4 + i, 0:3] = q[3 - i + 1, 4 + j, 1:4]
+
+    @dace.program
+    def selfcopy(q: dace.float64[128, 128, 80]):
+        for i in range(1, 4):
+            for j in range(1, 4):
+                nested(q, i, j)
+
+    sdfg = selfcopy.to_sdfg(strict=False)
+    found_copy = False
+    for s in sdfg.all_sdfgs_recursive():
+        found_copy |= any(
+            isinstance(d, data.Array) and d.transient and d.shape == (3,)
+            for d in s.arrays.values())
+    assert found_copy
+
+
 if __name__ == '__main__':
-    # test_set_by_view()
-    # test_set_by_view_1()
-    # test_set_by_view_2()
-    # test_set_by_view_3()
-    # test_set_by_view_4()
+    test_set_by_view()
+    test_set_by_view_1()
+    test_set_by_view_2()
+    test_set_by_view_3()
+    test_set_by_view_4()
     test_set_by_view_5()
     test_is_a_copy()
+    test_needs_view()
+    test_needs_copy()
