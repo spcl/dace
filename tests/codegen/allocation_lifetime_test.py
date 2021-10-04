@@ -339,6 +339,19 @@ def test_nested_persistent():
     assert np.allclose(b, a + 1)
 
 
+def test_persistent_scalar():
+    @dace.program
+    def perscal(a: dace.float64[20]):
+        tmp = dace.define_local_scalar(
+            dace.float64, lifetime=dace.AllocationLifetime.Persistent)
+        tmp[:] = a[1] + 1
+        return tmp
+
+    a = np.random.rand(20)
+    b = perscal(a)
+    assert np.allclose(b, a[1] + 1)
+
+
 if __name__ == '__main__':
     test_determine_alloc_scope()
     test_determine_alloc_state()
@@ -352,3 +365,4 @@ if __name__ == '__main__':
     test_alloc_multistate()
     test_nested_view_samename()
     test_nested_persistent()
+    test_persistent_scalar()

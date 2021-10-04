@@ -1021,6 +1021,15 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
                          expr_semicolon=False,
                          defined_symbols=defined_symbols)
 
+    def _Name(self, t: ast.Name):
+        if t.id not in self.sdfg.arrays:
+            return super()._Name(t)
+
+        # Replace values with their code-generated names (for example,
+        # persistent arrays)
+        desc = self.sdfg.arrays[t.id]
+        self.write(ptr(t.id, desc, self.sdfg))
+
     def _Subscript(self, t: ast.Subscript):
         from dace.frontend.python.astutils import subscript_to_slice
         target, rng = subscript_to_slice(t, self.sdfg.arrays)
