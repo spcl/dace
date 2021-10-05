@@ -9,7 +9,7 @@ import sympy
 import sys
 import warnings
 
-from typing import Any, Callable, Dict, List, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import dace
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.sdfg import SDFG
@@ -368,6 +368,35 @@ class DeadCodeEliminator(ast.NodeTransformer):
         return node
 
 
+def has_replacement(callobj: Callable,
+                    parent_object: Optional[Any] = None) -> bool:
+    """
+    Returns True if the function/operator replacement repository
+    has a registered replacement for the called function described by
+    a live object.
+    """
+    from dace.frontend.common import op_repository as oprepo
+
+    # Attributes and methods
+    if parent_object is not None:
+        classname = type(parent_object).__name__
+        attrname = callobj.__name__
+        repl = oprepo.Replacements.get_attribute(classname, attrname)
+        if repl is not None:
+            return True
+        repl = oprepo.Replacements.get_method(classname, attrname)
+        if repl is not None:
+            return True
+
+    # NumPy ufuncs
+    if isinstance(callobj, numpy.ufunc):
+        return True
+
+    # Functions
+    full_func_name = callobj.__module__ + '.' + callobj.__qualname__
+    return oprepo.Replacements.get(full_func_name) is not None
+
+
 class GlobalResolver(ast.NodeTransformer):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
@@ -485,11 +514,20 @@ class GlobalResolver(ast.NodeTransformer):
             try:
                 from dace.frontend.python import parser  # Avoid import loops
 
+                parent_object = None
+                if hasattr(value, '__self__'):
+                    parent_object = value.__self__
+
                 # If it is a callable object
                 if (not inspect.isfunction(value)
                         and not inspect.ismethod(value)
                         and hasattr(value, '__call__')):
+                    parent_object = value
                     value = value.__call__
+
+                # Replacements take precedence over auto-parsing
+                if has_replacement(value, parent_object):
+                    return None
 
                 # Try to obtain source code for function (failure will raise a
                 # TypeError that is caught below)
@@ -499,8 +537,8 @@ class GlobalResolver(ast.NodeTransformer):
                                             dtypes.DeviceType.CPU)
                 # If method, add the first argument (which disappears due to
                 # being a bound method) and the method's object
-                if hasattr(value, '__self__'):
-                    parsed.methodobj = value.__self__
+                if parent_object is not None:
+                    parsed.methodobj = parent_object
                     parsed.objname = inspect.getfullargspec(value).args[0]
 
                 return self.global_value_to_node(parsed, parent_node, qualname,
