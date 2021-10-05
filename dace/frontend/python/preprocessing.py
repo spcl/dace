@@ -486,7 +486,9 @@ class GlobalResolver(ast.NodeTransformer):
                 from dace.frontend.python import parser  # Avoid import loops
 
                 # If it is a callable object
-                if hasattr(value, '__call__'):
+                if (not inspect.isfunction(value)
+                        and not inspect.ismethod(value)
+                        and hasattr(value, '__call__')):
                     value = value.__call__
 
                 # Try to obtain source code for function (failure will raise a
