@@ -10,15 +10,14 @@ import numpy as np
 import pytest
 
 
-@dataclass
-class TestClass:
-    some_field: int
-
-    def some_method(self, q):
-        return q * self.some_field
-
-
 def test_nested_function_method():
+    @dataclass
+    class TestClass:
+        some_field: int
+
+        def some_method(self, q):
+            return q * self.some_field
+
     obj = TestClass(5)
 
     def nested(a):

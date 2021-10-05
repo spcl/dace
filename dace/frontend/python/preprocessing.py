@@ -485,6 +485,10 @@ class GlobalResolver(ast.NodeTransformer):
             try:
                 from dace.frontend.python import parser  # Avoid import loops
 
+                # If it is a callable object
+                if hasattr(value, '__call__'):
+                    value = value.__call__
+
                 # Try to obtain source code for function (failure will raise a
                 # TypeError that is caught below)
                 astutils.function_to_ast(value)
@@ -499,8 +503,7 @@ class GlobalResolver(ast.NodeTransformer):
 
                 return self.global_value_to_node(parsed, parent_node, qualname,
                                                  recurse, detect_callables)
-            except (TypeError, SyntaxError):
-                # Parsing failed
+            except:  # Parsing failed (almost any exception can occur)
                 return None
         else:
             return None
