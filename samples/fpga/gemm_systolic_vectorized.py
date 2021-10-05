@@ -431,7 +431,7 @@ if (n0 < (N/TN) - 1 or m0 < (M/TM) - 1 or k < K - 1) and m1 >= p and m1 < P:
 
     # Instantiate the "big" buffer of the output, where most of our fast memory
     # will be spent
-    sdfg.add_array("C_buffer", ("TN", "TM/W"),
+    sdfg.add_array("C_buffer", ("TN/P", "TM/W"),
                    vtype,
                    storage=dace.StorageType.FPGA_Local,
                    transient=True)
