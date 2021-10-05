@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
+
 @dataclass
 class SomeClass:
     q: float
@@ -18,6 +19,7 @@ class SomeClass:
 
     def __call__(self, a):
         return self.method(a)
+
 
 def freefunction(A):
     return A + 1
@@ -93,9 +95,23 @@ def test_function_that_needs_replacement():
         notworking(A)
 
 
+def test_nested_autoparse_fail():
+    def notworking_nested(a):
+        return np.allclose(a, a)
+
+    @dace
+    def notworking2(a: dace.float64[20]):
+        return notworking_nested(a)
+
+    A = np.random.rand(20)
+    with pytest.raises(DaceSyntaxError, match='notworking_nested'):
+        notworking2(A)
+
+
 if __name__ == '__main__':
     test_autodetect_function()
     test_autodetect_method()
     test_autodetect_callable_object()
     test_nested_function_method()
     test_function_that_needs_replacement()
+    test_nested_autoparse_fail()

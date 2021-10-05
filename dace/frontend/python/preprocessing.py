@@ -492,6 +492,9 @@ class GlobalResolver(ast.NodeTransformer):
                     newnode = ast.NameConstant(value=None)
                 else:
                     newnode = ast.Num(n=value)
+
+            newnode.oldnode = copy.deepcopy(parent_node)
+
         elif detect_callables and hasattr(value, '__call__') and hasattr(
                 value.__call__, '__sdfg__'):
             return self.global_value_to_node(value.__call__, parent_node,
@@ -528,10 +531,6 @@ class GlobalResolver(ast.NodeTransformer):
                 # Replacements take precedence over auto-parsing
                 if has_replacement(value, parent_object):
                     return None
-
-                # Try to obtain source code for function (failure will raise a
-                # TypeError that is caught below)
-                astutils.function_to_ast(value)
 
                 parsed = parser.DaceProgram(value, [], {}, False,
                                             dtypes.DeviceType.CPU)
@@ -733,11 +732,16 @@ class CallTreeResolver(ast.NodeVisitor):
         # Resolve nested closure as necessary
         qualname = next(k for k, v in self.closure.closure_sdfgs.items()
                         if v is value)
-        if hasattr(value, 'closure_resolver'):
-            self.closure.nested_closures.append(
-                (qualname, value.closure_resolver(constant_args)))
-        else:
-            self.closure.nested_closures.append((qualname, SDFGClosure()))
+        try:
+            if hasattr(value, 'closure_resolver'):
+                self.closure.nested_closures.append(
+                    (qualname, value.closure_resolver(constant_args)))
+            else:
+                self.closure.nested_closures.append((qualname, SDFGClosure()))
+        except:  # Parsing failed (anything can happen here)
+            # Return old call AST instead
+            node.func = node.func.oldnode.func
+            return self.generic_visit(node)
 
 
 class ArrayClosureResolver(ast.NodeVisitor):
