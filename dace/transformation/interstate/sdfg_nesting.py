@@ -1115,7 +1115,7 @@ class RefineNestedAccess(transformation.Transformation):
         _offset_refine(torefine_in, state.in_edges_by_connector)
         _offset_refine(torefine_out, state.out_edges_by_connector)
 
-        # Propagate State Memlets
+        # Propagate the State Memlets
         propagation.propagate_memlets_state(sdfg, state)
 
 
