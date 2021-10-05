@@ -31,7 +31,9 @@ from .streaming_memory import StreamingMemory, StreamingComposition
 # Complexity reduction
 from .dedup_access import DeduplicateAccess
 from .redundant_array import (RedundantArray, RedundantSecondArray,
-                              SqueezeViewRemove, UnsqueezeViewRemove)
+                              SqueezeViewRemove, UnsqueezeViewRemove,
+                              RedundantReadSlice,
+                              RedundantWriteSlice)
 from .redundant_array_copying import (RedundantArrayCopyingIn,
                                       RedundantArrayCopying,
                                       RedundantArrayCopying2,

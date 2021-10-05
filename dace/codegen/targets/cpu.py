@@ -180,8 +180,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         name = node.data
         nodedesc = node.desc(sdfg)
-        if self._dispatcher.defined_vars.has(name):
-            return  # View was already allocated
 
         # Check if array is already declared
         declared = self._dispatcher.declared_arrays.has(name)
@@ -1028,7 +1026,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         desc = sdfg.arrays[memlet.data]
 
                         if defined_type == DefinedType.Scalar:
-                            write_expr = f"{memlet.data} = {in_local_name};"
+                            mname = cpp.ptr(memlet.data, desc, sdfg)
+                            write_expr = f"{mname} = {in_local_name};"
                         elif (defined_type == DefinedType.ArrayInterface
                               and not isinstance(desc, data.View)):
                             # Special case: No need to write anything between
@@ -1354,7 +1353,13 @@ class CPUCodeGen(TargetCodeGenerator):
         self._frame._initcode.write(codeblock_to_cpp(node.code_init), sdfg)
         self._frame._exitcode.write(codeblock_to_cpp(node.code_exit), sdfg)
 
-        state_dfg = sdfg.nodes()[state_id]
+        state_dfg: SDFGState = sdfg.nodes()[state_id]
+
+        # Free tasklets need to be presynchronized (e.g., CPU tasklet after
+        # GPU->CPU copy)
+        if state_dfg.entry_node(node) is None:
+            cpp.presynchronize_streams(sdfg, state_dfg, state_id, node,
+                                       callsite_stream)
 
         # Prepare preamble and code for after memlets
         after_memlets_stream = CodeIOStream()

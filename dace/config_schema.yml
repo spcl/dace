@@ -801,6 +801,12 @@ required:
             potentially build time, but disallows executing SDFGs in parallel
             and caching of more than one simultaneous SDFG.
 
+    store_history:
+        type: bool
+        default: true
+        title: Store SDFG transformation history
+        description: Store the history of transformations on the SDFG file.
+
     default_build_folder:
         type: str
         default: .dacecache
