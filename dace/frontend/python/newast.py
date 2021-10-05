@@ -50,6 +50,7 @@ class SkipCall(Exception):
     """ Exception used to skip calls to functions that cannot be parsed. """
     pass
 
+
 def until(val, substr):
     """ Helper function that returns the substring of a string until a certain pattern. """
     if substr not in val:
@@ -1660,8 +1661,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 self, node,
                 "Iterator of ast.For must be a function or a subscript")
 
-        iter_name = preprocessing.ModuleResolver(self.modules, True).visit(
-            copy.deepcopy(node))
+        iter_name = preprocessing.ModuleResolver(self.modules, True).visit(node)
         iterator = rname(iter_name)
 
         ast_ranges = []

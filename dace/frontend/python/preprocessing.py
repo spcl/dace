@@ -369,7 +369,8 @@ class DeadCodeEliminator(ast.NodeTransformer):
 
 
 def has_replacement(callobj: Callable,
-                    parent_object: Optional[Any] = None) -> bool:
+                    parent_object: Optional[Any] = None,
+                    node: Optional[ast.AST] = None) -> bool:
     """
     Returns True if the function/operator replacement repository
     has a registered replacement for the called function described by
@@ -394,7 +395,11 @@ def has_replacement(callobj: Callable,
 
     # Functions
     full_func_name = callobj.__module__ + '.' + callobj.__qualname__
-    return oprepo.Replacements.get(full_func_name) is not None
+    if oprepo.Replacements.get(full_func_name) is not None:
+        return True
+
+    # Also try the function as it is called in the AST
+    return oprepo.Replacements.get(astutils.rname(node)) is not None
 
 
 class GlobalResolver(ast.NodeTransformer):
@@ -407,6 +412,7 @@ class GlobalResolver(ast.NodeTransformer):
         self.resolve_functions = resolve_functions
         self.current_scope = set()
         self.toplevel_function = True
+        self.do_not_detect_callables = False
 
         self.closure = SDFGClosure()
 
@@ -529,7 +535,7 @@ class GlobalResolver(ast.NodeTransformer):
                     value = value.__call__
 
                 # Replacements take precedence over auto-parsing
-                if has_replacement(value, parent_object):
+                if has_replacement(value, parent_object, parent_node):
                     return None
 
                 parsed = parser.DaceProgram(value, [], {}, False,
@@ -632,15 +638,24 @@ class GlobalResolver(ast.NodeTransformer):
                 if newnode is not None:
                     return newnode
         elif not isinstance(global_func, dtypes.typeclass):
+            callables = not self.do_not_detect_callables
             newnode = self.global_value_to_node(global_func,
                                                 parent_node=node,
                                                 qualname=astutils.unparse(node),
                                                 recurse=True,
-                                                detect_callables=True)
+                                                detect_callables=callables)
             if newnode is not None:
                 node.func = newnode
                 return self.generic_visit(node)
         return self.generic_visit(node)
+
+    def visit_For(self, node: ast.For):
+        # Special case: for loop generators cannot be dace programs
+        oldval = self.do_not_detect_callables
+        self.do_not_detect_callables = True
+        result = self.generic_visit(node)
+        self.do_not_detect_callables = oldval
+        return result
 
     def visit_Assert(self, node: ast.Assert) -> Any:
         # Try to evaluate assertion statically
@@ -730,9 +745,9 @@ class CallTreeResolver(ast.NodeVisitor):
         constant_args = self._eval_args(node)
 
         # Resolve nested closure as necessary
-        qualname = next(k for k, v in self.closure.closure_sdfgs.items()
-                        if v is value)
         try:
+            qualname = next(k for k, v in self.closure.closure_sdfgs.items()
+                            if v is value)
             if hasattr(value, 'closure_resolver'):
                 self.closure.nested_closures.append(
                     (qualname, value.closure_resolver(constant_args)))
