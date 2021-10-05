@@ -9,6 +9,56 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
+@dataclass
+class SomeClass:
+    q: float
+
+    def method(self, a):
+        return a * self.q
+
+    def __call__(self, a):
+        return self.method(a)
+
+def freefunction(A):
+    return A + 1
+
+
+def test_autodetect_function():
+    """ 
+    Tests auto-detection of parsable free functions in the Python frontend.
+    """
+    @dace
+    def adf(A):
+        return freefunction(A)
+
+    A = np.random.rand(20)
+    B = adf(A)
+    assert np.allclose(B, A + 1)
+
+
+def test_autodetect_method():
+    obj = SomeClass(0.5)
+
+    @dace
+    def adm(A):
+        return obj.method(A)
+
+    A = np.random.rand(20)
+    B = adm(A)
+    assert np.allclose(B, A / 2)
+
+
+def test_autodetect_callable_object():
+    obj = SomeClass(0.5)
+
+    @dace
+    def adco(A):
+        return obj(A)
+
+    A = np.random.rand(20)
+    B = adco(A)
+    assert np.allclose(B, A / 2)
+
 
 def test_nested_function_method():
     @dataclass
@@ -44,5 +94,8 @@ def test_function_that_needs_replacement():
 
 
 if __name__ == '__main__':
+    test_autodetect_function()
+    test_autodetect_method()
+    test_autodetect_callable_object()
     test_nested_function_method()
     test_function_that_needs_replacement()
