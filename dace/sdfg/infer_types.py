@@ -4,7 +4,7 @@ from dace.codegen.tools import type_inference
 from dace.config import Config
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import nodes
-from dace.sdfg.utils import dfs_topological_sort
+from dace.sdfg.utils import dfs_topological_sort, has_dynamic_map_inputs
 from dace.symbolic import SymbolicType, pystr_to_symbolic, symbol
 from typing import Dict, List, Union
 
@@ -160,7 +160,8 @@ def _scopes_with_tbmaps(state: SDFGState, scopes: List[nodes.EntryNode]):
     return scopes_with_tbmaps
 
 
-def _set_default_schedule_in_scope(parent_node: nodes.Node,
+def _set_default_schedule_in_scope(state: SDFGState,
+                                   parent_node: nodes.Node,
                                    parent_schedule: dtypes.ScheduleType,
                                    reverse_scope_dict: Dict[nodes.Node,
                                                             List[nodes.Node]],
@@ -176,17 +177,20 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
             child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
         # Set default schedule type
         if isinstance(node, nodes.MapEntry):
+            if (parent_schedule is dtypes.ScheduleType.GPU_Device
+                    and has_dynamic_map_inputs(state, node)):
+                node.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
             if node.map.schedule is dtypes.ScheduleType.Default:
                 node.map.schedule = child_schedule
             # Also traverse children (recursively)
-            _set_default_schedule_in_scope(node, node.map.schedule,
+            _set_default_schedule_in_scope(state, node, node.map.schedule,
                                            reverse_scope_dict)
         elif isinstance(node, nodes.ConsumeEntry):
             if node.consume.schedule is dtypes.ScheduleType.Default:
                 node.consume.schedule = child_schedule
 
             # Also traverse children (recursively)
-            _set_default_schedule_in_scope(node, node.consume.schedule,
+            _set_default_schedule_in_scope(state, node, node.consume.schedule,
                                            reverse_scope_dict)
         elif isinstance(node, nodes.NestedSDFG):
             # Nested SDFGs retain same schedule as their parent scope
@@ -209,7 +213,7 @@ def _set_default_schedule_types(sdfg: SDFG,
         reverse_scope_dict = state.scope_children()
 
         # Start with top-level nodes and call recursively
-        _set_default_schedule_in_scope(None, toplevel_schedule,
+        _set_default_schedule_in_scope(state, None, toplevel_schedule,
                                        reverse_scope_dict, use_parent_schedule)
 
 
@@ -367,4 +371,5 @@ def _set_default_gpu_location_in_scope(
             if (child.schedule in dtypes.GPU_SCHEDULES
                     and 'gpu' not in child.location and parent_gpu_id != None):
                 child.location['gpu'] = parent_gpu_id
-            _set_default_gpu_location(child.sdfg, parent_gpu_id)
+            _set_default_gpu_location(child.sdfg,
+                                      child.location.get('gpu', None))

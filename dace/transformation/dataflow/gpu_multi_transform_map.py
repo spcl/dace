@@ -1,13 +1,13 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains the GPUMultiTransformMap transformation. """
-
+import dace
 from dace import dtypes, registry
 from dace.data import Scalar
-from dace.sdfg import has_dynamic_map_inputs
 from dace.sdfg import utils as sdutil
 from dace.sdfg import nodes, SDFG, SDFGState, infer_types
 from dace.properties import make_properties, Property, SymbolicProperty
 from dace.transformation import transformation
+from dace.sdfg import has_dynamic_map_inputs
 from dace.properties import make_properties
 from dace.config import Config
 from dace.symbolic import SymbolicType
@@ -48,6 +48,14 @@ class GPUMultiTransformMap(transformation.Transformation):
         desc="If True: skips the scalar data nodes. "
         "If False: creates localstorage for scalar transients.")
 
+    use_p2p = Property(
+        dtype=bool,
+        default=False,
+        allow_none=True,
+        desc="If True: uses peer-to-peer access if a data container is already "
+        "located on a GPU. "
+        "If False: creates transient localstorage for data located on GPU.")
+
     number_of_gpus = SymbolicProperty(
         default=None,
         allow_none=True,
@@ -75,6 +83,10 @@ class GPUMultiTransformMap(transformation.Transformation):
         if (Config.get("compiler", "cuda", "max_number_gpus") < 2):
             return False
 
+        # Dynamic map ranges not supported
+        if has_dynamic_map_inputs(graph, map_entry):
+            return False
+
         # Only accept maps with a default schedule
         schedule_whitelist = [dtypes.ScheduleType.Default]
         sdict = graph.scope_dict()
@@ -83,10 +95,6 @@ class GPUMultiTransformMap(transformation.Transformation):
             if parent.map.schedule not in schedule_whitelist:
                 return False
             parent = sdict[parent]
-
-        # Dynamic map ranges not supported
-        if has_dynamic_map_inputs(graph, map_entry):
-            return False
 
         # Library nodes inside the scope are not supported
         scope_subgraph = graph.scope_subgraph(map_entry)
@@ -102,6 +110,24 @@ class GPUMultiTransformMap(transformation.Transformation):
         for edge in graph.out_edges(map_exit):
             if edge.data.wcr is not None and operations.detect_reduction_type(
                     edge.data.wcr) == dtypes.ReductionType.Custom:
+                return False
+
+        storage_whitelist = [
+            dtypes.StorageType.Default,
+            dtypes.StorageType.CPU_Pinned,
+            dtypes.StorageType.CPU_Heap,
+            dtypes.StorageType.GPU_Global,
+        ]
+        for node in graph.predecessors(map_entry):
+            if not isinstance(node, nodes.AccessNode):
+                return False
+            if node.desc(graph).storage not in storage_whitelist:
+                return False
+
+        for node in graph.successors(map_exit):
+            if not isinstance(node, nodes.AccessNode):
+                return False
+            if node.desc(graph).storage not in storage_whitelist:
                 return False
 
         return True
@@ -156,6 +182,8 @@ class GPUMultiTransformMap(transformation.Transformation):
         inner_map_entry.map.schedule = dtypes.ScheduleType.GPU_Device
         outer_map.schedule = dtypes.ScheduleType.GPU_Multidevice
 
+        symbolic_gpu_id = outer_map.params[0]
+
         # Add the parameter of the outer map
         for node in graph.successors(inner_map_entry):
             if isinstance(node, nodes.NestedSDFG):
@@ -174,6 +202,10 @@ class GPUMultiTransformMap(transformation.Transformation):
             if (isinstance(node, nodes.AccessNode)
                     and not (self.skip_scalar
                              and isinstance(node.desc(sdfg), Scalar))):
+                if self.use_p2p and node.desc(
+                        sdfg).storage is dtypes.StorageType.GPU_Global:
+                    continue
+
                 in_data_node = InLocalStorage.apply_to(sdfg,
                                                        dict(array=node.data,
                                                             prefix=prefix),
@@ -181,6 +213,8 @@ class GPUMultiTransformMap(transformation.Transformation):
                                                        save=False,
                                                        node_a=outer_map_entry,
                                                        node_b=inner_map_entry)
+                in_data_node.desc(sdfg).location['gpu'] = symbolic_gpu_id
+                in_data_node.desc(sdfg).storage = dtypes.StorageType.GPU_Global
 
         wcr_data: Dict[str, Any] = {}
         # Add transient Data leading to the outer map
@@ -206,6 +240,9 @@ class GPUMultiTransformMap(transformation.Transformation):
                     wcr_data[data_name] = identity
                 elif (not isinstance(node.desc(sdfg), Scalar)
                       or not self.skip_scalar):
+                    if self.use_p2p and node.desc(
+                            sdfg).storage is dtypes.StorageType.GPU_Global:
+                        continue
                     # Transients without write-conflict resolution
                     if prefix + '_' + data_name in sdfg.arrays:
                         create_array = False
@@ -220,6 +257,9 @@ class GPUMultiTransformMap(transformation.Transformation):
                         save=False,
                         node_a=inner_map_exit,
                         node_b=outer_map_exit)
+                    out_data_node.desc(sdfg).location['gpu'] = symbolic_gpu_id
+                    out_data_node.desc(
+                        sdfg).storage = dtypes.StorageType.GPU_Global
 
         # Add Transients for write-conflict resolution
         if len(wcr_data) != 0:
@@ -228,6 +268,21 @@ class GPUMultiTransformMap(transformation.Transformation):
                 options=dict(array_identity_dict=wcr_data, prefix=prefix),
                 map_exit=inner_map_exit,
                 outer_map_exit=outer_map_exit)
+            nsdfg.schedule = dtypes.ScheduleType.GPU_Multidevice
+            nsdfg.location['gpu'] = symbolic_gpu_id
+            for transient_node in graph.successors(nsdfg):
+                if isinstance(transient_node, nodes.AccessNode):
+                    transient_node.desc(sdfg).location['gpu'] = symbolic_gpu_id
+                    transient_node.desc(
+                        sdfg).storage = dtypes.StorageType.GPU_Global
+                    nsdfg.sdfg.arrays[
+                        transient_node.label].location['gpu'] = symbolic_gpu_id
+                    nsdfg.sdfg.arrays[
+                        transient_node.
+                        label].storage = dtypes.StorageType.GPU_Global
+            infer_types.set_default_schedule_storage_types_and_location(
+                nsdfg.sdfg, dtypes.ScheduleType.GPU_Multidevice,
+                symbolic_gpu_id)
 
         # Remove the parameter of the outer_map from the sdfg symbols,
         # as it got added as a symbol in StripMining.

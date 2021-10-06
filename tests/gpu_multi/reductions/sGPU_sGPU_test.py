@@ -73,5 +73,5 @@ def test_reduction_GPU0_GPU0_sum():
 
 
 if __name__ == "__main__":
-    test_reduction_GPU0_GPU0_sum()
+    # test_reduction_GPU0_GPU0_sum()
     test_reduction_GPU0_GPU1_sum()

@@ -67,6 +67,7 @@ class ScheduleType(aenum.AutoNumberEnum):
 # A subset of GPU schedule types
 GPU_SCHEDULES = [
     ScheduleType.GPU_Device,
+    ScheduleType.GPU_Default,
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
     ScheduleType.GPU_Persistent,
@@ -1289,6 +1290,8 @@ def can_access(schedule: ScheduleType, storage: StorageType):
             StorageType.GPU_Global, StorageType.GPU_Shared,
             StorageType.CPU_Pinned
         ]
+    elif schedule in [ScheduleType.GPU_Multidevice]:
+        return storage in [StorageType.GPU_Global, StorageType.CPU_Pinned]
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore]:
         return storage in [
             StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned,

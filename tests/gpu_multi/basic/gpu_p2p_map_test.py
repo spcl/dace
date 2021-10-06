@@ -9,7 +9,7 @@ dc_dtype = dace.float64
 
 
 @dace.program
-def axpySelGPU(A: dc_dtype, X: dc_dtype[N], Y: dc_dtype[N]):
+def axpyP2P(A: dc_dtype, X: dc_dtype[N], Y: dc_dtype[N]):
     x_gpu = dace.ndarray([N], dc_dtype, storage=dace.StorageType.GPU_Global)
     y_gpu = dace.ndarray([N], dc_dtype, storage=dace.StorageType.GPU_Global)
     x_gpu[:] = X[:]
@@ -34,8 +34,7 @@ def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
 
 @pytest.mark.multigpu
 def test_select_gpu():
-    sdfg: dace.SDFG = axpySelGPU.to_sdfg(strict=True)
-    sdfg.name = 'gpu_select'
+    sdfg: dace.SDFG = axpyP2P.to_sdfg(strict=True)
     map_ = find_map_by_param(sdfg, 'i')
     map_.schedule = dace.ScheduleType.GPU_Device
     sdfg.arrays['x_gpu'].location['gpu'] = 0

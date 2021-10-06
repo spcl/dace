@@ -55,7 +55,7 @@ class ExpandRecvNCCL(ExpandTransformation):
 
         code = f"""ncclRecv(_outbuffer, {count_str}, {nccl_dtype_str}, {peerstr}, __state->ncclCommunicators->at(__dace_cuda_device),  __dace_current_stream)"""
         if Config.get('compiler', 'build_type') == 'Debug':
-            '''DACE_NCCL_CHECK(''' + code + ''');\n'''
+            code = '''DACE_NCCL_CHECK(''' + code + ''');\n'''
 
         else:
             code = code + ''';\n'''
@@ -67,46 +67,16 @@ class ExpandRecvNCCL(ExpandTransformation):
                 f'''printf("{str(node)}: end;  dev,peer: %d, %d\\n\\n", __dace_cuda_device, {peerstr});\n'''
             )
 
-        group_handle_conn = '_group_handle'
-        if group_handle_conn in node.in_connectors:
-            for edge in state.in_edges(node):
-                if edge.dst_conn == group_handle_conn:
-                    in_gh_edge = edge
-                    in_gh_node = edge.src
-            if not state.predecessors(in_gh_node):
-                code = """ncclGroupStart();\n""" + code
-            else:
-                predecessor_node = state.in_edges(in_gh_node)[0].src
-                state.add_edge(predecessor_node, None, node, None, Memlet())
-                state.remove_edge_and_connectors(state.in_edges(in_gh_node)[0])
-            state.remove_edge_and_connectors(in_gh_edge)
-            node.remove_in_connector(group_handle_conn)
-            state.remove_node(in_gh_node)
+        code = nutil.aggregate_calls(sdfg, state, node, code)
 
-        if group_handle_conn in node.out_connectors:
-            for edge in state.out_edges(node):
-                if edge.src_conn == group_handle_conn:
-                    out_gh_edge = edge
-                    out_gh_node = edge.dst
-            if not state.successors(out_gh_node):
-                code += """ncclGroupEnd();"""
-                # code += """\ncudaStreamSynchronize(__dace_current_stream);"""
-                out_gh_data = out_gh_node.data
-                state.remove_edge_and_connectors(out_gh_edge)
-                state.remove_node(out_gh_node)
-                try:
-                    sdfg.remove_data(out_gh_data)
-                except ValueError as ex:
-                    warnings.warn(str(ex))
-            node.remove_out_connector(group_handle_conn)
-
-        tasklet = nodes.Tasklet(str(node),
+        tasklet = nodes.Tasklet(node.name,
                                 node.in_connectors,
                                 node.out_connectors,
                                 code,
                                 location=node.location,
                                 language=dtypes.Language.CPP,
-                                library_expansion_symbols=set([str(peer)]))
+                                library_expansion_symbols=set(
+                                    map(str, peer.free_symbols)))
 
         return tasklet
 

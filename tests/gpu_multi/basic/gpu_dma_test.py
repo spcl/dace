@@ -54,11 +54,13 @@ def test_gpu_dma():
 
     add_gpu_location(sdfg, map_, 0)
 
+    sdfg.arrays['gpu_X'].location = {'gpu': 1}
+
     # clone GPU scalar
     inodename = 'alpha'
     inode = sdfg.arrays['alpha']
     newdesc = inode.clone()
-    newdesc.location = {'gpu': 1}
+    newdesc.location = {'gpu': 0}
     newdesc.storage = StorageType.GPU_Global
     newdesc.transient = True
     name = sdfg.add_datadesc('gpu_' + inodename, newdesc, find_new_name=True)

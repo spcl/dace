@@ -2153,6 +2153,9 @@ class CPUCodeGen(TargetCodeGenerator):
             # NOTE: sink nodes are synchronized at the end of a state
             cpp.presynchronize_streams(sdfg, state_dfg, state_id, node,
                                        callsite_stream)
+            if node not in state_dfg.source_nodes():
+                cpp.postsynchronize_streams_node(sdfg, state_dfg, state_id,
+                                                 node, callsite_stream)
 
         sdict = state_dfg.scope_dict()
         for edge in state_dfg.in_edges(node):

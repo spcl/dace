@@ -68,7 +68,7 @@ class ExpandReduceNCCL(ExpandTransformation):
 
         code = f"""ncclReduce(_inbuffer, _outbuffer, {count_str}, {nccl_dtype_str}, {wcr_str}, {rootstr}, __state->ncclCommunicators->at(__dace_cuda_device),  __dace_current_stream)"""
         if Config.get('compiler', 'build_type') == 'Debug':
-            '''DACE_NCCL_CHECK(''' + code + ''');\n'''
+            code = '''DACE_NCCL_CHECK(''' + code + ''');\n'''
 
         else:
             code = code + ''';\n'''
@@ -79,46 +79,16 @@ class ExpandReduceNCCL(ExpandTransformation):
                 + code +
                 f'''printf("{str(node)}: end;  dev,peer: %d, %d\\n\\n", __dace_cuda_device, {rootstr});\n'''
             )
+        code += """\ncudaStreamSynchronize(__dace_current_stream);"""
 
-        group_handle_conn = '_group_handle'
-        if group_handle_conn in node.in_connectors:
-            for edge in state.in_edges(node):
-                if edge.dst_conn == group_handle_conn:
-                    in_gh_edge = edge
-                    in_gh_node = edge.src
-            if not state.predecessors(in_gh_node):
-                code = """ncclGroupStart();\n""" + code
-            else:
-                predecessor_node = state.in_edges(in_gh_node)[0].src
-                state.add_edge(predecessor_node, None, node, None, Memlet())
-                state.remove_edge_and_connectors(state.in_edges(in_gh_node)[0])
-            state.remove_edge_and_connectors(in_gh_edge)
-            node.remove_in_connector(group_handle_conn)
-            state.remove_node(in_gh_node)
-
-        if group_handle_conn in node.out_connectors:
-            for edge in state.out_edges(node):
-                if edge.src_conn == group_handle_conn:
-                    out_gh_edge = edge
-                    out_gh_node = edge.dst
-            if not state.successors(out_gh_node):
-                code += """ncclGroupEnd();"""
-                out_gh_data = out_gh_node.data
-                state.remove_edge_and_connectors(out_gh_edge)
-                state.remove_node(out_gh_node)
-                try:
-                    sdfg.remove_data(out_gh_data)
-                except ValueError as ex:
-                    warnings.warn(str(ex))
-            node.remove_out_connector(group_handle_conn)
-
-        tasklet = nodes.Tasklet(str(node),
+        tasklet = nodes.Tasklet(node.name + "_" + wcr_str,
                                 node.in_connectors,
                                 node.out_connectors,
                                 code,
                                 location=node.location,
                                 language=dtypes.Language.CPP,
-                                library_expansion_symbols=set([str(root)]))
+                                library_expansion_symbols=set(
+                                    map(str, root.free_symbols)))
 
         return tasklet
 
@@ -160,10 +130,10 @@ class Reduce(nodes.LibraryNode):
     def __str__(self):
         redtype = self.reduction_type
 
-        wcrstr = str(redtype)
-        wcrstr = wcrstr[wcrstr.find('.') + 1:]  # Skip "ReductionType."
+        wcr_str = str(redtype)
+        wcr_str = wcr_str[wcr_str.find('.') + 1:]  # Skip "ReductionType."
 
-        return f'nccl_Reduce({wcrstr})'
+        return f'nccl_Reduce({wcr_str})'
 
     @property
     def reduction_type(self):
@@ -198,8 +168,8 @@ def nccl_reduce(pv: 'ProgramVisitor',
                 sdfg: SDFG,
                 state: SDFGState,
                 redfunction: Callable[[Any, Any], Any],
-                in_array: str,
-                out_array: Union[str, None] = None,
+                in_buffer: str,
+                out_buffer: Union[str, None] = None,
                 root: str = None,
                 group_handle: str = None):
 
@@ -228,16 +198,16 @@ def nccl_reduce(pv: 'ProgramVisitor',
             state.add_edge(gh_in, None, libnode, "_group_handle", gh_memlet)
         state.add_edge(libnode, "_group_handle", gh_out, None, gh_memlet)
 
-    # If out_array is not specified, the operation will be in-place.
-    if out_array is None:
-        out_array = in_array
+    # If out_buffer is not specified, the operation will be in-place.
+    if out_buffer is None:
+        out_buffer = in_buffer
 
     # Add nodes
-    in_node = state.add_read(in_array)
-    out_node = state.add_write(out_array)
+    in_node = state.add_read(in_buffer)
+    out_node = state.add_write(out_buffer)
 
     # Connect nodes
-    state.add_edge(in_node, None, libnode, '_inbuffer', Memlet(in_array))
-    state.add_edge(libnode, '_outbuffer', out_node, None, Memlet(out_array))
+    state.add_edge(in_node, None, libnode, '_inbuffer', Memlet(in_buffer))
+    state.add_edge(libnode, '_outbuffer', out_node, None, Memlet(out_buffer))
 
     return []
