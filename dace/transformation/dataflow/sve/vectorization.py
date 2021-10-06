@@ -66,6 +66,10 @@ class SVEVectorization(transformation.Transformation):
                                                  include_entry=False,
                                                  include_exit=False)
 
+        # Prevent infinite repeats
+        if current_map.schedule == dace.dtypes.ScheduleType.SVE_Map:
+            return False
+
         # Infer all connector types for later checks (without modifying the graph)
         inferred = infer_types.infer_connector_types(sdfg, state, subgraph)
 
@@ -74,7 +78,7 @@ class SVEVectorization(transformation.Transformation):
         for node, _ in subgraph_contents.all_nodes_recursive():
             if not isinstance(node, (nodes.Tasklet, nodes.AccessNode)):
                 return False
-
+        
         ########################
         # Check for unsupported datatypes on the connectors (including on the Map itself)
         bit_widths = set()
@@ -115,7 +119,7 @@ class SVEVectorization(transformation.Transformation):
                     return False
 
                 # Param in memlet during WCR is not supported
-                if param_name in e.data.subset.free_symbols:
+                if param_name in e.data.subset.free_symbols and e.data.wcr_nonatomic:
                     return False
 
                 # vreduce is not supported
@@ -189,7 +193,7 @@ class SVEVectorization(transformation.Transformation):
         current_map.schedule = dace.dtypes.ScheduleType.SVE_Map
 
         # Infer all connector types and apply them
-        inferred = infer_types.infer_connector_types(sdfg)
+        inferred = infer_types.infer_connector_types(sdfg, state, subgraph)
         infer_types.apply_connector_types(inferred)
 
         # Infer vector connectors and AccessNodes and apply them

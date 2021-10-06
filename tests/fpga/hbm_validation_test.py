@@ -109,6 +109,9 @@ def test_unsound_location():
     sdfg.arrays["b"].location["memorytype"] = "ddr"
     sdfg.arrays["b"].location["bank"] = "1"
     sdfg.validate()
+    sdfg.arrays["b"].location["memorytype"] = "hbm"
+    sdfg.arrays["b"].location["bank"] = "4"
+    sdfg.validate()
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ from dace.sdfg import graph, state, find_input_arraynode, find_output_arraynode
 from dace.sdfg.scope import is_in_scope
 import itertools
 from dace.codegen.targets.sve import util as util
+from typing import List
 import copy
 from six import StringIO
 import dace.codegen.targets.sve.unparse
@@ -70,6 +71,11 @@ class SVECodeGen(TargetCodeGenerator):
 
         self.cpu_codegen: dace.codegen.targets.CPUCodeGen = self.dispatcher.get_generic_node_dispatcher(
         )
+
+    def get_generated_codeobjects(self):
+        res = super().get_generated_codeobjects()
+        print(res)
+        return res
 
     def generate_node(self, sdfg: SDFG, state: SDFGState, state_id: int,
                       node: nodes.Node, function_stream: CodeIOStream,
@@ -403,13 +409,18 @@ class SVECodeGen(TargetCodeGenerator):
                        callsite_stream: CodeIOStream):
         entry_node = scope.source_nodes()[0]
         current_map = entry_node.map
+        self.current_map = current_map
 
         if len(current_map.params) > 1:
             raise util.NotSupportedError('SVE map must be one dimensional')
 
-        loop_type = list(
+        loop_types = list(
             set([util.get_base_type(sdfg.arrays[a].dtype)
-                 for a in sdfg.arrays]))[0]
+                 for a in sdfg.arrays]))
+
+        # Edge case if no arrays are used
+        loop_type = loop_types[0] if len(loop_types) > 0 else dace.int64
+
         ltype_size = loop_type.bytes
 
         long_type = copy.copy(dace.int64)
@@ -449,7 +460,11 @@ class SVECodeGen(TargetCodeGenerator):
         callsite_stream.write(
             f'svbool_t __pg_{param} = svwhilele_b{ltype_size * 8}({param}, ({self.counter_type}) {end});'
         )
-        callsite_stream.write('do {')
+        
+        # Test for the predicate
+        callsite_stream.write(
+            f'while(svptest_any(svptrue_b{ltype_size * 8}(), __pg_{param})) {{'
+        )
 
         # Allocate scope related memory
         for node, _ in scope.all_nodes_recursive():
@@ -470,19 +485,18 @@ class SVECodeGen(TargetCodeGenerator):
                                           skip_exit_node=True)
 
         # Increase the counting variable (according to the number of processed elements)
-        callsite_stream.write(
-            f'{param} += svcntp_b{ltype_size * 8}(__pg_{param}, __pg_{param}) * {stride};'
-        )
+        #callsite_stream.write(
+        #    f'{param} += svcntp_b{ltype_size * 8}(__pg_{param}, __pg_{param}) * {stride};'
+        #)
+        size_letter = {1: 'b', 2: 'h', 4: 'w', 8: 'd'}[ltype_size]
+        callsite_stream.write(f'{param} += svcnt{size_letter}() * {stride};')
 
         # Then recompute the loop predicate
         callsite_stream.write(
             f'__pg_{param} = svwhilele_b{ltype_size * 8}({param}, ({self.counter_type}) {end});'
         )
 
-        # And test for it
-        callsite_stream.write(
-            f'}} while(svptest_any(svptrue_b{ltype_size * 8}(), __pg_{param}));'
-        )
+        callsite_stream.write('}')
 
         self.dispatcher.defined_vars.exit_scope(scope)
         callsite_stream.write('}')
@@ -518,8 +532,8 @@ class SVECodeGen(TargetCodeGenerator):
         for stmt in body:
             stmt = copy.deepcopy(stmt)
             result = StringIO()
-            dace.codegen.targets.sve.unparse.SVEUnparser(
-                sdfg, self.cpu_codegen, stmt, result, body, memlets,
+            dace.codegen.targets.sve.unparse.SVEUnparser(sdfg,
+                dfg, self.current_map, self.cpu_codegen, stmt, result, body, memlets,
                 util.get_loop_predicate(sdfg, dfg, node), self.counter_type,
                 defined_symbols, self.stream_associations,
                 self.wcr_associations)

@@ -20,11 +20,14 @@ import collections
 import numpy as np
 from dace import data as data
 from dace.frontend.operations import detect_reduction_type
+from dace.codegen.targets.cpp import is_write_conflicted, cpp_ptr_expr, DefinedType, sym2cpp
 
 
 class SVEUnparser(cppunparse.CPPUnparser):
     def __init__(self,
                  sdfg: SDFG,
+                 dfg,
+                 map,
                  cpu_codegen,
                  tree: ast.AST,
                  file: IO[str],
@@ -37,6 +40,9 @@ class SVEUnparser(cppunparse.CPPUnparser):
                  wcr_associations=dict()):
 
         self.sdfg = sdfg
+        self.dfg = dfg
+        self.map = map
+
         self.cpu_codegen = cpu_codegen
 
         self.dtypes = {k: v[3] for k, v in memlets.items() if k is not None}
@@ -149,6 +155,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
                 else:
                     raise util.NotSupportedError('Inconsistent pointer types')
             else:
+                print(self.get_defined_symbols())
                 # Expecting anything else
                 raise util.NotSupportedError(
                     'Given a pointer, expected a scalar or vector')
@@ -318,25 +325,62 @@ class SVEUnparser(cppunparse.CPPUnparser):
         if reduction_type not in util.REDUCTION_TYPE_TO_SVE:
             raise util.NotSupportedError('Unsupported reduction in SVE')
 
-        # WCR on vectors works in two steps:
-        # 1. Reduce the SVE register using SVE instructions into a scalar
-        # 2. WCR the scalar to memory using DaCe functionality
+        nc = not is_write_conflicted(self.dfg, edge)
+        if not nc or not isinstance(edge.src.out_connectors[edge.src_conn],
+                                    (dtypes.pointer, dtypes.vector)):
+            # WCR on vectors works in two steps:
+            # 1. Reduce the SVE register using SVE instructions into a scalar
+            # 2. WCR the scalar to memory using DaCe functionality
+            wcr = self.cpu_codegen.write_and_resolve_expr(self.sdfg,
+                                                          edge.data,
+                                                          nc,
+                                                          None,
+                                                          '@',
+                                                          dtype=dtype)
+            self.fill(wcr[:wcr.find('@')])
+            self.write(util.REDUCTION_TYPE_TO_SVE[reduction_type])
+            self.write('(')
+            self.write(self.pred_name)
+            self.write(', ')
+            self.dispatch_expect(rhs, dtypes.vector(dtype, -1))
+            self.write(')')
+            self.write(wcr[wcr.find('@') + 1:])
+            self.write(';')
+        else:
+            ######################
+            # Horizontal non-atomic reduction
 
-        wcr = self.cpu_codegen.write_and_resolve_expr(self.sdfg,
-                                                      edge.data,
-                                                      edge.data.wcr_nonatomic,
-                                                      None,
-                                                      '@',
-                                                      dtype=dtype)
-        self.fill(wcr[:wcr.find('@')])
-        self.write(util.REDUCTION_TYPE_TO_SVE[reduction_type])
-        self.write('(')
-        self.write(self.pred_name)
-        self.write(', ')
-        self.dispatch_expect(rhs, dtypes.vector(dtype, -1))
-        self.write(')')
-        self.write(wcr[wcr.find('@') + 1:])
-        self.write(';')
+            stride = edge.data.get_stride(self.sdfg, self.map)
+
+            # long long fix
+            ptr_cast = ''
+            src_type = edge.src.out_connectors[edge.src_conn]
+
+            if src_type.type == np.int64:
+                ptr_cast = '(int64_t*) '
+            elif src_type.type == np.uint64:
+                ptr_cast = '(uint64_t*) '
+
+            store_args = '{}, {}'.format(
+                self.pred_name,
+                ptr_cast +
+                cpp_ptr_expr(self.sdfg, edge.data, DefinedType.Pointer),
+            )
+
+            red_type = util.REDUCTION_TYPE_TO_SVE[reduction_type][:-1] + '_x'
+            if stride == 1:
+                self.write(
+                    f'svst1({store_args}, {red_type}({self.pred_name}, svld1({store_args}), '
+                )
+                self.dispatch_expect(rhs, dtypes.vector(dtype, -1))
+                self.write('));')
+            else:
+                store_args = f'{store_args}, svindex_s{util.get_base_type(src_type).bytes * 8}(0, {sym2cpp(stride)})'
+                self.write(
+                    f'svst1_scatter_index({store_args}, {red_type}({self.pred_name}, svld1_gather_index({store_args}), '
+                )
+                self.dispatch_expect(rhs, dtypes.vector(dtype, -1))
+                self.write('));')
 
     def resolve_conflict(self, t, target):
         dst_node, edge, base_type = self.wcr_associations[target.id]

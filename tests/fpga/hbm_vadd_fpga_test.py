@@ -4,6 +4,7 @@ from dace import subsets
 from dace.fpga_testing import xilinx_test
 import dace
 import numpy as np
+from dace.transformation.interstate import InlineSDFG
 
 # A test executing vector addition with multidimensional arrays using HBM.
 
@@ -98,6 +99,7 @@ def create_vadd_multibank_sdfg(bank_count_per_array=2,
                               src_conn="__out")
 
     sdfg.apply_fpga_transformations()
+    sdfg.apply_transformations(InlineSDFG)
     return sdfg
 
 
@@ -128,6 +130,11 @@ def exec_test(dim, size1D, banks, test_name, unroll_map_inside=False):
 
 
 @xilinx_test()
+def test_vadd_1b1d():
+    return exec_test(1, 50, 1, "vadd_1b1d")
+
+
+@xilinx_test()
 def test_vadd_2b1d():
     return exec_test(1, 50, 2, "vadd_2b1d")
 
@@ -148,6 +155,7 @@ def test_vadd_8b1d():
 
 
 if __name__ == '__main__':
+    test_vadd_1b1d(None)
     test_vadd_2b1d(None)
     test_vadd_2b2d(None)
     test_vadd_2b3d(None)

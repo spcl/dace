@@ -65,16 +65,20 @@ def test_kernels_inside_component_0():
 
     sdfg = kernels_inside_component_0.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
     for state in sdfg.states():
         if is_fpga_kernel(sdfg, state):
             state.instrument = dace.InstrumentationType.FPGA
-    program = sdfg.compile()
 
+    res = sdfg(x=x, y=y, v=v, w=w, z=z)
     assert count_kernels(sdfg) == 3
-    res = program(x=x, y=y, v=v, w=w, z=z)
     assert np.allclose(res, x + y + v + w + z)
+
     report = sdfg.get_latest_report()
-    assert len(re.findall(r"_Add__[0-9]+(:|__Add__[0-9]+:)", str(report))) == 3
+    assert len(re.findall(r"[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+",
+                          str(report))) == 5
+    assert len(re.findall(r"Full FPGA .+ runtime",
+                          str(report))) == 2
 
     return sdfg
 
@@ -181,7 +185,7 @@ def test_kernels_inside_component_2():
     return sdfg
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test()
 def test_kernels_lns_inside_component():
     '''
     Tests for kernels detection inside a single connected component where we
