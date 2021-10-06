@@ -1113,9 +1113,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 raise cgx.CodegenError(
                     "Buffer length of stream cannot have dynamic size on FPGA")
 
-            if buffer_size < 1:
-                raise cgx.CodegenError("Streams cannot be unbounded on FPGA")
-
             # Language-specific implementation
             ctype, is_global = self.define_stream(nodedesc.dtype, buffer_size,
                                                   dataname, arrsize,
@@ -1123,8 +1120,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                                   sdfg)
 
             # defined type: decide whether this is a stream array or a single stream
-            def_type = DefinedType.StreamArray if cpp.sym2cpp(
-                arrsize) != "1" else DefinedType.Stream
+            def_type = (DefinedType.StreamArray
+                        if arrsize != 1 else DefinedType.Stream)
             if is_global:
                 self._dispatcher.defined_vars.add_global(
                     dataname, def_type, ctype)
@@ -1303,7 +1300,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # no local buffers, the destination is not a sink) then it should be on a separate kernel.
 
                 if len(list(state.predecessors(e.dst))) > 1 and not isinstance(
-                        e.dst, nodes.ExitNode) and e.dst not in sink_nodes and scopes[e.dst] == None:
+                        e.dst, nodes.ExitNode
+                ) and e.dst not in sink_nodes and scopes[e.dst] == None:
                     # Loop over all predecessors (except this edge)
                     crossroad_node = False
                     for pred_edge in state.in_edges(e.dst):
