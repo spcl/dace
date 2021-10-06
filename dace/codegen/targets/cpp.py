@@ -59,11 +59,15 @@ def copy_expr(
     is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
                                        dtypes.AllocationLifetime.Persistent)
     defined_types = None
+    # Non-free symbol dependent Arrays due to their shape
+    dependent_shape = (isinstance(
+        data_desc, data.Array) and not isinstance(data_desc, data.View) and any(
+            str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+            for s in data_desc.free_symbols))
     try:
-        if (isinstance(data_desc, data.Array)
-                and not isinstance(data_desc, data.View) and any(
-                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in data_desc.free_symbols)):
+        # NOTE: It is hard to get access to the view-edge here, so always check
+        # the declared-arrays dictionary for Views.
+        if dependent_shape or isinstance(data_desc, data.View):
             defined_types = dispatcher.declared_arrays.get(data_name,
                                                            is_global=is_global)
     except KeyError:
@@ -293,8 +297,8 @@ def emit_memlet_reference(dispatcher,
 
     if fpga.is_fpga_array(desc):
         datadef = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset,
-                                 is_write, dispatcher, ancestor,
-                                 defined_type == DefinedType.ArrayInterface)
+                                is_write, dispatcher, ancestor,
+                                defined_type == DefinedType.ArrayInterface)
     else:
         datadef = ptr(memlet.data, desc, sdfg)
 
@@ -611,7 +615,7 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     if fpga.is_fpga_array(desc):
         dname = fpga.fpga_ptr(memlet.data, desc, sdfg, s, is_write, None, None,
-                               defined_type == DefinedType.ArrayInterface)
+                              defined_type == DefinedType.ArrayInterface)
     else:
         dname = ptr(memlet.data, desc, sdfg)
 
@@ -1016,6 +1020,15 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
                          file,
                          expr_semicolon=False,
                          defined_symbols=defined_symbols)
+
+    def _Name(self, t: ast.Name):
+        if t.id not in self.sdfg.arrays:
+            return super()._Name(t)
+
+        # Replace values with their code-generated names (for example,
+        # persistent arrays)
+        desc = self.sdfg.arrays[t.id]
+        self.write(ptr(t.id, desc, self.sdfg))
 
     def _Subscript(self, t: ast.Subscript):
         from dace.frontend.python.astutils import subscript_to_slice

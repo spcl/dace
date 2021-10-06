@@ -362,11 +362,21 @@ class Memlet(object):
             # Cannot initialize yet
             return
 
-        is_data_src = True
+        is_data_src = False
+        is_data_dst = False
+        if isinstance(path[0].src, AccessNode):
+            if path[0].src.data == self._data:
+                is_data_src = True
         if isinstance(path[-1].dst, AccessNode):
             if path[-1].dst.data == self._data:
-                is_data_src = False
-        self._is_data_src = is_data_src
+                is_data_dst = True
+        if is_data_src and is_data_dst:
+            # In case both point to the same array,
+            # prefer existing setting or is_data_src=True
+            if self._is_data_src is None:
+                self._is_data_src = True
+        else:
+            self._is_data_src = is_data_src
 
         # If subset is None, fill in with entire array
         if (self.data is not None and self.subset is None):
@@ -571,7 +581,10 @@ class Memlet(object):
             result += ' (CR: %s)' % wcrstr
 
         if self.other_subset is not None:
-            result += ' -> [%s]' % str(self.other_subset)
+            if self._is_data_src is False:
+                result += ' <- [%s]' % str(self.other_subset)
+            else:
+                result += ' -> [%s]' % str(self.other_subset)
         return result
 
     def __repr__(self):

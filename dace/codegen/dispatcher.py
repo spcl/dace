@@ -119,6 +119,36 @@ class DefinedMemlets:
                             type(name).__name__)
 
         self._scopes[0][1][name] = (dtype, ctype)
+    
+    def remove(self,
+               name: str,
+               ancestor: int = 0,
+               is_global: bool = False) -> Tuple[DefinedType, str]:
+        last_visited_scope = None
+        for parent, scope, can_access_parent in reversed(self._scopes):
+            last_parent = parent
+            last_visited_scope = scope
+            if ancestor > 0:
+                ancestor -= 1
+                continue
+            if name in scope:
+                del scope[name]
+                return
+            if not can_access_parent:
+                break
+
+        if is_global:
+            last_parent = None
+        if last_parent:
+            if isinstance(last_parent, SDFGState):
+                last_parent = last_parent.parent
+        for parent, scope, _ in self._scopes:
+            if not last_parent or parent == last_parent:
+                if name in scope:
+                    del scope[name]
+                    return
+
+        raise KeyError("Variable {} has not been defined".format(name))
 
 
 #############################################################################

@@ -3,7 +3,7 @@
 #define __DACE_HALFVEC_H
 
 // Only enable for supporting GPUs
-#if __CUDA_ARCH__ >= 600 || !defined(__CUDA_ARCH__)
+#if __CUDA_ARCH__ >= 530 || !defined(__CUDA_ARCH__)
 
 // Support for half-precision vector types in CUDA/HIP
 #ifdef __CUDACC__
@@ -45,13 +45,13 @@ struct __align__(8) half4 {
     
     DACE_HDFI half4() {}
     DACE_HDFI half4(const half4& other) {
-        #pragma unroll
+        __DACE_UNROLL
         for (int i = 0; i < ELEMS; ++i)
             h[i] = other.h[i];
     }
 
     DACE_HDFI half4& operator=(const half4& other) {
-        #pragma unroll
+        __DACE_UNROLL
         for (int i = 0; i < ELEMS; ++i)
             h[i] = other.h[i];
         return *this;
@@ -78,7 +78,7 @@ struct __align__(8) half4 {
             res.h2<0>() = in;
             res.h2<1>() = in;
         #else
-            #pragma unroll
+            __DACE_UNROLL
             for (int i = 0; i < ELEMS; i++) {
                 res.h[i] = value;
             }
@@ -93,7 +93,7 @@ struct __align__(8) half4 {
         if (stride == 1) {
             res = *(half4*)ptr;
         } else {
-            #pragma unroll
+            __DACE_UNROLL
             for (int i = 0; i < ELEMS; i++) {
                 res.h[i] = ptr[i * stride];
             }
@@ -107,7 +107,7 @@ struct __align__(8) half4 {
         if (stride == 1) {
             *(half4*)ptr = *this;
         } else {
-            #pragma unroll
+            __DACE_UNROLL
             for (int i = 0; i < ELEMS; i++) {
                 ptr[i * stride] = h[i];
             }
@@ -116,7 +116,7 @@ struct __align__(8) half4 {
     
     DACE_DFI
     void sum(float& res) {
-        #pragma unroll
+        __DACE_UNROLL
         for (int k = 0; k < ELEMS; k++) {
             res += __half2float(h[k]);
         }
@@ -234,7 +234,7 @@ struct __align__(16) half8 {
             res.h2<2>() = in;
             res.h2<3>() = in;
         #else
-            #pragma unroll
+            __DACE_UNROLL
             for (int i = 0; i < ELEMS; i++) {
                 res.h[i] = value;
             }
@@ -249,7 +249,7 @@ struct __align__(16) half8 {
         if (stride == 1) {
             res = *(half8*)ptr;
         } else {
-            #pragma unroll
+            __DACE_UNROLL
             for (int i = 0; i < ELEMS; i++) {
                 res.h[i] = ptr[i * stride];
             }
@@ -263,7 +263,7 @@ struct __align__(16) half8 {
         if (stride == 1) {
             *(half8*)ptr = *this;
         } else {
-            #pragma unroll
+            __DACE_UNROLL
             for (int i = 0; i < ELEMS; i++) {
                 ptr[i * stride] = h[i];
             }
@@ -272,7 +272,7 @@ struct __align__(16) half8 {
     
     DACE_DFI
     void sum(float& res) {
-        #pragma unroll
+        __DACE_UNROLL
         for (int k = 0; k < ELEMS; k++) {
             res += __half2float(h[k]);
         }
@@ -576,6 +576,32 @@ DACE_DFI half8 max(half8 a, half8 b) {
                  max(a.h2<1>(), b.h2<1>()),
                  max(a.h2<2>(), b.h2<2>()),
                  max(a.h2<3>(), b.h2<3>()));
+}
+
+// Scalar operations that involve half arguments
+DACE_DFI float operator-(float a, half b) { return a - ((float)b); }
+DACE_DFI float operator-(half a, float b) { return ((float)a) - b; }
+
+DACE_DFI float operator*(float a, half b) { return a * ((float)b); }
+DACE_DFI float operator*(half a, float b) { return ((float)a) * b; }
+
+DACE_DFI float operator+(float a, half b) { return a + ((float)b); }
+DACE_DFI float operator+(half a, float b) { return ((float)a) + b; }
+
+DACE_HDFI float operator>(int a, half b) {
+    #ifdef __CUDA_ARCH__
+        return ((half)a) > b;
+    #else
+        return ((float)a) > ((float)b);
+    #endif
+}
+
+DACE_HDFI float operator>(half a, int b) {
+    #ifdef __CUDA_ARCH__
+        return a > ((half)b);
+    #else
+        return ((float)a) > ((float)b);
+    #endif
 }
 
 #else  // __CUDA_ARCH__

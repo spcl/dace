@@ -160,8 +160,10 @@ class DoubleBuffering(transformation.Transformation):
 
         # All instances of the map parameter in this state become the loop start
         sd.replace(initial_state, map_param, map_rstart)
-        # Initial writes go to the first buffer
-        sd.replace(initial_state, '__dace_db_param', 0)
+        # Initial writes go to the appropriate buffer
+        init_expr = symbolic.pystr_to_symbolic('(%s / %s) %% 2' %
+                                              (map_rstart, map_rstride))
+        sd.replace(initial_state, '__dace_db_param', init_expr)
 
         ##############################
         # Modify main state's memlets

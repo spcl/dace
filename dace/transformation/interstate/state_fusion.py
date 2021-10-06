@@ -191,6 +191,25 @@ class StateFusion(transformation.Transformation):
                     return False
 
         if strict:
+
+            # NOTE: This is quick fix for MPI Waitall (probably also needed for
+            # Wait), until we have a better SDFG representation of the buffer
+            # dependencies.
+            try:
+                from dace.libraries.mpi import Waitall
+                next(node for node in first_state.nodes()
+                     if isinstance(node, Waitall) or node.label == '_Waitall_')
+                return False
+            except StopIteration:
+                pass
+            try:
+                from dace.libraries.mpi import Waitall
+                next(node for node in second_state.nodes()
+                     if isinstance(node, Waitall) or node.label == '_Waitall_')
+                return False
+            except StopIteration:
+                pass
+
             # If second state has other input edges, there might be issues
             # Exceptions are when none of the states contain dataflow, unless
             # the first state is an initial state (in which case the new initial
@@ -277,26 +296,24 @@ class StateFusion(transformation.Transformation):
                 write_write_candidates = (
                     (fused_cc.first_outputs & fused_cc.second_outputs) -
                     fused_cc.second_inputs)
-                if len(write_write_candidates) > 0:
-                    # If we have potential candidates, check if there is a
-                    # path from the first write to the second write (in that
-                    # case, there is no hazard):
-                    # Find the leaf (topological) instances of the matches
-                    order = [
-                        x for x in reversed(
-                            list(nx.topological_sort(first_state._nx)))
-                        if isinstance(x, nodes.AccessNode)
-                        and x.data in fused_cc.first_outputs
-                    ]
-                    # Those nodes will be the connection points upon fusion
-                    match_nodes = {
-                        next(n for n in order if n.data == match)
-                        for match in (fused_cc.first_outputs
-                                      & fused_cc.second_inputs)
-                    }
-                else:
-                    match_nodes = set()
+                
+                # Find the leaf (topological) instances of the matches
+                order = [
+                    x for x in reversed(
+                        list(nx.topological_sort(first_state._nx)))
+                    if isinstance(x, nodes.AccessNode)
+                    and x.data in fused_cc.first_outputs
+                ]
+                # Those nodes will be the connection points upon fusion
+                match_nodes = {
+                    next(n for n in order if n.data == match)
+                    for match in (fused_cc.first_outputs
+                                    & fused_cc.second_inputs)
+                }
 
+                # If we have potential candidates, check if there is a
+                # path from the first write to the second write (in that
+                # case, there is no hazard):
                 for cand in write_write_candidates:
                     nodes_first = [n for n in first_output if n.data == cand]
                     nodes_second = [n for n in second_output if n.data == cand]
@@ -344,6 +361,8 @@ class StateFusion(transformation.Transformation):
                                     nodes_first = [
                                         n for n in first_input if n.data == d
                                     ]
+                                else:
+                                    nodes_first = []
                                 for n2 in nodes_second:
                                     for e in second_state.in_edges(n2):
                                         path = second_state.memlet_path(e)
@@ -386,6 +405,21 @@ class StateFusion(transformation.Transformation):
                                         second_state, nodes_second, False):
                                     return False
                     # End of data race check
+
+                # Read-after-write dependencies: if there is an output of the
+                # second state that is an input of the first, ensure all paths
+                # from the input of the first state lead to the output.
+                # Otherwise, there may be a RAW due to topological sort or
+                # concurrency.
+                second_inout = ((fused_cc.first_inputs | fused_cc.first_outputs)
+                                & fused_cc.second_outputs)
+                for inout in second_inout:
+                    nodes_first = [
+                        n for n in match_nodes
+                        if n.data == inout
+                    ]
+                    if any(first_state.out_degree(n) > 0 for n in nodes_first):
+                        return False
 
                 # Read-after-write dependencies: if there is more than one first
                 # output with the same data, make sure it can be unambiguously

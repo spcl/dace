@@ -464,16 +464,22 @@ class StateGraphView(object):
         # Start with SDFG global symbols
         defined_syms = {k: v for k, v in sdfg.symbols.items()}
 
+        def update_if_not_none(dic, update):
+            update = {k: v for k, v in update.items() if v is not None}
+            dic.update(update)
+
         # Add data-descriptor free symbols
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
-                defined_syms[str(sym)] = sym.dtype
+                if sym.dtype is not None:
+                    defined_syms[str(sym)] = sym.dtype
 
         # Add inter-state symbols
         # NOTE: A DFS such as in validate_sdfg can be invoked here, but may
         #       be time consuming.
         for edge in sdfg.edges():
-            defined_syms.update(edge.data.new_symbols(defined_syms))
+            update_if_not_none(defined_syms,
+                               edge.data.new_symbols(sdfg, defined_syms))
 
         # Add scope symbols all the way to the subgraph
         sdict = state.scope_dict()
@@ -485,7 +491,8 @@ class StateGraphView(object):
                 scope_nodes.append(curnode)
 
         for snode in dtypes.deduplicate(list(reversed(scope_nodes))):
-            defined_syms.update(snode.new_symbols(sdfg, state, defined_syms))
+            update_if_not_none(defined_syms,
+                               snode.new_symbols(sdfg, state, defined_syms))
 
         return defined_syms
 
@@ -995,12 +1002,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             start_state = sdfg.start_state
             for path in sdfg.all_simple_paths(start_state, self, as_edges=True):
                 for e in path:
-                    symbols.update(e.data.new_symbols(symbols))
+                    symbols.update(e.data.new_symbols(sdfg, symbols))
         except ValueError:
             # Cannot determine starting state (possibly some inter-state edges
             # do not yet exist)
             for e in sdfg.edges():
-                symbols.update(e.data.new_symbols(symbols))
+                symbols.update(e.data.new_symbols(sdfg, symbols))
 
         # Find scopes this node is situated in
         sdict = self.scope_dict()
@@ -1330,12 +1337,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                 [memlet.data for memlet in inputs.values()])
             output_data = dtypes.deduplicate(
                 [memlet.data for memlet in outputs.values()])
-            for inp in input_data:
+            for inp in sorted(input_data):
                 if inp in input_nodes:
                     inpdict[inp] = input_nodes[inp]
                 else:
                     inpdict[inp] = self.add_read(inp)
-            for out in output_data:
+            for out in sorted(output_data):
                 if out in output_nodes:
                     outdict[out] = output_nodes[out]
                 else:
@@ -1345,7 +1352,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
 
         # Connect inputs from map to tasklet
         tomemlet = {}
-        for name, memlet in inputs.items():
+        for name, memlet in sorted(inputs.items()):
             # Set memlet local name
             memlet.name = name
             # Add internal memlet edge
@@ -1357,7 +1364,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             self.add_edge(map_entry, None, tasklet, None, mm.Memlet())
 
         if external_edges:
-            for inp, inpnode in inpdict.items():
+            for inp, inpnode in sorted(inpdict.items()):
                 # Add external edge
                 if propagate:
                     outer_memlet = propagate_memlet(self, tomemlet[inp],
@@ -1379,7 +1386,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
 
         # Connect outputs from tasklet to map
         tomemlet = {}
-        for name, memlet in outputs.items():
+        for name, memlet in sorted(outputs.items()):
             # Set memlet local name
             memlet.name = name
             # Add internal memlet edge
@@ -1391,7 +1398,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             self.add_edge(tasklet, None, map_exit, None, mm.Memlet())
 
         if external_edges:
-            for out, outnode in outdict.items():
+            for out, outnode in sorted(outdict.items()):
                 # Add external edge
                 if propagate:
                     outer_memlet = propagate_memlet(self, tomemlet[out],

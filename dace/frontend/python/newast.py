@@ -17,10 +17,11 @@ from dace import sourcemap
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
-from dace.frontend.python.common import DaceSyntaxError, inverse_dict_lookup
+from dace.frontend.python.common import (DaceSyntaxError, SDFGClosure,
+                                         SDFGConvertible, inverse_dict_lookup)
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
-from dace.frontend.python import nested_call, replacements
+from dace.frontend.python import nested_call, replacements, preprocessing
 from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet,
                                                 pyexpr_to_symbolic, ParseMemlet,
                                                 inner_eval_ast, MemletExpr)
@@ -98,6 +99,12 @@ def _method(sdfg: SDFG, sample_data: data.Scalar, dtype: dtypes.typeclass):
 
 @specifies_datatype(datatype=data.Array)
 def _method(sdfg: SDFG, sample_data: data.Array, dtype):
+    name, new_data = sdfg.add_temp_transient_like(sample_data, dtype=dtype)
+    return name, new_data
+
+
+@specifies_datatype(datatype=data.View)
+def _method(sdfg: SDFG, sample_data: data.View, dtype):
     name, new_data = sdfg.add_temp_transient(sample_data.shape, dtype)
     return name, new_data
 
@@ -127,259 +134,75 @@ def _add_transient_data(sdfg: SDFG,
         return func(sdfg, sample_data, dtype)
 
 
-def parse_dace_program(f,
-                       name,
-                       argtypes,
-                       global_vars,
-                       modules,
-                       constants,
-                       strict=None,
-                       resolve_functions=False):
-    """ Parses a `@dace.program` function into a _ProgramNode object.
-        :param f: A Python function to parse.
-        :param argtypes: An dictionary of (name, type) for the given
-                         function's arguments, which may pertain to data
-                         nodes or symbols (scalars).
-        :param global_vars: A dictionary of global variables in the closure
-                            of `f`.
-        :param modules: A dictionary from an imported module name to the
-                        module itself.
-        :param constants: A dictionary from a name to a constant value.
-        :param strict: Whether to apply strict transformations after parsing nested dace programs.
-        :param resolve_functions: If True, treats all global functions defined
-                                  outside of the program as returning constant
-                                  values.
+def parse_dace_program(name: str,
+                       preprocessed_ast: ast.AST,
+                       argtypes: Dict[str, data.Data],
+                       constants: Dict[str, Any],
+                       closure: SDFGClosure,
+                       strict: Optional[bool] = None,
+                       save=True) -> SDFG:
+    """ Parses a `@dace.program` function into an SDFG.
+        :param src_ast: The AST of the Python program to parse.
+        :param visitor: A ProgramVisitor object returned from 
+                        ``preprocess_dace_program``.
+        :param closure: An object that contains the @dace.program closure.
+        :param strict: If True, strict transformations will be performed.
+        :param save: If True, saves source mapping data for this SDFG.
         :return: A 2-tuple of SDFG and its reduced (used) closure.
-        @rtype: SDFG
     """
-    src_ast, src_file, src_line, src = astutils.function_to_ast(f)
+    visitor = ProgramVisitor(name=name,
+                             filename=preprocessed_ast.filename,
+                             line_offset=preprocessed_ast.src_line,
+                             col_offset=0,
+                             global_vars=preprocessed_ast.program_globals,
+                             constants=constants,
+                             scope_arrays=argtypes,
+                             scope_vars={},
+                             other_sdfgs=closure.closure_sdfgs,
+                             strict=strict)
 
-    # Resolve data structures
-    src_ast = StructTransformer(global_vars).visit(src_ast)
-
-    src_ast = ModuleResolver(modules).visit(src_ast)
-    # Convert modules after resolution
-    for mod, modval in modules.items():
-        if mod == 'builtins':
-            continue
-        newmod = global_vars[mod]
-        #del global_vars[mod]
-        global_vars[modval] = newmod
-
-    # Resolve constants to their values (if they are not already defined in this scope)
-    # and symbols to their names
-    resolved = {
-        k: v
-        for k, v in global_vars.items() if k not in argtypes and k != '_'
-    }
-    closure_resolver = GlobalResolver(resolved, resolve_functions)
-    src_ast = closure_resolver.visit(src_ast)
-    src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
-    src_ast = DeadCodeEliminator().visit(src_ast)
-
-    # Filter remaining global variables according to type and scoping rules
-    program_globals = {
-        k: v
-        for k, v in global_vars.items() if k not in argtypes
-    }
-
-    # Fill in data descriptors from closure arrays
-    argtypes.update(
-        {arrname: v
-         for arrname, v in closure_resolver.closure_arrays.values()})
-
-    pv = ProgramVisitor(name=name,
-                        filename=src_file,
-                        line_offset=src_line,
-                        col_offset=0,
-                        global_vars=program_globals,
-                        constants=constants,
-                        scope_arrays=argtypes,
-                        scope_vars={},
-                        other_sdfgs=closure_resolver.closure_sdfgs,
-                        strict=strict)
-
-    sdfg, _, _, _ = pv.parse_program(src_ast.body[0])
-    sdfg.set_sourcecode(src, 'python')
+    sdfg, _, _, _ = visitor.parse_program(
+        preprocessed_ast.preprocessed_ast.body[0])
+    sdfg.set_sourcecode(preprocessed_ast.src, 'python')
 
     # Combine nested closures with the current one
-    for name, (arr, desc) in pv.nested_closure_arrays.items():
+    nested_closure_replacements: Dict[str, str] = {}
+    for name, (arr, _) in visitor.nested_closure_arrays.items():
         # Check if the same array is already passed as part of a nested closure
-        if id(arr) in closure_resolver.array_mapping:
-            existing_name = closure_resolver.array_mapping[id(arr)]
+        if id(arr) in closure.array_mapping:
+            existing_name = closure.array_mapping[id(arr)]
+            if name != existing_name:
+                nested_closure_replacements[name] = existing_name
+
+    # Make safe replacements
+    def repl_callback(repldict):
+        for state in sdfg.nodes():
+            for name, new_name in repldict.items():
+                state.replace(name, new_name)
+        for name, new_name in repldict.items():
+            sdfg.arrays[new_name] = sdfg.arrays[name]
             del sdfg.arrays[name]
-            for state in sdfg.nodes():
-                state.replace(name, existing_name)
-        else:
-            # Only supported in JIT mode
-            closure_resolver.closure_arrays[name] = (arr, desc)
+
+    symbolic.safe_replace(nested_closure_replacements,
+                          repl_callback,
+                          value_as_string=True)
 
     # We save information in a tmp file for improved source mapping.
-    other_functions = [
-        func for func in closure_resolver.closure_sdfgs if not func == name
-    ]
-    data = {
-        "start_line": src_line + 1,
-        "end_line": src_line + len(src.split("\n")) - 1,
-        "src_file": path.abspath(src_file),
-        "other_sdfgs": other_functions,
-    }
-    sourcemap.temporaryInfo(name, data)
-
-    return sdfg, closure_resolver
-
-
-class StructTransformer(ast.NodeTransformer):
-    """ A Python AST transformer that replaces `Call`s to create structs with
-        the custom StructInitializer AST node. """
-    def __init__(self, gvars):
-        super().__init__()
-        self._structs = {
-            k: v
-            for k, v in gvars.items() if isinstance(v, dtypes.struct)
+    if save:
+        other_functions = [
+            func for func in closure.closure_sdfgs
+            if not func == visitor.orig_name
+        ]
+        data = {
+            "start_line": visitor.src_line + 1,
+            "end_line":
+            visitor.src_line + len(preprocessed_ast.src.split("\n")) - 1,
+            "src_file": path.abspath(preprocessed_ast.filename),
+            "other_sdfgs": other_functions,
         }
+        sourcemap.temporaryInfo(visitor.orig_name, data)
 
-    def visit_Call(self, node: ast.Call):
-        # Struct initializer
-        name = rname(node.func)
-        if name not in self._structs:
-            return self.generic_visit(node)
-
-        # Parse name and fields
-        struct = self._structs[name]
-        name = struct.name
-        fields = {rname(arg.arg): arg.value for arg in node.keywords}
-        if tuple(sorted(fields.keys())) != tuple(sorted(struct.fields.keys())):
-            raise SyntaxError('Mismatch in fields in struct definition')
-
-        # Create custom node
-        #new_node = astutils.StructInitializer(name, fields)
-        #return ast.copy_location(new_node, node)
-
-        node.func = ast.copy_location(
-            ast.Name(id='__DACESTRUCT_' + name, ctx=ast.Load()), node.func)
-
-        return node
-
-
-# Replaces instances of modules Y imported with "import X as Y" by X
-class ModuleResolver(ast.NodeTransformer):
-    def __init__(self, modules: Dict[str, str], always_replace=False):
-        self.modules = modules
-        self.should_replace = False
-        self.always_replace = always_replace
-
-    def visit_Call(self, node) -> Any:
-        self.should_replace = True
-        node.func = self.visit(node.func)
-        self.should_replace = False
-        return self.generic_visit(node)
-
-    def visit_Attribute(self, node):
-        if not self.should_replace and not self.always_replace:
-            return self.generic_visit(node)
-        # Traverse AST until reaching the top-level value (could be a name
-        # or a function)
-        cnode = node
-        while isinstance(cnode.value, ast.Attribute):
-            cnode = cnode.value
-
-        if (isinstance(cnode.value, ast.Name)
-                and cnode.value.id in self.modules):
-            cnode.value.id = self.modules[cnode.value.id]
-
-        return self.generic_visit(node)
-
-
-class RewriteSympyEquality(ast.NodeTransformer):
-    """ 
-    Replaces symbolic equality checks by ``sympy.{Eq,Ne}``. 
-    This is done because a test ``if x == 0`` where ``x`` is a symbol would
-    result in False, even in indeterminate cases.
-    """
-    def __init__(self, globals: Dict[str, Any]) -> None:
-        super().__init__()
-        self.globals = globals
-
-    def visit_Compare(self, node: ast.Compare) -> Any:
-        if len(node.comparators) != 1:
-            return self.generic_visit(node)
-        left = astutils.evalnode(self.visit(node.left), self.globals)
-        right = astutils.evalnode(self.visit(node.comparators[0]), self.globals)
-        if (isinstance(left, sympy.Basic) or isinstance(right, sympy.Basic)):
-            if isinstance(node.ops[0], ast.Eq):
-                return sympy.Eq(left, right)
-            elif isinstance(node.ops[0], ast.NotEq):
-                return sympy.Ne(left, right)
-        return self.generic_visit(node)
-
-
-class ConditionalCodeResolver(ast.NodeTransformer):
-    """ 
-    Replaces if conditions by their bodies if can be evaluated at compile time.
-    """
-    def __init__(self, globals: Dict[str, Any]):
-        super().__init__()
-        self.globals = globals
-
-    def visit_If(self, node: ast.If) -> Any:
-        node = self.generic_visit(node)
-        try:
-            test = RewriteSympyEquality(self.globals).visit(node.test)
-            result = astutils.evalnode(test, self.globals)
-
-            if (result is True
-                    or (isinstance(result, sympy.Basic) and result == True)):
-                # Only return "if" body
-                return node.body
-            elif (result is False
-                  or (isinstance(result, sympy.Basic) and result == False)):
-                # Only return "else" body
-                return node.orelse
-            # Any other case is indeterminate, fall back to generic visit
-        except SyntaxError:
-            # Cannot evaluate if condition at compile time
-            pass
-
-        return node
-
-    def visit_IfExp(self, node: ast.IfExp) -> Any:
-        return self.visit_If(node)
-
-
-class DeadCodeEliminator(ast.NodeTransformer):
-    """ Removes any code within scope after return/break/continue/raise. """
-    def generic_visit(self, node: ast.AST):
-        for field, old_value in ast.iter_fields(node):
-            if isinstance(old_value, list):
-                # Scope fields
-                scope_field = field in ('body', 'orelse')
-
-                new_values = []
-                for value in old_value:
-                    if isinstance(value, ast.AST):
-                        value = self.visit(value)
-                        if value is None:
-                            continue
-                        elif not isinstance(value, ast.AST):
-                            new_values.extend(value)
-                            continue
-                        elif (scope_field and isinstance(
-                                value,
-                            (ast.Return, ast.Break, ast.Continue, ast.Raise))):
-                            # Any AST node after this one is unreachable and
-                            # not parsed by this transformer
-                            new_values.append(value)
-                            break
-                    new_values.append(value)
-                old_value[:] = new_values
-            elif isinstance(old_value, ast.AST):
-                new_node = self.visit(old_value)
-                if new_node is None:
-                    delattr(node, field)
-                else:
-                    setattr(node, field, new_node)
-        return node
+    return sdfg
 
 
 # AST node types that are disallowed in DaCe programs
@@ -408,6 +231,8 @@ def _subset_has_indirection(subset, pvisitor: 'ProgramVisitor' = None):
         if not isinstance(dim, tuple):
             dim = [dim]
         for r in dim:
+            if not symbolic.issymbolic(r):
+                continue
             if symbolic.contains_sympy_functions(r):
                 return True
             if pvisitor:
@@ -738,271 +563,6 @@ def add_indirection_subgraph(sdfg: SDFG,
     return tmp_name
 
 
-class GlobalResolver(ast.NodeTransformer):
-    """ Resolves global constants and lambda expressions if not
-        already defined in the given scope. """
-    def __init__(self,
-                 globals: Dict[str, Any],
-                 resolve_functions: bool = False):
-        self._globals = globals
-        self.resolve_functions = resolve_functions
-        self.current_scope = set()
-        self.toplevel_function = True
-
-        # A dace.program's closure is defined by its constants, arrays, and
-        # other SDFG-convertible objects
-        self.closure_constants: Dict[str, Any] = {}
-        self.closure_arrays: Dict[str, Tuple[str, data.Data]] = {}
-        self.closure_sdfgs: Dict[str, SDFG] = {
-            k: v
-            for k, v in globals.items()
-            if isinstance(v, SDFG) or hasattr(v, '__sdfg__')
-        }
-
-        # Map same array objects (checked via python id) to the same name
-        self.array_mapping: Dict[int, str] = {}
-
-    @property
-    def globals(self):
-        return {
-            k: v
-            for k, v in self._globals.items() if k not in self.current_scope
-        }
-
-    def generic_visit(self, node: ast.AST):
-        if hasattr(node, 'body') or hasattr(node, 'orelse'):
-            oldscope = self.current_scope
-            self.current_scope = set()
-            self.current_scope.update(oldscope)
-            result = super().generic_visit(node)
-            self.current_scope = oldscope
-            return result
-        else:
-            return super().generic_visit(node)
-
-    def _qualname_to_array_name(self, qualname: str) -> str:
-        """ Converts a Python qualified attribute name to an SDFG array name. """
-        # We only support attributes and subscripts for now
-        sanitized = re.sub(r'[\.\[\]\'\",]', '_', qualname)
-        if not dtypes.validate_name(sanitized):
-            raise NameError(
-                f'Variable name "{sanitized}" is not sanitized '
-                'properly during parsing. Please report this issue.')
-        return f"__g_{sanitized}"
-
-    def global_value_to_node(self,
-                             value,
-                             parent_node,
-                             qualname,
-                             recurse=False,
-                             detect_callables=False):
-        # if recurse is false, we don't allow recursion into lists
-        # this should not happen anyway; the globals dict should only contain
-        # single "level" lists
-        if not recurse and isinstance(value, (list, tuple)):
-            # bail after more than one level of lists
-            return None
-
-        if isinstance(value, list):
-            elts = [
-                self.global_value_to_node(v,
-                                          parent_node,
-                                          qualname + f'[{i}]',
-                                          detect_callables=detect_callables)
-                for i, v in enumerate(value)
-            ]
-            if any(e is None for e in elts):
-                return None
-            newnode = ast.List(elts=elts, ctx=parent_node.ctx)
-        elif isinstance(value, tuple):
-            elts = [
-                self.global_value_to_node(v,
-                                          parent_node,
-                                          qualname + f'[{i}]',
-                                          detect_callables=detect_callables)
-                for i, v in enumerate(value)
-            ]
-            if any(e is None for e in elts):
-                return None
-            newnode = ast.Tuple(elts=elts, ctx=parent_node.ctx)
-        elif isinstance(value, symbolic.symbol):
-            # Symbols resolve to the symbol name
-            newnode = ast.Name(id=value.name, ctx=ast.Load())
-        elif (dtypes.isconstant(value) or isinstance(value, SDFG)
-              or hasattr(value, '__sdfg__')):
-            # Could be a constant, an SDFG, or SDFG-convertible object
-            if isinstance(value, SDFG) or hasattr(value, '__sdfg__'):
-                self.closure_sdfgs[qualname] = value
-            else:
-                self.closure_constants[qualname] = value
-
-            # Compatibility check since Python changed their AST nodes
-            if sys.version_info >= (3, 8):
-                newnode = ast.Constant(value=value, kind='')
-            else:
-                if value is None:
-                    newnode = ast.NameConstant(value=None)
-                else:
-                    newnode = ast.Num(n=value)
-        elif detect_callables and hasattr(value, '__call__') and hasattr(
-                value.__call__, '__sdfg__'):
-            return self.global_value_to_node(value.__call__, parent_node,
-                                             qualname, recurse,
-                                             detect_callables)
-        elif isinstance(value, numpy.ndarray):
-            # Arrays need to be stored as a new name and fed as an argument
-            if id(value) in self.array_mapping:
-                arrname = self.array_mapping[id(value)]
-            else:
-                arrname = self._qualname_to_array_name(qualname)
-                desc = data.create_datadescriptor(value)
-                self.closure_arrays[qualname] = (arrname, desc)
-                self.array_mapping[id(value)] = arrname
-
-            newnode = ast.Name(id=arrname, ctx=ast.Load())
-        else:
-            return None
-
-        if parent_node is not None:
-            return ast.copy_location(newnode, parent_node)
-        else:
-            return newnode
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
-        # Skip the top function definition (handled outside of the resolver)
-        if self.toplevel_function:
-            self.toplevel_function = False
-            return self.generic_visit(node)
-
-        for arg in ast.walk(node.args):
-            if isinstance(arg, ast.arg):
-                self.current_scope.add(arg.arg)
-        return self.generic_visit(node)
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
-        return self.visit_FunctionDef(node)
-
-    def visit_Name(self, node: ast.Name):
-        if isinstance(node.ctx, (ast.Store, ast.AugStore)):
-            self.current_scope.add(node.id)
-        else:
-            if node.id in self.current_scope:
-                return node
-            if node.id in self.globals:
-                global_val = self.globals[node.id]
-                newnode = self.global_value_to_node(global_val,
-                                                    parent_node=node,
-                                                    qualname=node.id,
-                                                    recurse=True)
-                if newnode is None:
-                    return node
-                return newnode
-        return node
-
-    def visit_keyword(self, node: ast.keyword):
-        if node.arg in self.globals and isinstance(self.globals[node.arg],
-                                                   symbolic.symbol):
-            node.arg = self.globals[node.arg].name
-        return self.generic_visit(node)
-
-    def visit_Attribute(self, node: ast.Attribute) -> Any:
-        # Try to evaluate the expression with only the globals
-        try:
-            global_val = astutils.evalnode(node, self.globals)
-        except SyntaxError:
-            return self.generic_visit(node)
-
-        if not isinstance(global_val, dtypes.typeclass):
-            newnode = self.global_value_to_node(global_val,
-                                                parent_node=node,
-                                                qualname=astutils.unparse(node),
-                                                recurse=True)
-            if newnode is not None:
-                return newnode
-        return self.generic_visit(node)
-
-    def visit_Subscript(self, node: ast.Subscript) -> Any:
-        # First visit the subscripted value alone, then the whole subscript
-        node.value = self.visit(node.value)
-        return self.visit_Attribute(node)
-
-    def visit_Call(self, node: ast.Call) -> Any:
-        try:
-            global_func = astutils.evalnode(node.func, self.globals)
-            if self.resolve_functions:
-                global_val = astutils.evalnode(node, self.globals)
-            else:
-                global_val = node
-        except SyntaxError:
-            return self.generic_visit(node)
-
-        newnode = None
-        if self.resolve_functions and global_val is not node:
-            # Without this check, casts don't generate code
-            if not isinstance(global_val, dtypes.typeclass):
-                newnode = self.global_value_to_node(
-                    global_val,
-                    parent_node=node,
-                    qualname=astutils.unparse(node),
-                    recurse=True)
-                if newnode is not None:
-                    return newnode
-        elif not isinstance(global_func, dtypes.typeclass):
-            newnode = self.global_value_to_node(global_func,
-                                                parent_node=node,
-                                                qualname=astutils.unparse(node),
-                                                recurse=True,
-                                                detect_callables=True)
-            if newnode is not None:
-                node.func = newnode
-                return self.generic_visit(node)
-        return self.generic_visit(node)
-
-    def visit_Assert(self, node: ast.Assert) -> Any:
-        # Try to evaluate assertion statically
-        try:
-            global_val = astutils.evalnode(node.test, self.globals)
-            if global_val:  # Check condition the same way as assert does
-                return None
-            try:
-                msg = astutils.evalnode(node.msg, self.globals)
-                if msg is not None:
-                    msg = '. Message: ' + msg
-                else:
-                    msg = '.'
-            except SyntaxError:
-                msg = ' (ERROR: could not statically evaluate message).'
-
-            raise AssertionError('Assertion failed statically at line '
-                                 f'{node.lineno} during compilation of DaCe '
-                                 'program' + msg)
-        except SyntaxError:
-            warnings.warn(f'Runtime assertion at line {node.lineno} could not'
-                          ' be checked in DaCe program, skipping check.')
-        return None
-
-    def visit_JoinedStr(self, node: ast.JoinedStr) -> Any:
-        try:
-            global_val = astutils.evalnode(node, self.globals)
-            return ast.copy_location(ast.Constant(kind='', value=global_val),
-                                     node)
-        except SyntaxError:
-            warnings.warn(f'f-string at line {node.lineno} could not '
-                          'be fully evaluated in DaCe program, converting to '
-                          'partially-evaluated string.')
-            visited = self.generic_visit(node)
-            parsed = [
-                not isinstance(v, ast.FormattedValue)
-                or isinstance(v.value, ast.Constant) for v in visited.values
-            ]
-            values = [astutils.unparse(v.value) for v in visited.values]
-            return ast.copy_location(
-                ast.Constant(kind='',
-                             value=''.join(('{%s}' % v) if not p else v
-                                           for p, v in zip(parsed, values))),
-                node)
-
-
 class TaskletTransformer(ExtNodeTransformer):
     """ A visitor that traverses a data-centric tasklet, removes memlet
         annotations and returns input and output memlets.
@@ -1171,7 +731,7 @@ class TaskletTransformer(ExtNodeTransformer):
             arr_type = type(parent_array)
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
-        elif arr_type == data.Array:
+        elif arr_type in (data.Array, data.View):
             self.sdfg.add_array(var_name, shape, dtype, strides=strides)
         elif arr_type == data.Stream:
             self.sdfg.add_stream(var_name, dtype)
@@ -1271,6 +831,9 @@ class TaskletTransformer(ExtNodeTransformer):
         else:
             raise NotImplementedError
 
+        if isinstance(rng, subsets.Indices):
+            rng = subsets.Range.from_indices(rng)
+
         return rng
 
     def _update_names(self,
@@ -1323,12 +886,19 @@ class TaskletTransformer(ExtNodeTransformer):
                     if squeezed_rng is not None:
                         # TODO: Fix for `contains_sympy_functions`
                         # not liking ints
-                        memlet.subset = subsets.Range([
-                            (symbolic.pystr_to_symbolic(b),
-                             symbolic.pystr_to_symbolic(e),
-                             symbolic.pystr_to_symbolic(s))
-                            for b, e, s in squeezed_rng.ranges
-                        ])
+                        if isinstance(squeezed_rng, subsets.Indices):
+                            memlet.subset = subsets.Range([
+                                (symbolic.pystr_to_symbolic(i),
+                                 symbolic.pystr_to_symbolic(i), 1)
+                                for i in squeezed_rng.indices
+                            ])
+                        else:
+                            memlet.subset = subsets.Range([
+                                (symbolic.pystr_to_symbolic(b),
+                                 symbolic.pystr_to_symbolic(e),
+                                 symbolic.pystr_to_symbolic(s))
+                                for b, e, s in squeezed_rng.ranges
+                            ])
                     if self.nested and _subset_has_indirection(rng):
                         memlet = dace.Memlet.simple(memlet.data, rng)
                     if connector in self.inputs or connector in self.outputs:
@@ -1359,12 +929,19 @@ class TaskletTransformer(ExtNodeTransformer):
                     if squeezed_rng is not None:
                         # TODO: Fix for `contains_sympy_functions`
                         # not liking ints
-                        memlet.subset = subsets.Range([
-                            (symbolic.pystr_to_symbolic(b),
-                             symbolic.pystr_to_symbolic(e),
-                             symbolic.pystr_to_symbolic(s))
-                            for b, e, s in squeezed_rng.ranges
-                        ])
+                        if isinstance(squeezed_rng, subsets.Indices):
+                            memlet.subset = subsets.Range([
+                                (symbolic.pystr_to_symbolic(i),
+                                 symbolic.pystr_to_symbolic(i), 1)
+                                for i in squeezed_rng.indices
+                            ])
+                        else:
+                            memlet.subset = subsets.Range([
+                                (symbolic.pystr_to_symbolic(b),
+                                 symbolic.pystr_to_symbolic(e),
+                                 symbolic.pystr_to_symbolic(s))
+                                for b, e, s in squeezed_rng.ranges
+                            ])
                     if self.nested and _subset_has_indirection(rng):
                         memlet = dace.Memlet.simple(memlet.data, rng)
                     if self.nested and name in self.sdfg_outputs:
@@ -1422,7 +999,7 @@ class ProgramVisitor(ExtNodeVisitor):
                  constants: Dict[str, Any],
                  scope_arrays: Dict[str, data.Data],
                  scope_vars: Dict[str, str],
-                 map_symbols: Set[Union[str, 'symbol']] = None,
+                 map_symbols: Set[Union[str, symbolic.symbol]] = None,
                  other_sdfgs: Dict[str, Union[SDFG, 'DaceProgram']] = None,
                  nested: bool = False,
                  tmp_idx: int = 0,
@@ -1447,6 +1024,9 @@ class ProgramVisitor(ExtNodeVisitor):
         """
 
         self.filename = filename
+        self.src_line = line_offset
+        self.src_col = col_offset
+        self.orig_name = name
         if nested:
             self.name = "{n}_{l}_{c}".format(n=name,
                                              l=line_offset,
@@ -1467,7 +1047,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.numbers = dict()  # Dict[str, str]
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
-        self.views: Dict[str, str] = {}  # Keeps track of views
+        self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
 
         # Keep track of map symbols from upper scopes
@@ -1560,6 +1140,9 @@ class ProgramVisitor(ExtNodeVisitor):
             if vname.startswith('__return'):
                 if isinstance(self.sdfg.arrays[arrname], data.View):
                     # In case of a view, make a copy
+                    # NOTE: If we are at the top level SDFG (not always clear),
+                    # and it is a View of an input array, can we return a NumPy
+                    # View directly?
                     desc = self.sdfg.arrays[arrname]
                     return_state = self._add_state()
                     r = return_state.add_read(arrname)
@@ -1571,15 +1154,21 @@ class ProgramVisitor(ExtNodeVisitor):
                             desc.dtype,
                             storage=desc.storage,
                             transient=False,
-                            strides=desc.strides,
-                            offset=desc.offset,
+                            # NOTE: It seems that NumPy doesn't support creating
+                            # non-contiguous arrays directly.
+                            # strides=desc.strides,
+                            # offset=desc.offset,
                             debuginfo=desc.debuginfo,
-                            total_size=desc.total_size,
+                            # total_size=desc.total_size,
                             allow_conflicts=desc.allow_conflicts)
                     return_state.add_nedge(r, w, Memlet(vname))
                 else:
                     # Other cases can be replaced with return value directly
                     self.sdfg.replace(arrname, vname)
+                    for k, (v, m) in self.views.items():
+                        if v == arrname:
+                            m.data = vname
+                            self.views[k] = (vname, m)
 
         # Return values become non-transient (accessible by the outside)
         for arrname, arr in self.sdfg.arrays.items():
@@ -1588,23 +1177,35 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.outputs[arrname] = Memlet.from_array(arrname, arr)
         ####
 
-        # Map view access nodes to their respective data
-        for state in self.sdfg.nodes():
-            for vnode in list(state.data_nodes()):
+        def _views_to_data(
+                state: SDFGState, nodes: List[dace.nodes.AccessNode]
+        ) -> List[dace.nodes.AccessNode]:
+            new_nodes = []
+            for vnode in nodes:
                 if vnode.data in self.views:
                     if state.in_degree(vnode) == 0:
-                        aname = self.views[vnode.data]
+                        aname, m = self.views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         r = state.add_read(aname)
-                        state.add_nedge(r, vnode, Memlet.from_array(aname, arr))
+                        state.add_nedge(r, vnode, copy.deepcopy(m))
+                        new_nodes.append(r)
                     elif state.out_degree(vnode) == 0:
-                        aname = self.views[vnode.data]
+                        aname, m = self.views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         w = state.add_write(aname)
-                        state.add_nedge(vnode, w, Memlet.from_array(aname, arr))
+                        state.add_nedge(vnode, w, copy.deepcopy(m))
+                        new_nodes.append(w)
                     else:
                         raise ValueError(f'View "{vnode.data}" already has'
                                          'both incoming and outgoing edges')
+            return new_nodes
+
+        # Map view access nodes to their respective data
+        for state in self.sdfg.nodes():
+            # NOTE: We need to support views of views
+            nodes = list(state.data_nodes())
+            while nodes:
+                nodes = _views_to_data(state, nodes)
 
         # Try to replace transients with their python-assigned names
         for pyname, arrname in self.variables.items():
@@ -1810,7 +1411,8 @@ class ProgramVisitor(ExtNodeVisitor):
             dec = 'dace.tasklet'
         else:
             dec_ast = node.decorator_list[0]
-            dec_ast = ModuleResolver(self.modules, True).visit(dec_ast)
+            dec_ast = preprocessing.ModuleResolver(self.modules,
+                                                   True).visit(dec_ast)
             dec = rname(dec_ast)
 
         # Create a new state for the statement
@@ -2054,16 +1656,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 self, node,
                 "Iterator of ast.For must be a function or a subscript")
 
-        iter_name = ModuleResolver(self.modules,
-                                   True).visit(copy.deepcopy(node))
+        iter_name = preprocessing.ModuleResolver(self.modules, True).visit(
+            copy.deepcopy(node))
         iterator = rname(iter_name)
 
         ast_ranges = []
 
-        if iterator not in {'range', 'parrange', 'dace.map'}:
+        if iterator not in {'range', 'prange', 'parrange', 'dace.map'}:
             raise DaceSyntaxError(self, node,
                                   "Iterator {} is unsupported".format(iterator))
-        elif iterator in ['range', 'parrange']:
+        elif iterator in ['range', 'prange', 'parrange']:
             # AST nodes for common expressions
             zero = ast.parse('0').body[0]
             one = ast.parse('1').body[0]
@@ -2092,7 +1694,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(
                     self, node,
                     'Invalid number of arguments for "%s"' % iterator)
-            if iterator == 'parrange':
+            if iterator in ('prange', 'parrange'):
                 iterator = 'dace.map'
         else:
             ranges = []
@@ -3358,7 +2960,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 arr_type = data.Scalar
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
-        elif arr_type == data.Array:
+        elif arr_type in (data.Array, data.View):
             if non_squeezed:
                 strides = [parent_array.strides[d] for d in non_squeezed]
             else:
@@ -3514,7 +3116,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, target,
                     'Variable "{}" used before definition'.format(name))
 
-            new_data = None
+            new_data, rng = None, None
             dtype_keys = tuple(dtypes.DTYPE_TO_TYPECLASS.keys())
             if not (symbolic.issymbolic(result) or isinstance(
                     result, dtype_keys) or result in self.sdfg.arrays):
@@ -3551,6 +3153,24 @@ class ProgramVisitor(ExtNodeVisitor):
                             [1], result_data.dtype)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
+                    elif (not name.startswith('__return')
+                          and (isinstance(result_data, data.View) or
+                               (not result_data.transient
+                                and isinstance(result_data, data.Array)))):
+                        true_name, new_data = self.sdfg.add_view(
+                            result,
+                            result_data.shape,
+                            result_data.dtype,
+                            result_data.storage,
+                            result_data.strides,
+                            result_data.offset,
+                            find_new_name=True)
+                        self.views[true_name] = (result,
+                                                 Memlet.from_array(
+                                                     result, result_data))
+                        self.variables[name] = true_name
+                        defined_vars[name] = true_name
+                        continue
                     elif not result_data.transient:
                         true_name, new_data = _add_transient_data(
                             self.sdfg, result_data, dtype)
@@ -3563,7 +3183,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             boolarr = None
             if new_data:
-                rng = dace.subsets.Range.from_array(new_data)
+                rng = rng or dace.subsets.Range.from_array(new_data)
             else:
                 true_target = copy.deepcopy(target)
                 if isinstance(target, ast.Name):
@@ -3583,6 +3203,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 expr: MemletExpr = ParseMemlet(self, defined_arrays,
                                                true_target, nslice)
                 rng = expr.subset
+                if isinstance(rng, subsets.Indices):
+                    rng = subsets.Range.from_indices(rng)
 
                 # Figure out whether the target subcript is an array-index
                 # indirection or a boolean array
@@ -3627,6 +3249,32 @@ class ProgramVisitor(ExtNodeVisitor):
                     new_rng = rng
             else:
                 new_name, new_rng = true_name, rng
+
+            # Self-copy check
+            if result in self.views and new_name == self.views[result][1].data:
+                read_rng = self.views[result][1].subset
+                needs_copy = False
+                for i, sz in enumerate(new_rng.size()):
+                    # NOTE: We only have an issue with partial overlap of the
+                    # read and write subsets. This occurs when the range of
+                    # one of the dimensions is greater than one and the read
+                    # and write ranges (for that particular dimension) are not
+                    # the same.
+                    if sz != 1 and new_rng[i] != read_rng[i]:
+                        needs_copy = True
+                        break
+                if needs_copy:
+                    view = self.sdfg.arrays[result]
+                    cname, carr = self.sdfg.add_transient(
+                        result, view.shape, view.dtype, find_new_name=True)
+                    self._add_state(f'copy_from_view_{node.lineno}')
+                    rnode = self.last_state.add_read(
+                        result, debuginfo=self.current_lineinfo)
+                    wnode = self.last_state.add_read(
+                        cname, debuginfo=self.current_lineinfo)
+                    self.last_state.add_nedge(
+                        rnode, wnode, Memlet.from_array(cname, carr))
+                    result = cname
 
             # Strict independent access check for augmented assignments
             if op:
@@ -3821,7 +3469,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Obtain a string representation
         result = self.visit(arg)
         if isinstance(result, (list, tuple)):
-            if len(result) == 1 and isinstance(result[0], str):
+            if len(result) == 1 and isinstance(result[0], (str, slice)):
                 return result[0]
         return result
 
@@ -3947,9 +3595,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 required_args = argnames
                 fargs = (self._eval_arg(arg) for _, arg in args)
 
-                fcopy = copy.copy(func)
+                # fcopy = copy.copy(func)
+                fcopy = func
+                if hasattr(fcopy, 'global_vars'):
+                    fcopy.global_vars = {**self.globals, **func.global_vars}
+
                 if isinstance(fcopy, DaceProgram):
-                    fcopy.global_vars = {**func.global_vars, **self.globals}
                     fcopy.signature = copy.deepcopy(func.signature)
                     sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
                 else:
@@ -4045,6 +3696,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Change connector names
             updated_args = []
+            arrays_before = list(sdfg.arrays.items())
             for i, (conn, arg) in enumerate(args):
                 if (conn in self.scope_vars.keys()
                         or conn in self.sdfg.arrays.keys()
@@ -4053,10 +3705,17 @@ class ProgramVisitor(ExtNodeVisitor):
                         new_conn = self.sdfg.temp_data_name()
                     else:
                         new_conn = sdfg.temp_data_name()
-                    warnings.warn("Renaming nested SDFG connector {c} to "
-                                  "{n}".format(c=conn, n=new_conn))
+                    # warnings.warn("Renaming nested SDFG connector {c} to "
+                    #               "{n}".format(c=conn, n=new_conn))
                     sdfg.replace(conn, new_conn)
                     updated_args.append((new_conn, arg))
+                    # Rename the connector's Views
+                    for arrname, array in arrays_before:
+                        if (isinstance(array, data.View)
+                                and len(arrname) > len(conn)
+                                and arrname[:len(conn) + 1] == f'{conn}_'):
+                            new_name = f'{new_conn}{arrname[len(conn):]}'
+                            sdfg.replace(arrname, new_name)
                 else:
                     updated_args.append((conn, arg))
             args = updated_args
@@ -4146,40 +3805,50 @@ class ProgramVisitor(ExtNodeVisitor):
                     inputs[k] = v
             # Unset parent inputs/read accesses that
             # turn out to be outputs/write accesses.
-            # TODO: Is there a case where some data is both input and output?
-            # TODO: If yes, is it a problem?
             for memlet in outputs.values():
                 aname = memlet.data
                 rng = memlet.subset
                 access_value = (aname, rng)
                 access_key = inverse_dict_lookup(self.accesses, access_value)
+                # NOTE: `memlet in inputs.values()` doesn't work because
+                # it only looks at the subset and not the data
+                # isinput = memlet in inputs.values()
+                isinput = False
+                for other in inputs.values():
+                    if not isinstance(other, dace.Memlet):
+                        continue
+                    if memlet == other and memlet.data == other.data:
+                        isinput = True
+                        break
                 if access_key:
                     # Delete read access and create write access and output
                     vname = aname[:-1] + 'w'
                     name, rng, atype = access_key
                     if atype == 'r':
-                        del self.accesses[access_key]
+                        if not isinput:
+                            del self.accesses[access_key]
                         access_value = self._add_write_access(name,
                                                               rng,
                                                               node,
                                                               new_name=vname)
                         memlet.data = vname
                     # Delete the old read descriptor
-                    conn_used = False
-                    for s in self.sdfg.nodes():
-                        for n in s.data_nodes():
-                            if n.data == aname:
-                                conn_used = True
+                    if not isinput:
+                        conn_used = False
+                        for s in self.sdfg.nodes():
+                            for n in s.data_nodes():
+                                if n.data == aname:
+                                    conn_used = True
+                                    break
+                            if conn_used:
                                 break
-                        if conn_used:
-                            break
-                    if not conn_used:
-                        del self.sdfg.arrays[aname]
-                if aname in self.inputs.keys():
+                        if not conn_used:
+                            del self.sdfg.arrays[aname]
+                if not isinput and aname in self.inputs.keys():
                     # Delete input
                     del self.inputs[aname]
                 # Delete potential input slicing
-                if slice_state:
+                if not isinput and slice_state:
                     for n in slice_state.nodes():
                         if isinstance(n, nodes.AccessNode) and n.data == aname:
                             for e in slice_state.in_edges(n):
@@ -4330,6 +3999,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         **self.sdfg.arrays,
                         **self.defined
                     }, arg)
+                    if isinstance(expr.subset, subsets.Indices):
+                        expr.subset = subsets.Range.from_indices(expr.subset)
                     name = rname(arg)
                     if name in self.variables.keys():
                         name = self.variables[name]
@@ -4383,6 +4054,10 @@ class ProgramVisitor(ExtNodeVisitor):
             state = self._add_state('globalmemlet_%d' % node.lineno)
             src_expr = ParseMemlet(self, self.defined, src)
             dst_expr = ParseMemlet(self, self.defined, dst)
+            if isinstance(src_expr.subset, subsets.Indices):
+                src_expr.subset = subsets.Range.from_indices(src_expr.subset)
+            if isinstance(dst_expr.subset, subsets.Indices):
+                dst_expr.subset = subsets.Range.from_indices(dst_expr.subset)
             if src_expr.arrdims or dst_expr.arrdims:
                 raise NotImplementedError(
                     'Copying with array indices only allowed through assignment '
@@ -4706,40 +4381,64 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Add slicing state
         self._add_state('slice_%s_%d' % (array, node.lineno))
-        rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
         if has_array_indirection:
             # Make copy slicing state
+            rnode = self.last_state.add_read(array,
+                                             debuginfo=self.current_lineinfo)
             return self._array_indirection_subgraph(rnode, expr)
         else:
-            other_subset = copy.deepcopy(expr.subset)
+            is_index = False
+            if isinstance(expr.subset, subsets.Indices):
+                is_index = True
+                other_subset = subsets.Range([(i, i, 1) for i in expr.subset])
+            else:
+                other_subset = copy.deepcopy(expr.subset)
+            strides = list(arrobj.strides)
 
             # Make new axes and squeeze for scalar subsets (as per numpy behavior)
             # For example: A[0, np.newaxis, 5:7] results in a 1x2 ndarray
             new_axes = []
             if expr.new_axes:
                 new_axes = other_subset.unsqueeze(expr.new_axes)
-            other_subset.squeeze(ignore_indices=new_axes)
+                for i in new_axes:
+                    strides.insert(i, 1)
+            length = len(other_subset)
+            nsqz = other_subset.squeeze(ignore_indices=new_axes)
+            sqz = [i for i in range(length) if i not in nsqz]
+            for i in reversed(sqz):
+                strides.pop(i)
+            if not strides:
+                strides = None
 
-            # NOTE: This is fixing azimint_hist (issue is `if x == a_max`)
-            # TODO: Follow Numpy, i.e. slicing with indices returns scalar but
-            # slicing with a range of (squeezed) size 1 returns array/view.
-            if all(s == 1 for s in other_subset.size()):
+            if is_index:
                 tmp = self.sdfg.temp_data_name()
                 tmp, tmparr = self.sdfg.add_scalar(tmp,
                                                    arrobj.dtype,
                                                    arrobj.storage,
                                                    transient=True)
             else:
-                tmp, tmparr = self.sdfg.add_temp_transient(
-                    other_subset.size(), arrobj.dtype, arrobj.storage)
+                tmp, tmparr = self.sdfg.add_view(array,
+                                                 other_subset.size(),
+                                                 arrobj.dtype,
+                                                 storage=arrobj.storage,
+                                                 strides=strides,
+                                                 find_new_name=True)
+                self.views[tmp] = (
+                    array,
+                    Memlet(f'{array}[{expr.subset}]->{other_subset}',
+                           volume=expr.accesses,
+                           wcr=expr.wcr))
             self.variables[tmp] = tmp
-            wnode = self.last_state.add_write(tmp,
-                                              debuginfo=self.current_lineinfo)
-            self.last_state.add_nedge(
-                rnode, wnode,
-                Memlet(f'{array}[{expr.subset}]->{other_subset}',
-                       volume=expr.accesses,
-                       wcr=expr.wcr))
+            if not isinstance(tmparr, data.View):
+                rnode = self.last_state.add_read(
+                    array, debuginfo=self.current_lineinfo)
+                wnode = self.last_state.add_write(
+                    tmp, debuginfo=self.current_lineinfo)
+                self.last_state.add_nedge(
+                    rnode, wnode,
+                    Memlet(f'{array}[{expr.subset}]->{other_subset}',
+                           volume=expr.accesses,
+                           wcr=expr.wcr))
             return tmp
 
     def _parse_subscript_slice(
@@ -4771,7 +4470,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     return sym
             return scalar
 
-        if isinstance(s, Number):
+        if isinstance(s, (Number, bool, numpy.bool_, sympy.Basic)):
             res = s
         elif isinstance(s, ast.Constant):  # 1D index (since Python 3.9)
             # Special case for Python slice objects
@@ -4839,6 +4538,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node,
                                                nslice)
                 rng = expr.subset
+                if isinstance(rng, subsets.Indices):
+                    rng = subsets.Range.from_indices(rng)
                 new_name, new_rng = self._add_read_access(name, rng, node)
                 new_arr = self.sdfg.arrays[new_name]
                 full_rng = subsets.Range.from_array(new_arr)
