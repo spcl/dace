@@ -117,15 +117,15 @@ def test_three_matmul_pure():
     E = sdfg(A=A, B=B, C=C, D=D, M=m, K=k, N=n, L=l, O=o)
     print('GPU done')
 
-    # # res = (A @ B) @ (C @ D)
-    # # idx = list(zip(*np.where(~np.isclose(E, res, atol=0, rtol=1e-7))))
-    # # numErrors = len(idx)
-    # # if numErrors > 0:
-    # #     print("number of errors:", numErrors)
-    # # if numErrors < 100:
-    # #     for i in idx:
-    # #         print(i, E[i], res[i])
-    # # assert np.allclose(E, res)
+    res = (A @ B) @ (C @ D)
+    idx = list(zip(*np.where(~np.isclose(E, res, atol=0, rtol=1e-7))))
+    numErrors = len(idx)
+    if numErrors > 0:
+        print("number of errors:", numErrors)
+    if numErrors < 100:
+        for i in idx:
+            print(i, E[i], res[i])
+    assert np.allclose(E, res)
 
     # program_objects = sdfg.generate_code()
     # from dace.codegen import compiler
