@@ -42,6 +42,27 @@ def test_nested_sa_call():
     nested_call_subarray_prog(A, B, N=2)
 
 
+def test_nested_selfcopy_slice():
+    @dace.program
+    def nested(q, i, j):
+        q[3 + j, 4 + i, 0:3] = q[3 - i + 1, 4 + j, 0:3]
+
+    @dace.program
+    def selfcopy(q: dace.float64[128, 128, 80]):
+        for i in range(1, 4):
+            for j in range(1, 4):
+                nested(q, i, j)
+
+    q = np.random.rand(128, 128, 80)
+    ref = np.copy(q)
+    for i in range(1, 4):
+        for j in range(1, 4):
+            ref[3 + j, 4 + i, 0:3] = ref[3 - i + 1, 4 + j, 0:3]
+    selfcopy(q)
+    assert np.allclose(q, ref)
+
+
 if __name__ == '__main__':
     test_nested_sa_call()
     test_ncs_local_program()
+    test_nested_selfcopy_slice()
