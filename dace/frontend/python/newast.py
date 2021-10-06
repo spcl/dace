@@ -3250,6 +3250,32 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 new_name, new_rng = true_name, rng
 
+            # Self-copy check
+            if result in self.views and new_name == self.views[result][1].data:
+                read_rng = self.views[result][1].subset
+                needs_copy = False
+                for i, sz in enumerate(new_rng.size()):
+                    # NOTE: We only have an issue with partial overlap of the
+                    # read and write subsets. This occurs when the range of
+                    # one of the dimensions is greater than one and the read
+                    # and write ranges (for that particular dimension) are not
+                    # the same.
+                    if sz != 1 and new_rng[i] != read_rng[i]:
+                        needs_copy = True
+                        break
+                if needs_copy:
+                    view = self.sdfg.arrays[result]
+                    cname, carr = self.sdfg.add_transient(
+                        result, view.shape, view.dtype, find_new_name=True)
+                    self._add_state(f'copy_from_view_{node.lineno}')
+                    rnode = self.last_state.add_read(
+                        result, debuginfo=self.current_lineinfo)
+                    wnode = self.last_state.add_read(
+                        cname, debuginfo=self.current_lineinfo)
+                    self.last_state.add_nedge(
+                        rnode, wnode, Memlet.from_array(cname, carr))
+                    result = cname
+
             # Strict independent access check for augmented assignments
             if op:
                 independent = False
