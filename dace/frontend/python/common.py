@@ -79,12 +79,18 @@ class SDFGConvertible(object):
         """
         raise NotImplementedError
 
-    def closure_resolver(self, constant_args: Dict[str, Any]) -> 'SDFGClosure':
+    def closure_resolver(
+            self,
+            constant_args: Dict[str, Any],
+            parent_closure: Optional['SDFGClosure'] = None) -> 'SDFGClosure':
         """ 
         Returns an SDFGClosure object representing the closure of the
         object to be converted to an SDFG.
         :param constant_args: Arguments whose values are already resolved to
                               compile-time values.
+        :param parent_closure: The parent SDFGClosure object (used for, e.g.,
+                               recursion detection).
+        :return: New SDFG closure object representing the convertible object.
         """
         return SDFGClosure()
 
@@ -115,12 +121,16 @@ class SDFGClosure:
     # Maps same array objects (checked via python id) to the same name
     array_mapping: Dict[int, str]
 
+    # Trace of called functions (as their `id`) until this point
+    callstack: List[int]
+
     def __init__(self):
         self.closure_constants = {}
         self.closure_arrays = {}
         self.closure_sdfgs = collections.OrderedDict()
         self.nested_closures = []
         self.array_mapping = {}
+        self.callstack = []
 
     def print_call_tree(self, name, indent=0):
         print('  ' * indent + name)
