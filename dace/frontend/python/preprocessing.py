@@ -12,6 +12,7 @@ import warnings
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import dace
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
+from dace.config import Config
 from dace.sdfg import SDFG
 from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible,
@@ -538,6 +539,11 @@ class GlobalResolver(ast.NodeTransformer):
                 if has_replacement(value, parent_object, parent_node):
                     return None
 
+                # Decorated or functions with missing source code
+                sast, _, _, _ = astutils.function_to_ast(value)
+                if len(sast.body[0].decorator_list) > 0:
+                    return None
+
                 parsed = parser.DaceProgram(value, [], {}, False,
                                             dtypes.DeviceType.CPU)
                 # If method, add the first argument (which disappears due to
@@ -562,6 +568,7 @@ class GlobalResolver(ast.NodeTransformer):
         # Skip the top function definition (handled outside of the resolver)
         if self.toplevel_function:
             self.toplevel_function = False
+            node.decorator_list = []  # Skip decorators
             return self.generic_visit(node)
 
         for arg in ast.walk(node.args):
@@ -750,7 +757,8 @@ class CallTreeResolver(ast.NodeVisitor):
                             if v is value)
             if hasattr(value, 'closure_resolver'):
                 self.closure.nested_closures.append(
-                    (qualname, value.closure_resolver(constant_args)))
+                    (qualname,
+                     value.closure_resolver(constant_args, self.closure)))
             else:
                 self.closure.nested_closures.append((qualname, SDFGClosure()))
         except:  # Parsing failed (anything can happen here)
@@ -782,11 +790,13 @@ class AugAssignExpander(ast.NodeTransformer):
 
 
 def preprocess_dace_program(
-        f: Callable[..., Any],
-        argtypes: Dict[str, data.Data],
-        global_vars: Dict[str, Any],
-        modules: Dict[str, Any],
-        resolve_functions: bool = False) -> Tuple[PreprocessedAST, SDFGClosure]:
+    f: Callable[..., Any],
+    argtypes: Dict[str, data.Data],
+    global_vars: Dict[str, Any],
+    modules: Dict[str, Any],
+    resolve_functions: bool = False,
+    parent_closure: Optional[SDFGClosure] = None
+) -> Tuple[PreprocessedAST, SDFGClosure]:
     """
     Preprocesses a ``@dace.program`` and all its nested functions, returning
     a preprocessed AST object and the closure of the resulting SDFG.
@@ -803,6 +813,8 @@ def preprocess_dace_program(
     :param resolve_functions: If True, treats all global functions defined
                                 outside of the program as returning constant
                                 values.
+    :param parent_closure: If not None, represents the closure of the parent of
+                           the currently processed function.
     :return: A 2-tuple of the AST and its reduced (used) closure.
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
@@ -826,6 +838,22 @@ def preprocess_dace_program(
         for k, v in global_vars.items() if k not in argtypes and k != '_'
     }
     closure_resolver = GlobalResolver(resolved, resolve_functions)
+
+    # Append element to call stack and handle max recursion depth
+    if parent_closure is not None:
+        fid = id(f)
+        if fid in parent_closure.callstack:
+            raise TypeError('Non-analyzable recursion detected, function '
+                            'cannot be parsed as data-centric')
+        if len(parent_closure.callstack) > Config.get(
+                'frontend', 'implicit_recursion_depth'):
+            raise TypeError('Implicit (automatically parsed) recursion depth '
+                            'exceeded. Functions below this call will not be '
+                            'parsed. To change this setting, modify the value '
+                            '`frontend.implicit_recursion_depth` in .dace.conf')
+
+        closure_resolver.closure.callstack = parent_closure.callstack + [fid]
+
     src_ast = closure_resolver.visit(src_ast)
     src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
     src_ast = ConditionalCodeResolver(resolved).visit(src_ast)

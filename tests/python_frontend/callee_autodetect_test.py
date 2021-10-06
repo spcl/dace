@@ -108,6 +108,52 @@ def test_nested_autoparse_fail():
         notworking2(A)
 
 
+def test_nested_recursion_fail():
+    def nested_a(a):
+        return nested_a(a)
+
+    @dace
+    def recursive_autoparse(a: dace.float64[20]):
+        return nested_a(a)
+
+    A = np.random.rand(20)
+    with pytest.raises(DaceSyntaxError, match='nested_a'):
+        recursive_autoparse(A)
+
+
+def test_nested_recursion2_fail():
+    def nested_a(a):
+        return nested_b(a)
+
+    def nested_b(a):
+        return nested_a(a)
+
+    @dace
+    def recursive_autoparse(a: dace.float64[20]):
+        return nested_a(a)
+
+    A = np.random.rand(20)
+    with pytest.raises(DaceSyntaxError, match='nested_a'):
+        recursive_autoparse(A)
+
+
+def test_nested_autoparse_dec_fail():
+    def some_decorator(f):
+        return f
+
+    @some_decorator
+    def notworking_nested(a):
+        return a
+
+    @dace
+    def notworking3(a: dace.float64[20]):
+        return notworking_nested(a)
+
+    A = np.random.rand(20)
+    with pytest.raises(DaceSyntaxError, match='notworking_nested'):
+        notworking3(A)
+
+
 if __name__ == '__main__':
     test_autodetect_function()
     test_autodetect_method()
@@ -115,3 +161,6 @@ if __name__ == '__main__':
     test_nested_function_method()
     test_function_that_needs_replacement()
     test_nested_autoparse_fail()
+    test_nested_recursion_fail()
+    test_nested_recursion2_fail()
+    test_nested_autoparse_dec_fail()
