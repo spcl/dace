@@ -27,9 +27,9 @@ MINIMUM_CHANNEL_DEPTH = 8
 #   TM: The tile size in M, which must divide the size in M.
 #   P:  The number of (vertically unrolled) processing elements, and
 #       consequently one of the two degrees of parallelism in the kernel. Must
-#       divide the size in N.
+#       divide the tile size TN.
 #   W:  The vectorization width, being the other degree of parallelism. Must
-#       divide the size in M.
+#       divide the tile size TM.
 
 def make_copy_to_fpga_state(sdfg, vtype):
     """
@@ -681,16 +681,28 @@ def cli(n, k, m, num_pes, dtype, tile_size_n, tile_size_m, vector_width,
     TN = tile_size_n
     TM = tile_size_m
 
+    dtype = getattr(dace.dtypes, dtype)  # Convert from string to typeclass
+    vtype = dace.vector(dtype, vector_width)
+
+    if TN % P != 0:
+        raise ValueError(f"Tile size in N {TN} must be divisible by the number of processing elements {P}.")
+    if TM % W != 0:
+        raise ValueError(f"Tile size in M {TM} must be divisible by the vectorization width {W}.")
+    if n % TN != 0:
+        raise ValueError(f"Size in N {n} must be divisible by the tile size in N {TN}.")
+    if n % TM != 0:
+        raise ValueError(f"Size in M {m} must be divisible by the tile size in M {TM}.")
+    if dtype.bytes % TM != 0:
+        raise ValueError(f"Size in M must be a multiple of 64 bytes.")
+
+    dtype = dtype.type  # Convert from typeclass to NumPy type
+
     if specialize:
         name = (f"gemm_fpga_systolic_vectorized_d{num_pes}_"
                 f"w{vector_width}_{tile_size_n}x{tile_size_m}_{n}x{k}x{m}")
     else:
         name = (f"gemm_fpga_systolic_vectorized_d{num_pes}_"
                 f"w{vector_width}_{tile_size_n}x{tile_size_m}_NxKxM")
-
-    dtype = getattr(dace.dtypes, dtype)  # Convert from string to typeclass
-    vtype = dace.vector(dtype, vector_width)
-    dtype = dtype.type  # Convert from typeclass to NumPy type
 
     sdfg = make_sdfg(name, vtype)
 
