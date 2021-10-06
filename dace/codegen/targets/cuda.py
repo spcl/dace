@@ -1245,44 +1245,19 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Check if the node needs to be annotated with a CUDA stream.
         if node_gpu_id in gpu_ids:
             # This node needs to be annotated
-            # If the node is a source of the state and has only one successor
-            # that resides on the same GPU and already has a CUDA stream, this
-            # node can have the same CUDA stream as its successor.
             parent_gpu_id = sdutil.get_gpu_location(graph, parent)
-            if (parent is None and
-                ((len(graph.successors(node)) == 1 and sdutil.get_gpu_location(
-                    graph,
-                    graph.successors(node)[0]) == node_gpu_id)
-                 and hasattr(graph.successors(node)[0], '_cuda_stream'))):
-                node._cuda_stream = {
-                    node_gpu_id:
-                    graph.successors(node)[0]._cuda_stream[node_gpu_id]
-                }
-            # If the parent is a CUDA kernel or a CodeNode with a CUDA stream
-            # located on same GPU, the node must have the parent's CUDA stream.
-            elif (hasattr(parent, '_cuda_stream')
-                  and parent_gpu_id == node_gpu_id
-                  and ((isinstance(parent, nodes.ExitNode)
-                        and graph.entry_node(parent).schedule in [
-                            dtypes.ScheduleType.GPU_Device,
-                            dtypes.ScheduleType.GPU_Persistent
-                        ]) or isinstance(parent, nodes.CodeNode))):
-                node._cuda_stream = {
-                    node_gpu_id: parent._cuda_stream[node_gpu_id]
-                }
             # If the parent node represents an Array and the node represents a
             # View to that Array the node only has one successor that has a
             # CUDA stream and the same GPU ID as the parent, the node must have
             # the parent's CUDA stream.
-            elif (hasattr(parent, '_cuda_stream')
-                  and parent_gpu_id == node_gpu_id
-                  and (isinstance(node, nodes.AccessNode)
-                       and isinstance(node.desc(graph), dt.View)
-                       and len(graph.successors(node)) == 1)
-                  and hasattr(graph.successors(node)[0], '_cuda_stream')
-                  and (sdutil.get_gpu_location(graph,
-                                               graph.successors(node)[0])
-                       == parent_gpu_id and parent._cuda_stream)):
+            if (hasattr(parent, '_cuda_stream') and parent_gpu_id == node_gpu_id
+                    and (isinstance(node, nodes.AccessNode)
+                         and isinstance(node.desc(graph), dt.View)
+                         and len(graph.successors(node)) == 1)
+                    and hasattr(graph.successors(node)[0], '_cuda_stream')
+                    and (sdutil.get_gpu_location(graph,
+                                                 graph.successors(node)[0])
+                         == parent_gpu_id and parent._cuda_stream)):
                 node._cuda_stream = {
                     node_gpu_id:
                     graph.successors(node)[0]._cuda_stream[node_gpu_id]
@@ -1628,6 +1603,10 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
                         state_dfg, next_dst)
                     if isinstance(next_dst, nodes.AccessNode):
                         continue
+                    if isinstance(
+                            next_dst, nodes.MapEntry
+                    ) and next_dst.schedule is dtypes.ScheduleType.GPU_Multidevice:
+                        continue
                     if not hasattr(next_dst, '_cuda_stream'):
                         stream_wait[src_gpuid] = src_cudastream
                     elif next_dst._cuda_stream != dst_node._cuda_stream:
@@ -1779,10 +1758,16 @@ DACE_EXPORTED void __dace_runkernel_{kernel_name}({fargs});
                         state_dfg, next_dst)
                     if isinstance(next_dst, nodes.AccessNode):
                         continue
+                    if isinstance(
+                            next_dst, nodes.MapEntry
+                    ) and next_dst.schedule is dtypes.ScheduleType.GPU_Multidevice:
+                        continue
                     if (is_sync is not False
                             and (not hasattr(next_dst, '_cuda_stream')
                                  and not hasattr(next_edge, '_cuda_event'))):
                         is_sync = True
+                    if not hasattr(next_dst, '_cuda_stream'):
+                        stream_wait[src_gpuid] = src_cudastream
                     elif next_dst._cuda_stream != dst_node._cuda_stream and hasattr(
                             next_edge, '_cuda_event'):
                         dst_cudastream = '__state->gpu_context->at(%s).streams[%d]' % (
