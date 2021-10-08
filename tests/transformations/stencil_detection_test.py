@@ -203,12 +203,220 @@ def test_CFD_pressure_poisson():
     sdfg = pressure_poisson.to_sdfg(strict=True)
     sdfg.apply_transformations_repeated(MapFusion)
     sdfg.apply_transformations_repeated(SimpleTaskletFusion)
-    sdfg.save('test.sdfg')
     num = sdfg.apply_transformations_repeated(StencilDetection)
     assert (num == 1)
     sdfg(nit=nit, p=p, dx=dx, dy=dy, b=b, nx=nx, ny=ny)
 
     assert (np.allclose(p, ref))
+
+I, J, K = 100, 100, 100
+
+
+@dace.program
+def hdiff(in_field: dace.float64[I + 4, J + 4, K],
+          out_field: dace.float64[I, J, K], coeff: dace.float64[I, J, K]):
+
+    lap_field = 4.0 * in_field[1:I + 3, 1:J + 3, :] - (
+        in_field[2:I + 4, 1:J + 3, :] + in_field[0:I + 2, 1:J + 3, :] +
+        in_field[1:I + 3, 2:J + 4, :] + in_field[1:I + 3, 0:J + 2, :])
+
+    res1 = lap_field[1:, 1:J + 1, :] - lap_field[:I + 1, 1:J + 1, :]
+    flx_field = np.where(
+        (res1 *
+         (in_field[2:I + 3, 2:J + 2, :] - in_field[1:I + 2, 2:J + 2, :])) > 0,
+        0,
+        res1,
+    )
+
+    res2 = lap_field[1:I + 1, 1:, :] - lap_field[1:I + 1, :J + 1, :]
+    fly_field = np.where(
+        (res2 *
+         (in_field[2:I + 2, 2:J + 3, :] - in_field[2:I + 2, 1:J + 2, :])) > 0,
+        0,
+        res2,
+    )
+
+    out_field[:, :, :] = in_field[2:I + 2, 2:J + 2, :] - coeff[:, :, :] * (
+        flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] -
+        fly_field[:, :-1, :])
+
+
+@pytest.mark.skip
+def test_hdiff():
+
+    rng = np.random.default_rng(42)
+    in_field = rng.random((I+4, J+4, K))
+    coeff = rng.random((I, J, K))
+    out_field = np.zeros((I, J, K))
+    ref = np.zeros((I, J, K))
+
+    hdiff.f(in_field, coeff, ref)
+
+    sdfg = hdiff.to_sdfg(strict=True)
+    # from dace.transformation.auto import auto_optimize as autoopt
+    # sdfg = autoopt.auto_optimize(sdfg, dace.DeviceType.CPU)
+    # autoopt.greedy_fuse(sdfg, True)
+    sdfg.apply_transformations_repeated(MapFusion)
+    sdfg.apply_transformations_repeated(SimpleTaskletFusion)
+    sdfg.save('hdiff_before.sdfg')
+    num = sdfg.apply_transformations_repeated(StencilDetection)
+    sdfg.save('hdiff_after.sdfg')
+    print(num)
+    sdfg(in_field=in_field, coeff=coeff, out_field=out_field)
+
+
+BET_M = 0.5
+BET_P = 0.5
+
+
+@dace.program
+def vadv(utens_stage: dace.float64[I, J, K], u_stage: dace.float64[I, J, K],
+         wcon: dace.float64[I + 1, J, K], u_pos: dace.float64[I, J, K],
+         utens: dace.float64[I, J, K], dtr_stage: dace.float64):
+    ccol = np.ndarray((I, J, K), dtype=utens_stage.dtype)
+    dcol = np.ndarray((I, J, K), dtype=utens_stage.dtype)
+    data_col = np.ndarray((I, J), dtype=utens_stage.dtype)
+
+    for k in range(1):
+        gcv = 0.25 * (wcon[1:, :, k + 1] + wcon[:-1, :, k + 1])
+        cs = gcv * BET_M
+
+        ccol[:, :, k] = gcv * BET_P
+        bcol = dtr_stage - ccol[:, :, k]
+
+        # update the d column
+        correction_term = -cs * (u_stage[:, :, k + 1] - u_stage[:, :, k])
+        dcol[:, :, k] = (dtr_stage * u_pos[:, :, k] + utens[:, :, k] +
+                         utens_stage[:, :, k] + correction_term)
+
+        # Thomas forward
+        divided = 1.0 / bcol
+        ccol[:, :, k] = ccol[:, :, k] * divided
+        dcol[:, :, k] = dcol[:, :, k] * divided
+
+    for k in range(1, K - 1):
+        gav = -0.25 * (wcon[1:, :, k] + wcon[:-1, :, k])
+        gcv[:] = 0.25 * (wcon[1:, :, k + 1] + wcon[:-1, :, k + 1])
+
+        as_ = gav * BET_M
+        cs[:] = gcv * BET_M
+
+        acol = gav * BET_P
+        ccol[:, :, k] = gcv * BET_P
+        bcol[:] = dtr_stage - acol - ccol[:, :, k]
+
+        # update the d column
+        correction_term[:] = -as_ * (
+            u_stage[:, :, k - 1] -
+            u_stage[:, :, k]) - cs * (u_stage[:, :, k + 1] - u_stage[:, :, k])
+        dcol[:, :, k] = (dtr_stage * u_pos[:, :, k] + utens[:, :, k] +
+                         utens_stage[:, :, k] + correction_term)
+
+        # Thomas forward
+        divided[:] = 1.0 / (bcol - ccol[:, :, k - 1] * acol)
+        ccol[:, :, k] = ccol[:, :, k] * divided
+        dcol[:, :, k] = (dcol[:, :, k] - (dcol[:, :, k - 1]) * acol) * divided
+
+    for k in range(K - 1, K):
+        gav[:] = -0.25 * (wcon[1:, :, k] + wcon[:-1, :, k])
+        as_[:] = gav * BET_M
+        acol[:] = gav * BET_P
+        bcol[:] = dtr_stage - acol
+
+        # update the d column
+        correction_term[:] = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k])
+        dcol[:, :, k] = (dtr_stage * u_pos[:, :, k] + utens[:, :, k] +
+                         utens_stage[:, :, k] + correction_term)
+
+        # Thomas forward
+        divided[:] = 1.0 / (bcol - ccol[:, :, k - 1] * acol)
+        dcol[:, :, k] = (dcol[:, :, k] - (dcol[:, :, k - 1]) * acol) * divided
+
+    for k in range(K - 1, K - 2, -1):
+        datacol = dcol[:, :, k]
+        data_col[:] = datacol
+        utens_stage[:, :, k] = dtr_stage * (datacol - u_pos[:, :, k])
+
+    for k in range(K - 2, -1, -1):
+        datacol[:] = dcol[:, :, k] - ccol[:, :, k] * data_col[:, :]
+        data_col[:] = datacol
+        utens_stage[:, :, k] = dtr_stage * (datacol - u_pos[:, :, k])
+    
+
+@pytest.mark.skip
+def test_vadv():
+
+    # rng = np.random.default_rng(42)
+    # in_field = rng.random((I+4, J+4, K))
+    # coeff = rng.random((I, J, K))
+    # out_field = np.zeros((I, J, K))
+    # ref = np.zeros((I, J, K))
+
+    # hdiff.f(in_field, coeff, ref)
+
+    sdfg = vadv.to_sdfg(strict=True)
+    # from dace.transformation.auto import auto_optimize as autoopt
+    # sdfg = autoopt.auto_optimize(sdfg, dace.DeviceType.CPU)
+    # autoopt.greedy_fuse(sdfg, True)
+    sdfg.apply_transformations_repeated(MapFusion)
+    sdfg.apply_transformations_repeated(SimpleTaskletFusion)
+    sdfg.save('vadv_before.sdfg')
+    num = sdfg.apply_transformations_repeated(StencilDetection)
+    sdfg.save('vadv_after.sdfg')
+    print(num)
+    # sdfg(in_field=in_field, coeff=coeff, out_field=out_field)
+
+
+C_in, C_out, H, K, N, W = (dace.symbol(s, dace.int64)
+                           for s in ('C_in', 'C_out', 'H', 'K', 'N', 'W'))
+
+
+# Deep learning convolutional operator (stride = 1)
+@dace.program
+def conv2d(input: dace.float32[N, H, W, C_in], weights: dace.float32[K, K, C_in,
+                                                                 C_out]):
+    # K = weights.shape[0]  # Assuming square kernel
+    # N = input.shape[0]
+    # H_out = input.shape[1] - K + 1
+    # W_out = input.shape[2] - K + 1
+    # C_out = weights.shape[3]
+    # output = np.empty((N, H_out, W_out, C_out), dtype=np.float32)
+    output = np.ndarray((N, H - K + 1, W - K + 1, C_out), dtype=np.float32)
+
+    # Loop structure adapted from https://github.com/SkalskiP/ILearnDeepLearning.py/blob/ba0b5ba589d4e656141995e8d1a06d44db6ce58d/01_mysteries_of_neural_networks/06_numpy_convolutional_neural_net/src/layers/convolutional.py#L88
+    # for i, j in dc.map[0:H-K+1, 0:W-K+1]:
+    for i in range(H - K + 1):
+        for j in range(W - K + 1):
+            output[:, i, j, :] = np.sum(
+                input[:, i:i + K, j:j + K, :, np.newaxis] *
+                weights[np.newaxis, :, :, :],
+                axis=(1, 2, 3),
+            )
+
+    return output
+
+
+def test_conv2d():
+
+    # rng = np.random.default_rng(42)
+    # in_field = rng.random((I+4, J+4, K))
+    # coeff = rng.random((I, J, K))
+    # out_field = np.zeros((I, J, K))
+    # ref = np.zeros((I, J, K))
+
+    # hdiff.f(in_field, coeff, ref)
+
+    sdfg = conv2d.to_sdfg(strict=True)
+    from dace.transformation.auto import auto_optimize as autoopt
+    sdfg = autoopt.auto_optimize(sdfg, dace.DeviceType.CPU)
+    # autoopt.greedy_fuse(sdfg, True)
+    # sdfg.apply_transformations_repeated(MapFusion)
+    sdfg.apply_transformations_repeated(SimpleTaskletFusion)
+    sdfg.save('conv2d_before.sdfg')
+    num = sdfg.apply_transformations_repeated(StencilDetection)
+    sdfg.save('conv2d_after.sdfg')
+    print(num)
+    # sdfg(in_field=in_field, coeff=coeff, out_field=out_field)
 
 
 if __name__ == '__main__':
@@ -217,4 +425,7 @@ if __name__ == '__main__':
     # test_jacobi2d()
     # test_jacobi1d_with_scalar()
     # test_CFD_build_up_b()
-    test_CFD_pressure_poisson()
+    # test_CFD_pressure_poisson()
+    # test_hdiff()
+    # test_vadv()
+    test_conv2d()
