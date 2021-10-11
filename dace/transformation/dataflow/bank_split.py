@@ -19,11 +19,11 @@ class BankSplit(transformation.Transformation):
     but its intended use case is to distribute data on many HBM-banks.
     Matches any 2 AccessNodes connected by an edge, if the dimensionality of the two accessed
     arrays differ by exactly one. The sizes of the arrays have to be large enough with
-    respect to the split executed, but this is not verified. While it is allowed to use symbolics 
+    respect to the split executed, but this is not verified. While it is allowed to use symbolics
     for the shapes of the array, it is expected that each dimension is divisible by the number
     of splits specified.
 
-    When appling an unrolled map is generated around the accessnodes, which copies the parts of 
+    When appling an unrolled map is generated around the accessnodes, which copies the parts of
     the array to the target array.
 
     Examples:
@@ -32,13 +32,13 @@ class BankSplit(transformation.Transformation):
     split_array_info=[1, 10]. A will then be divided along it's second dimension into 10 parts
     of size [100, 10] and distributed on B.
     Gather: Suppose A has shape [4, 50, 50] and B has shape [100, 100]. If one sets
-    split_array_info to [2, 2] and applies the transformation, it will split 
+    split_array_info to [2, 2] and applies the transformation, it will split
     equally in all dimensions.
     Therefore A[0] will be copied to B[0:50, 0:50], A[1] to B[0:50, 50:100], A[2] to B[50:100, 0:50] and
     A[3] to B[50:100, 50:100].
 
     Note that simply reversing the AccessNodes for the arrays in the above examples would
-    have lead to the inverse operation, i.e. the gather would become a distribute and 
+    have lead to the inverse operation, i.e. the gather would become a distribute and
     the other way around.
     """
 
@@ -98,13 +98,12 @@ class BankSplit(transformation.Transformation):
         # same dimensions means HBM-array needs 1 dimension more
         collect_src = len(src_array.shape) - 1 == len(dst_array.shape)
         distribute_dst = len(src_array.shape) + 1 == len(dst_array.shape)
-        if collect_src and symbolic.issymbolic(src_array.shape[0], sdfg.constants):
+        if collect_src and symbolic.issymbolic(src_array.shape[0],
+                                               sdfg.constants):
             return False
-        elif distribute_dst:
-            try:
-                tmp = symbolic.evaluate(dst_array.shape[0], sdfg.constants)
-            except TypeError:
-                return False
+        elif distribute_dst and symbolic.issymbolic(dst_array.shape[0],
+                                                    sdfg.constants):
+            return False
         return collect_src or distribute_dst
 
     @staticmethod
