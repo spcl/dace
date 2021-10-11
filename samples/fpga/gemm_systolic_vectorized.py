@@ -692,8 +692,8 @@ def cli(n, k, m, num_pes, dtype, tile_size_n, tile_size_m, vector_width,
         raise ValueError(f"Size in N {n} must be divisible by the tile size in N {TN}.")
     if n % TM != 0:
         raise ValueError(f"Size in M {m} must be divisible by the tile size in M {TM}.")
-    if dtype.bytes % TM != 0:
-        raise ValueError(f"Size in M must be a multiple of 64 bytes.")
+    if (dtype.bytes * TM) % 64 != 0:
+        raise ValueError(f"Tile size in M {TM} must be a multiple of 64 bytes.")
 
     dtype = dtype.type  # Convert from typeclass to NumPy type
 
