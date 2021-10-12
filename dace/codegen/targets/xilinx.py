@@ -171,7 +171,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                    XilinxCodeGen,
                                    "Xilinx",
                                    target_type="host")
-                                
+
         ip_objs = [
             CodeObject(kernel_name, code, ext, XilinxCodeGen, "ip", target_type="ip")
             for (kernel_name, ext, code) in self._ip_codes
@@ -780,14 +780,42 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             double_kernel = CodeIOStream()
 
             if double_pumped:
+                # TODO the loop ranges should also be halved? I.e. symbols
+                # Half the vector size
+                acces_nodes_touched = []
+                for node in subgraph.nodes():
+                    if isinstance(node, dace.nodes.AccessNode) and sdfg.arrays[node.data].dtype.veclen > 1:
+                        acces_nodes_touched.append(sdfg.arrays[node.data].dtype)
+                for node in acces_nodes_touched:
+                    node.veclen >>= 1
+
                 double_kernel.write('''#include <dace/xilinx/device.h>
 #include <dace/math.h>
 #include <dace/complex.h>''')
+
+                # TODO support more than just streams
+                # Regenerate parameters with new sizes
+                kernel_args_module_double = []
+                for is_output, pname, p, interface_ids in parameters:
+                    if isinstance(p, dt.Stream):
+                        if p.is_stream_array():
+                            kernel_args_module_double.append(
+                                "dace::FIFO<{}, {}, {}> {}[{}]".format(
+                                    p.dtype.base_type.ctype, p.veclen,
+                                    p.buffer_size, pname, p.size_string()))
+                        else:
+                            kernel_args_module_double.append(
+                                "dace::FIFO<{}, {}, {}> &{}".format(
+                                    p.dtype.base_type.ctype, p.veclen,
+                                    p.buffer_size, pname))
+
                 self._frame.generate_fileheader(sdfg, double_kernel, 'xilinx_device')
-                double_kernel.write("DACE_EXPORTED void {}({}) {{".format(rtl_name, ", ".join(kernel_args_module)))
+                double_kernel.write("DACE_EXPORTED void {}({}) {{".format(rtl_name, ", ".join(kernel_args_module_double)))
                 double_kernel.write('#pragma HLS INTERFACE ap_ctrl_none port=return')
                 for _, pname, _, _, in parameters:
                     double_kernel.write(f'#pragma HLS INTERFACE axis port={pname}')
+                double_kernel.write('while (1) {')
+                double_kernel.write('#pragma HLS DATAFLOW')
 
             self._dispatcher.dispatch_subgraph(sdfg,
                                                subgraph,
@@ -796,9 +824,15 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                double_kernel,
                                                skip_entry_node=False)
             if double_pumped:
+                # Increase the vector size, in case some other subgraph uses it.
+                # TODO maybe it shouldn't be every access that is halved? One could have a stream which is rarely consumed from?
+                for node in acces_nodes_touched:
+                    node.veclen <<= 1
+
+                double_kernel.write('}')
                 double_kernel.write('}')
                 self._ip_codes.append((rtl_name, 'cpp', double_kernel.getvalue()))
-                
+
                 # Generate all of the RTL files
                 rtllib_config = {
                     "name": rtl_name,
@@ -816,10 +850,38 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     #"unroll": True,
                     "double_pump": True,
                     "ip_cores": {
-                        # TODO add them! Maybe with some help from rtllib
+                        # TODO Maybe with some help from rtllib
                     },
                     "clocks": 2 # TODO make this "trickle" down to here. Maybe add speeds as well?
                 }
+                rtllib_config['ip_cores'][f'{rtl_name}_0'] = {
+                    'name': f'{rtl_name}',
+                    'vendor': 'xilinx.com',
+                    'library': 'hls',
+                    'version': '1.0',
+                    'params': {}
+                }
+                for is_output, pname, p, _ in parameters:
+                    rtllib_config['ip_cores'][f'clock_sync_{pname}'] = {
+                        'name': 'axis_clock_converter',
+                        'vendor': 'xilinx.com',
+                        'library': 'ip',
+                        'version': '1.1',
+                        'params': {
+                            'CONFIG.TDATA_NUM_BYTES': p.dtype.bytes,
+                            'CONFIG.SYNCHRONIZATION_STAGES': 8,
+                        }
+                    }
+                    rtllib_config['ip_cores'][f'data_issue_pack_{pname}'] = {
+                        'name': 'axis_dwidth_converter',
+                        'vendor': 'xilinx.com',
+                        'library': 'ip',
+                        'version': '1.1',
+                        'params': {
+                            'CONFIG.S_TDATA_NUM_BYTES': p.dtype.bytes // 2 if is_output else p.dtype.bytes,
+                            'CONFIG.M_TDATA_NUM_BYTES': p.dtype.bytes if is_output else p.dtype.bytes // 2,
+                        }
+                    }
 
                 self._ip_codes.append((f"{rtl_name}_control", 'v', rtllib_control(rtllib_config)))
 
@@ -833,7 +895,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             # TODO only if there are any scalar arguments. Otherwise, it shouldn't be needed.
             # Launch the kernel from the host code
             host_stream.write(
-                f"all_events.push_back(program.MakeKernel(\"{rtl_name}{'_top' if rtl_tasklet else ''}\"{', '.join([''] + [name for _, name, p, _ in parameters if not isinstance(p, dt.Stream)])}).ExecuteTaskFork());",
+                f"all_events.push_back(program.MakeKernel(\"{rtl_name}_top\"{', '.join([''] + [name for _, name, p, _ in parameters if not isinstance(p, dt.Stream)])}).ExecuteTaskFork());",
                 sdfg, state_id, rtl_tasklet)
             if state.instrument == dtypes.InstrumentationType.FPGA:
                 self.instrument_opencl_kernel(rtl_name, state_id, sdfg.sdfg_id,

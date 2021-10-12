@@ -5,15 +5,16 @@ from dace.transformation.dataflow import StreamingMemory
 from dace.transformation.interstate import FPGATransformState
 
 N = dace.symbol("N")
-N.set(10)
-veclen = 2
+N.set(1024)
+veclen = 16
 
 sdfg = dace.SDFG("vector_addition")
 
-vec_type = dace.vector(dace.float32, veclen)
-sdfg.add_array("A", [N / veclen], vec_type)
-sdfg.add_array("B", [N / veclen], vec_type)
-sdfg.add_array("C", [N / veclen], vec_type)
+# TODO using the same data type breaks when halving the veclen
+#vec_type = dace.vector(dace.float32, veclen)
+sdfg.add_array("A", [N / veclen], dace.vector(dace.float32, veclen))
+sdfg.add_array("B", [N / veclen], dace.vector(dace.float32, veclen))
+sdfg.add_array("C", [N / veclen], dace.vector(dace.float32, veclen))
 
 state = sdfg.add_state()
 a = state.add_read("A")
@@ -38,24 +39,6 @@ sdfg.specialize(dict(N=N))
 sdfg.apply_transformations(FPGATransformState)
 sdfg.apply_transformations_repeated(StreamingMemory, dict(storage=dace.StorageType.FPGA_Local))
 
-# Add the rtl placeholder subgraph
-#i_entry, i_exit = state.add_map('rtl_map', dict({'i': f'0:N//{veclen}'}))
-#i_task = state.add_tasklet('rtl_core', {'a', 'b'}, {'c'},
-#'''
-#hls_core hls_core_0 (
-#    .ap_clk(ap_aclk),
-#    .ap_rst_n(ap_areset_n2),
-#
-#    .a_V_TVALID(s_axis_a_tvalid),
-#    .a_V_TDATA(s_axis_a_)
-#);
-#''', language=dace.dtypes.Language.SystemVerilog)
-#i_a = state.add_read('fpga_A_0')
-#i_b = state.add_read('fpga_B_0')
-#i_c = state.add_write('fpga_C_0')
-#state.add_memlet_path(i_a, i_entry, i_task, memlet=dace.Memlet('fpga_A[0]'), dst_conn='a')
-#state.add_memlet_path(i_b, i_entry, i_task, memlet=dace.Memlet('fpga_B[0]'), dst_conn='b')
-#state.add_memlet_path(i_task, i_exit, i_c, memlet=dace.Memlet('fpga_C[0]'), src_conn='c')
 sdfg.save('aoeu.sdfg')
 
 sdfg(A=A, B=B, C=C)
