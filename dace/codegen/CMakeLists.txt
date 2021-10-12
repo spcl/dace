@@ -66,6 +66,11 @@ foreach(DACE_FILE ${DACE_FILES})
     set(DACE_ENABLE_XILINX ON)
     if(DACE_FILE_TARGET_TYPE MATCHES "host")
       set(DACE_XILINX_HOST_FILES ${DACE_XILINX_HOST_FILES} ${DACE_FILE})
+    elseif (DACE_FILE_TARGET_TYPE MATCHES "ip")
+      set(DACE_ENABLE_RTL ON)
+      if (DACE_FILE_EXT MATCHES ".cpp")
+        set(DACE_XILINX_IP_FILES ${DACE_XILINX_IP_FILES} ${DACE_FILE})
+      endif()
     elseif(DACE_FILE_EXT MATCHES ".cpp")
       set(DACE_XILINX_KERNEL_FILES ${DACE_XILINX_KERNEL_FILES} ${DACE_FILE})
     elseif(DACE_FILE_EXT MATCHES ".cfg")
@@ -145,7 +150,7 @@ endif()
 
 # Function for performing deferred variable expansion
 function(expand_deferred_variables VAR_NAME)
-  string(REGEX MATCHALL "_DACE_CMAKE_EXPAND{([^}]+)}" EXPAND_VARS 
+  string(REGEX MATCHALL "_DACE_CMAKE_EXPAND{([^}]+)}" EXPAND_VARS
          "${${VAR_NAME}}")
   string(REPLACE " " ";" EXPAND_VARS "${EXPAND_VARS}")
   foreach(EXPAND_VAR ${EXPAND_VARS})
@@ -341,7 +346,7 @@ if(DACE_ENABLE_RTL)
         get_filename_component(RTL_KERNEL ${RTL_SRC_DIR} NAME)
         get_filename_component(RTL_SCRIPTS "${RTL_SRC_DIR}/../scripts" ABSOLUTE)
         set (RTL_XO "${RTL_KERNEL}.xo")
-        rtllib_rtl_target(${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} ${RTL_GENERATED_DIR} ${RTL_LOG_DIR} ${RTL_TEMP_DIR} "${RTLLIB_DIR}/rtl" ${RTL_XO} ${RTL_PART})
+        rtllib_rtl_target(${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} ${RTL_GENERATED_DIR} ${RTL_LOG_DIR} ${RTL_TEMP_DIR} "${RTLLIB_DIR}/rtl" ${RTL_XO} ${RTL_PART} "" "")
         set (DACE_VITIS_KERNELS_HW_EMU ${DACE_VITIS_KERNELS_HW_EMU} ${RTL_XO})
         set (DACE_VITIS_KERNELS_HW ${DACE_VITIS_KERNELS_HW} ${RTL_XO})
     endforeach()
@@ -442,6 +447,7 @@ if(DACE_ENABLE_XILINX)
 
   set(VITIS_BUILD_FLAGS
     ${VITIS_BUILD_FLAGS}
+    --user_ip_repo_paths ip_cores
     -s
     -O3
     -I${CMAKE_SOURCE_DIR}/include
@@ -540,6 +546,28 @@ if(DACE_ENABLE_XILINX)
     # Since with Vitis only one kernel can be compiled at a time,
     # for the general case we have to first compile each kernel
     # and then link together the generated .xo files
+
+    foreach(DACE_IP ${DACE_XILINX_IP_FILES})
+      get_filename_component(DACE_KERNEL_NAME ${DACE_IP} NAME_WE)
+      get_filename_component(DACE_KERNEL_SRC ${DACE_IP} DIRECTORY)
+
+      configure_file(${CMAKE_SOURCE_DIR}/Xilinx_IP.tcl.in Package_${DACE_KERNEL_NAME}.tcl)
+      add_custom_command(
+        OUTPUT ip_cores/${DACE_KERNEL_NAME}/impl/export.zip
+        COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_HLS}
+        -f Package_${DACE_KERNEL_NAME}.tcl
+        DEPENDS ${DACE_IP}
+      )
+
+      execute_process(COMMAND ${Vitis_PLATFORMINFO} -p ${DACE_XILINX_TARGET_PLATFORM} -jhardwarePlatform.board.part
+      OUTPUT_VARIABLE RTL_PART
+      RESULT_VARIABLE _platforminfo_res
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+      set (RTL_XO "${DACE_KERNEL_NAME}.xo")
+      rtllib_rtl_target(${DACE_KERNEL_NAME} ${DACE_KERNEL_SRC} ${DACE_KERNEL_SRC} ${DACE_KERNEL_SRC} log tmp ${DACE_KERNEL_SRC} ${RTL_XO} ${RTL_PART} ip_cores/${DACE_KERNEL_NAME}/impl/export.zip ip_cores)
+      set (DACE_VITIS_KERNELS_HW_EMU ${DACE_VITIS_KERNELS_HW_EMU} ${RTL_XO})
+    endforeach()
 
     foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
       # Compile .xo files
