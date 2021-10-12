@@ -1010,7 +1010,7 @@ def make_fpga_state(sdfg):
                     transient=True,
                     shape=(P, ),
                     storage=dace.dtypes.StorageType.FPGA_Local,
-                    buffer_size="M")
+                    buffer_size="1")
 
     make_read_A(state)
     make_read_B(state)
