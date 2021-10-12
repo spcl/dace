@@ -312,6 +312,7 @@ class FPGACodeGen(TargetCodeGenerator):
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
 
         self._host_codes = []
+        self._ip_codes = []
         self._kernel_codes = []
         # any other kind of generated file if any (name, code object)
         self._other_codes = {}
@@ -323,7 +324,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         # Register additional FPGA dispatchers
         self._dispatcher.register_map_dispatcher(
-            [dtypes.ScheduleType.FPGA_Device], self)
+            [dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Double], self)
 
         self._dispatcher.register_state_dispatcher(self,
                                                    predicate=is_fpga_kernel)
@@ -747,7 +748,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 if isinstance(node, dace.sdfg.nodes.AccessNode)
             })
             rtl_subgraph = any([
-                isinstance(node, nodes.RTLTasklet) for node in subgraph.nodes()
+                isinstance(node, nodes.RTLTasklet) or (isinstance(node, dace.nodes.MapEntry) and node.schedule is dace.dtypes.ScheduleType.FPGA_Double) for node in subgraph.nodes()
             ])
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
@@ -842,9 +843,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # Ignore views, as these never need to be explicitly passed
                 if isinstance(desc, dt.View):
                     continue
-                # Only distinguish between inputs and outputs for arrays
-                if not isinstance(desc, dt.Array):
-                    is_output = None
+                # Only distinguish between inputs and outputs for arrays # TODO why?
+                #if not isinstance(desc, dt.Array):
+                #    is_output = None
                 # If this is a global array, assign the correct interface ID and
                 # memory interface (e.g., DDR or HBM bank)
                 if (isinstance(desc, dt.Array)
@@ -993,7 +994,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             return self.generate_kernel(
                 sdfg, sdfg.node(state_id),
                 dfg_scope.source_nodes()[0].map.label.replace(" ", "_"),
-                subgraphs, function_stream, callsite_stream)
+                subgraphs, function_stream, callsite_stream)# TODO doesn't match the current function signature
 
         self.generate_node(sdfg, dfg_scope, state_id,
                            dfg_scope.source_nodes()[0], function_stream,
@@ -1840,7 +1841,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         if hasattr(self, method_name):
 
             if hasattr(node, "schedule") and node.schedule not in [
-                    dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device
+                    dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Double
             ]:
                 warnings.warn("Found schedule {} on {} node in FPGA code. "
                               "Ignoring.".format(node.schedule,

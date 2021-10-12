@@ -60,6 +60,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
     FPGA_Device = ()
+    FPGA_Double = () #: Used for double pumping
 
 
 # A subset of GPU schedule types
@@ -194,6 +195,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
+    ScheduleType.FPGA_Double: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential
 }
 

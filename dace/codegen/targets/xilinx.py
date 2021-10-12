@@ -22,6 +22,11 @@ from dace.codegen.targets.target import make_absolute
 from dace.codegen.targets import cpp, fpga
 from typing import List, Union
 
+from dace.external.rtllib.templates.control import generate_from_config as rtllib_control
+from dace.external.rtllib.templates.package import generate_from_config as rtllib_package
+from dace.external.rtllib.templates.top import generate_from_config as rtllib_top
+from dace.external.rtllib.templates.synth import generate_from_config as rtllib_synth
+
 REDUCTION_TYPE_TO_HLSLIB = {
     dace.dtypes.ReductionType.Min: "hlslib::op::Min",
     dace.dtypes.ReductionType.Max: "hlslib::op::Max",
@@ -166,6 +171,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                    XilinxCodeGen,
                                    "Xilinx",
                                    target_type="host")
+                                
+        ip_objs = [
+            CodeObject(kernel_name, code, ext, XilinxCodeGen, "ip", target_type="ip")
+            for (kernel_name, ext, code) in self._ip_codes
+        ]
 
         kernel_code_objs = [
             CodeObject(kernel_name,
@@ -208,7 +218,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                            "Xilinx",
                            target_type="device"))
 
-        return [host_code_obj] + kernel_code_objs + other_objs
+        return [host_code_obj] + ip_objs + kernel_code_objs + other_objs
 
     @staticmethod
     def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
@@ -687,19 +697,26 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # Check if we are generating an RTL module, in which case only the
         # accesses to the streams should be handled
         rtl_tasklet = None
+        double_pumped = None
         for n in subgraph.nodes():
             if (isinstance(n, dace.nodes.Tasklet)
                     and n.language == dace.dtypes.Language.SystemVerilog):
                 rtl_tasklet = n
                 break
-        if rtl_tasklet:
+            if isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Double:
+                double_pumped = n
+
+        if rtl_tasklet or double_pumped:
+            label = 'RTL' if rtl_tasklet else 'Double pumped'
+
             entry_stream.write(
-                f'// [RTL] HLSLIB_DATAFLOW_FUNCTION({name}, {", ".join(kernel_args_call)});'
+                f'// [{label}] HLSLIB_DATAFLOW_FUNCTION({name}, {", ".join(kernel_args_call)});'
             )
             module_stream.write(
-                f'// [RTL] void {name}({", ".join(kernel_args_module)});\n\n')
+                f'// [{label}] void {name}({", ".join(kernel_args_module)});\n\n')
 
-            rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg)
+            # TODO Better name than rtl_name
+            rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg) if rtl_tasklet else name
 
             # _i in names are due to vitis
             for node in subgraph.source_nodes():
@@ -724,7 +741,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         if elem not in self._stream_connections:
                             self._stream_connections[elem] = [None, None]
                         for edge in subgraph.out_edges(node):
-                            rtl_dst = state.memlet_path(edge)[-1].dst_conn
+                            rtl_dst = state.memlet_path(edge)[-1].dst_conn if rtl_tasklet else node.data
                             val = '{}_top_1.s_axis_{}{}'.format(
                                 rtl_name, rtl_dst, postfix)
                             self._stream_connections[elem][1] = val
@@ -751,7 +768,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         if elem not in self._stream_connections:
                             self._stream_connections[elem] = [None, None]
                         for edge in state.in_edges(node):
-                            rtl_src = subgraph.memlet_path(edge)[0].src_conn
+                            rtl_src = subgraph.memlet_path(edge)[0].src_conn if rtl_tasklet else node.data
                             self._stream_connections[elem][
                                 0] = '{}_top_1.m_axis_{}{}'.format(
                                     rtl_name, rtl_src, postfix)
@@ -760,21 +777,69 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             # ignore the generated code, as the RTL codegen will generate the
             # appropriate files.
             ignore_stream = CodeIOStream()
+            double_kernel = CodeIOStream()
+
+            if double_pumped:
+                double_kernel.write('''#include <dace/xilinx/device.h>
+#include <dace/math.h>
+#include <dace/complex.h>''')
+                self._frame.generate_fileheader(sdfg, double_kernel, 'xilinx_device')
+                double_kernel.write("DACE_EXPORTED void {}({}) {{".format(rtl_name, ", ".join(kernel_args_module)))
+                double_kernel.write('#pragma HLS INTERFACE ap_ctrl_none port=return')
+                for _, pname, _, _, in parameters:
+                    double_kernel.write(f'#pragma HLS INTERFACE axis port={pname}')
+
             self._dispatcher.dispatch_subgraph(sdfg,
                                                subgraph,
                                                state_id,
                                                ignore_stream,
-                                               ignore_stream,
+                                               double_kernel,
                                                skip_entry_node=False)
+            if double_pumped:
+                double_kernel.write('}')
+                self._ip_codes.append((rtl_name, 'cpp', double_kernel.getvalue()))
+                
+                # Generate all of the RTL files
+                rtllib_config = {
+                    "name": rtl_name,
+                    "buses": { # TODO unroll factor
+                        pname: ('m_axis' if is_output else 's_axis', p.veclen)
+                        for is_output, pname, p, _ in parameters
+                    },
+                    "params": {
+                        "scalars": {
+                            #name: total_size
+                            #for name, (_, total_size) in scalars.items()
+                        },
+                        "memory": {}
+                    },
+                    #"unroll": True,
+                    "double_pump": True,
+                    "ip_cores": {
+                        # TODO add them! Maybe with some help from rtllib
+                    },
+                    "clocks": 2 # TODO make this "trickle" down to here. Maybe add speeds as well?
+                }
 
+                self._ip_codes.append((f"{rtl_name}_control", 'v', rtllib_control(rtllib_config)))
+
+                self._ip_codes.append((f'{rtl_name}_top', 'v', rtllib_top(rtllib_config)))
+
+                self._ip_codes.append((f'{rtl_name}_package', 'tcl', rtllib_package(rtllib_config)))
+
+                self._ip_codes.append((f'{rtl_name}_synth', 'tcl', rtllib_synth(rtllib_config)))
+
+        if rtl_tasklet or double_pumped:
+            # TODO only if there are any scalar arguments. Otherwise, it shouldn't be needed.
             # Launch the kernel from the host code
             host_stream.write(
-                f"  auto kernel_{rtl_name} = program.MakeKernel(\"{rtl_name}_top\"{', '.join([''] + [name for _, name, p, _ in parameters if not isinstance(p, dt.Stream)])}).ExecuteTaskFork();",
+                f"all_events.push_back(program.MakeKernel(\"{rtl_name}{'_top' if rtl_tasklet else ''}\"{', '.join([''] + [name for _, name, p, _ in parameters if not isinstance(p, dt.Stream)])}).ExecuteTaskFork());",
                 sdfg, state_id, rtl_tasklet)
             if state.instrument == dtypes.InstrumentationType.FPGA:
                 self.instrument_opencl_kernel(rtl_name, state_id, sdfg.sdfg_id,
                                               instrumentation_stream)
 
+        if rtl_tasklet or double_pumped:
             return
 
         # create a unique module name to prevent name clashes

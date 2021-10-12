@@ -8,14 +8,14 @@ import warnings
 
 from dace.transformation import transformation as xf
 from dace import (data, dtypes, nodes, properties, registry, memlet as mm,
-                  subsets, symbolic)
+                  subsets, symbolic, ScheduleType)
 from dace.sdfg import SDFG, SDFGState, utils as sdutil, graph as gr
 
 
 def _collect_map_ranges(
     state: SDFGState, memlet_path: List[gr.MultiConnectorEdge[mm.Memlet]]
 ) -> List[Tuple[str, subsets.Range]]:
-    """ 
+    """
     Collects a list of parameters and ranges for every map (entry or exit)
     in the given memlet path.
     """
@@ -39,8 +39,8 @@ def _canonicalize_memlet(
         memlet: mm.Memlet,
         mapranges: List[Tuple[str,
                               subsets.Range]]) -> Tuple[symbolic.SymbolicType]:
-    """ 
-    Turn a memlet subset expression (of a single element) into an expression 
+    """
+    Turn a memlet subset expression (of a single element) into an expression
     that does not depend on the map symbol names.
     """
     repldict = {
@@ -55,7 +55,7 @@ def _do_memlets_correspond(
         memlet_a: mm.Memlet, memlet_b: mm.Memlet,
         mapranges_a: List[Tuple[str, subsets.Range]],
         mapranges_b: List[Tuple[str, subsets.Range]]) -> bool:
-    """ 
+    """
     Returns True if the two memlets correspond to each other, disregarding
     symbols from equivalent maps.
     """
@@ -103,7 +103,7 @@ def _streamify_recursive(node: nodes.NestedSDFG, to_replace: str,
 @registry.autoregister_params(singlestate=True)
 @properties.make_properties
 class StreamingMemory(xf.Transformation):
-    """ 
+    """
     Converts a read or a write to streaming memory access, where data is
     read/written to/from a stream in a separate connected component than the
     computation.
@@ -349,7 +349,7 @@ class StreamingMemory(xf.Transformation):
                     state.add_map(f'__s{opname}_{mapname}',
                                   [(p, r)
                                    for p, r in zip(map.params, map.range)],
-                                  map.schedule))
+                                  map.schedule if not map.schedule is ScheduleType.FPGA_Double else ScheduleType.FPGA_Device)) # TODO the new external interfaces shouldn't be double pumped!
             tasklet = state.add_tasklet(
                 f'{opname}_{mapname}',
                 {m[1]
@@ -377,7 +377,7 @@ class StreamingMemory(xf.Transformation):
 @registry.autoregister_params(singlestate=True)
 @properties.make_properties
 class StreamingComposition(xf.Transformation):
-    """ 
+    """
     Converts two connected computations (nodes, map scopes) into two separate
     processing elements, with a stream connecting the results. Only applies
     if the memory access patterns of the two computations match.
