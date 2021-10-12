@@ -13,7 +13,7 @@ from dace.transformation.interstate import InlineSDFG
 
 
 def test_3_interface_to_2_banks(mem_type):
-    sdfg = SDFG("test_4_interface_to_2_banks")
+    sdfg = SDFG("test_4_interface_to_2_banks_" + mem_type)
     state = sdfg.add_state()
 
     _, desc_a = sdfg.add_array("a", [2, 2], dace.int32)
