@@ -355,10 +355,10 @@ def test_vadv():
     # hdiff.f(in_field, coeff, ref)
 
     sdfg = vadv.to_sdfg(strict=True)
-    # from dace.transformation.auto import auto_optimize as autoopt
-    # sdfg = autoopt.auto_optimize(sdfg, dace.DeviceType.CPU)
+    from dace.transformation.auto import auto_optimize as autoopt
+    sdfg = autoopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     # autoopt.greedy_fuse(sdfg, True)
-    sdfg.apply_transformations_repeated(MapFusion)
+    # sdfg.apply_transformations_repeated(MapFusion)
     sdfg.apply_transformations_repeated(SimpleTaskletFusion)
     sdfg.save('vadv_before.sdfg')
     num = sdfg.apply_transformations_repeated(StencilDetection)
@@ -397,11 +397,6 @@ def conv2d(input: dace.float32[N, H, W, C_in], weights: dace.float32[K, K, C_in,
 
 
 def test_conv2d():
-
-    # rng = np.random.default_rng(42)
-    # in_field = rng.random((I+4, J+4, K))
-    # coeff = rng.random((I, J, K))
-    # out_field = np.zeros((I, J, K))
     # ref = np.zeros((I, J, K))
 
     # hdiff.f(in_field, coeff, ref)
@@ -427,5 +422,5 @@ if __name__ == '__main__':
     # test_CFD_build_up_b()
     # test_CFD_pressure_poisson()
     # test_hdiff()
-    # test_vadv()
-    test_conv2d()
+    test_vadv()
+    # test_conv2d()
