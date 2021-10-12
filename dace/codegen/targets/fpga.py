@@ -239,7 +239,7 @@ def fpga_ptr(name: str,
         location_bank = parse_location_bank(desc)
         mem_type = ""
         if location_bank is not None:
-            mem_type = location_bank[0]
+            mem_type = location_bank[0].lower()
 
         if (subset_info_hbm == None):
             raise ValueError(

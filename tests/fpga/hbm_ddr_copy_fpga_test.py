@@ -129,22 +129,22 @@ def test_copy_hbm2ddr_ddr2hbm(mem_type_1, mem_type_2):
 
 @xilinx_test()
 def test_copy_hbm2hbm():
-    return test_copy_hbm2hbm_ddr2ddr(mem_type="HBM")
+    return test_copy_hbm2hbm_ddr2ddr(mem_type="hbm")
 
 
 @xilinx_test()
 def test_copy_ddr2ddr():
-    return test_copy_hbm2hbm_ddr2ddr(mem_type="DDR")
+    return test_copy_hbm2hbm_ddr2ddr(mem_type="ddr")
 
 
 @xilinx_test()
 def test_copy_hbm2ddr():
-    return test_copy_hbm2ddr_ddr2hbm(mem_type_1="HBM", mem_type_2="DDR")
+    return test_copy_hbm2ddr_ddr2hbm(mem_type_1="hbm", mem_type_2="ddr")
 
 
 @xilinx_test()
 def test_copy_ddr2hbm():
-    return test_copy_hbm2ddr_ddr2hbm(mem_type_1="DDR", mem_type_2="HBM")
+    return test_copy_hbm2ddr_ddr2hbm(mem_type_1="ddr", mem_type_2="hbm")
 
 
 if __name__ == "__main__":
