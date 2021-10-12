@@ -82,7 +82,7 @@ def is_hbm_array(array: dt.Data):
     if (isinstance(array, dt.Array)
             and array.storage == dtypes.StorageType.FPGA_Global):
         res = parse_location_bank(array)
-        return res is not None and res[0] == "HBM"
+        return res is not None and (res[0] == "HBM" or res[0] == "DDR")
     else:
         return False
 
@@ -1152,17 +1152,17 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     bank_info = parse_location_bank(nodedesc)
                     if bank_info is not None:
                         bank_type, bank = bank_info
+
+                        bank_low, bank_high = get_multibank_ranges_from_subset(
+                            bank, sdfg)
+                        memory_bank_arg_count = bank_high - bank_low
+                        arrsize = dace.symbolic.pystr_to_symbolic(
+                            f"({str(arrsize)}) / {str(bank_high - bank_low)}")
+                        bank_offset = bank_low
+
                         if bank_type == "HBM":
-                            bank_low, bank_high = get_multibank_ranges_from_subset(
-                                bank, sdfg)
-                            memory_bank_arg_count = bank_high - bank_low
-                            arrsize = dace.symbolic.pystr_to_symbolic(
-                                f"({str(arrsize)}) / {str(bank_high - bank_low)}"
-                            )
-                            bank_offset = bank_low
                             storage_type_str = "hlslib::ocl::StorageType::HBM"
                         else:
-                            bank_offset = int(bank)
                             storage_type_str = "hlslib::ocl::StorageType::DDR"
 
                     # Define buffer, using proper type

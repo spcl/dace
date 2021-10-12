@@ -63,21 +63,22 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             except ValueError as e:
                 raise InvalidSDFGError(str(e), sdfg, None)
             if bank_assignment is not None:
-                if bank_assignment[0] == "DDR":
-                    try:
-                        tmp = int(bank_assignment[1])
-                    except ValueError:
-                        raise InvalidSDFGError(
-                            "Memory bank specifier must be convertible to int, "
-                            f"got {bank_assignment[1]} on array {name}", sdfg,
-                            None)
-                elif bank_assignment[0] == "HBM":
+                # print(bank_assignment)
+                if bank_assignment[0] == "DDR" or bank_assignment[0] == "HBM":
+                    # try:
+                    #    tmp = int(bank_assignment[1])
+                    # except ValueError:
+                    #    raise InvalidSDFGError(
+                    #        "Memory bank specifier must be convertible to int, "
+                    #        f"got {bank_assignment[1]} on array {name}", sdfg,
+                    #        None)
+                    # if bank_assignment[0] == "HBM":
                     try:
                         tmp = subsets.Range.from_string(bank_assignment[1])
                     except SyntaxError:
                         raise InvalidSDFGError(
                             "Memory bank specifier must be convertible to subsets.Range"
-                            f" for array {name} since it uses HBM", sdfg, None)
+                            f" for array {name} since it uses HBM or DDR", sdfg, None)
                     try:
                         low, high = fpga.get_multibank_ranges_from_subset(
                             bank_assignment[1], sdfg)
@@ -88,11 +89,15 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                             "Memory bank specifier must at least define one bank to be used"
                             f" for array {name}", sdfg, None)
                     if (high - low > 1 and
-                        (high - low != desc.shape[0] or len(desc.shape) < 2)):
+                            (high - low != desc.shape[0] or len(desc.shape) < 2)):
                         raise InvalidSDFGError(
-                            "Arrays that use HBM must have the size of the first dimension equal"
+                            "Arrays that use HBM or DDR must have the size of the first dimension equal"
                             f" the number of banks and have at least 2 dimensions for array {name}",
                             sdfg, None)
+                else:
+                    raise InvalidSDFGError(
+                        "Currently on HBM or DDR memory is supported in array {name}",
+                        sdfg, None)
 
         # Check every state separately
         start_state = sdfg.start_state
