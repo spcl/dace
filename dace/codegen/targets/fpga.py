@@ -235,11 +235,17 @@ def fpga_ptr(name: str,
     :return: C-compatible name that can be used to access the data.
     """
     if (desc is not None and is_hbm_array_with_distributed_index(desc)):
+
+        location_bank = parse_location_bank(desc)
+        mem_type = ""
+        if location_bank is not None:
+            mem_type = location_bank[0]
+
         if (subset_info_hbm == None):
             raise ValueError(
                 "Cannot generate name for HBM bank without subset info")
         elif (isinstance(subset_info_hbm, int)):
-            name = f"hbm{subset_info_hbm}_{name}"
+            name = f"{mem_type}{subset_info_hbm}_{name}"
         elif (isinstance(subset_info_hbm, subsets.Subset)):
             if (sdfg == None):
                 raise ValueError(
@@ -250,7 +256,9 @@ def fpga_ptr(name: str,
                 raise ValueError(
                     "ptr cannot generate HBM names for subsets accessing more than one HBM bank"
                 )
-            name = f"hbm{low}_{name}"
+
+            name = f"{mem_type}{low}_{name}"
+
             subset_info_hbm = low  #used for arrayinterface name where it must be int
     if is_array_interface:
         if is_write is None:
