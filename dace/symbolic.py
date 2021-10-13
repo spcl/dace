@@ -62,7 +62,7 @@ class symbol(sympy.Symbol):
 
     def __getstate__(self):
         return dict(
-            super().__getstate__(), **{
+            self.assumptions0, **{
                 'value': self.value,
                 'dtype': self.dtype,
                 '_constraints': self._constraints
