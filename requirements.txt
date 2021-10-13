@@ -20,7 +20,7 @@ PyYAML==5.4
 requests==2.25.1
 scikit-build==0.11.1
 six==1.15.0
-sympy==1.7
+sympy==1.9
 urllib3==1.26.5
 websockets==9.1
 Werkzeug==1.0.1
