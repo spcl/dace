@@ -1,5 +1,5 @@
 import dace
-from hbm_ddr_copy_fpga_test import mkc
+from multibank_copy_fpga_test import mkc
 from dace.dtypes import StorageType
 from dace.transformation.dataflow import BankSplit
 from dace.transformation import optimizer

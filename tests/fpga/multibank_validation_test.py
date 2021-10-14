@@ -7,8 +7,7 @@ import numpy as np
 from dace import subsets
 from dace.sdfg import nodes as nd
 
-# A test to check the changes to the validation required for the support for HBM
-# The three functions will be automatically called by pytest
+# A test to check the changes to the validation required for the support for HBM and DDR
 
 
 def assert_validation_failure(sdfg, exceptiontype):
@@ -20,7 +19,7 @@ def assert_validation_failure(sdfg, exceptiontype):
     assert ok
 
 
-def test_deep_scope(mem_type="hbm"):
+def multibank_deep_scope(mem_type):
     @dace.program
     def deep_scope(input: dace.int32[12, 10], output: dace.int32[12, 10]):
         for k in dace.map[0:10]:
@@ -44,7 +43,7 @@ def test_deep_scope(mem_type="hbm"):
     sdfg.validate()
 
 
-def test_multi_tasklet(mem_type="hbm"):
+def multibank_multi_tasklet(mem_type):
     @dace.program
     def multi_tasklet(input: dace.int32[12, 10], output: dace.int32[12, 10]):
         with dace.tasklet:
@@ -77,7 +76,7 @@ def test_multi_tasklet(mem_type="hbm"):
     sdfg.validate()
 
 
-def test_unsound_location(mem_type_1="hbm", mem_type_2="ddr"):
+def multibank_unsound_location(mem_type_1, mem_type_2):
     sdfg = dace.SDFG("jdj")
     sdfg.add_array("a", [4, 3], dtypes.int32, dtypes.StorageType.FPGA_Global)
     sdfg.add_array("b", [4], dtypes.int32, dtypes.StorageType.FPGA_Global)
@@ -114,13 +113,30 @@ def test_unsound_location(mem_type_1="hbm", mem_type_2="ddr"):
     sdfg.validate()
 
 
-if __name__ == "__main__":
-    test_deep_scope(mem_type="hbm")
-    test_deep_scope(mem_type="ddr")
+def test_multibank_deep_scope_hbm():
+    multibank_deep_scope("hbm")
 
-    test_multi_tasklet(mem_type="hbm")
-    test_multi_tasklet(mem_type="ddr")
+def test_multibank_deep_scope_ddr():
+    multibank_deep_scope("ddr")
 
-    test_unsound_location(mem_type_1="hbm", mem_type_2="ddr")
-    test_unsound_location(mem_type_1="ddr", mem_type_2="hbm")
+def test_multibank_multi_tasklet_hbm():
+    multibank_multi_tasklet("hbm")
+
+def test_multibank_multi_tasklet_ddr():
+    multibank_multi_tasklet("ddr")
     
+
+def test_multibank_unsound_location_hmb2ddr():
+    multibank_unsound_location("hbm", "ddr")
+
+def test_multibank_unsound_location():
+    multibank_unsound_location("ddr", "hbm")
+
+if __name__ == "__main__":
+    test_multibank_deep_scope_hbm()
+    test_multibank_deep_scope_ddr()
+    test_multibank_multi_tasklet_hbm()
+    test_multibank_multi_tasklet_ddr()
+    test_multibank_unsound_location_hmb2ddr()
+    test_multibank_unsound_location()
+

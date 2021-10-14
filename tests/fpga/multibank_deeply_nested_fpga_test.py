@@ -5,12 +5,12 @@ from dace import subsets as sbs, dtypes, memlet as mem
 from dace import subsets
 import numpy as np
 
-# A test checking HBM/DDR in the context of nested maps and nested sdfgs
+# A test checking Multibank HBM/DDR in the context of nested maps and nested sdfgs
 # Note, usually there are only 4 ddr banks but much more hmb banks.
 # Since the tests run in simulation mode, this should not be an issue.
 
 
-def create_deeply_nested_sdfg(mem_type="hbm"):
+def create_deeply_nested_sdfg(mem_type):
     sdfg = dace.SDFG("deepnest_test_" + mem_type)
     state: dace.SDFGState = sdfg.add_state("init")
     xarr = state.add_array("x", [4, 10], dace.float32)
@@ -71,7 +71,7 @@ def create_deeply_nested_sdfg(mem_type="hbm"):
 
 
 def deeply_nested_sdfg(mem_type):
-    sdfg = create_deeply_nested_sdfg(mem_type=mem_type)
+    sdfg = create_deeply_nested_sdfg(mem_type)
     a = np.zeros((4, 10), np.float32)
     a[2, 4:9] += 1
     a[3, 3:8] += 2

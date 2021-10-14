@@ -5,15 +5,19 @@ from dace import subsets
 from dace.fpga_testing import xilinx_test
 import numpy as np
 
-# A test checking wcr-reduction with HBM arrays as inputs and output
+# A test checking wcr-reduction with HBM/DDR arrays as inputs and output
 
 
-def create_hbm_reduce_sdfg(banks=2, name="red_hbm", mem_type="hbm"):
+def create_multibank_reduce_sdfg(
+    name,
+    mem_type,
+    banks=2,
+):
     N = dace.symbol("N")
     M = dace.symbol("M")
 
     sdfg = dace.SDFG(name + "_" + mem_type)
-    state = sdfg.add_state('red_hbm', True)
+    state = sdfg.add_state('red_' + mem_type, True)
 
     in1 = sdfg.add_array("in1", [banks, N, M], dace.float32)
     in2 = sdfg.add_array("in2", [banks, N, M], dace.float32)
@@ -63,7 +67,7 @@ def create_hbm_reduce_sdfg(banks=2, name="red_hbm", mem_type="hbm"):
     return sdfg
 
 
-def create_test_set(N, M, mem_type, banks):
+def create_test_set(N, M, banks):
     in1 = np.random.rand(*[banks, N, M]).astype('f')
     in2 = np.random.rand(*[banks, N, M]).astype('f')
     expected = np.sum(in1 * in2, axis=2, dtype=np.float32)
@@ -72,8 +76,8 @@ def create_test_set(N, M, mem_type, banks):
 
 
 def exec_test(N, M, banks, mem_type, name):
-    in1, in2, expected, target = create_test_set(N, M, mem_type, banks)
-    sdfg = create_hbm_reduce_sdfg(banks, name)
+    in1, in2, expected, target = create_test_set(N, M, banks)
+    sdfg = create_multibank_reduce_sdfg(name, mem_type, banks)
     sdfg(in1=in1, in2=in2, out=target, N=N, M=M)
     assert np.allclose(expected, target, rtol=1e-6)
     return sdfg

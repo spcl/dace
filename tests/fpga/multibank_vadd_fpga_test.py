@@ -6,7 +6,7 @@ import dace
 import numpy as np
 from dace.transformation.interstate import InlineSDFG
 
-# A test executing vector addition with multidimensional arrays using HBM.
+# A test executing vector addition with multidimensional arrays using HBM/DDR.
 
 
 def create_vadd_multibank_sdfg(bank_count_per_array=2,

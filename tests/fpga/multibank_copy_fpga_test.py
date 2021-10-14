@@ -6,7 +6,7 @@ from dace.codegen.targets.fpga import _FPGA_STORAGE_TYPES
 from dace.dtypes import StorageType
 from dace.fpga_testing import xilinx_test
 
-# A test checking copies involving HBM-arrays in some way
+# A test checking copies involving Multibank-arrays using HBM and DDR in some way
 
 
 def mkc(sdfg: dace.SDFG,
@@ -74,8 +74,8 @@ def mkc(sdfg: dace.SDFG,
 # Since the tests run in simulation mode, this should not be an issue.
 
 
-def copy_hbm2hbm_ddr2ddr(mem_type="hbm"):
-    sdfg = dace.SDFG("test_copy_hbm2hbm_ddr2ddr_" + mem_type)
+def copy_multibank_1_mem_type(mem_type):
+    sdfg = dace.SDFG("copy_multibank_1_mem_type_" + mem_type)
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
                   StorageType.FPGA_Global, [3, 4, 4], [3, 4, 4], "a", None,
                   (mem_type, "0:3"))
@@ -102,8 +102,8 @@ def copy_hbm2hbm_ddr2ddr(mem_type="hbm"):
     return sdfg
 
 
-def copy_hbm2ddr_ddr2hbm(mem_type_1, mem_type_2):
-    sdfg = dace.SDFG("test_copy_hbm2ddr_ddr2hbm_" + mem_type_1 + "_" +
+def copy_multibank_2_mem_type(mem_type_1, mem_type_2):
+    sdfg = dace.SDFG("copy_multibank_2_mem_type_" + mem_type_1 + "_" +
                      mem_type_2)
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
                   StorageType.FPGA_Global, [3, 5, 5], [3, 5, 5], "a", None,
@@ -129,22 +129,22 @@ def copy_hbm2ddr_ddr2hbm(mem_type_1, mem_type_2):
 
 @xilinx_test()
 def test_copy_hbm2hbm():
-    return copy_hbm2hbm_ddr2ddr(mem_type="hbm")
+    return copy_multibank_1_mem_type(mem_type="hbm")
 
 
 @xilinx_test()
 def test_copy_ddr2ddr():
-    return copy_hbm2hbm_ddr2ddr(mem_type="ddr")
+    return copy_multibank_1_mem_type(mem_type="ddr")
 
 
 @xilinx_test()
 def test_copy_hbm2ddr():
-    return copy_hbm2ddr_ddr2hbm(mem_type_1="hbm", mem_type_2="ddr")
+    return copy_multibank_2_mem_type(mem_type_1="hbm", mem_type_2="ddr")
 
 
 @xilinx_test()
 def test_copy_ddr2hbm():
-    return copy_hbm2ddr_ddr2hbm(mem_type_1="ddr", mem_type_2="hbm")
+    return copy_multibank_2_mem_type(mem_type_1="ddr", mem_type_2="hbm")
 
 
 if __name__ == "__main__":
