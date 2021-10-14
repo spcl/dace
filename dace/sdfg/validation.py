@@ -63,7 +63,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             except ValueError as e:
                 raise InvalidSDFGError(str(e), sdfg, None)
             if bank_assignment is not None:
-                # print(bank_assignment)
                 if bank_assignment[0] == "DDR" or bank_assignment[0] == "HBM":
                     try:
                         tmp = subsets.Range.from_string(bank_assignment[1])
