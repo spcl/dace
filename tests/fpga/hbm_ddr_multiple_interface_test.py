@@ -69,12 +69,12 @@ def test_4_interface_to_2_banks(mem_type):
 
 @xilinx_test(assert_ii_1=False)
 def test_4_interface_to_2_banks_hbm():
-    return test_4_interface_to_2_banks(mem_type="hbm")
+    return test_4_interface_to_2_banks(mem_type="HBM")
 
 
 @xilinx_test(assert_ii_1=False)
 def test_4_interface_to_2_banks_ddr():
-    return test_4_interface_to_2_banks(mem_type="ddr")
+    return test_4_interface_to_2_banks(mem_type="DDR")
 
 
 if __name__ == "__main__":
