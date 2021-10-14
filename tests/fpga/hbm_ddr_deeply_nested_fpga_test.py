@@ -10,7 +10,7 @@ import numpy as np
 # Since the tests run in simulation mode, this should not be an issue.
 
 
-def create_deeply_nested_sdfg(mem_type="hbms"):
+def create_deeply_nested_sdfg(mem_type="hbm"):
     sdfg = dace.SDFG("deepnest_test_" + mem_type)
     state: dace.SDFGState = sdfg.add_state("init")
     xarr = state.add_array("x", [4, 10], dace.float32)
