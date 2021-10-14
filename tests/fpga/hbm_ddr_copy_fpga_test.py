@@ -74,7 +74,7 @@ def mkc(sdfg: dace.SDFG,
 # Since the tests run in simulation mode, this should not be an issue.
 
 
-def test_copy_hbm2hbm_ddr2ddr(mem_type="hbm"):
+def copy_hbm2hbm_ddr2ddr(mem_type="hbm"):
     sdfg = dace.SDFG("test_copy_hbm2hbm_ddr2ddr_" + mem_type)
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
                   StorageType.FPGA_Global, [3, 4, 4], [3, 4, 4], "a", None,
@@ -102,7 +102,7 @@ def test_copy_hbm2hbm_ddr2ddr(mem_type="hbm"):
     return sdfg
 
 
-def test_copy_hbm2ddr_ddr2hbm(mem_type_1, mem_type_2):
+def copy_hbm2ddr_ddr2hbm(mem_type_1, mem_type_2):
     sdfg = dace.SDFG("test_copy_hbm2ddr_ddr2hbm_" + mem_type_1 + "_" +
                      mem_type_2)
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
@@ -129,22 +129,22 @@ def test_copy_hbm2ddr_ddr2hbm(mem_type_1, mem_type_2):
 
 @xilinx_test()
 def test_copy_hbm2hbm():
-    return test_copy_hbm2hbm_ddr2ddr(mem_type="hbm")
+    return copy_hbm2hbm_ddr2ddr(mem_type="hbm")
 
 
 @xilinx_test()
 def test_copy_ddr2ddr():
-    return test_copy_hbm2hbm_ddr2ddr(mem_type="ddr")
+    return copy_hbm2hbm_ddr2ddr(mem_type="ddr")
 
 
 @xilinx_test()
 def test_copy_hbm2ddr():
-    return test_copy_hbm2ddr_ddr2hbm(mem_type_1="hbm", mem_type_2="ddr")
+    return copy_hbm2ddr_ddr2hbm(mem_type_1="hbm", mem_type_2="ddr")
 
 
 @xilinx_test()
 def test_copy_ddr2hbm():
-    return test_copy_hbm2ddr_ddr2hbm(mem_type_1="ddr", mem_type_2="hbm")
+    return copy_hbm2ddr_ddr2hbm(mem_type_1="ddr", mem_type_2="hbm")
 
 
 if __name__ == "__main__":

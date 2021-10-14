@@ -48,7 +48,7 @@ def create_dynamic_memlet_sdfg(mem_type="hbm"):
     return sdfg
 
 
-def test_dynamic_memlet(mem_type="hbm"):
+def dynamic_memlet(mem_type="hbm"):
     sdfg = create_dynamic_memlet_sdfg(mem_type)
     x = np.zeros((4, 10), dtype=np.int32)
     y = np.ones((4, 10), dtype=np.int32)  # has to be copied to sdfg
@@ -64,12 +64,12 @@ def test_dynamic_memlet(mem_type="hbm"):
 
 @xilinx_test()
 def test_hbm_dynamic_memlet():
-    return test_dynamic_memlet("hbm")
+    return dynamic_memlet("hbm")
 
 
 @xilinx_test()
 def test_ddr_dynamic_memlet():
-    return test_dynamic_memlet("ddr")
+    return dynamic_memlet("ddr")
 
 
 if __name__ == "__main__":

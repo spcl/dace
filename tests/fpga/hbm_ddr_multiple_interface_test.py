@@ -12,7 +12,7 @@ from dace.transformation.interstate import InlineSDFG
 # Checks multiple interfaces attached to the same HBM/DDR-bank.
 
 
-def test_4_interface_to_2_banks(mem_type="HBM"):
+def four_interface_to_2_banks(mem_type="HBM"):
     sdfg = SDFG("test_4_interface_to_2_banks_" + mem_type)
     state = sdfg.add_state()
 
@@ -69,12 +69,12 @@ def test_4_interface_to_2_banks(mem_type="HBM"):
 
 @xilinx_test(assert_ii_1=False)
 def test_4_interface_to_2_banks_hbm():
-    return test_4_interface_to_2_banks(mem_type="HBM")
+    return four_interface_to_2_banks(mem_type="HBM")
 
 
 @xilinx_test(assert_ii_1=False)
 def test_4_interface_to_2_banks_ddr():
-    return test_4_interface_to_2_banks(mem_type="DDR")
+    return four_interface_to_2_banks(mem_type="DDR")
 
 
 if __name__ == "__main__":

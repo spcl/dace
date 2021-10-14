@@ -70,7 +70,7 @@ def create_deeply_nested_sdfg(mem_type="hbm"):
     return sdfg
 
 
-def test_deeply_nested_sdfg(mem_type):
+def deeply_nested_sdfg(mem_type):
     sdfg = create_deeply_nested_sdfg(mem_type=mem_type)
     a = np.zeros((4, 10), np.float32)
     a[2, 4:9] += 1
@@ -84,12 +84,12 @@ def test_deeply_nested_sdfg(mem_type):
 
 @xilinx_test()
 def test_hbm_deeply_nested_sdfg():
-    return test_deeply_nested_sdfg(mem_type="hbm")
+    return deeply_nested_sdfg(mem_type="hbm")
 
 
 @xilinx_test()
 def test_ddr_deeply_nested_sdfg():
-    return test_deeply_nested_sdfg(mem_type="ddr")
+    return deeply_nested_sdfg(mem_type="ddr")
 
 
 if __name__ == "__main__":
