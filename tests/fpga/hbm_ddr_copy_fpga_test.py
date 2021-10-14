@@ -74,7 +74,7 @@ def mkc(sdfg: dace.SDFG,
 # Since the tests run in simulation mode, this should not be an issue.
 
 
-def test_copy_hbm2hbm_ddr2ddr(mem_type):
+def test_copy_hbm2hbm_ddr2ddr(mem_type="hbm"):
     sdfg = dace.SDFG("test_copy_hbm2hbm_ddr2ddr_" + mem_type)
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
                   StorageType.FPGA_Global, [3, 4, 4], [3, 4, 4], "a", None,

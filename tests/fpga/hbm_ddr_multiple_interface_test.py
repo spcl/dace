@@ -12,7 +12,7 @@ from dace.transformation.interstate import InlineSDFG
 # Checks multiple interfaces attached to the same HBM/DDR-bank.
 
 
-def test_4_interface_to_2_banks(mem_type):
+def test_4_interface_to_2_banks(mem_type="HBM"):
     sdfg = SDFG("test_4_interface_to_2_banks_" + mem_type)
     state = sdfg.add_state()
 
