@@ -9,7 +9,7 @@ import numpy as np
 
 
 def create_dynamic_memlet_sdfg(mem_type):
-    sdfg = dace.SDFG("dyn_memlet")
+    sdfg = dace.SDFG("dyn_memlet_" + mem_type)
     state: dace.SDFGState = sdfg.add_state("dyn_memlet")
     xarr = state.add_array("x", [4, 10], dace.int32)
     sdfg.arrays["x"].location["memorytype"] = mem_type
