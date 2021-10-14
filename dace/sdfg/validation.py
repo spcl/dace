@@ -65,14 +65,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             if bank_assignment is not None:
                 # print(bank_assignment)
                 if bank_assignment[0] == "DDR" or bank_assignment[0] == "HBM":
-                    # try:
-                    #    tmp = int(bank_assignment[1])
-                    # except ValueError:
-                    #    raise InvalidSDFGError(
-                    #        "Memory bank specifier must be convertible to int, "
-                    #        f"got {bank_assignment[1]} on array {name}", sdfg,
-                    #        None)
-                    # if bank_assignment[0] == "HBM":
                     try:
                         tmp = subsets.Range.from_string(bank_assignment[1])
                     except SyntaxError:
