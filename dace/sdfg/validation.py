@@ -321,7 +321,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if isinstance(node, nd.Tasklet):
             for attached in state.all_edges(node):
                 if attached.data.data in sdfg.arrays:
-                    if fpga.is_hbm_array_with_distributed_index(
+                    if fpga.is_multibank_array_with_distributed_index(
                             sdfg.arrays[attached.data.data]):
                         low, high, _ = attached.data.subset[0]
                         if (low != high):
