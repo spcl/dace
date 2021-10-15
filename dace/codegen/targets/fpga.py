@@ -236,8 +236,6 @@ def fpga_ptr(name: str,
     """
     if (desc is not None and is_multibank_array_with_distributed_index(desc)):
 
-        print("here")
-
         location_bank = parse_location_bank(desc)
         mem_type = ""
         if location_bank is not None:

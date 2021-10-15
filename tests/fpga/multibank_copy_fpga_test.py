@@ -4,7 +4,7 @@ import dace
 import numpy as np
 from dace.codegen.targets.fpga import _FPGA_STORAGE_TYPES
 from dace.dtypes import StorageType
-from dace.fpga_testing import xilinx_test
+from dace.fpga_testing import fpga_test, xilinx_test
 
 # A test checking copies involving Multibank-arrays using HBM and DDR in some way
 
@@ -142,7 +142,7 @@ def test_copy_hbm2ddr():
     return copy_multibank_2_mem_type(mem_type_1="hbm", mem_type_2="ddr")
 
 
-@xilinx_test()
+@fpga_test()
 def test_copy_ddr2hbm():
     return copy_multibank_2_mem_type(mem_type_1="ddr", mem_type_2="hbm")
 
