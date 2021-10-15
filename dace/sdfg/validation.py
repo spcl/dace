@@ -69,7 +69,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                     except SyntaxError:
                         raise InvalidSDFGError(
                             "Memory bank specifier must be convertible to subsets.Range"
-                            f" for array {name} since it uses HBM or DDR", sdfg, None)
+                            f" for array {name}",
+                            sdfg, None)
                     try:
                         low, high = fpga.get_multibank_ranges_from_subset(
                             bank_assignment[1], sdfg)
@@ -80,15 +81,11 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                             "Memory bank specifier must at least define one bank to be used"
                             f" for array {name}", sdfg, None)
                     if (high - low > 1 and
-                            (high - low != desc.shape[0] or len(desc.shape) < 2)):
+                        (high - low != desc.shape[0] or len(desc.shape) < 2)):
                         raise InvalidSDFGError(
-                            "Arrays that use HBM or DDR must have the size of the first dimension equal"
+                            "Arrays that use a multibank access pattern must have the size of the first dimension equal"
                             f" the number of banks and have at least 2 dimensions for array {name}",
                             sdfg, None)
-                else:
-                    raise InvalidSDFGError(
-                        "Currently on HBM or DDR memory is supported in array {name}",
-                        sdfg, None)
 
         # Check every state separately
         start_state = sdfg.start_state
@@ -586,12 +583,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     state_id, eid)
                 # NOTE: Make an exception for Views
                 from dace.sdfg import utils
-                if (isinstance(sdfg.arrays[src_node.data], dt.View) and
-                        utils.get_view_edge(state, src_node) is e):
+                if (isinstance(sdfg.arrays[src_node.data], dt.View)
+                        and utils.get_view_edge(state, src_node) is e):
                     warnings.warn(error.message)
                     continue
-                if (isinstance(sdfg.arrays[dst_node.data], dt.View) and
-                        utils.get_view_edge(state, dst_node) is e):
+                if (isinstance(sdfg.arrays[dst_node.data], dt.View)
+                        and utils.get_view_edge(state, dst_node) is e):
                     warnings.warn(error.message)
                     continue
                 raise error
