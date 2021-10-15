@@ -20,7 +20,7 @@ DEFAULT_SYMBOL_TYPE = dtypes.int32
 # form {'N': sympy.abc.N, 'I': sympy.abc.I, 'pi': sympy.abc.pi}
 # Since version 1.9, the values of this dictionary are None. In the dictionary
 # below, we recreate it to be as in versions < 1.9.
-_sympy_clash = {k: v if v else eval(f'sympy.abc.{k}')
+_sympy_clash = {k: v if v else getattr(sympy.abc, k)
                 for k, v in sympy.abc._clash.items()}
 
 
