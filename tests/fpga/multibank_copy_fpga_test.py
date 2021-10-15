@@ -142,7 +142,7 @@ def test_copy_hbm2ddr():
     return copy_multibank_2_mem_type(mem_type_1="hbm", mem_type_2="ddr")
 
 
-@fpga_test()
+@xilinx_test()
 def test_copy_ddr2hbm():
     return copy_multibank_2_mem_type(mem_type_1="ddr", mem_type_2="hbm")
 
