@@ -490,11 +490,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 data_name] is not None
             if is_assigned and isinstance(data, dt.Array):
                 memory_bank = bank_assignments[data_name]
-                if memory_bank[0] == "HBM" or memory_bank[0] == "DDR":
-                    lowest_bank_index, _ = fpga.get_multibank_ranges_from_subset(
-                        memory_bank[1], sdfg)
-                # else:
-                #   lowest_bank_index = int(memory_bank[1])
+                lowest_bank_index, _ = fpga.get_multibank_ranges_from_subset(
+                    memory_bank[1], sdfg)
+
                 for bank, interface_id in fpga.iterate_hbm_interface_ids(
                         data, interface):
                     kernel_arg = self.make_kernel_argument(
