@@ -716,10 +716,17 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 f'// [{label}] void {name}({", ".join(kernel_args_module)});\n\n')
 
             # TODO Better name than rtl_name
-            rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg) if rtl_tasklet else name
+            rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg) if rtl_tasklet else 'dp_kernel' #name # Breaks with long names
 
             # _i in names are due to vitis
+            source_accessors = []
             for node in subgraph.source_nodes():
+                if isinstance(node, dace.nodes.MapEntry):
+                    source_accessors += [e.dst for e in state.out_edges(node)]
+                else:
+                    source_accessors += [node]
+
+            for node in source_accessors:
                 if isinstance(sdfg.arrays[node.data], dt.Stream):
                     # TODO multiple readers accessing a single stream should fail
                     dst = subgraph.out_edges(node)[0].dst
@@ -746,7 +753,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                 rtl_name, rtl_dst, postfix)
                             self._stream_connections[elem][1] = val
 
+            sink_accessors = []
             for node in subgraph.sink_nodes():
+                if isinstance(node, dace.nodes.MapExit):
+                    sink_accessors += [e.src for e in state.in_edges(node)]
+                else:
+                    sink_accessors += [node]
+
+            for node in sink_accessors:
                 if isinstance(sdfg.arrays[node.data], dt.Stream):
                     # TODO multiple writers accessing a single stream should fail
                     src = subgraph.in_edges(node)[0].src
@@ -785,16 +799,38 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 acces_nodes_touched = []
                 for node in subgraph.nodes():
                     if isinstance(node, dace.nodes.AccessNode) and sdfg.arrays[node.data].dtype.veclen > 1:
-                        acces_nodes_touched.append(sdfg.arrays[node.data].dtype)
+                        found = False
+                        for elem in acces_nodes_touched:
+                            if elem is sdfg.arrays[node.data].dtype:
+                                found = True
+                                break
+                        if not found:
+                            acces_nodes_touched.append(sdfg.arrays[node.data].dtype)
+                    #if isinstance(node, dace.nodes.AccessNode) and ((sdfg.arrays[node.data].dtype.veclen is int and sdfg.arrays[node.data].dtype.veclen > 1) or type(sdfg.arrays[node.data].dtype.veclen) is int):
+                    #    acces_nodes_touched.add(sdfg.arrays[node.data].dtype)
+                #acces_nodes_touched = [an.dtype for an in acces_nodes_touched]
+                #acces_nodes_touched = [an for an in acces_nodes_touched]
+
+
+
+                #print (acces_nodes_touched)
+                #print (set([an.dtype for an in acces_nodes_touched]))
+                #for i in range(len(acces_nodes_touched)):
+                #    print (acces_nodes_touched[i] in acces_nodes_touched[i:])
+                #    aoeu = []
+                #    for j in range(len(acces_nodes_touched)):
+                #        aoeu += [None if i == j else (i,j,acces_nodes_touched[i] is acces_nodes_touched[j])]
+                #    print (aoeu)
+
                 for node in acces_nodes_touched:
-                    node.veclen >>= 1
+                    node.bytes = int(dace.symbolic.evaluate(node.bytes, sdfg.constants)) >> 1
+                    node.veclen = int(dace.symbolic.evaluate(node.veclen, sdfg.constants)) >> 1
 
                 double_kernel.write('''#include <dace/xilinx/device.h>
 #include <dace/math.h>
 #include <dace/complex.h>''')
 
-                # TODO support more than just streams
-                # Regenerate parameters with new sizes
+                # Regenerate parameters with new vector length
                 kernel_args_module_double = []
                 for is_output, pname, p, interface_ids in parameters:
                     if isinstance(p, dt.Stream):
@@ -827,6 +863,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 # Increase the vector size, in case some other subgraph uses it.
                 # TODO maybe it shouldn't be every access that is halved? One could have a stream which is rarely consumed from?
                 for node in acces_nodes_touched:
+                    node.bytes <<= 1
                     node.veclen <<= 1
 
                 double_kernel.write('}')

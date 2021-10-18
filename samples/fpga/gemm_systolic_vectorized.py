@@ -315,7 +315,8 @@ if n1 <= p:
     # Unroll processing elements
     compute_entry, compute_exit = state.add_map(
         "unroll_compute", {"p": "0:P"},
-        schedule=dace.ScheduleType.FPGA_Device,
+        schedule=dace.ScheduleType.FPGA_Double,
+        #schedule=dace.ScheduleType.FPGA_Device,
         unroll=True)
 
     # Bring data nodes into scope
@@ -383,11 +384,13 @@ def cli(size_n, size_k, size_m, num_processing_elements, vector_width,
         specialize):
 
     print("==== Program start ====")
-
+    #HUSK! standard_ er mappen med normalt, hvor den uden er dobbel pumpet! Den er buildet, men den gav block error, så kortet skal resettes
     if specialize:
+        #name = (f"standard_gemm_fpga_systolic_vectorized_d{num_processing_elements}_"
         name = (f"gemm_fpga_systolic_vectorized_d{num_processing_elements}_"
                 f"w{vector_width}_{size_n}x{size_k}x{size_m}")
     else:
+        #name = (f"standard_gemm_fpga_systolic_vectorized_d{num_processing_elements}_"
         name = (f"gemm_fpga_systolic_vectorized_d{num_processing_elements}_"
                 f"w{vector_width}_NxKx{size_m}")
     sdfg = make_sdfg(name, vector_width)

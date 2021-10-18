@@ -567,6 +567,7 @@ if(DACE_ENABLE_XILINX)
       set (RTL_XO "${DACE_KERNEL_NAME}.xo")
       rtllib_rtl_target(${DACE_KERNEL_NAME} ${DACE_KERNEL_SRC} ${DACE_KERNEL_SRC} ${DACE_KERNEL_SRC} log tmp ${DACE_KERNEL_SRC} ${RTL_XO} ${RTL_PART} ip_cores/${DACE_KERNEL_NAME}/impl/export.zip ip_cores)
       set (DACE_VITIS_KERNELS_HW_EMU ${DACE_VITIS_KERNELS_HW_EMU} ${RTL_XO})
+      set (DACE_VITIS_KERNELS_HW ${DACE_VITIS_KERNELS_HW} ${RTL_XO})
     endforeach()
 
     foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})

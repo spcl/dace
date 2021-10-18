@@ -759,10 +759,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
                 if rtl_subgraph:
+                    names = [e.dst.data if e.data.data is None else e.data.data for e in state.out_edges(n)]
                     external_streams |= {
-                        (True, e.data.data, subsdfg.arrays[e.data.data], None)
-                        for e in state.out_edges(n)
-                        if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
+                        (True, name, subsdfg.arrays[name], None)
+                        for name in names
+                        if isinstance(subsdfg.arrays[name], dt.Stream)
                     }
                 else:
                     candidates += [(False, e.data.data,
@@ -772,10 +773,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
                 if rtl_subgraph:
+                    names = [e.src.data if e.data.data is None else e.data.data for e in state.in_edges(n)]
                     external_streams |= {
-                        (False, e.data.data, subsdfg.arrays[e.data.data], None)
-                        for e in state.in_edges(n)
-                        if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
+                        (False, name, subsdfg.arrays[name], None)
+                        for name in names
+                        if isinstance(subsdfg.arrays[name], dt.Stream)
                     }
                 else:
                     candidates += [(True, e.data.data,
@@ -843,9 +845,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # Ignore views, as these never need to be explicitly passed
                 if isinstance(desc, dt.View):
                     continue
-                # Only distinguish between inputs and outputs for arrays # TODO why?
-                #if not isinstance(desc, dt.Array):
-                #    is_output = None
+                # Only distinguish between inputs and outputs for arrays # TODO why? Because otherwise the same one gets defined multiple times. Is this a problem?
+                if not isinstance(desc, dt.Array):
+                    is_output = None
                 # If this is a global array, assign the correct interface ID and
                 # memory interface (e.g., DDR or HBM bank)
                 if (isinstance(desc, dt.Array)
