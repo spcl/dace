@@ -81,7 +81,6 @@ def test_cpu():
 def test_gpu():
     run_atax(dace.dtypes.DeviceType.GPU)
 
-
-@fpga_test(intel=True, xilinx=False)
+@fpga_test(assert_ii_1 = False)
 def test_fpga():
     run_atax(dace.dtypes.DeviceType.FPGA)
