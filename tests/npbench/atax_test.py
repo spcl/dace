@@ -36,6 +36,7 @@ def init_data(M, N):
 def run_atax(device_type: dace.dtypes.DeviceType):
     '''
     Runs ATAX for the given device
+    :return: the SDFG
     '''
 
     # Initialize data (polybench medium size)
@@ -72,6 +73,7 @@ def run_atax(device_type: dace.dtypes.DeviceType):
     # Validate result
     ground_truth(A, x, y_ref)
     assert np.allclose(y, y_ref)
+    return sdfg
 
 
 def test_cpu():
@@ -83,4 +85,4 @@ def test_gpu():
 
 @fpga_test(assert_ii_1 = False)
 def test_fpga():
-    run_atax(dace.dtypes.DeviceType.FPGA)
+    retur run_atax(dace.dtypes.DeviceType.FPGA)
