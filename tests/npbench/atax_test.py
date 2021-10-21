@@ -85,4 +85,4 @@ def test_gpu():
 
 @fpga_test(assert_ii_1 = False)
 def test_fpga():
-    retur run_atax(dace.dtypes.DeviceType.FPGA)
+    return run_atax(dace.dtypes.DeviceType.FPGA)
