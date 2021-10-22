@@ -537,6 +537,30 @@ def test_mlir_tasklet_recursion():
     mlir_tasklet_recursion(A, B)
     assert B[0] == 55
 
+@dace.program
+def mlir_tasklet_long_name(A: dace.int32[2], B: dace.int32[1]):
+    @dace.tasklet('MLIR')
+    def add():
+        a << A[0]
+        longName >> B[0]
+        """
+        module  {
+            func @mlir_entry(%a: i32) -> i32 {
+                return %a : i32
+            }
+        }
+        """
+
+@pytest.mark.mlir
+def test_mlir_tasklet_long_name():
+    A = dace.ndarray((1, ), dace.int32)
+    B = dace.ndarray((1, ), dace.int32)
+
+    A[:] = 10
+    B[:] = 2
+
+    mlir_tasklet_long_name(A, B)
+    assert B[0] == 10
 
 if __name__ == "__main__":
     test_mlir_tasklet_explicit()
@@ -550,3 +574,4 @@ if __name__ == "__main__":
     test_mlir_tasklet_llvm_dialect()
     test_mlir_tasklet_float()
     test_mlir_tasklet_recursion()
+    test_mlir_tasklet_long_name()
