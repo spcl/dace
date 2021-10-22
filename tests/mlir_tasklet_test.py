@@ -562,6 +562,29 @@ def test_mlir_tasklet_long_name():
     mlir_tasklet_long_name(A, B)
     assert B[0] == 10
 
+@dace.program
+def mlir_tasklet_no_input(A: dace.int32[1]):
+    @dace.tasklet('MLIR')
+    def add():
+        c >> A[0]
+        """
+        module  {
+            func @mlir_entry() -> i32 {
+                %5 = constant 5 : i32
+                return %5 : i32
+            }
+        }
+        """
+
+@pytest.mark.mlir
+def test_mlir_tasklet_no_input():
+    A = dace.ndarray((1, ), dace.int32)
+
+    A[:] = 10
+
+    mlir_tasklet_no_input(A)
+    assert A[0] == 5
+
 if __name__ == "__main__":
     test_mlir_tasklet_explicit()
     test_mlir_tasklet_explicit_vec()
@@ -575,3 +598,4 @@ if __name__ == "__main__":
     test_mlir_tasklet_float()
     test_mlir_tasklet_recursion()
     test_mlir_tasklet_long_name()
+    test_mlir_tasklet_no_input()
