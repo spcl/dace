@@ -761,7 +761,8 @@ class CallTreeResolver(ast.NodeVisitor):
                      value.closure_resolver(constant_args, self.closure)))
             else:
                 self.closure.nested_closures.append((qualname, SDFGClosure()))
-        except:  # Parsing failed (anything can happen here)
+        except Exception as ex:  # Parsing failed (anything can happen here)
+            warnings.warn(f'Parsing SDFGConvertible {value} failed: {ex}')
             # Return old call AST instead
             node.func = node.func.oldnode.func
             return self.generic_visit(node)
