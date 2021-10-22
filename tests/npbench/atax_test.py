@@ -40,7 +40,7 @@ def run_atax(device_type: dace.dtypes.DeviceType):
     '''
 
     # Initialize data (polybench medium size)
-    M, N = (390, 410)  # Medium size, polybench
+    M, N = (390, 410)
     A, x, y_ref = init_data(M, N)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:

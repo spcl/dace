@@ -61,22 +61,20 @@ def run_jacobi_2d(device_type: dace.dtypes.DeviceType):
         # Parse SDFG and apply FPGA friendly optimization
         sdfg = kernel.to_sdfg(strict=True)
         sdfg.apply_transformations_repeated([MapFusion])
+        sdfg.apply_strict_transformations()
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
-
-
+        sdfg.specialize(dict(N=N))
         sm_applied = sdfg.apply_transformations_repeated(
             [InlineSDFG, StreamingMemory],
             [{}, {
                 'storage': dace.StorageType.FPGA_Local
             }],
             print_report=True)
-        print(sm_applied)
         sdfg.apply_transformations_repeated([InlineSDFG])
         sdfg.states()[0].location["is_FPGA_kernel"] = False
-        # assert sm_applied == 6  # 3 inlines and 3 Streaming memories
+        sdfg.view()
         # specialize the SDFG (needed by the GEMV expansion)
-        sdfg.specialize(dict(N=N))
         sdfg(A=A, B=B, TSTEPS=TSTEPS)
 
     # Validate result
@@ -87,4 +85,4 @@ def run_jacobi_2d(device_type: dace.dtypes.DeviceType):
 
 
 # def test_cpu():
-run_jacobi_2d(dace.dtypes.DeviceType.FPGA)
+# run_jacobi_2d(dace.dtypes.DeviceType.FPGA)
