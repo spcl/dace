@@ -59,6 +59,8 @@ class MemoryBuffering(sm.StreamingMemory):
         else:
             edges = state.in_edges(dnode)
 
+        print("edges: ", edges)
+
         # To understand how many components we need to create, all map ranges
         # throughout memlet paths must match exactly. We thus create a
         # dictionary of unique ranges
@@ -70,6 +72,9 @@ class MemoryBuffering(sm.StreamingMemory):
             mpath = state.memlet_path(edge)
             ranges[edge] = _collect_map_ranges(state, mpath)
             mapping[tuple(r[1] for r in ranges[edge])].append(edge)
+
+        print("ranges: ", ranges)
+        print("mapping: ", mapping)
 
         # Collect all edges with the same memory access pattern
         components_to_create: Dict[
@@ -86,6 +91,8 @@ class MemoryBuffering(sm.StreamingMemory):
                 expr = _canonicalize_memlet(innermost_edge.data, ranges[edge])
                 components_to_create[expr].append((innermost_edge, edge))
         components = list(components_to_create.values())
+
+        print("components: ", components)
 
         # Split out components that have dependencies between them to avoid
         # deadlocks
@@ -114,93 +121,79 @@ class MemoryBuffering(sm.StreamingMemory):
         for edge in edges:
 
             # TODO: Check correct usage of both streams
-            name, newdesc = sdfg.add_stream(dnode.data,
-                                            desc.dtype,
-                                            buffer_size=self.buffer_size,
-                                            storage=self.storage,
-                                            transient=True,
-                                            find_new_name=True)
+            input_gearbox_name, input_gearbox_newdesc = sdfg.add_stream(
+                dnode.data,
+                dtypes.vector(desc.dtype, self.vector_size),
+                buffer_size=self.buffer_size,
+                storage=self.storage,
+                transient=True,
+                find_new_name=True)
 
+            output_gearbox_name, output_gearbox_newdesc = sdfg.add_stream(
+                dnode.data,
+                desc.dtype,
+                buffer_size=self.buffer_size,
+                storage=self.storage,
+                transient=True,
+                find_new_name=True)
 
-            name2, newdesc2 = sdfg.add_stream(dnode.data,
-                                            desc.dtype,
-                                            buffer_size=self.buffer_size,
-                                            storage=self.storage,
-                                            transient=True,
-                                            find_new_name=True)
-
-        
-            print("name = ", name)
-            print("newdesc = ", newdesc)
-            print("name2 = ", name2)
-            print("newdesc2 = ", newdesc2)
-            # Vectorize stream
-            #  TODO: correct in loop ?
-            dtype = sdfg.arrays[name].dtype
-
-            print(dtype)
-
-            if not isinstance(dtype, dtypes.vector):
-                sdfg.arrays[name].dtype = dtypes.vector(
-                    dtype, self.vector_size)
-                new_shape = list(sdfg.arrays[name].shape)
-                contigidx = sdfg.arrays[name].strides.index(1)
-                new_shape[contigidx] /= self.vector_size
-                try:
-                    new_shape[contigidx] = int(new_shape[contigidx])
-                except TypeError:
-                    pass
-                sdfg.arrays[name].shape = new_shape
-
+            print("name = ", input_gearbox_name)
+            print("newdesc = ", input_gearbox_newdesc)
+            print("name2 = ", output_gearbox_name)
+            print("newdesc2 = ", output_gearbox_newdesc)
 
             # Add Gearbox
             # TODO: different name if multiple gearboxes
 
             print(streams)
 
-            read_to_gearbox_read = state.add_read(name)
-            gearbox_to_kernel_write = state.add_write(name2)
+            read_to_gearbox = state.add_read(input_gearbox_name)
+            gearbox_to_kernel_write = state.add_write(output_gearbox_name)
 
-            read_gearbox = Gearbox(64 / self.vector_size, name="read_gearbox")
+            
+
+            read_gearbox = Gearbox(64 / self.vector_size, name=sdfg._find_new_name("read_gearbox"))
             state.add_node(read_gearbox)
 
-            state.add_memlet_path(read_to_gearbox_read,
-                              read_gearbox,
-                              dst_conn="from_memory",
-                              memlet=dace.Memlet("read_to_gearbox[0]",
-                                                 volume=64 / self.vector_size))
+            state.add_memlet_path(read_to_gearbox,
+                                  read_gearbox,
+                                  dst_conn="from_memory",
+                                  memlet=dace.Memlet("read_to_gearbox[0]",
+                                                     volume=64 /
+                                                     self.vector_size))
             state.add_memlet_path(read_gearbox,
-                              gearbox_to_kernel_write,
-                              src_conn="to_kernel",
-                              memlet=dace.Memlet("gearbox_to_kernel[0]",
-                                                 volume=64 / self.vector_size))
+                                  gearbox_to_kernel_write,
+                                  src_conn="to_kernel",
+                                  memlet=dace.Memlet("gearbox_to_kernel[0]",
+                                                     volume=64 /
+                                                     self.vector_size))
 
-
-
-            streams[edge] = name
+            streams[edge] = input_gearbox_name
             mpath = state.memlet_path(edge)
             mpaths[edge] = mpath
 
             # Replace memlets in path with stream access
             for e in mpath:
-                e.data = mm.Memlet(data=name2,
+                e.data = mm.Memlet(data=output_gearbox_name,
                                    subset='0',
                                    other_subset=e.data.other_subset)
                 if isinstance(e.src, nodes.NestedSDFG):
                     e.data.dynamic = True
-                    _streamify_recursive(e.src, e.src_conn, newdesc2)
+                    _streamify_recursive(e.src, e.src_conn,
+                                         output_gearbox_newdesc)
                 if isinstance(e.dst, nodes.NestedSDFG):
                     e.data.dynamic = True
-                    _streamify_recursive(e.dst, e.dst_conn, newdesc2)
+                    _streamify_recursive(e.dst, e.dst_conn,
+                                         output_gearbox_newdesc)
 
             # Replace access node and memlet tree with one access
             if self.expr_index == 0:
-                replacement = state.add_read(name2)
+                replacement = state.add_read(output_gearbox_name)
                 state.remove_edge(edge)
                 state.add_edge(replacement, edge.src_conn, edge.dst,
                                edge.dst_conn, edge.data)
             else:
-                replacement = state.add_write(name)
+                replacement = state.add_write(input_gearbox_name)
                 state.remove_edge(edge)
                 state.add_edge(edge.src, edge.src_conn, replacement,
                                edge.dst_conn, edge.data)
@@ -224,9 +217,9 @@ class MemoryBuffering(sm.StreamingMemory):
                     name = streams[edge]
                     ionode = state.add_write(name)
                     ionodes.append(ionode)
-                    wmemlets.append(
-                        (ionode, '__out%d' % i, mm.Memlet(data=name,
-                                                          subset='0')))
+                    wmemlets.append((ionode, '__out%d' % i,
+                                     mm.Memlet(data=input_gearbox_name,
+                                               subset='0')))
                 code = '\n'.join('__out%d = __inp' % i
                                  for i in range(len(component)))
             else:
@@ -244,13 +237,13 @@ class MemoryBuffering(sm.StreamingMemory):
                     name = streams[edge]
                     ionode = state.add_read(name)
                     ionodes.append(ionode)
-                    rmemlets.append(
-                        (ionode, '__inp%d' % i, mm.Memlet(data=name,
-                                                          subset='0')))
+                    rmemlets.append((ionode, '__inp%d' % i,
+                                     mm.Memlet(data=name,
+                                               subset='0')))
                 code = '__out = __inp0'
 
-            # Vectorize the stuff
-            arrname  = str(self.access(sdfg))
+            # Vectorize the the global array
+            arrname = str(self.access(sdfg))
             print(arrname)
             print(sdfg.arrays)
             dtype = sdfg.arrays[arrname].dtype
@@ -269,8 +262,6 @@ class MemoryBuffering(sm.StreamingMemory):
                 except TypeError:
                     pass
                 sdfg.arrays[arrname].shape = new_shape
-
-            
 
             # Create map structure for read/write component
             maps = []
@@ -309,7 +300,5 @@ class MemoryBuffering(sm.StreamingMemory):
                                       src_conn=cname,
                                       memlet=memlet)
 
-
-           
-
+        print("Done")
         return ionodes
