@@ -437,8 +437,8 @@ def mlir_tasklet_llvm_dialect_opt(A: dace.int32[3], B: dace.int32[2],
         b << B[0]
         c >> C[0]
         """
-        "module"() ( {
-        "func"() ( {
+        "builtin.module"() ( {
+        "builtin.func"() ( {
         ^bb0(%a: i32, %b: i32):  // no predecessors
             %0 = "std.addi"(%b, %a) : (i32, i32) -> i32
             "std.return"(%0) : (i32) -> ()
@@ -500,8 +500,8 @@ def mlir_tasklet_recursion(A: dace.int32[2], B: dace.int32[1]):
         a << A[0]
         b >> B[0]
         """
-        "module"() ( {
-        "func"() ( {
+        "builtin.module"() ( {
+        "builtin.func"() ( {
         ^bb0(%a: i32):  // no predecessors
             %c0_i32 = "std.constant"() {value = 0 : i32} : () -> i32
             %c1_i32 = "std.constant"() {value = 1 : i32} : () -> i32
