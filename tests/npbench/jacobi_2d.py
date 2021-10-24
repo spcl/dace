@@ -6,11 +6,11 @@ import dace as dc
 import pytest
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition, MapFusion
+from dace.transformation.dataflow import StreamingMemory, MapFusion
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-
 N = dc.symbol('N', dtype=dc.int32)
+
 
 @dc.program
 def kernel(TSTEPS: dc.int32, A: dc.float32[N, N], B: dc.float32[N, N]):
@@ -24,10 +24,12 @@ def kernel(TSTEPS: dc.int32, A: dc.float32[N, N], B: dc.float32[N, N]):
 
 def ground_truth(TSTEPS, N, A, B):
     for t in range(1, TSTEPS):
-        B[1:N - 1, 1:N - 1] = 0.2 * (A[1:N - 1, 1:N - 1] + A[1:N - 1, :N - 2] +
-                                     A[1:N - 1, 2:] + A[2:, 1:N - 1] + A[:N - 2, 1:N - 1])
-        A[1:N - 1, 1:N - 1] = 0.2 * (B[1:N - 1, 1:N - 1] + B[1:N - 1, :N - 2] +
-                                     B[1:N - 1, 2:] + B[2:, 1:N - 1] + B[:N - 2, 1:N - 1])
+        B[1:N - 1, 1:N -
+          1] = 0.2 * (A[1:N - 1, 1:N - 1] + A[1:N - 1, :N - 2] +
+                      A[1:N - 1, 2:] + A[2:, 1:N - 1] + A[:N - 2, 1:N - 1])
+        A[1:N - 1, 1:N -
+          1] = 0.2 * (B[1:N - 1, 1:N - 1] + B[1:N - 1, :N - 2] +
+                      B[1:N - 1, 2:] + B[2:, 1:N - 1] + B[:N - 2, 1:N - 1])
 
 
 def init_data(N):
@@ -61,20 +63,24 @@ def run_jacobi_2d(device_type: dace.dtypes.DeviceType):
         # Parse SDFG and apply FPGA friendly optimization
         sdfg = kernel.to_sdfg(strict=True)
         sdfg.apply_transformations_repeated([MapFusion])
-        sdfg.apply_strict_transformations()
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
-        sdfg.specialize(dict(N=N))
+
         sm_applied = sdfg.apply_transformations_repeated(
             [InlineSDFG, StreamingMemory],
             [{}, {
                 'storage': dace.StorageType.FPGA_Local
             }],
             print_report=True)
-        sdfg.apply_transformations_repeated([InlineSDFG])
+        assert sm_applied == 2
+
+        # In this case, we want to generate the top-level state as an host-based state,
+        # not an FPGA kernel. We need to explicitly indicate that
         sdfg.states()[0].location["is_FPGA_kernel"] = False
-        sdfg.view()
-        # specialize the SDFG (needed by the GEMV expansion)
+        # we need to specialize both the top-level SDFG and the nested SDFG
+        sdfg.specialize(dict(N=N))
+        sdfg.states()[0].nodes()[0].sdfg.specialize(dict(N=N))
+        # run program
         sdfg(A=A, B=B, TSTEPS=TSTEPS)
 
     # Validate result
@@ -84,5 +90,15 @@ def run_jacobi_2d(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-# def test_cpu():
-# run_jacobi_2d(dace.dtypes.DeviceType.FPGA)
+def test_cpu():
+    run_jacobi_2d(dace.dtypes.DeviceType.CPU)
+
+
+@pytest.mark.gpu
+def test_gpu():
+    run_jacobi_2d(dace.dtypes.DeviceType.GPU)
+
+
+@fpga_test(assert_ii_1=False)
+def test_fpga():
+    return run_jacobi_2d(dace.dtypes.DeviceType.FPGA)
