@@ -656,13 +656,42 @@ class GlobalResolver(ast.NodeTransformer):
                 return self.generic_visit(node)
         return self.generic_visit(node)
 
+    def generic_visit_field(self, node: ast.AST, field: str) -> ast.AST:
+        """
+        Modification of ast.NodeTransformer.generic_visit that only visits one
+        field.
+        """
+        old_value = getattr(node, field)
+        if isinstance(old_value, list):
+            new_values = []
+            for value in old_value:
+                if isinstance(value, ast.AST):
+                    value = self.visit(value)
+                    if value is None:
+                        continue
+                    elif not isinstance(value, ast.AST):
+                        new_values.extend(value)
+                        continue
+                new_values.append(value)
+            old_value[:] = new_values
+        elif isinstance(old_value, ast.AST):
+            new_node = self.visit(old_value)
+            if new_node is None:
+                delattr(node, field)
+            else:
+                setattr(node, field, new_node)
+        return node
+
     def visit_For(self, node: ast.For):
         # Special case: for loop generators cannot be dace programs
         oldval = self.do_not_detect_callables
         self.do_not_detect_callables = True
-        result = self.generic_visit(node)
+        self.generic_visit_field(node, 'target')
+        self.generic_visit_field(node, 'iter')
         self.do_not_detect_callables = oldval
-        return result
+        self.generic_visit_field(node, 'body')
+        self.generic_visit_field(node, 'orelse')
+        return node
 
     def visit_Assert(self, node: ast.Assert) -> Any:
         # Try to evaluate assertion statically
