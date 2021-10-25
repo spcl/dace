@@ -300,6 +300,7 @@ class StreamingMemory(xf.Transformation):
         # Make read/write components
         ionodes = []
         for component in components:
+
             # Pick the first edge as the edge to make the component from
             innermost_edge, outermost_edge = component[0]
             mpath = mpaths[outermost_edge]

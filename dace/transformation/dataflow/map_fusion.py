@@ -492,7 +492,7 @@ class MapFusion(transformation.Transformation):
             # redirect all through an access node
             out_edges = list(
                 graph.out_edges_by_connector(edge.src, edge.src_conn))
-            if True: # len(out_edges) > 1:
+            if len(out_edges) > 1:
                 local_node = graph.add_access(local_name)
                 src_connector = None
 
