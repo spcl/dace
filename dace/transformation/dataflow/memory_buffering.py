@@ -133,7 +133,7 @@ class MemoryBuffering(sm.StreamingMemory):
                 "gearbox_input",
                 gearbox_input_type,
                 buffer_size=self.buffer_size,
-                storage=self.storage,
+                storage=dtypes.StorageType.FPGA_Local,
                 transient=True,
                 find_new_name=True)
 
@@ -141,7 +141,7 @@ class MemoryBuffering(sm.StreamingMemory):
                 "gearbox_output",
                 gearbox_output_type,
                 buffer_size=self.buffer_size,
-                storage=self.storage,
+                storage=dtypes.StorageType.FPGA_Local,
                 transient=True,
                 find_new_name=True)
 
@@ -164,12 +164,14 @@ class MemoryBuffering(sm.StreamingMemory):
             state.add_node(gearbox)
 
             state.add_memlet_path(read_to_gearbox,
-                                  gearbox,                       
+                                  gearbox,    
+                                  dst_conn="from_memory",                   
                                   memlet=dace.Memlet(
                                       input_gearbox_name + "[0]",
                                       volume=int(64 / self.vector_size)))
             state.add_memlet_path(gearbox,
                                   write_from_gearbox,
+                                  src_conn="to_kernel",
                                   memlet=dace.Memlet(
                                       output_gearbox_name + "[0]",
                                       volume=int(64 / self.vector_size)))
@@ -266,6 +268,7 @@ class MemoryBuffering(sm.StreamingMemory):
                 code = '__out = __inp0'
 
             # Vectorize the the global array
+            print("Vectorize")
             arrname = str(self.access(sdfg))
             print(arrname)
             print(sdfg.arrays)
@@ -286,6 +289,27 @@ class MemoryBuffering(sm.StreamingMemory):
                     pass
                 sdfg.arrays[arrname].shape = new_shape
 
+            print("States: " , sdfg.states())
+
+            # TODO States always sorted? 
+
+            for e in sdfg.states()[-1].edges():
+                print(e)
+                print(e.src)
+                print(e.dst)
+                print(e.data)
+                print(str(e.src) == arrname)
+                if(str(e.src) == arrname):
+                    print("Change data")
+                    e.data = mm.Memlet(data=str(e.src),
+                                   subset='0:16')
+                    print(e.data)
+                
+            
+            print(sdfg.states()[-1].edges())
+                
+
+
             # Create map structure for read/write component
             maps = []
             for entry in path:
@@ -295,11 +319,13 @@ class MemoryBuffering(sm.StreamingMemory):
                 #     print("p = ", p)
                 #     print("r = ", r)
 
+                print("Schedule = ", map.schedule)
+
                 print({m[1] for m in rmemlets})
 
                 maps.append(
                     state.add_map(f'__s{opname}_{mapname}',
-                                  [(p, (r[0], r[1], self.vector_size))
+                                  [(p, (r[0], r[1] / self.vector_size, r[2]))
                                    for p, r in zip(map.params, map.range)],
                                   map.schedule))
             tasklet = state.add_tasklet(
