@@ -47,9 +47,11 @@ class MemoryBuffering(sm.StreamingMemory):
 
         # TODO: correct stride check?
         # TODO: make general
+        # TODO: Only makes sense if Global array
 
-        return super().can_be_applied(graph, candidate, expr_index, sdfg,
-                                      strict) and desc.strides[-1] == 1 and desc.strides[0] % self.vector_size == 0
+        return super().can_be_applied(
+            graph, candidate, expr_index, sdfg, strict
+        ) and desc.strides[-1] == 1
 
     def apply(self, sdfg: SDFG) -> nodes.AccessNode:
 
@@ -78,9 +80,8 @@ class MemoryBuffering(sm.StreamingMemory):
             edges = state.in_edges(dnode)
             gearbox_input_type = desc.dtype
             gearbox_output_type = dtypes.vector(desc.dtype, self.vector_size)
-            gearbox_read_volume = total_size 
+            gearbox_read_volume = total_size
             gearbox_write_volume = total_size / self.vector_size
-
 
         print("edges: ", edges)
 
@@ -174,15 +175,14 @@ class MemoryBuffering(sm.StreamingMemory):
             # gearbox_name = sdfg._find_new_name("gearbox")
             print("Gearbox", sdfg.arrays[arrname].total_size / self.vector_size)
 
-            
-
-
-            gearbox = Gearbox(sdfg.arrays[arrname].total_size / self.vector_size, name="gearbox")
+            gearbox = Gearbox(sdfg.arrays[arrname].total_size /
+                              self.vector_size,
+                              name="gearbox")
             state.add_node(gearbox)
 
             state.add_memlet_path(read_to_gearbox,
-                                  gearbox,    
-                                  dst_conn="from_memory",                   
+                                  gearbox,
+                                  dst_conn="from_memory",
                                   memlet=dace.Memlet(
                                       input_gearbox_name + "[0]",
                                       volume=gearbox_read_volume))
@@ -192,7 +192,6 @@ class MemoryBuffering(sm.StreamingMemory):
                                   memlet=dace.Memlet(
                                       output_gearbox_name + "[0]",
                                       volume=gearbox_write_volume))
-
 
             if self.expr_index == 0:
                 # Read
@@ -205,13 +204,10 @@ class MemoryBuffering(sm.StreamingMemory):
                 name = input_gearbox_name
                 newdesc = input_gearbox_newdesc
 
-
-             
-
             mpath = state.memlet_path(edge)
             mpaths[edge] = mpath
 
-            print("mpath = " , mpath)
+            print("mpath = ", mpath)
 
             # Replace memlets in path with stream access
             for e in mpath:
@@ -221,12 +217,10 @@ class MemoryBuffering(sm.StreamingMemory):
                                    other_subset=e.data.other_subset)
                 if isinstance(e.src, nodes.NestedSDFG):
                     e.data.dynamic = True
-                    _streamify_recursive(e.src, e.src_conn,
-                                         newdesc)
+                    _streamify_recursive(e.src, e.src_conn, newdesc)
                 if isinstance(e.dst, nodes.NestedSDFG):
                     e.data.dynamic = True
-                    _streamify_recursive(e.dst, e.dst_conn,
-                                         newdesc)
+                    _streamify_recursive(e.dst, e.dst_conn, newdesc)
 
             # Replace access node and memlet tree with one access
             if self.expr_index == 0:
@@ -306,12 +300,11 @@ class MemoryBuffering(sm.StreamingMemory):
                     pass
                 sdfg.arrays[arrname].shape = new_shape
 
-                print("Strides:" , sdfg.arrays[arrname].strides)
+                print("Strides:", sdfg.arrays[arrname].strides)
 
                 new_strides: List = list(sdfg.arrays[arrname].strides)
                 new_strides.reverse()
                 print(new_strides)
-
 
                 # Divides the stride by vector size
                 divider = 1
@@ -325,10 +318,9 @@ class MemoryBuffering(sm.StreamingMemory):
                 print(new_strides)
                 sdfg.arrays[arrname].strides = new_strides
 
+            print("States: ", sdfg.states())
 
-            print("States: " , sdfg.states())
-
-            # TODO States always sorted? 
+            # TODO States always sorted?
 
             for e in sdfg.states()[-1].edges():
                 print(e)
@@ -336,22 +328,34 @@ class MemoryBuffering(sm.StreamingMemory):
                 print(e.dst)
                 print(e.data)
                 print(str(e.src) == arrname)
-                if(str(e.src) == arrname):
+                if (str(e.src) == arrname):
                     print("Change data")
-                    e.data = mm.Memlet(data=str(e.src),
-                                   subset='0:16')
-                    print(e.data)
-                
-            
-            print(sdfg.states()[-1].edges())
-                
+                    print(e.data.subset)
+                    new_subset = list(e.data.subset)
 
+                    print(new_subset)
+
+                    new_subset.reverse()
+
+                    i, j, k = new_subset[0]
+
+                    new_subset[0] = (i, j / self.vector_size, k)
+
+                    new_subset.reverse()
+                    print(new_subset)
+
+                    print(subsets.Range(new_subset))
+
+                    e.data = mm.Memlet(data=str(e.src),
+                                       subset=subsets.Range(new_subset))
+                    print(e.data)
+
+            print(sdfg.states()[-1].edges())
 
             # Create map structure for read/write component
             maps = []
             for entry in path:
                 map: nodes.Map = entry.map
-
 
                 print(map.range)
 
@@ -361,21 +365,21 @@ class MemoryBuffering(sm.StreamingMemory):
 
                 print("Schedule = ", map.schedule)
 
-                ranges =  [(p, (r[0], r[1], r[2]))
-                                   for p, r in zip(map.params, map.range)]
+                ranges = [(p, (r[0], r[1], r[2]))
+                          for p, r in zip(map.params, map.range)]
 
                 print(ranges)
                 print(ranges[-1][1][1])
 
-                ranges[-1] = (ranges[-1][0], (ranges[-1][1][0], ranges[-1][1][1] / self.vector_size, ranges[-1][1][2]))
-
-                
+                ranges[-1] = (ranges[-1][0],
+                              (ranges[-1][1][0],
+                               ranges[-1][1][1] / self.vector_size,
+                               ranges[-1][1][2]))
 
                 print({m[1] for m in rmemlets})
 
                 maps.append(
-                    state.add_map(f'__s{opname}_{mapname}',
-                                  ranges,
+                    state.add_map(f'__s{opname}_{mapname}', ranges,
                                   map.schedule))
             tasklet = state.add_tasklet(
                 f'{opname}_{mapname}',

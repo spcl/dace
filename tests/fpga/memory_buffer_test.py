@@ -118,11 +118,6 @@ def test_mem_buffer_mat_add():
 
     diff = np.linalg.norm(C - (A + B))
 
-    print(diff)
-
-    print("A = ", A)
-    print("B = ", B)
-    print("C = ", C)
     assert diff <= 1e-5
 
     return sdfg
@@ -156,5 +151,5 @@ def test_mem_buffer_mat_mul():
 if __name__ == "__main__":
     # test_mem_buffer_vec_add_1(None)
     # test_mem_buffer_vec_add(None)
-    test_mem_buffer_mat_add(None)
-    # test_mem_buffer_mat_mul(None)
+    # test_mem_buffer_mat_add(None)
+    test_mem_buffer_mat_mul(None)
