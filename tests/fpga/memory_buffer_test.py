@@ -102,10 +102,8 @@ def test_mem_buffer_mat_add():
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
-    sdfg.apply_transformations([mb.MemoryBuffering])
 
-
-    # sdfg.apply_transformations_repeated(mb.MemoryBuffering)
+    sdfg.apply_transformations_repeated(mb.MemoryBuffering)
 
 
     # assert sdfg.apply_transformations_repeated(

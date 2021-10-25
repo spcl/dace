@@ -46,9 +46,10 @@ class MemoryBuffering(sm.StreamingMemory):
         # print(desc.strides == (1,))
 
         # TODO: correct stride check?
+        # TODO: make general
 
         return super().can_be_applied(graph, candidate, expr_index, sdfg,
-                                      strict) and desc.strides[-1] == 1
+                                      strict) and desc.strides[-1] == 1 and desc.strides[0] % self.vector_size == 0
 
     def apply(self, sdfg: SDFG) -> nodes.AccessNode:
 
@@ -304,6 +305,26 @@ class MemoryBuffering(sm.StreamingMemory):
                 except TypeError:
                     pass
                 sdfg.arrays[arrname].shape = new_shape
+
+                print("Strides:" , sdfg.arrays[arrname].strides)
+
+                new_strides: List = list(sdfg.arrays[arrname].strides)
+                new_strides.reverse()
+                print(new_strides)
+
+
+                # Divides the stride by vector size
+                divider = 1
+
+                for i in range(len(new_strides)):
+                    new_strides[i] = int(new_strides[i] / divider)
+                    divider *= self.vector_size
+
+                new_strides.reverse()
+
+                print(new_strides)
+                sdfg.arrays[arrname].strides = new_strides
+
 
             print("States: " , sdfg.states())
 
