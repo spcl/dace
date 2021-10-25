@@ -22,16 +22,6 @@ def kernel(TSTEPS: dc.int32, A: dc.float32[N, N], B: dc.float32[N, N]):
                                B[2:, 1:-1] + B[:-2, 1:-1])
 
 
-def ground_truth(TSTEPS, N, A, B):
-    for t in range(1, TSTEPS):
-        B[1:N - 1, 1:N -
-          1] = 0.2 * (A[1:N - 1, 1:N - 1] + A[1:N - 1, :N - 2] +
-                      A[1:N - 1, 2:] + A[2:, 1:N - 1] + A[:N - 2, 1:N - 1])
-        A[1:N - 1, 1:N -
-          1] = 0.2 * (B[1:N - 1, 1:N - 1] + B[1:N - 1, :N - 2] +
-                      B[1:N - 1, 2:] + B[2:, 1:N - 1] + B[:N - 2, 1:N - 1])
-
-
 def init_data(N):
     A = np.empty((N, N), dtype=np.float32)
     B = np.empty((N, N), dtype=np.float32)
@@ -83,8 +73,8 @@ def run_jacobi_2d(device_type: dace.dtypes.DeviceType):
         # run program
         sdfg(A=A, B=B, TSTEPS=TSTEPS)
 
-    # Validate result
-    ground_truth(TSTEPS, N, np_A, np_B)
+    # Compute ground truth and validate result
+    kernel.f(TSTEPS, np_A, np_B)
     assert np.allclose(A, np_A)
     assert np.allclose(B, np_B)
     return sdfg

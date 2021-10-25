@@ -17,10 +17,6 @@ def kernel(A: dc.float32[M, N], x: dc.float32[N]):
     return (A @ x) @ A
 
 
-def ground_truth(A, x, y):
-    y[:] = (A @ x) @ A
-
-
 def init_data(M, N):
     fn = np.float32(N)
     A = np.empty((M, N), dtype=np.float32)
@@ -71,8 +67,8 @@ def run_atax(device_type: dace.dtypes.DeviceType):
         sdfg.specialize(dict(M=M, N=N))
         y = sdfg(A, x)
 
-    # Validate result
-    ground_truth(A, x, y_ref)
+    # Compute ground truth and Validate result
+    y_ref = kernel.f(A, x)
     assert np.allclose(y, y_ref)
     return sdfg
 
@@ -80,9 +76,11 @@ def run_atax(device_type: dace.dtypes.DeviceType):
 def test_cpu():
     run_atax(dace.dtypes.DeviceType.CPU)
 
+
 @pytest.mark.gpu
 def test_gpu():
     run_atax(dace.dtypes.DeviceType.GPU)
+
 
 @fpga_test(assert_ii_1=False)
 def test_fpga():
