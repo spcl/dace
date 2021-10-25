@@ -8,6 +8,7 @@ from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize
+
 M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
 
 
