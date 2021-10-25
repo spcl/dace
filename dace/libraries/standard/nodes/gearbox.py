@@ -21,6 +21,10 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
         sdfg = dace.SDFG(node.name)
         in_desc_inner = copy.deepcopy(in_desc)
         in_desc_inner.transient = False
+        print(in_edge)
+        print(in_edge.dst_conn)
+        print(in_desc_inner)
+
         sdfg.add_datadesc(in_edge.dst_conn, in_desc_inner)
         out_desc_inner = copy.deepcopy(out_desc)
         out_desc_inner.transient = False
@@ -309,6 +313,8 @@ class Gearbox(dace.sdfg.nodes.LibraryNode):
             raise ValueError(
                 f"Expected only one input edge, found {len(out_edge)} edges.")
         in_edge = in_edge[0]
+        # print(in_edge)
+        # print(in_edge.data.data)
         in_desc = sdfg.arrays[in_edge.data.data]
         if not isinstance(in_desc, dace.data.Stream):
             raise TypeError(
