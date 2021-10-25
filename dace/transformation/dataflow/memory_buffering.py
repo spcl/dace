@@ -137,10 +137,10 @@ class MemoryBuffering(sm.StreamingMemory):
                 transient=True,
                 find_new_name=True)
 
-            print("name = ", input_gearbox_name)
-            print("newdesc = ", input_gearbox_newdesc)
-            print("name2 = ", output_gearbox_name)
-            print("newdesc2 = ", output_gearbox_newdesc)
+            print("input_gearbox_name = ", input_gearbox_name)
+            print("input_gearbox_newdesc = ", input_gearbox_newdesc)
+            print("output_gearbox_name = ", output_gearbox_name)
+            print("output_gearbox_newdesc = ", output_gearbox_newdesc)
 
             # Add Gearbox
             # TODO: different name if multiple gearboxes
@@ -150,25 +150,29 @@ class MemoryBuffering(sm.StreamingMemory):
             read_to_gearbox = state.add_read(input_gearbox_name)
             gearbox_to_kernel_write = state.add_write(output_gearbox_name)
 
-            
+            # gearbox_name = sdfg._find_new_name("gearbox")
 
-            read_gearbox = Gearbox(64 / self.vector_size, name=sdfg._find_new_name("read_gearbox"))
+            read_gearbox = Gearbox(64 / self.vector_size, name="gearbox")
             state.add_node(read_gearbox)
 
             state.add_memlet_path(read_to_gearbox,
                                   read_gearbox,
                                   dst_conn="from_memory",
-                                  memlet=dace.Memlet("read_to_gearbox[0]",
+                                  memlet=dace.Memlet(input_gearbox_name + "[0]",
                                                      volume=64 /
                                                      self.vector_size))
             state.add_memlet_path(read_gearbox,
                                   gearbox_to_kernel_write,
                                   src_conn="to_kernel",
-                                  memlet=dace.Memlet("gearbox_to_kernel[0]",
-                                                     volume=64 /
-                                                     self.vector_size))
+                                  memlet=dace.Memlet(
+                                      output_gearbox_name + "[0]",
+                                      volume=64 / self.vector_size))
 
-            streams[edge] = input_gearbox_name
+            if self.expr_index == 0:
+                streams[edge] = input_gearbox_name
+            else:
+                streams[edge] = output_gearbox_name
+
             mpath = state.memlet_path(edge)
             mpaths[edge] = mpath
 
@@ -188,11 +192,13 @@ class MemoryBuffering(sm.StreamingMemory):
 
             # Replace access node and memlet tree with one access
             if self.expr_index == 0:
+                print("1")
                 replacement = state.add_read(output_gearbox_name)
                 state.remove_edge(edge)
                 state.add_edge(replacement, edge.src_conn, edge.dst,
                                edge.dst_conn, edge.data)
             else:
+                print(2)
                 replacement = state.add_write(input_gearbox_name)
                 state.remove_edge(edge)
                 state.add_edge(edge.src, edge.src_conn, replacement,
@@ -237,9 +243,9 @@ class MemoryBuffering(sm.StreamingMemory):
                     name = streams[edge]
                     ionode = state.add_read(name)
                     ionodes.append(ionode)
-                    rmemlets.append((ionode, '__inp%d' % i,
-                                     mm.Memlet(data=name,
-                                               subset='0')))
+                    rmemlets.append(
+                        (ionode, '__inp%d' % i, mm.Memlet(data=name,
+                                                          subset='0')))
                 code = '__out = __inp0'
 
             # Vectorize the the global array
@@ -300,5 +306,6 @@ class MemoryBuffering(sm.StreamingMemory):
                                       src_conn=cname,
                                       memlet=memlet)
 
+        # sdfg.expand_library_nodes()
         print("Done")
         return ionodes
