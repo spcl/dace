@@ -488,12 +488,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 data_name] is not None
             if is_assigned and isinstance(data, dt.Array):
                 memory_bank = bank_assignments[data_name]
-                if memory_bank[0] == "HBM":
-                    lowest_bank_index, _ = fpga.get_multibank_ranges_from_subset(
-                        memory_bank[1], sdfg)
-                else:
-                    lowest_bank_index = int(memory_bank[1])
-                for bank, interface_id in fpga.iterate_hbm_interface_ids(
+                lowest_bank_index, _ = fpga.get_multibank_ranges_from_subset(
+                    memory_bank[1], sdfg)
+
+                for bank, interface_id in fpga.iterate_multibank_interface_ids(
                         data, interface):
                     kernel_arg = self.make_kernel_argument(
                         data, data_name, bank, sdfg, is_output, True,
@@ -581,7 +579,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args = []
         for _, name, p, interface_ids in parameters:
             if isinstance(p, dt.Array):
-                for bank, _ in fpga.iterate_hbm_interface_ids(p, interface_ids):
+                for bank, _ in fpga.iterate_multibank_interface_ids(p, interface_ids):
                     kernel_args.append(
                         p.as_arg(False, name=fpga.fpga_ptr(name, p, sdfg,
                                                            bank)))
@@ -631,7 +629,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args_module = []
         for is_output, pname, p, interface_ids in parameters:
             if isinstance(p, dt.Array):
-                for bank, interface_id in fpga.iterate_hbm_interface_ids(
+                for bank, interface_id in fpga.iterate_multibank_interface_ids(
                         p, interface_ids):
                     arr_name = fpga.fpga_ptr(pname,
                                              p,
@@ -789,7 +787,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # FPGA kernel
         interfaces_added = set()
         for is_output, argname, arg, interface_id in parameters:
-            for bank, _ in fpga.iterate_hbm_interface_ids(arg, interface_id):
+            for bank, _ in fpga.iterate_multibank_interface_ids(arg, interface_id):
                 if (not (isinstance(arg, dt.Array) and arg.storage
                          == dace.dtypes.StorageType.FPGA_Global)):
                     continue
@@ -937,7 +935,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args = []
         for is_output, name, arg, interface_ids in parameters:
             if isinstance(arg, dt.Array):
-                for bank, interface_id in fpga.iterate_hbm_interface_ids(
+                for bank, interface_id in fpga.iterate_multibank_interface_ids(
                         arg, interface_ids):
                     argname = fpga.fpga_ptr(name, arg, sdfg, bank, is_output,
                                             None, None, True, interface_id)
@@ -1006,7 +1004,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                     memlet_references.append(interface_ref)
             if vconn in inout:
                 continue
-            if fpga.is_hbm_array_with_distributed_index(
+            if fpga.is_multibank_array_with_distributed_index(
                     sdfg.arrays[in_memlet.data]):
                 passed_memlet = copy.deepcopy(in_memlet)
                 passed_memlet.subset = fpga.modify_distributed_subset(
@@ -1026,7 +1024,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                 state.out_edges(node), key=lambda e: e.src_conn or ""):
             if out_memlet.data is None:
                 continue
-            if fpga.is_hbm_array_with_distributed_index(
+            if fpga.is_multibank_array_with_distributed_index(
                     sdfg.arrays[out_memlet.data]):
                 passed_memlet = copy.deepcopy(out_memlet)
                 passed_memlet.subset = fpga.modify_distributed_subset(

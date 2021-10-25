@@ -9,16 +9,15 @@ import numpy as np
 from dace.sdfg import SDFG
 from dace.transformation.interstate import InlineSDFG
 
-# Checks multiple interfaces attached to the same HBM-bank.
+# Checks multiple interfaces attached to the same HBM/DDR-bank.
 
 
-@xilinx_test(assert_ii_1=False)
-def test_3_interface_to_2_banks():
-    sdfg = SDFG("test_4_interface_to_2_banks")
+def four_interface_to_2_banks(mem_type):
+    sdfg = SDFG("test_4_interface_to_2_banks_" + mem_type)
     state = sdfg.add_state()
 
     _, desc_a = sdfg.add_array("a", [2, 2], dace.int32)
-    desc_a.location["memorytype"] = "HBM"
+    desc_a.location["memorytype"] = mem_type
     desc_a.location["bank"] = "0:2"
     acc_read1 = state.add_read("a")
     acc_write1 = state.add_write("a")
@@ -56,8 +55,8 @@ def test_3_interface_to_2_banks():
 
     bank_assignment = sdfg.generate_code()[3].clean_code
     assert bank_assignment.count("sp") == 6
-    assert bank_assignment.count("HBM[0]") == 3
-    assert bank_assignment.count("HBM[1]") == 3
+    assert bank_assignment.count(mem_type + "[0]") == 3
+    assert bank_assignment.count(mem_type + "[1]") == 3
 
     a = np.zeros([2, 2], np.int32)
     a[0, 0] = 2
@@ -68,5 +67,16 @@ def test_3_interface_to_2_banks():
     return sdfg
 
 
+@xilinx_test(assert_ii_1=False)
+def test_4_interface_to_2_banks_hbm():
+    return four_interface_to_2_banks(mem_type="HBM")
+
+
+@xilinx_test(assert_ii_1=False)
+def test_4_interface_to_2_banks_ddr():
+    return four_interface_to_2_banks(mem_type="DDR")
+
+
 if __name__ == "__main__":
-    test_3_interface_to_2_banks(None)
+    test_4_interface_to_2_banks_hbm(None)
+    test_4_interface_to_2_banks_ddr(None)
