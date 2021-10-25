@@ -25,11 +25,11 @@ class MemoryBuffering(sm.StreamingMemory):
      on the fly to the right data type used by the computation.
      A combination of the StreamingMemory transformation and a gearbox node. 
     """
-
+    # TODO: 512 bits
     vector_size = properties.Property(dtype=int, default=4, desc='Vector Size')
 
-    @staticmethod
-    def can_be_applied(graph: SDFGState,
+    def can_be_applied(self,
+                       graph: SDFGState,
                        candidate: Dict[xf.PatternNode, int],
                        expr_index: int,
                        sdfg: SDFG,
@@ -47,17 +47,27 @@ class MemoryBuffering(sm.StreamingMemory):
 
         # TODO: correct stride check?
 
-        return super(MemoryBuffering, MemoryBuffering).can_be_applied(
-            graph, candidate, expr_index, sdfg,
-            strict) and desc.strides[-1] == 1
+        return super().can_be_applied(graph, candidate, expr_index, sdfg,
+                                      strict) and desc.strides[-1] == 1
 
     def apply(self, sdfg: SDFG) -> nodes.AccessNode:
+
         state = sdfg.node(self.state_id)
         dnode: nodes.AccessNode = self.access(sdfg)
+        desc = sdfg.arrays[dnode.data]
+
         if self.expr_index == 0:
+            print("Read")
             edges = state.out_edges(dnode)
+            #  Read
+            gearbox_input_type = dtypes.vector(desc.dtype, self.vector_size)
+            gearbox_output_type = desc.dtype
         else:
+            print("Write")
+            # Write
             edges = state.in_edges(dnode)
+            gearbox_input_type = desc.dtype
+            gearbox_output_type = dtypes.vector(desc.dtype, self.vector_size)
 
         print("edges: ", edges)
 
@@ -113,8 +123,6 @@ class MemoryBuffering(sm.StreamingMemory):
             components.extend(ccs_to_add)
         # End of split
 
-        desc = sdfg.arrays[dnode.data]
-
         # Create new streams of shape 1
         streams = {}
         mpaths = {}
@@ -122,16 +130,16 @@ class MemoryBuffering(sm.StreamingMemory):
 
             # TODO: Check correct usage of both streams
             input_gearbox_name, input_gearbox_newdesc = sdfg.add_stream(
-                dnode.data,
-                dtypes.vector(desc.dtype, self.vector_size),
+                "gearbox_input",
+                gearbox_input_type,
                 buffer_size=self.buffer_size,
                 storage=self.storage,
                 transient=True,
                 find_new_name=True)
 
             output_gearbox_name, output_gearbox_newdesc = sdfg.add_stream(
-                dnode.data,
-                desc.dtype,
+                "gearbox_output",
+                gearbox_output_type,
                 buffer_size=self.buffer_size,
                 storage=self.storage,
                 transient=True,
@@ -148,57 +156,66 @@ class MemoryBuffering(sm.StreamingMemory):
             print(streams)
 
             read_to_gearbox = state.add_read(input_gearbox_name)
-            gearbox_to_kernel_write = state.add_write(output_gearbox_name)
+            write_from_gearbox = state.add_write(output_gearbox_name)
 
             # gearbox_name = sdfg._find_new_name("gearbox")
 
-            read_gearbox = Gearbox(64 / self.vector_size, name="gearbox")
-            state.add_node(read_gearbox)
+            gearbox = Gearbox(64 / self.vector_size, name="gearbox")
+            state.add_node(gearbox)
 
             state.add_memlet_path(read_to_gearbox,
-                                  read_gearbox,
-                                  dst_conn="from_memory",
-                                  memlet=dace.Memlet(input_gearbox_name + "[0]",
-                                                     volume=64 /
-                                                     self.vector_size))
-            state.add_memlet_path(read_gearbox,
-                                  gearbox_to_kernel_write,
-                                  src_conn="to_kernel",
+                                  gearbox,                       
+                                  memlet=dace.Memlet(
+                                      input_gearbox_name + "[0]",
+                                      volume=int(64 / self.vector_size)))
+            state.add_memlet_path(gearbox,
+                                  write_from_gearbox,
                                   memlet=dace.Memlet(
                                       output_gearbox_name + "[0]",
-                                      volume=64 / self.vector_size))
+                                      volume=int(64 / self.vector_size)))
+
 
             if self.expr_index == 0:
+                # Read
                 streams[edge] = input_gearbox_name
+                name = output_gearbox_name
+                newdesc = output_gearbox_newdesc
             else:
+                # Write
                 streams[edge] = output_gearbox_name
+                name = input_gearbox_name
+                newdesc = input_gearbox_newdesc
+
+
+             
 
             mpath = state.memlet_path(edge)
             mpaths[edge] = mpath
 
+            print("mpath = " , mpath)
+
             # Replace memlets in path with stream access
             for e in mpath:
-                e.data = mm.Memlet(data=output_gearbox_name,
+                print("e = ", e)
+                e.data = mm.Memlet(data=name,
                                    subset='0',
                                    other_subset=e.data.other_subset)
                 if isinstance(e.src, nodes.NestedSDFG):
                     e.data.dynamic = True
                     _streamify_recursive(e.src, e.src_conn,
-                                         output_gearbox_newdesc)
+                                         newdesc)
                 if isinstance(e.dst, nodes.NestedSDFG):
                     e.data.dynamic = True
                     _streamify_recursive(e.dst, e.dst_conn,
-                                         output_gearbox_newdesc)
+                                         newdesc)
 
             # Replace access node and memlet tree with one access
             if self.expr_index == 0:
-                print("1")
                 replacement = state.add_read(output_gearbox_name)
                 state.remove_edge(edge)
                 state.add_edge(replacement, edge.src_conn, edge.dst,
                                edge.dst_conn, edge.data)
             else:
-                print(2)
                 replacement = state.add_write(input_gearbox_name)
                 state.remove_edge(edge)
                 state.add_edge(edge.src, edge.src_conn, replacement,
