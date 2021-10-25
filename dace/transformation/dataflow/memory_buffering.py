@@ -56,18 +56,30 @@ class MemoryBuffering(sm.StreamingMemory):
         dnode: nodes.AccessNode = self.access(sdfg)
         desc = sdfg.arrays[dnode.data]
 
+        print("sdfg.arrays[dnode.data] = ", sdfg.arrays[dnode.data])
+        print(self.access(sdfg))
+        arrname = str(self.access(sdfg))
+        print()
+
+        total_size = sdfg.arrays[arrname].total_size
+
         if self.expr_index == 0:
             print("Read")
             edges = state.out_edges(dnode)
             #  Read
             gearbox_input_type = dtypes.vector(desc.dtype, self.vector_size)
             gearbox_output_type = desc.dtype
+            gearbox_read_volume = total_size / self.vector_size
+            gearbox_write_volume = total_size
         else:
             print("Write")
             # Write
             edges = state.in_edges(dnode)
             gearbox_input_type = desc.dtype
             gearbox_output_type = dtypes.vector(desc.dtype, self.vector_size)
+            gearbox_read_volume = total_size 
+            gearbox_write_volume = total_size / self.vector_size
+
 
         print("edges: ", edges)
 
@@ -159,8 +171,12 @@ class MemoryBuffering(sm.StreamingMemory):
             write_from_gearbox = state.add_write(output_gearbox_name)
 
             # gearbox_name = sdfg._find_new_name("gearbox")
+            print("Gearbox", sdfg.arrays[arrname].total_size / self.vector_size)
 
-            gearbox = Gearbox(64 / self.vector_size, name="gearbox")
+            
+
+
+            gearbox = Gearbox(sdfg.arrays[arrname].total_size / self.vector_size, name="gearbox")
             state.add_node(gearbox)
 
             state.add_memlet_path(read_to_gearbox,
@@ -168,13 +184,13 @@ class MemoryBuffering(sm.StreamingMemory):
                                   dst_conn="from_memory",                   
                                   memlet=dace.Memlet(
                                       input_gearbox_name + "[0]",
-                                      volume=int(64 / self.vector_size)))
+                                      volume=gearbox_read_volume))
             state.add_memlet_path(gearbox,
                                   write_from_gearbox,
                                   src_conn="to_kernel",
                                   memlet=dace.Memlet(
                                       output_gearbox_name + "[0]",
-                                      volume=int(64 / self.vector_size)))
+                                      volume=gearbox_write_volume))
 
 
             if self.expr_index == 0:
@@ -315,18 +331,30 @@ class MemoryBuffering(sm.StreamingMemory):
             for entry in path:
                 map: nodes.Map = entry.map
 
-                # for p, r in zip(map.params, map.range):
-                #     print("p = ", p)
-                #     print("r = ", r)
+
+                print(map.range)
+
+                for p, r in zip(map.params, map.range):
+                    print("p = ", p)
+                    print("r = ", r)
 
                 print("Schedule = ", map.schedule)
+
+                ranges =  [(p, (r[0], r[1], r[2]))
+                                   for p, r in zip(map.params, map.range)]
+
+                print(ranges)
+                print(ranges[-1][1][1])
+
+                ranges[-1] = (ranges[-1][0], (ranges[-1][1][0], ranges[-1][1][1] / self.vector_size, ranges[-1][1][2]))
+
+                
 
                 print({m[1] for m in rmemlets})
 
                 maps.append(
                     state.add_map(f'__s{opname}_{mapname}',
-                                  [(p, (r[0], r[1] / self.vector_size, r[2]))
-                                   for p, r in zip(map.params, map.range)],
+                                  ranges,
                                   map.schedule))
             tasklet = state.add_tasklet(
                 f'{opname}_{mapname}',
