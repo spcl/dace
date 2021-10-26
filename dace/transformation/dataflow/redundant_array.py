@@ -24,6 +24,8 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                       dst_name: str = None) -> typing.Tuple[subsets.Subset]:
     """ Extracts and validates src and dst subsets from the edge. """
 
+
+
     # Find src and dst names
     if not src_name and isinstance(edge.src, nodes.AccessNode):
         src_name = edge.src.data
@@ -86,8 +88,18 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                 src_expr_exact = src_subset.num_elements_exact()
                 dst_expr = dst_subset.num_elements()
                 dst_expr_exact = dst_subset.num_elements_exact()
+                print("src_expr != dst_expr")
+                print(edge)
+                print(src_expr)
+                print(dst_expr)
+                print(src_expr_exact)
+                print(dst_expr_exact)
+                print(dst_subset)
                 if (src_expr != dst_expr and symbolic.inequal_symbols(
                         src_expr_exact, dst_expr_exact)):
+
+                   
+
                     raise ValueError(
                         "Destination subset is missing (src_subset: {}, "
                         "dst_shape: {}, desc {}, dest_name {})".format(src_subset, desc.shape, desc, dst_name))

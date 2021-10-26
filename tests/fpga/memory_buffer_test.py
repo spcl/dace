@@ -11,9 +11,9 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.fpga_testing import xilinx_test
 from dace.transformation.dataflow import Vectorization
 
-N = 8
-M = 8
-K = 8
+N = 4
+M = 4
+K = 4
 
 
 @dace.program
@@ -32,11 +32,27 @@ def matadd_streaming(A: dace.float32[M, N], B: dace.float32[M, N],
                      C: dace.float32[M, N]):
     C[:] = A + B
 
-
 @dace.program
-def matmul_streaming(A: dace.float32[M, K], B: dace.float32[K, N],
-                     C: dace.float32[M, N]):
-    C[:] = A @ B
+def matmul_streaming(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float32[M, N]):
+    tmp = np.ndarray([M, N, K], dtype=A.dtype)
+
+    # Multiply every pair of values to a large 3D temporary array
+    for i, j, k in dace.map[0:M, 0:N, 0:K]:
+        with dace.tasklet:
+            in_A << A[i, k]
+            in_B << B[k, j]
+            out >> tmp[i, j, k]
+
+            out = in_A * in_B
+
+    # Sum last dimension of temporary array to obtain resulting matrix
+    dace.reduce(lambda a, b: a + b, tmp, C, axis=2, identity=0)
+
+
+# @dace.program
+# def matmul_streaming(A: dace.float32[M, K], B: dace.float32[K, N],
+#                      C: dace.float32[M, N]):
+#     C[:] = A @ B
 
 
 @xilinx_test()
@@ -129,8 +145,7 @@ def test_mem_buffer_mat_mul():
     sdfg: dace.SDFG = matmul_streaming.to_sdfg()
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-
-    sdfg.apply_transformations_repeated(mb.MemoryBuffering)
+    sdfg.apply_transformations([mb.MemoryBuffering])
 
     # assert sdfg.apply_transformations_repeated(
     #     mb.MemoryBuffering, dict(storage=dace.StorageType.FPGA_Local)) == 3

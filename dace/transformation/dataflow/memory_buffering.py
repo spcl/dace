@@ -26,7 +26,8 @@ class MemoryBuffering(sm.StreamingMemory):
      A combination of the StreamingMemory transformation and a gearbox node. 
     """
     # TODO: 512 bits
-    vector_size = properties.Property(dtype=int, default=4, desc='Vector Size')
+    # TODO: Replace / with //
+    vector_size = properties.Property(dtype=int, default=2, desc='Vector Size')
 
     def can_be_applied(self,
                        graph: SDFGState,
@@ -49,9 +50,8 @@ class MemoryBuffering(sm.StreamingMemory):
         # TODO: make general
         # TODO: Only makes sense if Global array
 
-        return super().can_be_applied(
-            graph, candidate, expr_index, sdfg, strict
-        ) and desc.strides[-1] == 1
+        return super().can_be_applied(graph, candidate, expr_index, sdfg,
+                                      strict) and desc.strides[-1] == 1
 
     def apply(self, sdfg: SDFG) -> nodes.AccessNode:
 
@@ -64,7 +64,6 @@ class MemoryBuffering(sm.StreamingMemory):
         arrname = str(self.access(sdfg))
         print()
 
-        total_size = sdfg.arrays[arrname].total_size
 
         if self.expr_index == 0:
             print("Read")
@@ -72,16 +71,12 @@ class MemoryBuffering(sm.StreamingMemory):
             #  Read
             gearbox_input_type = dtypes.vector(desc.dtype, self.vector_size)
             gearbox_output_type = desc.dtype
-            gearbox_read_volume = total_size / self.vector_size
-            gearbox_write_volume = total_size
         else:
             print("Write")
             # Write
             edges = state.in_edges(dnode)
             gearbox_input_type = desc.dtype
             gearbox_output_type = dtypes.vector(desc.dtype, self.vector_size)
-            gearbox_read_volume = total_size
-            gearbox_write_volume = total_size / self.vector_size
 
         print("edges: ", edges)
 
@@ -141,6 +136,21 @@ class MemoryBuffering(sm.StreamingMemory):
         streams = {}
         mpaths = {}
         for edge in edges:
+
+            total_size = edge.data.volume
+
+            print("Total_size = ", total_size)
+
+            if self.expr_index == 0:
+                print("Read")
+                #  Read
+                gearbox_read_volume = total_size  // self.vector_size
+                gearbox_write_volume = total_size
+            else:
+                print("Write")
+                # Write
+                gearbox_read_volume = total_size
+                gearbox_write_volume = total_size // self.vector_size
 
             # TODO: Check correct usage of both streams
             input_gearbox_name, input_gearbox_newdesc = sdfg.add_stream(
@@ -307,11 +317,13 @@ class MemoryBuffering(sm.StreamingMemory):
                 print(new_strides)
 
                 # Divides the stride by vector size
-                divider = 1
+                # divider = 1
 
                 for i in range(len(new_strides)):
-                    new_strides[i] = int(new_strides[i] / divider)
-                    divider *= self.vector_size
+                    if i == 0:
+                        continue
+                    new_strides[i] = int(new_strides[i] // self.vector_size)
+                    # divider *= self.vector_size
 
                 new_strides.reverse()
 
@@ -339,7 +351,7 @@ class MemoryBuffering(sm.StreamingMemory):
 
                     i, j, k = new_subset[0]
 
-                    new_subset[0] = (i, j / self.vector_size, k)
+                    new_subset[0] = (i, j // self.vector_size, k)
 
                     new_subset.reverse()
                     print(new_subset)
@@ -370,11 +382,16 @@ class MemoryBuffering(sm.StreamingMemory):
 
                 print(ranges)
                 print(ranges[-1][1][1])
+                print(ranges[-1][1][1] // self.vector_size)
 
+
+                # TODO: Not always last dimension ?
                 ranges[-1] = (ranges[-1][0],
                               (ranges[-1][1][0],
-                               ranges[-1][1][1] / self.vector_size,
+                               ranges[-1][1][1] // self.vector_size,
                                ranges[-1][1][2]))
+
+                print(ranges)
 
                 print({m[1] for m in rmemlets})
 
