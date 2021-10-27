@@ -94,7 +94,7 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
                 # appropriate indices
                 unroll_entry, unroll_exit = read_state.add_map(
                     f"{node.name}_elementwise", {elem_it: f"0:{small_veclen}"},
-                    schedule=node.schedule)
+                    schedule=node.schedule, unroll=True)
                 unroll_tasklet = read_state.add_tasklet(
                     f"{node.name}_elementwise", {"unpack_in"}, {"buffer_out"},
                     "buffer_out = unpack_in")
@@ -154,7 +154,7 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
                 pack_access = write_state.add_write(pack_name)
                 unroll_entry, unroll_exit = write_state.add_map(
                     f"{node.name}_elementwise", {elem_it: f"0:{small_veclen}"},
-                    schedule=node.schedule)
+                    schedule=node.schedule, unroll=True)
                 unroll_tasklet = write_state.add_tasklet(
                     f"{node.name}_elementwise", {"buffer_in"}, {"pack_out"},
                     "pack_out = buffer_in")
