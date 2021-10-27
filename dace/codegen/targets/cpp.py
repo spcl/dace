@@ -404,8 +404,8 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
 
 
 def _is_c_contiguous(shape, strides):
-    """ 
-    Returns True if the strides represent a non-padded, C-contiguous (last 
+    """
+    Returns True if the strides represent a non-padded, C-contiguous (last
     dimension contiguous) array.
     """
     computed_strides = tuple(
@@ -532,7 +532,7 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    if fpga.is_hbm_array_with_distributed_index(d):
+    if fpga.is_multibank_array_with_distributed_index(d):
         subset_in = fpga.modify_distributed_subset(subset_in, 0)
 
     # Offset according to parameters, then offset according to array
@@ -1021,6 +1021,15 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
                          expr_semicolon=False,
                          defined_symbols=defined_symbols)
 
+    def _Name(self, t: ast.Name):
+        if t.id not in self.sdfg.arrays:
+            return super()._Name(t)
+
+        # Replace values with their code-generated names (for example,
+        # persistent arrays)
+        desc = self.sdfg.arrays[t.id]
+        self.write(ptr(t.id, desc, self.sdfg))
+
     def _Subscript(self, t: ast.Subscript):
         from dace.frontend.python.astutils import subscript_to_slice
         target, rng = subscript_to_slice(t, self.sdfg.arrays)
@@ -1245,9 +1254,16 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if name not in self.memlets:
             return self.generic_visit(node)
         memlet, nc, wcr, dtype = self.memlets[name]
+        try:
+            defined_type, _ = self.codegen._dispatcher.defined_vars.get(node.id)
+        except KeyError:
+            defined_type = None
         if (isinstance(dtype, dtypes.pointer)
                 and memlet.subset.num_elements() == 1):
             return ast.Name(id="(*{})".format(name), ctx=node.ctx)
+        elif ((defined_type == DefinedType.Stream
+               or defined_type == DefinedType.StreamArray) and memlet.dynamic):
+            return ast.Name(id=f"{name}.pop()", ctx=node.ctx)
         else:
             return self.generic_visit(node)
 

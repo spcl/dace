@@ -366,25 +366,43 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
 
 
 def _get_internal_subset(internal_memlet: Memlet,
-                         external_memlet: Memlet) -> subsets.Subset:
+                         external_memlet: Memlet,
+                         use_src_subset: bool = False,
+                         use_dst_subset: bool = False) -> subsets.Subset:
     if (internal_memlet.data != external_memlet.data
             and internal_memlet.other_subset is not None):
         return internal_memlet.other_subset
+    if not use_src_subset and not use_dst_subset:
+        return internal_memlet.subset
+    if use_src_subset and use_dst_subset:
+        raise ValueError('Source and destination subsets cannot be '
+                         'specified at the same time')
+    if use_src_subset:
+        return internal_memlet.src_subset
+    if use_dst_subset:
+        return internal_memlet.dst_subset
     return internal_memlet.subset
 
 
 def unsqueeze_memlet(internal_memlet: Memlet,
                      external_memlet: Memlet,
-                     preserve_minima: bool = False) -> Memlet:
+                     preserve_minima: bool = False,
+                     use_src_subset: bool = False,
+                     use_dst_subset: bool = False) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
         :param internal_memlet: The internal memlet (inside nested SDFG)
                                 before modification.
         :param external_memlet: The external memlet before modification.
         :param preserve_minima: Do not change the subset's minimum elements.
+        :param use_src_subset: If both sides of the memlet refer to same array,
+                               prefer source subset.
+        :param use_dst_subset: If both sides of the memlet refer to same array,
+                               prefer destination subset.
         :return: Offset Memlet to set on the resulting graph.
     """
-    internal_subset = _get_internal_subset(internal_memlet, external_memlet)
+    internal_subset = _get_internal_subset(internal_memlet, external_memlet,
+                                           use_src_subset, use_dst_subset)
     result = copy.deepcopy(internal_memlet)
     result.data = external_memlet.data
     result.other_subset = None
@@ -646,7 +664,8 @@ def constant_symbols(sdfg: SDFG) -> Set[str]:
     return set(sdfg.symbols) - interstate_symbols
 
 
-def simplify_state(state: SDFGState, remove_views: bool = False) -> MultiDiGraph:
+def simplify_state(state: SDFGState,
+                   remove_views: bool = False) -> MultiDiGraph:
     """
     Returns a networkx MultiDiGraph object that contains all the access nodes
     and corresponding edges of an SDFG state. The removed code nodes and map
@@ -676,7 +695,8 @@ def simplify_state(state: SDFGState, remove_views: bool = False) -> MultiDiGraph
     # wcr edges and connect their predecessors and successors
     for n in state.nodes():
         if n in G.nodes():
-            if (not isinstance(n, nodes.AccessNode) or (remove_views and isinstance(sdfg.arrays[n.data], data.View))):
+            if (not isinstance(n, nodes.AccessNode) or
+                (remove_views and isinstance(sdfg.arrays[n.data], data.View))):
                 for p in G.predecessors(n):
                     for c in G.successors(n):
                         G.add_edge(p, c)

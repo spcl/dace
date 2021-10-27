@@ -77,10 +77,15 @@ def _define_local_scalar(
         sdfg: SDFG,
         state: SDFGState,
         dtype: dace.typeclass,
-        storage: dtypes.StorageType = dtypes.StorageType.Default):
+        storage: dtypes.StorageType = dtypes.StorageType.Default,
+        lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
-    _, desc = sdfg.add_scalar(name, dtype, transient=True, storage=storage)
+    _, desc = sdfg.add_scalar(name,
+                              dtype,
+                              transient=True,
+                              storage=storage,
+                              lifetime=lifetime)
     pv.variables[name] = name
     return name
 
@@ -1731,7 +1736,7 @@ def _array_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
         right_shape = [1]
         arguments = [left_arr, right_operand]
-        tasklet_args = ['__in1', str(right_operand)]
+        tasklet_args = ['__in1', f'({str(right_operand)})']
     else:
         left_arr = None
         left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
@@ -1741,7 +1746,7 @@ def _array_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_shape = right_arr.shape
         storage = right_arr.storage
         arguments = [left_operand, right_arr]
-        tasklet_args = [str(left_operand), '__in2']
+        tasklet_args = [f'({str(left_operand)})', '__in2']
 
     result_type, casting = _result_type(arguments, operator)
     left_cast = casting[0]
@@ -1814,7 +1819,7 @@ def _array_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_type = _sym_type(right_operand)
         right_shape = [1]
         arguments = [left_arr, right_operand]
-        tasklet_args = ['__in1', astutils.unparse(right_operand)]
+        tasklet_args = ['__in1', f'({astutils.unparse(right_operand)})']
     else:
         left_arr = None
         left_type = _sym_type(left_operand)
@@ -1824,7 +1829,7 @@ def _array_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_shape = right_arr.shape
         storage = right_arr.storage
         arguments = [left_operand, right_arr]
-        tasklet_args = [astutils.unparse(left_operand), '__in2']
+        tasklet_args = [f'({astutils.unparse(left_operand)})', '__in2']
 
     result_type, casting = _result_type(arguments, operator)
     left_cast = casting[0]
@@ -1942,7 +1947,7 @@ def _scalar_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_scal = None
         right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
         arguments = [left_scal, right_operand]
-        tasklet_args = ['__in1', str(right_operand)]
+        tasklet_args = ['__in1', f'({str(right_operand)})']
     else:
         left_scal = None
         left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
@@ -1950,7 +1955,7 @@ def _scalar_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_type = right_scal.dtype
         storage = right_scal.storage
         arguments = [left_operand, right_scal]
-        tasklet_args = [str(left_operand), '__in2']
+        tasklet_args = [f'({str(left_operand)})', '__in2']
 
     result_type, casting = _result_type(arguments, operator)
     left_cast = casting[0]
@@ -2006,7 +2011,7 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_scal = None
         right_type = _sym_type(right_operand)
         arguments = [left_scal, right_operand]
-        tasklet_args = ['__in1', astutils.unparse(right_operand)]
+        tasklet_args = ['__in1', f'({astutils.unparse(right_operand)})']
     else:
         left_scal = None
         left_type = _sym_type(left_operand)
@@ -2014,7 +2019,7 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_type = right_scal.dtype
         storage = right_scal.storage
         arguments = [left_operand, right_scal]
-        tasklet_args = [astutils.unparse(left_operand), '__in2']
+        tasklet_args = [f'({astutils.unparse(left_operand)})', '__in2']
 
     result_type, casting = _result_type(arguments, operator)
     left_cast = casting[0]

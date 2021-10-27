@@ -4,9 +4,9 @@ import dace
 import numpy as np
 from dace.codegen.targets.fpga import _FPGA_STORAGE_TYPES
 from dace.dtypes import StorageType
-from dace.fpga_testing import xilinx_test
+from dace.fpga_testing import fpga_test, xilinx_test
 
-# A test checking copies involving HBM-arrays in some way
+# A test checking copies involving Multibank-arrays using HBM and DDR in some way
 
 
 def mkc(sdfg: dace.SDFG,
@@ -70,20 +70,23 @@ def mkc(sdfg: dace.SDFG,
     return (state, a_np_arr, b_np_arr)
 
 
-@xilinx_test()
-def check_hbm2hbm1():
-    sdfg = dace.SDFG("hbm2hbm1")
+# Note, usually there are only 4 ddr banks but much more hmb banks.
+# Since the tests run in simulation mode, this should not be an issue.
+
+
+def copy_multibank_1_mem_type(mem_type):
+    sdfg = dace.SDFG("copy_multibank_1_mem_type_" + mem_type)
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
                   StorageType.FPGA_Global, [3, 4, 4], [3, 4, 4], "a", None,
-                  ("HBM", "0:3"))
+                  (mem_type, "0:3"))
     s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global, None,
                   [2, 4, 4, 4], "x[1, 1:4, 1:4]->1, 1:4, 1:4, 1", None,
-                  ("HBM", "3:5"))
+                  (mem_type, "3:5"))
     s, _, _ = mkc(sdfg, s, "y", "z", None, StorageType.FPGA_Global, None,
                   [1, 4, 4, 4], "y[1, 0:4, 0:4, 0:4]->0, 0:4, 0:4, 0:4", None,
-                  ("HBM", "5:6"))
+                  (mem_type, "5:6"))
     s, _, _ = mkc(sdfg, s, "z", "w", None, StorageType.FPGA_Global, None,
-                  [1, 4, 4, 4], "z", None, ("hbm", "6:7"))
+                  [1, 4, 4, 4], "z", None, (mem_type, "6:7"))
     s, _, c = mkc(sdfg, s, "w", "c", None, StorageType.Default, None,
                   [1, 4, 4, 4], "w")
 
@@ -99,17 +102,18 @@ def check_hbm2hbm1():
     return sdfg
 
 
-@xilinx_test()
-def check_hbm2ddr1():
-    sdfg = dace.SDFG("hbm2ddr1")
+def copy_multibank_2_mem_type(mem_type_1, mem_type_2):
+    sdfg = dace.SDFG("copy_multibank_2_mem_type_" + mem_type_1 + "_" +
+                     mem_type_2)
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
                   StorageType.FPGA_Global, [3, 5, 5], [3, 5, 5], "a", None,
-                  ("hbm", "0:3"))
+                  (mem_type_1, "0:3"))
     s, _, _ = mkc(sdfg, s, "x", "d1", None, StorageType.FPGA_Global, None,
-                  [3, 5, 5], "x[2, 0:5, 0:5]->1, 0:5, 0:5", None, ("DDR", "1"))
+                  [3, 5, 5], "x[2, 0:5, 0:5]->1, 0:5, 0:5", None,
+                  (mem_type_2, "1:4"))
     s, _, _ = mkc(sdfg, s, "d1", "y", None, StorageType.FPGA_Global, None,
                   [1, 7, 7], "d1[1, 0:5,0:5]->0, 2:7, 2:7", None,
-                  ("hbm", "3:4"))
+                  (mem_type_1, "3:4"))
     s, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default, None, [1, 7, 7],
                   "y")
 
@@ -123,6 +127,28 @@ def check_hbm2ddr1():
     return sdfg
 
 
+@xilinx_test()
+def test_copy_hbm2hbm():
+    return copy_multibank_1_mem_type(mem_type="hbm")
+
+
+@xilinx_test()
+def test_copy_ddr2ddr():
+    return copy_multibank_1_mem_type(mem_type="ddr")
+
+
+@xilinx_test()
+def test_copy_hbm2ddr():
+    return copy_multibank_2_mem_type(mem_type_1="hbm", mem_type_2="ddr")
+
+
+@xilinx_test()
+def test_copy_ddr2hbm():
+    return copy_multibank_2_mem_type(mem_type_1="ddr", mem_type_2="hbm")
+
+
 if __name__ == "__main__":
-    check_hbm2hbm1(None)
-    check_hbm2ddr1(None)
+    test_copy_hbm2hbm(None)  # HBM to HBM to HBM
+    test_copy_ddr2ddr(None)  # DDR to DDR to DDR
+    test_copy_hbm2ddr(None)  # HBM to DDR to HBM
+    test_copy_ddr2hbm(None)  # DDR to HBM to DDR

@@ -1026,7 +1026,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         desc = sdfg.arrays[memlet.data]
 
                         if defined_type == DefinedType.Scalar:
-                            write_expr = f"{memlet.data} = {in_local_name};"
+                            mname = cpp.ptr(memlet.data, desc, sdfg)
+                            write_expr = f"{mname} = {in_local_name};"
                         elif (defined_type == DefinedType.ArrayInterface
                               and not isinstance(desc, data.View)):
                             # Special case: No need to write anything between
@@ -1352,7 +1353,13 @@ class CPUCodeGen(TargetCodeGenerator):
         self._frame._initcode.write(codeblock_to_cpp(node.code_init), sdfg)
         self._frame._exitcode.write(codeblock_to_cpp(node.code_exit), sdfg)
 
-        state_dfg = sdfg.nodes()[state_id]
+        state_dfg: SDFGState = sdfg.nodes()[state_id]
+
+        # Free tasklets need to be presynchronized (e.g., CPU tasklet after
+        # GPU->CPU copy)
+        if state_dfg.entry_node(node) is None:
+            cpp.presynchronize_streams(sdfg, state_dfg, state_id, node,
+                                       callsite_stream)
 
         # Prepare preamble and code for after memlets
         after_memlets_stream = CodeIOStream()
@@ -1623,7 +1630,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         for _, _, _, vconn, memlet in state.all_edges(node):
             if (memlet.data in sdfg.arrays
-                    and fpga.is_hbm_array(sdfg.arrays[memlet.data])):
+                    and fpga.is_multibank_array(sdfg.arrays[memlet.data])):
                 raise NotImplementedError(
                     "HBM in nested SDFGs not supported in non-FPGA code.")
 

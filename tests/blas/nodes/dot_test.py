@@ -71,10 +71,10 @@ def run_test(target, size, vector_length):
     if target == "pure":
         sdfg = pure_graph("pure", dace.float32, vector_length)
     elif target == "intel_fpga":
-        dace.Config.set("compiler", "fpga_vendor", value="intel_fpga")
+        dace.Config.set("compiler", "fpga", "vendor", value="intel_fpga")
         sdfg = fpga_graph("FPGA_Accumulate", dace.float32, vector_length)
     elif target == "xilinx":
-        dace.Config.set("compiler", "fpga_vendor", value="xilinx")
+        dace.Config.set("compiler", "fpga", "vendor", value="xilinx")
         sdfg = fpga_graph("FPGA_PartialSums", dace.float32, vector_length)
     else:
         print(f"Unsupported target: {target}")

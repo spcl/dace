@@ -644,10 +644,12 @@ class InlineSDFG(transformation.Transformation):
                         state.out_edges_by_connector(top_edge.dst, inner_data))
                     # Create memlet by unsqueezing both w.r.t. src and dst
                     # subsets
-                    in_memlet = helpers.unsqueeze_memlet(
-                        inner_edge.data, top_edge.data)
-                    out_memlet = helpers.unsqueeze_memlet(
-                        inner_edge.data, matching_edge.data)
+                    in_memlet = helpers.unsqueeze_memlet(inner_edge.data,
+                                                         top_edge.data,
+                                                         use_src_subset=True)
+                    out_memlet = helpers.unsqueeze_memlet(inner_edge.data,
+                                                          matching_edge.data,
+                                                          use_dst_subset=True)
                     new_memlet = in_memlet
                     new_memlet.other_subset = out_memlet.subset
 
@@ -1112,6 +1114,9 @@ class RefineNestedAccess(transformation.Transformation):
         # Proceed symmetrically on incoming and outgoing edges
         _offset_refine(torefine_in, state.in_edges_by_connector)
         _offset_refine(torefine_out, state.out_edges_by_connector)
+
+        # Propagate the State Memlets
+        propagation.propagate_memlets_state(sdfg, state)
 
 
 @registry.autoregister

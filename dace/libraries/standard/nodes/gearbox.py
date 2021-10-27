@@ -342,5 +342,6 @@ class Gearbox(dace.sdfg.nodes.LibraryNode):
             gear_factor = out_desc.veclen // in_desc.veclen
         else:
             raise TypeError(
-                f"Cannot gearbox between {in_desc.dtype} and {out_desc.dtype}.")
+                f"Cannot gearbox between {in_desc.dtype} for {in_edge.dst_conn}"
+                f" and {out_desc.dtype} for {out_edge.src_conn}.")
         return (in_edge, in_desc, out_edge, out_desc, is_pack, gear_factor)
