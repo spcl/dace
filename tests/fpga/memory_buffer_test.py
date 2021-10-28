@@ -16,9 +16,7 @@ M = 64
 K = 64
 
 
-@dace.program
-def vecadd_1_streaming(A: dace.float32[N], B: dace.float32[N]):
-    B[:] = A + 1.0
+
 
 
 @dace.program
@@ -55,31 +53,7 @@ def matmul_streaming(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float
 #     C[:] = A @ B
 
 
-@xilinx_test()
-def test_mem_buffer_vec_add_1():
-    # Make SDFG
-    sdfg: dace.SDFG = vecadd_1_streaming.to_sdfg()
-    # Transform
 
-    sdfg.apply_transformations([
-        FPGATransformSDFG,
-        InlineSDFG,
-    ])
-
-    # sdfg.apply_transformations_repeated(mb.MemoryBuffering)
-
-    # assert sdfg.apply_transformations_repeated(
-    #     mb.MemoryBuffering, dict(storage=dace.StorageType.FPGA_Local)) == 3
-
-    # Run verification
-    A = np.random.rand(N).astype(np.float32)
-    B = np.random.rand(N).astype(np.float32)
-
-    sdfg(A=A, B=B)
-
-    assert all(B == A + 1)
-
-    return sdfg
 
 
 @xilinx_test()

@@ -12,6 +12,9 @@ from dace.fpga_testing import xilinx_test
 
 M, N, K = 64, 64, 64
 
+@dace.program
+def vecadd_1_streaming(A: dace.float32[N], B: dace.float32[N]):
+    B[:] = A + 1.0
 
 @dace.program
 def matadd_streaming(A: dace.float32[M, N], B: dace.float32[M, N],
@@ -236,13 +239,42 @@ def test_streaming_and_composition():
 
     return sdfg
 
+@xilinx_test()
+def test_mem_buffer_vec_add_1():
+    # Make SDFG
+    sdfg: dace.SDFG = vecadd_1_streaming.to_sdfg()
+    # Transform
+
+    sdfg.apply_transformations([
+        FPGATransformSDFG,
+        InlineSDFG,
+    ])
+
+    # sdfg.apply_transformations_repeated(mb.MemoryBuffering)
+
+    # assert sdfg.apply_transformations_repeated(
+    #     mb.MemoryBuffering, dict(storage=dace.StorageType.FPGA_Local)) == 3
+
+    # Run verification
+    A = np.random.rand(N).astype(np.float32)
+    B = np.random.rand(N).astype(np.float32)
+
+    sdfg(A=A, B=B)
+
+    assert all(B == A + 1)
+
+    return sdfg
+
+
 
 if __name__ == "__main__":
-    test_streaming_mem(None)
-    test_streaming_mem_mapnests(None)
-    test_multistream(None)
-    test_multistream_with_deps(None)
-    test_streaming_composition_matching(None)
-    test_streaming_composition(None)
-    test_streaming_composition_mapnests(None)
-    test_streaming_and_composition(None)
+    # test_streaming_mem(None)
+    # test_streaming_mem_mapnests(None)
+    # test_multistream(None)
+    # test_multistream_with_deps(None)
+    # test_streaming_composition_matching(None)
+    # test_streaming_composition(None)
+    # test_streaming_composition_mapnests(None)
+    # test_streaming_and_composition(None)
+
+    test_mem_buffer_vec_add_1(None)

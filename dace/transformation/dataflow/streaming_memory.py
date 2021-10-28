@@ -132,7 +132,7 @@ class StreamingMemory(xf.Transformation):
 
     use_memory_buffering = properties.Property(
         dtype=bool,
-        default=False,
+        default=True,
         desc='Set if memory buffering should be used.')
 
     memory_buffering_target_bytes = properties.Property(
@@ -350,6 +350,18 @@ class StreamingMemory(xf.Transformation):
 
         desc = sdfg.arrays[dnode.data]
 
+
+        # Save edge for later usage
+        if self.use_memory_buffering:
+            # Find edges from/to map
+
+            if self.expr_index == 0:
+                other_node = self.entry(sdfg)
+                edges_for_later = copy.deepcopy(state.out_edges(other_node))
+            else:
+                other_node = self.exit(sdfg)
+                edges_for_later = copy.deepcopy(state.in_edges(other_node).copy())
+
         # Create new streams of shape 1
         streams = {}
         mpaths = {}
@@ -369,20 +381,23 @@ class StreamingMemory(xf.Transformation):
                             "Using MemoryBuffering is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
                             .format(sym=i, vec=vector_size))
 
+                if self.storage != dtypes.StorageType.FPGA_Local:
+                    self.storage = dtypes.StorageType.FPGA_Local
+
                 if self.expr_index == 0:  # Read
                     edges = state.out_edges(dnode)
                     gearbox_input_type = dtypes.vector(desc.dtype,
-                                                       self.vector_size)
+                                                       vector_size)
                     gearbox_output_type = desc.dtype
-                    gearbox_read_volume = total_size // self.vector_size
+                    gearbox_read_volume = total_size // vector_size
                     gearbox_write_volume = total_size
                 else:  # Write
                     edges = state.in_edges(dnode)
                     gearbox_input_type = desc.dtype
                     gearbox_output_type = dtypes.vector(desc.dtype,
-                                                        self.vector_size)
+                                                        vector_size)
                     gearbox_read_volume = total_size
-                    gearbox_write_volume = total_size // self.vector_size
+                    gearbox_write_volume = total_size // vector_size
 
                 input_gearbox_name, input_gearbox_newdesc = sdfg.add_stream(
                     "gearbox_input",
@@ -395,7 +410,7 @@ class StreamingMemory(xf.Transformation):
                 output_gearbox_name, output_gearbox_newdesc = sdfg.add_stream(
                     "gearbox_output",
                     gearbox_output_type,
-                    buffer_size=self.storage,
+                    buffer_size=self.buffer_size,
                     storage=self.storage,
                     transient=True,
                     find_new_name=True)
@@ -540,8 +555,8 @@ class StreamingMemory(xf.Transformation):
                 sdfg.arrays[arrname].strides = new_strides
 
                 # Change subset
-                for state in sdfg.states():
-                    for e in state.edges():
+                for s in sdfg.states():
+                    for e in s.edges():
                         if e.data.data == self.access(sdfg).data:
                             new_subset = list(e.data.subset)
                             i, j, k = new_subset[-1]
@@ -560,19 +575,15 @@ class StreamingMemory(xf.Transformation):
                 # Change ranges of map
                 if self.use_memory_buffering:
                     # Find edges from/to map
-                    if self.expr_index == 0:
-                        other_node = self.entry(sdfg)
-                        edges = state.out_edges(other_node)
-                    else:
-                        other_node = self.exit(sdfg)
-                        edges = state.in_edges(other_node)
 
                     # Filter edges such that we only keep the ones which include the access node
                     filtered_edges = []
 
-                    for e in edges:
+                    for e in edges_for_later:
                         if e.data.data == self.access(sdfg).data:
                             filtered_edges.append(e)
+
+                    assert(len(filtered_edges) > 0)
 
                     edge_subset = [
                         a_tuple[0]
@@ -586,16 +597,18 @@ class StreamingMemory(xf.Transformation):
                     if (len(edge_subset) != 0):
                         label = edge_subset[-1]
 
+
                         # Find index to change
                         i = 0
                         for m in map.params:
-                            i += 1
                             if m == str(label):
                                 break
+                            i += 1
+
 
                         ranges[i] = (ranges[i][0],
                                     (ranges[i][1][0],
-                                    ranges[i][1][1] // self.vector_size,
+                                    ranges[i][1][1] // vector_size,
                                     ranges[i][1][2]))
 
                 maps.append(

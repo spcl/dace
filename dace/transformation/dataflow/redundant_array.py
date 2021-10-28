@@ -88,13 +88,13 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                 src_expr_exact = src_subset.num_elements_exact()
                 dst_expr = dst_subset.num_elements()
                 dst_expr_exact = dst_subset.num_elements_exact()
-                print("src_expr != dst_expr")
-                print(edge)
-                print(src_expr)
-                print(dst_expr)
-                print(src_expr_exact)
-                print(dst_expr_exact)
-                print(dst_subset)
+                # print("src_expr != dst_expr")
+                # print(edge)
+                # print(src_expr)
+                # print(dst_expr)
+                # print(src_expr_exact)
+                # print(dst_expr_exact)
+                # print(dst_subset)
                 if (src_expr != dst_expr and symbolic.inequal_symbols(
                         src_expr_exact, dst_expr_exact)):
 
