@@ -349,7 +349,7 @@ class MemoryBuffering(sm.StreamingMemory):
 
                     new_subset.reverse()
 
-                    i, j, k = new_subset[0]
+                    i, j, k = new_subset[-1]
 
                     new_subset[0] = (i, j // self.vector_size, k)
 
