@@ -132,7 +132,7 @@ class StreamingMemory(xf.Transformation):
 
     use_memory_buffering = properties.Property(
         dtype=bool,
-        default=True,
+        default=False,
         desc='Set if memory buffering should be used.')
 
     memory_buffering_target_bytes = properties.Property(
@@ -380,9 +380,6 @@ class StreamingMemory(xf.Transformation):
                         warnings.warn(
                             "Using MemoryBuffering is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
                             .format(sym=i, vec=vector_size))
-
-                if self.storage != dtypes.StorageType.FPGA_Local:
-                    self.storage = dtypes.StorageType.FPGA_Local
 
                 if self.expr_index == 0:  # Read
                     edges = state.out_edges(dnode)
