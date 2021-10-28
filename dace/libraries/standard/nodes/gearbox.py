@@ -21,7 +21,6 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
         sdfg = dace.SDFG(node.name)
         in_desc_inner = copy.deepcopy(in_desc)
         in_desc_inner.transient = False
-
         sdfg.add_datadesc(in_edge.dst_conn, in_desc_inner)
         out_desc_inner = copy.deepcopy(out_desc)
         out_desc_inner.transient = False
