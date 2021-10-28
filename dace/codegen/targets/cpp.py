@@ -404,8 +404,8 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
 
 
 def _is_c_contiguous(shape, strides):
-    """ 
-    Returns True if the strides represent a non-padded, C-contiguous (last 
+    """
+    Returns True if the strides represent a non-padded, C-contiguous (last
     dimension contiguous) array.
     """
     computed_strides = tuple(
@@ -1254,9 +1254,16 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if name not in self.memlets:
             return self.generic_visit(node)
         memlet, nc, wcr, dtype = self.memlets[name]
+        try:
+            defined_type, _ = self.codegen._dispatcher.defined_vars.get(node.id)
+        except KeyError:
+            defined_type = None
         if (isinstance(dtype, dtypes.pointer)
                 and memlet.subset.num_elements() == 1):
             return ast.Name(id="(*{})".format(name), ctx=node.ctx)
+        elif ((defined_type == DefinedType.Stream
+               or defined_type == DefinedType.StreamArray) and memlet.dynamic):
+            return ast.Name(id=f"{name}.pop()", ctx=node.ctx)
         else:
             return self.generic_visit(node)
 

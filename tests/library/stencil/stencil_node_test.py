@@ -96,7 +96,7 @@ def test_stencil_node_1d():
 
 @intel_fpga_test()
 def test_stencil_node_1d_fpga_array():
-    sdfg = make_sdfg_1d(dace.Config.get("compiler", "fpga_vendor"))
+    sdfg = make_sdfg_1d(dace.Config.get("compiler", "fpga", "vendor"))
     assert sdfg.apply_transformations(FPGATransformSDFG) == 1
     assert sdfg.apply_transformations(InlineSDFG) == 1
     run_stencil_1d(sdfg, 32)
@@ -127,7 +127,7 @@ def test_stencil_node_2d():
 
 @intel_fpga_test()
 def test_stencil_node_2d_fpga_array():
-    sdfg = make_sdfg_2d(dace.Config.get("compiler", "fpga_vendor"))
+    sdfg = make_sdfg_2d(dace.Config.get("compiler", "fpga", "vendor"))
     sdfg.specialize({"cols": 32})
     assert sdfg.apply_transformations(FPGATransformSDFG) == 1
     assert sdfg.apply_transformations(InlineSDFG) == 1

@@ -65,7 +65,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     language = 'hls'
 
     def __init__(self, *args, **kwargs):
-        fpga_vendor = Config.get("compiler", "fpga_vendor")
+        fpga_vendor = Config.get("compiler", "fpga", "vendor")
         if fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return
@@ -89,8 +89,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         target_board = Config.get("compiler", "intel_fpga", "board")
         enable_debugging = ("ON" if Config.get_bool(
             "compiler", "intel_fpga", "enable_debugging") else "OFF")
-        autobuild = ("ON" if Config.get_bool("compiler", "autobuild_bitstreams")
-                     else "OFF")
+        autobuild = ("ON" if Config.get_bool("compiler", "fpga",
+                                             "autobuild_bitstreams") else "OFF")
         options = [
             "-DDACE_INTELFPGA_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_INTELFPGA_KERNEL_FLAGS=\"{}\"".format(kernel_flags),
@@ -233,15 +233,22 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
         return self.module_mange[module_name][kernel_id]
 
     def define_stream(self, dtype, buffer_size, var_name, array_size,
-                      function_stream, kernel_stream):
+                      function_stream, kernel_stream, sdfg):
         """
         Defines a stream
         :return: a tuple containing the  type of the created variable, and boolean indicating
             whether this is a global variable or not
         """
         vec_type = self.make_vector_type(dtype, False)
-        if buffer_size > 1:
-            depth_attribute = " __attribute__((depth({})))".format(buffer_size)
+        minimum_depth = Config.get("compiler", "fpga", "minimum_fifo_depth")
+        buffer_size = evaluate(buffer_size, sdfg.constants)
+        if minimum_depth:
+            minimum_depth = int(minimum_depth)
+            if minimum_depth > buffer_size:
+                buffer_size = minimum_depth
+        if buffer_size != 1:
+            depth_attribute = " __attribute__((depth({})))".format(
+                cpp.sym2cpp(buffer_size))
         else:
             depth_attribute = ""
         if cpp.sym2cpp(array_size) != "1":
@@ -443,7 +450,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
 #pragma unroll
 for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
   {name}[u_{name}] = {name}[u_{name} + {veclen}];
-}}\n""".format(name=var_name, size=arr_size, veclen=dtype.veclen)
+}}\n""".format(name=var_name, size=arr_size, veclen=cpp.sym2cpp(dtype.veclen))
         # Then do write
         res += self.make_write(defined_type, dtype, var_name, write_expr, index,
                                read_expr, wcr, is_unpack, packing_factor)
@@ -1268,6 +1275,8 @@ __kernel void \\
             self._other_codes["converters"] = CodeIOStream()
         converter_stream = self._other_codes["converters"]
 
+        veclen = cpp.sym2cpp(veclen)
+
         if is_unpack:
             converter_name = "unpack_{dtype}{veclen}".format(dtype=ctype,
                                                              veclen=veclen)
@@ -1589,13 +1598,13 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             veclen = veclen_rhs
             ocltype = fpga.vector_element_type_of(dtype).ocltype
             self.width_converters.add((True, ocltype, veclen))
-            unpack_str = "unpack_{}{}".format(ocltype, veclen)
+            unpack_str = "unpack_{}{}".format(ocltype, cpp.sym2cpp(veclen))
 
         if veclen_lhs > veclen_rhs and isinstance(dtype_rhs, dace.pointer):
             veclen = veclen_lhs
             ocltype = fpga.vector_element_type_of(dtype).ocltype
             self.width_converters.add((False, ocltype, veclen))
-            pack_str = "pack_{}{}".format(ocltype, veclen)
+            pack_str = "pack_{}{}".format(ocltype, cpp.sym2cpp(veclen))
             # TODO: Horrible hack to not dereference pointers if we have to
             # unpack it
             if value[0] == "*":
@@ -1691,7 +1700,9 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
              or defined_type == DefinedType.StreamArray) and memlet.dynamic):
             # Input memlet, we read from channel
             # we should not need mangle here, since we are in a tasklet
-            updated = ast.Name(id="read_channel_intel({})".format(node.id))
+            updated = ast.Call(func=ast.Name(id="read_channel_intel"),
+                               args=[ast.Name(id=node.id)],
+                               keywords=[])
             self.used_streams.append(node.id)
         elif defined_type == DefinedType.Pointer and memlet.dynamic:
             # if this has a variable number of access, it has been declared
