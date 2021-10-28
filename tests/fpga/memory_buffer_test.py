@@ -11,9 +11,9 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.fpga_testing import xilinx_test
 from dace.transformation.dataflow import Vectorization
 
-N = 4
-M = 4
-K = 4
+N = 64
+M = 64
+K = 64
 
 
 @dace.program
@@ -66,7 +66,7 @@ def test_mem_buffer_vec_add_1():
         InlineSDFG,
     ])
 
-    sdfg.apply_transformations_repeated(mb.MemoryBuffering)
+    # sdfg.apply_transformations_repeated(mb.MemoryBuffering)
 
     # assert sdfg.apply_transformations_repeated(
     #     mb.MemoryBuffering, dict(storage=dace.StorageType.FPGA_Local)) == 3
@@ -119,7 +119,7 @@ def test_mem_buffer_mat_add():
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
 
-    sdfg.apply_transformations_repeated(mb.MemoryBuffering)
+    # sdfg.apply_transformations_repeated(mb.MemoryBuffering)
 
 
     # assert sdfg.apply_transformations_repeated(
@@ -145,7 +145,7 @@ def test_mem_buffer_mat_mul():
     sdfg: dace.SDFG = matmul_streaming.to_sdfg()
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    sdfg.apply_transformations([mb.MemoryBuffering])
+    # sdfg.apply_transformations([mb.MemoryBuffering])
 
     # assert sdfg.apply_transformations_repeated(
     #     mb.MemoryBuffering, dict(storage=dace.StorageType.FPGA_Local)) == 3

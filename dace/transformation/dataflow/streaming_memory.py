@@ -6,12 +6,11 @@ from typing import Dict, List, Tuple
 import networkx as nx
 import warnings
 
+import dace
 from dace.transformation import transformation as xf
 from dace import (data, dtypes, nodes, properties, registry, memlet as mm,
                   subsets, symbolic)
 from dace.sdfg import SDFG, SDFGState, utils as sdutil, graph as gr
-
-
 
 
 def _collect_map_ranges(
@@ -109,6 +108,10 @@ class StreamingMemory(xf.Transformation):
     Converts a read or a write to streaming memory access, where data is
     read/written to/from a stream in a separate connected component than the
     computation.
+    Optional: The MemoryBuffering transformation allows reading/writing data from memory
+    using a wider data format (e.g. 512 bits), and then convert it
+    on the fly to the right data type used by the computation:
+    A combination of the StreamingMemory transformation and a gearbox node. 
     """
     access = xf.PatternNode(nodes.AccessNode)
     entry = xf.PatternNode(nodes.EntryNode)
@@ -122,7 +125,17 @@ class StreamingMemory(xf.Transformation):
     storage = properties.EnumProperty(
         dtype=dtypes.StorageType,
         desc='Set storage type for the newly-created stream',
-        default=dtypes.StorageType.Default
+        default=dtypes.StorageType.Default)
+
+    use_memory_buffering = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Set if memory buffering should be used.')
+
+    memory_buffering_target_bytes = properties.Property(
+        dtype=int,
+        default=64,
+        desc='Set bytes read/written from memory if memory buffering is enabled.'
     )
 
     @staticmethod
@@ -134,8 +147,8 @@ class StreamingMemory(xf.Transformation):
                                    StreamingMemory.access),
         ]
 
-    @staticmethod
-    def can_be_applied(graph: SDFGState,
+    def can_be_applied(self,
+                       graph: SDFGState,
                        candidate: Dict[xf.PatternNode, int],
                        expr_index: int,
                        sdfg: SDFG,
@@ -201,6 +214,81 @@ class StreamingMemory(xf.Transformation):
             other_node = graph.entry_node(other_node)
         if other_node.label.startswith('__s'):
             return False
+
+        # TODO: Write test for all this
+        ## Check Memory Buffering Properties
+        if self.use_memory_buffering:
+
+            access = graph.node(candidate[StreamingMemory.access])
+            desc = sdfg.arrays[access.data]
+
+            # Type has to divide target bytes
+            if self.memory_buffering_target_bytes % desc.dtype.bytes != 0:
+                return False
+
+            # Target bytes has to be >= size of data type
+            if self.memory_buffering_target_bytes < desc.dtype.bytes:
+                return False
+
+            strides = list(desc.strides)
+
+            # Last stride has to be one
+            if strides[-1] != 1:
+                return False
+
+            vector_size = self.memory_buffering_target_bytes // desc.dtype.bytes
+            strides.pop()  # Remove last element since we already checked it
+
+            # Other strides has to be divisiable by vector size
+            for stride in strides:
+
+                # If is symbol, potentially unsafe
+                # TODO: Raise warning in apply
+                if isinstance(stride, dace.symbol):
+                    print("Is Symbol")
+                    continue
+
+                if stride % vector_size != 0:
+                    return False
+
+            state = sdfg.node(self.state_id)
+
+            # Find edges from/to map
+            if expr_index == 0:
+                other_node = graph.node(candidate[StreamingMemory.entry])
+                edges = state.out_edges(other_node)
+            else:
+                other_node = graph.node(candidate[StreamingMemory.exit])
+                edges = state.in_edges(other_node)
+
+            # Filter edges such that we only keep the ones which include the access node
+            filtered_edges = []
+
+            for e in edges:
+                if e.data.data == access.data:
+                    filtered_edges.append(e)
+
+            # Check if map has the right access pattern
+            for e in filtered_edges:
+                edge_subset = [a_tuple[0] for a_tuple in list(e.data.subset)]
+
+                map_subset = other_node.map.params.copy()
+
+                for label in edge_subset:
+                    if not isinstance(label, dace.symbol):
+                        continue  # Skip the non symbol values
+
+                    if (len(map_subset) == 0):
+                        return False
+
+                    while (str(label) != map_subset[0]):
+                        map_subset.pop(0)
+
+                    map_subset.pop(0)
+
+            # Array has to be global array
+            if desc.storage != dtypes.StorageType.FPGA_Global:
+                return False
 
         return True
 
@@ -397,8 +485,7 @@ class StreamingComposition(xf.Transformation):
     storage = properties.EnumProperty(
         dtype=dtypes.StorageType,
         desc='Set storage type for the newly-created stream',
-        default=dtypes.StorageType.Default
-    )
+        default=dtypes.StorageType.Default)
 
     @staticmethod
     def expressions() -> List[gr.SubgraphView]:

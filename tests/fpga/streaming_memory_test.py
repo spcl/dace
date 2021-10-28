@@ -239,10 +239,10 @@ def test_streaming_and_composition():
 
 if __name__ == "__main__":
     test_streaming_mem(None)
-    # test_streaming_mem_mapnests(None)
-    # test_multistream(None)
-    # test_multistream_with_deps(None)
-    # test_streaming_composition_matching(None)
-    # test_streaming_composition(None)
-    # test_streaming_composition_mapnests(None)
-    # test_streaming_and_composition(None)
+    test_streaming_mem_mapnests(None)
+    test_multistream(None)
+    test_multistream_with_deps(None)
+    test_streaming_composition_matching(None)
+    test_streaming_composition(None)
+    test_streaming_composition_mapnests(None)
+    test_streaming_and_composition(None)

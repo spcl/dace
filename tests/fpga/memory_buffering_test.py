@@ -296,7 +296,7 @@ def test_memory_buffering_library_node_elementwise_scalar():
 
 
 if __name__ == "__main__":
-    # test_memory_buffering_manual(None)
-    # test_memory_buffering_library_node(None)
+    test_memory_buffering_manual(None)
+    test_memory_buffering_library_node(None)
     test_memory_buffering_library_node_scalar(None)
-    # test_memory_buffering_library_node_elementwise(None)
+    test_memory_buffering_library_node_elementwise(None)
