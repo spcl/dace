@@ -250,40 +250,51 @@ class StreamingMemory(xf.Transformation):
                 if stride % vector_size != 0:
                     return False
 
-            state = sdfg.node(self.state_id)
-
-            # Find edges from/to map
-            if expr_index == 0:
-                other_node = graph.node(candidate[StreamingMemory.entry])
-                edges = state.out_edges(other_node)
-            else:
-                other_node = graph.node(candidate[StreamingMemory.exit])
-                edges = state.in_edges(other_node)
-
-            # Filter edges such that we only keep the ones which include the access node
-            filtered_edges = []
-
-            for e in edges:
-                if e.data.data == access.data:
-                    filtered_edges.append(e)
-
             # Check if map has the right access pattern
-            for e in filtered_edges:
-                edge_subset = [a_tuple[0] for a_tuple in list(e.data.subset)]
+            # Code from apply 
+            state = sdfg.node(self.state_id)
+            dnode: nodes.AccessNode = self.access(sdfg)
+            if self.expr_index == 0:
+                edges = state.out_edges(dnode)
+            else:
+                edges = state.in_edges(dnode)
 
-                map_subset = other_node.map.params.copy()
+            mapping: Dict[Tuple[subsets.Range],
+                          List[gr.MultiConnectorEdge[mm.Memlet]]] = defaultdict(
+                              list)
+            ranges = {}
+            for edge in edges:
+                mpath = state.memlet_path(edge)
+                ranges[edge] = _collect_map_ranges(state, mpath)
+                mapping[tuple(r[1] for r in ranges[edge])].append(edge)
 
-                for label in edge_subset:
-                    if not isinstance(label, dace.symbol):
-                        continue  # Skip the non symbol values
+            for edges_with_same_range in mapping.values():
+                for edge in edges_with_same_range:
+                    # Get memlet path and innermost edge
+                    mpath = state.memlet_path(edge)
+                    innermost_edge = copy.deepcopy(
+                        mpath[-1] if self.expr_index == 0 else mpath[0])
 
-                    if (len(map_subset) == 0):
-                        return False
+                    edge_subset = [
+                        a_tuple[0]
+                        for a_tuple in list(innermost_edge.data.subset)
+                    ]
 
-                    while (str(label) != map_subset[0]):
-                        map_subset.pop(0)
+                    if self.expr_index == 0:
+                        map_subset = innermost_edge.src.map.params.copy()
+                    else:
+                        map_subset = innermost_edge.dst.map.params.copy()
 
-                    map_subset.pop(0)
+                    edge_subset.reverse()
+
+                    for label in edge_subset:
+                        if not isinstance(label, dace.symbol):
+                            continue  # Skip the non symbol values
+
+                        if str(label) != map_subset[-1]:
+                            return False
+
+                        break
 
             # Array has to be global array
             if desc.storage != dtypes.StorageType.FPGA_Global:
@@ -348,7 +359,6 @@ class StreamingMemory(xf.Transformation):
         # End of split
 
         desc = sdfg.arrays[dnode.data]
-
 
         # Create new streams of shape 1
         streams = {}
@@ -578,10 +588,11 @@ class StreamingMemory(xf.Transformation):
                                 break
                             i += 1
 
-                        ranges[i] = (ranges[i][0],
-                                     (ranges[i][1][0],
-                                      ranges[i][1][1] // vector_size,
-                                      ranges[i][1][2]))
+                        if i < len(ranges):
+                            ranges[i] = (ranges[i][0],
+                                         (ranges[i][1][0],
+                                          ranges[i][1][1] // vector_size,
+                                          ranges[i][1][2]))
 
                 maps.append(
                     state.add_map(f'__s{opname}_{mapname}', ranges,

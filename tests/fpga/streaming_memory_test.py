@@ -391,13 +391,13 @@ def test_mem_buffer_mat_mul():
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
-    sdfg.apply_transformations(sm.StreamingMemory,
-                                        options=[{
-                                            'use_memory_buffering':
-                                            True,
-                                            "storage":
-                                            dace.StorageType.FPGA_Local
-                                        }])
+    # sdfg.apply_transformations(sm.StreamingMemory,
+    #                                     options=[{
+    #                                         'use_memory_buffering':
+    #                                         True,
+    #                                         "storage":
+    #                                         dace.StorageType.FPGA_Local
+    #                                     }])
 
     # assert sdfg.apply_transformations_repeated(
     #     mb.MemoryBuffering, dict(storage=dace.StorageType.FPGA_Local)) == 3
