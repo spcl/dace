@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
+
 import dace.dtypes
 import numpy as np
 import dace as dc
@@ -49,7 +50,7 @@ def ground_truth(N, A):
 
 def run_cholesky(device_type: dace.dtypes.DeviceType):
     '''
-    Runs ATAX for the given device
+    Runs Cholesky for the given device
     :return: the SDFG
     '''
 
