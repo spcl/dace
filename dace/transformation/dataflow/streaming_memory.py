@@ -128,11 +128,11 @@ class StreamingMemory(xf.Transformation):
     storage = properties.EnumProperty(
         dtype=dtypes.StorageType,
         desc='Set storage type for the newly-created stream',
-        default=dtypes.StorageType.FPGA_Local)
+        default=dtypes.StorageType.Default)
 
     use_memory_buffering = properties.Property(
         dtype=bool,
-        default=True,
+        default=False,
         desc='Set if memory buffering should be used.')
 
     memory_buffering_target_bytes = properties.Property(
@@ -246,7 +246,6 @@ class StreamingMemory(xf.Transformation):
             for stride in strides:
 
                 # If is symbol, potentially unsafe
-                # TODO: Raise warning in apply
                 if isinstance(stride, dace.symbol):
                     continue
 
@@ -363,6 +362,12 @@ class StreamingMemory(xf.Transformation):
                 # Add gearbox
                 total_size = edge.data.volume
                 vector_size = self.memory_buffering_target_bytes // desc.dtype.bytes
+
+                for i in sdfg.arrays[dnode.data].strides:
+                    if isinstance(i, dace.symbol):
+                        warnings.warn(
+                            "Using MemoryBuffering is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
+                            .format(sym=i, vec=vector_size))
 
                 if self.expr_index == 0:  # Read
                     edges = state.out_edges(dnode)
@@ -578,23 +583,20 @@ class StreamingMemory(xf.Transformation):
                     while (not isinstance(edge_subset[-1], dace.symbol)):
                         edge_subset.pop()
 
-                    if (len(edge_subset) == 0):
-                        pass
-                        # TODO: Raise Warning ?
+                    if (len(edge_subset) != 0):
+                        label = edge_subset[-1]
 
-                    label = edge_subset[-1]
+                        # Find index to change
+                        i = 0
+                        for m in map.params:
+                            i += 1
+                            if m == str(label):
+                                break
 
-                    # Find index to change
-                    i = 0
-                    for m in map.params:
-                        i += 1
-                        if m == str(label):
-                            break
-
-                    ranges[i] = (ranges[i][0],
-                                 (ranges[i][1][0],
-                                  ranges[i][1][1] // self.vector_size,
-                                  ranges[i][1][2]))
+                        ranges[i] = (ranges[i][0],
+                                    (ranges[i][1][0],
+                                    ranges[i][1][1] // self.vector_size,
+                                    ranges[i][1][2]))
 
                 maps.append(
                     state.add_map(f'__s{opname}_{mapname}', ranges,
