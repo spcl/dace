@@ -2135,7 +2135,10 @@ void  *{kname}_args[] = {{ {kargs} }};
                 symbolic.symbol('__DAPT%d' % i, nonnegative=True, integer=True)
                 for i in range(len(brange))
             ]
-            dsym_end = [d + bs - 1 for d, bs in zip(dsym, self._block_dims)]
+            dsym_end = [
+                d + (bs * rng[2]) - 1
+                for d, bs, rng in zip(dsym, self._block_dims, brange)
+            ]
             tidx = brange.coord_at(dsym)
 
             # First three dimensions are evaluated directly
@@ -2190,7 +2193,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                 if i >= 3:
                     skipcond = False
                 else:
-                    skipcond = dsym_end[i].subs({dsym[i]: 0}) == maxel
+                    skipcond = dsym_end[i].subs({dsym[i]: minel}) == maxel
 
                 # Block range end
                 if i >= 3 or (not skipcond and (dsym_end[i] < maxel) != True):
