@@ -251,7 +251,7 @@ class StreamingMemory(xf.Transformation):
                     return False
 
             # Check if map has the right access pattern
-            # Code from apply 
+            # Code from apply
             state = sdfg.node(self.state_id)
             dnode: nodes.AccessNode = self.access(sdfg)
             if self.expr_index == 0:
@@ -332,7 +332,6 @@ class StreamingMemory(xf.Transformation):
                 mpath = state.memlet_path(edge)
                 innermost_edge = copy.deepcopy(mpath[-1] if self.expr_index ==
                                                0 else mpath[0])
-                innermost_edge_copy = copy.deepcopy(innermost_edge)
 
                 # Store memlets of the same access in the same component
                 expr = _canonicalize_memlet(innermost_edge.data, ranges[edge])
@@ -478,6 +477,49 @@ class StreamingMemory(xf.Transformation):
                 state.add_edge(edge.src, edge.src_conn, replacement,
                                edge.dst_conn, edge.data)
 
+        if self.use_memory_buffering:
+
+            arrname = str(self.access(sdfg))
+            vector_size = self.memory_buffering_target_bytes // desc.dtype.bytes
+
+            for i in sdfg.arrays[dnode.data].strides:
+                if isinstance(i, dace.symbol):
+                    warnings.warn(
+                        "Using MemoryBuffering is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
+                        .format(sym=i, vec=vector_size))
+
+            # Vectorize access to global array.
+            dtype = sdfg.arrays[arrname].dtype
+            sdfg.arrays[arrname].dtype = dtypes.vector(dtype, vector_size)
+            new_shape = list(sdfg.arrays[arrname].shape)
+            contigidx = sdfg.arrays[arrname].strides.index(1)
+            new_shape[contigidx] /= vector_size
+            try:
+                new_shape[contigidx] = int(new_shape[contigidx])
+            except TypeError:
+                pass
+            sdfg.arrays[arrname].shape = new_shape
+
+            # Change strides
+            new_strides: List = list(sdfg.arrays[arrname].strides)
+
+            for i in range(len(new_strides)):
+                if i == len(new_strides
+                            ) - 1:  # Skip last dimension since it is always 1
+                    continue
+                new_strides[i] = new_strides[i] / vector_size
+            sdfg.arrays[arrname].strides = new_strides
+
+            # Change subset
+            for s in sdfg.states():
+                for e in s.edges():
+                    if e.data.data == self.access(sdfg).data:
+                        new_subset = list(e.data.subset)
+                        i, j, k = new_subset[-1]
+                        new_subset[-1] = (i, j // vector_size, k)
+                        e.data = mm.Memlet(data=str(e.src),
+                                           subset=subsets.Range(new_subset))
+
         # Make read/write components
         ionodes = []
         for component in components:
@@ -523,40 +565,6 @@ class StreamingMemory(xf.Transformation):
                                                           subset='0')))
                 code = '__out = __inp0'
 
-            if self.use_memory_buffering:
-                # Vectorize access to global array.
-                dtype = sdfg.arrays[arrname].dtype
-                sdfg.arrays[arrname].dtype = dtypes.vector(dtype, vector_size)
-                new_shape = list(sdfg.arrays[arrname].shape)
-                contigidx = sdfg.arrays[arrname].strides.index(1)
-                new_shape[contigidx] /= vector_size
-                try:
-                    new_shape[contigidx] = int(new_shape[contigidx])
-                except TypeError:
-                    pass
-                sdfg.arrays[arrname].shape = new_shape
-
-                # Change strides
-                new_strides: List = list(sdfg.arrays[arrname].strides)
-
-                for i in range(len(new_strides)):
-                    if i == len(
-                            new_strides
-                    ) - 1:  # Skip last dimension since it is always 1
-                        continue
-                    new_strides[i] = new_strides[i] / vector_size
-                sdfg.arrays[arrname].strides = new_strides
-
-                # Change subset
-                for s in sdfg.states():
-                    for e in s.edges():
-                        if e.data.data == self.access(sdfg).data:
-                            new_subset = list(e.data.subset)
-                            i, j, k = new_subset[-1]
-                            new_subset[-1] = (i, j // vector_size, k)
-                            e.data = mm.Memlet(data=str(e.src),
-                                               subset=subsets.Range(new_subset))
-
             # Create map structure for read/write component
             maps = []
             for entry in path:
@@ -571,7 +579,7 @@ class StreamingMemory(xf.Transformation):
 
                     edge_subset = [
                         a_tuple[0]
-                        for a_tuple in list(innermost_edge_copy.data.subset)
+                        for a_tuple in list(innermost_edge.data.subset)
                     ]
 
                     # Find first non symbol access
