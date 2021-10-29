@@ -362,6 +362,7 @@ def test_mem_buffer_mat_add():
 
     return sdfg
 
+
 @xilinx_test()
 def test_mem_buffer_tensor_add():
     # Make SDFG
@@ -391,7 +392,6 @@ def test_mem_buffer_tensor_add():
     return sdfg
 
 
-
 @xilinx_test()
 def test_mem_buffer_mapnests():
     # Make SDFG
@@ -419,6 +419,7 @@ def test_mem_buffer_mapnests():
 
     return sdfg
 
+
 @xilinx_test()
 def test_mem_buffer_multistream():
     # Make SDFG
@@ -434,10 +435,8 @@ def test_mem_buffer_multistream():
                                                    dace.StorageType.FPGA_Local
                                                }]) == 4
 
-    # TODO
-    # Ensure only 4 connected components exist
-    # mainstate = next(s for s in sdfg.nodes() if 'copy' not in s.label)
-    # assert len(list(nx.weakly_connected_components(mainstate.nx))) == 6
+    mainstate = next(s for s in sdfg.nodes() if 'copy' not in s.label)
+    assert len(list(nx.weakly_connected_components(mainstate.nx))) == 12
 
     # Run verification
     A = np.random.rand(M, N).astype(np.float32)
@@ -453,6 +452,7 @@ def test_mem_buffer_multistream():
 
     return sdfg
 
+
 @xilinx_test()
 def test_mem_buffer_multistream_with_deps():
     # Make SDFG
@@ -461,17 +461,15 @@ def test_mem_buffer_multistream_with_deps():
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
     assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
-                                        options=[{
-                                            'use_memory_buffering':
-                                            True,
-                                            "storage":
-                                            dace.StorageType.FPGA_Local
-                                        }]) == 3
+                                               options=[{
+                                                   'use_memory_buffering':
+                                                   True,
+                                                   "storage":
+                                                   dace.StorageType.FPGA_Local
+                                               }]) == 3
 
-    # TODO:
-    # Ensure only 4 connected components exist
-    # mainstate = next(s for s in sdfg.nodes() if 'copy' not in s.label)
-    # assert len(list(nx.weakly_connected_components(mainstate.nx))) == 4
+    mainstate = next(s for s in sdfg.nodes() if 'copy' not in s.label)
+    assert len(list(nx.weakly_connected_components(mainstate.nx))) == 8
 
     # Run verification
     A = np.random.rand(M, N).astype(np.float32)
@@ -483,6 +481,7 @@ def test_mem_buffer_multistream_with_deps():
     assert diff <= 1e-5
 
     return sdfg
+
 
 @xilinx_test()
 def test_mem_buffer_mat_mul():
@@ -512,7 +511,6 @@ def test_mem_buffer_mat_mul():
     return sdfg
 
 
-
 if __name__ == "__main__":
     test_streaming_mem(None)
     test_streaming_mem_mapnests(None)
@@ -528,10 +526,9 @@ if __name__ == "__main__":
     test_mem_buffer_mat_add(None)
     test_mem_buffer_tensor_add(None)
     test_mem_buffer_mapnests(None)
-    test_mem_buffer_multistream(None) 
+    test_mem_buffer_multistream(None)
     test_mem_buffer_multistream_with_deps(None)
     test_mem_buffer_mat_mul(None)
-
 
     # TODO: Write more test cases
     # Symbol
