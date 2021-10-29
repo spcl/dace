@@ -410,7 +410,7 @@ class StreamingMemory(xf.Transformation):
                 read_to_gearbox = state.add_read(input_gearbox_name)
                 write_from_gearbox = state.add_write(output_gearbox_name)
 
-                gearbox = Gearbox(sdfg.arrays[arrname].total_size / vector_size)
+                gearbox = Gearbox(total_size / vector_size)
 
                 state.add_node(gearbox)
 
