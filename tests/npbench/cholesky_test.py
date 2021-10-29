@@ -71,7 +71,7 @@ def run_cholesky(device_type: dace.dtypes.DeviceType):
 
         # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
         from dace.libraries.blas import Dot
-        platform = dace.config.Config.get("compiler", "fpga_vendor")
+        platform = dace.config.Config.get("compiler", "fpga" ,"vendor")
         if platform == "intel_fpga":
             Dot.default_implementation = "FPGA_Accumulate"
         else:
