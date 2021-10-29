@@ -27,6 +27,7 @@ from dace.codegen.targets.cpp import (sym2cpp, unparse_cr, unparse_cr_split,
                                       codeblock_to_cpp)
 
 from dace.codegen import cppunparse
+from dace.transformation import helpers as xfh
 
 
 def prod(iterable):
@@ -977,14 +978,25 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             state_dfg = sdfg.nodes()[state_id]
             sdict = state_dfg.scope_dict()
+            schedule_node = src_node
             if scope_contains_scope(sdict, src_node, dst_node):
-                inner_schedule = dst_schedule
+                schedule_node = dst_node
+
+            state = state_dfg
+            while (schedule_node is None
+                   or not isinstance(schedule_node, nodes.MapEntry)
+                   or schedule_node.map.schedule
+                   == dtypes.ScheduleType.Sequential):
+                ret = xfh.get_parent_map(state, schedule_node)
+                if ret is None:
+                    schedule_node = None
+                    break
+                schedule_node, state = ret
+
+            if schedule_node is None:
+                inner_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[None]
             else:
-                inner_schedule = sdict[src_node]
-                if inner_schedule is not None:
-                    inner_schedule = inner_schedule.map.schedule
-            if inner_schedule is None:  # Top-level schedule
-                inner_schedule = self._toplevel_schedule
+                inner_schedule = schedule_node.map.schedule
 
             # Collaborative load
             if inner_schedule == dtypes.ScheduleType.GPU_Device:
