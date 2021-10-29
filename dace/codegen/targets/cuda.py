@@ -2174,15 +2174,25 @@ void  *{kname}_args[] = {{ {kargs} }};
                 condition = ''
 
                 # Optimize conditions if they are always true
+                #############################################
+
+                # Block range start
                 if i >= 3 or (dsym[i] >= minel) != True:
                     condition += '%s >= %s' % (v, _topy(minel))
 
-                # Block size is exactly the range of the map (0:size)
-                skipcond = dsym_end[i].subs({dsym[i]: 0}) == maxel
+                # Special case: block size is exactly the range of the map (0:b)
+                if i >= 3:
+                    skipcond = False
+                else:
+                    skipcond = dsym_end[i].subs({dsym[i]: 0}) == maxel
+
+                # Block range end
                 if i >= 3 or (not skipcond and (dsym_end[i] < maxel) != True):
                     if len(condition) > 0:
                         condition += ' && '
                     condition += '%s < %s' % (v, _topy(maxel + 1))
+
+                # Emit condition in code
                 if len(condition) > 0:
                     callsite_stream.write('if (%s) {' % condition, sdfg,
                                           state_id, scope_entry)
