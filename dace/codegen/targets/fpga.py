@@ -512,9 +512,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 start_kernel = start_kernel + num_kernels
 
             # There is no need to generate additional kernels if the number of found kernels
-            # is equal to the number of connected components: use PEs instead
+            # is equal to the number of connected components: use PEs instead (only one kernel)
             if len(subgraphs) == len(kernels):
                 kernels = [(state, 0)]
+
+            self._num_kernels = len(kernels)
 
             state_parameters = []
 
@@ -777,6 +779,15 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 external = any([
                     t.language == dtypes.Language.SystemVerilog for t in tasks
                 ])
+
+                # If this is a stream, check if the other side of it is in the same kernel/subgraph
+                if self._num_kernels > 1:
+                    if isinstance(n, dace.nodes.AccessNode) and isinstance(n.desc(subgraph), dt.Stream):
+                        for nn in subgraph.nodes():
+                            if nn != n and  isinstance(nn, dace.nodes.AccessNode) and n.desc(subgraph) == nn.desc(subgraph):
+                                break
+                        else:
+                            external |= True
                 if external:
                     external_streams |= {
                         (True, e.data.data, subsdfg.arrays[e.data.data], None)
@@ -795,9 +806,21 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 tasks = [
                     t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)
                 ]
+
                 external = any([
                     t.language == dtypes.Language.SystemVerilog for t in tasks
                 ])
+
+                # If this is a stream, check if the other side of it is in the same kernel/subgraph
+                if self._num_kernels > 1:
+                    if isinstance(n, dace.nodes.AccessNode) and isinstance(n.desc(subgraph), dt.Stream):
+                        for nn in subgraph.nodes():
+                            if nn != n and isinstance(nn, dace.nodes.AccessNode) and n.desc(subgraph) == nn.desc(
+                                    subgraph):
+                                break
+                        else:
+                            external |= True
+
                 if external:
                     external_streams |= {
                         (False, e.data.data, subsdfg.arrays[e.data.data], None)
