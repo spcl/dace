@@ -1132,6 +1132,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                        function_stream,
                                        callsite_stream,
                                        generate_state_footer=False)
+
+            # Reset thread-block-level information
+            self._scope_has_collaborative_copy = False
+
             if state.nosync == False:
                 streams_to_sync = set()
                 for node in state.sink_nodes():
@@ -1186,7 +1190,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
                         and state.in_degree(node) == 0
                         and state.out_degree(node) > 0):
-                    callsite_stream.write('__syncthreads();', sdfg, state_id)
+                    if not self._scope_has_collaborative_copy:
+                        callsite_stream.write('__syncthreads();', sdfg,
+                                              state_id)
                     break
 
         # In GPU_Persistent scopes, states need global barriers between them,
