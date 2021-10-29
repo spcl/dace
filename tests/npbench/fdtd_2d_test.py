@@ -89,7 +89,6 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
         # In this case, we want to generate the top-level state as an host-based state,
         # not an FPGA kernel. We need to explicitly indicate that
         sdfg.states()[0].location["is_FPGA_kernel"] = False
-        sdfg.view()
 
         sdfg(ex=ex, ey=ey, hz=hz, _fict_=_fict_, TMAX=TMAX, NX=NX, NY=NY)
 
@@ -106,4 +105,4 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
 
     return sdfg
 
-run_fdtd_2d(dace.dtypes.DeviceType.FPGA)
+# run_fdtd_2d(dace.dtypes.DeviceType.FPGA)
