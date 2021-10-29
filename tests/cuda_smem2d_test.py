@@ -135,6 +135,7 @@ def _find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
 @pytest.mark.gpu
 def test_gpu_2shared_map():
     K = dace.symbol('K')
+
     @dace.program
     def addtwoandmult(A: dace.float64[H, W], B: dace.float64[H, W],
                       Vout: dace.float64[H, W]):
@@ -174,3 +175,6 @@ def test_gpu_2shared_map():
 
 if __name__ == "__main__":
     test_cpu()
+    test_gpu_2localstorage()
+    test_gpu_2shared_for()
+    test_gpu_2shared_map()

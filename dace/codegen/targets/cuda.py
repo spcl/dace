@@ -70,6 +70,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self._block_dims = None
         self._grid_dims = None
         self._kernel_map = None
+        self._scope_has_collaborative_copy = False
         target_type = "" if self.backend == 'cuda' else self.backend
         self._codeobject = CodeObject(sdfg.name + '_' + 'cuda',
                                       '',
@@ -1011,7 +1012,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 funcname = 'dace::%sTo%s%dD' % (_get_storagename(src_storage),
                                                 _get_storagename(dst_storage),
                                                 dims)
-
+                self._scope_has_collaborative_copy = True
                 accum = ''
                 custom_reduction = []
                 if memlet.wcr is not None:
@@ -1023,6 +1024,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                     str(redtype)[str(redtype).find('.') + 1:])
                         reduction_tmpl = '<%s>' % credtype
                     else:
+                        dtype = dst_node.desc(sdfg).dtype
                         custom_reduction = [unparse_cr(sdfg, memlet.wcr, dtype)]
                     accum = '::template Accum%s' % reduction_tmpl
 
@@ -1036,7 +1038,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                              type=dst_node.desc(sdfg).dtype.ctype,
                              bdims=', '.join(_topy(self._block_dims)),
                              dststrides=', '.join(_topy(dst_strides)),
-                             is_async='false'
+                             is_async='true'
                              if state_dfg.out_degree(dst_node) > 0 else 'true',
                              accum=accum,
                              args=', '.join([src_expr] + _topy(src_strides) +
@@ -1052,7 +1054,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                              bdims=', '.join(_topy(self._block_dims)),
                              copysize=', '.join(_topy(copy_shape)),
                              dststrides=', '.join(_topy(dst_strides)),
-                             is_async='false'
+                             is_async='true'
                              if state_dfg.out_degree(dst_node) > 0 else 'true',
                              accum=accum,
                              args=', '.join([src_expr] + _topy(src_strides) +
@@ -2114,6 +2116,13 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         # Generate all index arguments for block
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+            if self._scope_has_collaborative_copy:
+                # Emit post-copy synchronization
+                callsite_stream.write('__syncthreads();', sdfg, state_id,
+                                      scope_entry)
+                # Reset thread-block-level information
+                self._scope_has_collaborative_copy = False
+
             brange = subsets.Range(scope_map.range[::-1])
             kdims = brange.size()
             dsym = [
@@ -2179,6 +2188,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                                           state_id, scope_entry)
                 else:
                     callsite_stream.write('{', sdfg, state_id, scope_entry)
+
         ##########################################################
 
         # need to handle subgraphs appropriately if they contain
@@ -2189,10 +2199,10 @@ void  *{kname}_args[] = {{ {kargs} }};
                 for node in dfg_scope.nodes()):
 
             subgraphs = dace.sdfg.concurrent_subgraphs(dfg_scope)
-            for dfg in subgraphs:
+            for subdfg in subgraphs:
                 components = dace.sdfg.utils.separate_maps(
                     sdfg.nodes()[state_id],
-                    dfg,
+                    subdfg,
                     dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
                 )
 
@@ -2233,7 +2243,9 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         # If there are any other threadblock maps down the road,
         # synchronize the thread-block / grid
-        if len(next_scopes) > 0:
+        parent_scope, _ = xfh.get_parent_map(dfg, scope_entry)
+        if (len(next_scopes) > 0
+                or parent_scope.schedule == dtypes.ScheduleType.Sequential):
             # Thread-block synchronization
             if scope_entry.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
                 callsite_stream.write('__syncthreads();', sdfg, state_id,
