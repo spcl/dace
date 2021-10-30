@@ -60,6 +60,24 @@ def tensoradd_streaming(A: dace.float32[M, N, K], B: dace.float32[M, N, K],
 
 
 @dace.program
+def maporder_streaming(A: dace.float32[N, N, N], B: dace.float32[N, N, N],
+                       C: dace.float32[N, N, N], D: dace.float32[N, N, N],
+                       E: dace.float32[N, N, N], F: dace.float32[N, N, N],
+                       G: dace.float32[N, N]):
+    for i, j in dace.map[0:N, 0:N]:
+        with dace.tasklet:
+            in_A << A[i, j, 0]  # No
+            in_B << B[i, 0, j]  # Yes
+            in_C << C[0, i, j]  # Yes
+            in_D << D[j, i, 0]  # No
+            in_E << E[j, 0, i]  # No
+            in_F << F[0, j, i]  # No
+            out >> G[i, j]  # Yes
+
+            out = in_A + in_B + in_C + in_D + in_E + in_F
+
+
+@dace.program
 def matadd_multistream(A: dace.float32[M, N], B: dace.float32[M, N],
                        C: dace.float32[M, N], D: dace.float32[M, N]):
     C[:] = A + B
@@ -572,13 +590,13 @@ def test_mem_buffer_mat_mul():
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
-    sdfg.apply_transformations_repeated(sm.StreamingMemory,
-                                        options=[{
-                                            'use_memory_buffering':
-                                            True,
-                                            "storage":
-                                            dace.StorageType.FPGA_Local
-                                        }]) == 1
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
+                                               options=[{
+                                                   'use_memory_buffering':
+                                                   True,
+                                                   "storage":
+                                                   dace.StorageType.FPGA_Local
+                                               }]) == 1
 
     # Run verification
     A = np.random.rand(M, K).astype(np.float32)
@@ -594,47 +612,77 @@ def test_mem_buffer_mat_mul():
 
 
 @xilinx_test()
+def test_mem_buffer_map_order():
+    # Make SDFG
+    sdfg: dace.SDFG = maporder_streaming.to_sdfg()
+    # Transform
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
+                                               options=[{
+                                                   'use_memory_buffering':
+                                                   True,
+                                                   "storage":
+                                                   dace.StorageType.FPGA_Local
+                                               }]) == 3
+
+    # Run verification
+    A = np.random.rand(N, N, N).astype(np.float32)
+    B = np.random.rand(N, N, N).astype(np.float32)
+    C = np.random.rand(N, N, N).astype(np.float32)
+    D = np.random.rand(N, N, N).astype(np.float32)
+    E = np.random.rand(N, N, N).astype(np.float32)
+    F = np.random.rand(N, N, N).astype(np.float32)
+    G = np.random.rand(N, N).astype(np.float32)
+    G_sol = np.random.rand(N, N).astype(np.float32)
+
+    for i in range(N):
+        for j in range(N):
+            G_sol[i][j] = A[i, j, 0] + B[i, 0, j] + C[0, i, j] + D[j, i, 0] + E[
+                j, 0, i] + F[0, j, i]
+
+    sdfg(A=A, B=B, C=C, D=D, E=E, F=F, G=G)
+
+    diff = np.linalg.norm(G_sol - G)
+    assert diff <= 1e-4
+
+    return sdfg
+
+
+@xilinx_test()
 def test_mem_buffer_not_applicable():
     # Make SDFG
     sdfg: dace.SDFG = vecadd_1_streaming.to_sdfg()
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
-    sdfg.apply_transformations_repeated(sm.StreamingMemory,
-                                        options=[{
-                                            'use_memory_buffering':
-                                            True,
-                                            "storage":
-                                            dace.StorageType.FPGA_Local,
-                                            "memory_buffering_target_bytes":
-                                            65
-                                        }]) == 0
+    assert sdfg.apply_transformations_repeated(
+        sm.StreamingMemory,
+        options=[{
+            'use_memory_buffering': True,
+            "storage": dace.StorageType.FPGA_Local,
+            "memory_buffering_target_bytes": 65
+        }]) == 0
 
-    sdfg.apply_transformations_repeated(sm.StreamingMemory,
-                                        options=[{
-                                            'use_memory_buffering':
-                                            True,
-                                            "storage":
-                                            dace.StorageType.FPGA_Local,
-                                            "memory_buffering_target_bytes":
-                                            0
-                                        }]) == 0
+    assert sdfg.apply_transformations_repeated(
+        sm.StreamingMemory,
+        options=[{
+            'use_memory_buffering': True,
+            "storage": dace.StorageType.FPGA_Local,
+            "memory_buffering_target_bytes": 0
+        }]) == 0
 
-    sdfg.apply_transformations_repeated(sm.StreamingMemory,
-                                        options=[{
-                                            'use_memory_buffering': True,
-                                        }]) == 0
 
     sdfg2: dace.SDFG = matadd_streaming_bad_stride.to_sdfg()
     sdfg2.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
-    sdfg2.apply_transformations_repeated(sm.StreamingMemory,
-                                         options=[{
-                                             'use_memory_buffering':
-                                             True,
-                                             "storage":
-                                             dace.StorageType.FPGA_Local,
-                                         }]) == 0
+    assert sdfg2.apply_transformations_repeated(sm.StreamingMemory,
+                                                options=[{
+                                                    'use_memory_buffering':
+                                                    True,
+                                                    "storage":
+                                                    dace.StorageType.FPGA_Local,
+                                                }]) == 0
 
     return []
 
@@ -660,6 +708,4 @@ if __name__ == "__main__":
     test_mem_buffer_multistream_with_deps(None)
     test_mem_buffer_mat_mul(None)
     test_mem_buffer_not_applicable(None)
-
-    # TODO: Write more test cases
-    # Symbol
+    test_mem_buffer_map_order(None)

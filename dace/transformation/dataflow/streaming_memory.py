@@ -216,7 +216,6 @@ class StreamingMemory(xf.Transformation):
         if other_node.label.startswith('__s'):
             return False
 
-        # TODO: Write test for all this
         ## Check Memory Buffering Properties
         if self.use_memory_buffering:
 
@@ -286,16 +285,12 @@ class StreamingMemory(xf.Transformation):
                     else:
                         map_subset = innermost_edge.dst.map.params.copy()
 
-                    edge_subset.reverse()
+                    # Check is correct access pattern
+                    if not isinstance(edge_subset[-1], dace.symbol):
+                        return False
 
-                    for label in edge_subset:
-                        if not isinstance(label, dace.symbol):
-                            continue  # Skip the non symbol values
-
-                        if str(label) != map_subset[-1]:
-                            return False
-
-                        break
+                    if str(edge_subset[-1]) != map_subset[-1]:
+                        return False
 
             # Array has to be global array
             if desc.storage != dtypes.StorageType.FPGA_Global:
@@ -579,25 +574,20 @@ class StreamingMemory(xf.Transformation):
                         for a_tuple in list(innermost_edge.data.subset)
                     ]
 
-                    # Find first non symbol access
-                    while (not isinstance(edge_subset[-1], dace.symbol)):
-                        edge_subset.pop()
+                    label = edge_subset[-1]
 
-                    if (len(edge_subset) != 0):
-                        label = edge_subset[-1]
+                    # Find index to change
+                    i = 0
+                    for m in map.params:
+                        if m == str(label):
+                            break
+                        i += 1
 
-                        # Find index to change
-                        i = 0
-                        for m in map.params:
-                            if m == str(label):
-                                break
-                            i += 1
-
-                        if i < len(ranges):
-                            ranges[i] = (ranges[i][0],
-                                         (ranges[i][1][0],
-                                          (ranges[i][1][1] + 1) / vector_size - 1,
-                                          ranges[i][1][2]))
+                    if i < len(ranges):
+                        ranges[i] = (ranges[i][0],
+                                     (ranges[i][1][0],
+                                      (ranges[i][1][1] + 1) / vector_size - 1,
+                                      ranges[i][1][2]))
 
                 maps.append(
                     state.add_map(f'__s{opname}_{mapname}', ranges,
