@@ -251,7 +251,7 @@ class StreamingMemory(xf.Transformation):
                     return False
 
             # Check if map has the right access pattern
-            # Code from apply
+            # Same code as in apply
             state = sdfg.node(self.state_id)
             dnode: nodes.AccessNode = self.access(sdfg)
             if self.expr_index == 0:
