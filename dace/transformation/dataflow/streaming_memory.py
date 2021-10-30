@@ -375,7 +375,7 @@ class StreamingMemory(xf.Transformation):
                 for i in sdfg.arrays[dnode.data].strides:
                     if isinstance(i, dace.symbol):
                         warnings.warn(
-                            "Using MemoryBuffering is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
+                            "Using the MemoryBuffering transformation is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
                             .format(sym=i, vec=vector_size))
 
                 if self.expr_index == 0:  # Read
@@ -481,12 +481,6 @@ class StreamingMemory(xf.Transformation):
 
             arrname = str(self.access(sdfg))
             vector_size = self.memory_buffering_target_bytes // desc.dtype.bytes
-
-            for i in sdfg.arrays[dnode.data].strides:
-                if isinstance(i, dace.symbol):
-                    warnings.warn(
-                        "Using MemoryBuffering is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
-                        .format(sym=i, vec=vector_size))
 
             # Vectorize access to global array.
             dtype = sdfg.arrays[arrname].dtype
