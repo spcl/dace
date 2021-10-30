@@ -237,7 +237,8 @@ class StreamingMemory(xf.Transformation):
             if strides[-1] != 1:
                 return False
 
-            vector_size = self.memory_buffering_target_bytes // desc.dtype.bytes
+            vector_size = int(self.memory_buffering_target_bytes /
+                              desc.dtype.bytes)
             strides.pop()  # Remove last element since we already checked it
 
             # Other strides has to be divisiable by vector size
@@ -370,7 +371,8 @@ class StreamingMemory(xf.Transformation):
 
                 # Add gearbox
                 total_size = edge.data.volume
-                vector_size = self.memory_buffering_target_bytes // desc.dtype.bytes
+                vector_size = int(self.memory_buffering_target_bytes /
+                                  desc.dtype.bytes)
 
                 for i in sdfg.arrays[dnode.data].strides:
                     if isinstance(i, dace.symbol):
@@ -382,14 +384,14 @@ class StreamingMemory(xf.Transformation):
                     edges = state.out_edges(dnode)
                     gearbox_input_type = dtypes.vector(desc.dtype, vector_size)
                     gearbox_output_type = desc.dtype
-                    gearbox_read_volume = total_size // vector_size
+                    gearbox_read_volume = total_size / vector_size
                     gearbox_write_volume = total_size
                 else:  # Write
                     edges = state.in_edges(dnode)
                     gearbox_input_type = desc.dtype
                     gearbox_output_type = dtypes.vector(desc.dtype, vector_size)
                     gearbox_read_volume = total_size
-                    gearbox_write_volume = total_size // vector_size
+                    gearbox_write_volume = total_size / vector_size
 
                 input_gearbox_name, input_gearbox_newdesc = sdfg.add_stream(
                     "gearbox_input",
@@ -480,7 +482,8 @@ class StreamingMemory(xf.Transformation):
         if self.use_memory_buffering:
 
             arrname = str(self.access(sdfg))
-            vector_size = self.memory_buffering_target_bytes // desc.dtype.bytes
+            vector_size = int(self.memory_buffering_target_bytes /
+                              desc.dtype.bytes)
 
             # Vectorize access to global array.
             dtype = sdfg.arrays[arrname].dtype
@@ -510,7 +513,7 @@ class StreamingMemory(xf.Transformation):
                     if e.data.data == self.access(sdfg).data:
                         new_subset = list(e.data.subset)
                         i, j, k = new_subset[-1]
-                        new_subset[-1] = (i, j // vector_size, k)
+                        new_subset[-1] = (i, (j + 1) / vector_size - 1, k)
                         e.data = mm.Memlet(data=str(e.src),
                                            subset=subsets.Range(new_subset))
 
@@ -593,7 +596,7 @@ class StreamingMemory(xf.Transformation):
                         if i < len(ranges):
                             ranges[i] = (ranges[i][0],
                                          (ranges[i][1][0],
-                                          ranges[i][1][1] // vector_size,
+                                          (ranges[i][1][1] + 1) / vector_size - 1,
                                           ranges[i][1][2]))
 
                 maps.append(

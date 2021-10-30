@@ -12,9 +12,18 @@ from dace.fpga_testing import xilinx_test
 
 M, N, K = 64, 64, 64
 
+M_s = dace.symbol('M_s')
+N_s = dace.symbol('N_s')
+K_s = dace.symbol('K_s')
+
 
 @dace.program
 def vecadd_1_streaming(A: dace.float32[N], B: dace.float32[N]):
+    B[:] = A + 1.0
+
+
+@dace.program
+def vecadd_1_streaming_symbol(A: dace.float32[N_s], B: dace.float32[N_s]):
     B[:] = A + 1.0
 
 
@@ -310,6 +319,36 @@ def test_mem_buffer_vec_add_1():
 
 
 @xilinx_test()
+def test_mem_buffer_vec_add_1_symbolic():
+    # Make SDFG
+    sdfg: dace.SDFG = vecadd_1_streaming_symbol.to_sdfg()
+    # Transform
+
+    sdfg.apply_transformations([
+        FPGATransformSDFG,
+        InlineSDFG,
+    ])
+
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
+                                               options=[{
+                                                   'use_memory_buffering':
+                                                   True,
+                                                   "storage":
+                                                   dace.StorageType.FPGA_Local
+                                               }]) == 2
+
+    # Run verification
+    A = np.random.rand(N).astype(np.float32)
+    B = np.random.rand(N).astype(np.float32)
+
+    sdfg(A=A, B=B, N_s=64)
+
+    assert all(B == A + 1)
+
+    return sdfg
+
+
+@xilinx_test()
 def test_mem_buffer_vec_add():
     # Make SDFG
     sdfg: dace.SDFG = vecadd_streaming.to_sdfg()
@@ -565,16 +604,17 @@ def test_mem_buffer_not_applicable():
 
 
 if __name__ == "__main__":
-    test_streaming_mem(None)
-    test_streaming_mem_mapnests(None)
-    test_multistream(None)
-    test_multistream_with_deps(None)
-    test_streaming_composition_matching(None)
-    test_streaming_composition(None)
-    test_streaming_composition_mapnests(None)
-    test_streaming_and_composition(None)
+    # test_streaming_mem(None)
+    # test_streaming_mem_mapnests(None)
+    # test_multistream(None)
+    # test_multistream_with_deps(None)
+    # test_streaming_composition_matching(None)
+    # test_streaming_composition(None)
+    # test_streaming_composition_mapnests(None)
+    # test_streaming_and_composition(None)
 
     test_mem_buffer_vec_add_1(None)
+    test_mem_buffer_vec_add_1_symbolic(None)
     test_mem_buffer_vec_add(None)
     test_mem_buffer_mat_add(None)
     test_mem_buffer_tensor_add(None)
