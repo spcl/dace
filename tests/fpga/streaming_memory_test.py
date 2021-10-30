@@ -40,6 +40,13 @@ def matadd_streaming(A: dace.float32[M, N], B: dace.float32[M, N],
 
 
 @dace.program
+def matadd_streaming_symbol(A: dace.float32[M_s, N_s],
+                            B: dace.float32[M_s, N_s], C: dace.float32[M_s,
+                                                                       N_s]):
+    C[:] = A + B
+
+
+@dace.program
 def matadd_streaming_bad_stride(A: dace.float32[M + 1, N + 1],
                                 B: dace.float32[M + 1, N + 1],
                                 C: dace.float32[M + 1, N + 1]):
@@ -410,6 +417,35 @@ def test_mem_buffer_mat_add():
 
 
 @xilinx_test()
+def test_mem_buffer_mat_add_symbol():
+    # Make SDFG
+    sdfg: dace.SDFG = matadd_streaming_symbol.to_sdfg()
+    # Transform
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
+                                               options=[{
+                                                   'use_memory_buffering':
+                                                   True,
+                                                   "storage":
+                                                   dace.StorageType.FPGA_Local
+                                               }]) == 3
+
+    # Run verification
+    A = np.random.rand(M, N).astype(np.float32)
+    B = np.random.rand(M, N).astype(np.float32)
+    C = np.random.rand(M, N).astype(np.float32)
+
+    sdfg(A=A, B=B, C=C, M_s=M, N_s=N)
+
+    diff = np.linalg.norm(C - (A + B))
+
+    assert diff <= 1e-5
+
+    return sdfg
+
+
+@xilinx_test()
 def test_mem_buffer_tensor_add():
     # Make SDFG
     sdfg: dace.SDFG = tensoradd_streaming.to_sdfg()
@@ -604,19 +640,20 @@ def test_mem_buffer_not_applicable():
 
 
 if __name__ == "__main__":
-    # test_streaming_mem(None)
-    # test_streaming_mem_mapnests(None)
-    # test_multistream(None)
-    # test_multistream_with_deps(None)
-    # test_streaming_composition_matching(None)
-    # test_streaming_composition(None)
-    # test_streaming_composition_mapnests(None)
-    # test_streaming_and_composition(None)
+    test_streaming_mem(None)
+    test_streaming_mem_mapnests(None)
+    test_multistream(None)
+    test_multistream_with_deps(None)
+    test_streaming_composition_matching(None)
+    test_streaming_composition(None)
+    test_streaming_composition_mapnests(None)
+    test_streaming_and_composition(None)
 
     test_mem_buffer_vec_add_1(None)
     test_mem_buffer_vec_add_1_symbolic(None)
     test_mem_buffer_vec_add(None)
     test_mem_buffer_mat_add(None)
+    test_mem_buffer_mat_add_symbol(None)
     test_mem_buffer_tensor_add(None)
     test_mem_buffer_mapnests(None)
     test_mem_buffer_multistream(None)
