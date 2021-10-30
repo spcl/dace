@@ -31,6 +31,13 @@ def matadd_streaming(A: dace.float32[M, N], B: dace.float32[M, N],
 
 
 @dace.program
+def matadd_streaming_bad_stride(A: dace.float32[M + 1, N + 1],
+                                B: dace.float32[M + 1, N + 1],
+                                C: dace.float32[M + 1, N + 1]):
+    C[:] = A + B
+
+
+@dace.program
 def tensoradd_streaming(A: dace.float32[M, N, K], B: dace.float32[M, N, K],
                         C: dace.float32[M, N, K]):
     C[:] = A + B
@@ -511,6 +518,52 @@ def test_mem_buffer_mat_mul():
     return sdfg
 
 
+@xilinx_test()
+def test_mem_buffer_not_applicable():
+    # Make SDFG
+    sdfg: dace.SDFG = vecadd_1_streaming.to_sdfg()
+    # Transform
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    sdfg.apply_transformations_repeated(sm.StreamingMemory,
+                                        options=[{
+                                            'use_memory_buffering':
+                                            True,
+                                            "storage":
+                                            dace.StorageType.FPGA_Local,
+                                            "memory_buffering_target_bytes":
+                                            65
+                                        }]) == 0
+
+    sdfg.apply_transformations_repeated(sm.StreamingMemory,
+                                        options=[{
+                                            'use_memory_buffering':
+                                            True,
+                                            "storage":
+                                            dace.StorageType.FPGA_Local,
+                                            "memory_buffering_target_bytes":
+                                            0
+                                        }]) == 0
+
+    sdfg.apply_transformations_repeated(sm.StreamingMemory,
+                                        options=[{
+                                            'use_memory_buffering': True,
+                                        }]) == 0
+
+    sdfg2: dace.SDFG = matadd_streaming_bad_stride.to_sdfg()
+    sdfg2.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    sdfg2.apply_transformations_repeated(sm.StreamingMemory,
+                                         options=[{
+                                             'use_memory_buffering':
+                                             True,
+                                             "storage":
+                                             dace.StorageType.FPGA_Local,
+                                         }]) == 0
+
+    return []
+
+
 if __name__ == "__main__":
     test_streaming_mem(None)
     test_streaming_mem_mapnests(None)
@@ -529,6 +582,7 @@ if __name__ == "__main__":
     test_mem_buffer_multistream(None)
     test_mem_buffer_multistream_with_deps(None)
     test_mem_buffer_mat_mul(None)
+    test_mem_buffer_not_applicable(None)
 
     # TODO: Write more test cases
     # Symbol
