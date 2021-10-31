@@ -110,8 +110,10 @@ def test_intermediate_copies():
     def loop_body(A: dace.int32[5, 5], B: dace.int32[5, 5]):
         B[1] = A[0]
         tmp1 = B[2] + 5
+        B[3] = tmp1
         A[2] = B[3]
         tmp2 = A[1] + 5
+        A[4] = tmp2
         B[4] = A[4]
 
 
