@@ -3257,7 +3257,10 @@ class ProgramVisitor(ExtNodeVisitor):
             # Self-copy check
             if result in self.views and new_name == self.views[result][1].data:
                 read_rng = self.views[result][1].subset
-                needs_copy = not (new_rng.intersects(read_rng) == False)
+                try:
+                    needs_copy = not (new_rng.intersects(read_rng) == False)
+                except TypeError:
+                    needs_copy = True
                 if needs_copy:
                     view = self.sdfg.arrays[result]
                     cname, carr = self.sdfg.add_transient(result,
