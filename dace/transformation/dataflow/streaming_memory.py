@@ -574,20 +574,12 @@ class StreamingMemory(xf.Transformation):
                         for a_tuple in list(innermost_edge.data.subset)
                     ]
 
-                    label = edge_subset[-1]
-
-                    # Find index to change
-                    i = 0
-                    for m in map.params:
-                        if m == str(label):
-                            break
-                        i += 1
-
-                    if i < len(ranges):
-                        ranges[i] = (ranges[i][0],
-                                     (ranges[i][1][0],
-                                      (ranges[i][1][1] + 1) / vector_size - 1,
-                                      ranges[i][1][2]))
+                    # Change range of map
+                    if str(edge_subset[-1]) == map.params[-1]:
+                        ranges[-1] = (ranges[-1][0],
+                                      (ranges[-1][1][0],
+                                       (ranges[-1][1][1] + 1) / vector_size - 1,
+                                       ranges[-1][1][2]))
 
                 maps.append(
                     state.add_map(f'__s{opname}_{mapname}', ranges,
