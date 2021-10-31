@@ -491,6 +491,9 @@ class InlineSDFG(transformation.Transformation):
         edges_to_ignore = self._modify_access_to_access(new_incoming_edges,
                                                         nsdfg, nstate, state,
                                                         orig_data)
+        edges_to_ignore |= self._modify_access_to_access(
+            new_outgoing_edges, nsdfg, nstate, state, orig_data, False,
+            edges_to_ignore)
 
         source_to_outer = {n: e.src for n, e in new_incoming_edges.items()}
         sink_to_outer = {n: e.dst for n, e in new_outgoing_edges.items()}
@@ -529,25 +532,29 @@ class InlineSDFG(transformation.Transformation):
                         narr = state.add_access(arr)
                         state.add_nedge(node, narr, dc(mem))
                         state.add_nedge(narr, nview, dc(mem))
-                    
+
                     # NOTE: Node is destination
                     for edge in state.in_edges(node):
                         if (edge not in modified_edges
                                 and edge.data.data == node.data):
                             for e in state.memlet_tree(edge):
-                                new_memlet = helpers.unsqueeze_memlet(
-                                    e.data, outer_edge.data,
-                                    use_dst_subset=True) 
-                                e._data.dst_subset = new_memlet.subset
+                                if e.data.get_dst_subset(e, state):
+                                    new_memlet = helpers.unsqueeze_memlet(
+                                        e.data,
+                                        outer_edge.data,
+                                        use_dst_subset=True)
+                                    e._data.dst_subset = new_memlet.subset
                     # NOTE: Node is source
                     for edge in state.out_edges(node):
                         if (edge not in modified_edges
                                 and edge.data.data == node.data):
                             for e in state.memlet_tree(edge):
-                                new_memlet = helpers.unsqueeze_memlet(
-                                    e.data, outer_edge.data,
-                                    use_src_subset=True) 
-                                e._data.src_subset = new_memlet.subset
+                                if e.data.get_src_subset(e, state):
+                                    new_memlet = helpers.unsqueeze_memlet(
+                                        e.data,
+                                        outer_edge.data,
+                                        use_src_subset=True)
+                                    e._data.src_subset = new_memlet.subset
 
         # If source/sink node is not connected to a source/destination access
         # node, and the nested SDFG is in a scope, connect to scope with empty
@@ -639,43 +646,84 @@ class InlineSDFG(transformation.Transformation):
         nstate: SDFGState,
         state: SDFGState,
         orig_data: Dict[Union[nodes.AccessNode, MultiConnectorEdge], str],
+        inputs: bool = True,
+        edges_to_ignore: Set[MultiConnectorEdge] = None
     ) -> Set[MultiConnectorEdge]:
         """
         Deals with access->access edges where both sides are non-transient.
         """
         nsdfg_node = nstate.parent.parent_nsdfg_node
+        edges_to_ignore = edges_to_ignore or set()
         result = set()
         edges = input_edges
         while edges:
             new_edges = {}
             for node, top_edge in edges.items():
-                for inner_edge in nstate.out_edges(node):
-                    if inner_edge.dst not in orig_data:
-                        continue
-                    inner_data = orig_data[inner_edge.dst]
-                    if (isinstance(inner_edge.dst, nodes.AccessNode)
-                            and not nsdfg.arrays[inner_data].transient):
-                        matching_edge: MultiConnectorEdge = next(
-                            state.out_edges_by_connector(nsdfg_node, inner_data))
-                        # Create memlet by unsqueezing both w.r.t. src and dst
-                        # subsets
-                        in_memlet = helpers.unsqueeze_memlet(inner_edge.data,
-                                                            top_edge.data,
-                                                            use_src_subset=True)
-                        out_memlet = helpers.unsqueeze_memlet(inner_edge.data,
-                                                            matching_edge.data,
-                                                            use_dst_subset=True)
-                        new_memlet = in_memlet
-                        new_memlet.other_subset = out_memlet.subset
+                if inputs:
+                    for inner_edge in nstate.out_edges(node):
+                        if inner_edge in edges_to_ignore:
+                            continue
+                        if inner_edge.dst not in orig_data:
+                            continue
+                        inner_data = orig_data[inner_edge.dst]
+                        if (isinstance(inner_edge.dst, nodes.AccessNode)
+                                and not nsdfg.arrays[inner_data].transient):
+                            matching_edge: MultiConnectorEdge = next(
+                                state.out_edges_by_connector(
+                                    nsdfg_node, inner_data))
+                            # Create memlet by unsqueezing both w.r.t. src and
+                            # dst subsets
+                            in_memlet = helpers.unsqueeze_memlet(
+                                inner_edge.data,
+                                top_edge.data,
+                                use_src_subset=True)
+                            out_memlet = helpers.unsqueeze_memlet(
+                                inner_edge.data,
+                                matching_edge.data,
+                                use_dst_subset=True)
+                            new_memlet = in_memlet
+                            new_memlet.other_subset = out_memlet.subset
 
-                        inner_edge.data = new_memlet
-                        if len(nstate.out_edges(inner_edge.dst)) > 0:
-                            if node.data == inner_edge.dst.data:
-                                new_edges[inner_edge.dst] = top_edge
-                            else:
-                                new_edges[inner_edge.dst] = matching_edge
-                        result.add(inner_edge)
-                
+                            inner_edge.data = new_memlet
+                            if len(nstate.out_edges(inner_edge.dst)) > 0:
+                                if node.data == inner_edge.dst.data:
+                                    new_edges[inner_edge.dst] = top_edge
+                                else:
+                                    new_edges[inner_edge.dst] = matching_edge
+                            result.add(inner_edge)
+                else:
+                    for inner_edge in nstate.in_edges(node):
+                        if inner_edge in edges_to_ignore:
+                            continue
+                        if inner_edge.src not in orig_data:
+                            continue
+                        inner_data = orig_data[inner_edge.src]
+                        if (isinstance(inner_edge.src, nodes.AccessNode)
+                                and not nsdfg.arrays[inner_data].transient):
+                            matching_edge: MultiConnectorEdge = next(
+                                state.out_edges_by_connector(
+                                    nsdfg_node, inner_data))
+                            # Create memlet by unsqueezing both w.r.t. src and
+                            # dst subsets
+                            in_memlet = helpers.unsqueeze_memlet(
+                                inner_edge.data,
+                                top_edge.data,
+                                use_src_subset=True)
+                            out_memlet = helpers.unsqueeze_memlet(
+                                inner_edge.data,
+                                matching_edge.data,
+                                use_dst_subset=True)
+                            new_memlet = in_memlet
+                            new_memlet.other_subset = out_memlet.subset
+
+                            inner_edge.data = new_memlet
+                            if len(nstate.out_edges(inner_edge.src)) > 0:
+                                if node.data == inner_edge.src.data:
+                                    new_edges[inner_edge.src] = top_edge
+                                else:
+                                    new_edges[inner_edge.src] = matching_edge
+                            result.add(inner_edge)
+
             edges = new_edges
 
         return result
@@ -700,8 +748,8 @@ class InlineSDFG(transformation.Transformation):
                 if inner_edge in edges_to_ignore:
                     new_memlet = inner_edge.data
                 else:
-                    new_memlet = helpers.unsqueeze_memlet(inner_edge.data,
-                                                        top_edge.data)
+                    new_memlet = helpers.unsqueeze_memlet(
+                        inner_edge.data, top_edge.data)
                 if inputs:
                     if inner_edge.dst in inner_to_outer:
                         dst = inner_to_outer[inner_edge.dst]
