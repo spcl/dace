@@ -366,7 +366,7 @@ def test_mem_buffer_vec_add_1_symbolic():
     A = np.random.rand(N).astype(np.float32)
     B = np.random.rand(N).astype(np.float32)
 
-    sdfg(A=A, B=B, N_s=64)
+    sdfg(A=A, B=B, N_s=256)
 
     assert all(B == A + 1)
 
@@ -454,7 +454,7 @@ def test_mem_buffer_mat_add_symbol():
     B = np.random.rand(M, N).astype(np.float32)
     C = np.random.rand(M, N).astype(np.float32)
 
-    sdfg(A=A, B=B, C=C, M_s=M, N_s=N)
+    sdfg(A=A, B=B, C=C, M_s=256, N_s=512)
 
     diff = np.linalg.norm(C - (A + B))
 
@@ -688,24 +688,24 @@ def test_mem_buffer_not_applicable():
 
 
 if __name__ == "__main__":
-    test_streaming_mem(None)
-    test_streaming_mem_mapnests(None)
-    test_multistream(None)
-    test_multistream_with_deps(None)
-    test_streaming_composition_matching(None)
-    test_streaming_composition(None)
-    test_streaming_composition_mapnests(None)
-    test_streaming_and_composition(None)
+    # test_streaming_mem(None)
+    # test_streaming_mem_mapnests(None)
+    # test_multistream(None)
+    # test_multistream_with_deps(None)
+    # test_streaming_composition_matching(None)
+    # test_streaming_composition(None)
+    # test_streaming_composition_mapnests(None)
+    # test_streaming_and_composition(None)
 
-    test_mem_buffer_vec_add_1(None)
+    # test_mem_buffer_vec_add_1(None)
     test_mem_buffer_vec_add_1_symbolic(None)
-    test_mem_buffer_vec_add(None)
-    test_mem_buffer_mat_add(None)
+    # test_mem_buffer_vec_add(None)
+    # test_mem_buffer_mat_add(None)
     test_mem_buffer_mat_add_symbol(None)
-    test_mem_buffer_tensor_add(None)
-    test_mem_buffer_mapnests(None)
-    test_mem_buffer_multistream(None)
-    test_mem_buffer_multistream_with_deps(None)
-    test_mem_buffer_mat_mul(None)
-    test_mem_buffer_not_applicable(None)
-    test_mem_buffer_map_order(None)
+    # test_mem_buffer_tensor_add(None)
+    # test_mem_buffer_mapnests(None)
+    # test_mem_buffer_multistream(None)
+    # test_mem_buffer_multistream_with_deps(None)
+    # test_mem_buffer_mat_mul(None)
+    # test_mem_buffer_not_applicable(None)
+    # test_mem_buffer_map_order(None)
