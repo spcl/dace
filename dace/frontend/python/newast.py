@@ -3257,16 +3257,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # Self-copy check
             if result in self.views and new_name == self.views[result][1].data:
                 read_rng = self.views[result][1].subset
-                needs_copy = False
-                for i, sz in enumerate(new_rng.size()):
-                    # NOTE: We only have an issue with partial overlap of the
-                    # read and write subsets. This occurs when the range of
-                    # one of the dimensions is greater than one and the read
-                    # and write ranges (for that particular dimension) are not
-                    # the same.
-                    if sz != 1 and new_rng[i] != read_rng[i]:
-                        needs_copy = True
-                        break
+                needs_copy = not (new_rng.intersects(read_rng) == False)
                 if needs_copy:
                     view = self.sdfg.arrays[result]
                     cname, carr = self.sdfg.add_transient(result,
