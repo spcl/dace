@@ -533,28 +533,38 @@ class InlineSDFG(transformation.Transformation):
                         state.add_nedge(node, narr, dc(mem))
                         state.add_nedge(narr, nview, dc(mem))
 
-                    # NOTE: Node is destination
                     for edge in state.in_edges(node):
                         if (edge not in modified_edges
                                 and edge.data.data == node.data):
                             for e in state.memlet_tree(edge):
-                                if e.data.get_dst_subset(e, state):
-                                    new_memlet = helpers.unsqueeze_memlet(
-                                        e.data,
-                                        outer_edge.data,
-                                        use_dst_subset=True)
-                                    e._data.dst_subset = new_memlet.subset
-                    # NOTE: Node is source
-                    for edge in state.out_edges(node):
-                        if (edge not in modified_edges
-                                and edge.data.data == node.data):
-                            for e in state.memlet_tree(edge):
-                                if e.data.get_src_subset(e, state):
-                                    new_memlet = helpers.unsqueeze_memlet(
-                                        e.data,
-                                        outer_edge.data,
-                                        use_src_subset=True)
-                                    e._data.src_subset = new_memlet.subset
+                                if e.data.data == node.data:
+                                    other_subset = copy.deepcopy(e.data.other_subset)
+                                    e._data = helpers.unsqueeze_memlet(
+                                        e.data,outer_edge.data)
+                                    e._data.other_subset = other_subset
+
+                    # # NOTE: Node is destination
+                    # for edge in state.in_edges(node):
+                    #     if (edge not in modified_edges
+                    #             and edge.data.data == node.data):
+                    #         for e in state.memlet_tree(edge):
+                    #             if e._data.get_dst_subset(e, state):
+                    #                 new_memlet = helpers.unsqueeze_memlet(
+                    #                     e.data,
+                    #                     outer_edge.data,
+                    #                     use_dst_subset=True)
+                    #                 e._data.dst_subset = new_memlet.subset
+                    # # NOTE: Node is source
+                    # for edge in state.out_edges(node):
+                    #     if (edge not in modified_edges
+                    #             and edge.data.data == node.data):
+                    #         for e in state.memlet_tree(edge):
+                    #             if e._data.get_src_subset(e, state):
+                    #                 new_memlet = helpers.unsqueeze_memlet(
+                    #                     e.data,
+                    #                     outer_edge.data,
+                    #                     use_src_subset=True)
+                    #                 e._data.src_subset = new_memlet.subset
 
         # If source/sink node is not connected to a source/destination access
         # node, and the nested SDFG is in a scope, connect to scope with empty
