@@ -369,6 +369,12 @@ class StreamingMemory(xf.Transformation):
                 vector_size = int(self.memory_buffering_target_bytes /
                                   desc.dtype.bytes)
 
+                if isinstance(sdfg.arrays[dnode.data].shape[-1], dace.symbol):
+                    warnings.warn(
+                        "Using the MemoryBuffering transformation is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
+                        .format(sym=sdfg.arrays[dnode.data].shape[-1],
+                                vec=vector_size))
+
                 for i in sdfg.arrays[dnode.data].strides:
                     if isinstance(i, dace.symbol):
                         warnings.warn(
