@@ -627,7 +627,7 @@ class InlineSDFG(transformation.Transformation):
             # Fission state if necessary
             cc = utils.weakly_connected_component(state, node)
             if not any(n in cc for n in subgraph.nodes()):
-                cc2 = SubgraphView([n for n in state.nodes() if n not in cc])
+                cc2 = SubgraphView(state, [n for n in state.nodes() if n not in cc])
                 state = helpers.state_fission(sdfg, cc2)
 
         #######################################################

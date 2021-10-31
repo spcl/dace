@@ -2825,7 +2825,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 in1_subset.offset(wtarget_subset, True)
                 in1_memlet = Memlet.simple(
                     rtarget_name, ','.join([
-                        '__i%d + %d' % (i, s)
+                        '__i%d + %s' % (i, s)
                         for i, (s, _, _) in enumerate(in1_subset)
                     ]))
                 if op_name:
