@@ -697,8 +697,6 @@ class InlineSDFG(transformation.Transformation):
             inner_edges = (nstate.out_edges(node)
                            if inputs else nstate.in_edges(node))
             for inner_edge in inner_edges:
-                # if inner_edge in edges_to_ignore:
-                #     continue
                 if inner_edge in edges_to_ignore:
                     new_memlet = inner_edge.data
                 else:
