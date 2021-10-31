@@ -1370,6 +1370,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                   shape,
                   dtype,
                   storage=dtypes.StorageType.Default,
+                  location=None,
                   transient=False,
                   strides=None,
                   offset=None,
@@ -1397,6 +1398,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         desc = dt.Array(dtype,
                         shape,
                         storage=storage,
+                        location=location,
                         allow_conflicts=allow_conflicts,
                         transient=transient,
                         strides=strides,
@@ -1464,6 +1466,15 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                    find_new_name=False) -> Tuple[str, dt.Stream]:
         """ Adds a stream to the SDFG data descriptor store. """
 
+        # Convert to int if possible, otherwise to symbolic
+        _shape = []
+        for s in shape:
+            try:
+                _shape.append(int(s))
+            except:
+                _shape.append(dace.symbolic.pystr_to_symbolic(s))
+        shape = _shape
+
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
@@ -1508,6 +1519,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                       shape,
                       dtype,
                       storage=dtypes.StorageType.Default,
+                      location=None,
                       strides=None,
                       offset=None,
                       lifetime=dace.dtypes.AllocationLifetime.Scope,
@@ -1522,10 +1534,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return self.add_array(name,
                               shape,
                               dtype,
-                              storage,
-                              True,
-                              strides,
-                              offset,
+                              storage=storage,
+                              location=location,
+                              transient=True,
+                              strides=strides,
+                              offset=offset,
                               lifetime=lifetime,
                               debuginfo=debuginfo,
                               allow_conflicts=allow_conflicts,
@@ -1549,6 +1562,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                            shape,
                            dtype,
                            storage=dtypes.StorageType.Default,
+                           location=None,
                            strides=None,
                            offset=None,
                            lifetime=dace.dtypes.AllocationLifetime.Scope,
@@ -1562,10 +1576,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return self.add_array(self.temp_data_name(),
                               shape,
                               dtype,
-                              storage,
-                              True,
-                              strides,
-                              offset,
+                              storage=storage,
+                              location=location,
+                              transient=True,
+                              strides=strides,
+                              offset=offset,
                               lifetime=lifetime,
                               alignment=alignment,
                               debuginfo=debuginfo,
@@ -1581,10 +1596,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return self.add_array(self.temp_data_name(),
                               desc.shape,
                               desc.dtype,
-                              desc.storage,
-                              True,
-                              desc.strides,
-                              desc.offset,
+                              storage=desc.storage,
+                              location=desc.location,
+                              transient=True,
+                              strides=desc.strides,
+                              offset=desc.offset,
                               lifetime=desc.lifetime,
                               alignment=desc.alignment,
                               debuginfo=debuginfo,
@@ -1779,7 +1795,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """ Compiles a runnable binary from this SDFG.
             :param output_file: If not None, copies the output library file to
                                 the specified path.
-            :param validate: If True, validates the SDFG prior to generating 
+            :param validate: If True, validates the SDFG prior to generating
                              code.
             :return: A callable CompiledSDFG object.
         """

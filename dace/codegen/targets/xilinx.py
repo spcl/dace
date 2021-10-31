@@ -4,7 +4,6 @@ import copy
 from dace.sdfg.sdfg import SDFG
 import itertools
 import os
-import pdb
 import re
 import numpy as np
 
@@ -40,7 +39,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
     language = 'hls'
 
     def __init__(self, *args, **kwargs):
-        fpga_vendor = Config.get("compiler", "fpga_vendor")
+        fpga_vendor = Config.get("compiler", "fpga", "vendor")
         if fpga_vendor.lower() != "xilinx":
             # Don't register this code generator
             return
@@ -58,8 +57,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         target_platform = Config.get("compiler", "xilinx", "platform")
         enable_debugging = ("ON" if Config.get_bool(
             "compiler", "xilinx", "enable_debugging") else "OFF")
-        autobuild = ("ON" if Config.get_bool("compiler", "autobuild_bitstreams")
-                     else "OFF")
+        autobuild = ("ON" if Config.get_bool("compiler", "fpga",
+                                             "autobuild_bitstreams") else "OFF")
         frequency = Config.get("compiler", "xilinx", "frequency").strip()
         options = [
             "-DDACE_XILINX_HOST_FLAGS=\"{}\"".format(host_flags),
@@ -212,22 +211,24 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
     @staticmethod
     def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
-                      kernel_stream):
+                      kernel_stream, sdfg):
         """
            Defines a stream
            :return: a tuple containing the type of the created variable, and boolean indicating
                whether this is a global variable or not
            """
         ctype = "dace::FIFO<{}, {}, {}>".format(dtype.base_type.ctype,
-                                                dtype.veclen, buffer_size)
-        if cpp.sym2cpp(array_size) == "1":
+                                                cpp.sym2cpp(dtype.veclen),
+                                                cpp.sym2cpp(buffer_size))
+        array_size_cpp = cpp.sym2cpp(array_size)
+        if array_size_cpp == "1":
             kernel_stream.write("{} {}(\"{}\");".format(ctype, var_name,
                                                         var_name))
         else:
             kernel_stream.write("{} {}[{}];\n".format(ctype, var_name,
-                                                      cpp.sym2cpp(array_size)))
+                                                      array_size_cpp))
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
-                var_name, var_name, cpp.sym2cpp(array_size)))
+                var_name, var_name, array_size_cpp))
 
         # In Xilinx, streams are defined as local variables
         # Return value is used for adding to defined_vars in fpga.py
@@ -242,10 +243,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
                                 "complete\n".format(var_name))
         elif desc.storage == dace.dtypes.StorageType.FPGA_Local:
-            if len(desc.shape) > 1:
-                kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
-                                    "block factor={}\n".format(
-                                        var_name, desc.shape[-2]))
+            pass
         else:
             raise ValueError("Unsupported storage type: {}".format(
                 desc.storage.name))
@@ -276,9 +274,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 dtype = data.dtype.base_type
             return "{} *{}".format(dtype.ctype, var_name)
         if isinstance(data, dt.Stream):
-            ctype = "dace::FIFO<{}, {}, {}>".format(data.dtype.base_type.ctype,
-                                                    data.dtype.veclen,
-                                                    data.buffer_size)
+            ctype = "dace::FIFO<{}, {}, {}>".format(
+                data.dtype.base_type.ctype, cpp.sym2cpp(data.dtype.veclen),
+                cpp.sym2cpp(data.buffer_size))
             return "{} &{}".format(ctype, var_name)
         else:
             return data.as_arg(with_types=True, name=var_name)
@@ -661,13 +659,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     if p.is_stream_array():
                         kernel_args_module.append(
                             "dace::FIFO<{}, {}, {}> {}[{}]".format(
-                                p.dtype.base_type.ctype, p.veclen,
-                                p.buffer_size, pname, p.size_string()))
+                                p.dtype.base_type.ctype, cpp.sym2cpp(p.veclen),
+                                cpp.sym2cpp(p.buffer_size), pname,
+                                p.size_string()))
                     else:
                         kernel_args_module.append(
                             "dace::FIFO<{}, {}, {}> &{}".format(
-                                p.dtype.base_type.ctype, p.veclen,
-                                p.buffer_size, pname))
+                                p.dtype.base_type.ctype, cpp.sym2cpp(p.veclen),
+                                cpp.sym2cpp(p.buffer_size), pname))
                 else:
                     kernel_args_call.append(
                         p.as_arg(with_types=False, name=pname))

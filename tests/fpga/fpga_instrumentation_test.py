@@ -141,10 +141,10 @@ def test_instrumentation_single():
     run_program(sdfg)
     report = sdfg.get_latest_report()
     # There should be three runtimes: One for the kernel, and two for the state
-    if dace.Config.get("compiler", "fpga_vendor") == "xilinx":
+    if dace.Config.get("compiler", "fpga", "vendor") == "xilinx":
         # For Xilinx, processing elements live within a single kernel
         expected_num_kernels = 1
-    elif dace.Config.get("compiler", "fpga_vendor") == "intel_fpga":
+    elif dace.Config.get("compiler", "fpga", "vendor") == "intel_fpga":
         # For Intel, each processing element is a distinct kernel
         expected_num_kernels = 2
     assert len(
