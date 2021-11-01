@@ -717,7 +717,11 @@ class TaskletTransformer(ExtNodeTransformer):
                         # NOTE: The code takes into account the case where an
                         # index is dependent on multiple symbols. See also
                         # tests/python_frontend/nested_name_accesses_test.py.
-                        repl_dict[s] = sr[0][0]
+                        step = sr[0][2]
+                        if (step < 0) == True:
+                            repl_dict[s] = sr[0][1]
+                        else:
+                            repl_dict[s] = sr[0][0]
                 offset.append(r[0].subs(repl_dict))
 
             if ignore_indices:
@@ -738,6 +742,8 @@ class TaskletTransformer(ExtNodeTransformer):
             shape = squeezed_rng.size()
             for i, sr in zip(ignore_indices, sym_rng):
                 iMin, iMax, step = sr.ranges[0]
+                if (step < 0) == True:
+                    iMin, iMax, step = iMax, iMin, -step
                 ts = to_squeeze_rng.tile_sizes[i]
                 sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
                 shape[sqz_idx] = ts * sympy.ceiling(
@@ -2972,8 +2978,15 @@ class ProgramVisitor(ExtNodeVisitor):
                         # NOTE: The code takes into account the case where an
                         # index is dependent on multiple symbols. See also
                         # tests/python_frontend/nested_name_accesses_test.py.
-                        repl_dict[s] = sr[0][0]
-                offset.append(r[0].subs(repl_dict))
+                        step = sr[0][2]
+                        if (step < 0) == True:
+                            repl_dict[s] = sr[0][1]
+                        else:
+                            repl_dict[s] = sr[0][0]
+                if repl_dict:
+                    offset.append(r[0].subs(repl_dict))
+                else:
+                    offset.append(0)
 
             if ignore_indices:
                 tmp_memlet = Memlet.simple(parent_name, rng)
@@ -2992,6 +3005,8 @@ class ProgramVisitor(ExtNodeVisitor):
             shape = squeezed_rng.size()
             for i, sr in zip(ignore_indices, sym_rng):
                 iMin, iMax, step = sr.ranges[0]
+                if (step < 0) == True:
+                    iMin, iMax, step = iMax, iMin, -step
                 ts = to_squeeze_rng.tile_sizes[i]
                 sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
                 shape[sqz_idx] = ts * sympy.ceiling(
