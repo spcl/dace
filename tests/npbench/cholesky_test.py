@@ -76,6 +76,9 @@ def run_cholesky(device_type: dace.dtypes.DeviceType):
             Dot.default_implementation = "FPGA_Accumulate"
         else:
             Dot.default_implementation = "FPGA_PartialSums"
+        sdfg.expand_library_nodes()
+        sdfg.apply_transformations_repeated([InlineSDFG])
+
         sdfg(A=A, N=N)
 
     # Compute ground truth and validate result
