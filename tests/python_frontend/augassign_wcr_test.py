@@ -113,7 +113,47 @@ def test_augassign_wcr3():
     assert(np.array_equal(B, D))
 
 
+def test_augassign_no_wcr():
+
+    @dace.program
+    def no_wcr(A: dace.int32[5, 5, 5]):
+        A[2, 3, :] += A[3, 2, :]
+    
+    sdfg = no_wcr.to_sdfg(strict=False)
+    sdfg.save('test.sdfg')
+    for e, _ in sdfg.all_edges_recursive():
+        if hasattr(e.data, 'wcr'):
+            assert(not e.data.wcr)
+    
+    ref = np.reshape(np.arange(125, dtype=np.int32), (5, 5, 5))
+    A = ref.copy()
+    sdfg(A)
+    no_wcr.f(ref)
+    assert(np.allclose(A, ref))
+
+
+def test_augassign_no_wcr2():
+
+    @dace.program
+    def no_wcr(A: dace.int32[5, 5, 5]):
+        A[2, 3, 1:4] += A[2:5, 1, 4]
+    
+    sdfg = no_wcr.to_sdfg(strict=False)
+    sdfg.save('test.sdfg')
+    for e, _ in sdfg.all_edges_recursive():
+        if hasattr(e.data, 'wcr'):
+            assert(not e.data.wcr)
+    
+    ref = np.reshape(np.arange(125, dtype=np.int32), (5, 5, 5))
+    A = ref.copy()
+    sdfg(A)
+    no_wcr.f(ref)
+    assert(np.allclose(A, ref))
+
+
 if __name__ == "__main__":
     test_augassign_wcr()
     test_augassign_wcr2()
     test_augassign_wcr3()
+    test_augassign_no_wcr()
+    test_augassign_no_wcr2()
