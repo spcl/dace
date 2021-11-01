@@ -2825,7 +2825,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 in1_subset.offset(wtarget_subset, True)
                 in1_memlet = Memlet.simple(
                     rtarget_name, ','.join([
-                        '__i%d + %d' % (i, s)
+                        '__i%d + %s' % (i, s)
                         for i, (s, _, _) in enumerate(in1_subset)
                     ]))
                 if op_name:
@@ -3257,16 +3257,10 @@ class ProgramVisitor(ExtNodeVisitor):
             # Self-copy check
             if result in self.views and new_name == self.views[result][1].data:
                 read_rng = self.views[result][1].subset
-                needs_copy = False
-                for i, sz in enumerate(new_rng.size()):
-                    # NOTE: We only have an issue with partial overlap of the
-                    # read and write subsets. This occurs when the range of
-                    # one of the dimensions is greater than one and the read
-                    # and write ranges (for that particular dimension) are not
-                    # the same.
-                    if sz != 1 and new_rng[i] != read_rng[i]:
-                        needs_copy = True
-                        break
+                try:
+                    needs_copy = not (new_rng.intersects(read_rng) == False)
+                except TypeError:
+                    needs_copy = True
                 if needs_copy:
                     view = self.sdfg.arrays[result]
                     cname, carr = self.sdfg.add_transient(result,
