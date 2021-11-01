@@ -694,11 +694,35 @@ class TaskletTransformer(ExtNodeTransformer):
         else:
             ignore_indices = []
             sym_rng = []
+            offset = []
             for i, r in enumerate(rng):
+                repl_dict = {}
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
                         sym_rng.append(sr)
+                        # NOTE: Assume that the i-th index of the range is
+                        # dependent on a local symbol s, i.e, rng[i] = f(s).
+                        # Therefore, the i-th index will not be squeezed
+                        # even if it has length equal to 1. However, it must
+                        # still be offsetted by f(min(sr)), so that the indices
+                        # for the squeezed connector start from 0.
+                        # Example:
+                        # Memlet range: [i+1, j, k+1]
+                        # k: local symbol with range(1, 4)
+                        # i,j: global symbols
+                        # Squeezed range: [f(k)] = [k+1]
+                        # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
+                        #                        [f(k)-f(1)] = [k-1]
+                        # NOTE: The code takes into account the case where an
+                        # index is dependent on multiple symbols. See also
+                        # tests/python_frontend/nested_name_accesses_test.py.
+                        step = sr[0][2]
+                        if (step < 0) == True:
+                            repl_dict[s] = sr[0][1]
+                        else:
+                            repl_dict[s] = sr[0][0]
+                offset.append(r[0].subs(repl_dict))
 
             if ignore_indices:
                 tmp_memlet = Memlet.simple(parent_name, rng)
@@ -709,14 +733,19 @@ class TaskletTransformer(ExtNodeTransformer):
                                                   r,
                                                   use_dst=use_dst)
 
-            squeezed_rng = copy.deepcopy(rng)
+            to_squeeze_rng = rng
+            if ignore_indices:
+                to_squeeze_rng = rng.offset_new(offset, True)
+            squeezed_rng = copy.deepcopy(to_squeeze_rng)
             non_squeezed = squeezed_rng.squeeze(ignore_indices)
             # TODO: Need custom shape computation here
             shape = squeezed_rng.size()
             for i, sr in zip(ignore_indices, sym_rng):
                 iMin, iMax, step = sr.ranges[0]
-                ts = rng.tile_sizes[i]
-                sqz_idx = squeezed_rng.ranges.index(rng.ranges[i])
+                if (step < 0) == True:
+                    iMin, iMax, step = iMax, iMin, -step
+                ts = to_squeeze_rng.tile_sizes[i]
+                sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
                 shape[sqz_idx] = ts * sympy.ceiling(
                     ((iMax.approx
                       if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
@@ -2926,11 +2955,38 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             ignore_indices = []
             sym_rng = []
+            offset = []
             for i, r in enumerate(rng):
+                repl_dict = {}
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
                         sym_rng.append(sr)
+                        # NOTE: Assume that the i-th index of the range is
+                        # dependent on a local symbol s, i.e, rng[i] = f(s).
+                        # Therefore, the i-th index will not be squeezed
+                        # even if it has length equal to 1. However, it must
+                        # still be offsetted by f(min(sr)), so that the indices
+                        # for the squeezed connector start from 0.
+                        # Example:
+                        # Memlet range: [i+1, j, k+1]
+                        # k: local symbol with range(1, 4)
+                        # i,j: global symbols
+                        # Squeezed range: [f(k)] = [k+1]
+                        # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
+                        #                        [f(k)-f(1)] = [k-1]
+                        # NOTE: The code takes into account the case where an
+                        # index is dependent on multiple symbols. See also
+                        # tests/python_frontend/nested_name_accesses_test.py.
+                        step = sr[0][2]
+                        if (step < 0) == True:
+                            repl_dict[s] = sr[0][1]
+                        else:
+                            repl_dict[s] = sr[0][0]
+                if repl_dict:
+                    offset.append(r[0].subs(repl_dict))
+                else:
+                    offset.append(0)
 
             if ignore_indices:
                 tmp_memlet = Memlet.simple(parent_name, rng)
@@ -2940,15 +2996,19 @@ class ProgramVisitor(ExtNodeVisitor):
                                                   parent_array, [s],
                                                   r,
                                                   use_dst=use_dst)
-
-            squeezed_rng = copy.deepcopy(rng)
+            to_squeeze_rng = rng
+            if ignore_indices:
+                to_squeeze_rng = rng.offset_new(offset, True)
+            squeezed_rng = copy.deepcopy(to_squeeze_rng)
             non_squeezed = squeezed_rng.squeeze(ignore_indices)
             # TODO: Need custom shape computation here
             shape = squeezed_rng.size()
             for i, sr in zip(ignore_indices, sym_rng):
                 iMin, iMax, step = sr.ranges[0]
-                ts = rng.tile_sizes[i]
-                sqz_idx = squeezed_rng.ranges.index(rng.ranges[i])
+                if (step < 0) == True:
+                    iMin, iMax, step = iMax, iMin, -step
+                ts = to_squeeze_rng.tile_sizes[i]
+                sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
                 shape[sqz_idx] = ts * sympy.ceiling(
                     ((iMax.approx
                       if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
