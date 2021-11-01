@@ -187,8 +187,8 @@ class Property:
         # If a custom getter is specified, use it
         if self.getter:
             return self.getter(obj)
-        if not hasattr(self, "attr_name"):
-            raise RuntimeError("Attribute name not set")
+        # if not hasattr(self, "attr_name"):
+        #     raise RuntimeError("Attribute name not set")
         # Otherwise look for attribute prefixed by "_"
         return getattr(obj, "_" + self.attr_name)
 
@@ -196,14 +196,14 @@ class Property:
         # If custom setter is specified, use it
         if self.setter:
             return self.setter(obj, val)
-        if not hasattr(self, "attr_name"):
-            raise RuntimeError("Attribute name not set")
+        # if not hasattr(self, "attr_name"):
+        #     raise RuntimeError("Attribute name not set")
         # Fail on None unless explicitly allowed
-        if val is None and not self.allow_none:
-            raise ValueError(
-                "None not allowed for property {} in class {}".format(
-                    self.attr_name,
-                    type(obj).__name__))
+        # if val is None and not self.allow_none:
+        #     raise ValueError(
+        #         "None not allowed for property {} in class {}".format(
+        #             self.attr_name,
+        #             type(obj).__name__))
 
         # Accept all DaCe/numpy typeclasses as Python native types
         if isinstance(val, np.number):
@@ -215,26 +215,26 @@ class Property:
         if isinstance(val, float) and self.dtype == int and val == int(val):
             val = int(val)
 
-        # Check if type matches before setting
-        if (self.dtype is not None and not isinstance(val, self.dtype)
-                and not (val is None and self.allow_none)):
-            if isinstance(val, str):
-                raise TypeError(
-                    "Received str for property {} of type {}. Use "
-                    "dace.properties.set_property_from_string or the "
-                    "from_string method of the property.".format(
-                        self.attr_name, self.dtype))
-            raise TypeError(
-                "Invalid type \"{}\" for property {}: expected {}".format(
-                    type(val).__name__, self.attr_name, self.dtype.__name__))
+        # # Check if type matches before setting
+        # if (self.dtype is not None and not isinstance(val, self.dtype)
+        #         and not (val is None and self.allow_none)):
+        #     if isinstance(val, str):
+        #         raise TypeError(
+        #             "Received str for property {} of type {}. Use "
+        #             "dace.properties.set_property_from_string or the "
+        #             "from_string method of the property.".format(
+        #                 self.attr_name, self.dtype))
+        #     raise TypeError(
+        #         "Invalid type \"{}\" for property {}: expected {}".format(
+        #             type(val).__name__, self.attr_name, self.dtype.__name__))
         # If the value has not yet been set, we cannot pass it to the enum
         # function. Fail silently if this happens
-        if self.choices is not None \
-                and isinstance(self.choices,(list, tuple, set)) \
-                and (val is not None or not self.allow_none):
-            if val not in self.choices:
-                raise ValueError("Value {} not present in choices: {}".format(
-                    val, self.choices))
+        # if self.choices is not None \
+        #         and isinstance(self.choices,(list, tuple, set)) \
+        #         and (val is not None or not self.allow_none):
+        #     if val not in self.choices:
+        #         raise ValueError("Value {} not present in choices: {}".format(
+        #             val, self.choices))
         setattr(obj, "_" + self.attr_name, val)
 
     # Python Properties of this Property class
@@ -702,7 +702,6 @@ class DictProperty(Property):
 
 
 class EnumProperty(Property):
-
     def __init__(self, dtype, *args, **kwargs):
         kwargs['dtype'] = dtype
         super().__init__(*args, **kwargs)
