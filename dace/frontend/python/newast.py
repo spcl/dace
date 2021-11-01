@@ -696,6 +696,7 @@ class TaskletTransformer(ExtNodeTransformer):
             sym_rng = []
             offset = []
             for i, r in enumerate(rng):
+                repl_dict = {}
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
@@ -713,11 +714,11 @@ class TaskletTransformer(ExtNodeTransformer):
                         # Squeezed range: [f(k)] = [k+1]
                         # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
                         #                        [f(k)-f(1)] = [k-1]
-                        # See also
+                        # NOTE: The code takes into account the case where an
+                        # index is dependent on multiple symbols. See also
                         # tests/python_frontend/nested_name_accesses_test.py.
-                        offset.append(r[0].subs({s:sr[0][0]}))
-                    else:
-                        offset.append(0)
+                        repl_dict[s] = sr[0][0]
+                offset.append(r[0].subs(repl_dict))
 
             if ignore_indices:
                 tmp_memlet = Memlet.simple(parent_name, rng)
@@ -2950,6 +2951,7 @@ class ProgramVisitor(ExtNodeVisitor):
             sym_rng = []
             offset = []
             for i, r in enumerate(rng):
+                repl_dict = {}
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
@@ -2967,11 +2969,11 @@ class ProgramVisitor(ExtNodeVisitor):
                         # Squeezed range: [f(k)] = [k+1]
                         # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
                         #                        [f(k)-f(1)] = [k-1]
-                        # See also
+                        # NOTE: The code takes into account the case where an
+                        # index is dependent on multiple symbols. See also
                         # tests/python_frontend/nested_name_accesses_test.py.
-                        offset.append(r[0].subs({s:sr[0][0]}))
-                    else:
-                        offset.append(0)
+                        repl_dict[s] = sr[0][0]
+                offset.append(r[0].subs(repl_dict))
 
             if ignore_indices:
                 tmp_memlet = Memlet.simple(parent_name, rng)
