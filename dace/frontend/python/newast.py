@@ -2801,32 +2801,42 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if wtarget_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
-                if wtarget_subset.size() == op_subset.size():
-                    in1_subset = copy.deepcopy(rtarget_subset)
-                    in1_subset.offset(wtarget_subset, True)
+                sqz_osub = copy.deepcopy(op_subset)
+                oidx = sqz_osub.squeeze()
+                sqz_wsub = copy.deepcopy(wtarget_subset)
+                widx = sqz_wsub.squeeze()
+                sqz_rsub = copy.deepcopy(rtarget_subset)
+                ridx = sqz_rsub.squeeze()
+                if (sqz_wsub.size() == sqz_osub.size() and
+                        sqz_wsub.size() == sqz_rsub.size()):
+                    r_to_w = {i: j for i, j in zip(ridx, widx)}
+                    o_to_w = {i: j for i, j in zip(oidx, widx)}
+                    # NOTE: Since 'sqz_wsub is squeezed, 'start' should be
+                    # equal to 0
+                    map_range = {
+                        f'__i{widx[i]}': f'{start}:{end} + 1:{step}'
+                        for i, (start, end, step) in enumerate(sqz_wsub)
+                    }
                     in1_memlet = Memlet.simple(
                         rtarget_name, ','.join([
-                            '__i%d + %s' % (i, s)
-                            for i, (s, _, _) in enumerate(in1_subset)
+                            f'__i{r_to_w[i]} + {s}' if i in ridx else str(s)
+                            for i, (s, _, _) in enumerate(rtarget_subset)
                         ]))
-                    in2_subset = copy.deepcopy(op_subset)
-                    in2_subset.offset(wtarget_subset, True)
                     in2_memlet = Memlet.simple(
                         op_name, ','.join([
-                            '__i%d + %s' % (i, s)
-                            for i, (s, _, _) in enumerate(in2_subset)
+                            f'__i{o_to_w[i]} + {s}' if i in oidx else str(s)
+                            for i, (s, _, _) in enumerate(op_subset)
                         ]))
                     out_memlet = Memlet.simple(
-                        wtarget_name, ','.join(
-                            ['__i%d' % i for i in range(len(wtarget_subset))]))
+                        wtarget_name, ','.join([
+                            f'__i{i} + {s}' if i in widx else str(s)
+                            for i, (s, _, _) in enumerate(wtarget_subset)
+                        ]))
                     if boolarr is not None:
                         in1_memlet.dynamic = True
                         out_memlet.dynamic = True
                     tasklet_code += '__out = __in1 {op} __in2'.format(op=op)
-                    state.add_mapped_tasklet(state.label, {
-                        '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
-                        for i, (start, end, step) in enumerate(wtarget_subset)
-                    }, {
+                    state.add_mapped_tasklet(state.label, map_range, {
                         '__in1': in1_memlet,
                         '__in2': in2_memlet,
                         **input_memlets,
