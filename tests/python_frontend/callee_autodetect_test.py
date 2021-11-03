@@ -154,6 +154,25 @@ def test_nested_autoparse_dec_fail():
         notworking3(A)
 
 
+def freefunction2(A):
+    A += 2
+
+
+def test_autodetect_function_in_for():
+    """ 
+    Tests auto-detection of parsable free functions in a for loop.
+    """
+    @dace
+    def adff(A):
+        for _ in range(5):
+            freefunction2(A)
+
+    A = np.random.rand(20)
+    ref = np.copy(A)
+    adff(A)
+    assert np.allclose(A, ref + 2 * 5)
+
+
 if __name__ == '__main__':
     test_autodetect_function()
     test_autodetect_method()
@@ -164,3 +183,4 @@ if __name__ == '__main__':
     test_nested_recursion_fail()
     test_nested_recursion2_fail()
     test_nested_autoparse_dec_fail()
+    test_autodetect_function_in_for()
