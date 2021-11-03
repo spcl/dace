@@ -106,6 +106,10 @@ def parse_connectors(node, state, sdfg):
         field_to_edge[field] = e
         vector_lengths[field] = desc.veclen
         shape = check_stencil_shape(shape, desc.shape)
+    # Adjust shape for vector length
+    vector_length = max(vector_lengths.values())
+    shape = tuple(s * vector_length if i == len(shape) - 1 else s
+                  for i, s in enumerate(shape))
     return (inputs, outputs, shape, field_to_data, field_to_desc, field_to_edge,
             vector_lengths)
 
@@ -191,19 +195,28 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
             # Loop over each index of this access
             for i, offset in enumerate(indices):
                 if i == len(indices) - 1 and dtype.veclen > 1:
-                    unroll_boundary = " + i_unroll"
-                    unroll_write = " - i_unroll"
+                    unroll_boundary = f"*{dtype.veclen} + i_unroll"
+                    unroll_write = f"*{dtype.veclen} - i_unroll"
                 else:
                     unroll_boundary = ""
                     unroll_write = ""
                 if offset < 0:
-                    offset = sym2cpp(-offset)
-                    term = f"_i{i}{unroll_boundary} < {offset}"
-                    if offset <= -veclen:
-                        cond_global.add(f"_i{i}{unroll_write} < {offset}")
+                    offset_str = sym2cpp(-offset)
+                    term = f"_i{i}{unroll_boundary} < {offset_str}"
+                    if i != len(indices) - 1:
+                        offset_str = sym2cpp(-offset)
+                        cond_global.add(f"_i{i} < {offset_str}")
+                    elif offset <= -veclen:
+                        offset_str = sym2cpp(-offset // veclen)
+                        cond_global.add(f"_i{i} < {offset_str}")
                 elif offset > 0:
-                    offset = sym2cpp(shape[i] - offset)
-                    term = f"_i{i}{unroll_offset} >= {offset}"
+                    offset_str = sym2cpp(shape[i] - offset)
+                    term = f"_i{i}{unroll_boundary} >= {offset_str}"
+                    if i != len(indices) - 1:
+                        cond_global.add(f"_i{i} >= {offset_str}")
+                    elif offset >= veclen:
+                        offset_str = sym2cpp((shape[i] - offset) // veclen)
+                        cond_global.add(f"_i{i} >= {offset_str}")
                 else:
                     continue
                 cond.add(term)
@@ -229,7 +242,7 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
                         # If not a float, assume it's some kind of integer
                         boundary_val = np.iinfo(dtype.type).min
                     # Add this to the output condition
-                    oob_cond |= cond
+                    oob_cond |= cond_global
                 else:
                     raise ValueError(
                         f"Unsupported boundary condition type: {btype}")
