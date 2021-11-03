@@ -621,13 +621,13 @@ const unsigned long int _dace_fpga_begin_us = std::chrono::duration_cast<std::ch
 """)
             # Create a vector to collect all events that are being generated to allow
             # waiting before exiting this state
-            kernel_host_stream.write("std::vector<cl::Event> all_events;")
+            kernel_host_stream.write("std::vector<hlslib::ocl::Event> all_events;")
 
             # Kernels invocations
             kernel_host_stream.write(state_host_body_stream.getvalue())
 
             # Wait for all events
-            kernel_host_stream.write("cl::Event::waitForEvents(all_events);")
+            kernel_host_stream.write("hlslib::ocl::WaitForEvents(all_events);")
 
             # Instrumentation
             if state.instrument == dtypes.InstrumentationType.FPGA:
@@ -2486,7 +2486,7 @@ std::cout << "FPGA OpenCL kernel \\"{kernel_name}\\" executed in " << elapsed <<
     {{
 cl_ulong event_start = 0;
 cl_ulong event_end = 0;
-cl::Event const &event = all_events[{kernel_index}];
+hlslib::ocl::Event const &event = all_events[{kernel_index}];
 event.getProfilingInfo(CL_PROFILING_COMMAND_START, &event_start);
 event.getProfilingInfo(CL_PROFILING_COMMAND_END, &event_end);
 if (event_start < first_start) {{
