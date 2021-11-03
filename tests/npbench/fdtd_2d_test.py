@@ -105,4 +105,17 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
 
     return sdfg
 
-# run_fdtd_2d(dace.dtypes.DeviceType.FPGA)
+
+
+def test_cpu():
+    run_fdtd_2d(dace.dtypes.DeviceType.CPU)
+
+
+@pytest.mark.gpu
+def test_gpu():
+    run_fdtd_2d(dace.dtypes.DeviceType.GPU)
+
+
+@fpga_test(assert_ii_1=False)
+def test_fpga():
+    return run_fdtd_2d(dace.dtypes.DeviceType.FPGA)
