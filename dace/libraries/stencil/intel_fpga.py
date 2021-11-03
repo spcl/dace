@@ -49,7 +49,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
         iterator_mapping = make_iterator_mapping(node, field_accesses, shape)
         vector_length = validate_vector_lengths(vector_lengths,
                                                 iterator_mapping)
-        shape_vectorized = tuple(s // vector_length if i == len(shape) -
+        shape_vectorized = tuple(s / vector_length if i == len(shape) -
                                  1 else s for i, s in enumerate(shape))
 
         # Extract which fields to read from streams and what to buffer
