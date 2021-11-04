@@ -14,6 +14,10 @@ from dace.sdfg import SDFG, SDFGState, utils as sdutil, graph as gr
 from dace.libraries.standard import Gearbox
 
 
+def isInt(i):
+    return isinstance(i, int) or isinstance(i, sympy.core.numbers.Integer)
+
+
 def _collect_map_ranges(
     state: SDFGState, memlet_path: List[gr.MultiConnectorEdge[mm.Memlet]]
 ) -> List[Tuple[str, subsets.Range]]:
@@ -243,11 +247,7 @@ class StreamingMemory(xf.Transformation):
             # Other strides have to be divisiable by vector size
             for stride in strides:
 
-                # If is symbol, potentially unsafe
-                if isinstance(stride, symbol):
-                    continue
-
-                if stride % vector_size != 0:
+                if isInt(stride) and stride % vector_size != 0:
                     return False
 
             # Check if map has the right access pattern
@@ -288,10 +288,9 @@ class StreamingMemory(xf.Transformation):
                         ranges = list(innermost_edge.dst.map.range)
 
                     # Check is correct access pattern
-
                     # Correct ranges in map
-                    if isinstance(ranges[-1][1],
-                                  int) and ranges[-1][1] % vector_size != 0:
+                    if isInt(ranges[-1]
+                             [1]) and (ranges[-1][1] + 1) % vector_size != 0:
                         return False
 
                     if ranges[-1][2] != 1:
@@ -393,16 +392,16 @@ class StreamingMemory(xf.Transformation):
                 vector_size = int(self.memory_buffering_target_bytes /
                                   desc.dtype.bytes)
 
-                if not isinstance(sdfg.arrays[dnode.data].shape[-1], int):
+                if not isInt(sdfg.arrays[dnode.data].shape[-1]):
                     warnings.warn(
-                        "Using the MemoryBuffering transformation is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
+                        "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0"
                         .format(sym=sdfg.arrays[dnode.data].shape[-1],
                                 vec=vector_size))
 
                 for i in sdfg.arrays[dnode.data].strides:
-                    if not isinstance(i, int):
+                    if not isInt(i):
                         warnings.warn(
-                            "Using the MemoryBuffering transformation is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
+                            "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0"
                             .format(sym=i, vec=vector_size))
 
                 if self.expr_index == 0:  # Read
@@ -607,11 +606,10 @@ class StreamingMemory(xf.Transformation):
                     if isinstance(edge_subset[-1], symbol) and str(
                             edge_subset[-1]) == map.params[-1]:
 
-                        if not isinstance(ranges[-1][1][1],
-                                          sympy.core.numbers.Integer):
+                        if not isInt(ranges[-1][1][1]):
 
                             warnings.warn(
-                                "Using the MemoryBuffering transformation is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
+                                "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0"
                                 .format(sym=ranges[-1][1][1].args[1],
                                         vec=vector_size))
 
@@ -626,10 +624,9 @@ class StreamingMemory(xf.Transformation):
                             if isinstance(
                                     arg, symbol) and str(arg) == map.params[-1]:
 
-                                if not isinstance(ranges[-1][1][1],
-                                                  sympy.core.numbers.Integer):
+                                if not isInt(ranges[-1][1][1]):
                                     warnings.warn(
-                                        "Using the MemoryBuffering transformation is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
+                                        "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0"
                                         .format(sym=ranges[-1][1][1].args[1],
                                                 vec=vector_size))
 

@@ -23,6 +23,24 @@ def vecadd_1_streaming(A: dace.float32[N], B: dace.float32[N]):
 
 
 @dace.program
+def vecadd_1_streaming_non_appl_0(A: dace.float32[N], B: dace.float32[N]):
+    for i in dace.map[0:61]:
+        with dace.tasklet:
+            in_A << A[i]
+            out >> B[i]
+            out = in_A + 1.0
+
+
+@dace.program
+def vecadd_1_streaming_non_appl_1(A: dace.float32[N], B: dace.float32[N]):
+    for i in dace.map[0:N:2]:
+        with dace.tasklet:
+            in_A << A[i]
+            out >> B[i]
+            out = in_A + 1.0
+
+
+@dace.program
 def vecadd_1_streaming_symbol(A: dace.float32[N_s], B: dace.float32[N_s]):
     B[:] = A + 1.0
 
@@ -651,9 +669,8 @@ def test_mem_buffer_map_order():
 
 @xilinx_test()
 def test_mem_buffer_not_applicable():
-    # Make SDFG
+
     sdfg: dace.SDFG = vecadd_1_streaming.to_sdfg()
-    # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
     assert sdfg.apply_transformations_repeated(
@@ -672,7 +689,6 @@ def test_mem_buffer_not_applicable():
             "memory_buffering_target_bytes": 0
         }]) == 0
 
-
     sdfg2: dace.SDFG = matadd_streaming_bad_stride.to_sdfg()
     sdfg2.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
@@ -684,18 +700,40 @@ def test_mem_buffer_not_applicable():
                                                     dace.StorageType.FPGA_Local,
                                                 }]) == 0
 
+    sdfg3: dace.SDFG = vecadd_1_streaming_non_appl_0.to_sdfg()
+    sdfg3.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    assert sdfg3.apply_transformations_repeated(sm.StreamingMemory,
+                                                options=[{
+                                                    'use_memory_buffering':
+                                                    True,
+                                                    "storage":
+                                                    dace.StorageType.FPGA_Local,
+                                                }]) == 0
+
+    sdfg4: dace.SDFG = vecadd_1_streaming_non_appl_1.to_sdfg()
+    sdfg4.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    assert sdfg4.apply_transformations_repeated(sm.StreamingMemory,
+                                                options=[{
+                                                    'use_memory_buffering':
+                                                    True,
+                                                    "storage":
+                                                    dace.StorageType.FPGA_Local,
+                                                }]) == 0
+
     return []
 
 
 if __name__ == "__main__":
-    test_streaming_mem(None)
-    test_streaming_mem_mapnests(None)
-    test_multistream(None)
-    test_multistream_with_deps(None)
-    test_streaming_composition_matching(None)
-    test_streaming_composition(None)
-    test_streaming_composition_mapnests(None)
-    test_streaming_and_composition(None)
+    # test_streaming_mem(None)
+    # test_streaming_mem_mapnests(None)
+    # test_multistream(None)
+    # test_multistream_with_deps(None)
+    # test_streaming_composition_matching(None)
+    # test_streaming_composition(None)
+    # test_streaming_composition_mapnests(None)
+    # test_streaming_and_composition(None)
 
     test_mem_buffer_vec_add_1(None)
     test_mem_buffer_vec_add_1_symbolic(None)
