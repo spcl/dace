@@ -6,10 +6,9 @@ from typing import Dict, List, Tuple
 import networkx as nx
 import warnings
 
-import dace
 from dace.transformation import transformation as xf
 from dace import (data, dtypes, nodes, properties, registry, memlet as mm,
-                  subsets, symbolic)
+                  subsets, symbolic, symbol, Memlet)
 from dace.sdfg import SDFG, SDFGState, utils as sdutil, graph as gr
 from dace.libraries.standard import Gearbox
 
@@ -244,7 +243,7 @@ class StreamingMemory(xf.Transformation):
             for stride in strides:
 
                 # If is symbol, potentially unsafe
-                if isinstance(stride, dace.symbol):
+                if isinstance(stride, symbol):
                     continue
 
                 if stride % vector_size != 0:
@@ -286,7 +285,7 @@ class StreamingMemory(xf.Transformation):
                         map_subset = innermost_edge.dst.map.params.copy()
 
                     # Check is correct access pattern
-                    if not isinstance(edge_subset[-1], dace.symbol):
+                    if not isinstance(edge_subset[-1], symbol):
                         return False
 
                     if str(edge_subset[-1]) != map_subset[-1]:
@@ -369,14 +368,14 @@ class StreamingMemory(xf.Transformation):
                 vector_size = int(self.memory_buffering_target_bytes /
                                   desc.dtype.bytes)
 
-                if isinstance(sdfg.arrays[dnode.data].shape[-1], dace.symbol):
+                if isinstance(sdfg.arrays[dnode.data].shape[-1], symbol):
                     warnings.warn(
                         "Using the MemoryBuffering transformation is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
                         .format(sym=sdfg.arrays[dnode.data].shape[-1],
                                 vec=vector_size))
 
                 for i in sdfg.arrays[dnode.data].strides:
-                    if isinstance(i, dace.symbol):
+                    if isinstance(i, symbol):
                         warnings.warn(
                             "Using the MemoryBuffering transformation is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
                             .format(sym=i, vec=vector_size))
@@ -420,13 +419,13 @@ class StreamingMemory(xf.Transformation):
                 state.add_memlet_path(read_to_gearbox,
                                       gearbox,
                                       dst_conn="from_memory",
-                                      memlet=dace.Memlet(
+                                      memlet=Memlet(
                                           input_gearbox_name + "[0]",
                                           volume=gearbox_read_volume))
                 state.add_memlet_path(gearbox,
                                       write_from_gearbox,
                                       src_conn="to_kernel",
-                                      memlet=dace.Memlet(
+                                      memlet=Memlet(
                                           output_gearbox_name + "[0]",
                                           volume=gearbox_write_volume))
 
