@@ -239,7 +239,7 @@ class StreamingMemory(xf.Transformation):
                               desc.dtype.bytes)
             strides.pop()  # Remove last element since we already checked it
 
-            # Other strides has to be divisiable by vector size
+            # Other strides have to be divisiable by vector size
             for stride in strides:
 
                 # If is symbol, potentially unsafe
