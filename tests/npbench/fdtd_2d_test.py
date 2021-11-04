@@ -9,7 +9,7 @@ from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition, MapFusion
 from dace.transformation.auto.auto_optimize import auto_optimize
-
+import argparse
 
 TMAX, NX, NY = (dc.symbol(s, dtype=dc.int32) for s in ('TMAX', 'NX', 'NY'))
 
@@ -85,7 +85,6 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
         assert sm_applied == 2
 
         sdfg.apply_transformations_repeated([InlineSDFG])
-
         # In this case, we want to generate the top-level state as an host-based state,
         # not an FPGA kernel. We need to explicitly indicate that
         sdfg.states()[0].location["is_FPGA_kernel"] = False
@@ -119,3 +118,24 @@ def test_gpu():
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_fdtd_2d(dace.dtypes.DeviceType.FPGA)
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-t",
+        "--target",
+        default='cpu',
+        choices=['cpu', 'gpu', 'fpga'],
+        help='Target platform')
+
+    args = vars(parser.parse_args())
+    target = args["target"]
+
+    if target == "cpu":
+        run_fdtd_2d(dace.dtypes.DeviceType.CPU)
+    elif target == "gpu":
+        run_fdtd_2d(dace.dtypes.DeviceType.GPU)
+    elif target == "fpga":
+        run_fdtd_2d(dace.dtypes.DeviceType.FPGA)

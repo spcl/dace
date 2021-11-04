@@ -5,6 +5,7 @@ import dace.dtypes
 import numpy as np
 import dace as dc
 import pytest
+import argparse
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
@@ -100,3 +101,23 @@ def test_gpu():
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_cholesky(dace.dtypes.DeviceType.FPGA)
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-t",
+        "--target",
+        default='cpu',
+        choices=['cpu', 'gpu', 'fpga'],
+        help='Target platform')
+
+    args = vars(parser.parse_args())
+    target = args["target"]
+
+    if target == "cpu":
+        run_cholesky(dace.dtypes.DeviceType.CPU)
+    elif target == "gpu":
+        run_cholesky(dace.dtypes.DeviceType.GPU)
+    elif target == "fpga":
+        run_cholesky(dace.dtypes.DeviceType.FPGA)
