@@ -5,6 +5,7 @@ import copy
 from typing import Dict, List, Tuple
 import networkx as nx
 import warnings
+import sympy
 
 from dace.transformation import transformation as xf
 from dace import (data, dtypes, nodes, properties, registry, memlet as mm,
@@ -281,14 +282,38 @@ class StreamingMemory(xf.Transformation):
 
                     if self.expr_index == 0:
                         map_subset = innermost_edge.src.map.params.copy()
+                        ranges = list(innermost_edge.src.map.range)
                     else:
                         map_subset = innermost_edge.dst.map.params.copy()
+                        ranges = list(innermost_edge.dst.map.range)
 
                     # Check is correct access pattern
-                    if not isinstance(edge_subset[-1], symbol):
+
+                    # Correct ranges in map
+                    if isinstance(ranges[-1][1],
+                                  int) and ranges[-1][1] % vector_size != 0:
                         return False
 
-                    if str(edge_subset[-1]) != map_subset[-1]:
+                    if ranges[-1][2] != 1:
+                        return False
+
+                    # Correct access in array
+                    if isinstance(edge_subset[-1], symbol) and str(
+                            edge_subset[-1]) == map_subset[-1]:
+                        pass
+                    elif isinstance(edge_subset[-1], sympy.core.add.Add):
+
+                        counter: int = 0
+
+                        for arg in edge_subset[-1].args:
+                            if isinstance(
+                                    arg, symbol) and str(arg) == map_subset[-1]:
+                                counter += 1
+
+                        if counter != 1:
+                            return False
+
+                    else:
                         return False
 
             # Array has to be global array
@@ -368,14 +393,14 @@ class StreamingMemory(xf.Transformation):
                 vector_size = int(self.memory_buffering_target_bytes /
                                   desc.dtype.bytes)
 
-                if isinstance(sdfg.arrays[dnode.data].shape[-1], symbol):
+                if not isinstance(sdfg.arrays[dnode.data].shape[-1], int):
                     warnings.warn(
                         "Using the MemoryBuffering transformation is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
                         .format(sym=sdfg.arrays[dnode.data].shape[-1],
                                 vec=vector_size))
 
                 for i in sdfg.arrays[dnode.data].strides:
-                    if isinstance(i, symbol):
+                    if not isinstance(i, int):
                         warnings.warn(
                             "Using the MemoryBuffering transformation is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
                             .format(sym=i, vec=vector_size))
@@ -419,9 +444,8 @@ class StreamingMemory(xf.Transformation):
                 state.add_memlet_path(read_to_gearbox,
                                       gearbox,
                                       dst_conn="from_memory",
-                                      memlet=Memlet(
-                                          input_gearbox_name + "[0]",
-                                          volume=gearbox_read_volume))
+                                      memlet=Memlet(input_gearbox_name + "[0]",
+                                                    volume=gearbox_read_volume))
                 state.add_memlet_path(gearbox,
                                       write_from_gearbox,
                                       src_conn="to_kernel",
@@ -580,11 +604,39 @@ class StreamingMemory(xf.Transformation):
                     ]
 
                     # Change range of map
-                    if str(edge_subset[-1]) == map.params[-1]:
+                    if isinstance(edge_subset[-1], symbol) and str(
+                            edge_subset[-1]) == map.params[-1]:
+
+                        if not isinstance(ranges[-1][1][1],
+                                          sympy.core.numbers.Integer):
+
+                            warnings.warn(
+                                "Using the MemoryBuffering transformation is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
+                                .format(sym=ranges[-1][1][1].args[1],
+                                        vec=vector_size))
+
                         ranges[-1] = (ranges[-1][0],
                                       (ranges[-1][1][0],
                                        (ranges[-1][1][1] + 1) / vector_size - 1,
                                        ranges[-1][1][2]))
+
+                    elif isinstance(edge_subset[-1], sympy.core.add.Add):
+
+                        for arg in edge_subset[-1].args:
+                            if isinstance(
+                                    arg, symbol) and str(arg) == map.params[-1]:
+
+                                if not isinstance(ranges[-1][1][1],
+                                                  sympy.core.numbers.Integer):
+                                    warnings.warn(
+                                        "Using the MemoryBuffering transformation is potential unsafe since {sym} is a symbolic value. There should be no issue if {sym} % {vec} == 0"
+                                        .format(sym=ranges[-1][1][1].args[1],
+                                                vec=vector_size))
+
+                                ranges[-1] = (ranges[-1][0], (
+                                    ranges[-1][1][0],
+                                    (ranges[-1][1][1] + 1) / vector_size - 1,
+                                    ranges[-1][1][2]))
 
                 maps.append(
                     state.add_map(f'__s{opname}_{mapname}', ranges,
