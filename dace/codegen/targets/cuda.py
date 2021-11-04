@@ -27,6 +27,7 @@ from dace.codegen.targets.cpp import (sym2cpp, unparse_cr, unparse_cr_split,
                                       codeblock_to_cpp)
 
 from dace.codegen import cppunparse
+from dace.transformation import helpers as xfh
 
 
 def prod(iterable):
@@ -69,6 +70,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self._block_dims = None
         self._grid_dims = None
         self._kernel_map = None
+        self._scope_has_collaborative_copy = False
         target_type = "" if self.backend == 'cuda' else self.backend
         self._codeobject = CodeObject(sdfg.name + '_' + 'cuda',
                                       '',
@@ -977,14 +979,25 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             state_dfg = sdfg.nodes()[state_id]
             sdict = state_dfg.scope_dict()
+            schedule_node = src_node
             if scope_contains_scope(sdict, src_node, dst_node):
-                inner_schedule = dst_schedule
+                schedule_node = dst_node
+
+            state = state_dfg
+            while (schedule_node is None
+                   or not isinstance(schedule_node, nodes.MapEntry)
+                   or schedule_node.map.schedule
+                   == dtypes.ScheduleType.Sequential):
+                ret = xfh.get_parent_map(state, schedule_node)
+                if ret is None:
+                    schedule_node = None
+                    break
+                schedule_node, state = ret
+
+            if schedule_node is None:
+                inner_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[None]
             else:
-                inner_schedule = sdict[src_node]
-                if inner_schedule is not None:
-                    inner_schedule = inner_schedule.map.schedule
-            if inner_schedule is None:  # Top-level schedule
-                inner_schedule = self._toplevel_schedule
+                inner_schedule = schedule_node.map.schedule
 
             # Collaborative load
             if inner_schedule == dtypes.ScheduleType.GPU_Device:
@@ -999,7 +1012,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 funcname = 'dace::%sTo%s%dD' % (_get_storagename(src_storage),
                                                 _get_storagename(dst_storage),
                                                 dims)
-
+                self._scope_has_collaborative_copy = True
                 accum = ''
                 custom_reduction = []
                 if memlet.wcr is not None:
@@ -1011,6 +1024,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                     str(redtype)[str(redtype).find('.') + 1:])
                         reduction_tmpl = '<%s>' % credtype
                     else:
+                        dtype = dst_node.desc(sdfg).dtype
                         custom_reduction = [unparse_cr(sdfg, memlet.wcr, dtype)]
                     accum = '::template Accum%s' % reduction_tmpl
 
@@ -1024,7 +1038,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                              type=dst_node.desc(sdfg).dtype.ctype,
                              bdims=', '.join(_topy(self._block_dims)),
                              dststrides=', '.join(_topy(dst_strides)),
-                             is_async='false'
+                             is_async='true'
                              if state_dfg.out_degree(dst_node) > 0 else 'true',
                              accum=accum,
                              args=', '.join([src_expr] + _topy(src_strides) +
@@ -1040,7 +1054,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                              bdims=', '.join(_topy(self._block_dims)),
                              copysize=', '.join(_topy(copy_shape)),
                              dststrides=', '.join(_topy(dst_strides)),
-                             is_async='false'
+                             is_async='true'
                              if state_dfg.out_degree(dst_node) > 0 else 'true',
                              accum=accum,
                              args=', '.join([src_expr] + _topy(src_strides) +
@@ -1118,6 +1132,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                        function_stream,
                                        callsite_stream,
                                        generate_state_footer=False)
+
+            # Reset thread-block-level information
+            self._scope_has_collaborative_copy = False
+
             if state.nosync == False:
                 streams_to_sync = set()
                 for node in state.sink_nodes():
@@ -1172,7 +1190,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
                         and state.in_degree(node) == 0
                         and state.out_degree(node) > 0):
-                    callsite_stream.write('__syncthreads();', sdfg, state_id)
+                    if not self._scope_has_collaborative_copy:
+                        callsite_stream.write('__syncthreads();', sdfg,
+                                              state_id)
                     break
 
         # In GPU_Persistent scopes, states need global barriers between them,
@@ -2102,13 +2122,23 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         # Generate all index arguments for block
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+            if self._scope_has_collaborative_copy:
+                # Emit post-copy synchronization
+                callsite_stream.write('__syncthreads();', sdfg, state_id,
+                                      scope_entry)
+                # Reset thread-block-level information
+                self._scope_has_collaborative_copy = False
+
             brange = subsets.Range(scope_map.range[::-1])
             kdims = brange.size()
             dsym = [
                 symbolic.symbol('__DAPT%d' % i, nonnegative=True, integer=True)
                 for i in range(len(brange))
             ]
-            dsym_end = [d + bs - 1 for d, bs in zip(dsym, self._block_dims)]
+            dsym_end = [
+                d + (bs * rng[2]) - 1
+                for d, bs, rng in zip(dsym, self._block_dims, brange)
+            ]
             tidx = brange.coord_at(dsym)
 
             # First three dimensions are evaluated directly
@@ -2153,17 +2183,31 @@ void  *{kname}_args[] = {{ {kargs} }};
                 condition = ''
 
                 # Optimize conditions if they are always true
+                #############################################
+
+                # Block range start
                 if i >= 3 or (dsym[i] >= minel) != True:
                     condition += '%s >= %s' % (v, _topy(minel))
-                if i >= 3 or (dsym_end[i] < maxel) != True:
+
+                # Special case: block size is exactly the range of the map (0:b)
+                if i >= 3:
+                    skipcond = False
+                else:
+                    skipcond = dsym_end[i].subs({dsym[i]: minel}) == maxel
+
+                # Block range end
+                if i >= 3 or (not skipcond and (dsym_end[i] < maxel) != True):
                     if len(condition) > 0:
                         condition += ' && '
                     condition += '%s < %s' % (v, _topy(maxel + 1))
+
+                # Emit condition in code
                 if len(condition) > 0:
                     callsite_stream.write('if (%s) {' % condition, sdfg,
                                           state_id, scope_entry)
                 else:
                     callsite_stream.write('{', sdfg, state_id, scope_entry)
+
         ##########################################################
 
         # need to handle subgraphs appropriately if they contain
@@ -2174,10 +2218,10 @@ void  *{kname}_args[] = {{ {kargs} }};
                 for node in dfg_scope.nodes()):
 
             subgraphs = dace.sdfg.concurrent_subgraphs(dfg_scope)
-            for dfg in subgraphs:
+            for subdfg in subgraphs:
                 components = dace.sdfg.utils.separate_maps(
                     sdfg.nodes()[state_id],
-                    dfg,
+                    subdfg,
                     dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
                 )
 
@@ -2218,7 +2262,9 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         # If there are any other threadblock maps down the road,
         # synchronize the thread-block / grid
-        if len(next_scopes) > 0:
+        parent_scope, _ = xfh.get_parent_map(dfg, scope_entry)
+        if (len(next_scopes) > 0
+                or parent_scope.schedule == dtypes.ScheduleType.Sequential):
             # Thread-block synchronization
             if scope_entry.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
                 callsite_stream.write('__syncthreads();', sdfg, state_id,
