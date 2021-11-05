@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the StreamingMemory transformation. """
 import copy
+
+from numpy.core.numeric import allclose
 import dace
 import dace.libraries.blas
 import networkx as nx
@@ -49,6 +51,14 @@ def vecadd_1_streaming_symbol(A: dace.float32[N_s], B: dace.float32[N_s]):
 def vecadd_streaming(A: dace.float32[N], B: dace.float32[N],
                      C: dace.float32[N]):
     C[:] = A + B
+
+
+def vecadd_streaming_type(type0, type1, type2):
+    @dace.program
+    def vecadd_streaming_type_kernel(A: type0[N], B: type1[N], C: type2[N]):
+        C[:] = A + B
+
+    return vecadd_streaming_type_kernel
 
 
 @dace.program
@@ -423,6 +433,96 @@ def test_mem_buffer_vec_add():
     return sdfg
 
 
+def test_mem_buffer_vec_add_types(dace_type0, dace_type1, dace_type2, np_type0,
+                                  np_type1, np_type2):
+
+    sdfg: dace.SDFG = vecadd_streaming_type(dace_type0, dace_type1,
+                                            dace_type2).to_sdfg()
+
+    sdfg.apply_transformations([
+        FPGATransformSDFG,
+        InlineSDFG,
+    ])
+
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
+                                               options=[{
+                                                   'use_memory_buffering':
+                                                   True,
+                                                   "storage":
+                                                   dace.StorageType.FPGA_Local
+                                               }]) == 3
+
+    # Run verification
+    A = (np.random.rand(N) * 100).astype(np_type0)
+    B = (np.random.rand(N) * 100).astype(np_type1)
+    C = (np.random.rand(N) * 100).astype(np_type2)
+
+    sdfg(A=A, B=B, C=C)
+
+    diff = np.linalg.norm(C - (A + B))
+    assert diff <= 1e-5
+
+    return sdfg
+
+
+@xilinx_test()
+def test_mem_buffer_vec_add_float16():
+    return test_mem_buffer_vec_add_types(dace.float16, dace.float16,
+                                         dace.float16, np.float16, np.float16,
+                                         np.float16)
+
+
+@xilinx_test()
+def test_mem_buffer_vec_add_float32():
+    return test_mem_buffer_vec_add_types(dace.float32, dace.float32,
+                                         dace.float32, np.float32, np.float32,
+                                         np.float32)
+
+
+@xilinx_test()
+def test_mem_buffer_vec_add_float64():
+    return test_mem_buffer_vec_add_types(dace.float64, dace.float64,
+                                         dace.float64, np.float64, np.float64,
+                                         np.float64)
+
+
+@xilinx_test()
+def test_mem_buffer_vec_add_int8():
+    return test_mem_buffer_vec_add_types(dace.int8, dace.int8, dace.int8,
+                                         np.int8, np.int8, np.int8)
+
+
+@xilinx_test()
+def test_mem_buffer_vec_add_int16():
+    return test_mem_buffer_vec_add_types(dace.int16, dace.int16, dace.int16,
+                                         np.int16, np.int16, np.int16)
+
+
+@xilinx_test()
+def test_mem_buffer_vec_add_int32():
+    return test_mem_buffer_vec_add_types(dace.int32, dace.int32, dace.int32,
+                                         np.int32, np.int32, np.int32)
+
+
+@xilinx_test()
+def test_mem_buffer_vec_add_int64():
+    return test_mem_buffer_vec_add_types(dace.int64, dace.int64, dace.int64,
+                                         np.int64, np.int64, np.int64)
+
+
+@xilinx_test()
+def test_mem_buffer_vec_add_mixed_float():
+    return test_mem_buffer_vec_add_types(dace.float16, dace.float32,
+                                         dace.float64, np.float16, np.float32,
+                                         np.float64)
+
+
+@xilinx_test()
+def test_mem_buffer_vec_add_mixed_int():
+    return test_mem_buffer_vec_add_types(dace.int16, dace.int32, dace.int64,
+                                         np.int16, np.int32, np.int64)
+
+
 @xilinx_test()
 def test_mem_buffer_mat_add():
     # Make SDFG
@@ -661,8 +761,7 @@ def test_mem_buffer_map_order():
 
     sdfg(A=A, B=B, C=C, D=D, E=E, F=F, G=G)
 
-    diff = np.linalg.norm(G_sol - G)
-    assert diff <= 1e-4
+    assert allclose(G_sol, G)
 
     return sdfg
 
@@ -735,15 +834,25 @@ if __name__ == "__main__":
     # test_streaming_composition_mapnests(None)
     # test_streaming_and_composition(None)
 
-    test_mem_buffer_vec_add_1(None)
-    test_mem_buffer_vec_add_1_symbolic(None)
-    test_mem_buffer_vec_add(None)
-    test_mem_buffer_mat_add(None)
-    test_mem_buffer_mat_add_symbol(None)
-    test_mem_buffer_tensor_add(None)
-    test_mem_buffer_mapnests(None)
-    test_mem_buffer_multistream(None)
-    test_mem_buffer_multistream_with_deps(None)
-    test_mem_buffer_mat_mul(None)
-    test_mem_buffer_not_applicable(None)
-    test_mem_buffer_map_order(None)
+    # test_mem_buffer_vec_add_1(None)
+    # test_mem_buffer_vec_add_1_symbolic(None)
+    # test_mem_buffer_vec_add(None)
+    # test_mem_buffer_mat_add(None)
+    # test_mem_buffer_mat_add_symbol(None)
+    # test_mem_buffer_tensor_add(None)
+    # test_mem_buffer_mapnests(None)
+    # test_mem_buffer_multistream(None)
+    # test_mem_buffer_multistream_with_deps(None)
+    # test_mem_buffer_mat_mul(None)
+    # test_mem_buffer_not_applicable(None)
+    # test_mem_buffer_map_order(None)
+
+    # test_mem_buffer_vec_add_float16(None) # No
+    # test_mem_buffer_vec_add_float32(None) # Yes
+    # test_mem_buffer_vec_add_float64(None) # Yes
+    # test_mem_buffer_vec_add_int8(None) # No
+    # test_mem_buffer_vec_add_int16(None) # Yes
+    # test_mem_buffer_vec_add_int32(None) # Yes
+    # test_mem_buffer_vec_add_int64(None) # No
+    # test_mem_buffer_vec_add_mixed_float(None) # No
+    # test_mem_buffer_vec_add_mixed_int(None) # No
