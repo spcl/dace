@@ -621,7 +621,8 @@ const unsigned long int _dace_fpga_begin_us = std::chrono::duration_cast<std::ch
 """)
             # Create a vector to collect all events that are being generated to allow
             # waiting before exiting this state
-            kernel_host_stream.write("std::vector<hlslib::ocl::Event> all_events;")
+            kernel_host_stream.write(
+                "std::vector<hlslib::ocl::Event> all_events;")
 
             # Kernels invocations
             kernel_host_stream.write(state_host_body_stream.getvalue())
@@ -782,15 +783,18 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
                 # If this is a stream, check if the other side of it is in the same kernel/subgraph
                 if self._num_kernels > 1:
-                    if isinstance(n, dace.nodes.AccessNode) and isinstance(n.desc(subgraph), dt.Stream):
+                    if isinstance(n, dace.nodes.AccessNode) and isinstance(
+                            n.desc(subgraph), dt.Stream):
                         for nn in subgraph.nodes():
-                            if nn != n and  isinstance(nn, dace.nodes.AccessNode) and n.desc(subgraph) == nn.desc(subgraph):
+                            if nn != n and isinstance(
+                                    nn, dace.nodes.AccessNode) and n.desc(
+                                        subgraph) == nn.desc(subgraph):
                                 break
                         else:
                             external |= True
                 if external:
                     external_streams |= {
-                        (True, e.data.data, subsdfg.arrays[e.data.data], None)
+                        (False, e.data.data, subsdfg.arrays[e.data.data], None)
                         for e in state.out_edges(n)
                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
                     }
@@ -813,17 +817,19 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
                 # If this is a stream, check if the other side of it is in the same kernel/subgraph
                 if self._num_kernels > 1:
-                    if isinstance(n, dace.nodes.AccessNode) and isinstance(n.desc(subgraph), dt.Stream):
+                    if isinstance(n, dace.nodes.AccessNode) and isinstance(
+                            n.desc(subgraph), dt.Stream):
                         for nn in subgraph.nodes():
-                            if nn != n and isinstance(nn, dace.nodes.AccessNode) and n.desc(subgraph) == nn.desc(
-                                    subgraph):
+                            if nn != n and isinstance(
+                                    nn, dace.nodes.AccessNode) and n.desc(
+                                        subgraph) == nn.desc(subgraph):
                                 break
                         else:
                             external |= True
 
                 if external:
                     external_streams |= {
-                        (False, e.data.data, subsdfg.arrays[e.data.data], None)
+                        (True, e.data.data, subsdfg.arrays[e.data.data], None)
                         for e in state.in_edges(n)
                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
                     }
