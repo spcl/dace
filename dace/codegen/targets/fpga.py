@@ -1256,9 +1256,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         elif isinstance(nodedesc, dt.Scalar):
 
-            result_decl.write("{} {};\n".format(nodedesc.dtype.ctype, dataname))
+            ctype = self.make_vector_type(nodedesc.dtype, False)
+            result_decl.write("{} {};\n".format(ctype, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Scalar,
-                                              nodedesc.dtype.ctype)
+                                              ctype)
 
         else:
             raise TypeError("Unhandled data type: {}".format(
