@@ -4,6 +4,7 @@ import dace.dtypes
 import numpy as np
 import dace as dc
 import pytest
+import argparse
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
@@ -65,9 +66,9 @@ def run_atax(device_type: dace.dtypes.DeviceType):
         assert sm_applied == 6  # 3 inlines and 3 Streaming memories
 
         ###########################
-        # FPGA Auto OPT
+        # FPGA Auto Opt
         fpga_aopt.fpga_global_to_local(sdfg)
-        allocated = fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
+        fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
 
         # specialize the SDFG (needed by the GEMV expansion)
         sdfg.specialize(dict(M=M, N=N))
@@ -90,4 +91,24 @@ def test_gpu():
 
 @fpga_test(assert_ii_1=False)
 def test_fpga():
-    run_atax(dace.dtypes.DeviceType.FPGA)
+    return run_atax(dace.dtypes.DeviceType.FPGA)
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-t",
+                        "--target",
+                        default='cpu',
+                        choices=['cpu', 'gpu', 'fpga'],
+                        help='Target platform')
+
+    args = vars(parser.parse_args())
+    target = args["target"]
+
+    if target == "cpu":
+        run_atax(dace.dtypes.DeviceType.CPU)
+    elif target == "gpu":
+        run_atax(dace.dtypes.DeviceType.GPU)
+    elif target == "fpga":
+        run_atax(dace.dtypes.DeviceType.FPGA)

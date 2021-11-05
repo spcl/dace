@@ -270,7 +270,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
             # that will be code-generated as two separate files.
             # We need to declare the channel as global variable and it must have have
             # the same name in both the files.
-            
+
             chan_name = self.create_mangled_channel_name(
                 var_name, self._kernel_count, True)
             function_stream.write("channel {} {}{}{};".format(
@@ -607,7 +607,6 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         :param predecessors: list containing all the name of kernels that must be finished before starting this one
         '''
         state_id = sdfg.node_id(state)
-        launch_async = Config.get_bool("compiler", "intel_fpga", "launch_async")
 
         # Check if this kernel depends from other kernels
         needs_synch = len(predecessors) > 0
@@ -622,26 +621,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                     f"{kernel_deps_name}.insert({kernel_deps_name}.end(), {pred}_events.begin(), {pred}_events.end());"
                 )
 
-        if launch_async:
-            #TODO remove this?
-
-            # hlslib uses std::async to launch each kernel launch as an
-            # asynchronous task in a separate C++ thread. This seems to cause
-            # problems with some versions of the Intel FPGA runtime, despite it
-            # supposedly being thread-safe, so we allow disabling this.
-            host_stream.write(
-                f"""\
-  std::vector<std::future<std::pair<double, double>>> futures;
-  for (auto &k : {kernel_name}_kernels) {{
-    futures.emplace_back(k.ExecuteTaskAsync());
-  }}
-  for (auto &f : futures) {{
-    f.wait();
-  }}""", sdfg, state_id)
-        else:
-            # While spawning the kernel, indicates the synchronization events (if any)
-            host_stream.write(
-                f"""\
+        # While spawning the kernel, indicates the synchronization events (if any)
+        host_stream.write(
+            f"""\
   std::vector<cl::Event> {kernel_name}_events;
   for (auto &k : {kernel_name}_kernels) {{
     {kernel_name}_events.emplace_back(k.ExecuteTaskAsync({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''}));
