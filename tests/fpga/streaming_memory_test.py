@@ -524,6 +524,14 @@ def test_mem_buffer_vec_add_mixed_int():
 
 
 @xilinx_test()
+def test_mem_buffer_vec_add_vec4():
+    return test_mem_buffer_vec_add_types(dace.vector(dace.float32, 4),
+                                         dace.vector(dace.float32, 4),
+                                         dace.vector(dace.float32, 4),
+                                         np.float32, np.float32, np.float32)
+
+
+@xilinx_test()
 def test_mem_buffer_mat_add():
     # Make SDFG
     sdfg: dace.SDFG = matadd_streaming.to_sdfg()
@@ -847,7 +855,7 @@ if __name__ == "__main__":
     # test_mem_buffer_not_applicable(None)
     # test_mem_buffer_map_order(None)
 
-    # test_mem_buffer_vec_add_float16(None) # No
+    # test_mem_buffer_vec_add_float16(None)  # No
     # test_mem_buffer_vec_add_float32(None) # Yes
     # test_mem_buffer_vec_add_float64(None) # Yes
     # test_mem_buffer_vec_add_int8(None) # No
@@ -856,3 +864,4 @@ if __name__ == "__main__":
     # test_mem_buffer_vec_add_int64(None) # No
     # test_mem_buffer_vec_add_mixed_float(None) # No
     # test_mem_buffer_vec_add_mixed_int(None) # No
+    # test_mem_buffer_vec_add_vec4(None) # NO
