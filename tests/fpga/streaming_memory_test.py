@@ -534,12 +534,6 @@ def test_mem_buffer_vec_add_mixed_int():
                                          np.int16, np.int32, np.int64)
 
 
-@xilinx_test()
-def test_mem_buffer_vec_add_vec4():
-    return test_mem_buffer_vec_add_types(dace.vector(dace.float32, 4),
-                                         dace.vector(dace.float32, 4),
-                                         dace.vector(dace.float32, 4),
-                                         np.float32, np.float32, np.float32)
 
 
 @xilinx_test()
@@ -970,7 +964,6 @@ if __name__ == "__main__":
     # test_mem_buffer_vec_add_int64(None) # No
     # test_mem_buffer_vec_add_mixed_float(None) # No
     # test_mem_buffer_vec_add_mixed_int(None) # No
-    # test_mem_buffer_vec_add_vec4(None) # NO
 
     # test_mem_buffer_atax(None)
-    test_mem_buffer_bicg(None)
+    # test_mem_buffer_bicg(None)
