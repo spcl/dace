@@ -444,7 +444,7 @@ def test_mem_buffer_vec_add():
     return sdfg
 
 
-def test_mem_buffer_vec_add_types(dace_type0, dace_type1, dace_type2, np_type0,
+def mem_buffer_vec_add_types(dace_type0, dace_type1, dace_type2, np_type0,
                                   np_type1, np_type2):
 
     sdfg: dace.SDFG = vecadd_streaming_type(dace_type0, dace_type1,
@@ -478,62 +478,74 @@ def test_mem_buffer_vec_add_types(dace_type0, dace_type1, dace_type2, np_type0,
 
 @xilinx_test()
 def test_mem_buffer_vec_add_float16():
-    return test_mem_buffer_vec_add_types(dace.float16, dace.float16,
+    return mem_buffer_vec_add_types(dace.float16, dace.float16,
                                          dace.float16, np.float16, np.float16,
                                          np.float16)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_float32():
-    return test_mem_buffer_vec_add_types(dace.float32, dace.float32,
+    return mem_buffer_vec_add_types(dace.float32, dace.float32,
                                          dace.float32, np.float32, np.float32,
                                          np.float32)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_float64():
-    return test_mem_buffer_vec_add_types(dace.float64, dace.float64,
+    return mem_buffer_vec_add_types(dace.float64, dace.float64,
                                          dace.float64, np.float64, np.float64,
                                          np.float64)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_int8():
-    return test_mem_buffer_vec_add_types(dace.int8, dace.int8, dace.int8,
+    return mem_buffer_vec_add_types(dace.int8, dace.int8, dace.int8,
                                          np.int8, np.int8, np.int8)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_int16():
-    return test_mem_buffer_vec_add_types(dace.int16, dace.int16, dace.int16,
+    return mem_buffer_vec_add_types(dace.int16, dace.int16, dace.int16,
                                          np.int16, np.int16, np.int16)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_int32():
-    return test_mem_buffer_vec_add_types(dace.int32, dace.int32, dace.int32,
+    return mem_buffer_vec_add_types(dace.int32, dace.int32, dace.int32,
                                          np.int32, np.int32, np.int32)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_int64():
-    return test_mem_buffer_vec_add_types(dace.int64, dace.int64, dace.int64,
+    return mem_buffer_vec_add_types(dace.int64, dace.int64, dace.int64,
                                          np.int64, np.int64, np.int64)
 
 
 @xilinx_test()
+def test_mem_buffer_vec_add_complex64():
+    return mem_buffer_vec_add_types(dace.complex64, dace.complex64,
+                                         dace.complex64, np.complex64,
+                                         np.complex64, np.complex64)
+
+
+@xilinx_test()
+def test_mem_buffer_vec_add_complex128():
+    return mem_buffer_vec_add_types(dace.complex128, dace.complex128,
+                                         dace.complex128, np.complex128,
+                                         np.complex128, np.complex128)
+
+
+@xilinx_test()
 def test_mem_buffer_vec_add_mixed_float():
-    return test_mem_buffer_vec_add_types(dace.float16, dace.float32,
+    return mem_buffer_vec_add_types(dace.float16, dace.float32,
                                          dace.float64, np.float16, np.float32,
                                          np.float64)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_mixed_int():
-    return test_mem_buffer_vec_add_types(dace.int16, dace.int32, dace.int64,
+    return mem_buffer_vec_add_types(dace.int16, dace.int32, dace.int64,
                                          np.int16, np.int32, np.int64)
-
-
 
 
 @xilinx_test()
@@ -933,37 +945,39 @@ def test_mem_buffer_bicg():
 
 
 if __name__ == "__main__":
-    # test_streaming_mem(None)
-    # test_streaming_mem_mapnests(None)
-    # test_multistream(None)
-    # test_multistream_with_deps(None)
-    # test_streaming_composition_matching(None)
-    # test_streaming_composition(None)
-    # test_streaming_composition_mapnests(None)
-    # test_streaming_and_composition(None)
+    test_streaming_mem(None)
+    test_streaming_mem_mapnests(None)
+    test_multistream(None)
+    test_multistream_with_deps(None)
+    test_streaming_composition_matching(None)
+    test_streaming_composition(None)
+    test_streaming_composition_mapnests(None)
+    test_streaming_and_composition(None)
 
-    # test_mem_buffer_vec_add_1(None)
-    # test_mem_buffer_vec_add_1_symbolic(None)
-    # test_mem_buffer_vec_add(None)
-    # test_mem_buffer_mat_add(None)
-    # test_mem_buffer_mat_add_symbol(None)
-    # test_mem_buffer_tensor_add(None)
-    # test_mem_buffer_mapnests(None)
-    # test_mem_buffer_multistream(None)
-    # test_mem_buffer_multistream_with_deps(None)
-    # test_mem_buffer_mat_mul(None)
-    # test_mem_buffer_not_applicable(None)
-    # test_mem_buffer_map_order(None)
+    test_mem_buffer_vec_add_1(None)
+    test_mem_buffer_vec_add_1_symbolic(None)
+    test_mem_buffer_vec_add(None)
+    test_mem_buffer_mat_add(None)
+    test_mem_buffer_mat_add_symbol(None)
+    test_mem_buffer_tensor_add(None)
+    test_mem_buffer_mapnests(None)
+    test_mem_buffer_multistream(None)
+    test_mem_buffer_multistream_with_deps(None)
+    test_mem_buffer_mat_mul(None)
+    test_mem_buffer_not_applicable(None)
+    test_mem_buffer_map_order(None)
 
-    # test_mem_buffer_vec_add_float16(None)  # No
-    # test_mem_buffer_vec_add_float32(None) # Yes
-    # test_mem_buffer_vec_add_float64(None) # Yes
-    # test_mem_buffer_vec_add_int8(None) # No
-    # test_mem_buffer_vec_add_int16(None) # Yes
-    # test_mem_buffer_vec_add_int32(None) # Yes
-    # test_mem_buffer_vec_add_int64(None) # No
-    # test_mem_buffer_vec_add_mixed_float(None) # No
-    # test_mem_buffer_vec_add_mixed_int(None) # No
+    test_mem_buffer_vec_add_float16(None)  
+    test_mem_buffer_vec_add_float32(None) 
+    test_mem_buffer_vec_add_float64(None)  
+    test_mem_buffer_vec_add_int8(None)  
+    test_mem_buffer_vec_add_int16(None)  
+    test_mem_buffer_vec_add_int32(None)  
+    test_mem_buffer_vec_add_int64(None)  
+    test_mem_buffer_vec_add_mixed_float(None)  
+    test_mem_buffer_vec_add_mixed_int(None)  
+    test_mem_buffer_vec_add_complex64(None)  
+    test_mem_buffer_vec_add_complex128(None)  
 
-    # test_mem_buffer_atax(None)
-    # test_mem_buffer_bicg(None)
+    test_mem_buffer_atax(None)
+    test_mem_buffer_bicg(None)
