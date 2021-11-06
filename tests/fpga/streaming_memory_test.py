@@ -11,12 +11,18 @@ import numpy as np
 from dace.transformation.dataflow import streaming_memory as sm, MapExpansion
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.fpga_testing import xilinx_test
+from dace.transformation.auto.fpga import fpga_rr_interleave_containers_to_banks
 
 M, N, K = 64, 64, 64
 
 M_s = dace.symbol('M_s')
 N_s = dace.symbol('N_s')
 K_s = dace.symbol('K_s')
+
+
+@dace.program
+def atax(A: dace.float32[M, N], x: dace.float32[N]):
+    return (A @ x) @ A
 
 
 @dace.program
@@ -832,6 +838,52 @@ def test_mem_buffer_not_applicable():
     return []
 
 
+@xilinx_test()
+def test_mem_buffer_atax():
+
+    A = np.random.rand(M, N).astype(np.float32)
+    x = np.random.rand(N).astype(np.float32)
+
+    # Parse SDFG and apply FPGA friendly optimization
+    sdfg = atax.to_sdfg(strict=True)
+    applied = sdfg.apply_transformations([FPGATransformSDFG])
+    assert applied == 1
+
+    fpga_rr_interleave_containers_to_banks(sdfg, num_banks=4)
+
+    # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
+    from dace.libraries.blas import Gemv
+    Gemv.default_implementation = "FPGA_Accumulate"
+    sdfg.expand_library_nodes()
+    sm_applied = sdfg.apply_transformations_repeated(
+        [InlineSDFG, sm.StreamingMemory], [{}, {
+            'storage': dace.StorageType.FPGA_Local,
+            'use_memory_buffering': True
+        }],
+        print_report=False)
+    assert sm_applied == 5  # 3 inlines and 2 Streaming memories
+
+    sm_applied = sdfg.apply_transformations_repeated(
+        [InlineSDFG, sm.StreamingMemory], [{}, {
+            'storage': dace.StorageType.FPGA_Local,
+            'use_memory_buffering': False
+        }],
+        print_report=False)
+
+    assert sm_applied == 1  # 1 Streaming memories
+
+    # specialize the SDFG (needed by the GEMV expansion)
+    sdfg.specialize(dict(M=M, N=N))
+
+    y = sdfg(A=A, x=x)
+
+    # Compute ground truth and Validate result
+    y_ref = atax.f(A, x)
+
+    assert np.allclose(y, y_ref)
+    return sdfg
+
+
 if __name__ == "__main__":
     # test_streaming_mem(None)
     # test_streaming_mem_mapnests(None)
@@ -865,3 +917,5 @@ if __name__ == "__main__":
     # test_mem_buffer_vec_add_mixed_float(None) # No
     # test_mem_buffer_vec_add_mixed_int(None) # No
     # test_mem_buffer_vec_add_vec4(None) # NO
+
+    test_mem_buffer_atax(None)
