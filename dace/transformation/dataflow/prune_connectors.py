@@ -75,7 +75,6 @@ class PruneConnectors(pm.Transformation):
         # Detect which nodes are used, so we can delete unused nodes after the
         # connectors have been pruned
         all_data_used = read_set | write_set
-
         # Add WCR outputs to "do not prune" input list
         for e in state.out_edges(nsdfg):
             if e.data.wcr is not None and e.src_conn in prune_in:
@@ -111,6 +110,17 @@ class PruneConnectors(pm.Transformation):
             if conn in nsdfg.sdfg.arrays and conn not in all_data_used and conn not in do_not_prune:
                 # If the data is now unused, we can purge it from the SDFG
                 nsdfg.sdfg.remove_data(conn)
+
+        # Remove unused arrays from parent SDFGs
+        arrays = list(sdfg.arrays.keys())
+        for name in arrays:
+            s = nsdfg.sdfg
+            while s.parent_sdfg:
+                s = s.parent_sdfg
+                try:
+                    s.remove_data(name)
+                except ValueError:
+                    break
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
