@@ -761,9 +761,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 if rtl_subgraph:
                     names = [e.dst.data if e.data.data is None else e.data.data for e in state.out_edges(n)]
                     external_streams |= {
-                        (True, name, subsdfg.arrays[name], None)
+                        (False, name, subsdfg.arrays[name], None)
                         for name in names
-                        if isinstance(subsdfg.arrays[name], dt.Stream)
+                        if isinstance(subsdfg.arrays[name], dt.Stream) and name in shared_data
                     }
                 else:
                     candidates += [(False, e.data.data,
@@ -775,9 +775,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 if rtl_subgraph:
                     names = [e.src.data if e.data.data is None else e.data.data for e in state.in_edges(n)]
                     external_streams |= {
-                        (False, name, subsdfg.arrays[name], None)
+                        (True, name, subsdfg.arrays[name], None)
                         for name in names
-                        if isinstance(subsdfg.arrays[name], dt.Stream)
+                        if isinstance(subsdfg.arrays[name], dt.Stream) and name in shared_data
                     }
                 else:
                     candidates += [(True, e.data.data,

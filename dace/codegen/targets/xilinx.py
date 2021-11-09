@@ -24,7 +24,7 @@ from typing import List, Union
 
 from dace.external.rtllib.templates.control import generate_from_config as rtllib_control
 from dace.external.rtllib.templates.package import generate_from_config as rtllib_package
-from dace.external.rtllib.templates.top import generate_from_config as rtllib_top
+from dace.external.rtllib.templates.top import data_packer, generate_from_config as rtllib_top
 from dace.external.rtllib.templates.synth import generate_from_config as rtllib_synth
 
 REDUCTION_TYPE_TO_HLSLIB = {
@@ -534,6 +534,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                    is_output, True, interface)
             if kernel_arg:
                 stream_args.append(kernel_arg)
+        print (22, kernel_args)
+        print (11, external_streams)
 
         # Write kernel signature
         kernel_stream.write(
@@ -716,12 +718,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 f'// [{label}] void {name}({", ".join(kernel_args_module)});\n\n')
 
             # TODO Better name than rtl_name
-            rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg) if rtl_tasklet else 'dp_kernel' #name # Breaks with long names
+            rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg) if rtl_tasklet else 'dp_kernel' #name
 
             # _i in names are due to vitis
             source_accessors = []
+            top_unrolled = False
             for node in subgraph.source_nodes():
                 if isinstance(node, dace.nodes.MapEntry):
+                    top_unrolled = node
                     source_accessors += [e.dst for e in state.out_edges(node)]
                 else:
                     source_accessors += [node]
@@ -790,8 +794,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             # Make the dispatcher trigger generation of the RTL module, but
             # ignore the generated code, as the RTL codegen will generate the
             # appropriate files.
-            ignore_stream = CodeIOStream()
-            double_kernel = CodeIOStream()
+            double_kernel_call = CodeIOStream()
+            double_kernel_module = CodeIOStream()
 
             if double_pumped:
                 # TODO the loop ranges should also be halved? I.e. symbols
@@ -799,41 +803,23 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 acces_nodes_touched = []
                 for node in subgraph.nodes():
                     if isinstance(node, dace.nodes.AccessNode) and sdfg.arrays[node.data].dtype.veclen > 1:
-                        found = False
-                        for elem in acces_nodes_touched:
-                            if elem is sdfg.arrays[node.data].dtype:
-                                found = True
-                                break
-                        if not found:
+                        if not any([elem is sdfg.arrays[node.data].dtype for elem in acces_nodes_touched]):
                             acces_nodes_touched.append(sdfg.arrays[node.data].dtype)
-                    #if isinstance(node, dace.nodes.AccessNode) and ((sdfg.arrays[node.data].dtype.veclen is int and sdfg.arrays[node.data].dtype.veclen > 1) or type(sdfg.arrays[node.data].dtype.veclen) is int):
-                    #    acces_nodes_touched.add(sdfg.arrays[node.data].dtype)
-                #acces_nodes_touched = [an.dtype for an in acces_nodes_touched]
-                #acces_nodes_touched = [an for an in acces_nodes_touched]
-
-
-
-                #print (acces_nodes_touched)
-                #print (set([an.dtype for an in acces_nodes_touched]))
-                #for i in range(len(acces_nodes_touched)):
-                #    print (acces_nodes_touched[i] in acces_nodes_touched[i:])
-                #    aoeu = []
-                #    for j in range(len(acces_nodes_touched)):
-                #        aoeu += [None if i == j else (i,j,acces_nodes_touched[i] is acces_nodes_touched[j])]
-                #    print (aoeu)
 
                 for node in acces_nodes_touched:
                     node.bytes = int(dace.symbolic.evaluate(node.bytes, sdfg.constants)) >> 1
                     node.veclen = int(dace.symbolic.evaluate(node.veclen, sdfg.constants)) >> 1
 
-                double_kernel.write('''#include <dace/xilinx/device.h>
+                double_kernel_module.write('''#include <dace/xilinx/device.h>
 #include <dace/math.h>
 #include <dace/complex.h>''')
 
                 # Regenerate parameters with new vector length
+                kernel_args_call_double = []
                 kernel_args_module_double = []
                 for is_output, pname, p, interface_ids in parameters:
                     if isinstance(p, dt.Stream):
+                        kernel_args_call_double.append(p.as_arg(with_types=False, name=pname))
                         if p.is_stream_array():
                             kernel_args_module_double.append(
                                 "dace::FIFO<{}, {}, {}> {}[{}]".format(
@@ -845,36 +831,81 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                     p.dtype.base_type.ctype, p.veclen,
                                     p.buffer_size, pname))
 
-                self._frame.generate_fileheader(sdfg, double_kernel, 'xilinx_device')
-                double_kernel.write("DACE_EXPORTED void {}({}) {{".format(rtl_name, ", ".join(kernel_args_module_double)))
-                double_kernel.write('#pragma HLS INTERFACE ap_ctrl_none port=return')
+                self._frame.generate_fileheader(sdfg, double_kernel_module, 'xilinx_device')
+                double_kernel_call.write("void {}({}) {{".format(rtl_name, ", ".join(kernel_args_module_double)))
+                double_kernel_call.write('#pragma HLS INTERFACE ap_ctrl_none port=return')
                 for _, pname, _, _, in parameters:
-                    double_kernel.write(f'#pragma HLS INTERFACE axis port={pname}')
-                double_kernel.write('while (1) {')
-                double_kernel.write('#pragma HLS DATAFLOW')
+                    double_kernel_call.write(f'#pragma HLS INTERFACE axis port={pname}')
+                double_kernel_call.write('#pragma HLS DATAFLOW')
+
+                data_to_allocate = (set(subgraph.top_level_transients()) -
+                            set(sdfg.shared_transients()) -
+                            set([p[1] for p in parameters]))
+
+                print (set(sdfg.shared_transients()))
+                data_to_allocate = {'A_pipe', 'B_pipe', 'C_pipe'} # TODO don't hardcode
+                print (data_to_allocate)
+                allocated = set()
+                for node in subgraph.nodes():
+                    if not isinstance(node, dace.sdfg.nodes.AccessNode):
+                        continue
+                    if node.data not in data_to_allocate or node.data in allocated:
+                        continue
+                    allocated.add(node.data)
+                    sdfg_array = node.desc(sdfg)
+                    kernel_args_call_double += [node.data]
+                    kernel_args_module_double += ["dace::FIFO<{}, {}, {}> {}[{}]".format(
+                                    sdfg_array.dtype.base_type.ctype, sdfg_array.veclen,
+                                    sdfg_array.buffer_size, node.data, sdfg_array.size_string())]
+                    self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
+                                                    sdfg_array,
+                                                    double_kernel_module,
+                                                    double_kernel_call
+                                                    )
+                print (55,allocated)
+
+                double_kernel_call.write('HLSLIB_DATAFLOW_INIT();')
+                if top_unrolled:
+                    for p, r in zip(top_unrolled.map.params, top_unrolled.map.range):
+                        if len(r) > 3:
+                            raise cgx.CodegenError("Strided unroll not supported")
+                        kernel_args_call_double += ", ".join(top_unrolled.map.params)
+                        kernel_args_module_double += ["int " + p for p in top_unrolled.params]
+                        double_kernel_call.write(
+                            "for (size_t {param} = {begin}; {param} < {end}; "
+                            "{param} += {increment}) {{\n#pragma HLS UNROLL".format(
+                                param=p, begin=r[0], end=r[1] + 1, increment=r[2]))
+                double_kernel_call.write(
+                    "HLSLIB_DATAFLOW_FUNCTION({}, {});".format(
+                        name, ", ".join(kernel_args_call_double)), sdfg,
+                    state_id)
+                double_kernel_call.write('}')
+                double_kernel_call.write('HLSLIB_DATAFLOW_FINALIZE();')
+                double_kernel_call.write('}')
+
+                double_kernel_module.write("void {}({}) {{{{".format(name, ", ".join(kernel_args_module_double)))
 
             self._dispatcher.dispatch_subgraph(sdfg,
                                                subgraph,
                                                state_id,
-                                               ignore_stream,
-                                               double_kernel,
-                                               skip_entry_node=False)
+                                               double_kernel_call,
+                                               double_kernel_module,
+                                               skip_entry_node=not top_unrolled is None)
+
             if double_pumped:
                 # Increase the vector size, in case some other subgraph uses it.
-                # TODO maybe it shouldn't be every access that is halved? One could have a stream which is rarely consumed from?
+                # TODO maybe it shouldn't be every access that is halved? One could have a stream which is rarely consumed from? Should be related to the memlet?
                 for node in acces_nodes_touched:
                     node.bytes <<= 1
                     node.veclen <<= 1
 
-                double_kernel.write('}')
-                double_kernel.write('}')
-                self._ip_codes.append((rtl_name, 'cpp', double_kernel.getvalue()))
+                self._ip_codes.append((rtl_name, 'cpp', double_kernel_module.getvalue() + double_kernel_call.getvalue()))
 
                 # Generate all of the RTL files
                 rtllib_config = {
                     "name": rtl_name,
                     "buses": { # TODO unroll factor
-                        pname: ('m_axis' if is_output else 's_axis', p.veclen)
+                        pname: ('m_axis' if is_output or pname.endswith('_out') else 's_axis', p.veclen)
                         for is_output, pname, p, _ in parameters
                     },
                     "params": {
@@ -889,7 +920,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     "ip_cores": {
                         # TODO Maybe with some help from rtllib
                     },
-                    "clocks": 2 # TODO make this "trickle" down to here. Maybe add speeds as well?
+                    "clocks": 2 # TODO make this "trickle" down to here. Maybe add speeds as well? Might be usefull when packaging
                 }
                 rtllib_config['ip_cores'][f'{rtl_name}_0'] = {
                     'name': f'{rtl_name}',
@@ -899,6 +930,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     'params': {}
                 }
                 for is_output, pname, p, _ in parameters:
+                    isout = is_output or pname.endswith('_out')
+                    veced = p.dtype.veclen > 1
                     rtllib_config['ip_cores'][f'clock_sync_{pname}'] = {
                         'name': 'axis_clock_converter',
                         'vendor': 'xilinx.com',
@@ -915,8 +948,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         'library': 'ip',
                         'version': '1.1',
                         'params': {
-                            'CONFIG.S_TDATA_NUM_BYTES': p.dtype.bytes // 2 if is_output else p.dtype.bytes,
-                            'CONFIG.M_TDATA_NUM_BYTES': p.dtype.bytes if is_output else p.dtype.bytes // 2,
+                            'CONFIG.S_TDATA_NUM_BYTES': p.dtype.bytes // 2 if isout and veced else p.dtype.bytes,
+                            'CONFIG.M_TDATA_NUM_BYTES': p.dtype.bytes if isout or not veced else p.dtype.bytes // 2,
                         }
                     }
 
@@ -940,6 +973,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         if rtl_tasklet or double_pumped:
             return
+
+        print (42, kernel_args_call)
+        print (42, kernel_args_module)
 
         # create a unique module name to prevent name clashes
         module_function_name = f"module_{name}_{sdfg.sdfg_id}"
