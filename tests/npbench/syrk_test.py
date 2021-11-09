@@ -11,7 +11,6 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, MapFusion, StreamingComposition, PruneConnectors
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_aopt
 
-
 M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
 
 
@@ -23,7 +22,6 @@ def kernel(alpha: dc.float32, beta: dc.float32, C: dc.float32[N, N],
         C[i, :i + 1] *= beta
         for k in range(M):
             C[i, :i + 1] += alpha * A[i, k] * A[:i + 1, k]
-
 
 
 def init_data(N, M):
@@ -50,8 +48,6 @@ def ground_truth(N, M, alpha, beta, C, A):
             C[i, :i + 1] += alpha * A[i, k] * A[:i + 1, k]
 
 
-
-
 def run_syrk(device_type: dace.dtypes.DeviceType):
     '''
     Runs Syrk for the given device
@@ -72,7 +68,6 @@ def run_syrk(device_type: dace.dtypes.DeviceType):
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
         sdfg = kernel.to_sdfg(strict=True)
-        # sdfg.apply_transformations_repeated([MapFusion])
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
@@ -83,7 +78,7 @@ def run_syrk(device_type: dace.dtypes.DeviceType):
         sdfg(alpha=alpha, beta=beta, C=C, A=A)
 
     # Compute ground truth and validate result
-    ground_truth(N,M , alpha, beta, gt_C, A)
+    ground_truth(N, M, alpha, beta, gt_C, A)
     assert np.allclose(C, gt_C)
     return sdfg
 
