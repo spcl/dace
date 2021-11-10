@@ -3,19 +3,27 @@ from os import stat
 from typing import Any, AnyStr, Dict, Set, Tuple, Union
 import re
 
-from dace import dtypes, registry, SDFG, SDFGState, symbolic
+from dace import dtypes, registry, SDFG, SDFGState, symbolic, properties
 from dace.transformation import transformation as pm, helpers
 from dace.sdfg import nodes, utils
 from dace.sdfg.analysis import cfg
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
+@properties.make_properties
 class PruneConnectors(pm.Transformation):
     """ Removes unused connectors from nested SDFGs, as well as their memlets
         in the outer scope, replacing them with empty memlets if necessary.
+
+        Optionally: after pruning, removes the unused containers from parent SDFG.
     """
 
     nsdfg = pm.PatternNode(nodes.NestedSDFG)
+
+    remove_unused_containers = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='If True, remove unused containers from parent SDFG.')
 
     @staticmethod
     def expressions():
@@ -111,16 +119,17 @@ class PruneConnectors(pm.Transformation):
                 # If the data is now unused, we can purge it from the SDFG
                 nsdfg.sdfg.remove_data(conn)
 
-        # Remove unused arrays from parent SDFGs
-        arrays = list(sdfg.arrays.keys())
-        for name in arrays:
-            s = nsdfg.sdfg
-            while s.parent_sdfg:
-                s = s.parent_sdfg
-                try:
-                    s.remove_data(name)
-                except ValueError:
-                    break
+        if self.remove_unused_containers:
+            # Remove unused containers from parent SDFGs
+            containers = list(sdfg.arrays.keys())
+            for name in containers:
+                s = nsdfg.sdfg
+                while s.parent_sdfg:
+                    s = s.parent_sdfg
+                    try:
+                        s.remove_data(name)
+                    except ValueError:
+                        break
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
