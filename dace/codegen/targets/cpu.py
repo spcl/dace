@@ -242,6 +242,10 @@ class CPUCodeGen(TargetCodeGenerator):
         if self._dispatcher.declared_arrays.has(name):
             return
 
+        # If this is a view, do not declare it here
+        if isinstance(nodedesc, data.View):
+            return
+
         # Compute array size
         arrsize = nodedesc.total_size
         if not isinstance(nodedesc.dtype, dtypes.opaque):
@@ -1629,8 +1633,10 @@ class CPUCodeGen(TargetCodeGenerator):
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
         for _, _, _, vconn, memlet in state.all_edges(node):
-            if (memlet.data in sdfg.arrays and fpga.is_multibank_array(sdfg.arrays[memlet.data]) and fpga.parse_location_bank(
-                    sdfg.arrays[memlet.data])[0] == "HBM"):
+            if (memlet.data in sdfg.arrays
+                    and fpga.is_multibank_array(sdfg.arrays[memlet.data])
+                    and fpga.parse_location_bank(
+                        sdfg.arrays[memlet.data])[0] == "HBM"):
 
                 raise NotImplementedError(
                     "HBM in nested SDFGs not supported in non-FPGA code.")
