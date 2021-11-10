@@ -192,27 +192,6 @@ required:
                     are represented using 64 bits). If the property is set to "C", C's semantcs will be
                     used (`float` and `int` are represented using 32bits).
 
-            fpga_vendor:
-                type: str
-                default: xilinx
-                title: FPGA vendor
-                description: >
-                    Target Xilinx ("xilinx") or Intel ("intel_fpga") FPGAs when
-                    generating code.
-
-
-            autobuild_bitstreams:
-                type: bool
-                default: true
-                title: Automatically build bitstreams
-                description: >
-                    If set to true, CMake will automatically build missing
-                    bitstreams when running an FPGA program. This can take a
-                    very long time, and users might want to do this manually.
-                    If set to false, the program will optimistically assume
-                    that the bitstream is present in the build directory, and
-                    will crash if this is not the case.
-
             unique_functions:
                 type: str
                 default: hash
@@ -413,6 +392,40 @@ required:
                         title: Additional libraries
                         description: Additional linked libraries required by target
                         default: ''
+
+            #############################################
+            # General FPGA flags
+            fpga:
+                type: dict
+                title: FPGA
+                description: "Common preferences for FPGA compilation."
+                required:
+
+                    autobuild_bitstreams:
+                        type: bool
+                        default: true
+                        title: Automatically build bitstreams
+                        description: >
+                            If set to true, CMake will automatically build missing
+                            bitstreams when running an FPGA program. This can take a
+                            very long time, and users might want to do this manually.
+                            If set to false, the program will optimistically assume
+                            that the bitstream is present in the build directory, and
+                            will crash if this is not the case.
+
+                    minimum_fifo_depth:
+                        type: int
+                        default: ''
+                        title: Minimum depth of FIFOs
+                        description: Sets the minimum depth of any generated FIFO.
+
+                    vendor:
+                        type: str
+                        default: xilinx
+                        title: FPGA vendor
+                        description: >
+                            Target Xilinx ("xilinx") or Intel ("intel_fpga") FPGAs when
+                            generating code.
 
             #############################################
             # FPGA (Xilinx) compiler flags
@@ -773,6 +786,14 @@ required:
                     The number of compiled programs to cache (based on argument 
                     types, closure constants, and closure array types) to avoid
                     reparsing/compiling when calling a @dace.program or method.
+
+            implicit_recursion_depth:
+                type: int
+                title: Auto-parsing recursion depth
+                default: 64
+                description: >
+                    The maximum call-stack depth allowed when automatically
+                    parsing called dace functions or methods.
 
 
     #############################################

@@ -63,21 +63,14 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             except ValueError as e:
                 raise InvalidSDFGError(str(e), sdfg, None)
             if bank_assignment is not None:
-                if bank_assignment[0] == "DDR":
-                    try:
-                        tmp = int(bank_assignment[1])
-                    except ValueError:
-                        raise InvalidSDFGError(
-                            "Memory bank specifier must be convertible to int, "
-                            f"got {bank_assignment[1]} on array {name}", sdfg,
-                            None)
-                elif bank_assignment[0] == "HBM":
+                if bank_assignment[0] == "DDR" or bank_assignment[0] == "HBM":
                     try:
                         tmp = subsets.Range.from_string(bank_assignment[1])
                     except SyntaxError:
                         raise InvalidSDFGError(
                             "Memory bank specifier must be convertible to subsets.Range"
-                            f" for array {name} since it uses HBM", sdfg, None)
+                            f" for array {name}",
+                            sdfg, None)
                     try:
                         low, high = fpga.get_multibank_ranges_from_subset(
                             bank_assignment[1], sdfg)
@@ -90,7 +83,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                     if (high - low > 1 and
                         (high - low != desc.shape[0] or len(desc.shape) < 2)):
                         raise InvalidSDFGError(
-                            "Arrays that use HBM must have the size of the first dimension equal"
+                            "Arrays that use a multibank access pattern must have the size of the first dimension equal"
                             f" the number of banks and have at least 2 dimensions for array {name}",
                             sdfg, None)
 
@@ -328,7 +321,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if isinstance(node, nd.Tasklet):
             for attached in state.all_edges(node):
                 if attached.data.data in sdfg.arrays:
-                    if fpga.is_hbm_array_with_distributed_index(
+                    if fpga.is_multibank_array_with_distributed_index(
                             sdfg.arrays[attached.data.data]):
                         low, high, _ = attached.data.subset[0]
                         if (low != high):
@@ -590,12 +583,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     state_id, eid)
                 # NOTE: Make an exception for Views
                 from dace.sdfg import utils
-                if (isinstance(sdfg.arrays[src_node.data], dt.View) and
-                        utils.get_view_edge(state, src_node) is e):
+                if (isinstance(sdfg.arrays[src_node.data], dt.View)
+                        and utils.get_view_edge(state, src_node) is e):
                     warnings.warn(error.message)
                     continue
-                if (isinstance(sdfg.arrays[dst_node.data], dt.View) and
-                        utils.get_view_edge(state, dst_node) is e):
+                if (isinstance(sdfg.arrays[dst_node.data], dt.View)
+                        and utils.get_view_edge(state, dst_node) is e):
                     warnings.warn(error.message)
                     continue
                 raise error

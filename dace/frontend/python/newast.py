@@ -46,6 +46,11 @@ ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 
 
+class SkipCall(Exception):
+    """ Exception used to skip calls to functions that cannot be parsed. """
+    pass
+
+
 def until(val, substr):
     """ Helper function that returns the substring of a string until a certain pattern. """
     if substr not in val:
@@ -689,11 +694,35 @@ class TaskletTransformer(ExtNodeTransformer):
         else:
             ignore_indices = []
             sym_rng = []
+            offset = []
             for i, r in enumerate(rng):
+                repl_dict = {}
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
                         sym_rng.append(sr)
+                        # NOTE: Assume that the i-th index of the range is
+                        # dependent on a local symbol s, i.e, rng[i] = f(s).
+                        # Therefore, the i-th index will not be squeezed
+                        # even if it has length equal to 1. However, it must
+                        # still be offsetted by f(min(sr)), so that the indices
+                        # for the squeezed connector start from 0.
+                        # Example:
+                        # Memlet range: [i+1, j, k+1]
+                        # k: local symbol with range(1, 4)
+                        # i,j: global symbols
+                        # Squeezed range: [f(k)] = [k+1]
+                        # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
+                        #                        [f(k)-f(1)] = [k-1]
+                        # NOTE: The code takes into account the case where an
+                        # index is dependent on multiple symbols. See also
+                        # tests/python_frontend/nested_name_accesses_test.py.
+                        step = sr[0][2]
+                        if (step < 0) == True:
+                            repl_dict[s] = sr[0][1]
+                        else:
+                            repl_dict[s] = sr[0][0]
+                offset.append(r[0].subs(repl_dict))
 
             if ignore_indices:
                 tmp_memlet = Memlet.simple(parent_name, rng)
@@ -704,14 +733,19 @@ class TaskletTransformer(ExtNodeTransformer):
                                                   r,
                                                   use_dst=use_dst)
 
-            squeezed_rng = copy.deepcopy(rng)
+            to_squeeze_rng = rng
+            if ignore_indices:
+                to_squeeze_rng = rng.offset_new(offset, True)
+            squeezed_rng = copy.deepcopy(to_squeeze_rng)
             non_squeezed = squeezed_rng.squeeze(ignore_indices)
             # TODO: Need custom shape computation here
             shape = squeezed_rng.size()
             for i, sr in zip(ignore_indices, sym_rng):
                 iMin, iMax, step = sr.ranges[0]
-                ts = rng.tile_sizes[i]
-                sqz_idx = squeezed_rng.ranges.index(rng.ranges[i])
+                if (step < 0) == True:
+                    iMin, iMax, step = iMax, iMin, -step
+                ts = to_squeeze_rng.tile_sizes[i]
+                sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
                 shape[sqz_idx] = ts * sympy.ceiling(
                     ((iMax.approx
                       if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
@@ -1656,8 +1690,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 self, node,
                 "Iterator of ast.For must be a function or a subscript")
 
-        iter_name = preprocessing.ModuleResolver(self.modules, True).visit(
-            copy.deepcopy(node))
+        iter_name = preprocessing.ModuleResolver(self.modules, True).visit(node)
         iterator = rname(iter_name)
 
         ast_ranges = []
@@ -2768,32 +2801,42 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if wtarget_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
-                if wtarget_subset.size() == op_subset.size():
-                    in1_subset = copy.deepcopy(rtarget_subset)
-                    in1_subset.offset(wtarget_subset, True)
+                sqz_osub = copy.deepcopy(op_subset)
+                oidx = sqz_osub.squeeze()
+                sqz_wsub = copy.deepcopy(wtarget_subset)
+                widx = sqz_wsub.squeeze()
+                sqz_rsub = copy.deepcopy(rtarget_subset)
+                ridx = sqz_rsub.squeeze()
+                if (sqz_wsub.size() == sqz_osub.size() and
+                        sqz_wsub.size() == sqz_rsub.size()):
+                    r_to_w = {i: j for i, j in zip(ridx, widx)}
+                    o_to_w = {i: j for i, j in zip(oidx, widx)}
+                    # NOTE: Since 'sqz_wsub is squeezed, 'start' should be
+                    # equal to 0
+                    map_range = {
+                        f'__i{widx[i]}': f'{start}:{end} + 1:{step}'
+                        for i, (start, end, step) in enumerate(sqz_wsub)
+                    }
                     in1_memlet = Memlet.simple(
                         rtarget_name, ','.join([
-                            '__i%d + %s' % (i, s)
-                            for i, (s, _, _) in enumerate(in1_subset)
+                            f'__i{r_to_w[i]} + {s}' if i in ridx else str(s)
+                            for i, (s, _, _) in enumerate(rtarget_subset)
                         ]))
-                    in2_subset = copy.deepcopy(op_subset)
-                    in2_subset.offset(wtarget_subset, True)
                     in2_memlet = Memlet.simple(
                         op_name, ','.join([
-                            '__i%d + %s' % (i, s)
-                            for i, (s, _, _) in enumerate(in2_subset)
+                            f'__i{o_to_w[i]} + {s}' if i in oidx else str(s)
+                            for i, (s, _, _) in enumerate(op_subset)
                         ]))
                     out_memlet = Memlet.simple(
-                        wtarget_name, ','.join(
-                            ['__i%d' % i for i in range(len(wtarget_subset))]))
+                        wtarget_name, ','.join([
+                            f'__i{i} + {s}' if i in widx else str(s)
+                            for i, (s, _, _) in enumerate(wtarget_subset)
+                        ]))
                     if boolarr is not None:
                         in1_memlet.dynamic = True
                         out_memlet.dynamic = True
                     tasklet_code += '__out = __in1 {op} __in2'.format(op=op)
-                    state.add_mapped_tasklet(state.label, {
-                        '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
-                        for i, (start, end, step) in enumerate(wtarget_subset)
-                    }, {
+                    state.add_mapped_tasklet(state.label, map_range, {
                         '__in1': in1_memlet,
                         '__in2': in2_memlet,
                         **input_memlets,
@@ -2821,7 +2864,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 in1_subset.offset(wtarget_subset, True)
                 in1_memlet = Memlet.simple(
                     rtarget_name, ','.join([
-                        '__i%d + %d' % (i, s)
+                        '__i%d + %s' % (i, s)
                         for i, (s, _, _) in enumerate(in1_subset)
                     ]))
                 if op_name:
@@ -2922,11 +2965,38 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             ignore_indices = []
             sym_rng = []
+            offset = []
             for i, r in enumerate(rng):
+                repl_dict = {}
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
                         sym_rng.append(sr)
+                        # NOTE: Assume that the i-th index of the range is
+                        # dependent on a local symbol s, i.e, rng[i] = f(s).
+                        # Therefore, the i-th index will not be squeezed
+                        # even if it has length equal to 1. However, it must
+                        # still be offsetted by f(min(sr)), so that the indices
+                        # for the squeezed connector start from 0.
+                        # Example:
+                        # Memlet range: [i+1, j, k+1]
+                        # k: local symbol with range(1, 4)
+                        # i,j: global symbols
+                        # Squeezed range: [f(k)] = [k+1]
+                        # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
+                        #                        [f(k)-f(1)] = [k-1]
+                        # NOTE: The code takes into account the case where an
+                        # index is dependent on multiple symbols. See also
+                        # tests/python_frontend/nested_name_accesses_test.py.
+                        step = sr[0][2]
+                        if (step < 0) == True:
+                            repl_dict[s] = sr[0][1]
+                        else:
+                            repl_dict[s] = sr[0][0]
+                if repl_dict:
+                    offset.append(r[0].subs(repl_dict))
+                else:
+                    offset.append(0)
 
             if ignore_indices:
                 tmp_memlet = Memlet.simple(parent_name, rng)
@@ -2936,15 +3006,19 @@ class ProgramVisitor(ExtNodeVisitor):
                                                   parent_array, [s],
                                                   r,
                                                   use_dst=use_dst)
-
-            squeezed_rng = copy.deepcopy(rng)
+            to_squeeze_rng = rng
+            if ignore_indices:
+                to_squeeze_rng = rng.offset_new(offset, True)
+            squeezed_rng = copy.deepcopy(to_squeeze_rng)
             non_squeezed = squeezed_rng.squeeze(ignore_indices)
             # TODO: Need custom shape computation here
             shape = squeezed_rng.size()
             for i, sr in zip(ignore_indices, sym_rng):
                 iMin, iMax, step = sr.ranges[0]
-                ts = rng.tile_sizes[i]
-                sqz_idx = squeezed_rng.ranges.index(rng.ranges[i])
+                if (step < 0) == True:
+                    iMin, iMax, step = iMax, iMin, -step
+                ts = to_squeeze_rng.tile_sizes[i]
+                sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
                 shape[sqz_idx] = ts * sympy.ceiling(
                     ((iMax.approx
                       if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
@@ -3253,27 +3327,23 @@ class ProgramVisitor(ExtNodeVisitor):
             # Self-copy check
             if result in self.views and new_name == self.views[result][1].data:
                 read_rng = self.views[result][1].subset
-                needs_copy = False
-                for i, sz in enumerate(new_rng.size()):
-                    # NOTE: We only have an issue with partial overlap of the
-                    # read and write subsets. This occurs when the range of
-                    # one of the dimensions is greater than one and the read
-                    # and write ranges (for that particular dimension) are not
-                    # the same.
-                    if sz != 1 and new_rng[i] != read_rng[i]:
-                        needs_copy = True
-                        break
+                try:
+                    needs_copy = not (new_rng.intersects(read_rng) == False)
+                except TypeError:
+                    needs_copy = True
                 if needs_copy:
                     view = self.sdfg.arrays[result]
-                    cname, carr = self.sdfg.add_transient(
-                        result, view.shape, view.dtype, find_new_name=True)
+                    cname, carr = self.sdfg.add_transient(result,
+                                                          view.shape,
+                                                          view.dtype,
+                                                          find_new_name=True)
                     self._add_state(f'copy_from_view_{node.lineno}')
                     rnode = self.last_state.add_read(
                         result, debuginfo=self.current_lineinfo)
                     wnode = self.last_state.add_read(
                         cname, debuginfo=self.current_lineinfo)
-                    self.last_state.add_nedge(
-                        rnode, wnode, Memlet.from_array(cname, carr))
+                    self.last_state.add_nedge(rnode, wnode,
+                                              Memlet.from_array(cname, carr))
                     result = cname
 
             # Strict independent access check for augmented assignments
@@ -3514,8 +3584,374 @@ class ProgramVisitor(ExtNodeVisitor):
             return self.sdfg.symbols[arg]
         return arg
 
+    def _parse_sdfg_call(self, funcname: str,
+                         func: Union[SDFG, SDFGConvertible], node: ast.Call):
+        # Avoid import loops
+        from dace.frontend.python.common import SDFGConvertible
+        from dace.frontend.python.parser import DaceProgram
+
+        if func is None:
+            func = self.other_sdfgs[funcname]
+        if isinstance(func, SDFG):
+            sdfg = copy.deepcopy(func)
+            funcname = sdfg.name
+            args = [(aname, self._parse_function_arg(arg))
+                    for aname, arg in zip(sdfg.arg_names, node.args)]
+            args += [(arg.arg, self._parse_function_arg(arg.value))
+                     for arg in node.keywords]
+            required_args = [
+                a for a in sdfg.arglist().keys()
+                if a not in sdfg.symbols and not a.startswith('__return')
+            ]
+            all_args = required_args
+        elif isinstance(func, SDFGConvertible) or self._has_sdfg(func):
+            argnames, constant_args = func.__sdfg_signature__()
+            args = [(aname, self._parse_function_arg(arg))
+                    for aname, arg in zip(argnames, node.args)]
+            args += [(arg.arg, self._parse_function_arg(arg.value))
+                     for arg in node.keywords]
+            required_args = argnames
+            fargs = (self._eval_arg(arg) for _, arg in args)
+
+            # fcopy = copy.copy(func)
+            fcopy = func
+            if hasattr(fcopy, 'global_vars'):
+                fcopy.global_vars = {**self.globals, **func.global_vars}
+
+            try:
+                if isinstance(fcopy, DaceProgram):
+                    fcopy.signature = copy.deepcopy(func.signature)
+                    sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
+                else:
+                    sdfg = fcopy.__sdfg__(*fargs)
+            except:  # Parsing failure
+                # If parsing fails in an auto-parsed context, exit silently
+                if hasattr(node.func, 'oldnode'):
+                    raise SkipCall
+                else:
+                    raise
+
+            funcname = sdfg.name
+            all_args = required_args
+            # Try to promote args of kind `sym = scalar`
+            args = [(a, self._parse_subscript_slice(v)) if a in sdfg.symbols
+                    and str(v) not in self.sdfg.symbols else (a, v)
+                    for a, v in args]
+            required_args = [k for k, _ in args if k in sdfg.arg_names]
+            # Filter out constant and None-constant arguments
+            req = sdfg.arglist().keys()
+            args = [(k, v) for k, v in args
+                    if k not in constant_args and (v is not None or k in req)]
+
+            # Handle nested closure
+            closure_arrays = getattr(fcopy, '__sdfg_closure__',
+                                     lambda *args: {})()
+            for aname, arr in closure_arrays.items():
+                desc = data.create_datadescriptor(arr)
+                outer_name = self.sdfg.add_datadesc(aname,
+                                                    desc,
+                                                    find_new_name=True)
+                self.nested_closure_arrays[outer_name] = (arr, desc)
+                # Add closure arrays as function arguments
+                args.append((aname, outer_name))
+                required_args.append(aname)
+        else:
+            raise DaceSyntaxError(
+                self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
+                (type(func).__name__, funcname))
+
+        # Avoid import loops
+        from dace.frontend.python.parser import infer_symbols_from_datadescriptor
+
+        # Map internal SDFG symbols by adding keyword arguments
+        # symbols = set(sdfg.symbols.keys())
+        symbols = sdfg.free_symbols
+        try:
+            mapping = infer_symbols_from_datadescriptor(
+                sdfg, {
+                    k: self.sdfg.arrays[v]
+                    for k, v in args if v in self.sdfg.arrays
+                }, set(sym.arg for sym in node.keywords if sym.arg in symbols))
+        except ValueError as ex:
+            raise DaceSyntaxError(self, node, str(ex))
+        if len(mapping) == 0:  # Default to same-symbol mapping
+            mapping = None
+
+        # Add undefined symbols to required arguments
+        if mapping:
+            required_args.extend([sym for sym in symbols if sym not in mapping])
+        else:
+            required_args.extend(symbols)
+        required_args = dtypes.deduplicate(required_args)
+
+        # Argument checks
+        for arg in node.keywords:
+            # Skip explicit return values
+            if arg.arg.startswith('__return'):
+                required_args.append(arg.arg)
+                continue
+            if arg.arg not in required_args and arg.arg not in all_args:
+                raise DaceSyntaxError(
+                    self, node, 'Invalid keyword argument "%s" in call to '
+                    '"%s"' % (arg.arg, funcname))
+        if len(args) != len(required_args):
+            raise DaceSyntaxError(
+                self, node, 'Argument number mismatch in'
+                ' call to "%s" (expected %d,'
+                ' got %d)' % (funcname, len(required_args), len(args)))
+
+        # Remove newly-defined symbols from arguments
+        if mapping is not None:
+            symbols -= set(mapping.keys())
+        # if len(symbols) > 0:
+        #     mapping = mapping or {}
+        # TODO: Why above the None fix was applied when there were symbols?
+        mapping = mapping or {}
+        args_to_remove = []
+        for i, (aname, arg) in enumerate(args):
+            if aname in symbols:
+                args_to_remove.append(args[i])
+                mapping[aname] = arg
+        for arg in args_to_remove:
+            args.remove(arg)
+
+        # Change connector names
+        updated_args = []
+        arrays_before = list(sdfg.arrays.items())
+        for i, (conn, arg) in enumerate(args):
+            if (conn in self.scope_vars.keys()
+                    or conn in self.sdfg.arrays.keys()
+                    or conn in self.sdfg.symbols):
+                if self.sdfg._temp_transients > sdfg._temp_transients:
+                    new_conn = self.sdfg.temp_data_name()
+                else:
+                    new_conn = sdfg.temp_data_name()
+                # warnings.warn("Renaming nested SDFG connector {c} to "
+                #               "{n}".format(c=conn, n=new_conn))
+                sdfg.replace(conn, new_conn)
+                updated_args.append((new_conn, arg))
+                # Rename the connector's Views
+                for arrname, array in arrays_before:
+                    if (isinstance(array, data.View)
+                            and len(arrname) > len(conn)
+                            and arrname[:len(conn) + 1] == f'{conn}_'):
+                        new_name = f'{new_conn}{arrname[len(conn):]}'
+                        sdfg.replace(arrname, new_name)
+            else:
+                updated_args.append((conn, arg))
+        args = updated_args
+
+        # Change transient names
+        arrays_before = list(sdfg.arrays.items())
+        for arrname, array in arrays_before:
+            if array.transient and arrname[:5] == '__tmp':
+                if int(arrname[5:]) < self.sdfg._temp_transients:
+                    if self.sdfg._temp_transients > sdfg._temp_transients:
+                        new_name = self.sdfg.temp_data_name()
+                    else:
+                        new_name = sdfg.temp_data_name()
+                    sdfg.replace(arrname, new_name)
+        self.sdfg._temp_transients = max(self.sdfg._temp_transients,
+                                         sdfg._temp_transients)
+        sdfg._temp_transients = self.sdfg._temp_transients
+
+        # TODO: This workaround needs to be formalized (pass-by-assignment)
+        slice_state = None
+        output_slices = set()
+        for arg in itertools.chain(node.args,
+                                   [kw.value for kw in node.keywords]):
+            if isinstance(arg, ast.Subscript):
+                slice_state = self.last_state
+                break
+
+        # Make sure that any scope vars in the arguments are substituted
+        # by an access.
+        for i, (aname, arg) in enumerate(args):
+            if arg not in self.sdfg.arrays:
+                if isinstance(arg, str) and arg in self.scope_arrays:
+                    # TODO: Do we need to do something with the sqz range?
+                    newarg, _ = self._add_read_access(
+                        arg, subsets.Range.from_array(self.scope_arrays[arg]),
+                        node)
+                else:
+                    newarg = arg
+                args[i] = (aname, newarg)
+
+        state = self._add_state('call_%s_%d' % (funcname, node.lineno))
+        argdict = {
+            conn: Memlet.from_array(arg, self.sdfg.arrays[arg])
+            for conn, arg in args if arg in self.sdfg.arrays
+        }
+        # Handle scalar inputs to nested SDFG calls
+        for conn, arg in args:
+            if (arg not in self.sdfg.arrays
+                    and conn not in mapping.keys() | symbols):
+                argdict[conn] = state.add_tasklet(
+                    'scalar', {}, {conn},
+                    '%s = %s' % (conn, arg),
+                    debuginfo=self.current_lineinfo)
+
+        # Handle scalar inputs that become symbols in the nested SDFG
+        for sym, local in mapping.items():
+            if local in self.sdfg.arrays:
+                # Add assignment state and inter-state edge
+                symassign_state = self.sdfg.add_state_before(state)
+                isedge = self.sdfg.edges_between(symassign_state, state)[0]
+                newsym = self.sdfg.find_new_symbol(f'sym_{local}')
+                desc = self.sdfg.arrays[local]
+                self.sdfg.add_symbol(newsym, desc.dtype)
+                if isinstance(desc, data.Array):
+                    isedge.data.assignments[newsym] = f'{local}[0]'
+                else:
+                    isedge.data.assignments[newsym] = local
+
+                # Replace mapping with symbol
+                mapping[sym] = newsym
+
+        inputs = {
+            k: v
+            for k, v in argdict.items() if self._is_inputnode(sdfg, k)
+        }
+        outputs = {
+            k: copy.deepcopy(v) if k in inputs else v
+            for k, v in argdict.items() if self._is_outputnode(sdfg, k)
+        }
+        # If an argument does not register as input nor as output,
+        # put it in the inputs.
+        # This may happen with input argument that are used to set
+        # a promoted scalar.
+        for k, v in argdict.items():
+            if k not in inputs.keys() and k not in outputs.keys():
+                inputs[k] = v
+        # Unset parent inputs/read accesses that
+        # turn out to be outputs/write accesses.
+        for memlet in outputs.values():
+            aname = memlet.data
+            rng = memlet.subset
+            access_value = (aname, rng)
+            access_key = inverse_dict_lookup(self.accesses, access_value)
+            # NOTE: `memlet in inputs.values()` doesn't work because
+            # it only looks at the subset and not the data
+            # isinput = memlet in inputs.values()
+            isinput = False
+            for other in inputs.values():
+                if not isinstance(other, dace.Memlet):
+                    continue
+                if memlet == other and memlet.data == other.data:
+                    isinput = True
+                    break
+            if access_key:
+                # Delete read access and create write access and output
+                vname = aname[:-1] + 'w'
+                name, rng, atype = access_key
+                if atype == 'r':
+                    if not isinput:
+                        del self.accesses[access_key]
+                    access_value = self._add_write_access(name,
+                                                          rng,
+                                                          node,
+                                                          new_name=vname)
+                    memlet.data = vname
+                # Delete the old read descriptor
+                if not isinput:
+                    conn_used = False
+                    for s in self.sdfg.nodes():
+                        for n in s.data_nodes():
+                            if n.data == aname:
+                                conn_used = True
+                                break
+                        if conn_used:
+                            break
+                    if not conn_used:
+                        del self.sdfg.arrays[aname]
+            if not isinput and aname in self.inputs.keys():
+                # Delete input
+                del self.inputs[aname]
+            # Delete potential input slicing
+            if not isinput and slice_state:
+                for n in slice_state.nodes():
+                    if isinstance(n, nodes.AccessNode) and n.data == aname:
+                        for e in slice_state.in_edges(n):
+                            sub = None
+                            for s in itertools.chain(
+                                    node.args,
+                                [kw.value for kw in node.keywords]):
+                                if isinstance(s, ast.Subscript):
+                                    if s.value.id == e.src.data:
+                                        sub = s
+                                        break
+                            if not sub:
+                                raise KeyError("Did not find output "
+                                               "subscript")
+                            output_slices.add((sub, ast.Name(id=aname)))
+                            slice_state.remove_edge(e)
+                            slice_state.remove_node(e.src)
+                        slice_state.remove_node(n)
+                        break
+
+        # Add return values as additional outputs
+        rets = []
+        given_args = set(a for a, _ in args)
+        for arrname, arr in sdfg.arrays.items():
+            if (arrname.startswith('__return') and not arr.transient
+                    and arrname not in given_args):
+                # Add a transient to the current SDFG
+                new_arrname = '%s_ret_%d' % (sdfg.name, len(rets))
+                newarr = copy.deepcopy(arr)
+                newarr.transient = True
+
+                # Substitute symbol mapping to get actual shape/strides
+                if mapping is not None:
+                    # Two-step replacement (N -> __dacesym_N --> mapping[N])
+                    # to avoid clashes
+                    symbolic.safe_replace(
+                        mapping,
+                        lambda m: sd.replace_properties_dict(newarr, m))
+
+                new_arrname = self.sdfg.add_datadesc(new_arrname,
+                                                     newarr,
+                                                     find_new_name=True)
+
+                # Create an output entry for the connectors
+                outputs[arrname] = dace.Memlet.from_array(new_arrname, newarr)
+                rets.append(new_arrname)
+
+        nsdfg = state.add_nested_sdfg(sdfg,
+                                      self.sdfg,
+                                      inputs.keys(),
+                                      outputs.keys(),
+                                      mapping,
+                                      debuginfo=self.current_lineinfo)
+        self._add_nested_symbols(nsdfg)
+        self._add_dependencies(state, nsdfg, None, None, inputs, outputs)
+
+        if output_slices:
+            if len(rets) > 0:
+                raise DaceSyntaxError(
+                    self, node, 'Both return values and output slices '
+                    'unsupported')
+
+            assign_node = ast.Assign()
+            targets = []
+            value = []
+            for t, v in output_slices:
+                targets.append(t)
+                value.append(v)
+            assign_node = ast.Assign(targets=ast.Tuple(elts=targets),
+                                     value=ast.Tuple(elts=value),
+                                     lineno=node.lineno,
+                                     col_offset=node.col_offset)
+            assign_node = ast.fix_missing_locations(assign_node)
+            return self._visit_assign(assign_node, assign_node.targets, None)
+
+        # Return SDFG return values, if exist
+        if len(rets) == 1:
+            return rets[0]
+        return rets
+
     def visit_Call(self, node: ast.Call):
         func = None
+        funcname = None
         # If the call directly refers to an SDFG or dace-compatible program
         if isinstance(node.func, ast.Num):
             if self._has_sdfg(node.func.n):
@@ -3568,368 +4004,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # If the function exists as a global SDFG or @dace.program, use it
         if func or funcname in self.other_sdfgs:
-            # Avoid import loops
-            from dace.frontend.python.common import SDFGConvertible
-            from dace.frontend.python.parser import DaceProgram
-
-            if func is None:
-                func = self.other_sdfgs[funcname]
-            if isinstance(func, SDFG):
-                sdfg = copy.deepcopy(func)
-                funcname = sdfg.name
-                args = [(aname, self._parse_function_arg(arg))
-                        for aname, arg in zip(sdfg.arg_names, node.args)]
-                args += [(arg.arg, self._parse_function_arg(arg.value))
-                         for arg in node.keywords]
-                required_args = [
-                    a for a in sdfg.arglist().keys()
-                    if a not in sdfg.symbols and not a.startswith('__return')
-                ]
-                all_args = required_args
-            elif isinstance(func, SDFGConvertible) or self._has_sdfg(func):
-                argnames, constant_args = func.__sdfg_signature__()
-                args = [(aname, self._parse_function_arg(arg))
-                        for aname, arg in zip(argnames, node.args)]
-                args += [(arg.arg, self._parse_function_arg(arg.value))
-                         for arg in node.keywords]
-                required_args = argnames
-                fargs = (self._eval_arg(arg) for _, arg in args)
-
-                # fcopy = copy.copy(func)
-                fcopy = func
-                if hasattr(fcopy, 'global_vars'):
-                    fcopy.global_vars = {**self.globals, **func.global_vars}
-
-                if isinstance(fcopy, DaceProgram):
-                    fcopy.signature = copy.deepcopy(func.signature)
-                    sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
-                else:
-                    sdfg = fcopy.__sdfg__(*fargs)
-
-                funcname = sdfg.name
-                all_args = required_args
-                # Try to promote args of kind `sym = scalar`
-                args = [(a, self._parse_subscript_slice(v)) if a in sdfg.symbols
-                        and str(v) not in self.sdfg.symbols else (a, v)
-                        for a, v in args]
-                required_args = [k for k, _ in args if k in sdfg.arg_names]
-                # Filter out constant and None-constant arguments
-                req = sdfg.arglist().keys()
-                args = [
-                    (k, v) for k, v in args
-                    if k not in constant_args and (v is not None or k in req)
-                ]
-
-                # Handle nested closure
-                closure_arrays = getattr(fcopy, '__sdfg_closure__',
-                                         lambda *args: {})()
-                for aname, arr in closure_arrays.items():
-                    desc = data.create_datadescriptor(arr)
-                    outer_name = self.sdfg.add_datadesc(aname,
-                                                        desc,
-                                                        find_new_name=True)
-                    self.nested_closure_arrays[outer_name] = (arr, desc)
-                    # Add closure arrays as function arguments
-                    args.append((aname, outer_name))
-                    required_args.append(aname)
-            else:
-                raise DaceSyntaxError(
-                    self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
-                    (type(func).__name__, funcname))
-
-            # Avoid import loops
-            from dace.frontend.python.parser import infer_symbols_from_datadescriptor
-
-            # Map internal SDFG symbols by adding keyword arguments
-            # symbols = set(sdfg.symbols.keys())
-            symbols = sdfg.free_symbols
             try:
-                mapping = infer_symbols_from_datadescriptor(
-                    sdfg, {
-                        k: self.sdfg.arrays[v]
-                        for k, v in args if v in self.sdfg.arrays
-                    },
-                    set(sym.arg for sym in node.keywords if sym.arg in symbols))
-            except ValueError as ex:
-                raise DaceSyntaxError(self, node, str(ex))
-            if len(mapping) == 0:  # Default to same-symbol mapping
-                mapping = None
-
-            # Add undefined symbols to required arguments
-            if mapping:
-                required_args.extend(
-                    [sym for sym in symbols if sym not in mapping])
-            else:
-                required_args.extend(symbols)
-            required_args = dtypes.deduplicate(required_args)
-
-            # Argument checks
-            for arg in node.keywords:
-                # Skip explicit return values
-                if arg.arg.startswith('__return'):
-                    required_args.append(arg.arg)
-                    continue
-                if arg.arg not in required_args and arg.arg not in all_args:
-                    raise DaceSyntaxError(
-                        self, node, 'Invalid keyword argument "%s" in call to '
-                        '"%s"' % (arg.arg, funcname))
-            if len(args) != len(required_args):
-                raise DaceSyntaxError(
-                    self, node, 'Argument number mismatch in'
-                    ' call to "%s" (expected %d,'
-                    ' got %d)' % (funcname, len(required_args), len(args)))
-
-            # Remove newly-defined symbols from arguments
-            if mapping is not None:
-                symbols -= set(mapping.keys())
-            # if len(symbols) > 0:
-            #     mapping = mapping or {}
-            # TODO: Why above the None fix was applied when there were symbols?
-            mapping = mapping or {}
-            args_to_remove = []
-            for i, (aname, arg) in enumerate(args):
-                if aname in symbols:
-                    args_to_remove.append(args[i])
-                    mapping[aname] = arg
-            for arg in args_to_remove:
-                args.remove(arg)
-
-            # Change connector names
-            updated_args = []
-            arrays_before = list(sdfg.arrays.items())
-            for i, (conn, arg) in enumerate(args):
-                if (conn in self.scope_vars.keys()
-                        or conn in self.sdfg.arrays.keys()
-                        or conn in self.sdfg.symbols):
-                    if self.sdfg._temp_transients > sdfg._temp_transients:
-                        new_conn = self.sdfg.temp_data_name()
-                    else:
-                        new_conn = sdfg.temp_data_name()
-                    # warnings.warn("Renaming nested SDFG connector {c} to "
-                    #               "{n}".format(c=conn, n=new_conn))
-                    sdfg.replace(conn, new_conn)
-                    updated_args.append((new_conn, arg))
-                    # Rename the connector's Views
-                    for arrname, array in arrays_before:
-                        if (isinstance(array, data.View)
-                                and len(arrname) > len(conn)
-                                and arrname[:len(conn) + 1] == f'{conn}_'):
-                            new_name = f'{new_conn}{arrname[len(conn):]}'
-                            sdfg.replace(arrname, new_name)
-                else:
-                    updated_args.append((conn, arg))
-            args = updated_args
-
-            # Change transient names
-            arrays_before = list(sdfg.arrays.items())
-            for arrname, array in arrays_before:
-                if array.transient and arrname[:5] == '__tmp':
-                    if int(arrname[5:]) < self.sdfg._temp_transients:
-                        if self.sdfg._temp_transients > sdfg._temp_transients:
-                            new_name = self.sdfg.temp_data_name()
-                        else:
-                            new_name = sdfg.temp_data_name()
-                        sdfg.replace(arrname, new_name)
-            self.sdfg._temp_transients = max(self.sdfg._temp_transients,
-                                             sdfg._temp_transients)
-            sdfg._temp_transients = self.sdfg._temp_transients
-
-            # TODO: This workaround needs to be formalized (pass-by-assignment)
-            slice_state = None
-            output_slices = set()
-            for arg in itertools.chain(node.args,
-                                       [kw.value for kw in node.keywords]):
-                if isinstance(arg, ast.Subscript):
-                    slice_state = self.last_state
-                    break
-
-            # Make sure that any scope vars in the arguments are substituted
-            # by an access.
-            for i, (aname, arg) in enumerate(args):
-                if arg not in self.sdfg.arrays:
-                    if isinstance(arg, str) and arg in self.scope_arrays:
-                        # TODO: Do we need to do something with the sqz range?
-                        newarg, _ = self._add_read_access(
-                            arg,
-                            subsets.Range.from_array(self.scope_arrays[arg]),
-                            node)
-                    else:
-                        newarg = arg
-                    args[i] = (aname, newarg)
-
-            state = self._add_state('call_%s_%d' % (funcname, node.lineno))
-            argdict = {
-                conn: Memlet.from_array(arg, self.sdfg.arrays[arg])
-                for conn, arg in args if arg in self.sdfg.arrays
-            }
-            # Handle scalar inputs to nested SDFG calls
-            for conn, arg in args:
-                if (arg not in self.sdfg.arrays
-                        and conn not in mapping.keys() | symbols):
-                    argdict[conn] = state.add_tasklet(
-                        'scalar', {}, {conn},
-                        '%s = %s' % (conn, arg),
-                        debuginfo=self.current_lineinfo)
-
-            # Handle scalar inputs that become symbols in the nested SDFG
-            for sym, local in mapping.items():
-                if local in self.sdfg.arrays:
-                    # Add assignment state and inter-state edge
-                    symassign_state = self.sdfg.add_state_before(state)
-                    isedge = self.sdfg.edges_between(symassign_state, state)[0]
-                    newsym = self.sdfg.find_new_symbol(f'sym_{local}')
-                    desc = self.sdfg.arrays[local]
-                    self.sdfg.add_symbol(newsym, desc.dtype)
-                    if isinstance(desc, data.Array):
-                        isedge.data.assignments[newsym] = f'{local}[0]'
-                    else:
-                        isedge.data.assignments[newsym] = local
-
-                    # Replace mapping with symbol
-                    mapping[sym] = newsym
-
-            inputs = {
-                k: v
-                for k, v in argdict.items() if self._is_inputnode(sdfg, k)
-            }
-            outputs = {
-                k: copy.deepcopy(v) if k in inputs else v
-                for k, v in argdict.items() if self._is_outputnode(sdfg, k)
-            }
-            # If an argument does not register as input nor as output,
-            # put it in the inputs.
-            # This may happen with input argument that are used to set
-            # a promoted scalar.
-            for k, v in argdict.items():
-                if k not in inputs.keys() and k not in outputs.keys():
-                    inputs[k] = v
-            # Unset parent inputs/read accesses that
-            # turn out to be outputs/write accesses.
-            for memlet in outputs.values():
-                aname = memlet.data
-                rng = memlet.subset
-                access_value = (aname, rng)
-                access_key = inverse_dict_lookup(self.accesses, access_value)
-                # NOTE: `memlet in inputs.values()` doesn't work because
-                # it only looks at the subset and not the data
-                # isinput = memlet in inputs.values()
-                isinput = False
-                for other in inputs.values():
-                    if not isinstance(other, dace.Memlet):
-                        continue
-                    if memlet == other and memlet.data == other.data:
-                        isinput = True
-                        break
-                if access_key:
-                    # Delete read access and create write access and output
-                    vname = aname[:-1] + 'w'
-                    name, rng, atype = access_key
-                    if atype == 'r':
-                        if not isinput:
-                            del self.accesses[access_key]
-                        access_value = self._add_write_access(name,
-                                                              rng,
-                                                              node,
-                                                              new_name=vname)
-                        memlet.data = vname
-                    # Delete the old read descriptor
-                    if not isinput:
-                        conn_used = False
-                        for s in self.sdfg.nodes():
-                            for n in s.data_nodes():
-                                if n.data == aname:
-                                    conn_used = True
-                                    break
-                            if conn_used:
-                                break
-                        if not conn_used:
-                            del self.sdfg.arrays[aname]
-                if not isinput and aname in self.inputs.keys():
-                    # Delete input
-                    del self.inputs[aname]
-                # Delete potential input slicing
-                if not isinput and slice_state:
-                    for n in slice_state.nodes():
-                        if isinstance(n, nodes.AccessNode) and n.data == aname:
-                            for e in slice_state.in_edges(n):
-                                sub = None
-                                for s in itertools.chain(
-                                        node.args,
-                                    [kw.value for kw in node.keywords]):
-                                    if isinstance(s, ast.Subscript):
-                                        if s.value.id == e.src.data:
-                                            sub = s
-                                            break
-                                if not sub:
-                                    raise KeyError("Did not find output "
-                                                   "subscript")
-                                output_slices.add((sub, ast.Name(id=aname)))
-                                slice_state.remove_edge(e)
-                                slice_state.remove_node(e.src)
-                            slice_state.remove_node(n)
-                            break
-
-            # Add return values as additional outputs
-            rets = []
-            given_args = set(a for a, _ in args)
-            for arrname, arr in sdfg.arrays.items():
-                if (arrname.startswith('__return') and not arr.transient
-                        and arrname not in given_args):
-                    # Add a transient to the current SDFG
-                    new_arrname = '%s_ret_%d' % (sdfg.name, len(rets))
-                    newarr = copy.deepcopy(arr)
-                    newarr.transient = True
-
-                    # Substitute symbol mapping to get actual shape/strides
-                    if mapping is not None:
-                        # Two-step replacement (N -> __dacesym_N --> mapping[N])
-                        # to avoid clashes
-                        symbolic.safe_replace(
-                            mapping,
-                            lambda m: sd.replace_properties_dict(newarr, m))
-
-                    new_arrname = self.sdfg.add_datadesc(new_arrname,
-                                                         newarr,
-                                                         find_new_name=True)
-
-                    # Create an output entry for the connectors
-                    outputs[arrname] = dace.Memlet.from_array(
-                        new_arrname, newarr)
-                    rets.append(new_arrname)
-
-            nsdfg = state.add_nested_sdfg(sdfg,
-                                          self.sdfg,
-                                          inputs.keys(),
-                                          outputs.keys(),
-                                          mapping,
-                                          debuginfo=self.current_lineinfo)
-            self._add_nested_symbols(nsdfg)
-            self._add_dependencies(state, nsdfg, None, None, inputs, outputs)
-
-            if output_slices:
-                if len(rets) > 0:
-                    raise DaceSyntaxError(
-                        self, node, 'Both return values and output slices '
-                        'unsupported')
-
-                assign_node = ast.Assign()
-                targets = []
-                value = []
-                for t, v in output_slices:
-                    targets.append(t)
-                    value.append(v)
-                assign_node = ast.Assign(targets=ast.Tuple(elts=targets),
-                                         value=ast.Tuple(elts=value),
-                                         lineno=node.lineno,
-                                         col_offset=node.col_offset)
-                assign_node = ast.fix_missing_locations(assign_node)
-                return self._visit_assign(assign_node, assign_node.targets,
-                                          None)
-
-            # Return SDFG return values, if exist
-            if len(rets) == 1:
-                return rets[0]
-            return rets
+                return self._parse_sdfg_call(funcname, func, node)
+            except SkipCall:
+                # Re-parse call with non-parsed information
+                return self.visit_Call(node.func.oldnode)
 
         # Set arguments
         args = []

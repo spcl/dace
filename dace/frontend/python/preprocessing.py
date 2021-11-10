@@ -2,15 +2,17 @@
 import ast
 import copy
 from dataclasses import dataclass
+import inspect
 import numpy
 import re
 import sympy
 import sys
 import warnings
 
-from typing import Any, Callable, Dict, List, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import dace
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
+from dace.config import Config
 from dace.sdfg import SDFG
 from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible,
@@ -367,6 +369,40 @@ class DeadCodeEliminator(ast.NodeTransformer):
         return node
 
 
+def has_replacement(callobj: Callable,
+                    parent_object: Optional[Any] = None,
+                    node: Optional[ast.AST] = None) -> bool:
+    """
+    Returns True if the function/operator replacement repository
+    has a registered replacement for the called function described by
+    a live object.
+    """
+    from dace.frontend.common import op_repository as oprepo
+
+    # Attributes and methods
+    if parent_object is not None:
+        classname = type(parent_object).__name__
+        attrname = callobj.__name__
+        repl = oprepo.Replacements.get_attribute(classname, attrname)
+        if repl is not None:
+            return True
+        repl = oprepo.Replacements.get_method(classname, attrname)
+        if repl is not None:
+            return True
+
+    # NumPy ufuncs
+    if isinstance(callobj, numpy.ufunc):
+        return True
+
+    # Functions
+    full_func_name = callobj.__module__ + '.' + callobj.__qualname__
+    if oprepo.Replacements.get(full_func_name) is not None:
+        return True
+
+    # Also try the function as it is called in the AST
+    return oprepo.Replacements.get(astutils.rname(node)) is not None
+
+
 class GlobalResolver(ast.NodeTransformer):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
@@ -377,6 +413,7 @@ class GlobalResolver(ast.NodeTransformer):
         self.resolve_functions = resolve_functions
         self.current_scope = set()
         self.toplevel_function = True
+        self.do_not_detect_callables = False
 
         self.closure = SDFGClosure()
 
@@ -462,6 +499,9 @@ class GlobalResolver(ast.NodeTransformer):
                     newnode = ast.NameConstant(value=None)
                 else:
                     newnode = ast.Num(n=value)
+
+            newnode.oldnode = copy.deepcopy(parent_node)
+
         elif detect_callables and hasattr(value, '__call__') and hasattr(
                 value.__call__, '__sdfg__'):
             return self.global_value_to_node(value.__call__, parent_node,
@@ -479,6 +519,43 @@ class GlobalResolver(ast.NodeTransformer):
                 self.closure.array_mapping[id(value)] = arrname
 
             newnode = ast.Name(id=arrname, ctx=ast.Load())
+        elif detect_callables and callable(value):
+            # Try parsing the function as a dace function/method
+            try:
+                from dace.frontend.python import parser  # Avoid import loops
+
+                parent_object = None
+                if hasattr(value, '__self__'):
+                    parent_object = value.__self__
+
+                # If it is a callable object
+                if (not inspect.isfunction(value)
+                        and not inspect.ismethod(value)
+                        and hasattr(value, '__call__')):
+                    parent_object = value
+                    value = value.__call__
+
+                # Replacements take precedence over auto-parsing
+                if has_replacement(value, parent_object, parent_node):
+                    return None
+
+                # Decorated or functions with missing source code
+                sast, _, _, _ = astutils.function_to_ast(value)
+                if len(sast.body[0].decorator_list) > 0:
+                    return None
+
+                parsed = parser.DaceProgram(value, [], {}, False,
+                                            dtypes.DeviceType.CPU)
+                # If method, add the first argument (which disappears due to
+                # being a bound method) and the method's object
+                if parent_object is not None:
+                    parsed.methodobj = parent_object
+                    parsed.objname = inspect.getfullargspec(value).args[0]
+
+                return self.global_value_to_node(parsed, parent_node, qualname,
+                                                 recurse, detect_callables)
+            except:  # Parsing failed (almost any exception can occur)
+                return None
         else:
             return None
 
@@ -491,6 +568,7 @@ class GlobalResolver(ast.NodeTransformer):
         # Skip the top function definition (handled outside of the resolver)
         if self.toplevel_function:
             self.toplevel_function = False
+            node.decorator_list = []  # Skip decorators
             return self.generic_visit(node)
 
         for arg in ast.walk(node.args):
@@ -567,15 +645,53 @@ class GlobalResolver(ast.NodeTransformer):
                 if newnode is not None:
                     return newnode
         elif not isinstance(global_func, dtypes.typeclass):
+            callables = not self.do_not_detect_callables
             newnode = self.global_value_to_node(global_func,
                                                 parent_node=node,
                                                 qualname=astutils.unparse(node),
                                                 recurse=True,
-                                                detect_callables=True)
+                                                detect_callables=callables)
             if newnode is not None:
                 node.func = newnode
                 return self.generic_visit(node)
         return self.generic_visit(node)
+
+    def generic_visit_field(self, node: ast.AST, field: str) -> ast.AST:
+        """
+        Modification of ast.NodeTransformer.generic_visit that only visits one
+        field.
+        """
+        old_value = getattr(node, field)
+        if isinstance(old_value, list):
+            new_values = []
+            for value in old_value:
+                if isinstance(value, ast.AST):
+                    value = self.visit(value)
+                    if value is None:
+                        continue
+                    elif not isinstance(value, ast.AST):
+                        new_values.extend(value)
+                        continue
+                new_values.append(value)
+            old_value[:] = new_values
+        elif isinstance(old_value, ast.AST):
+            new_node = self.visit(old_value)
+            if new_node is None:
+                delattr(node, field)
+            else:
+                setattr(node, field, new_node)
+        return node
+
+    def visit_For(self, node: ast.For):
+        # Special case: for loop generators cannot be dace programs
+        oldval = self.do_not_detect_callables
+        self.do_not_detect_callables = True
+        self.generic_visit_field(node, 'target')
+        self.generic_visit_field(node, 'iter')
+        self.do_not_detect_callables = oldval
+        self.generic_visit_field(node, 'body')
+        self.generic_visit_field(node, 'orelse')
+        return node
 
     def visit_Assert(self, node: ast.Assert) -> Any:
         # Try to evaluate assertion statically
@@ -665,13 +781,20 @@ class CallTreeResolver(ast.NodeVisitor):
         constant_args = self._eval_args(node)
 
         # Resolve nested closure as necessary
-        qualname = next(k for k, v in self.closure.closure_sdfgs.items()
-                        if v is value)
-        if hasattr(value, 'closure_resolver'):
-            self.closure.nested_closures.append(
-                (qualname, value.closure_resolver(constant_args)))
-        else:
-            self.closure.nested_closures.append((qualname, SDFGClosure()))
+        try:
+            qualname = next(k for k, v in self.closure.closure_sdfgs.items()
+                            if v is value)
+            if hasattr(value, 'closure_resolver'):
+                self.closure.nested_closures.append(
+                    (qualname,
+                     value.closure_resolver(constant_args, self.closure)))
+            else:
+                self.closure.nested_closures.append((qualname, SDFGClosure()))
+        except Exception as ex:  # Parsing failed (anything can happen here)
+            warnings.warn(f'Parsing SDFGConvertible {value} failed: {ex}')
+            # Return old call AST instead
+            node.func = node.func.oldnode.func
+            return self.generic_visit(node)
 
 
 class ArrayClosureResolver(ast.NodeVisitor):
@@ -684,6 +807,7 @@ class ArrayClosureResolver(ast.NodeVisitor):
             self.arrays.add(node.id)
         self.generic_visit(node)
 
+
 class AugAssignExpander(ast.NodeTransformer):
     def visit_AugAssign(self, node: ast.AugAssign) -> ast.Assign:
         target = self.generic_visit(node.target)
@@ -694,12 +818,15 @@ class AugAssignExpander(ast.NodeTransformer):
         return ast.copy_location(ast.Assign(targets=[target], value=newvalue),
                                  node)
 
+
 def preprocess_dace_program(
-        f: Callable[..., Any],
-        argtypes: Dict[str, data.Data],
-        global_vars: Dict[str, Any],
-        modules: Dict[str, Any],
-        resolve_functions: bool = False) -> Tuple[PreprocessedAST, SDFGClosure]:
+    f: Callable[..., Any],
+    argtypes: Dict[str, data.Data],
+    global_vars: Dict[str, Any],
+    modules: Dict[str, Any],
+    resolve_functions: bool = False,
+    parent_closure: Optional[SDFGClosure] = None
+) -> Tuple[PreprocessedAST, SDFGClosure]:
     """
     Preprocesses a ``@dace.program`` and all its nested functions, returning
     a preprocessed AST object and the closure of the resulting SDFG.
@@ -716,6 +843,8 @@ def preprocess_dace_program(
     :param resolve_functions: If True, treats all global functions defined
                                 outside of the program as returning constant
                                 values.
+    :param parent_closure: If not None, represents the closure of the parent of
+                           the currently processed function.
     :return: A 2-tuple of the AST and its reduced (used) closure.
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
@@ -739,6 +868,22 @@ def preprocess_dace_program(
         for k, v in global_vars.items() if k not in argtypes and k != '_'
     }
     closure_resolver = GlobalResolver(resolved, resolve_functions)
+
+    # Append element to call stack and handle max recursion depth
+    if parent_closure is not None:
+        fid = id(f)
+        if fid in parent_closure.callstack:
+            raise TypeError('Non-analyzable recursion detected, function '
+                            'cannot be parsed as data-centric')
+        if len(parent_closure.callstack) > Config.get(
+                'frontend', 'implicit_recursion_depth'):
+            raise TypeError('Implicit (automatically parsed) recursion depth '
+                            'exceeded. Functions below this call will not be '
+                            'parsed. To change this setting, modify the value '
+                            '`frontend.implicit_recursion_depth` in .dace.conf')
+
+        closure_resolver.closure.callstack = parent_closure.callstack + [fid]
+
     src_ast = closure_resolver.visit(src_ast)
     src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
     src_ast = ConditionalCodeResolver(resolved).visit(src_ast)

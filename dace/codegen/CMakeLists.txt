@@ -421,6 +421,10 @@ if(DACE_ENABLE_XILINX)
     add_definitions(-DHLSLIB_SIMULATE_OPENCL)
   endif()
 
+  if(DACE_MINIMUM_FIFO_DEPTH)
+    set(DACE_XILINX_MINIMUM_FIFO_DEPTH "\nconfig_dataflow -fifo_depth ${DACE_MINIMUM_FIFO_DEPTH}")
+  endif()
+
   unset(DACE_KERNEL_TARGETS)
   foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
 
@@ -431,6 +435,7 @@ if(DACE_ENABLE_XILINX)
     add_vitis_kernel(${DACE_KERNEL_NAME}
                      FILES ${DACE_VITIS_KERNEL_FILES} ${DACE_KERNEL_FILE}
                      HLS_FLAGS "${DACE_XILINX_SYNTHESIS_FLAGS} -DDACE_SYNTHESIS -DDACE_XILINX -DDACE_XILINX_DEVICE_CODE"
+                     HLS_CONFIG "config_compile -pipeline_style frp${DACE_XILINX_MINIMUM_FIFO_DEPTH}"
                      INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/../external/hlslib/include
                                   ${CMAKE_SOURCE_DIR}/../runtime/include)
     set(DACE_KERNEL_TARGETS ${DACE_KERNEL_TARGETS} ${DACE_KERNEL_NAME})

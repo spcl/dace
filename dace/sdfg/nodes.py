@@ -410,7 +410,7 @@ class Tasklet(CodeNode):
 
             mlir_result_type = utils.get_entry_result_type(
                 mlir_entry_func, mlir_is_generic)
-            mlir_out_name = next(iter(self.out_connectors.keys()))[0]
+            mlir_out_name = next(iter(self.out_connectors.keys()))
 
             if self.out_connectors[mlir_out_name] is None or self.out_connectors[
                     mlir_out_name].ctype == "void":

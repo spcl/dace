@@ -267,7 +267,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                 for k, v in reevaluate.items()
             }
 
-    def closure_resolver(self, constant_args):
+    def closure_resolver(self, constant_args, parent_closure=None):
         # Parse allowed global variables
         # (for inferring types and values in the DaCe program)
         global_vars = copy.copy(self.global_vars)
@@ -313,7 +313,8 @@ class DaceProgram(pycommon.SDFGConvertible):
             self.f, {},
             global_vars,
             modules,
-            resolve_functions=self.resolve_functions)
+            resolve_functions=self.resolve_functions,
+            parent_closure=parent_closure)
         return closure
 
     def _eval_closure(self,

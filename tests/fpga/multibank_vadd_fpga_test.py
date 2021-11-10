@@ -6,19 +6,20 @@ import dace
 import numpy as np
 from dace.transformation.interstate import InlineSDFG
 
-# A test executing vector addition with multidimensional arrays using HBM.
+# A test executing vector addition with multidimensional arrays using HBM/DDR.
 
 
 def create_vadd_multibank_sdfg(bank_count_per_array=2,
                                ndim=1,
                                unroll_map_inside=False,
+                               mem_type="hbm",
                                sdfg_name="vadd_hbm"):
     N = dace.symbol("N")
     M = dace.symbol("M")
     S = dace.symbol("S")
 
-    sdfg = dace.SDFG(sdfg_name)
-    state = sdfg.add_state('vadd_hbm', True)
+    sdfg = dace.SDFG(sdfg_name + "_" + mem_type)
+    state = sdfg.add_state('vadd_' + mem_type, True)
     shape = [bank_count_per_array, N]
     access_str = "i"
     inner_map_range = dict()
@@ -36,9 +37,9 @@ def create_vadd_multibank_sdfg(bank_count_per_array=2,
     in2 = sdfg.add_array("in2", shape, dace.float32)
     out = sdfg.add_array("out", shape, dace.float32)
 
-    in1[1].location["memorytype"] = "hbm"
-    in2[1].location["memorytype"] = "hbm"
-    out[1].location["memorytype"] = "hbm"
+    in1[1].location["memorytype"] = mem_type
+    in2[1].location["memorytype"] = mem_type
+    out[1].location["memorytype"] = mem_type
     in1[1].location["bank"] = f"0:{bank_count_per_array}"
     in2[1].location["bank"] = f"{bank_count_per_array}:{2*bank_count_per_array}"
     out[1].location[
@@ -116,9 +117,17 @@ def create_test_set(dim, size1D, banks):
     return (in1, in2, expected, out)
 
 
-def exec_test(dim, size1D, banks, test_name, unroll_map_inside=False):
+def exec_test(
+    dim,
+    size1D,
+    banks,
+    mem_type,
+    test_name,
+    unroll_map_inside=False,
+):
     in1, in2, expected, target = create_test_set(dim, size1D, banks)
-    sdfg = create_vadd_multibank_sdfg(banks, dim, unroll_map_inside, test_name)
+    sdfg = create_vadd_multibank_sdfg(banks, dim, unroll_map_inside, mem_type,
+                                      test_name)
     if (dim == 1):
         sdfg(in1=in1, in2=in2, out=target, N=size1D)
     elif (dim == 2):
@@ -130,33 +139,64 @@ def exec_test(dim, size1D, banks, test_name, unroll_map_inside=False):
 
 
 @xilinx_test()
-def test_vadd_1b1d():
-    return exec_test(1, 50, 1, "vadd_1b1d")
+def test_vadd_hbm_1b1d():
+    return exec_test(1, 50, 1, "hbm", "vadd_1b1d")
 
 
 @xilinx_test()
-def test_vadd_2b1d():
-    return exec_test(1, 50, 2, "vadd_2b1d")
+def test_vadd_hbm_2b1d():
+    return exec_test(1, 50, 2, "hbm", "vadd_2b1d")
 
 
 @xilinx_test()
-def test_vadd_2b2d():
-    return exec_test(2, 50, 2, "vadd_2b2d")
+def test_vadd_hbm_2b2d():
+    return exec_test(2, 50, 2, "hbm", "vadd_2b2d")
 
 
 @xilinx_test()
-def test_vadd_2b3d():
-    return exec_test(3, 10, 2, "vadd_2b3d")
+def test_vadd_hbm_2b3d():
+    return exec_test(3, 10, 2, "hbm", "vadd_2b3d")
 
 
 @xilinx_test()
-def test_vadd_8b1d():
-    return exec_test(1, 50, 8, "vadd_8b1d", True)
+def test_vadd_hbm_8b1d():
+    return exec_test(1, 50, 8, "hbm", "vadd_8b1d", True)
+
+
+@xilinx_test()
+def test_vadd_ddr_1b1d():
+    return exec_test(1, 50, 1, "ddr", "vadd_1b1d")
+
+
+@xilinx_test()
+def test_vadd_ddr_2b1d():
+    return exec_test(1, 50, 2, "ddr", "vadd_2b1d")
+
+
+@xilinx_test()
+def test_vadd_ddr_2b2d():
+    return exec_test(2, 50, 2, "ddr", "vadd_2b2d")
+
+
+@xilinx_test()
+def test_vadd_ddr_2b3d():
+    return exec_test(3, 10, 2, "ddr", "vadd_2b3d")
+
+
+@xilinx_test()
+def test_vadd_ddr_8b1d():
+    return exec_test(1, 50, 8, "ddr", "vadd_8b1d", True)
 
 
 if __name__ == '__main__':
-    test_vadd_1b1d(None)
-    test_vadd_2b1d(None)
-    test_vadd_2b2d(None)
-    test_vadd_2b3d(None)
-    test_vadd_8b1d(None)
+    test_vadd_hbm_1b1d(None)
+    test_vadd_hbm_2b1d(None)
+    test_vadd_hbm_2b2d(None)
+    test_vadd_hbm_2b3d(None)
+    test_vadd_hbm_8b1d(None)
+
+    test_vadd_ddr_1b1d(None)
+    test_vadd_ddr_2b1d(None)
+    test_vadd_ddr_2b2d(None)
+    test_vadd_ddr_2b3d(None)
+    test_vadd_ddr_8b1d(None)

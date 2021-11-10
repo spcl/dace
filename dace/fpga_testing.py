@@ -101,7 +101,7 @@ def _run_fpga_test(vendor: str,
         Config.set("optimizer", "interface", value=None)
         Config.set("optimizer", "autooptimize", value=False)
         if vendor == "xilinx":
-            Config.set("compiler", "fpga_vendor", value="xilinx")
+            Config.set("compiler", "fpga", "vendor", value="xilinx")
             Config.set("compiler", "xilinx", "mode", value="simulation")
 
             # Simulation in software
@@ -188,7 +188,7 @@ def _run_fpga_test(vendor: str,
 
         elif vendor == "intel_fpga":
             # Set environment variables
-            Config.set("compiler", "fpga_vendor", value="intel_fpga")
+            Config.set("compiler", "fpga", "vendor", value="intel_fpga")
             Config.set("compiler", "default_data_types", value="C")
             Config.set("compiler", "intel_fpga", "mode", value="emulator")
 
@@ -231,7 +231,7 @@ def fpga_test(run_synthesis: bool = True,
         @pytest.mark.parametrize("vendor", pytest_params)
         def wrapper(vendor: Optional[str]):
             if vendor == None:
-                vendor = Config.get("compiler", "fpga_vendor")
+                vendor = Config.get("compiler", "fpga", "vendor")
             p = FPGATestProcess(target=_run_fpga_test,
                                 args=(vendor, test_function, run_synthesis,
                                       assert_ii_1))

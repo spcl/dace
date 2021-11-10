@@ -335,6 +335,9 @@ class CPPUnparser:
                         inferred_symbols = type_inference.infer_types(
                             t, def_symbols)
                         inferred_type = inferred_symbols[target.id]
+                        if inferred_type is None:
+                            raise RuntimeError(
+                                f"Failed to infer type of \"{target.id}\".")
 
                         self.locals.define(target.id, t.lineno, self._indent,
                                            inferred_type)

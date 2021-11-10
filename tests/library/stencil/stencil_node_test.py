@@ -11,11 +11,14 @@ COLS = dace.symbol("cols")
 DTYPE = np.float32
 
 
-def make_sdfg_1d(implementation: str):
+def make_sdfg_1d(implementation: str, vector_length: int):
 
-    sdfg = dace.SDFG("stencil_node_test_1d")
-    _, a_desc = sdfg.add_array("a", (SIZE, ), dtype=DTYPE)
-    _, res_desc = sdfg.add_array("res", (SIZE, ), dtype=DTYPE)
+    vtype = dace.vector(dace.typeclass(DTYPE),
+                        vector_length) if vector_length > 1 else DTYPE
+
+    sdfg = dace.SDFG(f"stencil_node_test_1d_w{vector_length}")
+    _, a_desc = sdfg.add_array("a", (SIZE / vector_length, ), dtype=vtype)
+    _, res_desc = sdfg.add_array("res", (SIZE / vector_length, ), dtype=vtype)
 
     state = sdfg.add_state("stencil_node_test_1d")
     a = state.add_read("a")
@@ -39,14 +42,18 @@ res[1] = (dace.float32(0.3333) * tmp1)""",
     return sdfg
 
 
-def make_sdfg_2d(implementation: str):
+def make_sdfg_2d(implementation: str, vector_length: int):
 
-    sdfg = dace.SDFG("stencil_node_test_2d")
-    _, a_desc = sdfg.add_array("a", (ROWS, COLS), dtype=DTYPE)
+    vtype = dace.vector(dace.typeclass(DTYPE),
+                        vector_length) if vector_length > 1 else DTYPE
+
+    sdfg = dace.SDFG(f"stencil_node_test_2d_w{vector_length}")
+    _, a_desc = sdfg.add_array("a", (ROWS, COLS / vector_length), dtype=vtype)
     _, b_desc = sdfg.add_array("b", (ROWS, ), dtype=DTYPE)
     sdfg.add_symbol("c", DTYPE)
-    _, d_desc = sdfg.add_array("d", (ROWS, COLS), dtype=DTYPE)
-    _, res_desc = sdfg.add_array("res", (ROWS, COLS), dtype=DTYPE)
+    _, d_desc = sdfg.add_array("d", (ROWS, COLS / vector_length), dtype=vtype)
+    _, res_desc = sdfg.add_array("res", (ROWS, COLS / vector_length),
+                                 dtype=vtype)
 
     state = sdfg.add_state("stencil_node_test_2d")
     a = state.add_read("a")
@@ -85,22 +92,28 @@ def run_stencil_1d(sdfg, size):
     a = np.zeros((size, ), dtype=DTYPE)
     a[1:-1] = np.arange(1, size - 1, dtype=DTYPE).reshape((size - 2))
     res = np.zeros((size, ), dtype=DTYPE)
+    sdfg.expand_library_nodes()
     sdfg(a=a, res=res, size=size)
     expected = 0.3333 * (a[:-2] + a[1:-1] + a[2:])
     assert np.allclose(expected, res[1:-1])
 
 
 def test_stencil_node_1d():
-    run_stencil_1d(make_sdfg_1d("pure"), 32)
+    run_stencil_1d(make_sdfg_1d("pure", 1), 32)
 
 
-@intel_fpga_test()
-def test_stencil_node_1d_fpga_array():
-    sdfg = make_sdfg_1d(dace.Config.get("compiler", "fpga_vendor"))
+def stencil_node_1d_fpga_array(vector_length: int):
+    sdfg = make_sdfg_1d(dace.Config.get("compiler", "fpga", "vendor"),
+                        vector_length)
     assert sdfg.apply_transformations(FPGATransformSDFG) == 1
     assert sdfg.apply_transformations(InlineSDFG) == 1
     run_stencil_1d(sdfg, 32)
     return sdfg
+
+
+@intel_fpga_test()
+def test_stencil_node_1d_fpga_array():
+    return stencil_node_1d_fpga_array(1)
 
 
 def run_stencil_2d(sdfg, rows, cols, specialize: bool):
@@ -122,17 +135,27 @@ def run_stencil_2d(sdfg, rows, cols, specialize: bool):
 
 
 def test_stencil_node_2d():
-    run_stencil_2d(make_sdfg_2d("pure"), 16, 32, False)
+    run_stencil_2d(make_sdfg_2d("pure", 1), 16, 32, False)
+
+
+def stencil_node_2d_fpga_array(vector_length: int):
+    sdfg = make_sdfg_2d(dace.Config.get("compiler", "fpga", "vendor"),
+                        vector_length)
+    sdfg.specialize({"cols": 8})
+    assert sdfg.apply_transformations(FPGATransformSDFG) == 1
+    assert sdfg.apply_transformations(InlineSDFG) == 1
+    run_stencil_2d(sdfg, 4, 8, True)
+    return sdfg
 
 
 @intel_fpga_test()
 def test_stencil_node_2d_fpga_array():
-    sdfg = make_sdfg_2d(dace.Config.get("compiler", "fpga_vendor"))
-    sdfg.specialize({"cols": 32})
-    assert sdfg.apply_transformations(FPGATransformSDFG) == 1
-    assert sdfg.apply_transformations(InlineSDFG) == 1
-    run_stencil_2d(sdfg, 16, 32, True)
-    return sdfg
+    return stencil_node_2d_fpga_array(1)
+
+
+@intel_fpga_test()
+def test_stencil_node_2d_fpga_array_vectorized():
+    return stencil_node_2d_fpga_array(4)
 
 
 if __name__ == "__main__":
@@ -140,3 +163,4 @@ if __name__ == "__main__":
     test_stencil_node_1d_fpga_array(None)
     test_stencil_node_2d()
     test_stencil_node_2d_fpga_array(None)
+    test_stencil_node_2d_fpga_array_vectorized(None)
