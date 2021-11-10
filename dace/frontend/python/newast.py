@@ -3185,7 +3185,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, target,
                     'Cannot reassign value to variable "{}"'.format(name))
 
-            if not true_name and op:
+            if not true_name and (op or isinstance(target, ast.Subscript)):
                 raise DaceSyntaxError(
                     self, target,
                     'Variable "{}" used before definition'.format(name))
