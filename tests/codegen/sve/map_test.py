@@ -37,13 +37,13 @@ def test_map_advanced():
     assert '__pg_j' not in code
 
     # Check for stride of N * 2
-    assert '__pg_k) * (2 * N)' in code
+    assert '(2 * N)' in code
 
     # Offset initial
     assert 'k = 1' in code
 
     # Upper bound (minus 1)
-    assert '(8 * N))' in code
+    assert '(8 * N)' in code
 
 
 if __name__ == '__main__':

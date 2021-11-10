@@ -61,13 +61,16 @@ class SVECodeGen(TargetCodeGenerator):
 
         cpu_storage = [
             dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal,
-            dtypes.StorageType.Register
+            dtypes.StorageType.Register, dtypes.StorageType.SVE_Register
         ]
 
         # This dispatcher is required to catch the allocation of Code->Code registers
         # because we want SVE registers instead of dace::vec<>'s.
         # In any other case it will call the default codegen.
         self.dispatcher.register_array_dispatcher(cpu_storage, self)
+        self.dispatcher.register_copy_dispatcher(
+            dtypes.StorageType.SVE_Register, dtypes.StorageType.CPU_Heap, None,
+            self)
 
         self.cpu_codegen: dace.codegen.targets.CPUCodeGen = self.dispatcher.get_generic_node_dispatcher(
         )
@@ -76,6 +79,44 @@ class SVECodeGen(TargetCodeGenerator):
         res = super().get_generated_codeobjects()
         print(res)
         return res
+
+    def copy_memory(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
+                    src_node: nodes.Node, dst_node: nodes.Node,
+                    edge: gr.MultiConnectorEdge[mm.Memlet],
+                    function_stream: CodeIOStream,
+                    callsite_stream: CodeIOStream) -> None:
+
+        # Check whether it is a known reduction that is possible in SVE
+        reduction_type = detect_reduction_type(edge.data.wcr)
+        if reduction_type not in util.REDUCTION_TYPE_TO_SVE:
+            raise util.NotSupportedError('Unsupported reduction in SVE')
+
+        nc = not is_write_conflicted(dfg, edge)
+        desc = edge.src.desc(sdfg)
+        if not nc or not isinstance(desc.dtype,
+                                    (dtypes.pointer, dtypes.vector)):
+            # WCR on vectors works in two steps:
+            # 1. Reduce the SVE register using SVE instructions into a scalar
+            # 2. WCR the scalar to memory using DaCe functionality
+            wcr = self.cpu_codegen.write_and_resolve_expr(sdfg,
+                                                          edge.data,
+                                                          not nc,
+                                                          None,
+                                                          '@',
+                                                          dtype=desc.dtype)
+            callsite_stream.write(
+                wcr[:wcr.find('@')] +
+                util.REDUCTION_TYPE_TO_SVE[reduction_type] +
+                f'(svptrue_{util.TYPE_TO_SVE_SUFFIX[desc.dtype]}(), ' +
+                src_node.label + wcr[wcr.find('@') + 1:] + ');')
+            return
+        else:
+            ######################
+            # Horizontal non-atomic reduction
+            raise NotImplementedError()
+
+        return super().copy_memory(sdfg, dfg, state_id, src_node, dst_node,
+                                   edge, function_stream, callsite_stream)
 
     def generate_node(self, sdfg: SDFG, state: SDFGState, state_id: int,
                       node: nodes.Node, function_stream: CodeIOStream,
@@ -380,6 +421,12 @@ class SVECodeGen(TargetCodeGenerator):
                        global_stream: CodeIOStream,
                        declaration_stream: CodeIOStream,
                        allocation_stream: CodeIOStream) -> None:
+        if nodedesc.storage == dtypes.StorageType.SVE_Register:
+            sve_type = util.TYPE_TO_SVE[nodedesc.dtype]
+            self.dispatcher.defined_vars.add(node.data, DefinedType.Scalar,
+                                             sve_type)
+            return
+
         if util.get_sve_scope(sdfg, dfg, node) is not None and isinstance(
                 nodedesc, data.Scalar) and isinstance(nodedesc.dtype,
                                                       dtypes.vector):
@@ -457,14 +504,17 @@ class SVECodeGen(TargetCodeGenerator):
 
         # Declare our counting variable (e.g. i) and precompute the loop predicate for our range
         callsite_stream.write(f'{self.counter_type} {param} = {begin};')
+
+        end_param = f'__{param}_to'
+        callsite_stream.write(f'{self.counter_type} {end_param} = {end};')
+
         callsite_stream.write(
-            f'svbool_t __pg_{param} = svwhilele_b{ltype_size * 8}({param}, ({self.counter_type}) {end});'
+            f'svbool_t __pg_{param} = svwhilele_b{ltype_size * 8}({param}, {end_param});'
         )
-        
+
         # Test for the predicate
         callsite_stream.write(
-            f'while(svptest_any(svptrue_b{ltype_size * 8}(), __pg_{param})) {{'
-        )
+            f'while(svptest_any(svptrue_b{ltype_size * 8}(), __pg_{param})) {{')
 
         # Allocate scope related memory
         for node, _ in scope.all_nodes_recursive():
@@ -485,15 +535,12 @@ class SVECodeGen(TargetCodeGenerator):
                                           skip_exit_node=True)
 
         # Increase the counting variable (according to the number of processed elements)
-        #callsite_stream.write(
-        #    f'{param} += svcntp_b{ltype_size * 8}(__pg_{param}, __pg_{param}) * {stride};'
-        #)
         size_letter = {1: 'b', 2: 'h', 4: 'w', 8: 'd'}[ltype_size]
         callsite_stream.write(f'{param} += svcnt{size_letter}() * {stride};')
 
         # Then recompute the loop predicate
         callsite_stream.write(
-            f'__pg_{param} = svwhilele_b{ltype_size * 8}({param}, ({self.counter_type}) {end});'
+            f'__pg_{param} = svwhilele_b{ltype_size * 8}({param}, {end_param});'
         )
 
         callsite_stream.write('}')
@@ -532,8 +579,9 @@ class SVECodeGen(TargetCodeGenerator):
         for stmt in body:
             stmt = copy.deepcopy(stmt)
             result = StringIO()
-            dace.codegen.targets.sve.unparse.SVEUnparser(sdfg,
-                dfg, self.current_map, self.cpu_codegen, stmt, result, body, memlets,
+            dace.codegen.targets.sve.unparse.SVEUnparser(
+                sdfg, dfg, self.current_map, self.cpu_codegen,
+                stmt, result, body, memlets,
                 util.get_loop_predicate(sdfg, dfg, node), self.counter_type,
                 defined_symbols, self.stream_associations,
                 self.wcr_associations)

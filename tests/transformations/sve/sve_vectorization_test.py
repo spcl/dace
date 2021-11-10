@@ -19,7 +19,7 @@ def find_connector_by_name(sdfg: SDFG, name: str):
         elif name in node.out_connectors:
             return node.out_connectors[name]
 
-    raise NodeNotFoundError(f'Could not find connector "{name}"')
+    raise RuntimeError(f'Could not find connector "{name}"')
 
 
 def test_basic_stride():
@@ -89,20 +89,6 @@ def test_supported_wcr():
     sdfg = program.to_sdfg(strict=True)
     # Complex datatypes are currently not supported by the codegen
     assert sdfg.apply_transformations(SVEVectorization) == 1
-
-
-def test_unsupported_wcr():
-    @dace.program
-    def program(A: dace.float32[N], B: dace.int32[1]):
-        for i in dace.map[0:N]:
-            with dace.tasklet:
-                a << A[i]
-                b >> B(-1, lambda x, y: x + y)[i]
-                b = a
-
-    sdfg = program.to_sdfg(strict=True)
-    # Vector WCR not supported in SVE
-    assert sdfg.apply_transformations(SVEVectorization) == 0
 
 
 def test_first_level_vectorization():

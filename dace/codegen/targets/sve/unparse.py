@@ -331,9 +331,14 @@ class SVEUnparser(cppunparse.CPPUnparser):
             # WCR on vectors works in two steps:
             # 1. Reduce the SVE register using SVE instructions into a scalar
             # 2. WCR the scalar to memory using DaCe functionality
+            dst_node = self.dfg.memlet_path(edge)[-1].dst
+            if isinstance(dst_node, nodes.AccessNode) and dst_node.desc(self.sdfg).storage == dtypes.StorageType.SVE_Register:
+                print('wixx')
+                return
+
             wcr = self.cpu_codegen.write_and_resolve_expr(self.sdfg,
                                                           edge.data,
-                                                          nc,
+                                                          not nc,
                                                           None,
                                                           '@',
                                                           dtype=dtype)
