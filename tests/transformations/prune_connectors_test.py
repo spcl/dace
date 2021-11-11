@@ -2,7 +2,7 @@
 import argparse
 import numpy as np
 import os
-
+import pytest
 import dace
 from dace.transformation.dataflow import PruneConnectors
 
@@ -144,13 +144,18 @@ of << i << "\\n";""",
     return sdfg_outer
 
 
-def test_prune_connectors(n=None):
+@pytest.mark.parametrize("remove_unused_containers", [False, True])
+def test_prune_connectors(remove_unused_containers, n=None):
     if n is None:
         n = 64
 
     sdfg = make_sdfg()
 
-    if sdfg.apply_transformations_repeated(PruneConnectors) != 3:
+    if sdfg.apply_transformations_repeated(PruneConnectors,
+                                           options=[{
+                                               'remove_unused_containers':
+                                               remove_unused_containers
+                                           }]) != 3:
         raise RuntimeError("PruneConnectors was not applied.")
 
     arr_in = np.zeros((n, n), dtype=np.uint16)
@@ -161,15 +166,18 @@ def test_prune_connectors(n=None):
     except FileNotFoundError:
         pass
 
-    sdfg(read_used=arr_in,
-         read_unused=arr_in,
-         read_used_outer=arr_in,
-         read_unused_outer=arr_in,
-         write_used=arr_out,
-         write_unused=arr_out,
-         write_used_outer=arr_out,
-         write_unused_outer=arr_out,
-         N=n)
+    if remove_unused_containers:
+        sdfg(read_used=arr_in, write_used=arr_out, N=n)
+    else:
+        sdfg(read_used=arr_in,
+             read_unused=arr_in,
+             read_used_outer=arr_in,
+             read_unused_outer=arr_in,
+             write_used=arr_out,
+             write_unused=arr_out,
+             write_used_outer=arr_out,
+             write_unused_outer=arr_out,
+             N=n)
 
     assert np.allclose(arr_out, arr_in + 1)
 
@@ -190,4 +198,4 @@ if __name__ == "__main__":
 
     n = np.int32(args.N)
 
-    test_prune_connectors(n)
+    test_prune_connectors(n=n)

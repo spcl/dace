@@ -749,7 +749,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                              nodes that are using this data descriptor
                              prior to removing it.
         """
-        # Verify first that there are no access nodes that use this data
+
+        # Verify that the data descriptor exists
+        if name not in self._arrays:
+            return
+
+        # Verify that there are no access nodes that use this data
         if validate:
             for state in self.nodes():
                 for node in state.nodes():
@@ -1588,7 +1593,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                               total_size=total_size,
                               may_alias=may_alias)
 
-    def add_temp_transient_like(self, desc: dt.Array, dtype=None, debuginfo=None):
+    def add_temp_transient_like(self,
+                                desc: dt.Array,
+                                dtype=None,
+                                debuginfo=None):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
         debuginfo = debuginfo or desc.debuginfo
@@ -2020,11 +2028,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         from dace.transformation.transformation import (Transformation,
                                                         strict_transformations)
 
-        self.apply_transformations_repeated([RedundantReadSlice,
-                                             RedundantWriteSlice],
-                                            validate=validate,
-                                            strict=True,
-                                            validate_all=validate_all)
+        self.apply_transformations_repeated(
+            [RedundantReadSlice, RedundantWriteSlice],
+            validate=validate,
+            strict=True,
+            validate_all=validate_all)
         self.apply_transformations_repeated(strict_transformations(),
                                             validate=validate,
                                             strict=True,
