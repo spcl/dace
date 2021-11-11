@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests class fields and external arrays. """
 import dace
+from dace.data import Array
 from dace.frontend.python.common import DaceSyntaxError
 import numpy as np
 from dataclasses import dataclass
@@ -634,6 +635,42 @@ def test_two_inner_methods():
     assert np.allclose(10.0, B)
 
 
+class TransientField(np.ndarray):
+    def __descriptor__(self) -> Array:
+        dtype = dace.typeclass(self.dtype.type)
+        # Adapted from dace.data.create_datadescriptor
+        return Array(
+            dtype=dtype,
+            strides=tuple(s // self.itemsize for s in self.strides),
+            shape=self.shape,
+            transient=True,  # <----- Different part
+        )
+
+
+def test_transient_field():
+    class Something:
+        def __init__(self):
+            self._nonglobal = TransientField(shape=[10, 11], dtype=np.float64)
+
+        @dace.method
+        def __call__(self, A):
+            self._nonglobal[...] = A
+            return self._nonglobal + 1
+
+    A = np.ones((10, 11))
+
+    outer = Something()
+
+    # Ensure no other global arrays were created apart from A and __return
+    sdfg = outer.__call__.to_sdfg(A)
+    assert len([k for k, v in sdfg.arrays.items() if not v.transient]) == 2
+
+    # Run code
+    outer(A)
+
+    assert np.allclose(1.0, A)
+
+
 if __name__ == '__main__':
     test_bad_closure()
     test_dynamic_closure()
@@ -664,3 +701,4 @@ if __name__ == '__main__':
     test_method_allconstants()
     test_same_global_array()
     test_two_inner_methods()
+    test_transient_field()
