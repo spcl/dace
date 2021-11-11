@@ -3651,10 +3651,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 outer_name = self.sdfg.add_datadesc(aname,
                                                     desc,
                                                     find_new_name=True)
-                self.nested_closure_arrays[outer_name] = (arr, desc)
-                # Add closure arrays as function arguments
-                args.append((aname, outer_name))
-                required_args.append(aname)
+                if not desc.transient:
+                    self.nested_closure_arrays[outer_name] = (arr, desc)
+                    # Add closure arrays as function arguments
+                    args.append((aname, outer_name))
+                    required_args.append(aname)
         else:
             raise DaceSyntaxError(
                 self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %

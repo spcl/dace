@@ -162,5 +162,7 @@ class SDFGClosure:
 
                 new_name = data.find_new_name(arrname,
                                               self.closure_arrays.keys())
-                self.closure_arrays[new_name] = (arrname, desc, evaluator, True)
-                self.array_mapping[id(arr)] = new_name
+                if not desc.transient:
+                    self.closure_arrays[new_name] = (arrname, desc, evaluator,
+                                                     True)
+                    self.array_mapping[id(arr)] = new_name
