@@ -104,7 +104,7 @@ def test_nested_autoparse_fail():
         return notworking_nested(a)
 
     A = np.random.rand(20)
-    with pytest.raises(DaceSyntaxError, match='notworking_nested'):
+    with pytest.raises(DaceSyntaxError, match='numpy.allclose'):
         notworking2(A)
 
 
@@ -133,7 +133,7 @@ def test_nested_recursion2_fail():
         return nested_a(a)
 
     A = np.random.rand(20)
-    with pytest.raises(DaceSyntaxError, match='nested_a'):
+    with pytest.raises(DaceSyntaxError, match='nested_b'):
         recursive_autoparse(A)
 
 
