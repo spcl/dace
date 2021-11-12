@@ -24,8 +24,8 @@ class DaceSyntaxError(Exception):
             col = 0
 
         if self.visitor is not None:
-            return (self.message + "\n  in File " + str(self.visitor.filename) +
-                    ", line " + str(line) + ":" + str(col))
+            return (self.message + "\n  File \"" + str(self.visitor.filename) +
+                    "\", line " + str(line) + ", column " + str(col))
         else:
             return (self.message + "\n  in line " + str(line) + ":" + str(col))
 

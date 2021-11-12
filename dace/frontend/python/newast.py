@@ -4007,9 +4007,13 @@ class ProgramVisitor(ExtNodeVisitor):
         if func or funcname in self.other_sdfgs:
             try:
                 return self._parse_sdfg_call(funcname, func, node)
-            except SkipCall:
+            except SkipCall as ex:
                 # Re-parse call with non-parsed information
-                return self.visit_Call(node.func.oldnode)
+                try:
+                    return self.visit_Call(node.func.oldnode)
+                except Exception:  # Anything could happen here
+                    # Raise original exception instead
+                    raise ex.__context__
 
         # Set arguments
         args = []
