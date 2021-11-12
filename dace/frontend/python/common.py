@@ -24,8 +24,8 @@ class DaceSyntaxError(Exception):
             col = 0
 
         if self.visitor is not None:
-            return (self.message + "\n  in File " + str(self.visitor.filename) +
-                    ", line " + str(line) + ":" + str(col))
+            return (self.message + "\n  File \"" + str(self.visitor.filename) +
+                    "\", line " + str(line) + ", column " + str(col))
         else:
             return (self.message + "\n  in line " + str(line) + ":" + str(col))
 
@@ -162,5 +162,7 @@ class SDFGClosure:
 
                 new_name = data.find_new_name(arrname,
                                               self.closure_arrays.keys())
-                self.closure_arrays[new_name] = (arrname, desc, evaluator, True)
-                self.array_mapping[id(arr)] = new_name
+                if not desc.transient:
+                    self.closure_arrays[new_name] = (arrname, desc, evaluator,
+                                                     True)
+                    self.array_mapping[id(arr)] = new_name
