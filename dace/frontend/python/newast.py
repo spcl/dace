@@ -3185,7 +3185,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, target,
                     'Cannot reassign value to variable "{}"'.format(name))
 
-            if not true_name and op:
+            if not true_name and (op or isinstance(target, ast.Subscript)):
                 raise DaceSyntaxError(
                     self, target,
                     'Variable "{}" used before definition'.format(name))
@@ -3651,10 +3651,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 outer_name = self.sdfg.add_datadesc(aname,
                                                     desc,
                                                     find_new_name=True)
-                self.nested_closure_arrays[outer_name] = (arr, desc)
-                # Add closure arrays as function arguments
-                args.append((aname, outer_name))
-                required_args.append(aname)
+                if not desc.transient:
+                    self.nested_closure_arrays[outer_name] = (arr, desc)
+                    # Add closure arrays as function arguments
+                    args.append((aname, outer_name))
+                    required_args.append(aname)
         else:
             raise DaceSyntaxError(
                 self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
@@ -4006,9 +4007,13 @@ class ProgramVisitor(ExtNodeVisitor):
         if func or funcname in self.other_sdfgs:
             try:
                 return self._parse_sdfg_call(funcname, func, node)
-            except SkipCall:
+            except SkipCall as ex:
                 # Re-parse call with non-parsed information
-                return self.visit_Call(node.func.oldnode)
+                try:
+                    return self.visit_Call(node.func.oldnode)
+                except Exception:  # Anything could happen here
+                    # Raise original exception instead
+                    raise ex.__context__
 
         # Set arguments
         args = []
