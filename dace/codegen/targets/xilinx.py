@@ -656,6 +656,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         kernel_args_call = []
         kernel_args_module = []
+        print (222, [pname for _, pname, _, _ in parameters])
         for is_output, pname, p, interface_ids in parameters:
             if isinstance(p, dt.Array):
                 for bank, interface_id in fpga.iterate_hbm_interface_ids(
@@ -898,11 +899,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     "HLSLIB_DATAFLOW_FUNCTION({}, {});".format(
                         name, ", ".join(kernel_args_call_double)), sdfg,
                     state_id)
-                double_kernel_call.write('}')
+                #double_kernel_call.write('}')
                 double_kernel_call.write('HLSLIB_DATAFLOW_FINALIZE();')
                 double_kernel_call.write('}')
 
-                double_kernel_module.write("void {}({}) {{{{".format(name, ", ".join(kernel_args_module_double)))
+                double_kernel_module.write("void {}({})".format(name, ", ".join(kernel_args_module_double)))
 
             print (77, top_unrolled)
             self._dispatcher.dispatch_subgraph(sdfg,
@@ -1078,6 +1079,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         data_to_allocate = (set(subgraph.top_level_transients()) -
                             set(sdfg.shared_transients()) -
                             set([p[1] for p in parameters]))
+        print (111, subgraph.top_level_transients())
         allocated = set()
         for node in subgraph.nodes():
             if not isinstance(node, dace.sdfg.nodes.AccessNode):
@@ -1088,6 +1090,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                node.desc(sdfg), module_stream,
                                                module_body_stream)
+
+        print (333, allocated)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            subgraph,

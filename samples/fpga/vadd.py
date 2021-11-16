@@ -24,7 +24,8 @@ def make_sdfg(N, V, double_pumped):
     b = state.add_read("B")
     c = state.add_write("C")
 
-    c_entry, c_exit = state.add_map("compute_map", dict({'i': f'0:N//V'}),
+    # TODO Do the division of the loop bound in codegen, rather in the SDFG. Or maybe in the future, it should actually be through the SDFG as that would be more transparent and less magic?
+    c_entry, c_exit = state.add_map("compute_map", dict({'i': f'0:N//{"(V//2)" if double_pumped else "V"}'}),
         schedule=dace.ScheduleType.FPGA_Double if double_pumped else dace.ScheduleType.Default)
     tasklet = state.add_tasklet('vector_add_core', {'a', 'b'}, {'c'}, 'c = a + b')
 

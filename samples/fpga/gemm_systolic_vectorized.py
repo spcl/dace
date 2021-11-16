@@ -232,7 +232,7 @@ def make_compute(sdfg, state, vec_width=1, double=False):
     # every PE: reads input data, buffer the data assigned to it, forwards the data
     buffer_a_tasklet = state.add_tasklet(
         "buffer_a", {"a_in", "a_top_in"}, {"a_reg", "a_out"}, """\
-tmp = a_in if p > 0 else a_top_in
+tmp = a_in.pop() if p > 0 else a_top_in.pop()
 if n1 == P - p - 1:
     a_reg = tmp
 if p < P - 1:
@@ -271,7 +271,7 @@ if p < P - 1:
 c_prev = c_in
 if k == 0:
     c_prev = 0
-tmp = (b_in if p > 0 else b_top_in)
+tmp = (b_in.pop() if p > 0 else b_top_in.pop())
 c_out = c_prev + a_in * tmp
 if p < P - 1:
     b_out = tmp""")
@@ -321,9 +321,9 @@ if p < P - 1:
         "write_c", {"buffer_in", "forward_in"}, {"c_out", "c_out_top"}, """\
 if n1 <= p:
     if p < P-1:
-        c_out = forward_in if p > 0 and n1 > 0 else buffer_in
+        c_out = forward_in.pop() if p > 0 and n1 > 0 else buffer_in
     else:
-        c_out_top = forward_in if n1 > 0 else buffer_in""")
+        c_out_top = forward_in.pop() if n1 > 0 else buffer_in""")
     state.add_memlet_path(C_buffer_out,
                           entry_c,
                           write_c_tasklet,

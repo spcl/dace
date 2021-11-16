@@ -6,6 +6,7 @@ import functools
 import itertools
 import re
 import warnings
+from dace.frontend.python.newast import Shape
 import sympy as sp
 import numpy as np
 from typing import Dict, Iterable, List, Set, Tuple, Union
@@ -847,7 +848,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     continue
                 # Only distinguish between inputs and outputs for arrays # TODO why? Because otherwise the same one gets defined multiple times. Is this a problem?
                 # TODO check if it isn't an array, it might be a stream inside shared_data, which could be used by a double pumped kernel, in which case it should have is_output set correctly!
-                if not isinstance(desc, dt.Array):
+                if not isinstance(desc, dt.Array) and not desc in shared_data:
                     is_output = None
                 # If this is a global array, assign the correct interface ID and
                 # memory interface (e.g., DDR or HBM bank)
@@ -943,7 +944,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     # Global data is passed from outside the kernel
                     global_data_parameters.add(
                         (is_output, data_name, desc, interface_id))
-                elif data_name in shared_data:
+                # TODO fix hardcoding:
+                elif data_name in shared_data or str(desc.shape[0]) == 'P + 1':
                     # Add the data as a parameter to this PE
                     subgraph_parameters[subgraph].add(
                         (is_output, data_name, desc, interface_id))
