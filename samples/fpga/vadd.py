@@ -58,6 +58,12 @@ def cli(size_n, veclen, double_pumped):
     sdfg.apply_transformations(FPGATransformState)
     sdfg.apply_transformations_repeated(StreamingMemory, dict(storage=dace.StorageType.FPGA_Local))
 
+    #Instrument
+    from dace.codegen.targets.fpga import is_fpga_kernel
+    for s in sdfg.states():
+        if is_fpga_kernel(sdfg, s):
+            s.instrument = dace.InstrumentationType.FPGA
+            
     sdfg.save('aoeu.sdfg')
 
     #sdfg.compile()
