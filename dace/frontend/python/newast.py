@@ -1019,6 +1019,20 @@ class TaskletTransformer(ExtNodeTransformer):
                 self.sdfg.add_symbol(node.id, self.defined[node.id].dtype)
         return self.generic_visit(node)
 
+    def visit_Call(self, node: ast.Call) -> Any:
+        fname = rname(node.func)
+        if fname in self.defined:
+            ftype = self.defined[fname].dtype
+            if isinstance(ftype, dtypes.callback):
+                if not ftype.is_scalar_function():
+                    raise DaceSyntaxError(
+                        self, node,
+                        'Python callbacks that return arrays are not supported'
+                        ' within `dace.tasklet` scopes. Please use function '
+                        f'"{fname}" outside of a tasklet.'
+                    )
+        return self.generic_visit(node)
+
 
 class ProgramVisitor(ExtNodeVisitor):
     """ A visitor that traverses a data-centric Python program AST and

@@ -4,6 +4,7 @@ from __future__ import print_function
 import ctypes
 import aenum
 import inspect
+import itertools
 import numpy
 import re
 from functools import wraps
@@ -832,14 +833,13 @@ def _atomic_counter_generator():
 
 class callback(typeclass):
     """ Looks like dace.callback([None, <some_native_type>], *types)"""
-    def __init__(self, return_type, *variadic_args):
+    def __init__(self, return_types, *variadic_args):
         self.uid = next(_atomic_counter_generator())
         from dace import data
-        if isinstance(return_type, data.Array):
-            raise TypeError("Callbacks that return arrays are "
-                            "not supported as per SDFG semantics")
+        if not isinstance(return_types, (list, tuple, set)):
+            return_types = [return_types]
         self.dtype = self
-        self.return_type = return_type
+        self.return_types = return_types
         self.input_types = []
         for arg in variadic_args:
             if isinstance(arg, typeclass):
@@ -859,10 +859,15 @@ class callback(typeclass):
         """ Returns the ctypes version of the typeclass. """
         from dace import data
 
-        return_ctype = (self.return_type.as_ctypes()
-                        if self.return_type is not None else None)
+        return_ctype = self.cfunc_return_type().as_ctypes()
         input_ctypes = []
-        for some_arg in self.input_types:
+
+        if self.is_scalar_function():
+            args = self.input_types
+        else:
+            args = itertools.chain(self.input_types, self.return_types)
+
+        for some_arg in args:
             if isinstance(some_arg, data.Array):
                 input_ctypes.append(ctypes.c_void_p)
             else:
@@ -873,28 +878,51 @@ class callback(typeclass):
         cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
         return cf_object
 
+    def is_scalar_function(self) -> bool:
+        '''
+        Returns True if the callback is a function that returns a scalar
+        value (or nothing). Scalar functions are the only ones that can be 
+        used within a `dace.tasklet` explicitly.
+        '''
+        from dace import data
+        if len(self.return_types) == 0 or self.return_types == [None]:
+            return True
+        return (len(self.return_types) == 1
+                and isinstance(self.return_types[0], (typeclass, data.Scalar)))
+
+    def cfunc_return_type(self) -> typeclass:
+        ''' Returns the typeclass of the return value of the function call. '''
+        if len(self.return_types) == 0 or self.return_types == [None]:
+            return typeclass(None)
+        if not self.is_scalar_function():
+            return typeclass(None)
+
+        return self.return_types[0].dtype
+
     def as_numpy_dtype(self):
         return numpy.dtype(self.as_ctypes())
 
     def as_arg(self, name):
         from dace import data
 
-        return_type_cstring = (self.return_type.ctype
-                               if self.return_type is not None else "void")
         input_type_cstring = []
-        for arg in self.input_types:
+
+        if self.is_scalar_function():
+            args = self.input_types
+        else:
+            args = itertools.chain(self.input_types, self.return_types)
+
+        for arg in args:
+            if arg is None:
+                continue
             if isinstance(arg, data.Array):
                 # const hack needed to prevent error in casting const int* to int*
                 input_type_cstring.append(arg.dtype.ctype + " const *")
             else:
-                input_type_cstring.append(arg.ctype if arg is not None else "")
-        cstring = return_type_cstring + " " + "(*" + name + ")("
-        for index, inp_arg in enumerate(input_type_cstring):
-            if index > 0:
-                cstring = cstring + ","
-            cstring = cstring + inp_arg
-        cstring = cstring + ")"
-        return cstring
+                input_type_cstring.append(arg.ctype)
+
+        retval = self.cfunc_return_type()
+        return f'{retval} (*{name})({", ".join(input_type_cstring)})'
 
     def get_trampoline(self, pyfunc, other_arguments):
         from functools import partial
@@ -927,14 +955,14 @@ class callback(typeclass):
         return partial(trampoline, pyfunc, arraypos, types_and_sizes)
 
     def __hash__(self):
-        return hash((self.uid, self.return_type, *self.input_types))
+        return hash((self.uid, *self.return_types, *self.input_types))
 
     def to_json(self):
         return {
             'type': 'callback',
             'arguments': [i.to_json() for i in self.input_types],
-            'returntype':
-            self.return_type.to_json() if self.return_type else None
+            'returntypes':
+            [r.to_json() if r else None for r in self.return_types]
         }
 
     @staticmethod
