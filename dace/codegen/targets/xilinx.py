@@ -911,7 +911,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                state_id,
                                                double_kernel_call,
                                                double_kernel_module,
-                                               skip_entry_node=not (top_unrolled is None or not top_unrolled))
+                                               skip_entry_node=(not top_unrolled is None or top_unrolled))
 
             if double_pumped:
                 # Increase the vector size, in case some other subgraph uses it.

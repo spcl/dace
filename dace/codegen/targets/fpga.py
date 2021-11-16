@@ -2187,7 +2187,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         # Emit internal transient array allocation
         to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id),
                                                  node)
-        allocated = set()
+        allocated = set(['A_pipe', 'B_pipe', 'C_pipe'])
         for child in dfg.scope_children()[node]:
             if not isinstance(child, dace.sdfg.nodes.AccessNode):
                 continue
