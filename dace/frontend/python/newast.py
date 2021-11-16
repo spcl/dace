@@ -4,6 +4,7 @@ import astunparse
 from collections import OrderedDict
 import copy
 import itertools
+import inspect
 import re
 import sys
 from os import path
@@ -163,7 +164,7 @@ def parse_dace_program(name: str,
                              constants=constants,
                              scope_arrays=argtypes,
                              scope_vars={},
-                             other_sdfgs=closure.closure_sdfgs,
+                             closure=closure,
                              strict=strict)
 
     sdfg, _, _, _ = visitor.parse_program(
@@ -1048,7 +1049,7 @@ class ProgramVisitor(ExtNodeVisitor):
                  scope_arrays: Dict[str, data.Data],
                  scope_vars: Dict[str, str],
                  map_symbols: Set[Union[str, symbolic.symbol]] = None,
-                 other_sdfgs: Dict[str, Union[SDFG, 'DaceProgram']] = None,
+                 closure: SDFGClosure = None,
                  nested: bool = False,
                  tmp_idx: int = 0,
                  strict: Optional[bool] = None):
@@ -1063,7 +1064,7 @@ class ProgramVisitor(ExtNodeVisitor):
             constants {Dict[str, Any]} -- Constant values
             scope_arrays {Dict[str, data.Data]} -- Scope arrays
             scope_vars {Dict[str, str]} -- Scope variables
-            other_sdfgs {Dict[str, Union[SDFG, DaceProgram]]} -- Other SDFGs
+            closure {SDFGClosure} -- The closure of this program
             strict {bool} -- Whether to apply strict transforms after parsing nested dace programs
 
         Keyword Arguments:
@@ -1083,7 +1084,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self.name = name
 
         self.globals = global_vars
-        self.other_sdfgs = other_sdfgs
+        self.closure = closure
         self.nested = nested
         self.strict = strict
 
@@ -1384,7 +1385,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                 **self.variables,
                             },
                             map_symbols=map_symbols,
-                            other_sdfgs=self.other_sdfgs,
+                            closure=self.closure,
                             nested=True,
                             tmp_idx=self.sdfg._temp_transients + 1)
 
@@ -2821,8 +2822,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 widx = sqz_wsub.squeeze()
                 sqz_rsub = copy.deepcopy(rtarget_subset)
                 ridx = sqz_rsub.squeeze()
-                if (sqz_wsub.size() == sqz_osub.size() and
-                        sqz_wsub.size() == sqz_rsub.size()):
+                if (sqz_wsub.size() == sqz_osub.size()
+                        and sqz_wsub.size() == sqz_rsub.size()):
                     r_to_w = {i: j for i, j in zip(ridx, widx)}
                     o_to_w = {i: j for i, j in zip(oidx, widx)}
                     # NOTE: Since 'sqz_wsub is squeezed, 'start' should be
@@ -2850,11 +2851,12 @@ class ProgramVisitor(ExtNodeVisitor):
                         in1_memlet.dynamic = True
                         out_memlet.dynamic = True
                     tasklet_code += '__out = __in1 {op} __in2'.format(op=op)
-                    state.add_mapped_tasklet(state.label, map_range, {
-                        '__in1': in1_memlet,
-                        '__in2': in2_memlet,
-                        **input_memlets,
-                    },
+                    state.add_mapped_tasklet(state.label,
+                                             map_range, {
+                                                 '__in1': in1_memlet,
+                                                 '__in2': in2_memlet,
+                                                 **input_memlets,
+                                             },
                                              tasklet_code,
                                              {'__out': out_memlet},
                                              external_edges=True,
@@ -3605,7 +3607,7 @@ class ProgramVisitor(ExtNodeVisitor):
         from dace.frontend.python.parser import DaceProgram
 
         if func is None:
-            func = self.other_sdfgs[funcname]
+            func = self.closure.closure_sdfgs[funcname]
         if isinstance(func, SDFG):
             sdfg = copy.deepcopy(func)
             funcname = sdfg.name
@@ -4018,7 +4020,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         funcname = candidate
 
         # If the function exists as a global SDFG or @dace.program, use it
-        if func or funcname in self.other_sdfgs:
+        if func or funcname in self.closure.closure_sdfgs:
             try:
                 return self._parse_sdfg_call(funcname, func, node)
             except SkipCall as ex:
@@ -4031,8 +4033,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Set arguments
         args = []
-
-        # TODO: If the function is a callback, implement it as a tasklet
 
         # NumPy ufunc support
         found_ufunc = False

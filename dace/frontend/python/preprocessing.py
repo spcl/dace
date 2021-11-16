@@ -539,6 +539,9 @@ class GlobalResolver(ast.NodeTransformer):
                 if has_replacement(value, parent_object, parent_node):
                     return None
 
+                # Store the handle to the original callable, in case parsing fails
+                parent_node.callable = value
+
                 # Decorated or functions with missing source code
                 sast, _, _, _ = astutils.function_to_ast(value)
                 if len(sast.body[0].decorator_list) > 0:
