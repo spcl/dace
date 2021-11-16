@@ -382,12 +382,14 @@ def make_fpga_state(sdfg, vec_width=1, double=False):
                     vec_type,
                     transient=True,
                     shape=(1, ),
-                    storage=dace.dtypes.StorageType.FPGA_Local)
+                    storage=dace.dtypes.StorageType.FPGA_Local,
+                    buffer_size=2)
     sdfg.add_stream("C_pipe_out",
                     vec_type,
                     transient=True,
                     shape=(1, ),
-                    storage=dace.dtypes.StorageType.FPGA_Local)
+                    storage=dace.dtypes.StorageType.FPGA_Local,
+                    buffer_size=2)
     sdfg.add_stream("A_pipe",
                     dace.float32,
                     transient=True,
@@ -398,12 +400,14 @@ def make_fpga_state(sdfg, vec_width=1, double=False):
                     vec_type,
                     transient=True,
                     shape=(P + 1, ),
-                    storage=dace.dtypes.StorageType.FPGA_Local)
+                    storage=dace.dtypes.StorageType.FPGA_Local,
+                    buffer_size=2)
     sdfg.add_stream("C_pipe",
                     vec_type,
                     transient=True,
                     shape=(P + 1, ),
-                    storage=dace.dtypes.StorageType.FPGA_Local)
+                    storage=dace.dtypes.StorageType.FPGA_Local,
+                    buffer_size=2)
 
     make_read_A(state)
     make_read_B(state, sdfg, vec_width)
