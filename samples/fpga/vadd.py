@@ -9,9 +9,15 @@ def make_sdfg(N, V, double_pumped):
     sdfg = dace.SDFG(f"vector_addition_{N.get()}_{V.get()}_{'double' if double_pumped else 'single'}")
 
     vec_type = dace.vector(dace.float32, V.get())
-    sdfg.add_array("A", [N / V], vec_type)
-    sdfg.add_array("B", [N / V], vec_type)
-    sdfg.add_array("C", [N / V], vec_type)
+    _, arr_a = sdfg.add_array("A", [N / V], vec_type)
+    arr_a.location['bank'] = '0'
+    arr_a.location["memorytype"] = 'hbm'
+    _, arr_b = sdfg.add_array("B", [N / V], vec_type)
+    arr_b.location['bank'] = '16'
+    arr_b.location["memorytype"] = 'hbm'
+    _, arr_c = sdfg.add_array("C", [N / V], vec_type)
+    arr_c.location['bank'] = '28'
+    arr_c.location["memorytype"] = 'hbm'
 
     state = sdfg.add_state()
     a = state.add_read("A")
