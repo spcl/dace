@@ -8,7 +8,7 @@ from dace.transformation.interstate import FPGATransformState
 def make_sdfg(N, V, double_pumped):
     sdfg = dace.SDFG(f"vector_addition_{N.get()}_{V.get()}_{'double' if double_pumped else 'single'}")
 
-    vec_type = dace.vector(dace.float32, V)
+    vec_type = dace.vector(dace.float32, V.get())
     sdfg.add_array("A", [N / V], vec_type)
     sdfg.add_array("B", [N / V], vec_type)
     sdfg.add_array("C", [N / V], vec_type)

@@ -447,7 +447,6 @@ if(DACE_ENABLE_XILINX)
 
   set(VITIS_BUILD_FLAGS
     ${VITIS_BUILD_FLAGS}
-    --user_ip_repo_paths ip_cores
     -s
     -O3
     -I${CMAKE_SOURCE_DIR}/include
@@ -460,6 +459,12 @@ if(DACE_ENABLE_XILINX)
   # Optionally specify a target clock (otherwise default is used)
   if(NOT DACE_XILINX_TARGET_CLOCK STREQUAL "")
     set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS} --kernel_frequency ${DACE_XILINX_TARGET_CLOCK})
+  endif()
+
+  # If the project uses generated IP cores (E.g. through double pumping)
+  message("wat" ${DACE_XILINX_IP_FILES})
+  if(DACE_XILINX_IP_FILES)
+    set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS} --user_ip_repo_paths ip_cores)
   endif()
 
   # Add synthesis and build commands

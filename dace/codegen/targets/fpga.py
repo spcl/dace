@@ -846,6 +846,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 if isinstance(desc, dt.View):
                     continue
                 # Only distinguish between inputs and outputs for arrays # TODO why? Because otherwise the same one gets defined multiple times. Is this a problem?
+                # TODO check if it isn't an array, it might be a stream inside shared_data, which could be used by a double pumped kernel, in which case it should have is_output set correctly!
                 if not isinstance(desc, dt.Array):
                     is_output = None
                 # If this is a global array, assign the correct interface ID and

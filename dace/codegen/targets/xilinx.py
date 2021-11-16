@@ -206,6 +206,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # Emit mapping between inter-kernel streaming interfaces
         for _, (src, dst) in self._stream_connections.items():
             link_cfg.write(f"stream_connect={src}:{dst}")
+        for kernel_name, _ in self._kernel_codes:
+            link_cfg.write(f'slr={kernel_name}_1:SLR0')
+        for kernel_name, _, _ in self._ip_codes:
+            if kernel_name.endswith('_top'):
+                link_cfg.write(f'slr={kernel_name}_1:SLR0')
 
         other_objs = []
         for name, code in self._other_codes.items():
@@ -802,8 +807,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 # Half the vector size
                 acces_nodes_touched = []
                 for node in subgraph.nodes():
-                    if isinstance(node, dace.nodes.AccessNode) and sdfg.arrays[node.data].dtype.veclen > 1:
-                        if not any([elem is sdfg.arrays[node.data].dtype for elem in acces_nodes_touched]):
+                    if isinstance(node, dace.nodes.AccessNode):
+                        vlen = int(dace.symbolic.evaluate(sdfg.arrays[node.data].dtype.veclen, sdfg.constants))
+                        if vlen > 1 and not any([elem is sdfg.arrays[node.data].dtype for elem in acces_nodes_touched]):
                             acces_nodes_touched.append(sdfg.arrays[node.data].dtype)
 
                 for node in acces_nodes_touched:
@@ -838,18 +844,21 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     double_kernel_call.write(f'#pragma HLS INTERFACE axis port={pname}')
                 double_kernel_call.write('#pragma HLS DATAFLOW')
 
-                data_to_allocate = (set(subgraph.top_level_transients()) -
+                streams_to_allocate = (set(subgraph.top_level_transients()) -
                             set(sdfg.shared_transients()) -
                             set([p[1] for p in parameters]))
 
                 print (set(sdfg.shared_transients()))
-                data_to_allocate = {'A_pipe', 'B_pipe', 'C_pipe'} # TODO don't hardcode
-                print (data_to_allocate)
+                # For both GEMMs:
+                streams_to_allocate = {'A_pipe', 'B_pipe', 'C_pipe'}
+                # For IO GEMM only:
+                data_to_allocate = {'A_buffer', 'C_buffer'} # TODO don't hardcode
+                print (88, streams_to_allocate)
                 allocated = set()
                 for node in subgraph.nodes():
                     if not isinstance(node, dace.sdfg.nodes.AccessNode):
                         continue
-                    if node.data not in data_to_allocate or node.data in allocated:
+                    if node.data not in streams_to_allocate or node.data in allocated:
                         continue
                     allocated.add(node.data)
                     sdfg_array = node.desc(sdfg)
@@ -862,6 +871,16 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                     double_kernel_module,
                                                     double_kernel_call
                                                     )
+                for node in subgraph.nodes():
+                    if not isinstance(node, dace.sdfg.nodes.AccessNode):
+                        continue
+                    if node.data not in data_to_allocate or node.data in allocated:
+                        continue
+                    allocated.add(node.data)
+                    self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
+                                               node.desc(sdfg), double_kernel_module,
+                                               double_kernel_call)
+
                 print (55,allocated)
 
                 double_kernel_call.write('HLSLIB_DATAFLOW_INIT();')
@@ -885,12 +904,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
                 double_kernel_module.write("void {}({}) {{{{".format(name, ", ".join(kernel_args_module_double)))
 
+            print (77, top_unrolled)
             self._dispatcher.dispatch_subgraph(sdfg,
                                                subgraph,
                                                state_id,
                                                double_kernel_call,
                                                double_kernel_module,
-                                               skip_entry_node=not top_unrolled is None)
+                                               skip_entry_node=not (top_unrolled is None or not top_unrolled))
 
             if double_pumped:
                 # Increase the vector size, in case some other subgraph uses it.
@@ -1145,12 +1165,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                node.desc(sdfg), module_stream,
                                                entry_stream)
+        print (99, external_streams)
         for is_output, name, node, _ in external_streams:
             self._dispatcher.defined_vars.add_global(name, DefinedType.Stream,
                                                      node.ctype)
             # TODO find better way to extract num kernels, rather than the shape of the streams
             num_kernels = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
-            key = 0 if is_output else 1
+            key = 1 if is_output else 0
             if num_kernels > 1:
                 streams = [f'{name}_{i}' for i in range(num_kernels)]
             else:  # _num should not be appended, when there is only one kernel
@@ -1202,6 +1223,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
                                    dst_node, edge, callsite_stream):
         memlet = edge.data
+        print (66, self._dispatcher.defined_vars)
         if (self._dispatcher.defined_vars.get(
                 memlet.data)[0] == DefinedType.FPGA_ShiftRegister):
             raise NotImplementedError("Shift register for Xilinx NYI")
