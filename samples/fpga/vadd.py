@@ -1,6 +1,7 @@
 import click
 import dace
 import numpy as np
+from dace.subsets import Range
 
 from dace.transformation.dataflow import StreamingMemory
 from dace.transformation.interstate import FPGATransformState
@@ -25,13 +26,23 @@ def make_sdfg(N, V, double_pumped):
     c = state.add_write("C")
 
     # TODO Do the division of the loop bound in codegen, rather in the SDFG. Or maybe in the future, it should actually be through the SDFG as that would be more transparent and less magic?
-    c_entry, c_exit = state.add_map("compute_map", dict({'i': f'0:N//{"(V//2)" if double_pumped else "V"}'}),
+    c_entry, c_exit = state.add_map("compute_map", dict({'i': f'0:N//V'}),
         schedule=dace.ScheduleType.FPGA_Double if double_pumped else dace.ScheduleType.Default)
     tasklet = state.add_tasklet('vector_add_core', {'a', 'b'}, {'c'}, 'c = a + b')
 
     state.add_memlet_path(a, c_entry, tasklet, memlet=dace.Memlet("A[i]"), dst_conn='a')
     state.add_memlet_path(b, c_entry, tasklet, memlet=dace.Memlet("B[i]"), dst_conn='b')
     state.add_memlet_path(tasklet, c_exit, c, memlet=dace.Memlet("C[i]"), src_conn='c')
+
+    sdfg.specialize(dict(N=N, V=V))
+
+    # transformations
+    sdfg.apply_transformations(FPGATransformState)
+    sdfg.apply_transformations_repeated(StreamingMemory, dict(storage=dace.StorageType.FPGA_Local))
+
+    if double_pumped:
+        #c_entry.map.range = Range([(0,f'(N//(V//2))-1',1)])
+        c_entry.map.range = Range([(0,f'N-1',1)])
 
     return sdfg
 
@@ -53,13 +64,6 @@ def cli(size_n, veclen, double_pumped):
     expected = A + B
 
     sdfg = make_sdfg(N, V, double_pumped)
-    sdfg.specialize(dict(N=N, V=V))
-
-    # transformations
-    sdfg.apply_transformations(FPGATransformState)
-    sdfg.apply_transformations_repeated(StreamingMemory, dict(storage=dace.StorageType.FPGA_Local))
-
-    sdfg.save('aoeu.sdfg')
 
     #sdfg.compile()
     sdfg(A=A, B=B, C=C)
