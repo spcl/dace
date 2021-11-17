@@ -42,8 +42,8 @@ def make_sdfg(N, V, double_pumped):
 
 
     if double_pumped:
-        #c_entry.map.range = Range([(0,f'(N//(V//2))-1',1)])
-        c_entry.map.range = Range([(0,f'N-1',1)])
+        c_entry.map.range = Range([(0,f'(N//(V//2))-1',1)])
+        #c_entry.map.range = Range([(0,f'N-1',1)])
 
 
     from dace.codegen.targets.fpga import is_fpga_kernel
