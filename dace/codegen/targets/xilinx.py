@@ -205,7 +205,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 )
         # Emit mapping between inter-kernel streaming interfaces
         for _, (src, dst) in self._stream_connections.items():
-            link_cfg.write(f"stream_connect={src}:{dst}")
+            if src.replace('m_axis', 's_axis') != dst:
+                link_cfg.write(f"stream_connect={src}:{dst}")
         for kernel_name, _ in self._kernel_codes:
             link_cfg.write(f'slr={kernel_name}_1:SLR0')
         for kernel_name, _, _ in self._ip_codes:
@@ -539,8 +540,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                    is_output, True, interface)
             if kernel_arg:
                 stream_args.append(kernel_arg)
-        print (22, kernel_args)
-        print (11, external_streams)
 
         # Write kernel signature
         kernel_stream.write(
@@ -656,7 +655,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         kernel_args_call = []
         kernel_args_module = []
-        print (222, [pname for _, pname, _, _ in parameters])
+        
         for is_output, pname, p, interface_ids in parameters:
             if isinstance(p, dt.Array):
                 for bank, interface_id in fpga.iterate_hbm_interface_ids(
@@ -736,6 +735,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 else:
                     source_accessors += [node]
 
+            # TODO direction is removed from "parameters" in fpga.py, this tries to restore them.
+            # Format is name: is_output_from_double_pumped_region
+            direction_workaround = dict()
+
             for node in source_accessors:
                 if isinstance(sdfg.arrays[node.data], dt.Stream):
                     # TODO multiple readers accessing a single stream should fail
@@ -762,6 +765,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                             val = '{}_top_1.s_axis_{}{}'.format(
                                 rtl_name, rtl_dst, postfix)
                             self._stream_connections[elem][1] = val
+                            direction_workaround[rtl_dst] = False
 
             sink_accessors = []
             for node in subgraph.sink_nodes():
@@ -796,6 +800,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                             self._stream_connections[elem][
                                 0] = '{}_top_1.m_axis_{}{}'.format(
                                     rtl_name, rtl_src, postfix)
+                            direction_workaround[rtl_src] = True
 
             # Make the dispatcher trigger generation of the RTL module, but
             # ignore the generated code, as the RTL codegen will generate the
@@ -824,10 +829,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 # Regenerate parameters with new vector length
                 kernel_args_call_double = []
                 kernel_args_module_double = []
+                port_pragmas = []
+                externals = []
                 for is_output, pname, p, interface_ids in parameters:
                     if isinstance(p, dt.Stream):
-                        kernel_args_call_double.append(p.as_arg(with_types=False, name=pname))
                         if p.is_stream_array():
+                            continue
                             kernel_args_module_double.append(
                                 "dace::FIFO<{}, {}, {}> {}[{}]".format(
                                     p.dtype.base_type.ctype, p.veclen,
@@ -837,24 +844,28 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                 "dace::FIFO<{}, {}, {}> &{}".format(
                                     p.dtype.base_type.ctype, p.veclen,
                                     p.buffer_size, pname))
+                        kernel_args_call_double.append(p.as_arg(with_types=False, name=pname))
+                        port_pragmas.append(f'#pragma HLS INTERFACE axis port={pname}')
+                        externals.append((is_output if not (is_output is None) else direction_workaround[pname], pname, p))
 
                 self._frame.generate_fileheader(sdfg, double_kernel_module, 'xilinx_device')
                 double_kernel_call.write("void {}({}) {{".format(rtl_name, ", ".join(kernel_args_module_double)))
                 double_kernel_call.write('#pragma HLS INTERFACE ap_ctrl_none port=return')
-                for _, pname, _, _, in parameters:
-                    double_kernel_call.write(f'#pragma HLS INTERFACE axis port={pname}')
+                for pragma in port_pragmas:
+                    double_kernel_call.write(pragma)
                 double_kernel_call.write('#pragma HLS DATAFLOW')
 
                 streams_to_allocate = (set(subgraph.top_level_transients()) -
                             set(sdfg.shared_transients()) -
                             set([p[1] for p in parameters]))
 
-                print (set(sdfg.shared_transients()))
                 # For both GEMMs:
                 streams_to_allocate = {'A_pipe', 'B_pipe', 'C_pipe'}
+                #streams_to_allocate = {}
                 # For IO GEMM only:
-                data_to_allocate = {'A_buffer', 'C_buffer'} # TODO don't hardcode
-                print (88, streams_to_allocate)
+                #data_to_allocate = {'A_buffer', 'C_buffer'} # TODO don't hardcode
+                data_to_allocate = {}
+                
                 allocated = set()
                 for node in subgraph.nodes():
                     if not isinstance(node, dace.sdfg.nodes.AccessNode):
@@ -882,8 +893,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                node.desc(sdfg), double_kernel_module,
                                                double_kernel_call)
 
-                print (55,allocated)
-
                 double_kernel_call.write('HLSLIB_DATAFLOW_INIT();')
                 if top_unrolled:
                     for p, r in zip(top_unrolled.map.params, top_unrolled.map.range):
@@ -899,19 +908,21 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     "HLSLIB_DATAFLOW_FUNCTION({}, {});".format(
                         name, ", ".join(kernel_args_call_double)), sdfg,
                     state_id)
-                #double_kernel_call.write('}')
+                if top_unrolled:
+                    double_kernel_call.write('}')
                 double_kernel_call.write('HLSLIB_DATAFLOW_FINALIZE();')
                 double_kernel_call.write('}')
 
                 double_kernel_module.write("void {}({})".format(name, ", ".join(kernel_args_module_double)))
 
-            print (77, top_unrolled)
+            top_unrolled = (not top_unrolled is None) and top_unrolled
             self._dispatcher.dispatch_subgraph(sdfg,
                                                subgraph,
                                                state_id,
                                                double_kernel_call,
                                                double_kernel_module,
-                                               skip_entry_node=(not top_unrolled is None or top_unrolled))
+                                               skip_entry_node=top_unrolled,
+                                               skip_exit_node=top_unrolled)
 
             if double_pumped:
                 # Increase the vector size, in case some other subgraph uses it.
@@ -927,7 +938,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     "name": rtl_name,
                     "buses": { # TODO unroll factor
                         pname: ('m_axis' if is_output or pname.endswith('_out') else 's_axis', p.veclen)
-                        for is_output, pname, p, _ in parameters
+                        for is_output, pname, p in externals
                     },
                     "params": {
                         "scalars": {
@@ -950,7 +961,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     'version': '1.0',
                     'params': {}
                 }
-                for is_output, pname, p, _ in parameters:
+                for is_output, pname, p in externals:
                     isout = is_output or pname.endswith('_out')
                     veced = p.dtype.veclen > 1
                     rtllib_config['ip_cores'][f'clock_sync_{pname}'] = {
@@ -994,9 +1005,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         if rtl_tasklet or double_pumped:
             return
-
-        print (42, kernel_args_call)
-        print (42, kernel_args_module)
 
         # create a unique module name to prevent name clashes
         module_function_name = f"module_{name}_{sdfg.sdfg_id}"
@@ -1079,7 +1087,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         data_to_allocate = (set(subgraph.top_level_transients()) -
                             set(sdfg.shared_transients()) -
                             set([p[1] for p in parameters]))
-        print (111, subgraph.top_level_transients())
+                            
         allocated = set()
         for node in subgraph.nodes():
             if not isinstance(node, dace.sdfg.nodes.AccessNode):
@@ -1090,8 +1098,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                node.desc(sdfg), module_stream,
                                                module_body_stream)
-
-        print (333, allocated)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            subgraph,
@@ -1169,7 +1175,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                node.desc(sdfg), module_stream,
                                                entry_stream)
-        print (99, external_streams)
+        
         for is_output, name, node, _ in external_streams:
             self._dispatcher.defined_vars.add_global(name, DefinedType.Stream,
                                                      node.ctype)
@@ -1227,7 +1233,6 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
                                    dst_node, edge, callsite_stream):
         memlet = edge.data
-        print (66, self._dispatcher.defined_vars)
         if (self._dispatcher.defined_vars.get(
                 memlet.data)[0] == DefinedType.FPGA_ShiftRegister):
             raise NotImplementedError("Shift register for Xilinx NYI")
