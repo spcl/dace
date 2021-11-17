@@ -448,7 +448,7 @@ def cli(size_n, size_k, size_m, num_processing_elements, vector_width,
 
     print("==== Program start ====")
     #HUSK! standard_ er mappen med normalt, hvor den uden er dobbel pumpet! Den er buildet, men den gav block error, så kortet skal resettes
-    prefix = '' if double else 'standard_'
+    prefix = 'double_' if double else 'standard_'
     if specialize:
         name = (f"{prefix}gemm_fpga_systolic_vectorized_d{num_processing_elements}_"
                 f"w{vector_width}_{size_n}x{size_k}x{size_m}")

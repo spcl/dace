@@ -244,7 +244,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                       cpp.sym2cpp(array_size)))
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
                 var_name, var_name, cpp.sym2cpp(array_size)))
-
         # In Xilinx, streams are defined as local variables
         # Return value is used for adding to defined_vars in fpga.py
         return ctype, False
@@ -878,6 +877,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     kernel_args_module_double += ["dace::FIFO<{}, {}, {}> {}[{}]".format(
                                     sdfg_array.dtype.base_type.ctype, sdfg_array.veclen,
                                     sdfg_array.buffer_size, node.data, sdfg_array.size_string())]
+
                     self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                     sdfg_array,
                                                     double_kernel_module,
@@ -1175,10 +1175,27 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                node.desc(sdfg), module_stream,
                                                entry_stream)
+
+        # double_pumped = None
+        # for n in state.nodes():
+        #     if (isinstance(n, dace.nodes.Tasklet)
+        #             and n.language == dace.dtypes.Language.SystemVerilog):
+        #         rtl_tasklet = n
+        #         break
+        #     if isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Double:
+        #         double_pumped = n
         
         for is_output, name, node, _ in external_streams:
+
+            # TODO: deal with veclen if this goes into a double pumped version
+            buffer_size = dace.symbolic.evaluate(node.buffer_size,
+                                                     sdfg.constants)
+            ctype = "dace::FIFO<{}, {}, {}>".format(node.dtype.base_type.ctype,
+                                                node.dtype.veclen, buffer_size)
+
+
             self._dispatcher.defined_vars.add_global(name, DefinedType.Stream,
-                                                     node.ctype)
+                                                     ctype)
             # TODO find better way to extract num kernels, rather than the shape of the streams
             num_kernels = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
             key = 1 if is_output else 0
@@ -1191,6 +1208,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     self._stream_connections[stream] = [None, None]
                 val = '{}_1.{}'.format(kernel_name, stream)
                 self._stream_connections[stream][key] = val
+            
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, module_stream, entry_stream,
