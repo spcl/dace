@@ -413,7 +413,7 @@ def make_fpga_state(sdfg, vec_width=1, double=False):
     make_read_B(state, sdfg, vec_width)
     make_compute(sdfg, state, vec_width, double)
     make_write_C(state, sdfg, vec_width)
-
+    state.instrument = dace.InstrumentationType.FPGA
     return state
 
 
@@ -427,6 +427,7 @@ def make_sdfg(name, vec_width, double=False):
 
     sdfg.add_edge(pre_state, compute_state, dace.sdfg.InterstateEdge())
     sdfg.add_edge(compute_state, post_state, dace.sdfg.InterstateEdge())
+    
     return sdfg
 
 

@@ -32,7 +32,7 @@ def make_sdfg(N, V, double_pumped):
     state.add_memlet_path(a, c_entry, tasklet, memlet=dace.Memlet("A[i]"), dst_conn='a')
     state.add_memlet_path(b, c_entry, tasklet, memlet=dace.Memlet("B[i]"), dst_conn='b')
     state.add_memlet_path(tasklet, c_exit, c, memlet=dace.Memlet("C[i]"), src_conn='c')
-
+    
     return sdfg
 
 @click.command()
@@ -57,7 +57,7 @@ def cli(size_n, veclen, double_pumped):
 
     # transformations
     sdfg.apply_transformations(FPGATransformState)
-    sdfg.apply_transformations_repeated(StreamingMemory, dict(storage=dace.StorageType.FPGA_Local))
+    sdfg.apply_transformations_repeated(StreamingMemory, dict(storage=dace.StorageType.FPGA_Local, buffer_size=32))
 
     #Instrument
     from dace.codegen.targets.fpga import is_fpga_kernel
