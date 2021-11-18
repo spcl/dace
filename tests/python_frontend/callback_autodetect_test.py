@@ -24,8 +24,6 @@ def test_automatic_callback():
     def autocallback(A: dace.float64[N, N], B: dace.float64[N, N],
                      C: dace.float64[N, N], beta: dace.float64):
         tmp: dace.float64[N, N] = almost_gemm(A, 0.5, B)
-        # OR
-        # tmp[:] = almost_gemm(A, 0.5, B)
         scale(C, beta)
         C += tmp
 
@@ -121,23 +119,30 @@ def test_callback_tasklet():
 
 def test_view_callback():
     @dace.program
-    def autocallback(A: dace.float64[2*N, N], B: dace.float64[N, N],
+    def autocallback(A: dace.float64[2 * N, N], B: dace.float64[N, N],
                      C: dace.float64[N, N], beta: dace.float64):
-        tmp: dace.float64[N, N] = almost_gemm(A[0:N, :], 0.5, B)
-        # OR
-        # tmp[:] = almost_gemm(A, 0.5, B)
+        A[N:, :] = almost_gemm(A[:N, :], 0.5, B)
         scale(C, beta)
-        C += tmp
+        C += A[N:, :]
 
-    A = np.random.rand(24, 24)
+    A = np.random.rand(48, 24)
     B = np.random.rand(24, 24)
     C = np.random.rand(24, 24)
     beta = np.float64(np.random.rand())
-    expected = 0.5 * A @ B + beta * C
+    expected = 0.5 * A[:24] @ B + beta * C
 
     autocallback(A, B, C, beta)
 
     assert np.allclose(C, expected)
+
+
+def test_print():
+    @dace.program
+    def printprog(a: dace.float64[2, 2]):
+        print(a, 'hello')
+
+    a = np.random.rand(2, 2)
+    printprog(a)
 
 
 if __name__ == '__main__':

@@ -358,7 +358,7 @@ class Memlet(object):
         # Find source/destination of memlet
         try:
             path = state.memlet_path(edge)
-        except (ValueError, AssertionError, StopIteration):
+        except (ValueError, StopIteration):
             # Cannot initialize yet
             return
 

@@ -1030,8 +1030,7 @@ class TaskletTransformer(ExtNodeTransformer):
                         self, node,
                         'Python callbacks that return arrays are not supported'
                         ' within `dace.tasklet` scopes. Please use function '
-                        f'"{fname}" outside of a tasklet.'
-                    )
+                        f'"{fname}" outside of a tasklet.')
         return self.generic_visit(node)
 
 
@@ -1173,6 +1172,14 @@ class ProgramVisitor(ExtNodeVisitor):
         Returns:
             Tuple[SDFG, Dict, Dict] -- Parsed SDFG, its inputs and outputs
         """
+
+        # Set parents for nodes to access assignments from Calls
+        program = astutils.AnnotateTopLevel().visit(program)
+        for node in ast.walk(program):
+            if not hasattr(node, 'toplevel'):
+                node.toplevel = False
+            for child in ast.iter_child_nodes(node):
+                child.parent = node
 
         if is_tasklet:
             program.decorator_list = []
@@ -3966,7 +3973,116 @@ class ProgramVisitor(ExtNodeVisitor):
             return rets[0]
         return rets
 
-    def visit_Call(self, node: ast.Call):
+    def create_callback(self, node: ast.Call):
+        funcname = astutils.rname(node)
+        if funcname not in self.closure.callbacks:
+            raise DaceSyntaxError(
+                f'Cannot find appropriate Python callback for {funcname}')
+        func: Callable[..., Any] = self.closure.callbacks[funcname]
+
+        # Infer the type of the function arguments and return value
+        # TODO(later): Use inspect.signature and node.keywords to
+        #              work with keyword arguments
+        argtypes = []
+        args = []
+        outargs = []
+        allargs = []
+        for arg in node.args:
+            parsed_arg = self._parse_function_arg(arg)
+            if parsed_arg in self.defined:
+                atype = self.defined[parsed_arg]
+                args.append(parsed_arg)
+                if isinstance(atype, data.Array):
+                    outargs.append(parsed_arg)
+                allargs.append(f'__out_{parsed_arg}')
+            else:
+                atype = data.create_datadescriptor(parsed_arg)
+
+                if isinstance(parsed_arg, str):
+                    # Special case for strings
+                    parsed_arg = f'"{parsed_arg}"'
+                allargs.append(parsed_arg)
+
+            argtypes.append(atype)
+
+        if node.keywords:
+            raise DaceSyntaxError(
+                self, node,
+                'Keyword arguments in Python callbacks not yet supported')
+
+        # Return type inference
+        return_type = None
+
+        # If the parent is a top level expression, the return value is unused
+        if isinstance(node.parent, ast.Expr) and node.parent.toplevel:
+            return_type = dtypes.typeclass(None)
+        # TODO: Assign, augassign
+        elif isinstance(node.parent, ast.AnnAssign):
+            return_names = []
+            pass
+
+        # TODO(later): A proper type/shape inference pass can uncover
+        #              return values if in e.g., nested calls: f(g(a))
+
+        # If not annotated, nor the array didn't exist,
+        # raise a syntax error with an example of how to do it
+        if return_type is None:
+            raise DaceSyntaxError(
+                self, node,
+                f'Cannot infer return type of function call "{funcname}". '
+                'To ensure that the return types can be inferred, try to '
+                'extract the call to a separate statement and annotate the '
+                'return values. For example:\n'
+                '  a: dace.int32, b: dace.float64[N] = call(c, d)')
+
+        # Create a matching callback symbol from function type
+        if return_type == dtypes.typeclass(None):
+            return_type = None
+        callback_type = dace.callback(return_type, *argtypes)
+
+        funcname = self.sdfg.find_new_symbol(funcname)
+        self.sdfg.add_symbol(funcname, callback_type)
+
+        # Create the graph that calls the callback
+
+        # Create a state with a tasklet and the right arguments
+        self._add_state('callback_%d' % node.lineno)
+        self.last_state.set_default_lineinfo(self.current_lineinfo)
+
+        call_args = ', '.join(allargs)
+        tasklet = self.last_state.add_tasklet(
+            f'callback_{node.lineno}', {f'__in_{name}'
+                                        for name in args} | {'__istate'},
+            {f'__out_{name}'
+             for name in outargs} | {'__ostate'}, f'{funcname}({call_args})')
+
+        # Setup arguments in graph
+        for arg in args:
+            r = self.last_state.add_read(arg)
+            self.last_state.add_edge(r, None, tasklet, f'__in_{arg}',
+                                     Memlet(arg))
+
+        for arg in outargs:
+            w = self.last_state.add_write(arg)
+            self.last_state.add_edge(tasklet, f'__out_{arg}', w, None,
+                                     Memlet(arg))
+
+        # Create and connect a __pystate variable that blocks reordering optimizations
+        if '__pystate' not in self.sdfg.arrays:
+            self.sdfg.add_scalar('__pystate', dace.int32, transient=True)
+        rs = self.last_state.add_read('__pystate')
+        ws = self.last_state.add_write('__pystate')
+        self.last_state.add_edge(rs, None, tasklet, '__istate',
+                                 Memlet('__pystate'))
+        self.last_state.add_edge(tasklet, '__ostate', ws, None,
+                                 Memlet('__pystate'))
+
+        if return_type is None:
+            return []
+        else:
+            return return_names
+
+    def visit_Call(self, node: ast.Call, create_callbacks=False):
         func = None
         funcname = None
         # If the call directly refers to an SDFG or dace-compatible program
@@ -4024,9 +4140,11 @@ class ProgramVisitor(ExtNodeVisitor):
             try:
                 return self._parse_sdfg_call(funcname, func, node)
             except SkipCall as ex:
-                # Re-parse call with non-parsed information
+                # Re-parse call with non-parsed information, trying
+                # to create callbacks instead
                 try:
-                    return self.visit_Call(node.func.oldnode)
+                    return self.visit_Call(node.func.oldnode,
+                                           create_callbacks=True)
                 except Exception:  # Anything could happen here
                     # Raise original exception instead
                     raise ex.__context__
@@ -4056,6 +4174,16 @@ class ProgramVisitor(ExtNodeVisitor):
             classname = type(self.defined[modname]).__name__
             func = oprepo.Replacements.get_method(classname, methodname)
             if func is None:
+                nm = rname(node)
+                if nm in self.closure.callbacks:
+                    warnings.warn(
+                        'Performance warning: Automaticaly creating '
+                        f'callback to Python interpreter from method "{funcname}" '
+                        f'in class "{classname}.'
+                        'It is advised to fix underlying parsing issues or provide '
+                        'a replacement through "dace.frontend.common.op_repository".'
+                    )
+                    return self.create_callback(node)
                 raise DaceSyntaxError(
                     self, node,
                     'Method "%s" is not registered for object type "%s"' %
@@ -4070,6 +4198,15 @@ class ProgramVisitor(ExtNodeVisitor):
         elif not found_ufunc:
             func = oprepo.Replacements.get(funcname)
             if func is None:
+                nm = rname(node)
+                if nm in self.closure.callbacks:
+                    warnings.warn(
+                        'Performance warning: Automaticaly creating '
+                        f'callback to Python interpreter from function "{funcname}". '
+                        'It is advised to fix underlying parsing issues or provide '
+                        'a replacement through "dace.frontend.common.op_repository".'
+                    )
+                    return self.create_callback(node)
                 raise DaceSyntaxError(
                     self, node, 'Function "%s" is not registered with an SDFG '
                     'implementation' % funcname)

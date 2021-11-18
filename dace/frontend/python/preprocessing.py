@@ -536,11 +536,15 @@ class GlobalResolver(ast.NodeTransformer):
                     value = value.__call__
 
                 # Replacements take precedence over auto-parsing
-                if has_replacement(value, parent_object, parent_node):
-                    return None
+                try:
+                    if has_replacement(value, parent_object, parent_node):
+                        return None
+                except Exception:
+                    pass
 
                 # Store the handle to the original callable, in case parsing fails
-                parent_node.callable = value
+                #parent_node.callable = value
+                self.closure.callbacks[astutils.rname(parent_node)] = value
 
                 # Decorated or functions with missing source code
                 sast, _, _, _ = astutils.function_to_ast(value)
@@ -557,7 +561,7 @@ class GlobalResolver(ast.NodeTransformer):
 
                 return self.global_value_to_node(parsed, parent_node, qualname,
                                                  recurse, detect_callables)
-            except:  # Parsing failed (almost any exception can occur)
+            except Exception:  # Parsing failed (almost any exception can occur)
                 return None
         else:
             return None

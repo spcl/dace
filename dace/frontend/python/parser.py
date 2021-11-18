@@ -260,7 +260,9 @@ class DaceProgram(pycommon.SDFGConvertible):
             self.global_vars[self.objname] = self.methodobj
 
         if reevaluate is None:
-            return {k: v() for k, v in self.closure_arg_mapping.items()}
+            result = {k: v() for k, v in self.closure_arg_mapping.items()}
+            result.update(self.resolver.callbacks)
+            return result
         else:
             return {
                 k: eval(v, self.global_vars) if isinstance(v, str) else v
