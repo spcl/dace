@@ -8,7 +8,7 @@ import itertools
 import numpy
 import re
 from functools import wraps
-from typing import Any
+from typing import Any, Callable, Optional
 from dace.config import Config
 from dace.registry import extensible_enum, undefined_safe_enum
 
@@ -690,6 +690,16 @@ class vector(typeclass):
         self._veclen = val
 
 
+class string(pointer):
+    """
+    A specialization of the string data type to improve 
+    Python/generated code marshalling.
+    Used internally when `str` types are given
+    """
+    def __init__(self):
+        super().__init__(int8)
+
+
 class struct(typeclass):
     """ A data type for a struct of existing typeclasses.
 
@@ -871,8 +881,8 @@ class callback(typeclass):
             if isinstance(some_arg, data.Array):
                 input_ctypes.append(ctypes.c_void_p)
             else:
-                input_ctypes.append(
-                    some_arg.as_ctypes() if some_arg is not None else None)
+                input_ctypes.append(some_arg.dtype.as_ctypes(
+                ) if some_arg is not None else None)
         if input_ctypes == [None]:
             input_ctypes = []
         cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
@@ -930,10 +940,18 @@ class callback(typeclass):
 
         arraypos = []
         types_and_sizes = []
+        converters = []
         for index, arg in enumerate(self.input_types):
             if isinstance(arg, data.Array):
                 arraypos.append(index)
                 types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
+                converters.append(ptrtonumpy)
+            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
+                arraypos.append(index)
+                types_and_sizes.append((ctypes.c_char_p, []))
+                converters.append(lambda a: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
+            else:
+                converters.append(lambda a: a)
         if len(arraypos) == 0:
             return pyfunc
 
@@ -948,8 +966,11 @@ class callback(typeclass):
                         non_symbolic_sizes.append(other_arguments[str(s)])
                     else:
                         non_symbolic_sizes.append(s)
-                list_of_other_inputs[i] = ptrtonumpy(other_inputs[i], data_type,
-                                                     non_symbolic_sizes)
+                if data_type is ctypes.c_char_p:
+                    list_of_other_inputs[i] = converters[i](other_inputs[i])
+                else:
+                    list_of_other_inputs[i] = ptrtonumpy(
+                        other_inputs[i], data_type, non_symbolic_sizes)
             return orig_function(*list_of_other_inputs)
 
         return partial(trampoline, pyfunc, arraypos, types_and_sizes)

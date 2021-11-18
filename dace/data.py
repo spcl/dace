@@ -63,7 +63,13 @@ def create_datadescriptor(obj):
     elif callable(obj):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))
-    return Scalar(dtypes.typeclass(type(obj)))
+    elif isinstance(obj, str):
+        return Scalar(dtypes.string())
+
+    raise TypeError(
+        f'Could not create a DaCe data descriptor from object {obj}. '
+        'If this is a custom object, consider creating a `__descriptor__` '
+        'adaptor method to the type hint or object itself.')
 
 
 def find_new_name(name: str, existing_names: Sequence[str]) -> str:
