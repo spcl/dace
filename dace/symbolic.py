@@ -62,7 +62,7 @@ class symbol(sympy.Symbol):
 
     def __getstate__(self):
         return dict(
-            super().__getstate__(), **{
+            self.assumptions0, **{
                 'value': self.value,
                 'dtype': self.dtype,
                 '_constraints': self._constraints
@@ -258,14 +258,14 @@ class SymExpr(object):
         if isinstance(other, SymExpr):
             return self.expr == other.expr and self.approx == other.approx
         return self == pystr_to_symbolic(other)
-    
+
     def __lt__(self, other):
         if isinstance(other, sympy.Expr):
             return self.expr < other
         if isinstance(other, SymExpr):
             return self.expr < other.expr
         return self < pystr_to_symbolic(other)
-    
+
     def __gt__(self, other):
         if isinstance(other, sympy.Expr):
             return self.expr > other
@@ -707,7 +707,7 @@ def simplify_ext(expr):
 
 
 class SympyBooleanConverter(ast.NodeTransformer):
-    """ 
+    """
     Replaces boolean operations with the appropriate SymPy functions to avoid
     non-symbolic evaluation.
     """
@@ -882,10 +882,10 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
 
 def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
-    """ 
-    Convert a symbolic expression to a C++ compilable expression. 
+    """
+    Convert a symbolic expression to a C++ compilable expression.
     :param sym: Symbolic expression to convert.
-    :param arrayexprs: Set of names of arrays, used to convert SymPy 
+    :param arrayexprs: Set of names of arrays, used to convert SymPy
                        user-functions back to array expressions.
     :return: C++-compilable expression.
     """
@@ -923,7 +923,7 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType,
     ``__dacesym{N, M} -> {M, N}``.
     :param mapping: The replacement dictionary.
     :param replace_callback: A callable function that receives a replacement
-                             dictionary and performs the replacement (can be 
+                             dictionary and performs the replacement (can be
                              unsafe).
     """
     # First, filter out direct (to constants) and degenerate (N -> N) replacements

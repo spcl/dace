@@ -204,9 +204,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     f"sp={kernel_name}_1.m_axi_{interface_name}:{memory_type}[{memory_bank}]"
                 )
         # Emit mapping between inter-kernel streaming interfaces
-        for _, (src, dst) in self._stream_connections.items():
-            if src.replace('m_axis', 's_axis') != dst:
+        for stream_name, (src, dst) in self._stream_connections.items():
+            if not (src is None) and src.replace('m_axis', 's_axis') != dst:
                 link_cfg.write(f"stream_connect={src}:{dst}")
+            else:
+                link_cfg.write(f'{stream_name} failed {src} {dst}')
         for kernel_name, _ in self._kernel_codes:
             link_cfg.write(f'slr={kernel_name}_1:SLR0')
         for kernel_name, _, _ in self._ip_codes:
@@ -643,6 +645,16 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             kernel_stream.write(f"kernel_{name}.wait();\n", sdfg,
                                 sdfg.node_id(state))
 
+    def is_double_pumped(self, subgraph):
+        for n in subgraph.nodes():
+            if isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Double:
+                return True
+            if isinstance(n, dace.nodes.NestedSDFG):
+                for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
+                    if self.is_double_pumped(sg):
+                        return True
+        return False
+
     def generate_module(self, sdfg, state, kernel_name, name, subgraph,
                         parameters, module_stream, entry_stream, host_stream,
                         instrumentation_stream):
@@ -654,7 +666,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         kernel_args_call = []
         kernel_args_module = []
-        
+
         for is_output, pname, p, interface_ids in parameters:
             if isinstance(p, dt.Array):
                 for bank, interface_id in fpga.iterate_hbm_interface_ids(
@@ -703,14 +715,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # Check if we are generating an RTL module, in which case only the
         # accesses to the streams should be handled
         rtl_tasklet = None
-        double_pumped = None
+        double_pumped = self.is_double_pumped(subgraph)
         for n in subgraph.nodes():
             if (isinstance(n, dace.nodes.Tasklet)
                     and n.language == dace.dtypes.Language.SystemVerilog):
                 rtl_tasklet = n
                 break
-            if isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Double:
-                double_pumped = n
 
         if rtl_tasklet or double_pumped:
             label = 'RTL' if rtl_tasklet else 'Double pumped'
@@ -722,7 +732,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 f'// [{label}] void {name}({", ".join(kernel_args_module)});\n\n')
 
             # TODO Better name than rtl_name
-            rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg) if rtl_tasklet else 'dp_kernel' #name
+            rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg) if rtl_tasklet else self.dp_kernel_name(state, sdfg, subgraph.nodes()[0])
 
             # _i in names are due to vitis
             source_accessors = []
@@ -864,7 +874,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 # For IO GEMM only:
                 #data_to_allocate = {'A_buffer', 'C_buffer'} # TODO don't hardcode
                 data_to_allocate = {}
-                
+
                 allocated = set()
                 for node in subgraph.nodes():
                     if not isinstance(node, dace.sdfg.nodes.AccessNode):
@@ -1087,7 +1097,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         data_to_allocate = (set(subgraph.top_level_transients()) -
                             set(sdfg.shared_transients()) -
                             set([p[1] for p in parameters]))
-                            
+
         allocated = set()
         for node in subgraph.nodes():
             if not isinstance(node, dace.sdfg.nodes.AccessNode):
@@ -1110,6 +1120,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         module_stream.write("}\n\n")
 
         self._dispatcher.defined_vars.exit_scope(subgraph)
+
+    def dp_kernel_name(self, state, sdfg, node):
+        return "dp_kernel_{}_{}_{}".format(sdfg.sdfg_id, sdfg.node_id(state), state.node_id(node))
 
     def rtl_tasklet_name(self, node: nodes.RTLTasklet, state, sdfg):
         return "{}_{}_{}_{}".format(node.name, sdfg.sdfg_id,
