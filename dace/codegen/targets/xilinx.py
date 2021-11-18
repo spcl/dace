@@ -205,10 +205,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 )
         # Emit mapping between inter-kernel streaming interfaces
         for stream_name, (src, dst) in self._stream_connections.items():
-            if not (src is None) and src.replace('m_axis', 's_axis') != dst:
-                link_cfg.write(f"stream_connect={src}:{dst}")
-            else:
+            if src is None or dst is None:
                 link_cfg.write(f'{stream_name} failed {src} {dst}')
+            elif src.replace('m_axis', 's_axis') != dst:
+                link_cfg.write(f"stream_connect={src}:{dst}")
+
         for kernel_name, _ in self._kernel_codes:
             link_cfg.write(f'slr={kernel_name}_1:SLR0')
         for kernel_name, _, _ in self._ip_codes:
