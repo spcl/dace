@@ -541,7 +541,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             kernel_arg = self.make_kernel_argument(data, data_name, None, None,
                                                    is_output, True, interface)
             if kernel_arg:
-                stream_args.append(kernel_arg)
+                if kernel_arg in stream_args: # TODO sometimes streams are added as an argument twice. In this case it is used by 2 RTL kernels, which means the host shouldn't have them, as there can only be two accessing a stream at one point in time.
+                    stream_args.remove(kernel_arg)
+                else:
+                    stream_args.append(kernel_arg)
 
         # Write kernel signature
         kernel_stream.write(
@@ -572,14 +575,24 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 "#pragma HLS INTERFACE s_axilite port={} bundle=control".format(
                     var_name))
 
+        # TODO same comment as with the stream_args above; they are added double, when they shouldn't be.
+        axis_pragmas = []
         for _, var_name, node, _ in external_streams:
             arr_len = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
             if arr_len > 1:
-                kernel_stream.write(
-                    "#pragma HLS ARRAY_PARTITION variable={} dim=1 complete".
-                    format(var_name))
-            kernel_stream.write(
-                "#pragma HLS INTERFACE axis port={}".format(var_name))
+                partition_pragma = f"#pragma HLS ARRAY_PARTITION variable={var_name} dim=1 complete"
+                if partition_pragma in axis_pragmas:
+                    axis_pragmas.remove(partition_pragma)
+                else:
+                    axis_pragmas.append(partition_pragma)
+            port_pragma = f"#pragma HLS INTERFACE axis port={var_name}"
+            if port_pragma in axis_pragmas:
+                axis_pragmas.remove(port_pragma)
+            else:
+                axis_pragmas.append(port_pragma)
+        for axis_pragma in axis_pragmas:
+            kernel_stream.write(axis_pragma)
+
 
         # TODO: add special case if there's only one module for niceness
         kernel_stream.write("\n#pragma HLS DATAFLOW")
@@ -859,22 +872,21 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         externals.append((is_output if not (is_output is None) else direction_workaround[pname], pname, p))
 
                 self._frame.generate_fileheader(sdfg, double_kernel_module, 'xilinx_device')
-                double_kernel_call.write("void {}({}) {{".format(rtl_name, ", ".join(kernel_args_module_double)))
+                double_kernel_call.write("DACE_EXPORTED void {}({}) {{".format(rtl_name, ", ".join(kernel_args_module_double)))
                 double_kernel_call.write('#pragma HLS INTERFACE ap_ctrl_none port=return')
                 for pragma in port_pragmas:
                     double_kernel_call.write(pragma)
                 double_kernel_call.write('#pragma HLS DATAFLOW')
 
-                streams_to_allocate = (set(subgraph.top_level_transients()) -
-                            set(sdfg.shared_transients()) -
-                            set([p[1] for p in parameters]))
-
+                #streams_to_allocate = (set(subgraph.top_level_transients()) -
+                #            set(sdfg.shared_transients()) -
+                #            set([p[1] for p in parameters]))
                 # For both GEMMs:
                 streams_to_allocate = {'A_pipe', 'B_pipe', 'C_pipe'}
-                #streams_to_allocate = {}
-                # For IO GEMM only:
-                #data_to_allocate = {'A_buffer', 'C_buffer'} # TODO don't hardcode
                 data_to_allocate = {}
+                # For IO GEMM only:
+                #streams_to_allocate = {}
+                #data_to_allocate = {'A_buffer', 'C_buffer'} # TODO don't hardcode
 
                 allocated = set()
                 for node in subgraph.nodes():
@@ -1198,7 +1210,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         #         break
         #     if isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Double:
         #         double_pumped = n
-        
+
         for is_output, name, node, _ in external_streams:
 
             # TODO: deal with veclen if this goes into a double pumped version
@@ -1222,7 +1234,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     self._stream_connections[stream] = [None, None]
                 val = '{}_1.{}'.format(kernel_name, stream)
                 self._stream_connections[stream][key] = val
-            
+
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, module_stream, entry_stream,
