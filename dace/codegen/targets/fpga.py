@@ -749,8 +749,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 if isinstance(node, dace.sdfg.nodes.AccessNode)
             })
             rtl_subgraph = any([
-                isinstance(node, nodes.RTLTasklet) or (isinstance(node, dace.nodes.MapEntry) and node.schedule is dace.dtypes.ScheduleType.FPGA_Double) for node in subgraph.nodes()
+                isinstance(node, nodes.RTLTasklet) for node in subgraph.nodes()
             ])
+            rtl_subgraph |= self.is_double_pumped(subgraph)
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
