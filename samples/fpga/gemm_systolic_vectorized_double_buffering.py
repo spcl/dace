@@ -506,11 +506,11 @@ def cli(size_n, size_k, size_m, num_processing_elements, vector_width,
     prefix = 'double_' if double else 'standard_'
     if specialize:
         name = (
-            f"{prefix}gemm_fpga_systolic_vectorized_d{num_processing_elements}_"
+            f"{prefix}dbuff_gemm_fpga_systolic_vectorized_d{num_processing_elements}_"
             f"w{vector_width}_{size_n}x{size_k}x{size_m}")
     else:
         name = (
-            f"{prefix}gemm_fpga_systolic_vectorized_d{num_processing_elements}_"
+            f"{prefix}dbuff_gemm_fpga_systolic_vectorized_d{num_processing_elements}_"
             f"w{vector_width}_NxKx{size_m}")
     sdfg = make_sdfg(name, vector_width, double)
     if not specialize:
