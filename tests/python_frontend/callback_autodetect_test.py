@@ -1,6 +1,8 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests automatic detection and baking of callbacks in the Python frontend. """
 import dace
 import numpy as np
+import pytest
 
 N = dace.symbol('N')
 
@@ -110,6 +112,7 @@ def tasklet_callback(A: dace.float64[N, N], B: dace.float64[N, N]):
             b = sq(a)
 
 
+@pytest.mark.skip
 def test_callback_tasklet():
     A = np.random.rand(24, 24)
     B = np.random.rand(24, 24)
@@ -147,8 +150,9 @@ def test_print():
 
 if __name__ == '__main__':
     test_automatic_callback()
-    test_automatic_callback_inference()
-    test_automatic_callback_method()
-    test_callback_from_module()
-    test_view_callback()
-    test_callback_tasklet()
+    # test_automatic_callback_inference()
+    # test_automatic_callback_method()
+    # test_callback_from_module()
+    # test_view_callback()
+    # test_callback_tasklet()
+    test_print()

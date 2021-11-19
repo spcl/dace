@@ -574,6 +574,7 @@ class TaskletTransformer(ExtNodeTransformer):
         annotations and returns input and output memlets.
     """
     def __init__(self,
+                 visitor,
                  defined,
                  sdfg: SDFG,
                  state: SDFGState,
@@ -591,6 +592,7 @@ class TaskletTransformer(ExtNodeTransformer):
             :param sdfg: The SDFG to add the tasklet in (used for defined arrays and symbols).
             :param state: The SDFG state to add the tasklet to.
         """
+        self.visitor = visitor
         self.sdfg = sdfg
         self.state = state
         self.defined = defined
@@ -838,7 +840,7 @@ class TaskletTransformer(ExtNodeTransformer):
     def _get_range(self, node: Union[ast.Name, ast.Subscript, ast.Call],
                    name: str):
         if isinstance(node, ast.Name):
-            actual_node = copy.deepcopy(node)
+            actual_node = copy.copy(node)
             actual_node.id = name
             expr: MemletExpr = ParseMemlet(self, {
                 **self.sdfg.arrays,
@@ -847,10 +849,13 @@ class TaskletTransformer(ExtNodeTransformer):
             }, actual_node)
             rng = expr.subset
         elif isinstance(node, ast.Subscript):
-            actual_node = copy.deepcopy(node)
+            actual_node = copy.copy(node)
             if isinstance(actual_node.value, ast.Call):
+                actual_node.value = copy.copy(actual_node.value)
+                actual_node.value.func = copy.copy(actual_node.value.func)
                 actual_node.value.func.id = name
             else:
+                actual_node.value = copy.copy(actual_node.value)
                 actual_node.value.id = name
             expr: MemletExpr = ParseMemlet(self, {
                 **self.sdfg.arrays,
@@ -1021,6 +1026,10 @@ class TaskletTransformer(ExtNodeTransformer):
         return self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
+        # Parsed objects are not allowed to be called from tasklets
+        if isinstance(node.func.n, SDFGConvertible):
+            node.func = node.func.oldnode.func
+
         fname = rname(node.func)
         if fname in self.defined:
             ftype = self.defined[fname].dtype
@@ -1031,6 +1040,20 @@ class TaskletTransformer(ExtNodeTransformer):
                         'Python callbacks that return arrays are not supported'
                         ' within `dace.tasklet` scopes. Please use function '
                         f'"{fname}" outside of a tasklet.')
+        if fname in self.visitor.closure.callbacks:
+            # TODO(later): When type/shape inference dives into tasklets
+            raise DaceSyntaxError(
+                self, node, 'Automatic Python callbacks are not yet '
+                'supported within tasklets. Please define function '
+                f'"{fname}" as a `dace.callback` explicitly and input it '
+                'as a keyword argument to the function. Example:\n'
+                '  addfunc = dace.symbol("addfunc", dace.callback(dace.float32, dace.float32, dace.float32))\n'
+                '  @dace.program\n'
+                '  def myprogram(...):\n'
+                '    with dace.tasklet:\n'
+                '      # ...\n'
+                '      c = addfunc(a, b)\n'
+                '  myprogram(..., addfunc=add)')
         return self.generic_visit(node)
 
 
@@ -2526,7 +2549,8 @@ class ProgramVisitor(ExtNodeVisitor):
             langArg = node.decorator_list[0].args[0].value
             langInf = dtypes.Language[langArg]
 
-        ttrans = TaskletTransformer(self.defined,
+        ttrans = TaskletTransformer(self,
+                                    self.defined,
                                     self.sdfg,
                                     state,
                                     self.filename,
@@ -3973,7 +3997,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return rets[0]
         return rets
 
-    def create_callback(self, node: ast.Call):
+    def create_callback(self, node: ast.Call, create_graph=True):
         funcname = astutils.rname(node)
         if funcname not in self.closure.callbacks:
             raise DaceSyntaxError(
@@ -4044,6 +4068,8 @@ class ProgramVisitor(ExtNodeVisitor):
         self.sdfg.add_symbol(funcname, callback_type)
 
         # Create the graph that calls the callback
+        if not create_graph:
+            return []
 
         # Create a state with a tasklet and the right arguments
         self._add_state('callback_%d' % node.lineno)
@@ -4175,9 +4201,9 @@ class ProgramVisitor(ExtNodeVisitor):
             func = oprepo.Replacements.get_method(classname, methodname)
             if func is None:
                 nm = rname(node)
-                if nm in self.closure.callbacks:
+                if create_callbacks and nm in self.closure.callbacks:
                     warnings.warn(
-                        'Performance warning: Automaticaly creating '
+                        'Performance warning: Automatically creating '
                         f'callback to Python interpreter from method "{funcname}" '
                         f'in class "{classname}.'
                         'It is advised to fix underlying parsing issues or provide '
@@ -4199,9 +4225,9 @@ class ProgramVisitor(ExtNodeVisitor):
             func = oprepo.Replacements.get(funcname)
             if func is None:
                 nm = rname(node)
-                if nm in self.closure.callbacks:
+                if create_callbacks and nm in self.closure.callbacks:
                     warnings.warn(
-                        'Performance warning: Automaticaly creating '
+                        'Performance warning: Automatically creating '
                         f'callback to Python interpreter from function "{funcname}". '
                         'It is advised to fix underlying parsing issues or provide '
                         'a replacement through "dace.frontend.common.op_repository".'

@@ -543,7 +543,6 @@ class GlobalResolver(ast.NodeTransformer):
                     pass
 
                 # Store the handle to the original callable, in case parsing fails
-                #parent_node.callable = value
                 self.closure.callbacks[astutils.rname(parent_node)] = value
 
                 # Decorated or functions with missing source code
