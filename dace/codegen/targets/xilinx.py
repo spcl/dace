@@ -883,7 +883,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 #            set([p[1] for p in parameters]))
                 # For both GEMMs:
                 streams_to_allocate = {'A_pipe', 'B_pipe', 'C_pipe'}
-                data_to_allocate = {}
+                data_to_allocate = {'A_reg'}
                 # For IO GEMM only:
                 #streams_to_allocate = {}
                 #data_to_allocate = {'A_buffer', 'C_buffer'} # TODO don't hardcode
@@ -906,15 +906,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                     double_kernel_module,
                                                     double_kernel_call
                                                     )
-                for node in subgraph.nodes():
-                    if not isinstance(node, dace.sdfg.nodes.AccessNode):
-                        continue
-                    if node.data not in data_to_allocate or node.data in allocated:
-                        continue
-                    allocated.add(node.data)
-                    self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               node.desc(sdfg), double_kernel_module,
-                                               double_kernel_call)
 
                 double_kernel_call.write('HLSLIB_DATAFLOW_INIT();')
                 if top_unrolled:
@@ -936,9 +927,23 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 double_kernel_call.write('HLSLIB_DATAFLOW_FINALIZE();')
                 double_kernel_call.write('}')
 
-                double_kernel_module.write("void {}({})".format(name, ", ".join(kernel_args_module_double)))
+                double_kernel_module.write("void {}({}) {{".format(name, ", ".join(kernel_args_module_double)))
+
+                self._dispatcher.defined_vars.enter_scope(subgraph)
+                allocated = set()
+                for node in subgraph.nodes():
+                    if not isinstance(node, dace.sdfg.nodes.AccessNode):
+                        continue
+                    if node.data not in data_to_allocate or node.data in allocated:
+                        continue
+                    allocated.add(node.data)
+                    self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
+                                               node.desc(sdfg),
+                                               double_kernel_call,
+                                               double_kernel_module)
 
             top_unrolled = (not top_unrolled is None) and top_unrolled
+
             self._dispatcher.dispatch_subgraph(sdfg,
                                                subgraph,
                                                state_id,
@@ -946,6 +951,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                double_kernel_module,
                                                skip_entry_node=top_unrolled,
                                                skip_exit_node=top_unrolled)
+
+            double_kernel_module.write('}')
+            self._dispatcher.defined_vars.exit_scope(subgraph)
 
             if double_pumped:
                 # Increase the vector size, in case some other subgraph uses it.
