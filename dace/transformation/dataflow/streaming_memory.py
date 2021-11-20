@@ -349,7 +349,7 @@ class StreamingMemory(xf.Transformation):
                     state.add_map(f'__s{opname}_{mapname}',
                                   [(p, r)
                                    for p, r in zip(map.params, map.range)],
-                                  map.schedule if not map.schedule is ScheduleType.FPGA_Double else ScheduleType.FPGA_Device)) # TODO the new external interfaces shouldn't be double pumped!
+                                  map.schedule if ((not map.schedule is ScheduleType.FPGA_Double) and (not map.schedule is ScheduleType.FPGA_Double_out)) else ScheduleType.FPGA_Device)) # TODO the new external interfaces shouldn't be double pumped!
             tasklet = state.add_tasklet(
                 f'{opname}_{mapname}',
                 {m[1]

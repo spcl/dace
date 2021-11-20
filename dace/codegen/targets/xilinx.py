@@ -661,13 +661,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
     def is_double_pumped(self, subgraph):
         for n in subgraph.nodes():
-            if isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Double:
-                return True
+            if isinstance(n, dace.nodes.MapEntry) and ((n.schedule == dace.ScheduleType.FPGA_Double) or (n.schedule == dace.ScheduleType.FPGA_Double_out)):
+                return n.schedule
             if isinstance(n, dace.nodes.NestedSDFG):
                 for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
-                    if self.is_double_pumped(sg):
-                        return True
-        return False
+                    nested_double = self.is_double_pumped(sg)
+                    if nested_double:
+                        return nested_double
+        return None
 
     def generate_module(self, sdfg, state, kernel_name, name, subgraph,
                         parameters, module_stream, entry_stream, host_stream,
@@ -730,13 +731,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # accesses to the streams should be handled
         rtl_tasklet = None
         double_pumped = self.is_double_pumped(subgraph)
+        inward = double_pumped == dace.ScheduleType.FPGA_Double
         for n in subgraph.nodes():
             if (isinstance(n, dace.nodes.Tasklet)
                     and n.language == dace.dtypes.Language.SystemVerilog):
                 rtl_tasklet = n
                 break
 
-        if rtl_tasklet or double_pumped:
+        if rtl_tasklet or not (double_pumped is None):
             label = 'RTL' if rtl_tasklet else 'Double pumped'
 
             entry_stream.write(
@@ -831,15 +833,18 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             double_kernel_call = CodeIOStream()
             double_kernel_module = CodeIOStream()
 
-            if double_pumped:
+            if not (double_pumped is None):
                 # TODO the loop ranges should also be halved? I.e. symbols
                 # Half the vector size
-                acces_nodes_touched = []
-                for node in subgraph.nodes():
-                    if isinstance(node, dace.nodes.AccessNode):
-                        vlen = int(dace.symbolic.evaluate(sdfg.arrays[node.data].dtype.veclen, sdfg.constants))
-                        if vlen > 1 and not any([elem is sdfg.arrays[node.data].dtype for elem in acces_nodes_touched]):
-                            acces_nodes_touched.append(sdfg.arrays[node.data].dtype)
+                if inward:
+                    acces_nodes_touched = []
+                    for node in subgraph.nodes():
+                        if isinstance(node, dace.nodes.AccessNode):
+                            vlen = int(dace.symbolic.evaluate(sdfg.arrays[node.data].dtype.veclen, sdfg.constants))
+                            if vlen > 1 and not any([elem is sdfg.arrays[node.data].dtype for elem in acces_nodes_touched]):
+                                acces_nodes_touched.append(sdfg.arrays[node.data].dtype)
+                else:
+                    acces_nodes_touched = []
 
                 for node in acces_nodes_touched:
                     node.bytes = int(dace.symbolic.evaluate(node.bytes, sdfg.constants)) >> 1
@@ -927,9 +932,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 double_kernel_call.write('HLSLIB_DATAFLOW_FINALIZE();')
                 double_kernel_call.write('}')
 
-                double_kernel_module.write("void {}({}) {{".format(name, ", ".join(kernel_args_module_double)))
-
-                self._dispatcher.defined_vars.enter_scope(subgraph)
+                if inward:
+                    double_kernel_module.write("void {}({}) {{".format(name, ", ".join(kernel_args_module_double)))
+                else:
+                    self._dispatcher.defined_vars.enter_scope(subgraph)
                 allocated = set()
                 for node in subgraph.nodes():
                     if not isinstance(node, dace.sdfg.nodes.AccessNode):
@@ -942,33 +948,40 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                double_kernel_call,
                                                double_kernel_module)
 
-            top_unrolled = (not top_unrolled is None) and top_unrolled
+            if not inward:
+                wtf_kernel_call = CodeIOStream()
+                wtf_kernel_module = CodeIOStream()
+                wtf_kernel_call.write("void {}({}) {{".format(name, ", ".join(kernel_args_module_double)))
 
             self._dispatcher.dispatch_subgraph(sdfg,
                                                subgraph,
                                                state_id,
-                                               double_kernel_call,
-                                               double_kernel_module,
+                                               double_kernel_call if inward else wtf_kernel_module,
+                                               double_kernel_module if inward else wtf_kernel_call,
                                                skip_entry_node=top_unrolled,
                                                skip_exit_node=top_unrolled)
+            if inward:
+                double_kernel_module.write('}')
+            else:
+                wtf_kernel_call.write('}')
+                self._dispatcher.defined_vars.exit_scope(subgraph)
 
-            double_kernel_module.write('}')
-            self._dispatcher.defined_vars.exit_scope(subgraph)
-
-            if double_pumped:
+            if not (double_pumped is None):
                 # Increase the vector size, in case some other subgraph uses it.
                 # TODO maybe it shouldn't be every access that is halved? One could have a stream which is rarely consumed from? Should be related to the memlet?
                 for node in acces_nodes_touched:
                     node.bytes <<= 1
                     node.veclen <<= 1
 
-                self._ip_codes.append((rtl_name, 'cpp', double_kernel_module.getvalue() + double_kernel_call.getvalue()))
+                self._ip_codes.append((rtl_name, 'cpp',
+                (double_kernel_module.getvalue() + double_kernel_call.getvalue()) if inward else
+                (double_kernel_module.getvalue() + wtf_kernel_module.getvalue() + wtf_kernel_call.getvalue() + double_kernel_call.getvalue())))
 
                 # Generate all of the RTL files
                 rtllib_config = {
                     "name": rtl_name,
                     "buses": { # TODO unroll factor
-                        pname: ('m_axis' if is_output or pname.endswith('_out') else 's_axis', p.veclen)
+                        pname: ('m_axis' if is_output or pname.endswith('_out') else 's_axis', p.veclen if inward else p.veclen * 2)
                         for is_output, pname, p in externals
                     },
                     "params": {
@@ -1001,7 +1014,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         'library': 'ip',
                         'version': '1.1',
                         'params': {
-                            'CONFIG.TDATA_NUM_BYTES': p.dtype.bytes,
+                            'CONFIG.TDATA_NUM_BYTES': p.dtype.bytes if inward else p.dtype.bytes * 2,
                             'CONFIG.SYNCHRONIZATION_STAGES': 8,
                         }
                     }
@@ -1011,8 +1024,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         'library': 'ip',
                         'version': '1.1',
                         'params': {
-                            'CONFIG.S_TDATA_NUM_BYTES': p.dtype.bytes // 2 if isout and veced else p.dtype.bytes,
-                            'CONFIG.M_TDATA_NUM_BYTES': p.dtype.bytes if isout or not veced else p.dtype.bytes // 2,
+                            'CONFIG.S_TDATA_NUM_BYTES': (p.dtype.bytes // 2 if inward else p.dtype.bytes) if isout and veced else (p.dtype.bytes if inward else p.dtype.bytes * 2),
+                            'CONFIG.M_TDATA_NUM_BYTES': (p.dtype.bytes if inward else p.dtype.bytes * 2) if isout or not veced else (p.dtype.bytes // 2 if inward else p.dtype.bytes)
                         }
                     }
 
@@ -1024,7 +1037,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
                 self._ip_codes.append((f'{rtl_name}_synth', 'tcl', rtllib_synth(rtllib_config)))
 
-        if rtl_tasklet or double_pumped:
+        if rtl_tasklet or not (double_pumped is None):
             # TODO only if there are any scalar arguments. Otherwise, it shouldn't be needed.
             # Launch the kernel from the host code
             host_stream.write(
@@ -1034,7 +1047,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 self.instrument_opencl_kernel(rtl_name, state_id, sdfg.sdfg_id,
                                               instrumentation_stream)
 
-        if rtl_tasklet or double_pumped:
+        if rtl_tasklet or not (double_pumped is None):
             return
 
         # create a unique module name to prevent name clashes
@@ -1216,7 +1229,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         #             and n.language == dace.dtypes.Language.SystemVerilog):
         #         rtl_tasklet = n
         #         break
-        #     if isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Double:
+        #     if isinstance(n, dace.nodes.MapEntry) and ((n.schedule == dace.ScheduleType.FPGA_Double) or (n.schedule == dace.ScheduleType.FPGA_Double_out)):
         #         double_pumped = n
 
         for is_output, name, node, _ in external_streams:

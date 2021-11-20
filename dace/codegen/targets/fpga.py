@@ -325,7 +325,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         # Register additional FPGA dispatchers
         self._dispatcher.register_map_dispatcher(
-            [dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Double], self)
+            [dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Double, dtypes.ScheduleType.FPGA_Double_out], self)
 
         self._dispatcher.register_state_dispatcher(self,
                                                    predicate=is_fpga_kernel)
@@ -751,7 +751,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             rtl_subgraph = any([
                 isinstance(node, nodes.RTLTasklet) for node in subgraph.nodes()
             ])
-            rtl_subgraph |= self.is_double_pumped(subgraph)
+            rtl_subgraph |= not (self.is_double_pumped(subgraph) is None)
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
@@ -1847,7 +1847,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         if hasattr(self, method_name):
 
             if hasattr(node, "schedule") and node.schedule not in [
-                    dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Double
+                    dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Double, dtypes.ScheduleType.FPGA_Double_out
             ]:
                 warnings.warn("Found schedule {} on {} node in FPGA code. "
                               "Ignoring.".format(node.schedule,
