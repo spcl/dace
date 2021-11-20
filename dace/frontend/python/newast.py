@@ -4018,9 +4018,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 args.append(parsed_arg)
                 if isinstance(atype, data.Array):
                     outargs.append(parsed_arg)
-                allargs.append(f'__out_{parsed_arg}')
+                    allargs.append(f'__out_{parsed_arg}')
+                elif isinstance(atype, data.Scalar):
+                    allargs.append(f'__in_{parsed_arg}')
+                else:
+                    allargs.append(parsed_arg)
             else:
-                atype = data.create_datadescriptor(parsed_arg)
+                if isinstance(parsed_arg, (Number, numpy.number)):
+                    atype = data.create_datadescriptor(type(parsed_arg))
+                else:
+                    atype = data.create_datadescriptor(parsed_arg)
 
                 if isinstance(parsed_arg, str):
                     # Special case for strings
@@ -4043,7 +4050,18 @@ class ProgramVisitor(ExtNodeVisitor):
         # TODO: Assign, augassign
         elif isinstance(node.parent, ast.AnnAssign):
             return_names = []
-            pass
+            # TODO: Support multiple return values
+            try:
+                return_type = eval(astutils.unparse(node.parent.annotation),
+                                   globals(), self.defined)
+            except:
+                # TODO: Use a meaningful exception
+                pass
+            aname, _ = self.sdfg.add_temp_transient_like(return_type)
+            return_names = [aname]
+            outargs.extend(return_names)
+            allargs.extend([f'__out_{n}' for n in return_names])
+            
 
         # TODO(later): A proper type/shape inference pass can uncover
         #              return values if in e.g., nested calls: f(g(a))
@@ -4075,7 +4093,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_state('callback_%d' % node.lineno)
         self.last_state.set_default_lineinfo(self.current_lineinfo)
 
-        call_args = ', '.join(allargs)
+        call_args = ', '.join(str(s) for s in allargs)
         tasklet = self.last_state.add_tasklet(
             f'callback_{node.lineno}', {f'__in_{name}'
                                         for name in args} | {'__istate'},
@@ -4225,7 +4243,7 @@ class ProgramVisitor(ExtNodeVisitor):
             func = oprepo.Replacements.get(funcname)
             if func is None:
                 nm = rname(node)
-                if create_callbacks and nm in self.closure.callbacks:
+                if nm in self.closure.callbacks:
                     warnings.warn(
                         'Performance warning: Automatically creating '
                         f'callback to Python interpreter from function "{funcname}". '
