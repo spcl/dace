@@ -4,6 +4,7 @@ import re
 import copy as cp
 import sympy as sp
 import numpy
+from numbers import Number
 from typing import Set, Sequence, Tuple
 
 import dace.dtypes as dtypes
@@ -60,6 +61,10 @@ def create_datadescriptor(obj):
         return Scalar(obj)
     elif obj in {int, float, complex, bool, None}:
         return Scalar(dtypes.typeclass(obj))
+    elif isinstance(obj, type) and issubclass(obj, numpy.number):
+        return Scalar(dtypes.typeclass(obj))
+    elif isinstance(obj, (Number, numpy.number)):
+        return Scalar(dtypes.typeclass(type(obj)))
     elif callable(obj):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))
