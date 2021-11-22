@@ -119,6 +119,8 @@ class RewriteSympyEquality(ast.NodeTransformer):
     def visit_Constant(self, node):
         if isinstance(node.value, numpy.bool_):
             node.value = bool(node.value)
+        elif isinstance(node.value, numpy.number):
+            node.value = numpy.asscalar(node.value)
         return self.generic_visit(node)
 
 
