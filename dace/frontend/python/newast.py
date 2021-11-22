@@ -4061,7 +4061,6 @@ class ProgramVisitor(ExtNodeVisitor):
             return_names = [aname]
             outargs.extend(return_names)
             allargs.extend([f'__out_{n}' for n in return_names])
-            
 
         # TODO(later): A proper type/shape inference pass can uncover
         #              return values if in e.g., nested calls: f(g(a))
@@ -4223,10 +4222,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     warnings.warn(
                         'Performance warning: Automatically creating '
                         f'callback to Python interpreter from method "{funcname}" '
-                        f'in class "{classname}.'
-                        'It is advised to fix underlying parsing issues or provide '
-                        'a replacement through "dace.frontend.common.op_repository".'
-                    )
+                        f'in class "{classname}". If you would like to know why '
+                        'parsing failed, please place a @dace.method decorator on the method. '
+                        'If a DaCe method cannot be provided (for example, due to '
+                        'recursion), register a replacement through '
+                        '"dace.frontend.common.op_repository".')
                     return self.create_callback(node)
                 raise DaceSyntaxError(
                     self, node,
@@ -4246,10 +4246,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 if nm in self.closure.callbacks:
                     warnings.warn(
                         'Performance warning: Automatically creating '
-                        f'callback to Python interpreter from function "{funcname}". '
-                        'It is advised to fix underlying parsing issues or provide '
-                        'a replacement through "dace.frontend.common.op_repository".'
-                    )
+                        f'callback to Python interpreter from method "{funcname}". '
+                        f'If you would like to know why parsing failed, please '
+                        'place a @dace.program decorator on the function. '
+                        'If a DaCe function cannot be provided (for example, due to '
+                        'recursion), register a replacement through '
+                        '"dace.frontend.common.op_repository".')
                     return self.create_callback(node)
                 raise DaceSyntaxError(
                     self, node, 'Function "%s" is not registered with an SDFG '
