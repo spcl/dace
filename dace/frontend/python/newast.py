@@ -2807,8 +2807,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 widx = sqz_wsub.squeeze()
                 sqz_rsub = copy.deepcopy(rtarget_subset)
                 ridx = sqz_rsub.squeeze()
-                if (sqz_wsub.size() == sqz_osub.size() and
-                        sqz_wsub.size() == sqz_rsub.size()):
+                if (sqz_wsub.size() == sqz_osub.size()
+                        and sqz_wsub.size() == sqz_rsub.size()):
                     r_to_w = {i: j for i, j in zip(ridx, widx)}
                     o_to_w = {i: j for i, j in zip(oidx, widx)}
                     # NOTE: Since 'sqz_wsub is squeezed, 'start' should be
@@ -2836,11 +2836,12 @@ class ProgramVisitor(ExtNodeVisitor):
                         in1_memlet.dynamic = True
                         out_memlet.dynamic = True
                     tasklet_code += '__out = __in1 {op} __in2'.format(op=op)
-                    state.add_mapped_tasklet(state.label, map_range, {
-                        '__in1': in1_memlet,
-                        '__in2': in2_memlet,
-                        **input_memlets,
-                    },
+                    state.add_mapped_tasklet(state.label,
+                                             map_range, {
+                                                 '__in1': in1_memlet,
+                                                 '__in2': in2_memlet,
+                                                 **input_memlets,
+                                             },
                                              tasklet_code,
                                              {'__out': out_memlet},
                                              external_edges=True,
@@ -3181,9 +3182,22 @@ class ProgramVisitor(ExtNodeVisitor):
             if (not is_return and isinstance(target, ast.Name) and true_name
                     and not op and not isinstance(true_array, data.Scalar)
                     and not (true_array.shape == (1, ))):
-                raise DaceSyntaxError(
-                    self, target,
-                    'Cannot reassign value to variable "{}"'.format(name))
+                if (result in self.sdfg.arrays
+                        and self.sdfg.arrays[result].is_equivalent(true_array)):
+                    # Skip error if the arrays are defined exactly in the same way
+                    true_name = None
+                else:
+                    raise DaceSyntaxError(
+                        self, target,
+                        'Cannot reassign value to variable "{}"'.format(name))
+
+            if is_return and true_name:
+                if (result in self.sdfg.arrays and
+                        not self.sdfg.arrays[result].is_equivalent(true_array)):
+                    raise DaceSyntaxError(
+                        self, target,
+                        'Return values of a data-centric function must always '
+                        'have the same type and shape')
 
             if not true_name and (op or isinstance(target, ast.Subscript)):
                 raise DaceSyntaxError(
