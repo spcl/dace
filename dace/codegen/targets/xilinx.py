@@ -118,6 +118,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         host_code.write("""\
 #include "dace/xilinx/host.h"
 #include "dace/dace.h"
+#include "dace/xilinx/stream.h"
 """)
         if len(self._dispatcher.instrumentation) > 1:
             host_code.write("""\
