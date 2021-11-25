@@ -1019,12 +1019,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     subgraph_parameters[subgraph].append(param)
                     global_symbols.add(param)
 
-            # Append external streams that are not in shared data (e.g., inter-kernel streams)
-            for is_output, data_name, desc, interface_id in external_streams:
-                if data_name not in shared_data:
-                    subgraph_parameters[subgraph].append(
-                        (is_output, data_name, desc, interface_id))
-
         # Order by name
         global_data_parameters = list(
             sorted(global_data_parameters, key=sort_func))

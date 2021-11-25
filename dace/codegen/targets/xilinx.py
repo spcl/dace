@@ -904,9 +904,21 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         state_parameters.extend(global_data_parameters)
 
-        # Xilinx does not like external streams name with leading underscores to be used as port names
-        # We remove them, and we check that they are not defined anywwhere else
+        # We need to pass external streams as parameters to module
+        # (unless they are not already there. This could be case of inter-PE intra-kernel streams)
+        for k, v in subgraph_parameters.items():
+            for stream_is_out, stream_name, stream_desc, stream_iid in external_streams:
+                for is_output, data_name, desc, interface_id in v:
+                    if data_name == stream_name and stream_desc == desc:
+                        import pdb
+                        pdb.set_trace()
+                        break
+                else:
+                    v.append((stream_is_out, stream_name, stream_desc, stream_iid))
 
+
+        # Xilinx does not like external streams name with leading underscores to be used as port names
+        # We remove them, and we check that they are not defined anywhere else
         for es in external_streams:
 
             new_name = es[1].strip("_")
