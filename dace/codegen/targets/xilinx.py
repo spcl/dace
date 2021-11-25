@@ -50,6 +50,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 
         # Keep track of external streams: original_name -> mangled_name
         self._external_streams = dict()
+        self._defined_external_streams = set()
 
     @staticmethod
     def cmake_options():
@@ -970,6 +971,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                node.desc(sdfg), module_stream,
                                                entry_stream)
+
+
         for is_output, name, node, _ in external_streams:
             self._dispatcher.defined_vars.add_global(name, DefinedType.Stream,
                                                      node.ctype)
@@ -979,9 +982,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             val = '{}_1.{}'.format(kernel_name, name)
 
             # Define here external streams
-            self.define_stream(node.dtype, node.buffer_size, name,
+            if name not in self._defined_external_streams:
+                self.define_stream(node.dtype, node.buffer_size, name,
                                node.total_size, None, state_host_body_stream,
                                sdfg)
+                self._defined_external_streams.add(name)
 
             self._stream_connections[name][key] = val
 
