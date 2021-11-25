@@ -589,6 +589,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     kernel_args.append(
                         p.as_arg(False, name=fpga.fpga_ptr(name, p, sdfg,
                                                            bank)))
+            elif isinstance(
+                    p, dt.Stream) and name in self._external_streams.values():
+                kernel_args.append(f"std::ref({p.as_arg(False, name=name)})")
             else:
                 kernel_args.append(p.as_arg(False, name=name))
 
@@ -736,8 +739,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
             # Launch the kernel from the host code
             rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg)
+
+            # kernel arguments
+
             host_stream.write(
-                f"  auto kernel_{rtl_name} = program.MakeKernel(\"{rtl_name}_top\"{', '.join([''] + [name for _, name, p, _ in parameters if not isinstance(p, dt.Stream)])}).ExecuteTaskAsync();",
+                f"  auto kernel_{rtl_name} = program.MakeKernel(\"{rtl_name}_top\"{', '.join([''] + [name for _, name, p, _ in parameters if not (isinstance(p, dt.Stream))])}).ExecuteTaskAsync();",
                 sdfg, state_id, rtl_tasklet)
             if state.instrument == dtypes.InstrumentationType.FPGA:
                 self.instrument_opencl_kernel(rtl_name, state_id, sdfg.sdfg_id,
@@ -940,7 +946,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         ]
 
         # Generate host code
-        self.generate_host_header(sdfg, kernel_name, global_data_parameters,
+        self.generate_host_header(sdfg, kernel_name,
+                                  global_data_parameters + external_streams,
                                   state_host_header_stream)
         self.generate_host_function_boilerplate(sdfg, state,
                                                 nested_global_transients,
@@ -970,14 +977,17 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             key = 0 if is_output else 1
             val = '{}_1.{}'.format(kernel_name, name)
 
-            # TODO: define here external streams in state_host_body_stream
-            # state_host_body_stream.write(f"HELLO {name}")
+            # Define here external streams
+            self.define_stream(node.dtype, node.buffer_size, name,
+                               node.total_size, None, state_host_body_stream,
+                               sdfg)
+
             self._stream_connections[name][key] = val
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, module_stream, entry_stream,
                               state_host_body_stream, instrumentation_stream)
-        # TODO: pass here also external_streams
+
         self.generate_host_function_body(
             sdfg, state, kernel_name, predecessors,
             global_data_parameters + external_streams, rtl_tasklet_names,
@@ -995,7 +1005,17 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         kernel_args = []
         for is_output, name, arg, interface_ids in parameters:
-            if isinstance(arg, dt.Array):
+            if isinstance(arg, dt.Stream):
+
+                if arg.is_stream_array():
+                    kernel_args.append("dace::FIFO<{}, {}, {}> {}[{}]".format(
+                        arg.dtype.base_type.ctype, cpp.sym2cpp(arg.veclen),
+                        cpp.sym2cpp(arg.buffer_size), name, arg.size_string()))
+                else:
+                    kernel_args.append("dace::FIFO<{}, {}, {}> &{}".format(
+                        arg.dtype.base_type.ctype, cpp.sym2cpp(arg.veclen),
+                        cpp.sym2cpp(arg.buffer_size), name))
+            elif isinstance(arg, dt.Array):
                 for bank, interface_id in fpga.iterate_multibank_interface_ids(
                         arg, interface_ids):
                     argname = fpga.fpga_ptr(name, arg, sdfg, bank, is_output,
@@ -1004,6 +1024,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                   name=argname))
             else:
                 kernel_args.append(arg.as_arg(with_types=True, name=name))
+
         host_code_stream.write(
             """\
 // Signature of kernel function (with raw pointers) for argument matching
