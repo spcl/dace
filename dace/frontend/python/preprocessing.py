@@ -395,6 +395,11 @@ def has_replacement(callobj: Callable,
         return True
 
     # Functions
+    # Special case: Constructor method (e.g., numpy.ndarray)
+    if classname == "type":
+        cbqualname = astutils.rname(node)
+    if oprepo.Replacements.get(cbqualname) is not None:
+        return True
     full_func_name = callobj.__module__ + '.' + callobj.__qualname__
     if oprepo.Replacements.get(full_func_name) is not None:
         return True
