@@ -1345,7 +1345,7 @@ class UnregisteredLibraryNode(LibraryNode):
         self.original_json = json_obj
         super().__init__(label)
 
-    def to_json(self):
+    def to_json(self, parent):
         return self.original_json
 
     @staticmethod
