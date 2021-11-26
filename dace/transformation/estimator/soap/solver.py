@@ -6,10 +6,11 @@ from subprocess import call
 class Solver(): 
     def __init__(self) -> None:        
         self.debug_no_solve = False
+        self.debug = False
         self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.status = "disconnected"
     
-    def start_solver(self, remoteMatlab):
+    def start_solver(self, remoteMatlab : bool = True):
 
         # configuration
         port = 30000
@@ -26,15 +27,17 @@ class Solver():
 
 
         # initialize matlab connection
-        self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)            
-        print('\nWaiting for the Matlab server to start....\n')
+        self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)    
+        if self.debug:        
+            print('\nWaiting for the Matlab server to start....\n')
         while(True):
             try:
                 self.conn.connect((address,port))
                 break
             except:
                 time.sleep(1)
-        print('\nConnected\n')
+        if self.debug:        
+            self.print('\nConnected\n')
         self.status = "connected"
         #fromSolver = toSolver  # timos: we really don't need two sockets, but I didn't want to change too much of this code
 
@@ -47,6 +50,7 @@ class Solver():
 
     
     def set_debug(self, debug = True):
+        self.debug = debug
         self.conn.sendall(("debug;" + str(int(debug)) + '@').encode())  
         self.set_timeout(300)
 

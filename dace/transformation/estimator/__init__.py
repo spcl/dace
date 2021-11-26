@@ -2,4 +2,4 @@
 from .enumeration import Enumerator
 from .enumeration import BruteForceEnumerator, ConnectedEnumerator, GreedyEnumerator
 
-from .soap import SOAP_statement, SDG_scope, SDG
+from .soap import SoapStatement, SdgScope, SDG

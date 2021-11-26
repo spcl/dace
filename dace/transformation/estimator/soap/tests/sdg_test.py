@@ -80,7 +80,7 @@ def test_polybench_kernels():
     if params.IOanalysis:
         if params.latex:            
             colNames = ["kernel", "our I/O bound", "previous bound"]
-            outputStr = GenerateLatexTable(final_analysisStr, colNames, params.suiteName)
+            outputStr = generate_latex_table(final_analysisStr, colNames, params.suiteName)
         else:
             for kernel, result in final_analysisStr.items():
                 outputStr += "{0:30}Q: {1:40}\n".format(kernel, result)

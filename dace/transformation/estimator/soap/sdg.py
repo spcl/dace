@@ -4,7 +4,7 @@ import sympy as sp
 import networkx as nx
 import graphviz
 from numpy import nanargmax
-from dace.transformation.estimator.soap.soap import SOAP_statement, SOAPArray
+from dace.transformation.estimator.soap.soap import AccessParams, SoapStatement
 from dace.transformation.estimator.soap.utils import *
 import dace
 from dace.sdfg.graph import MultiConnectorEdge
@@ -41,7 +41,7 @@ class SDG_Path:
 # ------------------------------------
 # Symbolic Directed Graph abstraction
 # ------------------------------------
-class SDG_scope:
+class SdgScope:
     def __init__(self, sdfg_entry_node : Node = None):
         self.n_iterations = 1
         self.ranges = {}
@@ -55,17 +55,24 @@ class SDG_scope:
 
 
 
-class SDG_node:
-    def __init__(self, scope : SDG_scope = None, 
+class SdgNode:
+    def __init__(self, scope : SdgScope = None, 
                 sdfg_node : Node = None, 
-                statement : SOAP_statement = None):
+                statement : SoapStatement = None):
         self.scope = scope
         self.sdfg_node = sdfg_node
         self.statement = statement
 
 
 
+"""
+Main SDG (Symbolic Directed Graph) class. 
+The constuctor takes the input SDFG, and constructs SDG 
+(every vertex is a SOAP statement, every edge is an access function vector).
 
+It provides functionality both per-statement (per-vertex) I/O analysis, as well 
+as the SDG subgraphing (finding optimal kernel fusions).
+"""
 class SDG:
     def __init__(self, sdfg : dace.SDFG = None, params : global_parameters = None):
         self.params = params
@@ -84,14 +91,16 @@ class SDG:
     def edges(self):
         return list(self.graph.edges())
 
-    def in_edges(self, node):
+    def in_edges(self, node : str) -> List[Tuple[str,str, Dict]]:
         return list(self.graph.in_edges(node, data = True))
 
-    def out_edges(self, node):
+    def out_edges(self, node : str) -> List[Tuple[str,str, Dict]]:
         return list(self.graph.out_edges(node, data = True))
 
 
-    def add_edge(self, u, v, _base_access, access_params, _st : SOAP_statement, is_wcr = False, in_transient = False, out_transient = False):
+    def add_edge(self, u : str, v : str, _base_access : str, 
+                access_params : AccessParams, _st : SoapStatement, 
+                is_wcr = False, in_transient = False, out_transient = False) -> None:
         
         if v in self.graph.nodes:
             self.graph.nodes[v]['st'] = _st
@@ -103,13 +112,10 @@ class SDG:
         self.graph.add_edge(u, v, label = str(phi_str), 
                         base_access = _base_access, 
                         offsets = access_params,
-                        wcr = is_wcr)
-        
+                        wcr = is_wcr)        
         self.graph.nodes[u]['transient'] = in_transient                
-        self.graph.nodes[v]['transient'] = out_transient                
-       # self.graph = nx.relabel_nodes(self.graph, {u : uStr, v : vStr})
+        self.graph.nodes[v]['transient'] = out_transient         
 
-        #a = 1
 
     def get_node_label(self, u):
         basePhi = (u[0], u[1])
@@ -121,21 +127,25 @@ class SDG:
 
 
     
-    def from_SDFG(self, sdfg : dace.SDFG, params : global_parameters):     
+    def from_SDFG(self, sdfg : dace.SDFG, params : global_parameters) -> None:     
         """
+        Recursively builds the SDG from the input SDFG.
+        The recursive calls are one of the following:
+        1. _from_SDFG_sdfg - if the nested SDFG is encountered
+        2. _from_SDFG_loop
+        3. _from_SDFG_state
+        4. _from_SDFG_node
         """   
-        sdg_scope = SDG_scope()
+        sdg_scope = SdgScope()
         dace.propagate_memlets_sdfg(sdfg)
         sdfg.save("tmp.sdfg", hash=False)        
         # get all output arrays within a given STATE (for SSA purposes)
         sdg_scope.output_arrays = self._get_output_arrays_sdfg(sdfg, sdg_scope)
         self._from_SDFG_sdfg(sdfg, sdg_scope, params)
-        return self
 
 
-    def _from_SDFG_sdfg(self, sdfg: dace.SDFG, sdg_scope : SDG_scope, params : global_parameters):
-        control_tree = structured_control_flow_tree(sdfg, lambda x: None)
-       
+    def _from_SDFG_sdfg(self, sdfg: dace.SDFG, sdg_scope : SdgScope, params : global_parameters) -> None:
+        control_tree = structured_control_flow_tree(sdfg, lambda x: None)       
         # TODO: topological sort?
         for control_node in control_tree.children:
             if isinstance(control_node, control_flow.SingleState):
@@ -162,7 +172,8 @@ class SDG:
                 a = 1
                 
 
-    def _from_SDFG_loop(self, loop : control_flow.ForScope, sdg_scope: SDG_scope, params : global_parameters):
+    def _from_SDFG_loop(self, loop : control_flow.ForScope, 
+                sdg_scope: SdgScope, params : global_parameters) -> None:
         # TODO: loop iterations are already propagated into the nested scopes?
         # num_executions = loop.guard.executions
         # sdg_scope.SOAP_executions *= num_executions
@@ -190,13 +201,13 @@ class SDG:
 
 
     def _from_SDFG_scope(self, state: dace.SDFGState, 
-                    scope: Optional[dace.nodes.EntryNode], sdg_scope : SDG_scope, params : global_parameters):
+                    scope: Optional[dace.nodes.EntryNode], 
+                    sdg_scope : SdgScope, 
+                    params : global_parameters) -> SdgScope:
         num_executions = state.executions
         sdg_scope.SOAP_executions *= num_executions
         sdg_scope.SDFG_arrays = {**sdg_scope.SDFG_arrays, **state.parent.arrays}
         sdg_scope.input_SDFG_arrays += [src_node.data for src_node in state.source_nodes() if isinstance(src_node, AccessNode)]
-        if "stateFOR166" in state.label:
-            a = 1
                 
         snodes = [n for n in nx.topological_sort(state.nx) if n in state.scope_children()[scope]]
         for node in snodes:
@@ -255,18 +266,18 @@ class SDG:
 
 
     # the core SDG creation function. The elementary building block for SDG is the SDFG's tasklet
-    def _from_SDFG_node(self, node : dace.nodes, state: dace.SDFGState, sdg_scope : SDG_scope, params : global_parameters):            
-        if "compute_sum" in node.label:
-            a = 1           
-            
+    def _from_SDFG_node(self, node : dace.nodes, 
+                state: dace.SDFGState, sdg_scope : SdgScope, 
+                params : global_parameters) -> None:  
+        if node.__name__ == "_Div_":
+            a = 1
+                  
         if not state.out_edges(node) or not state.in_edges(node):
             return   
                            
-        S = SOAP_statement()    
+        S = SoapStatement()    
         S.name = node.label
         S.tasklet = node
-        if "stateFOR115" in sdg_scope.sdfg_path[-1].label:
-            a = 1
         S.daceRanges[sdg_scope.sdfg_path[-1].label] = sdg_scope.ranges      
         S.output_arrays = sdg_scope.output_arrays  
 
@@ -345,6 +356,8 @@ class SDG:
             return
         S.numExecutions = sdg_scope.SOAP_executions 
 
+        if len(S.phis) == 0:
+            return
         if params.IOanalysis:
             S.loop_ranges = sdg_scope.loop_ranges
             S.map_ranges = sdg_scope.map_ranges
@@ -356,7 +369,7 @@ class SDG:
         if params.WDanalysis:
             S.reductionRanges = node.reductionRanges
             S.update_ranges()        
-            S.calculate_dominator_size_2()  
+            S.calculate_dominator_size()  
             S.count_V()
             S.count_D()
 
@@ -370,7 +383,8 @@ class SDG:
         return
           
     
-    def _add_ranges_and_mappings(self, state : dace.SDFGState, sdg_scope : SDG_scope, node : dace.nodes):        
+    def _add_ranges_and_mappings(self, state : dace.SDFGState, sdg_scope : SdgScope, 
+                    node : dace.nodes) -> SdgScope:
         inner_scope = copy.deepcopy(sdg_scope)
         inner_scope.sdfg_path.append(node) 
         
@@ -460,12 +474,12 @@ class SDG:
         return inner_scope
     
     
-    def _find_transient_assignement(self, state : dace.SDFGState, sdg_scope : SDG_scope, node : dace.nodes):
+    def _find_transient_assignement(self, state : dace.SDFGState, sdg_scope : SdgScope, node : dace.nodes):
         a = 1
     
 
     @staticmethod
-    def _proj_compose(outer_mem : dace.Memlet, inner_mem : dace.Memlet):
+    def _proj_compose(outer_mem : dace.Memlet, inner_mem : dace.Memlet) -> Range:
         outer_rng = outer_mem.subset.ranges
         inner_rng = inner_mem.subset.ranges
         
@@ -495,7 +509,7 @@ class SDG:
 
 
 
-    def _add_statement_to_SDG(self, S : SOAP_statement, sdg_scope : SDG_scope):
+    def _add_statement_to_SDG(self, S : SoapStatement, sdg_scope : SdgScope) -> None:
         output_arrays_vers = []
         wcr_arrays = [e.data for e in S.wcr_edges]
         for output_array in S.output_accesses.keys():
@@ -542,8 +556,10 @@ class SDG:
     def add_projection(self,
                        project_from : dace.memlet,
                        project_to : dace.memlet,
-                       sdg_scope : SDG_scope):
-        # we need to add missing projection dimensions
+                       sdg_scope : SdgScope) -> None:
+        """
+        Handling projections between different dimensions of input/output memlets
+        """
         from_ranges = project_from.subset.ranges
         to_ranges = project_to.subset.ranges
         
@@ -569,7 +585,15 @@ class SDG:
     # SDFG preprocessing
     # ------------------------------------
     
-    def _get_output_arrays_sdfg(self, sdfg: dace.SDFG, sdg_scope : SDG_scope):
+    def _get_output_arrays_sdfg(self, sdfg: dace.SDFG, 
+                    sdg_scope : SdgScope) -> Dict[str, Tuple[str, Tuple[int]]]:
+        """
+        Before we create SDG, we need to know which arrays are EVENTUALLY updated,
+        to differentiate between read-only arrays (no SSA dimension), and the ones
+        for which the SSA dimension must be determined.
+
+        It is a recursive function, calling _get_output_arrays_state and _get_output_arrays_loop  
+        """
         output_arrays = {}
         control_tree = structured_control_flow_tree(sdfg, lambda x: None) 
         
@@ -594,7 +618,8 @@ class SDG:
         return output_arrays
                 
 
-    def _get_output_arrays_loop(self, loop : control_flow.ForScope, sdg_scope: SDG_scope):
+    def _get_output_arrays_loop(self, loop : control_flow.ForScope, 
+                sdg_scope: SdgScope) -> Dict[str, Tuple[str, Tuple[int]]]:
         output_arrays = {}
         
         #[n for n in nx.topological_sort(state.nx) if n in state.scope_children()[scope]]
@@ -616,7 +641,9 @@ class SDG:
         return output_arrays
 
     
-    def _get_output_arrays_state(self, state: dace.SDFGState, scope: Optional[dace.nodes.EntryNode], sdg_scope : SDG_scope):
+    def _get_output_arrays_state(self, state: dace.SDFGState, 
+            scope: Optional[dace.nodes.EntryNode],
+            sdg_scope : SdgScope) -> Dict[str, Tuple[str, Tuple[int]]]:            
         output_arrays = {}
         if len(sdg_scope.ranges) == 0:
             # then we are not in any parametric range scope            
@@ -642,10 +669,7 @@ class SDG:
                     # Otherwise, we might attach to it a wrong SSA_dim later.
                     if set(sdg_scope.ranges.keys()) != set(baseAccess.split('*')):
                         output_arrays[arrayName] = (baseAccess, offsets)
-                    else:
-                        a = 1
-                    
-                    
+                                        
             elif isinstance(node, dace.nodes.EntryNode):       
                 inner_scope = copy.deepcopy(sdg_scope)
                 inner_scope.sdfg_path.append(node)       
@@ -671,7 +695,10 @@ class SDG:
     # ------------------------------------
 
     @staticmethod
-    def _get_outer_memlet(inner_memlet : dace.Memlet, sdg_scope : SDG_scope, output : bool) -> dace.Memlet:
+    def _get_outer_memlet(inner_memlet : dace.Memlet, sdg_scope : SdgScope, output : bool) -> dace.Memlet:
+        """
+        Returns an outermost memlet which can be traced from the given inner_memlet
+        """
         if inner_memlet.data in sdg_scope.sdfg_mapping:
             outer_memlet = copy.deepcopy(sdg_scope.sdfg_mapping[inner_memlet.data])
             # TODO: new
@@ -680,9 +707,9 @@ class SDG:
             
             # a controversial trick for triangular dimensions. If the outer memlet ranges
             # are, e.g., [(0:N),( i + 1:M)], then we cut out this variable offset i and leave
-            # only [(0:N),(0:M)]. Otherwise, we will have problems later.
-            
+            # only [(0:N),(0:M)]. Otherwise, we will have problems later.            
             if any([len(x.free_symbols) > 0 for (x,y,z) in outer_memlet.subset.ranges]):
+                # TODO: remove?
                 a = 1
             outer_memlet.subset.ranges = [(0,y,z) if (x != y) else (x,y,z)  
                                           for (x,y,z) in outer_memlet.subset.ranges]
@@ -720,7 +747,8 @@ class SDG:
     
     
     @staticmethod
-    def _get_SSA_dim(memlet : dace.Memlet, sdg_scope : SDG_scope, preliminary_check = False):
+    def _get_SSA_dim(memlet : dace.Memlet, sdg_scope : SdgScope, 
+            preliminary_check = False) -> List[dace.symbol]:
         SSA_dim = []
         if len(sdg_scope.ranges) == 0:
             iter_vars = []
@@ -765,7 +793,7 @@ class SDG:
     # ------------------------------------
 
     
-    def plot_SDG(self, filename : str = 'SDG.dot'):
+    def plot_SDG(self, filename : str = 'SDG.dot') -> None:
         nx.nx_pydot.write_dot(self.graph, filename)
 
 
@@ -774,7 +802,8 @@ class SDG:
     # SDG PARTITIONING
     # ------------------------------------
     def perform_loop_swapping(self, node : str, swaplist : Dict[str, str], 
-                              visited: Set[str], first : bool) -> bool:
+                              visited: Set[str], params : global_parameters,
+                              first : bool) -> bool:
         """
         Propagates loop variables swapping. E.g., if we have a transient, whose 
         input edge is [i, j], but the output edge is [i, k], we try to propagate it
@@ -796,7 +825,7 @@ class SDG:
                 if node == "__return_1":
                     self.plot_SDG()
                     a = 1
-                statement.swap_iter_vars(swaplist, inv_swaplist, self.params.solver)
+                statement.swap_iter_vars(swaplist, inv_swaplist, self.params.solver, params)
                 
                 # if '__tmp7' in self.graph.nodes['__tmp8_1']['st'].phis.keys() and \
                 #         list(self.graph.nodes['__tmp8_1']['st'].phis['__tmp8'].keys())[0] == list(self.graph.nodes['__tmp8_1']['st'].phis['__tmp7'].keys())[0]:
@@ -817,8 +846,8 @@ class SDG:
                 e[2]["label"] = "[" + ",".join(e[2]["base_access"].split('*')) + "]" + \
                                 e[2]["label"].split(']')[1]
             
-            valid_swapping = valid_swapping and (self.perform_loop_swapping(in_node, swaplist, visited, False)
-                and self.perform_loop_swapping(out_node, swaplist, visited, False))
+            valid_swapping = valid_swapping and (self.perform_loop_swapping(in_node, swaplist, visited, params, False)
+                and self.perform_loop_swapping(out_node, swaplist, visited, params, False))
         
         return valid_swapping
                                 
@@ -831,7 +860,7 @@ class SDG:
     
     
     # --- preprocessing ---
-    def remove_transient_arrays(self):
+    def remove_transient_arrays(self, params : global_parameters) -> None:
         """
         removes transient nodes in the sdfg if there is only a single
         in-edge and single out-edge
@@ -876,7 +905,7 @@ class SDG:
                             visited_nodes.remove(node)
                             if node == "fc2_1":
                                 a = 1
-                            if not self.perform_loop_swapping(node, swaplist, visited_nodes, first = True):
+                            if not self.perform_loop_swapping(node, swaplist, visited_nodes, params, first = True):
                                 invalid_swapping = True                            
                             self.plot_SDG()
                             
@@ -912,7 +941,7 @@ class SDG:
 
     # we don't merge A and B if there is an edge (A,B) but also (A,C), (C,B)
     # this will be taken care of once we are in C
-    def is_shortest_pred(self, source_node, pred_node):
+    def is_shortest_pred(self, source_node: str, pred_node: str) -> bool:
         shortest_pred = True
         for sibling in self.graph.successors(pred_node):   
             if sibling != source_node:
@@ -924,127 +953,89 @@ class SDG:
         return shortest_pred
 
 
-    def recursive_SDG_subgraphing(self, node, checked_subgraphs : set) -> List[SOAP_statement]:
+    def recursive_SDG_subgraphing(self, node, checked_subgraphs : set) -> List[SoapStatement]:
         if "all_subgraphs" in self.graph.nodes[node].keys():
             return self.graph.nodes[node]["all_subgraphs"]
         base_st = self.graph.nodes[node]['st']
-        if node == "dace_w_0_4":
-            a = 1
         S = copy.deepcopy(base_st)
         S.name = node
         S.subgraph = set([node])
         sdg_statements = []
         sdg_statements.append(S)
 
-
         for pred in self.graph.predecessors(node): 
-            # TODO: new version doesn't differentiate between transients, since they should
-            # be handled in the remove_transient_nodes step
-            
-            # # for transients, we just go deeper      
-            # if self.graph.nodes[pred]['transient'] == True:      
-            #     if len(self.in_edges(pred)) > 0:            
-            #         # TODO: pruning. What's the best strategy here?   
-            #         if self.is_shortest_pred(node, pred):
-            #             if pred == "dace_w_0_6":
-            #                 a = 1
-            #             pred_statements = self.recursive_SDG_subgraphing(pred, checked_subgraphs)   
+            # merging horizontally - input reuse
+            for sibling in self.graph.successors(pred):   
+                if sibling != node:
+                    # our brother has to diverge from our recursive path
+                    is_divergent = not any([node == n for n in nx.ancestors(self.graph, sibling)]) \
+                                and not any([node == n for n in nx.descendants(self.graph, sibling)])
+                    if is_divergent:
+                        s_st = self.graph.nodes[sibling]['st']
+                        s_st.name = sibling
+                        s_st.subgraph = set([sibling])
+                        if "transient" not in self.graph.nodes[sibling].keys():
+                            self.graph.nodes[sibling]['transient'] = False
 
-            #             for cur_stat in sdg_statements:                                 
-            #                 for pred_stat in pred_statements:            
-            #                     cur_stat.concatenate_sdg_statements(None, pred_stat)                    
-            #         else:
-            #             a = 1
-            if False:
-                a = 1
+                        if self.graph.nodes[sibling]['transient'] == True: 
+                            continue
+                        
+                        # if the brother has no other parents than our shared parent, always add - do not branch
+                        if len(list(self.graph.predecessors(sibling))) == 1:
+                            for cur_stat in sdg_statements:                                 
+                                cur_stat.concatenate_sdg_statements(None, s_st)                            
+                        else:
+                            sibling_statements = copy.deepcopy(sdg_statements)
+                            for sib_stat in sibling_statements:                                 
+                                S = copy.deepcopy(sib_stat)
+                                S.concatenate_sdg_statements(None, s_st)
+                                if S.subgraph not in checked_subgraphs.union(set([frozenset(sg.subgraph) for sg in sdg_statements])):
+                                    sdg_statements.append(S)    
 
-            else:
-                # merging horizontally - input reuse
-                for sibling in self.graph.successors(pred):   
-                    if sibling != node:
-                        # our brother has to diverge from our recursive path
-                        is_divergent = not any([node == n for n in nx.ancestors(self.graph, sibling)]) \
-                                    and not any([node == n for n in nx.descendants(self.graph, sibling)])
-                        if is_divergent:
-                            s_st = self.graph.nodes[sibling]['st']
-                            s_st.name = sibling
-                            s_st.subgraph = set([sibling])
-                            if "transient" not in self.graph.nodes[sibling].keys():
-                                self.graph.nodes[sibling]['transient'] = False
-
-                            if self.graph.nodes[sibling]['transient'] == True: 
-                                continue
-                            
-                            # if the brother has no other parents than our shared parent, always add - do not branch
-                            if len(list(self.graph.predecessors(sibling))) == 1:
-                                for cur_stat in sdg_statements:                                 
-                                    cur_stat.concatenate_sdg_statements(None, s_st)                            
-                            else:
-                                sibling_statements = copy.deepcopy(sdg_statements)
-                                for sib_stat in sibling_statements:                                 
-                                    S = copy.deepcopy(sib_stat)
-                                    S.concatenate_sdg_statements(None, s_st)
-                                    if S.subgraph not in checked_subgraphs.union(set([frozenset(sg.subgraph) for sg in sdg_statements])):
-                                        sdg_statements.append(S)    
-                                    else:
-                                        a = 1
-
-                pred_arr_name = strip(pred)
-                # the first condition catches the case where the scope dimension changed, and the array is no longer transient
-                # if S accesses array pred with different base accesses (e.g., A[i,k], A[k,j]), we don't go any deeper
-                if pred_arr_name not in base_st.phis.keys() or \
-                    len(base_st.phis[pred_arr_name]) > 1:
-                        continue
-                    
-                # don't fuse over the WCR edge
-                edge = self.graph.edges[pred, node, 0]
-                if edge['wcr'] == True:
+            pred_arr_name = strip(pred)
+            # the first condition catches the case where the scope dimension changed, and the array is no longer transient
+            # if S accesses array pred with different base accesses (e.g., A[i,k], A[k,j]), we don't go any deeper
+            if pred_arr_name not in base_st.phis.keys() or \
+                len(base_st.phis[pred_arr_name]) > 1:
                     continue
-                    
-                if pred == "dace_R_4_1":
-                    a = 1
                 
-                if len(self.in_edges(pred)) > 0:            
-                    # TODO: pruning. What's the best strategy here?            
-                    pred_st = self.graph.nodes[pred]['st']
-                    if len(pred_st.rhoOpts.free_symbols) > 0 and any([pred_arr_name in in_arr for in_arr in pred_st.phis.keys()]):
-                        continue
-                    if any([len(base_accesses) > 1 for base_accesses in pred_st.phis.values()]):
-                        a = 1
-                        continue
-                    
-                    # if len(par_st.rhoOpts.free_symbols) == 0: 
-                    # if not e[2]['wcr']:           # e[2] is the dict of properties of the edge     
-                    if self.is_shortest_pred(node, pred):
-                        if pred == 'dace_y_3_1':
-                            a = 1
-                        # 'dace_y_3_1;dace_w_0_6'
-                        pred_statements = self.recursive_SDG_subgraphing(pred, checked_subgraphs)   
+            # don't fuse over the WCR edge
+            edge = self.graph.edges[pred, node, 0]
+            if edge['wcr'] == True:
+                continue
+            
+            if len(self.in_edges(pred)) > 0:            
+                # TODO: pruning. What's the best strategy here?            
+                pred_st = self.graph.nodes[pred]['st']
+                if len(pred_st.rhoOpts.free_symbols) > 0 and any([pred_arr_name in in_arr for in_arr in pred_st.phis.keys()]):
+                    continue
+                if any([len(base_accesses) > 1 for base_accesses in pred_st.phis.values()]):
+                    continue
+                
+                # if len(par_st.rhoOpts.free_symbols) == 0: 
+                # if not e[2]['wcr']:           # e[2] is the dict of properties of the edge     
+                if self.is_shortest_pred(node, pred):
+                    pred_statements = self.recursive_SDG_subgraphing(pred, checked_subgraphs)   
 
-                        # perform all-to-all possible mergings
-                        sibling_statements = copy.deepcopy(sdg_statements)
-                        for sib_stat in sibling_statements:
-                            for pred_stat in pred_statements:      
-                                # check if the concatenation crosses a WCR edge
-                                if not self.crosses_wcr(pred_stat.name, sib_stat.name):
-                                    S = copy.deepcopy(sib_stat)
-                                    S.concatenate_sdg_statements(pred, pred_stat)
-                                    if S.subgraph not in checked_subgraphs.union(set([frozenset(sg.subgraph) for sg in sdg_statements])):
-                                        sdg_statements.append(S)    
-                                    else:
-                                        a = 1  
-                    else:
-                        a = 1
+                    # perform all-to-all possible mergings
+                    sibling_statements = copy.deepcopy(sdg_statements)
+                    for sib_stat in sibling_statements:
+                        for pred_stat in pred_statements:      
+                            # check if the concatenation crosses a WCR edge
+                            if not self.crosses_wcr(pred_stat.name, sib_stat.name):
+                                S = copy.deepcopy(sib_stat)
+                                S.concatenate_sdg_statements(pred, pred_stat)
+                                if S.subgraph not in checked_subgraphs.union(set([frozenset(sg.subgraph) for sg in sdg_statements])):
+                                    sdg_statements.append(S)    
+  
 
-        if node == "dace_w_0_6":
-            a = 1
         self.graph.nodes[node]["all_subgraphs"] = sdg_statements
         
         return sdg_statements
 
 
 
-    def crosses_wcr(self, subgraph_1 : str, subgraph_2 : str):
+    def crosses_wcr(self, subgraph_1 : str, subgraph_2 : str) -> bool:
         nodes_1 = subgraph_1.split(';')
         nodes_2 = subgraph_2.split(';')
         for node_1 in nodes_1:
@@ -1056,7 +1047,7 @@ class SDG:
         return False
 
 
-    def propagate_SDG_rho(self, S : SOAP_statement):    
+    def propagate_SDG_rho(self, S : SoapStatement) -> None:    
         SDG_subgraph  = S.name.split(';')
         for SDG_node in SDG_subgraph:
             node_S = self.graph.nodes[SDG_node]['st']
@@ -1069,10 +1060,14 @@ class SDG:
 
 
     # structure-aware partitioning
-    def calculate_IO_of_SDG(self, params : global_parameters) -> Tuple[sp.core.Expr, list[SOAP_statement]]:
+    def calculate_IO_of_SDG(self, params : global_parameters) -> Tuple[sp.core.Expr, list[SoapStatement]]:
+        """
+        Exhaustively creates all possible subgraphs (using recursive_SDG_subgraphing),
+        and then chooses the best (with the lowest I/O cost Q) SDG partition (using compare_st).
+        """
         # clean up the SDG.
         # 1. remove intermediate transients:
-        self.remove_transient_arrays()
+        self.remove_transient_arrays(params)
         # 2. remove output transients:
         sinks = [u for u, deg in self.graph.out_degree() if not deg]
         final_sinks = [u for u in sinks if not self.graph.nodes[u]['transient']]
@@ -1096,7 +1091,7 @@ class SDG:
             if node in processed_nodes:
                 continue
 
-            subgraph_opt = SOAP_statement()
+            subgraph_opt = SoapStatement()
             subgraph_opt.Q = 0        
             Q_opt_val = 0
             sdg_subgraphs_statements = self.recursive_SDG_subgraphing(node, checked_subgraphs)
@@ -1122,7 +1117,7 @@ class SDG:
 
 
     # structure-aware WD analysis
-    def CalculateWDofSDG(self, params : global_parameters):
+    def CalculateWDofSDG(self, params : global_parameters) -> Tuple[sp.Expr, sp.Expr]:
         # set edge weights to match destination node weights. We need numerical values
         # potentialParams = ['n']                
         potentialParams = ['n', 'm', 'w', 'h', 'N', 'M', 'W', 'H', 'NI', 'NJ', 'NK', 'NP', 'NQ', 'NR', 'step']  

@@ -1,28 +1,29 @@
 from os import name
-from typing import Dict
+from typing import Dict, List
 import sympy as sp
 from dace.transformation.estimator.soap.sdg import SDG
-from dace.transformation.estimator.soap.utils import parse_params, Solver
+from dace.transformation.estimator.soap.utils import parse_params, Solver, global_parameters
 from dataclasses import dataclass, field
 from dace import SDFG
+import networkx as nx
 
 @dataclass
 class io_result_subgraph():
     name : int
-    Q: sp.core.Expr
-    rho : sp.core.Expr
+    Q: sp.Expr
+    rho : sp.Expr
     input_arrays : Dict
-    variables : list[sp.core.Expr]
-    inner_tile : list[sp.core.Expr]
-    outer_tile : list[sp.core.Expr]
+    variables :  List[sp.Expr]
+    inner_tile : List[sp.Expr]
+    outer_tile : List[sp.Expr]
 
     # The following three fields define the parallel distribution.
     # they require user to specify numerical value of parameters, 
     # such as P, S, and problem sizes. The default values of some of these 
     # parameters are specified in utils.param_values
-    loc_domain_dims : list[sp.core.Expr] = field(default_factory=list)
-    p_grid : list[sp.core.Expr] = field(default_factory=list)
-    dimensions_ordered : list[sp.core.Expr] = field(default_factory=list)
+    loc_domain_dims : list[sp.Expr] = field(default_factory=list)
+    p_grid : list[sp.Expr] = field(default_factory=list)
+    dimensions_ordered : list[sp.Expr] = field(default_factory=list)
 
     def get_data_decomposition(self, pp):
         # p_pos is an N -> N^d mapping, translating a global rank to a cooridnate rank in 
@@ -56,12 +57,56 @@ class io_result_subgraph():
 @dataclass
 class io_result():
     name : int
-    Q: sp.core.Expr
+    Q: sp.Expr
     sdg: SDG
     subgraphs : list[io_result_subgraph]
 
 
-def perform_soap_analysis(sdfg : SDFG, generate_schedule : bool = True) -> io_result_subgraph:
+def perform_soap_analysis(sdfg : SDFG, params: global_parameters = [], 
+                    generate_schedule : bool = False) -> io_result:
+    """
+    Main interface of the SOAP analysis. 
+
+    Input:
+    sdfg (SDFG): sdfg to be analyzed
+    params [Optional] (global_parameters): User-defined SOAP parameters. Default values are defined in utils
+    generate_schedule [Optional] (bool): Whether the parallel decomposition should be evaluated for each subgraph.
+                                         The decomposition parameters are specified in params.param_values.
+
+    Output:
+    io_result_subgraph: dataclass containing SOAP analysis results, 
+    such as I/O lower bound (Q), computational intensity (rho), symbolic directed graph (SDG),
+    and the list of subgraphs (subgraphs) with their optimal tilings and kernel merging
+    """
+    if params == []:
+        params = parse_params()
+        solver = Solver()
+        solver.start_solver(params.remoteMatlab)
+        solver.set_timeout(300)
+        params.solver = solver
+        
+    sdg = SDG(sdfg, params)
+    # check if the created SDG is correct
+    assert(nx.number_weakly_connected_components(sdg.graph) == 1)
+    Q, subgraphs = sdg.calculate_IO_of_SDG(params)
+
+    subgraphs_res = []
+    for subgr in subgraphs:
+        io_res_sg = io_result_subgraph(name= subgr.name, Q = subgr.Q, rho = subgr.rhoOpts, 
+                    variables = subgr.variables, inner_tile = subgr.inner_tile, 
+                    outer_tile = subgr.outer_tile, input_arrays = subgr.phis)                    
+        if generate_schedule:
+            subgr.init_decomposition(params.param_values,  params)   
+            io_res_sg.loc_domain_dims = subgr.loc_domain_dims
+            io_res_sg.p_grid = subgr.p_grid
+            io_res_sg.dimensions_ordered = subgr.dimensions_ordered        
+        subgraphs_res.append(io_res_sg)
+    
+    return(io_result(SDFG.__name__, Q, sdg, subgraphs_res))
+
+
+
+def perform_soap_analysis_einsum(einsum_string : str, generate_schedule : bool = True) -> io_result:
     """
     Main interface of the SOAP analysis. 
 
@@ -91,8 +136,7 @@ def perform_soap_analysis(sdfg : SDFG, generate_schedule : bool = True) -> io_re
         
         io_res_sg.loc_domain_dims = subgr.loc_domain_dims
         io_res_sg.p_grid = subgr.p_grid
-        io_res_sg.dimensions_ordered = subgr.dimensions_ordered
-        
+        io_res_sg.dimensions_ordered = subgr.dimensions_ordered        
         subgraphs_res.append(io_res_sg)
     
     return(io_result(SDFG.__name__, Q, sdg, subgraphs_res))

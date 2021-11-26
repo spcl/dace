@@ -1,11 +1,12 @@
 # import matplotlib.pyplot as plt
 from collections import defaultdict
+from dataclasses import dataclass
 import numpy as np
 from sympy.core.compatibility import ordered
 from dace.sdfg.nodes import *
 from dace.subsets import Range
 import sympy as sp
-from typing import Optional
+from typing import Optional, Tuple
 import copy
 from dace.sdfg.graph import MultiConnectorEdge
 import dace
@@ -29,7 +30,7 @@ available_setups = ["old_tals_sdfgs", "c2dace", "npbench", # different polybench
                     "einsum_string", "einsum_strings_from_file", 
                     "other"]
 chosen_setup = available_setups[3]
-only_selected_tests = ["fdtd"] #["lenet"] #["deriche", "symm", "mvt"]
+only_selected_tests = ["durbin"] #["lenet"] #["deriche", "symm", "mvt"]
 excluded_tests = ["cholesky2", "outer", "ssa", "deriche", "adi"]
 
 # parallel schedule
@@ -58,27 +59,26 @@ use_remote_matlab_server = True
 # ----------------------------------------
 
 # PARAMETERS 
-
+@dataclass
 class global_parameters():
-    def __init__(self):
-        self.remoteMatlab = False
-        self.WDanalysis = False
-        self.IOanalysis = True
-        self.latex = False
-        self.polybenchKernelsOnly = True
-        self.oldPolybench = True
-        self.perStOnly = False
-        self.suiteName = ""
-        self.onlySelectedTests = only_selected_tests
-        self.excludedTests = excluded_tests
-        self.param_values = param_values
-        self.SDGeval = "perState"
-        self.all_params_equal = True
-        self.just_leading_term = True
-        self.allInjective = True
-        self.einsum_strings = [""]
-        self.chosen_par_setup = chosen_par_setup
-
+    remoteMatlab : bool = False
+    WDanalysis : bool = False
+    IOanalysis : bool = True
+    latex : bool = False
+    polybenchKernelsOnly : bool = True
+    oldPolybench : bool = True
+    perStOnly : bool = False
+    suiteName : str = ""
+    onlySelectedTests = only_selected_tests
+    excludedTests = excluded_tests
+    param_values = param_values
+    all_params_equal = True
+    just_leading_term = True
+    allInjective = True
+    npbench = False
+    einsum_strings = [""]
+    chosen_par_setup = chosen_par_setup
+    abs_test_path : str = 'C:/gk_pliki/uczelnia/soap/soap_code/sdg'
 
 
 def get_kernels(params : global_parameters):
@@ -99,10 +99,10 @@ def get_kernels(params : global_parameters):
     
     if params.npbench:
         if '.py' in params.suiteName:
-            sdfg_path = "npbench/npbench/npbench/benchmarks/" + params.suiteName
+            sdfg_path = os.path.join(params.abs_test_path, "npbench/npbench/benchmarks/", params.suiteName)
             kernels = sdfgs_from_npbench(sdfg_path)
         else:
-            test_dir = "npbench/npbench/npbench/benchmarks/" + params.suiteName
+            test_dir = os.path.join(params.abs_test_path, "npbench/npbench/benchmarks/", params.suiteName)
             experiments = list(os.walk(test_dir))[0][1]
                     
             for exp in experiments:
@@ -121,13 +121,13 @@ def get_kernels(params : global_parameters):
               
     else:
         if '.sdfg' in params.suiteName:
-            sdfg_path = "sample-sdfgs/" + params.suiteName
+            sdfg_path = os.path.join(params.abs_test_path, "sample-sdfgs", params.suiteName)
             sdfg: dace.SDFG = dace.SDFG.from_file(sdfg_path)
             exp = params.suiteName.split('/')[-1].split('.')[0]
             kernels = [[sdfg, exp]]
 
         else:
-            test_dir = 'sample-sdfgs/' + params.suiteName
+            test_dir = os.path.join(params.abs_test_path, "sample-sdfgs", params.suiteName)
             experiments = list(os.walk(test_dir))[0][2]
                 
             for exp in experiments:
@@ -255,7 +255,7 @@ def rng_global2dict(ranges_scopes):
     return rng_dict
 
 
-def rng_list2dict(ranges):
+def rng_list2dict(ranges) -> Dict[str, Tuple]:
     return dict([(it, (rng_low, rng_high)) for (it, rng_low, rng_high) in ranges])
 
 
@@ -267,7 +267,7 @@ def strip(array_name_with_version : str) -> str:
     return '_'.join(array_name_with_version.split('_')[:-1])
 
 
-def get_access_from_memlet(memlet : dace.Memlet, iter_vars):
+def get_access_from_memlet(memlet : dace.Memlet, iter_vars) -> Tuple[str, str, Tuple[int]]:
     arrayName = memlet.data # + "_" + str(memlet.soap_array.version)
     baseAccess = ""
     offsets = []
@@ -296,7 +296,7 @@ def get_access_from_memlet(memlet : dace.Memlet, iter_vars):
             iter_vars = iter_vars - access.free_symbols
     baseAccess = baseAccess[:-1]
 
-    return (arrayName, baseAccess, offsets)
+    return (arrayName, baseAccess, tuple(offsets))
 
 
 def base_in_list(base_str : str, swaplist : Dict[str, str]) -> bool:
@@ -304,7 +304,7 @@ def base_in_list(base_str : str, swaplist : Dict[str, str]) -> bool:
                for iter in base_str.split('*')) 
 
 
-def swap_in_string(base_str, swaplist, inv_swaplist):
+def swap_in_string(base_str, swaplist, inv_swaplist) -> str:
     if not base_in_list(base_str, swaplist) and not base_in_list(base_str, inv_swaplist):
         return base_str
     if base_in_list(base_str, swaplist) and base_in_list(base_str, inv_swaplist):
@@ -483,26 +483,6 @@ def extract_access(accessFun, itervars):
 
 
 
-
-def AddRangeToIter(var, varRange):    
-    return str(var)
-    if len(varRange[0].free_symbols) > 0:
-        varFrom = '_'.join(map(str, varRange[0].free_symbols))
-    else:
-        varFrom = '0'
-
-    if len(varRange[1].free_symbols) > 0:
-        varTo = '_'.join(map(str, varRange[1].free_symbols))
-    else:
-        varTo = '0'
-    newVar = str(var) + '_' + varFrom + '_' + varTo
-    return newVar
-
-
-def D_S(var):
-    return dace.symbol(str(var))
-
-
 def get_lead_term(expression):
     q_pol = sp.Poly(expression)
     q_vars = list(q_pol.gens)
@@ -611,7 +591,7 @@ polybenchRes["trisolv"] =                      "N^2/2"
 polybenchRes["trmm"] =                         "M^2*N/sqrt(S)"
 
 
-def GenerateLatexTable(final_analysis, colNames, suiteName):
+def generate_latex_table(final_analysis, colNames, suiteName):
     outputStr = ""
 
     # table header

@@ -8,7 +8,7 @@ from dace import subsets
 from typing import List
 
 
-def sdfg_gen(subscripts: str, arrays: List[np.ndarray]) -> dace.SDFG:
+def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = [], inp_dim: int = 30) -> dace.SDFG:
     """ 
     Generates an SDFG for the given einsum discription. The SDFG comprises
         separates map for each contraction, based on the analysis done by the
@@ -16,14 +16,25 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray]) -> dace.SDFG:
 
     Args:
         subscripts (str): The einsum's subscript-description.
-        arrays (List[np.ndarray]): The einsum's inputs.
+        arrays [Optional] (List[np.ndarray]): The einsum's inputs. If not provided,
+                the arrays are auto-generated using the same size in each tensor mode (inp_dim)
+        inp_dim [Optinal] (int): If arrays are not provided, inp_dim is used to auto-generate them
+
 
     Returns:
         dace.SDFG: The SDFG implementing the einsum.
     """
 
-    # Extract symbols
+    # if input arrays are not provided, create them
+    if len(arrays) == 0:
+        inputs = subscripts.replace(' ', '').split('->')[0].split(',')         
+        for input in inputs:
+            order = len(input)
+            A = np.random.rand(inp_dim**order).reshape([inp_dim] * order)           
+            arrays.append(A)
+            
 
+    # Extract symbols
     path_info = oe.contract_path(subscripts, *arrays)
 
     counter = 0

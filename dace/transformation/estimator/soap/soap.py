@@ -1,5 +1,6 @@
 import ast
 from collections import defaultdict, namedtuple
+from dataclasses import dataclass, field
 
 import astunparse
 from dace.sdfg.graph import MultiConnectorEdge
@@ -32,7 +33,31 @@ from dace.transformation.estimator.soap.utils import *
 from warnings import warn
 
 
-pathToMatlab = 'C:\\gk_pliki\\uczelnia\\doktorat\\performance_modelling\\repo\\DAAPCe\\daapce\\matlab'
+"""
+Container class  storing parameters for access functions in SOAP statements.
+It contains information about the ssa (reduction) dimensions in this statement,
+as well as access offsets (required for stencil/overlapping accesses)
+"""
+@dataclass
+class AccessParams:
+    ssa_dim : List[dace.symbol] = field(default_factory=list)
+    offsets : set() = field(default_factory=set)
+
+"""
+Container class storing parameters for non-input arrays in the entire SDFG.
+It is used to determine whethere an array is updated "somewhere" in the SDFG,
+or is the current SOAP statement updating it. Needed to correctly append the
+SSA dimension.
+"""
+
+@dataclass
+class OutputArrayParams:
+    baseAccess : str
+    wcr : bool
+    offsets : Tuple[int]
+    ssa_dim : List[dace.symbol] = field(default_factory=list)
+    ssa_dim : List[dace.symbol] = field(default_factory=list)
+    offsets : set() = field(default_factory=set)
 
 
 
@@ -71,26 +96,28 @@ def strip_range_name_from_ranges(iters_, ranges_, sep = "_"):
         return iters
     
 
+@dataclass
+class SoapStatement:
+    variables : List = field(default_factory=list)
+    ranges : Dict = field(default_factory=defaultdict)
+    daceRanges : Dict = field(default_factory=dict)
+    reductionRanges : List = field(default_factory=list)
+    phis : Dict = field(default_factory=dict)
+    output_accesses : Dict  = field(default_factory=dict)
+    Q : dace.symbol = sp.sympify(1)
+    name : str = ""
+    numExecutions : sp.Expr = sp.sympify(1)
+    appended_versions : bool = False
+    SSAed : bool = False
+    parent_subgraph : 'SoapStatement' = None
+    subgraph : Set = field(default_factory=set)
+    in_transients : Set = field(default_factory=set)
+    out_transients : Set = field(default_factory=set)
+    inner_tile : List = field(default_factory=list)
+    outer_tile : List = field(default_factory=list)
 
-class SOAP_statement:
-
-    def __init__(self):
-        self.variables = []
+    def __post_init__(self):
         self.ranges = defaultdict(list)
-        self.daceRanges = {}
-        self.reductionRanges = []
-        self.phis = {}
-        self.output_accesses = {}
-        self.Q = []
-        self.name = ""
-        self.numExecutions = sp.sympify(1)
-        self.appended_versions = False
-        self.SSAed = False
-        self.parent_subgraph = []
-        self.subgraph = set()
-        self.in_transients = set()
-        self.out_transients = set()
-
     
     def get_phis(self):
         flat_phis = {}
@@ -104,11 +131,11 @@ class SOAP_statement:
 
     def solve(self, solver, params: global_parameters):
         self.update_ranges()        
-        self.calculate_dominator_size_2()  
+        self.calculate_dominator_size()  
         self.calculate_H_size()
         self.count_V()      
         
-        self.reductionRanges = [red_dim[0] for sublist in [arr[3] 
+        self.reductionRanges = [red_dim[0] for sublist in [arr.ssa_dim 
                                 for arr in self.output_accesses.values()] 
                                 for red_dim in sublist]
 
@@ -160,9 +187,7 @@ class SOAP_statement:
           
         input = str(self.Dom_size).replace('_', 'x').replace('**', '^')
         output = str(self.H_size).replace('_', 'x').replace('**', '^')
-        print("input: " + input + ",   output: " + output)
-        if '-' in input:
-            a = 1
+        # print("input: " + input + ",   output: " + output)
             
         if solver.debug_no_solve:
             self.rhoOpts = 1
@@ -434,9 +459,7 @@ class SOAP_statement:
         self.Dom_size = d2sp(simpDom)
 
 
-    def calculate_dominator_size_2(self, strip_array_versions : bool = False):
-        if 'data_2;__tmp4_1;__tmp2_1;data_1' in self.name:
-            a = 1
+    def calculate_dominator_size(self, strip_array_versions : bool = False):
         if strip_array_versions:
             # remove the version numbers from array names
             stripped_phis = {}
@@ -501,7 +524,7 @@ class SOAP_statement:
                         # We only checked so far that the current array is updated SOMEWHERE in our SDFG scope.
                         # Now we need to check if THIS statement updates it:
                         if array_name in stripped_outputs.keys() and \
-                                eq_accesses(base_access, stripped_outputs[array_name][0]):        
+                                eq_accesses(base_access, stripped_outputs[array_name].baseAccess):        
                             SSAing = True            
                                                                     
                         for i in range(dim):
@@ -671,7 +694,9 @@ class SOAP_statement:
             a = 1
 
 
-    def add_edge_to_statement(self, memlet : dace.Memlet, ssa_dim,  params : global_parameters):
+    def add_edge_to_statement(self, memlet : dace.Memlet, 
+                ssa_dim : List[dace.symbol],  
+                params : global_parameters):
         if memlet.subset is None or memlet.is_empty():
             return
 
@@ -686,19 +711,15 @@ class SOAP_statement:
         if len(self.phis[arrayName]) > 0:
             existingPhi = list(self.phis[arrayName])[0].split('*')
             baseAccessVec = baseAccess.split('*')
-            if params.allInjective:
-                warn('Assuming that the access ' + arrayName + str(existingPhi) \
-                    + " never overlaps with "  + arrayName + str(baseAccessVec) + "\n")
-            else:
-                warn('Assuming that the access ' + arrayName + str(existingPhi) \
-                    +" perfectly overlaps with "  + arrayName + str(baseAccessVec) + "], "\
-                    +"thus, the latter one does not generate any additional inputs.\n")
-                return
-    
-        soap_array = SOAPArray(memlet.data)
-        memlet.soap_array = soap_array
-        memlet.soap_array.baseAccess = baseAccess
-    
+            if baseAccessVec != existingPhi:
+                if params.allInjective:
+                    warn('Assuming that the access ' + arrayName + str(existingPhi) \
+                        + " never overlaps with "  + arrayName + str(baseAccessVec) + "\n")
+                else:
+                    warn('Assuming that the access ' + arrayName + str(existingPhi) \
+                        +" perfectly overlaps with "  + arrayName + str(baseAccessVec) + "], "\
+                        +"thus, the latter one does not generate any additional inputs.\n")
+                    return        
 
         # check for an equivalent existing access (e.g. i*j and j*i)
         equiv_base_access = [other for other in self.phis[arrayName].keys() if sp.sympify(baseAccess) == sp.sympify(other)]
@@ -707,7 +728,7 @@ class SOAP_statement:
 
         if baseAccess not in self.phis[arrayName].keys():
             # self.phis[arrayName][baseAccess] = set()
-            access_params = namedtuple('params', ['ssa_dim', 'offsets'])
+            access_params = AccessParams() #namedtuple('params', ['ssa_dim', 'offsets'])
             self.phis[arrayName][baseAccess] = access_params
             self.phis[arrayName][baseAccess].offsets = set()
         
@@ -717,13 +738,12 @@ class SOAP_statement:
 
 
 
-    def add_output_edge_to_statement(self, memlet : dace.Memlet, ssa_dim):
+    def add_output_edge_to_statement(self, memlet : dace.Memlet, ssa_dim : List[dace.symbol]):
         # all iteration variables known to this statement
         itervars = set(map(dace.symbol, [v.keys() for v in self.daceRanges.values()][0]))
         (arrayName, baseAccess, offsets) =  get_access_from_memlet(memlet, itervars)
         
-        # self.SSAed = memlet.soap_array.SSAed
-        self.output_accesses[arrayName] = (baseAccess,tuple(offsets), memlet.wcr is not None, ssa_dim)
+        self.output_accesses[arrayName] = OutputArrayParams(baseAccess, memlet.wcr is not None, tuple(offsets), ssa_dim)
 
 
     def match_iter_vars(self, in_S, concatenation_array : str, out_join : bool):
@@ -735,7 +755,7 @@ class SOAP_statement:
         if i in range(N) and j in range(i, N) SHOULD NOT be merged
         """        
         if out_join:
-            join_base_accesses = [in_S.output_accesses[concatenation_array][0]]
+            join_base_accesses = [in_S.output_accesses[concatenation_array].baseAccess]
         else:             
             join_base_accesses = list(in_S.phis[concatenation_array].keys())
                 
@@ -992,7 +1012,7 @@ class SOAP_statement:
         return [rhoOpts, varsOpt, Xopts]
     
     
-    def swap_iter_vars(self, swaplist, inv_swaplist, solver):
+    def swap_iter_vars(self, swaplist, inv_swaplist, solver, params : global_parameters):
         # used for a loop swap transformation, e.g., interchanging i<->j
         
         # swap inputs (phis)
@@ -1006,8 +1026,7 @@ class SOAP_statement:
             
         # swap outputs
         for arr, access in self.output_accesses.items():
-            self.output_accesses[arr] = (swap_in_string(access[0], swaplist, inv_swaplist),
-                                         access[1], access[2], access[3])
+            self.output_accesses[arr].baseAccess = swap_in_string(access.baseAccess, swaplist, inv_swaplist)
             
         # swap ranges
         for st, rngs in self.ranges.items():
@@ -1018,7 +1037,7 @@ class SOAP_statement:
             self.ranges[st] = new_rngs
         
         # recalculate
-        self.solve(solver)
+        self.solve(solver, params)
 
     # --------------------------------------------
     # ---------- various helper functions --------
@@ -1031,13 +1050,6 @@ class SOAP_statement:
                 return False
             
         return True
-
-class SOAPArray:
-    def __init__(self, arrName):
-        self.arrName = arrName
-        self.version = 0
-        self.SSAed = False
-
 
 # ------------------------------------
 # W/D result container
