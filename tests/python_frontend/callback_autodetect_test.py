@@ -266,7 +266,7 @@ def test_callback_samename():
 
 if __name__ == '__main__':
     test_automatic_callback()
-    # test_automatic_callback_inference()
+    test_automatic_callback_inference()
     test_automatic_callback_method()
     # test_callback_from_module()
     # test_view_callback()

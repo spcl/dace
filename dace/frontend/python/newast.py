@@ -4076,6 +4076,35 @@ class ProgramVisitor(ExtNodeVisitor):
             return_names = [aname]
             outargs.extend(return_names)
             allargs.extend([f'__out_{n}' for n in return_names])
+        
+        elif isinstance(node.parent, (ast.Assign, ast.AugAssign)):
+            defined_vars = {**self.variables, **self.scope_vars}
+            defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
+
+            return_names = []
+            return_type = []
+            for target in node.parent.targets:
+                name = rname(target)
+                if name in defined_vars:
+                    true_name = defined_vars[name]
+                    true_array = defined_arrays[true_name]
+                    if isinstance(target, ast.Subscript):
+                        dtype, shape = self.visit_Subscript(
+                            copy.deepcopy(target), True)
+                        n, arr = self.sdfg.add_temp_transient(shape, dtype)
+                    else:
+                        n, arr = self.sdfg.add_temp_transient_like(true_array)
+                    return_names.append(n)
+                    return_type.append(arr)
+                else:
+                    return_type = None
+                    break
+            
+            outargs.extend(return_names)
+            allargs.extend([f'__out_{n}' for n in return_names])
+
+            # TODO: Support multiple return types
+            return_type = return_type[0]
 
         # TODO(later): A proper type/shape inference pass can uncover
         #              return values if in e.g., nested calls: f(g(a))
@@ -4817,7 +4846,7 @@ class ProgramVisitor(ExtNodeVisitor):
         return res
 
     ### Subscript (slicing) handling
-    def visit_Subscript(self, node: ast.Subscript):
+    def visit_Subscript(self, node: ast.Subscript, inference: bool = False):
 
         if self.nested:
 
@@ -4848,6 +4877,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 rng = expr.subset
                 if isinstance(rng, subsets.Indices):
                     rng = subsets.Range.from_indices(rng)
+                if inference:
+                    rng.offset(rng, True)
+                    return self.sdfg.arrays[true_name].dtype, rng.size()
                 new_name, new_rng = self._add_read_access(name, rng, node)
                 new_arr = self.sdfg.arrays[new_name]
                 full_rng = subsets.Range.from_array(new_arr)
@@ -4883,6 +4915,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                   'Type "%s" cannot be sliced' % arrtype)
 
         # Visit slice contents
+        # TODO: Maybe we actually want to do scalar promotion even in inference
+        # mode
         nslice = self._parse_subscript_slice(node.slice)
 
         # Try to construct memlet from subscript
@@ -4891,6 +4925,11 @@ class ProgramVisitor(ExtNodeVisitor):
             **self.sdfg.arrays,
             **self.defined
         }, node, nslice)
+
+        if inference:
+            rng = expr.subset
+            rng.offset(rng, True)
+            return self.sdfg.arrays[array].dtype, rng.size()
 
         return self._add_read_slice(array, node, expr)
 
