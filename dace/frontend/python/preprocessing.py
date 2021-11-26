@@ -742,7 +742,9 @@ class GlobalResolver(ast.NodeTransformer):
                 not isinstance(v, ast.FormattedValue)
                 or isinstance(v.value, ast.Constant) for v in visited.values
             ]
-            values = [astutils.unparse(v.value) for v in visited.values]
+            values = [v.s if isinstance(v, ast.Str)
+                          else astutils.unparse(v.value)
+                      for v in visited.values]
             return ast.copy_location(
                 ast.Constant(kind='',
                              value=''.join(('{%s}' % v) if not p else v
