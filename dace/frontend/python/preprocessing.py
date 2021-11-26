@@ -122,6 +122,14 @@ class RewriteSympyEquality(ast.NodeTransformer):
         elif isinstance(node.value, numpy.number):
             node.value = numpy.asscalar(node.value)
         return self.generic_visit(node)
+    
+    # Compatibility for Python 3.7
+    def visit_Num(self, node):
+        if isinstance(node.n, numpy.bool_):
+            node.n = bool(node.n)
+        elif isinstance(node.n, numpy.number):
+            node.n = numpy.asscalar(node.n)
+        return self.generic_visit(node)
 
 
 class ConditionalCodeResolver(ast.NodeTransformer):
@@ -499,6 +507,8 @@ class GlobalResolver(ast.NodeTransformer):
             else:
                 if value is None:
                     newnode = ast.NameConstant(value=None)
+                elif isinstance(value, str):
+                    newnode = ast.Str(s=value)
                 else:
                     newnode = ast.Num(n=value)
 
