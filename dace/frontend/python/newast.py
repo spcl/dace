@@ -3694,6 +3694,15 @@ class ProgramVisitor(ExtNodeVisitor):
             closure_arrays = getattr(fcopy, '__sdfg_closure__',
                                      lambda *args: {})()
             for aname, arr in closure_arrays.items():
+                if aname in sdfg.symbols:
+                    outer_name = self.sdfg.find_new_symbol(aname)
+                    self.sdfg.add_symbol(outer_name, sdfg.symbols[aname])
+                    args.append((aname, outer_name))
+                    required_args.append(aname)
+                    self.nested_closure_arrays[outer_name] = (
+                        arr, sdfg.symbols[aname])
+                    continue
+
                 desc = data.create_datadescriptor(arr)
                 outer_name = self.sdfg.add_datadesc(aname,
                                                     desc,
@@ -3973,6 +3982,11 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_nested_symbols(nsdfg)
         self._add_dependencies(state, nsdfg, None, None, inputs, outputs)
 
+        # If __pystate is detected within nested SDFG, map to local Python state
+        if '__pystate' in sdfg.arrays:
+            sdfg.arrays['__pystate'].transient = False
+            self._connect_pystate(nsdfg, state)
+
         if output_slices:
             if len(rets) > 0:
                 raise DaceSyntaxError(
@@ -4110,20 +4124,32 @@ class ProgramVisitor(ExtNodeVisitor):
             self.last_state.add_edge(tasklet, f'__out_{arg}', w, None,
                                      Memlet(arg))
 
-        # Create and connect a __pystate variable that blocks reordering optimizations
-        if '__pystate' not in self.sdfg.arrays:
-            self.sdfg.add_scalar('__pystate', dace.int32, transient=True)
-        rs = self.last_state.add_read('__pystate')
-        ws = self.last_state.add_write('__pystate')
-        self.last_state.add_edge(rs, None, tasklet, '__istate',
-                                 Memlet('__pystate'))
-        self.last_state.add_edge(tasklet, '__ostate', ws, None,
-                                 Memlet('__pystate'))
+        # Connect Python state
+        self._connect_pystate(tasklet, self.last_state, '__istate', '__ostate')
 
         if return_type is None:
             return []
         else:
             return return_names
+
+    def _connect_pystate(self,
+                         tasklet: nodes.CodeNode,
+                         state: SDFGState,
+                         inp_conn: str = '__pystate',
+                         out_conn: str = '__pystate',
+                         arr_name: str = '__pystate'):
+        '''
+        Create and connect a __pystate variable that blocks reordering
+        optimizations to a given tasklet.
+        '''
+        if arr_name not in self.sdfg.arrays:
+            self.sdfg.add_scalar(arr_name, dace.int32, transient=True)
+        rs = state.add_read(arr_name)
+        ws = state.add_write(arr_name)
+        tasklet.add_in_connector(inp_conn, dace.int32, force=True)
+        state.add_edge(rs, None, tasklet, inp_conn, Memlet(arr_name))
+        tasklet.add_out_connector(out_conn, dace.int32, force=True)
+        state.add_edge(tasklet, out_conn, ws, None, Memlet(arr_name))
 
     def visit_Call(self, node: ast.Call, create_callbacks=False):
         func = None

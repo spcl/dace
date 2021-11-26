@@ -846,7 +846,9 @@ class callback(typeclass):
     def __init__(self, return_types, *variadic_args):
         self.uid = next(_atomic_counter_generator())
         from dace import data
-        if not isinstance(return_types, (list, tuple, set)):
+        if return_types is None:
+            return_types = []
+        elif not isinstance(return_types, (list, tuple, set)):
             return_types = [return_types]
         self.dtype = self
         self.return_types = return_types
@@ -952,7 +954,8 @@ class callback(typeclass):
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
-                inp_converters.append(lambda a: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
+                inp_converters.append(lambda a: ctypes.cast(a, ctypes.c_char_p).
+                                      value.decode('utf-8'))
             else:
                 inp_converters.append(lambda a: a)
         offset = 0
@@ -966,7 +969,8 @@ class callback(typeclass):
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
-                ret_converters.append(lambda a: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
+                ret_converters.append(lambda a: ctypes.cast(a, ctypes.c_char_p).
+                                      value.decode('utf-8'))
             else:
                 ret_converters.append(lambda a: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
@@ -1003,9 +1007,10 @@ class callback(typeclass):
                     else:
                         non_symbolic_sizes.append(s)
                 if data_type is ctypes.c_char_p:
-                    list_of_outputs[i-ret_indices[0]] = ret_converters[i-ret_indices[0]](other_inputs[i])
+                    list_of_outputs[i - ret_indices[0]] = ret_converters[
+                        i - ret_indices[0]](other_inputs[i])
                 else:
-                    list_of_outputs[i-ret_indices[0]] = ptrtonumpy(
+                    list_of_outputs[i - ret_indices[0]] = ptrtonumpy(
                         other_inputs[i], data_type, non_symbolic_sizes)
             if ret_indices:
                 ret = orig_function(*list_of_other_inputs)
@@ -1023,11 +1028,16 @@ class callback(typeclass):
         return hash((self.uid, *self.return_types, *self.input_types))
 
     def to_json(self):
+        if self.return_types:
+            return {
+                'type': 'callback',
+                'arguments': [i.to_json() for i in self.input_types],
+                'returntypes': [r.to_json() for r in self.return_types]
+            }
         return {
             'type': 'callback',
             'arguments': [i.to_json() for i in self.input_types],
-            'returntypes':
-            [r.to_json() if r else None for r in self.return_types]
+            'returntypes': []
         }
 
     @staticmethod
@@ -1035,14 +1045,16 @@ class callback(typeclass):
         if json_obj['type'] != "callback":
             raise TypeError("Invalid type for callback")
 
-        rettype = json_obj['returntype']
+        rettypes = json_obj['returntypes']
 
         import dace.serialize  # Avoid import loop
 
-        return callback(
-            json_to_typeclass(rettype) if rettype else None,
-            *(dace.serialize.from_json(arg, context)
-              for arg in json_obj['arguments']))
+        return callback([
+            json_to_typeclass(rettype) if rettype else None
+            for rettype in rettypes
+        ],
+                        *(dace.serialize.from_json(arg, context)
+                          for arg in json_obj['arguments']))
 
     def __str__(self):
         return "dace.callback"

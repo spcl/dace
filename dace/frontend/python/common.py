@@ -170,3 +170,7 @@ class SDFGClosure:
                     self.closure_arrays[new_name] = (arrname, desc, evaluator,
                                                      True)
                     self.array_mapping[id(arr)] = new_name
+
+            for cbname, cb in sorted(child.callbacks.items()):
+                new_name = data.find_new_name(cbname, self.callbacks.keys())
+                self.callbacks[new_name] = cb

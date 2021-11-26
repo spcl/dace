@@ -148,6 +148,75 @@ def test_print():
     printprog(a)
 
 
+def test_reorder():
+    counter = 0
+    should_be_one, should_be_two = 0, 0
+
+    @dace_inhibitor
+    def a():
+        nonlocal counter
+        nonlocal should_be_two
+        counter += 1
+        should_be_two = counter
+
+    @dace_inhibitor
+    def b():
+        nonlocal counter
+        nonlocal should_be_one
+        counter += 1
+        should_be_one = counter
+
+    @dace.program
+    def do_not_reorder():
+        b()
+        a()
+
+    sdfg = do_not_reorder.to_sdfg()
+    assert list(sdfg.arrays.keys()) == ['__pystate']
+
+    do_not_reorder()
+    assert should_be_one == 1
+    assert should_be_two == 2
+
+
+def test_reorder_nested():
+    counter = 0
+    should_be_one, should_be_two = 0, 0
+
+    @dace_inhibitor
+    def a():
+        nonlocal counter
+        nonlocal should_be_two
+        counter += 1
+        should_be_two = counter
+
+    def call_a():
+        a()
+
+    @dace_inhibitor
+    def b():
+        nonlocal counter
+        nonlocal should_be_one
+        counter += 1
+        should_be_one = counter
+
+    @dace.program
+    def call_b():
+        b()
+
+    @dace.program
+    def do_not_reorder_nested():
+        call_b()
+        call_a()
+
+    sdfg = do_not_reorder_nested.to_sdfg()
+    assert list(sdfg.arrays.keys()) == ['__pystate']
+
+    do_not_reorder_nested()
+    assert should_be_one == 1
+    assert should_be_two == 2
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     # test_automatic_callback_inference()
@@ -156,3 +225,5 @@ if __name__ == '__main__':
     # test_view_callback()
     # test_callback_tasklet()
     test_print()
+    test_reorder()
+    test_reorder_nested()
