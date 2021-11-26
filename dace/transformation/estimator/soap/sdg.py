@@ -16,6 +16,7 @@ from dace.codegen.control_flow import structured_control_flow_tree
 from typing import Optional, List
 # from dace.sdfg import Scope
 
+from typing import Tuple
 from dace.symbolic import pystr_to_symbolic, issymbolic
 from dace import subsets
 from warnings import warn
@@ -1068,7 +1069,7 @@ class SDG:
 
 
     # structure-aware partitioning
-    def calculate_IO_of_SDG(self, params : global_parameters):
+    def calculate_IO_of_SDG(self, params : global_parameters) -> Tuple[sp.core.Expr, list[SOAP_statement]]:
         # clean up the SDG.
         # 1. remove intermediate transients:
         self.remove_transient_arrays()
@@ -1082,6 +1083,7 @@ class SDG:
         self.plot_SDG()   
         
         Q_total = sp.sympify(0)
+        ret_subgraphs = []
         checked_subgraphs = set()
         all_nodes = list(reversed(list(nx.topological_sort(self.graph))))
         processed_nodes = []
@@ -1094,9 +1096,6 @@ class SDG:
             if node in processed_nodes:
                 continue
 
-            if node == "y_1":
-                a = 1
-
             subgraph_opt = SOAP_statement()
             subgraph_opt.Q = 0        
             Q_opt_val = 0
@@ -1105,11 +1104,7 @@ class SDG:
             checked_subgraphs = checked_subgraphs.union(set([frozenset(sg.subgraph) for sg in sdg_subgraphs_statements]))
 
             for subgraph_st in sdg_subgraphs_statements:    
-                if "linear_with_bias_1_linear_with_bias_48_4___tmp4_1;normed1_1" in subgraph_st.name:
-                    a = 1
-                subgraph_st.solve(params.solver, params)                
-                if "S" in str(subgraph_st.Q):
-                    a = 1
+                subgraph_st.solve(params.solver, params)     
                 if subgraph_st.parent_subgraph:
                     [better_subgraph, Q_val] = compare_st(subgraph_st, subgraph_st.parent_subgraph)
                     subgraph_st.rhoOpts = better_subgraph.rhoOpts
@@ -1119,25 +1114,11 @@ class SDG:
 
             self.graph.nodes[node]['st'] = subgraph_opt
             processed_nodes += subgraph_opt.name.split(';')
-            # if subgraph_opt != subgraph_opt.parent_subgraph:
-            #     propagate_SDG_rho(sdg, subgraph_opt)
-            if 'j' in str(subgraph_opt.Q) or 'i' in str(subgraph_opt.Q):
-                a = 1
             
-            subgraph_opt.print_schedule()
             Q_total = sp.simplify(Q_total + subgraph_opt.Q)
-            
-            # subgraph_opt.init_decomposition([("p", 64), ("Ss", 32*1024), ("S0", 512), ("S1", 512), ("S2", 512), ("S3", 512)],  params)  
-            # subgraph_opt.init_decomposition([("p", 1059), ("Ss", 32*1024), ("S0", 512), ("S1", 512), ("S2", 512), ("S3", 512)],  params)  
-            
-            # subgraph_opt.init_decomposition(params.param_values,  params)                    
-            # sample_ranks = [0, 5, 100, 13333]
-            # for rank in sample_ranks:                
-            #     print("\nrank {} should receive the following subsets of input arrays:".format(rank))
-            #     print(subgraph_opt.get_data_decomposition(rank))
-            
+            ret_subgraphs.append(subgraph_opt)       
 
-        return Q_total
+        return Q_total, ret_subgraphs
 
 
     # structure-aware WD analysis
@@ -1159,28 +1140,3 @@ class SDG:
         D = sum([self.graph.nodes[v]['st'].D for v in critical_path if "st" in self.graph.nodes[v].keys()])
         W = sum([self.graph.nodes[v]['st'].W for v in self.graph.nodes if "st" in self.graph.nodes[v].keys()])
         return [W,D]
-
-
-
-
-
-
-
-# def update_sdg_array_ver(sdg :SDG, array : str, output = False, out_arr = []):
-#     arr_name = array # '_'.join(array.split('_')[:-1])
-#     arr_no = int(output) #= int(array.split('_')[-1])
-    
-#     if out_arr:
-#         out_arr_name = '_'.join(out_arr.split('_')[:-1]) 
-#         out_arr_no = int(out_arr.split('_')[-1])
-#         if out_arr_name == arr_name:
-#             return arr_name + '_' + str(out_arr_no -1) 
-
-#     last_update_no = 0
-#     last_updates = [n for n in nx.topological_sort(sdg.graph) if arr_name in n]                    
-#     if last_updates:
-#         last_update_no = int(last_updates[-1].split('_')[-1])   
-#         # arr_no += last_update_no   
-#         #return arr_name + '_' + str(arr_no + last_update_no)    
-#    # return array
-#     return arr_name + '_' + str(arr_no + last_update_no)    

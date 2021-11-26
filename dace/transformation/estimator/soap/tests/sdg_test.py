@@ -7,6 +7,8 @@ import dace
 from dace.transformation.estimator.soap.utils import *
 from dace.transformation.estimator.soap.sdg import SDG
 from dace.transformation.estimator.soap.analysis import Perform_SDG_analysis
+from dace.transformation.estimator.soap.io_result import *
+
 
 def test_sdg_constructor():
  #   test_sdfg = "sample-sdfgs/various/tal_example.sdfg"
@@ -60,84 +62,7 @@ def test_polybench_kernels():
             # Parallelize as many loops as possible
             from dace.transformation.interstate import LoopToMap, RefineNestedAccess
             sdfg.apply_transformations_repeated([LoopToMap, RefineNestedAccess])
-            # Remove as many transients and views as possible
-            # NOTE: We are breaking program semantics here
-            # NOTE: This must be done after parallelization, because it may
-            # generate dependencies among loop iterations.
-            # TODO: (Maybe) make it a proper dace transformations
-            # First pattern: Non-transient data -> Map Entries -> Transient/View
-            # Second pattern: Transient/View -> Map Exits -> Non-transient data
-            # from dace import data, nodes
-            # for state in sdfg.nodes():
-            #     for node in state.nodes():
-            #         if not isinstance(node, nodes.AccessNode):
-            #             continue
-            #         desc = sdfg.arrays[node.data]
-            #         if not (isinstance(desc, data.View) or desc.transient):
-            #             continue
-            #         in_edges = state.in_edges(node)
-            #         out_edges = state.out_edges(node)
-            #         is_read = False
-            #         if len(in_edges) == 1:
-            #             in_edge = in_edges[0]
-            #             in_subset = in_edge.data.get_src_subset(in_edge, state)
-            #             src = state.memlet_path(in_edge)[0].src
-            #             if (in_subset and isinstance(src, nodes.AccessNode) and
-            #                     not sdfg.arrays[src.data].transient):
-            #                 is_read = True
-            #         if is_read:
-            #             composable = True
-            #             for e in out_edges:
-            #                 try:
-            #                     subset = e.data.get_src_subset(e, state)
-            #                     src_subset = copy.deepcopy(in_subset)
-            #                     src_subset.compose(subset)
-            #                 except:
-            #                     composable = False
-            #                     break
-            #             if composable:
-            #                 state.remove_edge(in_edge)
-            #                 for e1 in out_edges:
-            #                     for e2 in state.memlet_path(e1):
-            #                         subset = e2.data.get_src_subset(e2, state)
-            #                         src_subset = copy.deepcopy(in_subset)
-            #                         src_subset.compose(subset)
-            #                         e2.data.data = src.data
-            #                         e2.data.src_subset = src_subset
-            #                     state.remove_edge(e1)
-            #                     state.add_edge(in_edge.src, in_edge.src_conn, e1.dst, e1.dst_conn, e1.data)
-            #                 state.remove_node(node)
-            #             continue
-            #         is_write = False
-            #         if len(out_edges) == 1:
-            #             out_edge = out_edges[0]
-            #             out_subset = out_edge.data.get_dst_subset(out_edge, state)
-            #             dst = state.memlet_path(out_edge)[-1].dst
-            #             if (out_subset and isinstance(dst, nodes.AccessNode) and
-            #                     not sdfg.arrays[dst.data].transient):
-            #                 is_write = True
-            #         if is_write:
-            #             composable = True
-            #             for e in in_edges:
-            #                 try:
-            #                     subset = e.data.get_dst_subset(e, state)
-            #                     dst_subset = copy.deepcopy(out_subset)
-            #                     dst_subset.compose(subset)
-            #                 except:
-            #                     composable = False
-            #                     break
-            #             if composable:
-            #                 state.remove_edge(out_edge)
-            #                 for e1 in in_edges:
-            #                     for e2 in state.memlet_path(e1):
-            #                         subset = e2.data.get_dst_subset(e2, state)
-            #                         dst_subset = copy.deepcopy(out_subset)
-            #                         dst_subset.compose(subset)
-            #                         e2.data.data = dst.data
-            #                         e2.data.dst_subset = dst_subset
-            #                     state.remove_edge(e1)
-            #                     state.add_edge(e1.src, e1.src_conn, out_edge.dst, out_edge.dst_conn, e1.data)
-            #                 state.remove_node(node)
+           
             dace.propagate_memlets_sdfg(sdfg)
             sdfg.save("tmp.sdfg", hash=False)        
 
