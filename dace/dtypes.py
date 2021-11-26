@@ -958,9 +958,7 @@ class callback(typeclass):
                                       value.decode('utf-8'))
             else:
                 inp_converters.append(lambda a: a)
-        offset = 0
-        if inp_arraypos:
-            offset = inp_arraypos[-1] + 1
+        offset = len(self.input_types)
         for index, arg in enumerate(self.return_types):
             if isinstance(arg, data.Array):
                 ret_arraypos.append(index + offset)
