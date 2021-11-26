@@ -435,7 +435,9 @@ class GlobalResolver(ast.NodeTransformer):
         else:
             return super().generic_visit(node)
 
-    def _qualname_to_array_name(self, qualname: str) -> str:
+    def _qualname_to_array_name(self,
+                                qualname: str,
+                                prefix: str = '__g_') -> str:
         """ Converts a Python qualified attribute name to an SDFG array name. """
         # We only support attributes and subscripts for now
         sanitized = re.sub(r'[\.\[\]\'\",]', '_', qualname)
@@ -443,7 +445,7 @@ class GlobalResolver(ast.NodeTransformer):
             raise NameError(
                 f'Variable name "{sanitized}" is not sanitized '
                 'properly during parsing. Please report this issue.')
-        return f"__g_{sanitized}"
+        return f"{prefix}{sanitized}"
 
     def global_value_to_node(self,
                              value,
@@ -521,6 +523,7 @@ class GlobalResolver(ast.NodeTransformer):
             newnode = ast.Name(id=arrname, ctx=ast.Load())
         elif detect_callables and callable(value):
             # Try parsing the function as a dace function/method
+            newnode = None
             try:
                 from dace.frontend.python import parser  # Avoid import loops
 
@@ -543,12 +546,17 @@ class GlobalResolver(ast.NodeTransformer):
                     pass
 
                 # Store the handle to the original callable, in case parsing fails
-                self.closure.callbacks[astutils.rname(parent_node)] = value
+                cbqualname = astutils.rname(parent_node)
+                cbname = self._qualname_to_array_name(cbqualname, prefix='')
+                self.closure.callbacks[cbname] = (cbqualname, value, False)
+
+                # From this point on, any failure will result in a callback
+                newnode = ast.Name(id=cbname, ctx=ast.Load())
 
                 # Decorated or functions with missing source code
                 sast, _, _, _ = astutils.function_to_ast(value)
                 if len(sast.body[0].decorator_list) > 0:
-                    return None
+                    return newnode
 
                 parsed = parser.DaceProgram(value, [], {}, False,
                                             dtypes.DeviceType.CPU)
@@ -561,7 +569,7 @@ class GlobalResolver(ast.NodeTransformer):
                 return self.global_value_to_node(parsed, parent_node, qualname,
                                                  recurse, detect_callables)
             except Exception:  # Parsing failed (almost any exception can occur)
-                return None
+                return newnode
         else:
             return None
 

@@ -4016,7 +4016,8 @@ class ProgramVisitor(ExtNodeVisitor):
         if funcname not in self.closure.callbacks:
             raise DaceSyntaxError(
                 f'Cannot find appropriate Python callback for {funcname}')
-        func: Callable[..., Any] = self.closure.callbacks[funcname]
+        func: Callable[..., Any]
+        _, func, _ = self.closure.callbacks[funcname]
 
         # Infer the type of the function arguments and return value
         # TODO(later): Use inspect.signature and node.keywords to

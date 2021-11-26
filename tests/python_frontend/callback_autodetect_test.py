@@ -217,13 +217,61 @@ def test_reorder_nested():
     assert should_be_two == 2
 
 
+def test_callback_samename():
+    counter = 0
+    should_be_one, should_be_two = 0, 0
+
+    def get_func_a():
+        @dace_inhibitor
+        def b():
+            nonlocal counter
+            nonlocal should_be_two
+            counter += 1
+            should_be_two = counter
+
+        def call_a():
+            b()
+
+        return call_a
+
+    def get_func_b():
+        @dace_inhibitor
+        def b():
+            nonlocal counter
+            nonlocal should_be_one
+            counter += 1
+            should_be_one = counter
+
+        @dace.program
+        def call_b():
+            b()
+
+        return call_b
+
+    call_a = get_func_a()
+    call_b = get_func_b()
+
+    @dace.program
+    def do_not_reorder_nested():
+        call_b()
+        call_a()
+
+    sdfg = do_not_reorder_nested.to_sdfg()
+    assert list(sdfg.arrays.keys()) == ['__pystate']
+
+    do_not_reorder_nested()
+    assert should_be_one == 1
+    assert should_be_two == 2
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     # test_automatic_callback_inference()
-    # test_automatic_callback_method()
+    test_automatic_callback_method()
     # test_callback_from_module()
     # test_view_callback()
     # test_callback_tasklet()
     test_print()
     test_reorder()
     test_reorder_nested()
+    test_callback_samename()

@@ -116,7 +116,9 @@ class SDFGClosure:
     closure_sdfgs: OrderedDict[str, Union[SDFG, SDFGConvertible]]
 
     # Callbacks to Python callables that are used in the program
-    callbacks: OrderedDict[str, Callable[..., Any]]
+    # Mapping from unique names to a 3-tuple of (python name, callable,
+    # does the callback belong to a nested SDFG).
+    callbacks: OrderedDict[str, Tuple[str, Callable[..., Any], bool]]
 
     # List of nested SDFG-convertible closure objects and their names
     nested_closures: List[Tuple[str, 'SDFGClosure']]
@@ -171,6 +173,7 @@ class SDFGClosure:
                                                      True)
                     self.array_mapping[id(arr)] = new_name
 
-            for cbname, cb in sorted(child.callbacks.items()):
+            for cbname, (_, cb, _) in sorted(child.callbacks.items()):
                 new_name = data.find_new_name(cbname, self.callbacks.keys())
-                self.callbacks[new_name] = cb
+                self.callbacks[new_name] = (cbname, cb, True)
+                self.array_mapping[id(cb)] = new_name

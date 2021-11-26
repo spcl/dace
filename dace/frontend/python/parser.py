@@ -261,7 +261,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         if reevaluate is None:
             result = {k: v() for k, v in self.closure_arg_mapping.items()}
-            result.update(self.resolver.callbacks)
+            result.update({k: v[1] for k, v in self.resolver.callbacks.items()})
             return result
         else:
             return {
