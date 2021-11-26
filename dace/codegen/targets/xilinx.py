@@ -51,6 +51,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         # Keep track of external streams: original_name -> mangled_name
         self._external_streams = dict()
         self._defined_external_streams = set()
+        self._execution_mode = Config.get("compiler", "xilinx", "mode")
 
     @staticmethod
     def cmake_options():
@@ -592,7 +593,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         p.as_arg(False, name=fpga.fpga_ptr(name, p, sdfg,
                                                            bank)))
             elif isinstance(
-                    p, dt.Stream) and name in self._external_streams.values():
+                    p, dt.Stream) and name in self._external_streams.values(
+                    ) and not (self._execution_mode == "hardware"
+                               or self._execution_mode == "hardware_emulation"):
                 kernel_args.append(f"std::ref({p.as_arg(False, name=name)})")
             else:
                 kernel_args.append(p.as_arg(False, name=name))
@@ -614,9 +617,20 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     f"{kernel_deps_name}.push_back({pred}_event);")
 
         # Launch HLS kernel, passing synchronization events (if any)
+        if (self._execution_mode == "hardware"
+                or self._execution_mode == "hardware_emulation") and len(
+                    self._defined_external_streams) > 0:
+            # if there are external streams we should pass fake streams (XRT expects a nullptr)
+            kernel_stream.write(
+                f"""auto {kernel_name}_kernel = program.MakeKernel("{kernel_function_name}", {", ".join(kernel_args)});"""
+            )
+        else:
+            kernel_stream.write(
+                f"""auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});"""
+            )
+
         kernel_stream.write(
             f"""\
-  auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});
   hlslib::ocl::Event {kernel_name}_event = {kernel_name}_kernel.ExecuteTaskAsync({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''});
   all_events.push_back({kernel_name}_event);""", sdfg, sdfg.node_id(state))
         if state.instrument == dtypes.InstrumentationType.FPGA:
@@ -910,12 +924,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             for stream_is_out, stream_name, stream_desc, stream_iid in external_streams:
                 for is_output, data_name, desc, interface_id in v:
                     if data_name == stream_name and stream_desc == desc:
-                        import pdb
-                        pdb.set_trace()
                         break
                 else:
-                    v.append((stream_is_out, stream_name, stream_desc, stream_iid))
-
+                    v.append(
+                        (stream_is_out, stream_name, stream_desc, stream_iid))
 
         # Xilinx does not like external streams name with leading underscores to be used as port names
         # We remove them, and we check that they are not defined anywhere else
@@ -980,7 +992,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                node.desc(sdfg), module_stream,
                                                entry_stream)
 
-
         for is_output, name, node, _ in external_streams:
             self._dispatcher.defined_vars.add_global(name, DefinedType.Stream,
                                                      node.ctype)
@@ -991,9 +1002,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
             # Define here external streams
             if name not in self._defined_external_streams:
-                self.define_stream(node.dtype, node.buffer_size, name,
-                               node.total_size, None, state_host_body_stream,
-                               sdfg)
+                if self._execution_mode == "hardware" or self._execution_mode == "hardware_emulation":
+                    # define the placeholder
+                    state_host_body_stream.write(
+                        f"hlslib::ocl::_Stream {name};")
+                else:
+                    self.define_stream(node.dtype, node.buffer_size, name,
+                                       node.total_size, None,
+                                       state_host_body_stream, sdfg)
                 self._defined_external_streams.add(name)
 
             self._stream_connections[name][key] = val
