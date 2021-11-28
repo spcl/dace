@@ -133,7 +133,7 @@ def test_nested_recursion2_fail():
         return nested_a(a)
 
     A = np.random.rand(20)
-    with pytest.raises(DaceSyntaxError, match='nested_b'):
+    with pytest.raises(DaceSyntaxError, match='nested_'):
         recursive_autoparse(A)
 
 

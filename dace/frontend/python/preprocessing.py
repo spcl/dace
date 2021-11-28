@@ -19,6 +19,20 @@ from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible,
                                          SDFGClosure)
 
 
+class DaceRecursionError(Exception):
+    """
+    Exception that indicates a recursion in a data-centric parsed context.
+    The exception includes the id of the topmost function as a stopping
+    condition for parsing.
+    """
+    def __init__(self, fid: int):
+        self.fid = fid
+
+    def __str__(self) -> str:
+        return ('Non-analyzable recursion detected, function cannot be parsed '
+                'as data-centric')
+
+
 @dataclass
 class PreprocessedAST:
     """
@@ -804,10 +818,14 @@ class CallTreeResolver(ast.NodeVisitor):
                      value.closure_resolver(constant_args, self.closure)))
             else:
                 self.closure.nested_closures.append((qualname, SDFGClosure()))
+        except DaceRecursionError:  # Parsing failed in a nested context, raise
+            raise
         except Exception as ex:  # Parsing failed (anything can happen here)
             warnings.warn(f'Parsing SDFGConvertible {value} failed: {ex}')
+            del self.closure.closure_sdfgs[qualname]
             # Return old call AST instead
             node.func = node.func.oldnode.func
+
             return self.generic_visit(node)
 
 
@@ -887,8 +905,7 @@ def preprocess_dace_program(
     if parent_closure is not None:
         fid = id(f)
         if fid in parent_closure.callstack:
-            raise TypeError('Non-analyzable recursion detected, function '
-                            'cannot be parsed as data-centric')
+            raise DaceRecursionError(fid)
         if len(parent_closure.callstack) > Config.get(
                 'frontend', 'implicit_recursion_depth'):
             raise TypeError('Implicit (automatically parsed) recursion depth '
@@ -902,7 +919,14 @@ def preprocess_dace_program(
     src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
     src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
     src_ast = DeadCodeEliminator().visit(src_ast)
-    CallTreeResolver(closure_resolver.closure, resolved).visit(src_ast)
+    try:
+        CallTreeResolver(closure_resolver.closure, resolved).visit(src_ast)
+    except DaceRecursionError as ex:
+        if id(f) == ex.fid:
+            raise TypeError('Parsing failed due to recursion in a data-centric '
+                            'context called from this function')
+        else:
+            raise ex
     used_arrays = ArrayClosureResolver(closure_resolver.closure)
     used_arrays.visit(src_ast)
 
