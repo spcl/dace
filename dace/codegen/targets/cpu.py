@@ -1651,6 +1651,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                           sdfg,
                                           in_memlet,
                                           vconn,
+                                          is_write=vconn
+                                          in node.out_connectors,
                                           conntype=node.in_connectors[vconn]))
 
         for _, uconn, _, _, out_memlet in sorted(

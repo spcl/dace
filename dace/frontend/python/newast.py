@@ -1033,6 +1033,7 @@ class ProgramVisitor(ExtNodeVisitor):
                  scope_arrays: Dict[str, data.Data],
                  scope_vars: Dict[str, str],
                  map_symbols: Set[Union[str, symbolic.symbol]] = None,
+                 annotated_types: Dict[str, data.Data] = None,
                  other_sdfgs: Dict[str, Union[SDFG, 'DaceProgram']] = None,
                  nested: bool = False,
                  tmp_idx: int = 0,
@@ -1082,6 +1083,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.accesses = dict()
         self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
+        self.annotated_types: Dict[str, data.Data] = annotated_types or {}
 
         # Keep track of map symbols from upper scopes
         map_symbols = map_symbols or set()
@@ -1369,6 +1371,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                 **self.variables,
                             },
                             map_symbols=map_symbols,
+                            annotated_types=self.annotated_types,
                             other_sdfgs=self.other_sdfgs,
                             nested=True,
                             tmp_idx=self.sdfg._temp_transients + 1)
@@ -1766,8 +1769,10 @@ class ProgramVisitor(ExtNodeVisitor):
                             raise DaceSyntaxError(
                                 self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols
+                        # TODO: If scalar, should add dynamic map connector?
                         if str(atom) not in self.sdfg.symbols:
-                            self.sdfg.add_symbol(str(atom), atom.dtype)
+                            self.sdfg.add_symbol(str(atom),
+                                                 self.defined[str(atom)].dtype)
 
                 for expr in symbolic.swalk(symval):
                     if symbolic.is_sympy_userfunction(expr):
@@ -3135,8 +3140,9 @@ class ProgramVisitor(ExtNodeVisitor):
         except:
             dtype = None
             warnings.warn('typeclass {} is not supported'.format(type_name))
-        if node.value is None:  # Annotating type without assignment
-            return self.generic_visit(node)
+        if node.value is None and dtype is not None:  # Annotating type without assignment
+            self.annotated_types[rname(node.target)] = dtype
+            return
         self._visit_assign(node, node.target, None, dtype=dtype)
 
     def _visit_assign(self, node, node_target, op, dtype=None, is_return=False):
@@ -3170,6 +3176,10 @@ class ProgramVisitor(ExtNodeVisitor):
             if name in defined_vars:
                 true_name = defined_vars[name]
                 true_array = defined_arrays[true_name]
+
+            # If type was already annotated
+            if dtype is None and name in self.annotated_types:
+                dtype = self.annotated_types[name]
 
             if (isinstance(target, ast.Attribute)
                     and until(name, '.') in self.globals):
