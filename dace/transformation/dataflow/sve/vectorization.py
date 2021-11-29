@@ -10,7 +10,7 @@ from dace.codegen.targets.cpp import is_write_conflicted_with_reason
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg.state import SDFGState
 from dace import registry, symbolic, subsets
-from dace.properties import make_properties, Property, ShapeProperty
+from dace.properties import make_properties, Property, SymbolicProperty
 from dace.sdfg import nodes, SDFG, SDFGState
 import dace.sdfg
 from dace.sdfg import utils as sdutil
@@ -27,9 +27,7 @@ import dace.frontend.operations
 import dace.data as data
 import dace.dtypes as dtypes
 import dace.transformation.dataflow.sve.infer_types as infer_types
-from collections import defaultdict
-from dace.sdfg.utils import dfs_topological_sort
-import dace.transformation.dataflow.sve.vector_inference as vector_inference
+import dace.sdfg.analysis.vector_inference as vector_inference
 
 
 @registry.autoregister_params(singlestate=True)
@@ -43,23 +41,19 @@ class SVEVectorization(transformation.Transformation):
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
-    #vec_len = Property(dtype=symbolic.symbol,
-    #                   desc="Vector length",
-    #                   default=util.SVE_LEN)
+    vec_len = SymbolicProperty(desc="Vector length", default=util.SVE_LEN)
 
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry)]
 
-    @classmethod
-    def can_be_applied(cls,
+    def can_be_applied(self,
                        state: SDFGState,
                        candidate,
                        expr_index,
                        sdfg: SDFG,
                        strict=False) -> bool:
-        map_entry = state.node(candidate[cls.map_entry])
-        map_exit = state.exit_node(map_entry)
+        map_entry = self.map_entry(sdfg)
         current_map = map_entry.map
         subgraph = state.scope_subgraph(map_entry)
         subgraph_contents = state.scope_subgraph(map_entry,
@@ -78,7 +72,7 @@ class SVEVectorization(transformation.Transformation):
         for node, _ in subgraph_contents.all_nodes_recursive():
             if not isinstance(node, (nodes.Tasklet, nodes.AccessNode)):
                 return False
-        
+
         ########################
         # Check for unsupported datatypes on the connectors (including on the Map itself)
         bit_widths = set()
@@ -157,15 +151,14 @@ class SVEVectorization(transformation.Transformation):
 
         # Run the vector inference algorithm to check if vectorization is feasible
         try:
-            inf_graph = vector_inference.infer_vectors(
+            vector_inference.infer_vectors(
                 sdfg,
                 state,
                 map_entry,
-                util.SVE_LEN,
+                self.vec_len,
                 flags=vector_inference.VectorInferenceFlags.Allow_Stride,
                 apply=False)
         except vector_inference.VectorInferenceException as ex:
-            print(f'UserWarning: Vector inference failed! {ex}')
             return False
 
         return True
@@ -173,7 +166,6 @@ class SVEVectorization(transformation.Transformation):
     def apply(self, sdfg: SDFG):
         state = sdfg.node(self.state_id)
         map_entry = self.map_entry(sdfg)
-        map_exit = state.exit_node(map_entry)
         current_map = map_entry.map
 
         # Expand the innermost map if multidimensional
@@ -181,13 +173,9 @@ class SVEVectorization(transformation.Transformation):
             ext, rem = dace.transformation.helpers.extract_map_dims(
                 sdfg, map_entry, list(range(len(current_map.params) - 1)))
             map_entry = rem
-            map_exit = state.exit_node(map_entry)
             current_map = map_entry.map
 
         subgraph = state.scope_subgraph(map_entry)
-        subgraph_contents = state.scope_subgraph(map_entry,
-                                                 include_entry=False,
-                                                 include_exit=False)
 
         # Set the schedule
         current_map.schedule = dace.dtypes.ScheduleType.SVE_Map
@@ -201,6 +189,6 @@ class SVEVectorization(transformation.Transformation):
             sdfg,
             state,
             map_entry,
-            util.SVE_LEN,
+            self.vec_len,
             flags=vector_inference.VectorInferenceFlags.Allow_Stride,
             apply=True)

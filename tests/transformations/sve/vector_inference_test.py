@@ -2,12 +2,9 @@
 from dace import data
 from dace.sdfg.graph import NodeNotFoundError
 import dace
-import numpy as np
-from dace.transformation.dataflow.sve.vectorization import SVEVectorization
 from dace import SDFG
-import dace.dtypes as dtypes
 import dace.sdfg.nodes as nodes
-import dace.transformation.dataflow.sve.vector_inference as vector_inference
+import dace.sdfg.analysis.vector_inference as vector_inference
 import pytest
 
 N = dace.symbol('N')
