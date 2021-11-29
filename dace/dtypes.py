@@ -834,6 +834,14 @@ def ptrtonumpy(ptr, inner_ctype, shape):
         ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape)
 
 
+def ptrtocupy(ptr, inner_ctype, shape):
+    import cupy as cp
+    umem = cp.cuda.UnownedMemory(ptr, 0, None)
+    return cp.ndarray(shape=shape,
+                      dtype=inner_ctype,
+                      memptr=cp.cuda.MemoryPointer(umem, 0))
+
+
 def _atomic_counter_generator():
     ctr = 0
     while True:
@@ -950,12 +958,15 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                inp_converters.append(ptrtonumpy)
+                if arg.storage == StorageType.GPU_Global:
+                    inp_converters.append(ptrtocupy)
+                else:
+                    inp_converters.append(ptrtonumpy)
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
-                inp_converters.append(lambda a: ctypes.cast(a, ctypes.c_char_p).
-                                      value.decode('utf-8'))
+                inp_converters.append(lambda a, *args: ctypes.cast(
+                    a, ctypes.c_char_p).value.decode('utf-8'))
             else:
                 inp_converters.append(lambda a: a)
         offset = len(self.input_types)
@@ -963,14 +974,17 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                ret_converters.append(ptrtonumpy)
+                if arg.storage == StorageType.GPU_Global:
+                    ret_converters.append(ptrtocupy)
+                else:
+                    ret_converters.append(ptrtonumpy)
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
-                ret_converters.append(lambda a: ctypes.cast(a, ctypes.c_char_p).
-                                      value.decode('utf-8'))
+                ret_converters.append(lambda a, *args: ctypes.cast(
+                    a, ctypes.c_char_p).value.decode('utf-8'))
             else:
-                ret_converters.append(lambda a: a)
+                ret_converters.append(lambda a, *args: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
             return pyfunc
 
@@ -991,11 +1005,9 @@ class callback(typeclass):
                         non_symbolic_sizes.append(other_arguments[str(s)])
                     else:
                         non_symbolic_sizes.append(s)
-                if data_type is ctypes.c_char_p:
-                    list_of_other_inputs[i] = inp_converters[i](other_inputs[i])
-                else:
-                    list_of_other_inputs[i] = ptrtonumpy(
-                        other_inputs[i], data_type, non_symbolic_sizes)
+                list_of_other_inputs[i] = inp_converters[i](other_inputs[i],
+                                                            data_type,
+                                                            non_symbolic_sizes)
             for j, i in enumerate(ret_indices):
                 data_type, size = ret_data_types_and_sizes[j]
                 non_symbolic_sizes = []
@@ -1004,12 +1016,9 @@ class callback(typeclass):
                         non_symbolic_sizes.append(other_arguments[str(s)])
                     else:
                         non_symbolic_sizes.append(s)
-                if data_type is ctypes.c_char_p:
-                    list_of_outputs[i - ret_indices[0]] = ret_converters[
-                        i - ret_indices[0]](other_inputs[i])
-                else:
-                    list_of_outputs[i - ret_indices[0]] = ptrtonumpy(
-                        other_inputs[i], data_type, non_symbolic_sizes)
+                list_of_outputs[i - ret_indices[0]] = ret_converters[
+                    i - ret_indices[0]](other_inputs[i], data_type,
+                                        non_symbolic_sizes)
             if ret_indices:
                 ret = orig_function(*list_of_other_inputs)
                 if len(list_of_outputs) == 1:

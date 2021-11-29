@@ -290,6 +290,32 @@ def test_callback_samename():
     assert should_be_two == 2
 
 
+# Cannot run test without cupy
+@pytest.mark.skip
+def test_gpu_callback():
+    import cupy as cp
+
+    @dace_inhibitor
+    def cb_with_gpu(arr):
+        assert isinstance(arr, cp.ndarray)
+        arr *= 2
+
+    @dace.program
+    def gpucallback(A):
+        tmp = dace.ndarray([20],
+                           dace.float64,
+                           storage=dace.StorageType.GPU_Global)
+        tmp[:] = A
+        cb_with_gpu(tmp)
+        A[:] = tmp
+
+    a = cp.random.rand(20)
+    expected = a * 2
+    gpucallback(a)
+
+    assert cp.allclose(a, expected)
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -302,3 +328,4 @@ if __name__ == '__main__':
     test_reorder()
     test_reorder_nested()
     test_callback_samename()
+    # test_gpu_callback()
