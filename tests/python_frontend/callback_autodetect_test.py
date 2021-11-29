@@ -17,6 +17,11 @@ def almost_gemm(A, alpha, B):
 
 
 @dace_inhibitor
+def almost_gemm_2(A, alpha, B):
+    return alpha * A @ B, alpha * np.float64(2)
+
+
+@dace_inhibitor
 def scale(C, beta):
     C *= beta
 
@@ -34,6 +39,27 @@ def test_automatic_callback():
     C = np.random.rand(24, 24)
     beta = np.float64(np.random.rand())
     expected = 0.5 * A @ B + beta * C
+
+    autocallback(A, B, C, beta)
+
+    assert np.allclose(C, expected)
+
+
+def test_automatic_callback_2():
+    @dace.program
+    def autocallback(A: dace.float64[N, N], B: dace.float64[N, N],
+                     C: dace.float64[N, N], beta: dace.float64):
+        tmp: dace.float64[N, N]
+        tmp2: dace.float64
+        tmp, tmp2 = almost_gemm_2(A, 0.5, B)
+        scale(C, beta)
+        C += tmp * tmp2
+
+    A = np.random.rand(24, 24)
+    B = np.random.rand(24, 24)
+    C = np.random.rand(24, 24)
+    beta = np.float64(np.random.rand())
+    expected = 0.5 * A @ B * 0.5 * 2 + beta * C
 
     autocallback(A, B, C, beta)
 
@@ -265,12 +291,13 @@ def test_callback_samename():
 
 
 if __name__ == '__main__':
-    test_automatic_callback()
+    # test_automatic_callback()
+    test_automatic_callback_2()
     test_automatic_callback_inference()
     test_automatic_callback_method()
     test_callback_from_module()
     test_view_callback()
-    # test_callback_tasklet()
+    test_callback_tasklet()
     test_print()
     test_reorder()
     test_reorder_nested()
