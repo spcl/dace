@@ -3187,7 +3187,15 @@ class ProgramVisitor(ExtNodeVisitor):
             dtype = None
             warnings.warn('typeclass {} is not supported'.format(type_name))
         if node.value is None and dtype is not None:  # Annotating type without assignment
-            self.annotated_types[rname(node.target)] = dtype
+            try:
+                array_type = eval(astutils.unparse(node.annotation), globals(),
+                                  self.defined)
+            except:
+                # TODO: Use a meaningful exception
+                array_type = dtype
+            if isinstance(array_type, dtypes.typeclass):  # Scalar
+                array_type = data.Array(array_type, [1])
+            self.annotated_types[rname(node.target)] = array_type
             return
         self._visit_assign(node, node.target, None, dtype=dtype)
 
@@ -4132,28 +4140,68 @@ class ProgramVisitor(ExtNodeVisitor):
 
             return_names = []
             return_type = []
-            for target in node.parent.targets:
-                name = rname(target)
+
+            def parse_target(t: Union[ast.Name, ast.Subscript]):
+                name = rname(t)
                 if name in defined_vars:
                     true_name = defined_vars[name]
                     true_array = defined_arrays[true_name]
-                    if isinstance(target, ast.Subscript):
+                    if isinstance(t, ast.Subscript):
                         dtype, shape = self.visit_Subscript(
-                            copy.deepcopy(target), True)
+                            copy.deepcopy(t), True)
                         n, arr = self.sdfg.add_temp_transient(shape, dtype)
                     else:
                         n, arr = self.sdfg.add_temp_transient_like(true_array)
+                elif name in self.annotated_types:
+                    dtype = self.annotated_types[name]
+                    if isinstance(dtype, data.Data):
+                        n, arr = self.sdfg.add_temp_transient_like(dtype)
+                    # elif isinstance(dtype, dtypes.typeclass):
+                    #     n = self.sdfg.temp_data_name()
+                    #     n, arr = self.sdfg.add_scalar(n, dtype, transient=True)
+                    else:
+                        n, arr = None, None
+                else:
+                    n, arr = None, None
+                return n, arr
+
+            for target in node.parent.targets:
+                if isinstance(target, ast.Tuple):
+                    for actual_target in target.elts:
+                        n, arr = parse_target(actual_target)
+                        if not arr:
+                            return_type = None
+                            break
+                        return_names.append(n)
+                        return_type.append(arr)
+                else:
+                    n, arr = parse_target(target)
+                    if not arr:
+                        return_type = None
+                        break
                     return_names.append(n)
                     return_type.append(arr)
-                else:
-                    return_type = None
-                    break
+                # name = rname(target)
+                # if name in defined_vars:
+                #     true_name = defined_vars[name]
+                #     true_array = defined_arrays[true_name]
+                #     if isinstance(target, ast.Subscript):
+                #         dtype, shape = self.visit_Subscript(
+                #             copy.deepcopy(target), True)
+                #         n, arr = self.sdfg.add_temp_transient(shape, dtype)
+                #     else:
+                #         n, arr = self.sdfg.add_temp_transient_like(true_array)
+                #     return_names.append(n)
+                #     return_type.append(arr)
+                # else:
+                #     return_type = None
+                #     break
             
             outargs.extend(return_names)
             allargs.extend([f'__out_{n}' for n in return_names])
 
             # TODO: Support multiple return types
-            return_type = return_type[0]
+            # return_type = return_type[0]
 
         # TODO(later): A proper type/shape inference pass can uncover
         #              return values if in e.g., nested calls: f(g(a))
@@ -4170,8 +4218,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 '  a: dace.int32, b: dace.float64[N] = call(c, d)')
 
         # Create a matching callback symbol from function type
-        if return_type == dtypes.typeclass(None):
+        if (not isinstance(return_type, (list, tuple)) and
+                return_type == dtypes.typeclass(None)):
             return_type = None
+            # else:
+            #     return_type = dtypes.struct(
+            #         f'__dace_struct_{return_names[0]}',
+            #         **{n: t.dtype for n, t in zip(return_names, return_type)}
+            #     )
         callback_type = dace.callback(return_type, *argtypes)
 
         funcname = self.sdfg.find_new_symbol(funcname)
@@ -4191,6 +4245,15 @@ class ProgramVisitor(ExtNodeVisitor):
                                         for name in args} | {'__istate'},
             {f'__out_{name}'
              for name in outargs} | {'__ostate'}, f'{funcname}({call_args})')
+        # conn = tasklet.out_connectors
+        # print(conn)
+        # conn = {c: (dtypes.pointer(self.sdfg.arrays[c[6:]].dtype)
+        #             if c[6:] in self.sdfg.arrays and
+        #             self.sdfg.arrays[c[6:]].shape == (1,) else t)
+        #         for c, t in conn.items()
+        # }
+        # print(conn)
+        # tasklet.out_connectors = conn
 
         # Setup arguments in graph
         for arg in args:
