@@ -37,6 +37,7 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_Local = ()  #: On-chip memory (bulk storage)
     FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
     FPGA_ShiftRegister = ()  #: Only accessible at constant indices
+    SVE_Register = ()  #: SVE register
 
 
 @undefined_safe_enum
@@ -1486,4 +1487,24 @@ def is_array(obj: Any) -> bool:
         return True
     if hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__'):
         return hasattr(obj, 'shape') and len(obj.shape) > 0
+    return False
+
+
+def is_gpu_array(obj: Any) -> bool:
+    """
+    Returns True if an object is a GPU array, i.e., implements the 
+    ``__cuda_array_interface__`` standard (supported by Numba, CuPy, PyTorch,
+    etc.). If the interface is supported, pointers can be directly obtained using the
+    ``_array_interface_ptr`` function.
+
+    :param obj: The given object.
+    :return: True iff the object implements the CUDA array interface.
+    """
+    try:
+        if hasattr(obj, '__cuda_array_interface__'):
+            return True
+    except (KeyError, RuntimeError):
+        # In PyTorch, accessing this attribute throws a runtime error for
+        # variables that require grad, or KeyError when a boolean array is used
+        return False
     return False

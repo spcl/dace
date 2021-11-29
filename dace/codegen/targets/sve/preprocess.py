@@ -5,10 +5,7 @@
 """
 
 import ast
-import dace.codegen.targets.sve.util as util
-import dace.codegen.tools.type_inference as infer
-from dace.codegen.targets.cpp import DaCeKeywordRemover
-import dace.frontend.python.astutils as astutils
+from dace.codegen.targets.sve import util as util
 import dace
 import dace.dtypes
 

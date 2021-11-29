@@ -506,6 +506,31 @@ class Memlet(object):
             result |= self.dst_subset.free_symbols
         return result
 
+    def get_stride(self,
+                   sdfg: 'dace.sdfg.SDFG',
+                   map: 'dace.sdfg.nodes.Map',
+                   dim: int = -1) -> 'dace.symbolic.SymExpr':
+        """ Returns the stride of the underlying memory when traversing a Map.
+            
+            :param sdfg: The SDFG in which the memlet resides.
+            :param map: The map in which the memlet resides.
+            :param dim: The dimension that is incremented. By default it is the innermost.
+        """
+        if self.data is None:
+            return symbolic.pystr_to_symbolic('0')
+
+        param = symbolic.symbol(map.params[dim])
+        array = sdfg.arrays[self.data]
+
+        # Flatten the subset to a 1D-offset (using the array strides) at some iteration
+        curr = self.subset.at([0] * len(array.strides), array.strides)
+
+        # Substitute the param with the next (possibly strided) value
+        next = curr.subs(param, param + map.range[dim][2])
+
+        # The stride is the difference between both
+        return (next - curr).simplify()
+
     def __label__(self, sdfg, state):
         """ Returns a string representation of the memlet for display in a
             graph.
