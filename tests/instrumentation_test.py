@@ -63,7 +63,8 @@ def test_timer():
     onetest(dace.InstrumentationType.Timer)
 
 
-@pytest.mark.papi
+#@pytest.mark.papi
+@pytest.mark.skip
 def test_papi():
     # Run a lighter load for the sake of performance
     onetest(dace.InstrumentationType.PAPI_Counters, 4)
