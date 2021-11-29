@@ -1199,11 +1199,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Set parents for nodes to access assignments from Calls
         program = astutils.AnnotateTopLevel().visit(program)
-        for node in ast.walk(program):
-            if not hasattr(node, 'toplevel'):
-                node.toplevel = False
-            for child in ast.iter_child_nodes(node):
-                child.parent = node
+        self.program_ast = program
 
         if is_tasklet:
             program.decorator_list = []
@@ -3336,11 +3332,12 @@ class ProgramVisitor(ExtNodeVisitor):
             if new_data:
                 rng = rng or dace.subsets.Range.from_array(new_data)
             else:
-                true_target = copy.deepcopy(target)
+                true_target = copy.copy(target)
                 if isinstance(target, ast.Name):
                     true_target.id = true_name
                     nslice = None
                 elif isinstance(target, ast.Subscript):
+                    true_target.value = copy.copy(true_target.value)
                     true_target.value.id = true_name
 
                     # Visit slice contents
@@ -4116,15 +4113,28 @@ class ProgramVisitor(ExtNodeVisitor):
         # Return type inference
         return_type = None
 
+        # Get the parent node of this AST node
+        parent_is_toplevel = True
+        parent: ast.AST = None
+        for anode in ast.walk(self.program_ast):
+            for child in ast.iter_child_nodes(anode):
+                if child is node:
+                    parent = anode
+                    parent_is_toplevel = getattr(anode, 'toplevel', False)
+                    break
+        if parent is None:
+            raise DaceSyntaxError(
+                self, node,
+                f'Cannot obtain parent AST node for callback "{funcname}"')
+
         # If the parent is a top level expression, the return value is unused
-        if isinstance(node.parent, ast.Expr) and node.parent.toplevel:
+        if isinstance(parent, ast.Expr) and parent_is_toplevel:
             return_type = dtypes.typeclass(None)
-        # TODO: Assign, augassign
-        elif isinstance(node.parent, ast.AnnAssign):
+        elif isinstance(parent, ast.AnnAssign):
             return_names = []
             # TODO: Support multiple return values
             try:
-                return_type = eval(astutils.unparse(node.parent.annotation),
+                return_type = eval(astutils.unparse(parent.annotation),
                                    globals(), self.defined)
             except:
                 # TODO: Use a meaningful exception
@@ -4134,7 +4144,7 @@ class ProgramVisitor(ExtNodeVisitor):
             outargs.extend(return_names)
             allargs.extend([f'__out_{n}' for n in return_names])
 
-        elif isinstance(node.parent, (ast.Assign, ast.AugAssign)):
+        elif isinstance(parent, (ast.Assign, ast.AugAssign)):
             defined_vars = {**self.variables, **self.scope_vars}
             defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
 
@@ -4165,7 +4175,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     n, arr = None, None
                 return n, arr
 
-            for target in node.parent.targets:
+            for target in parent.targets:
                 if isinstance(target, ast.Tuple):
                     for actual_target in target.elts:
                         n, arr = parse_target(actual_target)
