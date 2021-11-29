@@ -593,10 +593,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         p.as_arg(False, name=fpga.fpga_ptr(name, p, sdfg,
                                                            bank)))
             elif isinstance(
-                    p, dt.Stream) and name in self._external_streams.values(
-                    ) and not (self._execution_mode == "hardware"
-                               or self._execution_mode == "hardware_emulation"):
-                kernel_args.append(f"std::ref({p.as_arg(False, name=name)})")
+                    p, dt.Stream) and name in self._external_streams.values():
+                kernel_args.append(
+                    f" hlslib::ocl::SimulationOnly({p.as_arg(False, name=name)})"
+                )
             else:
                 kernel_args.append(p.as_arg(False, name=name))
 
@@ -617,17 +617,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     f"{kernel_deps_name}.push_back({pred}_event);")
 
         # Launch HLS kernel, passing synchronization events (if any)
-        if (self._execution_mode == "hardware"
-                or self._execution_mode == "hardware_emulation") and len(
-                    self._defined_external_streams) > 0:
-            # if there are external streams we should pass fake streams (XRT expects a nullptr)
-            kernel_stream.write(
-                f"""auto {kernel_name}_kernel = program.MakeKernel("{kernel_function_name}", {", ".join(kernel_args)});"""
-            )
-        else:
-            kernel_stream.write(
-                f"""auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});"""
-            )
+        kernel_stream.write(
+            f"""auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});"""
+        )
 
         kernel_stream.write(
             f"""\
@@ -1002,14 +994,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
             # Define here external streams
             if name not in self._defined_external_streams:
-                if self._execution_mode == "hardware" or self._execution_mode == "hardware_emulation":
-                    # define the placeholder
-                    state_host_body_stream.write(
-                        f"hlslib::ocl::_Stream {name};")
-                else:
-                    self.define_stream(node.dtype, node.buffer_size, name,
-                                       node.total_size, None,
-                                       state_host_body_stream, sdfg)
+                self.define_stream(node.dtype, node.buffer_size, name,
+                                   node.total_size, None,
+                                   state_host_body_stream, sdfg)
                 self._defined_external_streams.add(name)
 
             self._stream_connections[name][key] = val
