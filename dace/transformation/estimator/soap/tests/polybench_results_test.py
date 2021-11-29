@@ -4,7 +4,8 @@ sys.path.insert(0,"C:/gk_pliki/uczelnia/soap/dace")
 import dace
 from dace.transformation.estimator.soap.einsum_to_sdfg import sdfg_gen
 from dace.transformation.estimator.soap.io_result import perform_soap_analysis
-from dace.transformation.estimator.soap.utils import parse_params, Solver, get_kernels, polybenchRes, get_lead_term, generate_latex_table
+from dace.transformation.estimator.soap.utils import parse_params, get_kernels, polybenchRes, get_lead_term, generate_latex_table
+from dace.transformation.estimator.soap.solver import Solver
 import sympy as sp
 import os
 
@@ -66,10 +67,10 @@ def test_manual_polybench_kernels():
                 replace('i', 'I').replace('j', 'J').replace('l', 'L')
 
         if exp in final_analysisSym.keys():
-            assert(final_analysisSym[exp] == strQ, 'Test failed! For exp ' + exp + ', old bound: ' + str(final_analysisSym[exp]) + ", new bound: " + strQ)
+            assert final_analysisSym[exp] == strQ, 'Test failed! For exp ' + exp + ', old bound: ' + str(final_analysisSym[exp]) + ", new bound: " + strQ
         elif any(exp in k for k in final_analysisSym.keys()):
             exp = [k for k in final_analysisSym.keys() if exp in k][0]
-            assert(final_analysisSym[exp] == strQ, 'Test failed! For exp ' + exp + ', old bound: ' + str(final_analysisSym[exp]) + ", new bound: " + strQ)
+            assert final_analysisSym[exp] == strQ, 'Test failed! For exp ' + exp + ', old bound: ' + str(final_analysisSym[exp]) + ", new bound: " + strQ
         else:
             final_analysisSym[exp] = Q
 

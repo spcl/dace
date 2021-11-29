@@ -188,11 +188,8 @@ class SoapStatement:
         input = str(self.Dom_size).replace('_', 'x').replace('**', '^')
         output = str(self.H_size).replace('_', 'x').replace('**', '^')
         # print("input: " + input + ",   output: " + output)
-            
-        if solver.debug_no_solve:
-            self.rhoOpts = 1
-        else:
-            self.parse_solution(solver.Command(input + ";" + output),  params)
+                
+        self.parse_solution(solver.send_command(input + ";" + output),  params)
         if self.rhoOpts == 0:
             self.rhoOpts = oo
         if 'J' in str(self.rhoOpts) or 'I' in str(self.rhoOpts):

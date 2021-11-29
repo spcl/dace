@@ -269,7 +269,7 @@ class SDG:
     def _from_SDFG_node(self, node : dace.nodes, 
                 state: dace.SDFGState, sdg_scope : SdgScope, 
                 params : global_parameters) -> None:  
-        if node.__name__ == "_Div_":
+        if node.label == "_Div_":
             a = 1
                   
         if not state.out_edges(node) or not state.in_edges(node):

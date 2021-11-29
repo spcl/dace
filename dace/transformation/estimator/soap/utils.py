@@ -50,8 +50,11 @@ einsum_string = 'pi,qj,ijkl,rk,sl->pqrs'
 # In the latter case, all sdfgs in the directtory will be evaluated
 sdfg_path = 'tensors/test.sdfg'
 
-# general
+# solver setup
 use_remote_matlab_server = True
+caching_solver_solutions = True
+only_cached = True
+
 
 
 # ----------------------------------------
@@ -72,6 +75,8 @@ class global_parameters():
     onlySelectedTests = only_selected_tests
     excludedTests = excluded_tests
     param_values = param_values
+    caching_solver_solutions = caching_solver_solutions
+    only_cached = only_cached
     all_params_equal = True
     just_leading_term = True
     allInjective = True

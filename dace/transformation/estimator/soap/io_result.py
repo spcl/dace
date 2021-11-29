@@ -2,7 +2,8 @@ from os import name
 from typing import Dict, List
 import sympy as sp
 from dace.transformation.estimator.soap.sdg import SDG
-from dace.transformation.estimator.soap.utils import parse_params, Solver, global_parameters
+from dace.transformation.estimator.soap.utils import parse_params, global_parameters
+from dace.transformation.estimator.soap.solver import Solver
 from dataclasses import dataclass, field
 from dace import SDFG
 import networkx as nx
@@ -80,7 +81,7 @@ def perform_soap_analysis(sdfg : SDFG, params: global_parameters = [],
     """
     if params == []:
         params = parse_params()
-        solver = Solver()
+        solver = Solver(cached_only = params.only_cached, caching_solutions= params.caching_solver_solutions)
         solver.start_solver(params.remoteMatlab)
         solver.set_timeout(300)
         params.solver = solver
@@ -89,6 +90,7 @@ def perform_soap_analysis(sdfg : SDFG, params: global_parameters = [],
     # check if the created SDG is correct
     assert(nx.number_weakly_connected_components(sdg.graph) == 1)
     Q, subgraphs = sdg.calculate_IO_of_SDG(params)
+    params.solver.end_solver()
 
     subgraphs_res = []
     for subgr in subgraphs:

@@ -57,13 +57,10 @@ def test_MMM_lowerbound():
     S.output_arrays = out_arrays
     S.ranges = soap_ranges
     S.loop_ranges = []
-
     params = global_parameters()
-
     solver = Solver()
     solver.start_solver(remoteMatlab = True)
     S.solve(solver, params)
-
     assert d2sp(S.Q) == d2sp(2*M*n*K / sp.sqrt(Ss))
 
 
