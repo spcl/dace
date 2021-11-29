@@ -4122,7 +4122,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # TODO: Assign, augassign
         elif isinstance(node.parent, ast.AnnAssign):
             return_names = []
-            # TODO: Support multiple return values
+            # NOTE: Python doesn't currently allow multiple return values in
+            # annotated assignments
             try:
                 return_type = eval(astutils.unparse(node.parent.annotation),
                                    globals(), self.defined)
@@ -4144,21 +4145,22 @@ class ProgramVisitor(ExtNodeVisitor):
             def parse_target(t: Union[ast.Name, ast.Subscript]):
                 name = rname(t)
                 if name in defined_vars:
-                    true_name = defined_vars[name]
-                    true_array = defined_arrays[true_name]
+                    tname = defined_vars[name]
+                    tarr = defined_arrays[tname]
                     if isinstance(t, ast.Subscript):
                         dtype, shape = self.visit_Subscript(
                             copy.deepcopy(t), True)
                         n, arr = self.sdfg.add_temp_transient(shape, dtype)
                     else:
-                        n, arr = self.sdfg.add_temp_transient_like(true_array)
+                        if isinstance(tarr, data.Scalar):
+                            n, arr = self.sdfg.add_temp_transient((1, ),
+                                                                  tarr.dtype)
+                        else:
+                            n, arr = self.sdfg.add_temp_transient_like(tarr)
                 elif name in self.annotated_types:
                     dtype = self.annotated_types[name]
                     if isinstance(dtype, data.Data):
                         n, arr = self.sdfg.add_temp_transient_like(dtype)
-                    # elif isinstance(dtype, dtypes.typeclass):
-                    #     n = self.sdfg.temp_data_name()
-                    #     n, arr = self.sdfg.add_scalar(n, dtype, transient=True)
                     else:
                         n, arr = None, None
                 else:
@@ -4181,27 +4183,9 @@ class ProgramVisitor(ExtNodeVisitor):
                         break
                     return_names.append(n)
                     return_type.append(arr)
-                # name = rname(target)
-                # if name in defined_vars:
-                #     true_name = defined_vars[name]
-                #     true_array = defined_arrays[true_name]
-                #     if isinstance(target, ast.Subscript):
-                #         dtype, shape = self.visit_Subscript(
-                #             copy.deepcopy(target), True)
-                #         n, arr = self.sdfg.add_temp_transient(shape, dtype)
-                #     else:
-                #         n, arr = self.sdfg.add_temp_transient_like(true_array)
-                #     return_names.append(n)
-                #     return_type.append(arr)
-                # else:
-                #     return_type = None
-                #     break
 
             outargs.extend(return_names)
             allargs.extend([f'__out_{n}' for n in return_names])
-
-            # TODO: Support multiple return types
-            # return_type = return_type[0]
 
         # TODO(later): A proper type/shape inference pass can uncover
         #              return values if in e.g., nested calls: f(g(a))
@@ -4215,17 +4199,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 'To ensure that the return types can be inferred, try to '
                 'extract the call to a separate statement and annotate the '
                 'return values. For example:\n'
-                '  a: dace.int32, b: dace.float64[N] = call(c, d)')
+                '  a: dace.int32\n'
+                '  b: dace.float64[N]\n'
+                '  a, b = call(c, d)')
 
         # Create a matching callback symbol from function type
         if (not isinstance(return_type, (list, tuple))
                 and return_type == dtypes.typeclass(None)):
             return_type = None
-            # else:
-            #     return_type = dtypes.struct(
-            #         f'__dace_struct_{return_names[0]}',
-            #         **{n: t.dtype for n, t in zip(return_names, return_type)}
-            #     )
         callback_type = dace.callback(return_type, *argtypes)
 
         funcname = self.sdfg.find_new_symbol(funcname)
