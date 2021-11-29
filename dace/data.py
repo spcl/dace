@@ -518,7 +518,7 @@ class Array(Data):
 
     # Checks for equivalent shape and type
     def is_equivalent(self, other):
-        if not isinstance(other, type(self)):
+        if not isinstance(other, Array):
             return False
 
         # Test type

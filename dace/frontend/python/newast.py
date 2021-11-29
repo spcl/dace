@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-import astunparse
 from collections import OrderedDict
 import copy
 import itertools
@@ -3228,9 +3227,22 @@ class ProgramVisitor(ExtNodeVisitor):
             if (not is_return and isinstance(target, ast.Name) and true_name
                     and not op and not isinstance(true_array, data.Scalar)
                     and not (true_array.shape == (1, ))):
-                raise DaceSyntaxError(
-                    self, target,
-                    'Cannot reassign value to variable "{}"'.format(name))
+                if (result in self.sdfg.arrays
+                        and self.sdfg.arrays[result].is_equivalent(true_array)):
+                    # Skip error if the arrays are defined exactly in the same way
+                    true_name = None
+                else:
+                    raise DaceSyntaxError(
+                        self, target,
+                        'Cannot reassign value to variable "{}"'.format(name))
+
+            if is_return and true_name:
+                if (result in self.sdfg.arrays and
+                        not self.sdfg.arrays[result].is_equivalent(true_array)):
+                    raise DaceSyntaxError(
+                        self, target,
+                        'Return values of a data-centric function must always '
+                        'have the same type and shape')
 
             if not true_name and (op or isinstance(target, ast.Subscript)):
                 raise DaceSyntaxError(
