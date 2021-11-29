@@ -36,8 +36,8 @@ class SVEUnparser(cppunparse.CPPUnparser):
                  pred_name,
                  counter_type,
                  defined_symbols=None,
-                 stream_associations=dict(),
-                 wcr_associations=dict()):
+                 stream_associations=None,
+                 wcr_associations=None):
 
         self.sdfg = sdfg
         self.dfg = dfg
@@ -64,8 +64,8 @@ class SVEUnparser(cppunparse.CPPUnparser):
         self.if_depth = 0
 
         # Stream associations keep track between the local stream variable name <-> underlying stream
-        self.stream_associations = stream_associations
-        self.wcr_associations = wcr_associations
+        self.stream_associations = stream_associations or {}
+        self.wcr_associations = wcr_associations or {}
 
         # Detect fused operations first (are converted into internal calls)
         preprocessed = preprocess.SVEBinOpFuser(defined_symbols).visit(tree)
@@ -155,7 +155,6 @@ class SVEUnparser(cppunparse.CPPUnparser):
                 else:
                     raise util.NotSupportedError('Inconsistent pointer types')
             else:
-                print(self.get_defined_symbols())
                 # Expecting anything else
                 raise util.NotSupportedError(
                     'Given a pointer, expected a scalar or vector')
@@ -332,8 +331,8 @@ class SVEUnparser(cppunparse.CPPUnparser):
             # 1. Reduce the SVE register using SVE instructions into a scalar
             # 2. WCR the scalar to memory using DaCe functionality
             dst_node = self.dfg.memlet_path(edge)[-1].dst
-            if isinstance(dst_node, nodes.AccessNode) and dst_node.desc(self.sdfg).storage == dtypes.StorageType.SVE_Register:
-                print('wixx')
+            if (isinstance(dst_node, nodes.AccessNode) and 
+                dst_node.desc(self.sdfg).storage == dtypes.StorageType.SVE_Register):
                 return
 
             wcr = self.cpu_codegen.write_and_resolve_expr(self.sdfg,
