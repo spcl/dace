@@ -77,7 +77,6 @@ class SVECodeGen(TargetCodeGenerator):
 
     def get_generated_codeobjects(self):
         res = super().get_generated_codeobjects()
-        print(res)
         return res
 
     def copy_memory(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
