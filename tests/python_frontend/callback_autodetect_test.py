@@ -86,6 +86,27 @@ def test_automatic_callback_inference():
     assert np.allclose(C, expected)
 
 
+def test_automatic_callback_inference_2():
+    @dace.program
+    def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N],
+                         C: dace.float64[N, N], beta: dace.float64):
+        tmp = np.ndarray([N, N], dace.float64)
+        tmp2 = np.float64(0.0)
+        tmp[:], tmp2 = almost_gemm_2(A, 0.5, B)
+        scale(C, beta)
+        C += tmp * tmp2
+
+    A = np.random.rand(24, 24)
+    B = np.random.rand(24, 24)
+    C = np.random.rand(24, 24)
+    beta = np.float64(np.random.rand())
+    expected = 0.5 * A @ B * 0.5 * 2 + beta * C
+
+    autocallback_ret(A, B, C, beta)
+
+    assert np.allclose(C, expected)
+
+
 def test_automatic_callback_method():
     class NotDace:
         def __init__(self):
@@ -294,6 +315,7 @@ if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
     test_automatic_callback_inference()
+    test_automatic_callback_inference_2()
     test_automatic_callback_method()
     test_callback_from_module()
     test_view_callback()
