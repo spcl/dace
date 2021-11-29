@@ -1070,6 +1070,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         self.memlets = memlets
         self.constants = constants
         self.codegen = codegen
+        self.allow_casts = True
 
     def visit_TopLevelExpr(self, node):
         # This is a DaCe shift, omit it
@@ -1251,6 +1252,18 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
         return ast.copy_location(newnode, node)
 
+    def visit_Call(self, node: ast.Call):
+        funcname = rname(node.func)
+        if (funcname in self.sdfg.symbols
+                and isinstance(self.sdfg.symbols[funcname], dtypes.callback)):
+            # Visit arguments without changing their types
+            self.allow_casts = False
+            result = self.generic_visit(node)
+            self.allow_casts = True
+            return result
+        else:
+            return self.generic_visit(node)
+
     def visit_Name(self, node: ast.Name):
         name = rname(node)
         if name not in self.memlets:
@@ -1260,11 +1273,12 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             defined_type, _ = self.codegen._dispatcher.defined_vars.get(node.id)
         except KeyError:
             defined_type = None
-        if (isinstance(dtype, dtypes.pointer)
+        if (self.allow_casts and isinstance(dtype, dtypes.pointer)
                 and memlet.subset.num_elements() == 1):
             return ast.Name(id="(*{})".format(name), ctx=node.ctx)
-        elif ((defined_type == DefinedType.Stream
-               or defined_type == DefinedType.StreamArray) and memlet.dynamic):
+        elif (self.allow_casts and (defined_type == DefinedType.Stream
+                                    or defined_type == DefinedType.StreamArray)
+              and memlet.dynamic):
             return ast.Name(id=f"{name}.pop()", ctx=node.ctx)
         else:
             return self.generic_visit(node)

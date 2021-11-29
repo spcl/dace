@@ -278,26 +278,26 @@ def test_callback_samename():
     call_b = get_func_b()
 
     @dace.program
-    def do_not_reorder_nested():
+    def same_name_nested():
         call_b()
         call_a()
 
-    sdfg = do_not_reorder_nested.to_sdfg()
+    sdfg = same_name_nested.to_sdfg(strict=False)
     assert list(sdfg.arrays.keys()) == ['__pystate']
 
-    do_not_reorder_nested()
+    same_name_nested()
     assert should_be_one == 1
     assert should_be_two == 2
 
 
 if __name__ == '__main__':
-    # test_automatic_callback()
+    test_automatic_callback()
     test_automatic_callback_2()
     test_automatic_callback_inference()
     test_automatic_callback_method()
     test_callback_from_module()
     test_view_callback()
-    test_callback_tasklet()
+    # test_callback_tasklet()
     test_print()
     test_reorder()
     test_reorder_nested()

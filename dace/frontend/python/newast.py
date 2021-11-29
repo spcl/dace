@@ -4133,7 +4133,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return_names = [aname]
             outargs.extend(return_names)
             allargs.extend([f'__out_{n}' for n in return_names])
-        
+
         elif isinstance(node.parent, (ast.Assign, ast.AugAssign)):
             defined_vars = {**self.variables, **self.scope_vars}
             defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
@@ -4196,7 +4196,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 # else:
                 #     return_type = None
                 #     break
-            
+
             outargs.extend(return_names)
             allargs.extend([f'__out_{n}' for n in return_names])
 
@@ -4218,8 +4218,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 '  a: dace.int32, b: dace.float64[N] = call(c, d)')
 
         # Create a matching callback symbol from function type
-        if (not isinstance(return_type, (list, tuple)) and
-                return_type == dtypes.typeclass(None)):
+        if (not isinstance(return_type, (list, tuple))
+                and return_type == dtypes.typeclass(None)):
             return_type = None
             # else:
             #     return_type = dtypes.struct(
@@ -4245,15 +4245,13 @@ class ProgramVisitor(ExtNodeVisitor):
                                         for name in args} | {'__istate'},
             {f'__out_{name}'
              for name in outargs} | {'__ostate'}, f'{funcname}({call_args})')
-        # conn = tasklet.out_connectors
-        # print(conn)
-        # conn = {c: (dtypes.pointer(self.sdfg.arrays[c[6:]].dtype)
-        #             if c[6:] in self.sdfg.arrays and
-        #             self.sdfg.arrays[c[6:]].shape == (1,) else t)
-        #         for c, t in conn.items()
-        # }
-        # print(conn)
-        # tasklet.out_connectors = conn
+
+        # Avoid cast of output pointers to scalars in code generation
+        for cname in outargs:
+            if (cname in self.sdfg.arrays
+                    and tuple(self.sdfg.arrays[cname].shape) == (1, )):
+                tasklet._out_connectors[f'__out_{cname}'] = dtypes.pointer(
+                    self.sdfg.arrays[cname].dtype)
 
         # Setup arguments in graph
         for arg in args:
