@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-from tests.codegen.sve.vectorization import vectorize
 import tests.codegen.sve.common as common
 import pytest
 
@@ -42,10 +41,9 @@ def test_filter():
     outsize = dace.scalar(dace.uint32)
     outsize[0] = 0
 
-    sdfg = pbf.to_sdfg()
-    vectorize(sdfg, 'i')
+    sdfg = common.vectorize(pbf)
 
-    sdfg(A=A, B=B, outsz=outsize, ratio=ratio, N=N)
+    sdfg(A=A, out=B, outsz=outsize, ratio=ratio, N=N)
 
     if dace.Config.get_bool('profiling'):
         dace.timethis('filter', 'numpy', 0, regression, A, ratio)

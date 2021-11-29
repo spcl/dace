@@ -192,11 +192,13 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         if len(osqdim) == 0:  # Fix for scalars
             osqdim = [0]
 
-        # Standardize axes
-        axes = node.axes if node.axes else [i for i in range(input_dims)]
+        # Standardize and squeeze axes
+        axes = node.axes if node.axes else [
+            i for i in range(len(inedge.data.subset))
+        ]
+        axes = [axis for axis in axes if axis in isqdim]
 
         assert node.identity is not None
-        assert len(axes) == 1
 
         # Create nested SDFG
         nsdfg = SDFG('reduce')
@@ -223,10 +225,6 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
                             dtypes.StorageType.Register)
 
         nstate = nsdfg.add_state()
-
-        axis = axes[0]
-        inp = dcpy(nsdfg.arrays['_in'])
-        out = dcpy(nsdfg.arrays['_out'])
 
         # Interleave input and output axes to match input memlet
         ictr, octr = 0, 0
@@ -265,7 +263,7 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
                                   schedule=dtypes.ScheduleType.Sequential)
 
         # Add identity tasklet for reduction
-        t = nstate.add_tasklet('identity', {'a', 'b'}, {'o'}, 'o = a + b')
+        t = nstate.add_tasklet('identity', {'a', 'b'}, {'o'}, 'o = b')
 
         # Connect everything
         r = nstate.add_read('_in')
@@ -280,7 +278,7 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
                                imx,
                                accwrite,
                                src_conn='o',
-                               memlet=dace.Memlet('acc[0]'))
+                               memlet=dace.Memlet('acc[0]', wcr=node.wcr))
         nstate.add_memlet_path(accwrite, omx, w, memlet=outm)
 
         # Rename outer connectors and add to node

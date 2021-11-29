@@ -1309,7 +1309,8 @@ class RedundantReadSlice(pm.Transformation):
         # Split the dimensions of A to sliced and non-viewed
         sliced_dims = _sliced_dims(in_desc, out_desc)
         nviewed_dims = [
-            i for i in range(len(in_desc.shape) - 1, -1) if i not in sliced_dims
+            i for i in range(len(in_desc.shape) - 1, -1, -1)
+            if i not in sliced_dims
         ]
         aset, popped = pop_dims(a_subset, nviewed_dims)
 
@@ -1466,7 +1467,7 @@ class RedundantWriteSlice(pm.Transformation):
         # Split the dimensions of A to sliced and non-viewed
         sliced_dims = _sliced_dims(out_desc, in_desc)
         nviewed_dims = [
-            i for i in range(len(out_desc.shape) - 1, -1)
+            i for i in range(len(out_desc.shape) - 1, -1, -1)
             if i not in sliced_dims
         ]
         aset, popped = pop_dims(a_subset, nviewed_dims)

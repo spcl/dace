@@ -7,7 +7,8 @@ import numpy as np
 import dace
 import dace.dtypes as dtypes
 import ast
-import dace.codegen.targets.sve.infer as infer
+import dace.codegen.targets
+from dace.codegen.targets.sve import infer as infer
 import astunparse
 import collections
 import itertools
@@ -237,8 +238,12 @@ def is_vector(type: dace.typeclass) -> bool:
     return isinstance(type, dtypes.vector)
 
 
+def is_pointer(type: dace.typeclass) -> bool:
+    return isinstance(type, dtypes.pointer)
+
+
 def is_scalar(type: dace.typeclass) -> bool:
-    return not isinstance(type, (dtypes.vector, dtypes.pointer))
+    return not is_vector(type) and not is_pointer(type)
 
 
 def infer_ast(defined_symbols: collections.OrderedDict, *args) -> tuple:
