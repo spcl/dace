@@ -37,6 +37,7 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_Local = ()  #: On-chip memory (bulk storage)
     FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
     FPGA_ShiftRegister = ()  #: Only accessible at constant indices
+    SVE_Register = () #: SVE register
 
 
 @undefined_safe_enum
