@@ -54,6 +54,17 @@ def create_datadescriptor(obj):
             raise ValueError(
                 "Attempted to convert a torch.Tensor, but torch could not be imported"
             )
+    elif dtypes.is_gpu_array(obj):
+        interface = obj.__cuda_array_interface__
+        dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
+        itemsize = numpy.dtype(interface['typestr']).itemsize
+        if len(interface['shape']) == 0:
+            return Scalar(dtype, storage=dtypes.StorageType.GPU_Global)
+        return Array(dtype=dtype,
+                     shape=interface['shape'],
+                     strides=(tuple(s // itemsize for s in interface['strides'])
+                              if interface['strides'] else None),
+                     storage=dtypes.StorageType.GPU_Global)
     elif symbolic.issymbolic(obj):
         return Scalar(symbolic.symtype(obj))
     elif isinstance(obj, dtypes.typeclass):
