@@ -403,6 +403,18 @@ def has_replacement(callobj: Callable,
     """
     from dace.frontend.common import op_repository as oprepo
 
+    # Nothing from the `dace` namespace needs preprocessing
+    mod = None
+    try:
+        mod = callobj.__module__
+    except AttributeError:
+        try:
+            mod = parent_object.__module__
+        except AttributeError:
+            pass
+    if mod and (mod.startswith('dace.') or mod.startswith('math.')):
+        return True
+
     # Attributes and methods
     classname = None
     if parent_object is not None:
@@ -674,18 +686,6 @@ class GlobalResolver(ast.NodeTransformer):
         return self.visit_Attribute(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
-        # Nothing from the `dace` namespace needs preprocessing
-        try:
-            from dace.frontend.python.newast import until
-            funcname = astutils.rname(node)
-            modname = until(funcname, '.')
-            if modname in ('dace', 'math'):
-                return self.generic_visit(node)
-        except AttributeError:
-            # Occurs when trying parse a (non-dace) decorated method.
-            # Let such cases continue.
-            pass
-
         try:
             global_func = astutils.evalnode(node.func, self.globals)
             if self.resolve_functions:
