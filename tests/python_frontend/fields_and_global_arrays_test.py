@@ -10,6 +10,8 @@ import time
 from types import SimpleNamespace
 
 
+# NOTE: Is this test obsolete?
+@pytest.mark.skip
 def test_bad_closure():
     """ 
     Testing functions that should not be in the closure (must be implemented as
@@ -704,7 +706,7 @@ def test_nested_transient_field():
 
 
 if __name__ == '__main__':
-    test_bad_closure()
+    # test_bad_closure()
     test_dynamic_closure()
     test_external_ndarray_readonly()
     test_external_ndarray_modify()
