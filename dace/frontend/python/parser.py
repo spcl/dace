@@ -244,10 +244,13 @@ class DaceProgram(pycommon.SDFGConvertible):
 
     def __sdfg_closure__(
             self,
+            arrays_only: bool = False,
             reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """ 
         Returns the closure arrays of the SDFG represented by the dace 
         program as a mapping between array name and the corresponding value.
+        :param arrays_only: If True, it only returns closure arrays (e.g.,
+                            not callbacks)
         :param reevaluate: If given, re-evaluates closure elements based on the
                            input mapping (keys: array names, values: expressions
                            to evaluate). Otherwise, re-evaluates 
@@ -261,7 +264,9 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         if reevaluate is None:
             result = {k: v() for k, v in self.closure_arg_mapping.items()}
-            result.update({k: v[1] for k, v in self.resolver.callbacks.items()})
+            if not arrays_only:
+                result.update({k: v[1]
+                               for k, v in self.resolver.callbacks.items()})
             return result
         else:
             return {
