@@ -70,7 +70,8 @@ def create_datadescriptor(obj):
         return Scalar(symbolic.symtype(obj))
     elif isinstance(obj, dtypes.typeclass):
         return Scalar(obj)
-    elif obj in {int, float, complex, bool, None}:
+    elif (obj is int or obj is float or obj is complex or obj is bool
+          or obj is None):
         return Scalar(dtypes.typeclass(obj))
     elif isinstance(obj, type) and issubclass(obj, numpy.number):
         return Scalar(dtypes.typeclass(obj))

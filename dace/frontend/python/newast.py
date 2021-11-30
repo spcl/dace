@@ -1026,7 +1026,7 @@ class TaskletTransformer(ExtNodeTransformer):
 
     def visit_Call(self, node: ast.Call) -> Any:
         # Parsed objects are not allowed to be called from tasklets
-        if isinstance(node.func.n, SDFGConvertible):
+        if hasattr(node.func, 'n') and isinstance(node.func.n, SDFGConvertible):
             node.func = node.func.oldnode.func
 
         fname = rname(node.func)
