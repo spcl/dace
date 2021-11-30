@@ -75,7 +75,7 @@ def create_datadescriptor(obj):
         return Scalar(dtypes.typeclass(obj))
     elif isinstance(obj, type) and issubclass(obj, numpy.number):
         return Scalar(dtypes.typeclass(obj))
-    elif isinstance(obj, (Number, numpy.number)):
+    elif isinstance(obj, (Number, numpy.number, numpy.bool, numpy.bool_)):
         return Scalar(dtypes.typeclass(type(obj)))
     elif callable(obj):
         # Cannot determine return value/argument types from function object
