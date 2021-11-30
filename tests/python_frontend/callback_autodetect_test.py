@@ -3,6 +3,7 @@
 import dace
 import numpy as np
 import pytest
+import time
 
 N = dace.symbol('N')
 
@@ -337,6 +338,25 @@ def test_gpu_callback():
     assert cp.allclose(a, expected)
 
 
+def test_bad_closure():
+    """ 
+    Testing functions that should not be in the closure (must be implemented as
+    callbacks).
+    """
+    @dace.program
+    def timeprog(A: dace.float64[20]):
+        # Library function that does not return the same value every time
+        A[:] = time.time()
+
+    A = np.random.rand(20)
+    B = np.random.rand(20)
+    now = time.time()
+    timeprog(A)
+    timeprog(B)
+
+    assert np.all(B >= A) and np.all(A >= now)
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -351,3 +371,4 @@ if __name__ == '__main__':
     test_reorder_nested()
     test_callback_samename()
     # test_gpu_callback()
+    test_bad_closure()
