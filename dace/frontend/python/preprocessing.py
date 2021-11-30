@@ -404,6 +404,7 @@ def has_replacement(callobj: Callable,
     from dace.frontend.common import op_repository as oprepo
 
     # Attributes and methods
+    classname = None
     if parent_object is not None:
         classname = type(parent_object).__name__
         attrname = callobj.__name__
@@ -422,8 +423,8 @@ def has_replacement(callobj: Callable,
     # Special case: Constructor method (e.g., numpy.ndarray)
     if classname == "type":
         cbqualname = astutils.rname(node)
-    if oprepo.Replacements.get(cbqualname) is not None:
-        return True
+        if oprepo.Replacements.get(cbqualname) is not None:
+            return True
     full_func_name = callobj.__module__ + '.' + callobj.__qualname__
     if oprepo.Replacements.get(full_func_name) is not None:
         return True
@@ -565,6 +566,7 @@ class GlobalResolver(ast.NodeTransformer):
                 # If it is a callable object
                 if (not inspect.isfunction(value)
                         and not inspect.ismethod(value)
+                        and not inspect.isbuiltin(value)
                         and hasattr(value, '__call__')):
                     parent_object = value
                     value = value.__call__
