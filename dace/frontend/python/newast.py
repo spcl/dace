@@ -1697,7 +1697,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         ast_ranges = []
 
-        if iterator not in {'range', 'prange', 'parrange', 'dace.map'}:
+        if iterator not in {'range', 'prange', 'parrange',
+                            'dace.map', 'dace.chain'}:
             raise DaceSyntaxError(self, node,
                                   "Iterator {} is unsupported".format(iterator))
         elif iterator in ['range', 'prange', 'parrange']:
@@ -2200,15 +2201,22 @@ class ProgramVisitor(ExtNodeVisitor):
                 self, node,
                 "Number of indices and ranges of for-loop do not match")
 
-        if iterator == 'dace.map':
-            state = self._add_state('MapState')
+        if iterator in ('dace.map', 'dace.chain'):
+            if iterator == 'dace.map':
+                state_label = 'MapState'
+                scope_vname = f'map_{node.lineno}'
+                func = SDFGState.add_map
+            else:
+                state_label = 'ChainState'
+                scope_vname = f'chain_{node.lineno}'
+                func = SDFGState.add_pipeline
+            state = self._add_state(state_label)
             params = [(k, ':'.join([str(t) for t in v]))
                       for k, v in zip(indices, ranges)]
-            params, map_inputs = self._parse_map_inputs('map_%d' % node.lineno,
-                                                        params, node)
-            me, mx = state.add_map(name='%s_%d' % (self.name, node.lineno),
-                                   ndrange=params,
-                                   debuginfo=self.current_lineinfo)
+            params, map_inputs = self._parse_map_inputs(scope_vname, params,
+                                                        node)
+            me, mx = func(state, name='%s_%d' % (self.name, node.lineno),
+                          ndrange=params, debuginfo=self.current_lineinfo)
             # body = SDFG('MapBody')
             body, inputs, outputs, symbols = self._parse_subprogram(
                 self.name,
