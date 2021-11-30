@@ -101,6 +101,11 @@ def run_nussinov(device_type: dace.dtypes.DeviceType):
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply autopot
         sdfg = kernel.to_sdfg()
+        # sdfg.apply_strict_transformations()
+
+        # Applying this will let the validation fail
+        # The problem seems to be in Loop2Map. With this version of it fc7ff0b8
+        # then autoopt works again
         sdfg = auto_optimize(sdfg, device_type)
         dace_res = sdfg(seq=seq, N=N)
 
