@@ -3189,8 +3189,6 @@ class ProgramVisitor(ExtNodeVisitor):
             except:
                 # TODO: Use a meaningful exception
                 array_type = dtype
-            if isinstance(array_type, dtypes.typeclass):  # Scalar
-                array_type = data.Array(array_type, [1])
             self.annotated_types[rname(node.target)] = array_type
             return
         self._visit_assign(node, node.target, None, dtype=dtype)
@@ -4171,6 +4169,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     dtype = self.annotated_types[name]
                     if isinstance(dtype, data.Data):
                         n, arr = self.sdfg.add_temp_transient_like(dtype)
+                    elif isinstance(dtype, dtypes.typeclass):
+                        n, arr = self.sdfg.add_temp_transient((1,), dtype)
                     else:
                         n, arr = None, None
                 else:
