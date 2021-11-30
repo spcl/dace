@@ -15,10 +15,10 @@ os.environ['SYMPY_USE_CACHE'] = 'no'
 def test_manual_polybench_kernels():
     params = parse_params()
     params.suiteName = "polybench"
-    params.npbench = True
+    params.npbench = False
     params.IOanalysis = True
     kernels = get_kernels(params)
-    solver = Solver()
+    solver = Solver(caching_solutions=params.caching_solver_solutions, cached_only=params.only_cached)
     params.solver = solver
         
     solver.start_solver(params.remoteMatlab)

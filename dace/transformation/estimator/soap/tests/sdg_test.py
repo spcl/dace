@@ -12,7 +12,7 @@ from dace.transformation.estimator.soap.io_result import *
 
 def test_sdg_constructor():
  #   test_sdfg = "sample-sdfgs/various/tal_example.sdfg"
-    params = global_parameters()
+    params = SOAPParameters()
     solver = Solver()
     params.solver = solver
     if params.IOanalysis:

@@ -8,7 +8,7 @@ from dace import subsets
 from typing import List
 
 
-def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = [], inp_dim: int = 30) -> dace.SDFG:
+def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 30) -> dace.SDFG:
     """ 
     Generates an SDFG for the given einsum discription. The SDFG comprises
         separates map for each contraction, based on the analysis done by the
@@ -26,7 +26,7 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = [], inp_dim: int = 30) 
     """
 
     # if input arrays are not provided, create them
-    if len(arrays) == 0:
+    if not arrays:
         inputs = subscripts.replace(' ', '').split('->')[0].split(',')         
         for input in inputs:
             order = len(input)

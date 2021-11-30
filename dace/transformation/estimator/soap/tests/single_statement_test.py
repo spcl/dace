@@ -3,7 +3,7 @@ sys.path.insert(0,"C:/gk_pliki/uczelnia/soap/dace")
 import dace
 from dace.transformation.estimator.soap.soap import SoapStatement, AccessParams, OutputArrayParams
 from dace.transformation.estimator.soap.solver import Solver
-from dace.transformation.estimator.soap.utils import global_parameters, d2sp
+from dace.transformation.estimator.soap.utils import SOAPParameters, d2sp
 import numpy as np
 import sympy as sp
 import copy
@@ -57,7 +57,7 @@ def test_MMM_lowerbound():
     S.output_arrays = out_arrays
     S.ranges = soap_ranges
     S.loop_ranges = []
-    params = global_parameters()
+    params = SOAPParameters()
     solver = Solver()
     solver.start_solver(remoteMatlab = True)
     S.solve(solver, params)

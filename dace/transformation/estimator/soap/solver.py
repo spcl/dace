@@ -5,37 +5,38 @@ from subprocess import call
 from dataclasses import dataclass, field
 from typing import Dict
 import json
+from dace import Config
 # MATLAB SERVER CONFIGURATION 
-
-solver_cache_path = "dace/transformation/estimator/soap/solver_cache/solver_cache.txt"
 
 @dataclass
 class Solver():     
-    cached_only : bool
+    cached_only : bool = False
     caching_solutions: bool = True
     debug: bool = False
     conn : socket = field(default_factory = socket.socket, hash = False)
     status: str = "disconnected"
     solver_cache: Dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        self.cached_only = Config.get("soap", "solver", "only_db") 
+        self.caching_solutions = Config.get("soap", "solver", "caching_solver_solutions") 
     
     def start_solver(self, remoteMatlab : bool = True):
         if self.caching_solutions:
-            if path.getsize(solver_cache_path) > 0:
-                with open(solver_cache_path, "r") as solver_cache_file:
+            if path.getsize(Config.get("soap", "solver", "db_path")) > 0:
+                with open(Config.get("soap", "solver", "db_path"), "r") as solver_cache_file:
                     self.solver_cache = json.load(solver_cache_file)
         if self.cached_only:
             return
         # configuration
         port = 30000
         if remoteMatlab:
-            address = 'galilei.inf.ethz.ch'   
-     #       address = '172.23.224.1'        
+            address = Config.get("soap", "solver", "remote_solver_address")
         else:
-            # address = '172.31.64.1'
             address = 'localhost'
             # start matlab in background
-            call("matlab.exe -nosplash -nodesktop -r \"cd('C:\\gk_pliki\\uczelnia\\doktorat\\performance_modelling\\repo"
-                       "\\DAAPCe\\daapce_official\\matlab'); BackgroundSolver(" + str(port) + ");exit\"", shell=True)
+            call("matlab.exe -nosplash -nodesktop -r \"cd('" + Config.get("soap", "solver", "local_solver_path") + 
+                "'); BackgroundSolver(" + str(port) + ");exit\"", shell=True)
 
 
 
@@ -78,7 +79,7 @@ class Solver():
 
     def end_solver(self):
         if self.caching_solutions:
-            with open(solver_cache_path, "w") as solver_cache_file:
+            with open(Config.get("soap", "solver", "db_path"), "w") as solver_cache_file:
                 json.dump(self.solver_cache, solver_cache_file)
         if self.cached_only:
             return

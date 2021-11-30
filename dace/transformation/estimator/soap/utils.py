@@ -22,25 +22,28 @@ import argparse
 import sys
 import networkx as nx
 
+# FOR DEBUGGING/DEVELOPMENT PURPOSES ONLY!!!
+# These parameters are specified in config_schema.yml and initialized in .dace.conf
+
 # ---------------------------------------
 #  CONFIG PARAMETERS
 # ---------------------------------------
+# -----------------------
+# -- parallel schedule -- 
+avail_par_setups = ["memory_independent", "memory_dependent"]
+chosen_par_setup = avail_par_setups[0]
 
+# default numerical parameters for the schedue generation
+decompostition_params = [("p", 8), ("Ss", 32*1024), ("S0", 512), ("S1", 512), ("S2", 512), ("S3", 512)]
+
+# -----------------------
+# -- test parameters --
 available_setups = ["old_tals_sdfgs", "c2dace", "npbench", # different polybench SDFGs
                     "einsum_string", "einsum_strings_from_file", 
                     "other"]
 chosen_setup = available_setups[3]
-only_selected_tests = ["durbin"] #["lenet"] #["deriche", "symm", "mvt"]
+only_selected_tests = ["doitgen"] #["lenet"] #["deriche", "symm", "mvt"]
 excluded_tests = ["cholesky2", "outer", "ssa", "deriche", "adi"]
-
-# parallel schedule
-avail_par_setups = ["memory_independent", "memory_dependent"]
-chosen_par_setup = avail_par_setups[0]
-
-# default numerical parameters
-#[("p", 16384), ("Ss", 64), ("S0", 64), ("S1", 64), ("S2", 64), ("S3", 64)]
-param_values = [("p", 8), ("Ss", 32*1024), ("S0", 512), ("S1", 512), ("S2", 512), ("S3", 512)]
-
 # einsum_string = 'ijk,jl,kl->il'
 einsum_string = 'pi,qj,ijkl,rk,sl->pqrs'
 # einsum_string = 'ik,kj->ij'
@@ -50,10 +53,17 @@ einsum_string = 'pi,qj,ijkl,rk,sl->pqrs'
 # In the latter case, all sdfgs in the directtory will be evaluated
 sdfg_path = 'tensors/test.sdfg'
 
-# solver setup
+# path to polybench kernels
+abs_test_path  = 'C:/gk_pliki/uczelnia/soap/soap_code/sdg'
+
+# ------------------
+# -- solver setup --
 use_remote_matlab_server = True
 caching_solver_solutions = True
-only_cached = True
+only_cached = False
+solver_local_path = "C:\\gk_pliki\\uczelnia\\soap\\soap_code\\matlab"
+solver_remote_access = 'galilei.inf.ethz.ch'  
+solver_db_path = "dace/transformation/estimator/soap/solver_cache/solver_cache.txt"
 
 
 
@@ -63,32 +73,28 @@ only_cached = True
 
 # PARAMETERS 
 @dataclass
-class global_parameters():
+class SOAPParameters():
     remoteMatlab : bool = False
     WDanalysis : bool = False
     IOanalysis : bool = True
     latex : bool = False
-    polybenchKernelsOnly : bool = True
-    oldPolybench : bool = True
-    perStOnly : bool = False
     suiteName : str = ""
     onlySelectedTests = only_selected_tests
     excludedTests = excluded_tests
-    param_values = param_values
+    decomposition_params = decompostition_params
     caching_solver_solutions = caching_solver_solutions
     only_cached = only_cached
-    all_params_equal = True
     just_leading_term = True
     allInjective = True
     npbench = False
     einsum_strings = [""]
     chosen_par_setup = chosen_par_setup
-    abs_test_path : str = 'C:/gk_pliki/uczelnia/soap/soap_code/sdg'
+    abs_test_path : str = abs_test_path
 
 
-def get_kernels(params : global_parameters):
+def get_kernels(params : SOAPParameters):
     kernels = []
-    if params.suiteName == "einsum":
+    if Config.get("soap", "tests", "suite_name") == "einsum": #params.suiteName == "einsum":
         dim = 30
         for einsum in params.einsum_strings:            
             inputs = einsum.replace(' ', '').split('->')[0].split(',')
@@ -156,7 +162,7 @@ def get_kernels(params : global_parameters):
 
 
 def parse_params():
-    params = global_parameters()
+    params = SOAPParameters()
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", "--matlab", help="Use remote Matlab server",
         action="store_true")
@@ -232,7 +238,7 @@ def sdfgs_from_npbench(path):
 
 
     progs = [getattr(mod, k) for k in dir(mod) if isinstance(getattr(mod, k), dace.frontend.python.parser.DaceProgram)]
-    params = global_parameters()
+    params = SOAPParameters()
     kernels = []
     solver = Solver()
     params.solver = solver

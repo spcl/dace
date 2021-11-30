@@ -129,7 +129,7 @@ class SoapStatement:
 
 
 
-    def solve(self, solver, params: global_parameters):
+    def solve(self, solver, params: SOAPParameters):
         self.update_ranges()        
         self.calculate_dominator_size()  
         self.calculate_H_size()
@@ -197,7 +197,7 @@ class SoapStatement:
         self.Q = self.V / self.rhoOpts
 
 
-    def parse_solution(self, input : str,  params : global_parameters):
+    def parse_solution(self, input : str,  params : SOAPParameters):
         data = input
         data = data.replace('Inf', 'oo')
         data = data.replace('^', '**')
@@ -227,7 +227,7 @@ class SoapStatement:
             a = 1
             
     
-    def create_schedule(self,  params : global_parameters):
+    def create_schedule(self,  params : SOAPParameters):
         # Get the streaming dimension. If we do have reduction ranges, we pick
         # the direction of the largest tile dimension in it.
         # If we don't have any reduction, we pick just the largest tile dimension among all dimensions
@@ -252,7 +252,7 @@ class SoapStatement:
         self.inner_tile[self.variables.index(self.stream_dim)] = streaming
 
 
-    def init_decomposition(self, subs_list,  params : global_parameters):
+    def init_decomposition(self, subs_list,  params : SOAPParameters):
         dimensions = {str(d[0]) : d[2] - d[1] + 1 for d in list(self.ranges.values())[0]}
         self.dimensions_ordered = [sp.sympify(str(dimensions[str(i)])).subs(subs_list) for i in self.variables]
         stream_dim_number = self.variables.index(self.stream_dim)
@@ -436,7 +436,7 @@ class SoapStatement:
             self.H_size = d2sp(simp_H)
             
         if '**' in str(self.H_size):
-            a = 1
+            raise Exception("Incorrect subcomputation volume H_size = {}. It cannot contain powers".format(self.H_size))
 
 
     def simplify_dom_size(self):
@@ -488,7 +488,8 @@ class SoapStatement:
             sym_reduction = True
         else:
             sym_reduction = False
-                     
+        
+        sym_reduction = False
         
 
         # iterate over input accesses 
@@ -523,38 +524,46 @@ class SoapStatement:
                         if array_name in stripped_outputs.keys() and \
                                 eq_accesses(base_access, stripped_outputs[array_name].baseAccess):        
                             SSAing = True            
-                                                                    
-                        for i in range(dim):
-                            # check if this output array is transient
-                            if self.output_arrays[array_name][1] == []:
-                                # if so, at least it should be in the output accesses, properly unrolled
-                                t[i].add(self.output_accesses[array_name][1][i])
+
+                        # looping over all SSA dimensions
+                        for c, ssa_dim in enumerate(access_params.ssa_dim):
+                            
+                            # TODO: Is the following necessary? Why?
+                            # for i in range(dim):
+                            #     # check if this output array is transient                            
+                            #     if self.output_arrays[array_name][1] == []:
+                            #         # if so, at least it should be in the output accesses, properly unrolled
+                            #         t[i].add(self.output_accesses[array_name][1][i])
+                            #     else:
+                            #         t[i].add(self.output_arrays[array_name][1][i])  #stripped_outputs[array_name][1][i])
+
+                            # We add this offset only to the first ssa_dim. This is necessary if more than one ssa_dim
+                            # is present. Without this, we will have an incorrect (diagonal) offset.
+                            if c == 0:  
+                                t.append({0, 1})
                             else:
-                                t[i].add(self.output_arrays[array_name][1][i])  #stripped_outputs[array_name][1][i])
-                                            
-                        # assert len(access_params.ssa_dim) < 2
-                        if len(access_params.ssa_dim) >= 2:
-                            a = 1
-                        t.append({0, 1})
-                        dim += 1    
-                        # if ssa_dim is empty, then every element is updated only once (not a parametric number of times).
-                        # Then, we don't add additional parametric dimension.
-                        if len(access_params.ssa_dim) == 1:
-                            vars.append(sp.sympify(str(access_params.ssa_dim[0][0])))
-                            base_access += "*" + str(access_params.ssa_dim[0][0])
-                        elif SSAing:
-                            ssa_dim = sp.sympify("temp")
-                            vars.append(ssa_dim)
-                            base_access += "*" + str(ssa_dim)
-                        if not (len(access_params.ssa_dim) > 0 or SSAing):
-                            dim -= 1
+                                t.append({0})
+                            dim += 1    
+                            vars.append(sp.sympify(str(ssa_dim[0])))
+                            base_access += "*" + str(ssa_dim[0])
+                            # # if ssa_dim is empty, then every element is updated only once (not a parametric number of times).
+                            # # Then, we don't add additional parametric dimension.
+                            # if len(access_params.ssa_dim) == 1:
+                            #     vars.append(sp.sympify(str(access_params.ssa_dim[0][0])))
+                            #     base_access += "*" + str(access_params.ssa_dim[0][0])
+                            # elif SSAing:
+                            #     ssa_dim = sp.sympify("temp")
+                            #     vars.append(ssa_dim)
+                            #     base_access += "*" + str(ssa_dim)
+                            # if not (len(access_params.ssa_dim) > 0 or SSAing):
+                            #     dim -= 1
                                         
                     
                         
                 for i in range(dim):
                     access_size *= (vars[i] - len(t[i]) + 1)
                     # accessSize *= (vars[i] - len(t[i] - set({0})))
-                access_size = 2*sp.sympify(base_access) - access_size
+                access_size = sp.simplify(2*sp.sympify(base_access) - access_size)
                 
                 if SSAing:                    
                     access_size -= sp.sympify(base_access)
@@ -628,36 +637,35 @@ class SoapStatement:
     def concatenate_sdg_statements(self, pred, in_S):  
         if "fc2_1" in in_S.name:
             a = 1
-        
-        # merge ranges of two statements            
-        for in_state, in_ranges in in_S.ranges.items():
-            if in_state in self.ranges.keys():
-                for in_rng in in_ranges:
-                    if all(in_rng[0] != rng[0] for rng in self.ranges[in_state]):
-                        self.ranges[in_state].append(in_rng)
-            else:
-                self.ranges[in_state] = in_ranges
-      
-        if "stateFOR115_map" in self.ranges.keys():
-            vars = [x for (x, y, z) in self.ranges["stateFOR115_map"]]
-            if len(vars) != len(set(vars)):
-                a = 1
-        self.name = ';'.join(list(OrderedSet(self.name.split(';')).union(OrderedSet(in_S.name.split(';')))))
-        self.subgraph = self.subgraph.union(in_S.subgraph)
-        self.output_arrays = {**self.output_arrays, **in_S.output_arrays}
-        if all(nm in self.name for nm in ["fc2_1", "__tmp8_1"]):
-            a = 1
-            
-        if not self.has_correct_ranges():
-            a = 1
-                
+
+        # If one statement's output is the input of the other statement, then
+        # we have only one "final output" of the subgraph. In this case, we keep
+        # the ranges only from the "final" computation. If not, we keep all ranges.
+
         if pred:
-            ## OLD: joining only on a single designated array pred
-            # concatenation_array = strip(pred)
-            # NEW: joining on all in_S arrays
+            not_consumed_prev_outputs = list(in_S.output_accesses.keys())
             for concatenation_array in in_S.output_accesses.keys():    
                 if concatenation_array in self.phis.keys():                    
                     self.match_iter_vars(in_S, concatenation_array, True)
+                    not_consumed_prev_outputs.remove(concatenation_array)
+
+        if not pred or len(not_consumed_prev_outputs) > 0:
+            # merge ranges of two statements            
+            for in_state, in_ranges in in_S.ranges.items():
+                if in_state in self.ranges.keys():
+                    for in_rng in in_ranges:
+                        if all(in_rng[0] != rng[0] for rng in self.ranges[in_state]):
+                            self.ranges[in_state].append(in_rng)
+                else:
+                    self.ranges[in_state] = in_ranges
+      
+        self.name = ';'.join(list(OrderedSet(self.name.split(';')).union(OrderedSet(in_S.name.split(';')))))
+        self.subgraph = self.subgraph.union(in_S.subgraph)
+        self.output_arrays = {**self.output_arrays, **in_S.output_arrays}
+            
+        if not self.has_correct_ranges():
+            a = 1
+           
 
                     
         # matching iteration variables also on input reuse
@@ -693,7 +701,7 @@ class SoapStatement:
 
     def add_edge_to_statement(self, memlet : dace.Memlet, 
                 ssa_dim : List[dace.symbol],  
-                params : global_parameters):
+                params : SOAPParameters):
         if memlet.subset is None or memlet.is_empty():
             return
 
@@ -1009,7 +1017,7 @@ class SoapStatement:
         return [rhoOpts, varsOpt, Xopts]
     
     
-    def swap_iter_vars(self, swaplist, inv_swaplist, solver, params : global_parameters):
+    def swap_iter_vars(self, swaplist, inv_swaplist, solver, params : SOAPParameters):
         # used for a loop swap transformation, e.g., interchanging i<->j
         
         # swap inputs (phis)

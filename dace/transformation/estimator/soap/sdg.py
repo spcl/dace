@@ -22,12 +22,12 @@ from dace import subsets
 from warnings import warn
 
 
-class SDG_Path:
+class SDGPath:
     def __init__(self, values):
         self.path = copy.copy(values)
         
     def __deepcopy__(self, memo):
-        node = object.__new__(SDG_Path)
+        node = object.__new__(SDGPath)
 
         node.path = copy.copy(self.path)
         return node
@@ -47,7 +47,7 @@ class SdgScope:
         self.ranges = {}
         self.map_ranges = {}
         self.loop_ranges = {}
-        self.sdfg_path = SDG_Path([sdfg_entry_node])
+        self.sdfg_path = SDGPath([sdfg_entry_node])
         self.sdfg_mapping = {}
         self.SOAP_executions = 1
         self.SDFG_arrays = {}
@@ -74,7 +74,7 @@ It provides functionality both per-statement (per-vertex) I/O analysis, as well
 as the SDG subgraphing (finding optimal kernel fusions).
 """
 class SDG:
-    def __init__(self, sdfg : dace.SDFG = None, params : global_parameters = None):
+    def __init__(self, sdfg : dace.SDFG = None, params : SOAPParameters = None):
         self.params = params
         self.graph = nx.MultiDiGraph()
         self.statements = []
@@ -127,7 +127,7 @@ class SDG:
 
 
     
-    def from_SDFG(self, sdfg : dace.SDFG, params : global_parameters) -> None:     
+    def from_SDFG(self, sdfg : dace.SDFG, params : SOAPParameters) -> None:     
         """
         Recursively builds the SDG from the input SDFG.
         The recursive calls are one of the following:
@@ -144,7 +144,7 @@ class SDG:
         self._from_SDFG_sdfg(sdfg, sdg_scope, params)
 
 
-    def _from_SDFG_sdfg(self, sdfg: dace.SDFG, sdg_scope : SdgScope, params : global_parameters) -> None:
+    def _from_SDFG_sdfg(self, sdfg: dace.SDFG, sdg_scope : SdgScope, params : SOAPParameters) -> None:
         control_tree = structured_control_flow_tree(sdfg, lambda x: None)       
         # TODO: topological sort?
         for control_node in control_tree.children:
@@ -173,7 +173,7 @@ class SDG:
                 
 
     def _from_SDFG_loop(self, loop : control_flow.ForScope, 
-                sdg_scope: SdgScope, params : global_parameters) -> None:
+                sdg_scope: SdgScope, params : SOAPParameters) -> None:
         # TODO: loop iterations are already propagated into the nested scopes?
         # num_executions = loop.guard.executions
         # sdg_scope.SOAP_executions *= num_executions
@@ -203,7 +203,7 @@ class SDG:
     def _from_SDFG_scope(self, state: dace.SDFGState, 
                     scope: Optional[dace.nodes.EntryNode], 
                     sdg_scope : SdgScope, 
-                    params : global_parameters) -> SdgScope:
+                    params : SOAPParameters) -> SdgScope:
         num_executions = state.executions
         sdg_scope.SOAP_executions *= num_executions
         sdg_scope.SDFG_arrays = {**sdg_scope.SDFG_arrays, **state.parent.arrays}
@@ -268,14 +268,14 @@ class SDG:
     # the core SDG creation function. The elementary building block for SDG is the SDFG's tasklet
     def _from_SDFG_node(self, node : dace.nodes, 
                 state: dace.SDFGState, sdg_scope : SdgScope, 
-                params : global_parameters) -> None:  
-        if node.label == "_Div_":
+                params : SOAPParameters) -> None:  
+        if node.label == "compute_sum":
             a = 1
                   
         if not state.out_edges(node) or not state.in_edges(node):
             return   
                            
-        S = SoapStatement()    
+        S = SoapStatement() 
         S.name = node.label
         S.tasklet = node
         S.daceRanges[sdg_scope.sdfg_path[-1].label] = sdg_scope.ranges      
@@ -766,17 +766,15 @@ class SDG:
                         for rng in memlet.subset.ranges
                             if len(rng[0].free_symbols) > 0])
                 
-                # TODO: experimental. Previously, the SSA_dim was chosen from between loop_ranges and innermost_ranges                
-                # # if the tasklet is in a nested loop, then this will constitute our SSA dim
-                # if len(sdg_scope.loop_ranges) > 0:
-                #     SSA_dim =  [ [dace.symbol(k), dace.symbol(k), 1] \
-                #                 for k in set(sdg_scope.loop_ranges) - memlet_iter_vars]
-                # else:    
-                #     SSA_dim =  [ [dace.symbol(k), dace.symbol(k), 1] \
-                #                 for k in set(sdg_scope.innermost_ranges) - memlet_iter_vars]
-                # Now we always take the innermost.
+                # TODO: experimental. We need have four pools to choose from to find the SSA_dim.
+                # 1. innermost_ranges: these are ranges, either from a map or a loop, that is closest to this statement
+                # 2. loop_ranges
+                # 3. map_ranges
+                # 4. ranges : these are all the ranges in the scope.
+                # It is unclear from which pool we should take it
+                potential_ssa_pool = set(sdg_scope.innermost_ranges) # set(sdg_scope.ranges) - set(sdg_scope.innermost_ranges) 
                 SSA_dim =  [ [dace.symbol(k), dace.symbol(k), 1] \
-                                 for k in set(sdg_scope.innermost_ranges) - memlet_iter_vars]
+                                 for k in potential_ssa_pool - memlet_iter_vars]
                 
                 # we first try to add the SSA_dim as the innermost range (the one from the innermost loop).
                 # If it fails, we then look for the SSA dim in the outer ranges.
@@ -802,7 +800,7 @@ class SDG:
     # SDG PARTITIONING
     # ------------------------------------
     def perform_loop_swapping(self, node : str, swaplist : Dict[str, str], 
-                              visited: Set[str], params : global_parameters,
+                              visited: Set[str], params : SOAPParameters,
                               first : bool) -> bool:
         """
         Propagates loop variables swapping. E.g., if we have a transient, whose 
@@ -860,7 +858,7 @@ class SDG:
     
     
     # --- preprocessing ---
-    def remove_transient_arrays(self, params : global_parameters) -> None:
+    def remove_transient_arrays(self, params : SOAPParameters) -> None:
         """
         removes transient nodes in the sdfg if there is only a single
         in-edge and single out-edge
@@ -1060,7 +1058,7 @@ class SDG:
 
 
     # structure-aware partitioning
-    def calculate_IO_of_SDG(self, params : global_parameters) -> Tuple[sp.core.Expr, list[SoapStatement]]:
+    def calculate_IO_of_SDG(self, params : SOAPParameters) -> Tuple[sp.core.Expr, list[SoapStatement]]:
         """
         Exhaustively creates all possible subgraphs (using recursive_SDG_subgraphing),
         and then chooses the best (with the lowest I/O cost Q) SDG partition (using compare_st).
@@ -1117,7 +1115,7 @@ class SDG:
 
 
     # structure-aware WD analysis
-    def CalculateWDofSDG(self, params : global_parameters) -> Tuple[sp.Expr, sp.Expr]:
+    def CalculateWDofSDG(self, params : SOAPParameters) -> Tuple[sp.Expr, sp.Expr]:
         # set edge weights to match destination node weights. We need numerical values
         # potentialParams = ['n']                
         potentialParams = ['n', 'm', 'w', 'h', 'N', 'M', 'W', 'H', 'NI', 'NJ', 'NK', 'NP', 'NQ', 'NR', 'step']  
