@@ -136,7 +136,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
         elif isinstance(node.value, numpy.number):
             node.value = numpy.asscalar(node.value)
         return self.generic_visit(node)
-    
+
     # Compatibility for Python 3.7
     def visit_Num(self, node):
         if isinstance(node.n, numpy.bool_):
@@ -416,7 +416,8 @@ def has_replacement(callobj: Callable,
             return True
 
     # NumPy ufuncs
-    if isinstance(callobj, numpy.ufunc):
+    if (isinstance(callobj, numpy.ufunc)
+            or isinstance(parent_object, numpy.ufunc)):
         return True
 
     # Functions
@@ -777,9 +778,10 @@ class GlobalResolver(ast.NodeTransformer):
                 not isinstance(v, ast.FormattedValue)
                 or isinstance(v.value, ast.Constant) for v in visited.values
             ]
-            values = [v.s if isinstance(v, ast.Str)
-                          else astutils.unparse(v.value)
-                      for v in visited.values]
+            values = [
+                v.s if isinstance(v, ast.Str) else astutils.unparse(v.value)
+                for v in visited.values
+            ]
             return ast.copy_location(
                 ast.Constant(kind='',
                              value=''.join(('{%s}' % v) if not p else v
