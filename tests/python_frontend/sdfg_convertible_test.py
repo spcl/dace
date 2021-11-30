@@ -34,7 +34,7 @@ def test_constants_in_signature():
         def __sdfg_signature__(self):
             return (['grid', 'arr'], ['grid'])
 
-        def __sdfg_closure__(self, reevaluate=None):
+        def __sdfg_closure__(self, arrays_only=False, reevaluate=None):
             return {}
 
     grid = SimpleNamespace(start=2, end=-2)

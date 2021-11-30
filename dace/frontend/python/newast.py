@@ -1040,24 +1040,19 @@ class TaskletTransformer(ExtNodeTransformer):
                         ' within `dace.tasklet` scopes. Please use function '
                         f'"{fname}" outside of a tasklet.')
         if fname in self.visitor.closure.callbacks:
-            # NOTE: Allow methods from the math library
-            mname = until(self.visitor.closure.callbacks[fname][0], '.')
-            if mname == 'math':
-                del self.visitor.closure.callbacks[fname]
-            else:
-                # TODO(later): When type/shape inference dives into tasklets
-                raise DaceSyntaxError(
-                    self, node, 'Automatic Python callbacks are not yet '
-                    'supported within tasklets. Please define function '
-                    f'"{fname}" as a `dace.callback` explicitly and input it '
-                    'as a keyword argument to the function. Example:\n'
-                    '  addfunc = dace.symbol("addfunc", dace.callback(dace.float32, dace.float32, dace.float32))\n'
-                    '  @dace.program\n'
-                    '  def myprogram(...):\n'
-                    '    with dace.tasklet:\n'
-                    '      # ...\n'
-                    '      c = addfunc(a, b)\n'
-                    '  myprogram(..., addfunc=add)')
+            # TODO(later): When type/shape inference dives into tasklets
+            raise DaceSyntaxError(
+                self, node, 'Automatic Python callbacks are not yet '
+                'supported within tasklets. Please define function '
+                f'"{fname}" as a `dace.callback` explicitly and input it '
+                'as a keyword argument to the function. Example:\n'
+                '  addfunc = dace.symbol("addfunc", dace.callback(dace.float32, dace.float32, dace.float32))\n'
+                '  @dace.program\n'
+                '  def myprogram(...):\n'
+                '    with dace.tasklet:\n'
+                '      # ...\n'
+                '      c = addfunc(a, b)\n'
+                '  myprogram(..., addfunc=add)')
         return self.generic_visit(node)
 
 

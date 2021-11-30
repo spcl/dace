@@ -679,7 +679,7 @@ class GlobalResolver(ast.NodeTransformer):
             from dace.frontend.python.newast import until
             funcname = astutils.rname(node)
             modname = until(funcname, '.')
-            if modname == 'dace':
+            if modname in ('dace', 'math'):
                 return self.generic_visit(node)
         except AttributeError:
             # Occurs when trying parse a (non-dace) decorated method.
