@@ -600,8 +600,10 @@ class GlobalResolver(ast.NodeTransformer):
                     parsed.methodobj = parent_object
                     parsed.objname = inspect.getfullargspec(value).args[0]
 
-                return self.global_value_to_node(parsed, parent_node, qualname,
-                                                 recurse, detect_callables)
+                res = self.global_value_to_node(parsed, parent_node, qualname,
+                                                recurse, detect_callables)
+                del self.closure.callbacks[cbname]
+                return res
             except Exception:  # Parsing failed (almost any exception can occur)
                 return newnode
         else:
