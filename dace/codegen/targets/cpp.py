@@ -310,6 +310,8 @@ def emit_memlet_reference(dispatcher,
             typedef = defined_ctype
         if is_scalar:
             defined_type = DefinedType.Scalar
+            if is_write is False:
+                typedef = f'const {typedef}'
             ref = '&'
     elif defined_type == DefinedType.ArrayInterface:
         base_ctype = conntype.base_type.ctype
