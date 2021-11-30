@@ -15,7 +15,7 @@ def test_contiguous_map():
                 b >> B[i]
                 b = a
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     assert 'svld1(' in code
     assert 'svst1(' in code
@@ -30,7 +30,7 @@ def test_stride_map():
                 b >> B[i]
                 b = a
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     assert 'svld1_gather' in code
     assert 'svst1_scatter' in code
@@ -46,7 +46,7 @@ def test_fake_stride():
                 b >> B[i]
                 b = a
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     # Load is contiguous even though it doesn't look like it
     assert 'svld1(' in code
@@ -64,7 +64,7 @@ def test_matrix_stride():
                 b >> B[j, i]
                 b = a
 
-    code = get_code(program, 'j')
+    code = get_code(program)
 
     # Contiguous load of entries
     assert 'svld1' in code
@@ -83,7 +83,7 @@ def test_indirect_load_explicit():
                 c >> C[i]
                 c = a[b]
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     assert 'svld1_gather_index' in code
 
@@ -97,7 +97,7 @@ def test_indirect_load_implicit():
                 c >> C[i]
                 c = a
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     # This is still an indirect load (uses Indirection tasklet)
     assert 'svld1_gather_index' in code

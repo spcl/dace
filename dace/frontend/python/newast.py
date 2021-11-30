@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-import astunparse
 from collections import OrderedDict
 import copy
 import itertools
@@ -1034,6 +1033,7 @@ class ProgramVisitor(ExtNodeVisitor):
                  scope_arrays: Dict[str, data.Data],
                  scope_vars: Dict[str, str],
                  map_symbols: Set[Union[str, symbolic.symbol]] = None,
+                 annotated_types: Dict[str, data.Data] = None,
                  other_sdfgs: Dict[str, Union[SDFG, 'DaceProgram']] = None,
                  nested: bool = False,
                  tmp_idx: int = 0,
@@ -1083,6 +1083,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.accesses = dict()
         self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
+        self.annotated_types: Dict[str, data.Data] = annotated_types or {}
 
         # Keep track of map symbols from upper scopes
         map_symbols = map_symbols or set()
@@ -1370,6 +1371,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                 **self.variables,
                             },
                             map_symbols=map_symbols,
+                            annotated_types=self.annotated_types,
                             other_sdfgs=self.other_sdfgs,
                             nested=True,
                             tmp_idx=self.sdfg._temp_transients + 1)
@@ -1767,8 +1769,10 @@ class ProgramVisitor(ExtNodeVisitor):
                             raise DaceSyntaxError(
                                 self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols
+                        # TODO: If scalar, should add dynamic map connector?
                         if str(atom) not in self.sdfg.symbols:
-                            self.sdfg.add_symbol(str(atom), atom.dtype)
+                            self.sdfg.add_symbol(str(atom),
+                                                 self.defined[str(atom)].dtype)
 
                 for expr in symbolic.swalk(symval):
                     if symbolic.is_sympy_userfunction(expr):
@@ -2807,8 +2811,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 widx = sqz_wsub.squeeze()
                 sqz_rsub = copy.deepcopy(rtarget_subset)
                 ridx = sqz_rsub.squeeze()
-                if (sqz_wsub.size() == sqz_osub.size() and
-                        sqz_wsub.size() == sqz_rsub.size()):
+                if (sqz_wsub.size() == sqz_osub.size()
+                        and sqz_wsub.size() == sqz_rsub.size()):
                     r_to_w = {i: j for i, j in zip(ridx, widx)}
                     o_to_w = {i: j for i, j in zip(oidx, widx)}
                     # NOTE: Since 'sqz_wsub is squeezed, 'start' should be
@@ -2836,11 +2840,12 @@ class ProgramVisitor(ExtNodeVisitor):
                         in1_memlet.dynamic = True
                         out_memlet.dynamic = True
                     tasklet_code += '__out = __in1 {op} __in2'.format(op=op)
-                    state.add_mapped_tasklet(state.label, map_range, {
-                        '__in1': in1_memlet,
-                        '__in2': in2_memlet,
-                        **input_memlets,
-                    },
+                    state.add_mapped_tasklet(state.label,
+                                             map_range, {
+                                                 '__in1': in1_memlet,
+                                                 '__in2': in2_memlet,
+                                                 **input_memlets,
+                                             },
                                              tasklet_code,
                                              {'__out': out_memlet},
                                              external_edges=True,
@@ -3135,8 +3140,9 @@ class ProgramVisitor(ExtNodeVisitor):
         except:
             dtype = None
             warnings.warn('typeclass {} is not supported'.format(type_name))
-        if node.value is None:  # Annotating type without assignment
-            return self.generic_visit(node)
+        if node.value is None and dtype is not None:  # Annotating type without assignment
+            self.annotated_types[rname(node.target)] = dtype
+            return
         self._visit_assign(node, node.target, None, dtype=dtype)
 
     def _visit_assign(self, node, node_target, op, dtype=None, is_return=False):
@@ -3171,6 +3177,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 true_name = defined_vars[name]
                 true_array = defined_arrays[true_name]
 
+            # If type was already annotated
+            if dtype is None and name in self.annotated_types:
+                dtype = self.annotated_types[name]
+
             if (isinstance(target, ast.Attribute)
                     and until(name, '.') in self.globals):
                 raise DaceSyntaxError(
@@ -3181,9 +3191,22 @@ class ProgramVisitor(ExtNodeVisitor):
             if (not is_return and isinstance(target, ast.Name) and true_name
                     and not op and not isinstance(true_array, data.Scalar)
                     and not (true_array.shape == (1, ))):
-                raise DaceSyntaxError(
-                    self, target,
-                    'Cannot reassign value to variable "{}"'.format(name))
+                if (result in self.sdfg.arrays
+                        and self.sdfg.arrays[result].is_equivalent(true_array)):
+                    # Skip error if the arrays are defined exactly in the same way
+                    true_name = None
+                else:
+                    raise DaceSyntaxError(
+                        self, target,
+                        'Cannot reassign value to variable "{}"'.format(name))
+
+            if is_return and true_name:
+                if (result in self.sdfg.arrays and
+                        not self.sdfg.arrays[result].is_equivalent(true_array)):
+                    raise DaceSyntaxError(
+                        self, target,
+                        'Return values of a data-centric function must always '
+                        'have the same type and shape')
 
             if not true_name and (op or isinstance(target, ast.Subscript)):
                 raise DaceSyntaxError(
@@ -3651,10 +3674,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 outer_name = self.sdfg.add_datadesc(aname,
                                                     desc,
                                                     find_new_name=True)
-                self.nested_closure_arrays[outer_name] = (arr, desc)
-                # Add closure arrays as function arguments
-                args.append((aname, outer_name))
-                required_args.append(aname)
+                if not desc.transient:
+                    self.nested_closure_arrays[outer_name] = (arr, desc)
+                    # Add closure arrays as function arguments
+                    args.append((aname, outer_name))
+                    required_args.append(aname)
         else:
             raise DaceSyntaxError(
                 self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
@@ -4006,9 +4030,13 @@ class ProgramVisitor(ExtNodeVisitor):
         if func or funcname in self.other_sdfgs:
             try:
                 return self._parse_sdfg_call(funcname, func, node)
-            except SkipCall:
+            except SkipCall as ex:
                 # Re-parse call with non-parsed information
-                return self.visit_Call(node.func.oldnode)
+                try:
+                    return self.visit_Call(node.func.oldnode)
+                except Exception:  # Anything could happen here
+                    # Raise original exception instead
+                    raise ex.__context__
 
         # Set arguments
         args = []
