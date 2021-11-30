@@ -673,11 +673,16 @@ class GlobalResolver(ast.NodeTransformer):
 
     def visit_Call(self, node: ast.Call) -> Any:
         # Nothing from the `dace` namespace needs preprocessing
-        from dace.frontend.python.newast import until
-        funcname = astutils.rname(node)
-        modname = until(funcname, '.')
-        if modname == 'dace':
-            return self.generic_visit(node)
+        try:
+            from dace.frontend.python.newast import until
+            funcname = astutils.rname(node)
+            modname = until(funcname, '.')
+            if modname == 'dace':
+                return self.generic_visit(node)
+        except AttributeError:
+            # Occurs when trying parse a (non-dace) decorated method.
+            # Let such cases continue.
+            pass
 
         try:
             global_func = astutils.evalnode(node.func, self.globals)
