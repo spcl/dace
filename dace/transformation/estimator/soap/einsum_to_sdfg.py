@@ -27,6 +27,7 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 30
 
     # if input arrays are not provided, create them
     if not arrays:
+        arrays = []
         inputs = subscripts.replace(' ', '').split('->')[0].split(',')         
         for input in inputs:
             order = len(input)

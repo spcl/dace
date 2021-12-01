@@ -21,7 +21,7 @@ class Solver():
         self.cached_only = Config.get("soap", "solver", "only_db") 
         self.caching_solutions = Config.get("soap", "solver", "caching_solver_solutions") 
     
-    def start_solver(self, remoteMatlab : bool = True):
+    def start_solver(self):
         if self.caching_solutions:
             if path.getsize(Config.get("soap", "solver", "db_path")) > 0:
                 with open(Config.get("soap", "solver", "db_path"), "r") as solver_cache_file:
@@ -30,7 +30,7 @@ class Solver():
             return
         # configuration
         port = 30000
-        if remoteMatlab:
+        if Config.get("soap", "solver", "remote_matlab") :
             address = Config.get("soap", "solver", "remote_solver_address")
         else:
             address = 'localhost'

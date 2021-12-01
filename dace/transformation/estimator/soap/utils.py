@@ -70,160 +70,132 @@ solver_db_path = "dace/transformation/estimator/soap/solver_cache/solver_cache.t
 # ----------------------------------------
 # initialization and launch configurations
 # ----------------------------------------
-
-# PARAMETERS 
-@dataclass
-class SOAPParameters():
-    remoteMatlab : bool = False
-    WDanalysis : bool = False
-    IOanalysis : bool = True
-    latex : bool = False
-    suiteName : str = ""
-    onlySelectedTests = only_selected_tests
-    excludedTests = excluded_tests
-    decomposition_params = decompostition_params
-    caching_solver_solutions = caching_solver_solutions
-    only_cached = only_cached
-    just_leading_term = True
-    allInjective = True
-    npbench = False
-    einsum_strings = [""]
-    chosen_par_setup = chosen_par_setup
-    abs_test_path : str = abs_test_path
-
-
-def get_kernels(params : SOAPParameters):
+def get_kernels():
     kernels = []
     if Config.get("soap", "tests", "suite_name") == "einsum": #params.suiteName == "einsum":
         dim = 30
-        for einsum in params.einsum_strings:            
-            inputs = einsum.replace(' ', '').split('->')[0].split(',')
-            inp_arrays = []            
-            for input in inputs:
-                order = len(input)
-                A = np.random.rand(dim**order).reshape([dim] * order)           
-                inp_arrays.append(A)
-                    
-            sdfg = sdfg_gen(einsum, inp_arrays)
+        for einsum in Config.get("soap", "tests", "einsum_string"):            
+            sdfg = sdfg_gen(einsum)
             kernels.append([sdfg, einsum])
         return kernels
     
-    if params.npbench:
-        if '.py' in params.suiteName:
-            sdfg_path = os.path.join(params.abs_test_path, "npbench/npbench/benchmarks/", params.suiteName)
-            kernels = sdfgs_from_npbench(sdfg_path)
-        else:
-            test_dir = os.path.join(params.abs_test_path, "npbench/npbench/benchmarks/", params.suiteName)
-            experiments = list(os.walk(test_dir))[0][1]
-                    
-            for exp in experiments:
-                if any(isExcluded for isExcluded in params.excludedTests if isExcluded in exp):
-                    continue
-                if params.onlySelectedTests:
-                    if not any(isSelected for isSelected in params.onlySelectedTests if isSelected in exp):
-                        continue              
-                try:
-                    sdfg_path = os.path.join(test_dir,exp, exp + "_dace.py")
-                    kernels += sdfgs_from_npbench(sdfg_path)
-                except:
-                    pass
+    if Config.get("soap", "tests", "suite_name") == "npbench":
+        test_dir = os.path.join(Config.get("soap", "tests", "abs_test_path"), 
+                "npbench/npbench/benchmarks/polybench")
+        experiments = list(os.walk(test_dir))[0][1]
+                
+        for exp in experiments:
+            if any(isExcluded for isExcluded in \
+                        Config.get("soap", "tests", "excluded_tests") \
+                        if isExcluded in exp):
+                continue
+            if len(Config.get("soap", "tests", "only_selected_tests")) > 0:
+                if not any(isSelected for isSelected in \
+                        Config.get("soap", "tests", "only_selected_tests") \
+                        if isSelected in exp):
+                    continue              
+            try:
+                sdfg_path = os.path.join(test_dir,exp, exp + "_dace.py")
+                kernels += sdfgs_from_npbench(sdfg_path)
+            except:
+                pass
+
+        return kernels
             # for n, k in zip(experiments, kernels):
             #     k.save(f'{n}.sdfg')
               
-    else:
-        if '.sdfg' in params.suiteName:
-            sdfg_path = os.path.join(params.abs_test_path, "sample-sdfgs", params.suiteName)
-            sdfg: dace.SDFG = dace.SDFG.from_file(sdfg_path)
-            exp = params.suiteName.split('/')[-1].split('.')[0]
-            kernels = [[sdfg, exp]]
-
-        else:
-            test_dir = os.path.join(params.abs_test_path, "sample-sdfgs", params.suiteName)
-            experiments = list(os.walk(test_dir))[0][2]
-                
-            for exp in experiments:
-                if any(isExcluded for isExcluded in params.excludedTests if isExcluded in exp):
-                    continue
-                if params.onlySelectedTests:
-                    if not any(isSelected for isSelected in params.onlySelectedTests if isSelected in exp):
-                        continue
-                
-                try: 
-                    sdfg_path = os.path.join(test_dir,exp)
-                    print("\n" + sdfg_path)
-                    sdfg: dace.SDFG = dace.SDFG.from_file(sdfg_path)
-                    expname = exp.split('.')[0]
-                    kernels.append([sdfg, expname])
-                except:
-                    pass
+    if Config.get("soap", "tests", "suite_name") == "manual_polybench":
+        test_dir = os.path.join(Config.get("soap", "tests", "abs_test_path"), 
+                     "sample-sdfgs/polybench")
+        experiments = list(os.walk(test_dir))[0][2]
+            
+        for exp in experiments:
+            if any(isExcluded for isExcluded in \
+                        Config.get("soap", "tests", "excluded_tests") \
+                        if isExcluded in exp):
+                continue
+            if len(Config.get("soap", "tests", "only_selected_tests")) > 0:
+                if not any(isSelected for isSelected in \
+                        Config.get("soap", "tests", "only_selected_tests") \
+                        if isSelected in exp):
+                    continue  
+            
+            try: 
+                sdfg_path = os.path.join(test_dir,exp)
+                print("\n" + sdfg_path)
+                sdfg: dace.SDFG = dace.SDFG.from_file(sdfg_path)
+                expname = exp.split('.')[0]
+                kernels.append([sdfg, expname])
+            except:
+                pass
         
 
     return kernels
 
 
-def parse_params():
-    params = SOAPParameters()
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-m", "--matlab", help="Use remote Matlab server",
-        action="store_true")
-    parser.add_argument("-w", "--workDepth", help="Perform work depth analysis",
-        action="store_true")
-    parser.add_argument("-q", "--IO", help="Perform I/O analysis",
-        action="store_false")
-    parser.add_argument("-i", "--injective", help="Assume that ALL accesses do not overlap",
-        action="store_false")
-    # just specify the path and recursively traverse the given dir
-    parser.add_argument("-t", "--test", help="Test the solver",
-        action="store_true")
-    parser.add_argument("-l", "--latex", help="Output as a Latex table",
-        action="store_true")
-    parser.add_argument("-n", "--npbench", help="Get kernels from npbench",
-        action="store_true")
-    parser.add_argument("-p", "--path", help="Name of the sdfg file (single experiment) or of the folder containing sdfgs",
-        default = "sources/test.sdfg")#"polybench")
-     #   default = "polybench")#"polybench")
-        # default = "polybench/correlation/correlation_dace.py")
-    #"polybench_optimized")#"nn")#"sample-sdfgs/sources/conv-param.sdfg")
+# def parse_params():
+#     params = SOAPParameters()
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument("-m", "--matlab", help="Use remote Matlab server",
+#         action="store_true")
+#     parser.add_argument("-w", "--workDepth", help="Perform work depth analysis",
+#         action="store_true")
+#     parser.add_argument("-q", "--IO", help="Perform I/O analysis",
+#         action="store_false")
+#     parser.add_argument("-i", "--injective", help="Assume that ALL accesses do not overlap",
+#         action="store_false")
+#     # just specify the path and recursively traverse the given dir
+#     parser.add_argument("-t", "--test", help="Test the solver",
+#         action="store_true")
+#     parser.add_argument("-l", "--latex", help="Output as a Latex table",
+#         action="store_true")
+#     parser.add_argument("-n", "--npbench", help="Get kernels from npbench",
+#         action="store_true")
+#     parser.add_argument("-p", "--path", help="Name of the sdfg file (single experiment) or of the folder containing sdfgs",
+#         default = "sources/test.sdfg")#"polybench")
+#      #   default = "polybench")#"polybench")
+#         # default = "polybench/correlation/correlation_dace.py")
+#     #"polybench_optimized")#"nn")#"sample-sdfgs/sources/conv-param.sdfg")
 
 
-    # command line arguments
-    args = parser.parse_args()
-    params.remoteMatlab = args.matlab
-    params.WDanalysis = args.workDepth
-    params.IOanalysis = args.IO
-    params.latex = args.latex
-    params.suiteName = args.path
-    params.allInjective = args.injective
-    params.npbench = args.npbench
+#     # command line arguments
+#     args = parser.parse_args()
+#     params.remoteMatlab = args.matlab
+#     params.WDanalysis = args.workDepth
+#     params.IOanalysis = args.IO
+#     params.latex = args.latex
+#     params.suiteName = args.path
+#     params.allInjective = args.injective
+#     params.npbench = args.npbench
     
-    # screw it, we overwrite it using the parameters specified on top of utils.py
-    params.remoteMatlab = use_remote_matlab_server
-    params.npbench = (chosen_setup == "npbench")
-    if chosen_setup == "old_tals_sdfgs":        
-        params.suiteName = "polybench"
-    if chosen_setup == "c2dace":        
-        params.suiteName = "polybench_optimized" 
-    if chosen_setup == "npbench":        
-        params.suiteName = "polybench" 
-    if chosen_setup == "other":        
-        params.suiteName = sdfg_path
-    if chosen_setup == "einsum_string":        
-        params.suiteName = "einsum"
-        params.einsum_strings = [einsum_string]
-    if chosen_setup == "einsum_strings_from_file":        
-        params.suiteName = "einsum"
-        with open("sample-sdfgs/tensors/sample_einsums.txt") as file:
-            params.einsum_strings = ["".join(line.split()) for line in file.readlines()]
+#     # screw it, we overwrite it using the parameters specified on top of utils.py
+#     params.remoteMatlab = use_remote_matlab_server
+#     params.npbench = (chosen_setup == "npbench")
+#     if chosen_setup == "old_tals_sdfgs":        
+#         params.suiteName = "polybench"
+#     if chosen_setup == "c2dace":        
+#         params.suiteName = "polybench_optimized" 
+#     if chosen_setup == "npbench":        
+#         params.suiteName = "polybench" 
+#     if chosen_setup == "other":        
+#         params.suiteName = sdfg_path
+#     if chosen_setup == "einsum_string":        
+#         params.suiteName = "einsum"
+#         params.einsum_strings = [einsum_string]
+#     if chosen_setup == "einsum_strings_from_file":        
+#         params.suiteName = "einsum"
+#         with open("sample-sdfgs/tensors/sample_einsums.txt") as file:
+#             params.einsum_strings = ["".join(line.split()) for line in file.readlines()]
     
 
-    if args.test:
-        solver = Solver()
-        [fromSolver, toSolver] = solver.start_solver(params.remoteMatlab)
-        TestSolver(solver)
-        solver.EndSolver()
-        sys.exit()
+#     if args.test:
+#         solver = Solver()
+#         [fromSolver, toSolver] = solver.start_solver(params.remoteMatlab)
+#         TestSolver(solver)
+#         solver.EndSolver()
+#         sys.exit()
     
-    return params
+#     return params
 
 
 import dace.frontend.python.parser
@@ -235,13 +207,8 @@ def sdfgs_from_npbench(path):
     fname = os.path.basename(path).split('.')[0]
     sys.path.append(os.path.dirname(path))
     mod = importlib.import_module(fname)
-
-
     progs = [getattr(mod, k) for k in dir(mod) if isinstance(getattr(mod, k), dace.frontend.python.parser.DaceProgram)]
-    params = SOAPParameters()
     kernels = []
-    solver = Solver()
-    params.solver = solver
     for prog in progs:
         try:
             sdfg = prog.to_sdfg()
@@ -581,7 +548,7 @@ polybenchRes["covariance"] =                   "M^2*N/sqrt(S)"
 polybenchRes["deriche"] =                      "3*H*W"
 polybenchRes["doitgen"] =                      "2*NP^2*NQ*NR/sqrt(S)"
 polybenchRes["durbin"] =                       "3*N^2/2"
-polybenchRes["fdtd2d"] =                       "2*sqrt(3)*NX*NY*T/sqrt(S)"
+polybenchRes["fdtd2d"] =                       "2*sqrt(3)*T*NX*NY/sqrt(S)"
 polybenchRes["floyd-warshall"] =                "2*N^3/sqrt(S)"
 polybenchRes["gemm"] =                         "2*NI*NJ*NK/sqrt(S)"
 polybenchRes["gemver"] =                       "N^2"
@@ -593,9 +560,9 @@ polybenchRes["jacobi2d"] =                     "4*N^2*T/sqrt(S)"
 polybenchRes["lu"] =                           "2*N^3/(3*sqrt(S))"
 polybenchRes["ludcmp"] =                       "2*N^3/(3*sqrt(S))"
 polybenchRes["mvt"] =                          "N^2"
-polybenchRes["nussinov"] =                     "N^2*(sqrt(S) + S*(N - 3)/3)/S^(3/2)"
+polybenchRes["nussinov"] =                     "N^3/(3*sqrt(S))" #"N^2*(sqrt(S) + S*(N - 3)/3)/S^(3/2)"
 polybenchRes["seidel2d"] =                     "4*N^2*T/sqrt(S)"
-polybenchRes["symm"] =                         "2*M^2*N/sqrt(S)"
+polybenchRes["symm"] =                         "sqrt(2)*M^2*N/sqrt(S)" #"2*M^2*N/sqrt(S)"
 polybenchRes["syr2k"] =                        "2*M*N^2/sqrt(S)"
 polybenchRes["syrk"] =                         "M*N^2/sqrt(S)"
 polybenchRes["trisolv"] =                      "N^2/2"

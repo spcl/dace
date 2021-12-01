@@ -13,7 +13,7 @@ def test_mttkrp_io():
     # get MTTKRP sdfg with auto-generated default tensor sizes  
     sdfg = sdfg_gen('ijk,jl,kl->il')
 
-    soap_result = perform_soap_analysis(sdfg)
+    soap_result = perform_soap_analysis(sdfg, generate_schedule=True)
     # test MTTKRP I/O bound
     assert d2sp(soap_result.Q) == sp.sympify('3*S0*S1*S2*S3/Ss**(2/3)')
 
@@ -30,4 +30,5 @@ def test_opt_einsum_example_io():
     assert d2sp(soap_result.Q) == sp.sympify('2*S0*S5*(S1*S3*S4 + S2*(S3*S4 + S6*(S4 + S7)))/sqrt(Ss)')
 
 if __name__ == "__main__":
+    test_mttkrp_io()
     test_opt_einsum_example_io()

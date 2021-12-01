@@ -773,7 +773,7 @@ required:
     #############################################
     # SOAP I/O analysis settings
 
-    soap_parameters:
+    soap:
         type: dict
         title: SOAP
         description: SOAP configuration parameters
@@ -943,6 +943,13 @@ required:
                             When a specified test suite contains multiple SDFGs to analyze,
                             (e.g., the entire Polybench), this list specifies the subset of kernels
                             to skip. If empty, all SDFGs are processed.
+
+                    einsum_string:
+                        type: str
+                        title: Einsum string for tensor contractions
+                        default: none
+                        description: >
+                            Einsum string to be parsed for the tensor contraction analysis
 
     #############################################
     # Python frontend settings

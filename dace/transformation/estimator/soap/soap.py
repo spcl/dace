@@ -10,7 +10,7 @@ from dace.subsets import Range
 # from dace.sdfg import Scope
 
 from dace.symbolic import pystr_to_symbolic
-from dace import subsets
+from dace import subsets, Config
 from dace.libraries.blas import MatMul, Transpose
 import sympy
 import sys
@@ -129,7 +129,7 @@ class SoapStatement:
 
 
 
-    def solve(self, solver, params: SOAPParameters):
+    def solve(self, solver : Solver) -> None:
         self.update_ranges()        
         self.calculate_dominator_size()  
         self.calculate_H_size()
@@ -142,7 +142,7 @@ class SoapStatement:
         if not self.Dom_size or self.Dom_size == 0 or not self.Dom_size.free_symbols:
             self.rhoOpts = oo
             self.Q = self.V / self.rhoOpts
-            if 'J' in str(self.rhoOpts):
+            if 'j' in str(self.rhoOpts):
                 a  = 1
             return
 
@@ -155,7 +155,7 @@ class SoapStatement:
                 self.rhoOpts = 1
             self.rhoOpts = sp.sympify(self.rhoOpts)
             self.Q = self.V / self.rhoOpts
-            if 'J' in str(self.rhoOpts):
+            if 'j' in str(self.rhoOpts):
                 a  = 1
             return
         if len(self.Dom_size.free_symbols) != len(self.H_size.free_symbols):
@@ -175,7 +175,7 @@ class SoapStatement:
             if 'tmp_index' in str(rho):
                 a = 1
             self.Q = self.V / self.rhoOpts
-            if 'J' in str(self.rhoOpts):
+            if 'j' in str(self.rhoOpts):
                 a  = 1
             return
                 
@@ -189,7 +189,7 @@ class SoapStatement:
         output = str(self.H_size).replace('_', 'x').replace('**', '^')
         # print("input: " + input + ",   output: " + output)
                 
-        self.parse_solution(solver.send_command(input + ";" + output),  params)
+        self.parse_solution(solver.send_command(input + ";" + output))
         if self.rhoOpts == 0:
             self.rhoOpts = oo
         if 'J' in str(self.rhoOpts) or 'I' in str(self.rhoOpts):
@@ -197,7 +197,7 @@ class SoapStatement:
         self.Q = self.V / self.rhoOpts
 
 
-    def parse_solution(self, input : str,  params : SOAPParameters):
+    def parse_solution(self, input : str):
         data = input
         data = data.replace('Inf', 'oo')
         data = data.replace('^', '**')
@@ -219,7 +219,7 @@ class SoapStatement:
             self.outer_tile = [sp.sympify(expr) for expr in data['outer_tile']]
             self.xpart_dims = copy.deepcopy(self.outer_tile)
             
-            self.create_schedule(params)            
+            self.create_schedule()            
         except:
             a = 1
             
@@ -227,7 +227,7 @@ class SoapStatement:
             a = 1
             
     
-    def create_schedule(self,  params : SOAPParameters):
+    def create_schedule(self):
         # Get the streaming dimension. If we do have reduction ranges, we pick
         # the direction of the largest tile dimension in it.
         # If we don't have any reduction, we pick just the largest tile dimension among all dimensions
@@ -252,7 +252,7 @@ class SoapStatement:
         self.inner_tile[self.variables.index(self.stream_dim)] = streaming
 
 
-    def init_decomposition(self, subs_list,  params : SOAPParameters):
+    def init_decomposition(self, subs_list):
         dimensions = {str(d[0]) : d[2] - d[1] + 1 for d in list(self.ranges.values())[0]}
         self.dimensions_ordered = [sp.sympify(str(dimensions[str(i)])).subs(subs_list) for i in self.variables]
         stream_dim_number = self.variables.index(self.stream_dim)
@@ -272,7 +272,7 @@ class SoapStatement:
         while(not loc_domain_found):
             loc_domain_found = True
             loc_domain_dims = [sp.floor(dim) for dim in xpart_opt_dims]
-            if params.chosen_par_setup == "memory_dependent":
+            if Config.get("soap", "decomposition", "chosen_par_setup") == "memory_dependent":
                 loc_domain_vol = sp.prod(self.variables).subs(self.stream_dim, X)
                 loc_domain_vol = loc_domain_vol.subs(zip(self.variables, loc_domain_dims))
                 X_size = solve(self.V - (p * loc_domain_vol), X)[0]            
@@ -295,13 +295,13 @@ class SoapStatement:
                     
                     # we do not need to reevaluate it for memory dependent bound, 
                     # as there is only one degree of freedom (in the streaming dimension).
-                    if params.chosen_par_setup == "memory_independent":                        
+                    if Config.get("soap", "decomposition", "chosen_par_setup") == "memory_independent":                        
                         loc_domain_found = False
         
         self.p_grid = [sp.ceiling((v / t).subs(self.param_vals))  for v,t in zip(self.dimensions_ordered, self.loc_domain_dims) ]
         
         if (sp.prod(self.p_grid) > comm_world):
-            if params.chosen_par_setup == "memory_dependent":
+            if Config.get("soap", "decomposition", "chosen_par_setup") == "memory_dependent":
                 if self.p_grid[stream_dim_number] == 1:
                     print("\n\nERROR!!!\nMemory-dependent bound. For S={}, the minimum number of ranks is p_min={}. \
                         \nHowever, only {} ranks are given\n\n".format(S_val, sp.prod(self.p_grid), comm_world))
@@ -409,7 +409,7 @@ class SoapStatement:
 
         # if we entered this branch, instead of taking one maximal scope, we would
         # add their sizes (e.g., instead of a single I*J*K, we would have I*J*K + I*J)
-        if len(max_rngs_state) < 3:
+        if len(max_rngs_state) < 0:
             self.H_size = sum(
                sp.prod(v[0] for v in Sranges) for 
                Sranges in self.ranges.values()
@@ -489,7 +489,7 @@ class SoapStatement:
         else:
             sym_reduction = False
         
-        sym_reduction = False
+        # sym_reduction = False
         
 
         # iterate over input accesses 
@@ -649,15 +649,25 @@ class SoapStatement:
                     self.match_iter_vars(in_S, concatenation_array, True)
                     not_consumed_prev_outputs.remove(concatenation_array)
 
-        if not pred or len(not_consumed_prev_outputs) > 0:
-            # merge ranges of two statements            
-            for in_state, in_ranges in in_S.ranges.items():
-                if in_state in self.ranges.keys():
-                    for in_rng in in_ranges:
-                        if all(in_rng[0] != rng[0] for rng in self.ranges[in_state]):
-                            self.ranges[in_state].append(in_rng)
-                else:
-                    self.ranges[in_state] = in_ranges
+
+        # if not pred or len(not_consumed_prev_outputs) > 0:
+        #     # merge ranges of two statements            
+        #     for in_state, in_ranges in in_S.ranges.items():
+        #         if in_state in self.ranges.keys():
+        #             for in_rng in in_ranges:
+        #                 if all(in_rng[0] != rng[0] for rng in self.ranges[in_state]):
+        #                     self.ranges[in_state].append(in_rng)
+        #         else:
+        #             self.ranges[in_state] = in_ranges
+
+        # merge ranges of two statements            
+        for in_state, in_ranges in in_S.ranges.items():
+            if in_state in self.ranges.keys():
+                for in_rng in in_ranges:
+                    if all(in_rng[0] != rng[0] for rng in self.ranges[in_state]):
+                        self.ranges[in_state].append(in_rng)
+            else:
+                self.ranges[in_state] = in_ranges
       
         self.name = ';'.join(list(OrderedSet(self.name.split(';')).union(OrderedSet(in_S.name.split(';')))))
         self.subgraph = self.subgraph.union(in_S.subgraph)
@@ -700,8 +710,7 @@ class SoapStatement:
 
 
     def add_edge_to_statement(self, memlet : dace.Memlet, 
-                ssa_dim : List[dace.symbol],  
-                params : SOAPParameters):
+                ssa_dim : List[dace.symbol]):
         if memlet.subset is None or memlet.is_empty():
             return
 
@@ -717,7 +726,7 @@ class SoapStatement:
             existingPhi = list(self.phis[arrayName])[0].split('*')
             baseAccessVec = baseAccess.split('*')
             if baseAccessVec != existingPhi:
-                if params.allInjective:
+                if Config.get("soap", "analysis", "all_injective"):
                     warn('Assuming that the access ' + arrayName + str(existingPhi) \
                         + " never overlaps with "  + arrayName + str(baseAccessVec) + "\n")
                 else:
@@ -1017,7 +1026,7 @@ class SoapStatement:
         return [rhoOpts, varsOpt, Xopts]
     
     
-    def swap_iter_vars(self, swaplist, inv_swaplist, solver, params : SOAPParameters):
+    def swap_iter_vars(self, swaplist, inv_swaplist, solver):
         # used for a loop swap transformation, e.g., interchanging i<->j
         
         # swap inputs (phis)
@@ -1042,7 +1051,7 @@ class SoapStatement:
             self.ranges[st] = new_rngs
         
         # recalculate
-        self.solve(solver, params)
+        self.solve(solver)
 
     # --------------------------------------------
     # ---------- various helper functions --------

@@ -84,10 +84,12 @@ class SDG:
     node_relabeler : Dict = field(default_factory=dict)
     array_version_counter : Dict = None
 
-    def __post_init__(self, sdfg : dace.SDFG = None):
+    def __post_init__(self):
         self.array_version_counter = defaultdict(int)
+        if self.graph is None:
+            self.graph = nx.MultiDiGraph()
         if self.sdfg is not None:
-            self.from_SDFG(sdfg)
+            self.from_SDFG(self.sdfg)
 
     @property
     def nodes(self):
@@ -133,7 +135,7 @@ class SDG:
 
 
     
-    def from_SDFG(self, sdfg : dace.SDFG, params : SOAPParameters) -> None:     
+    def from_SDFG(self, sdfg : dace.SDFG) -> None:     
         """
         Recursively builds the SDG from the input SDFG.
         The recursive calls are one of the following:
@@ -147,10 +149,10 @@ class SDG:
         sdfg.save("tmp.sdfg", hash=False)        
         # get all output arrays within a given STATE (for SSA purposes)
         sdg_scope.output_arrays = self._get_output_arrays_sdfg(sdfg, sdg_scope)
-        self._from_SDFG_sdfg(sdfg, sdg_scope, params)
+        self._from_SDFG_sdfg(sdfg, sdg_scope)
 
 
-    def _from_SDFG_sdfg(self, sdfg: dace.SDFG, sdg_scope : SdgScope, params : SOAPParameters) -> None:
+    def _from_SDFG_sdfg(self, sdfg: dace.SDFG, sdg_scope : SdgScope) -> None:
         control_tree = structured_control_flow_tree(sdfg, lambda x: None)       
         # TODO: topological sort?
         for control_node in control_tree.children:
@@ -158,7 +160,7 @@ class SDG:
                 state = control_node.state
                 inner_scope = copy.deepcopy(sdg_scope)
                 inner_scope.sdfg_path.append(state)
-                sdg_scope = self._from_SDFG_scope(state, None, inner_scope, params)
+                sdg_scope = self._from_SDFG_scope(state, None, inner_scope)
             
             elif isinstance(control_node, control_flow.ForScope):
                 inner_scope = copy.deepcopy(sdg_scope)
@@ -172,14 +174,14 @@ class SDG:
                 inner_scope.ranges = {**sdg_scope.ranges, **loop_ranges}
                 inner_scope.loop_ranges = {**sdg_scope.loop_ranges, **loop_ranges}
                 inner_scope.innermost_ranges = loop_ranges
-                self._from_SDFG_loop(control_node, inner_scope, params)
+                self._from_SDFG_loop(control_node, inner_scope)
                 
             elif isinstance(control_node, control_flow.IfScope):
                 a = 1
                 
 
     def _from_SDFG_loop(self, loop : control_flow.ForScope, 
-                sdg_scope: SdgScope, params : SOAPParameters) -> None:
+                sdg_scope: SdgScope) -> None:
         # TODO: loop iterations are already propagated into the nested scopes?
         # num_executions = loop.guard.executions
         # sdg_scope.SOAP_executions *= num_executions
@@ -190,7 +192,7 @@ class SDG:
                 state = control_node.state
                 inner_scope = copy.deepcopy(sdg_scope)
                 inner_scope.sdfg_path.append(state)              
-                sdg_scope = self._from_SDFG_scope(state, None, inner_scope, params)
+                sdg_scope = self._from_SDFG_scope(state, None, inner_scope)
             
             elif isinstance(control_node, control_flow.ForScope):
                 inner_scope = copy.deepcopy(sdg_scope)
@@ -203,13 +205,12 @@ class SDG:
                 inner_scope.loop_ranges = {**sdg_scope.loop_ranges, **loop_ranges}
                 inner_scope.ranges = {**sdg_scope.ranges, **loop_ranges}
                 inner_scope.innermost_ranges = loop_ranges
-                self._from_SDFG_loop(control_node, inner_scope, params)
+                self._from_SDFG_loop(control_node, inner_scope)
 
 
     def _from_SDFG_scope(self, state: dace.SDFGState, 
                     scope: Optional[dace.nodes.EntryNode], 
-                    sdg_scope : SdgScope, 
-                    params : SOAPParameters) -> SdgScope:
+                    sdg_scope : SdgScope) -> SdgScope:
         num_executions = state.executions
         sdg_scope.SOAP_executions *= num_executions
         sdg_scope.SDFG_arrays = {**sdg_scope.SDFG_arrays, **state.parent.arrays}
@@ -219,7 +220,7 @@ class SDG:
         for node in snodes:
             if isinstance(node, (dace.nodes.Tasklet, dace.nodes.LibraryNode)):
                 inner_scope = copy.deepcopy(sdg_scope)
-                self._from_SDFG_node(node, state, inner_scope, params)
+                self._from_SDFG_node(node, state, inner_scope)
             elif isinstance(node, (dace.nodes.AccessNode)):
                 if node.label == "__tmp2":
                     a = 1
@@ -261,10 +262,10 @@ class SDG:
                 inner_scope.innermost_ranges = map_ranges
                 num_executions = state.executions
                 inner_scope.SOAP_executions = num_executions
-                self._from_SDFG_scope(state, node, inner_scope, params)
+                self._from_SDFG_scope(state, node, inner_scope)
             elif isinstance(node, dace.nodes.NestedSDFG):
                 inner_scope = self._add_ranges_and_mappings(state, sdg_scope, node)
-                self._from_SDFG_sdfg(node.sdfg, inner_scope, params)
+                self._from_SDFG_sdfg(node.sdfg, inner_scope)
                 
         # return updated sdg_scope (e.g., sdfg_mapping updated by transients)
         return sdg_scope
@@ -273,9 +274,8 @@ class SDG:
 
     # the core SDG creation function. The elementary building block for SDG is the SDFG's tasklet
     def _from_SDFG_node(self, node : dace.nodes, 
-                state: dace.SDFGState, sdg_scope : SdgScope, 
-                params : SOAPParameters) -> None:  
-        if node.label == "compute_sum":
+                state: dace.SDFGState, sdg_scope : SdgScope) -> None:  
+        if node.label == 'comp_t2':
             a = 1
                   
         if not state.out_edges(node) or not state.in_edges(node):
@@ -340,7 +340,7 @@ class SDG:
                     SSA_dim = SDG._get_SSA_dim(outer_memlet, sdg_scope)
                 
             # add this input access to the elementary SOAP statement
-            S.add_edge_to_statement(outer_memlet, SSA_dim, params)            
+            S.add_edge_to_statement(outer_memlet, SSA_dim)            
             
             
         
@@ -364,15 +364,15 @@ class SDG:
 
         if len(S.phis) == 0:
             return
-        if params.IOanalysis:
+        if Config.get("soap", "analysis", "io_analysis") :
             S.loop_ranges = sdg_scope.loop_ranges
             S.map_ranges = sdg_scope.map_ranges
-            S.solve(params.solver, params)
+            S.solve(self.solver)
             if S.Dom_size == 0 or len(S.phis) == 0 or S.Q == 0:
                 return
 
         # perform WD analysis
-        if params.WDanalysis:
+        if Config.get("soap", "analysis", "wd_analysis") :
             S.reductionRanges = node.reductionRanges
             S.update_ranges()        
             S.calculate_dominator_size()  
@@ -705,10 +705,12 @@ class SDG:
         """
         Returns an outermost memlet which can be traced from the given inner_memlet
         """
-        if inner_memlet.data in sdg_scope.sdfg_mapping:
-            outer_memlet = copy.deepcopy(sdg_scope.sdfg_mapping[inner_memlet.data])
+        new_memlet = copy.deepcopy(inner_memlet)
+
+        if new_memlet.data in sdg_scope.sdfg_mapping:
+            outer_memlet = copy.deepcopy(sdg_scope.sdfg_mapping[new_memlet.data])
             # TODO: new
-            if sdg_scope.SDFG_arrays[inner_memlet.data].transient:
+            if sdg_scope.SDFG_arrays[new_memlet.data].transient:
                 return outer_memlet
             
             # a controversial trick for triangular dimensions. If the outer memlet ranges
@@ -720,34 +722,54 @@ class SDG:
             outer_memlet.subset.ranges = [(0,y,z) if (x != y) else (x,y,z)  
                                           for (x,y,z) in outer_memlet.subset.ranges]
             if output:
-                outer_memlet.subset = outer_memlet.subset.compose(inner_memlet.dst_subset)
+                outer_memlet.subset = outer_memlet.subset.compose(new_memlet.dst_subset)
             else:
                 try:
-                    outer_memlet.subset = outer_memlet.subset.compose(inner_memlet.src_subset)
+                    outer_memlet.subset = outer_memlet.subset.compose(new_memlet.src_subset)
                 except:
-                    outer_memlet.subset = outer_memlet.dst_subset.compose(inner_memlet.src_subset)
+                    outer_memlet.subset = outer_memlet.dst_subset.compose(new_memlet.src_subset)
         else:
-            outer_memlet = inner_memlet            
+            outer_memlet = new_memlet  
+
+        if outer_memlet.is_empty():
+            return None
+
+        # if memlet is declared within a map scope (e.g., we have a "sum" memlet inside an outer map),
+        # we add the ranges of the outer map to the memlet.
+        # To filter which are the "outer maps", we need to compare outer_memlet._state with 
+        # the sdg_scope.sdfg_path, and take all the nodes in the path preceeding it.
+        # E.g.: doitgen in polybench kernels. sum[p] is declared inside an outer map[r,q].
+        # The resulting memlet will be sum[p,r,q]      
+        outer_maps = [map_node for map_node in 
+                    sdg_scope.sdfg_path[:sdg_scope.sdfg_path.path.index(outer_memlet._state)] 
+                    if isinstance(map_node, MapEntry)]
+        #if new_memlet != outer_memlet:
+        for outer_map in outer_maps:
+            map_ranges = {k: v for k, v in zip(outer_map.params, outer_map.range.ranges) if isinstance(k, str)}
+            outer_memlet.subset.ranges += rng_to_subset(map_ranges)
             
-        if outer_memlet.subset is None or \
-                        len(outer_memlet.subset.ranges) == 0 or \
-                        len(outer_memlet.subset.ranges[0][0].free_symbols) == 0:
+        # if outer_memlet.subset is None or \
+        #                 len(outer_memlet.subset.ranges) == 0 or \
+        #                 len(outer_memlet.subset.ranges[0][0].free_symbols) == 0:
                             
-            # TODO: New. We now always add these ranges. Before, we filtered out suspicious memlets            
-            # I really don't like the following part... Looks hacky
-            if outer_memlet.data in sdg_scope.SDFG_arrays.keys() and  \
-                        sdg_scope.SDFG_arrays[outer_memlet.data].transient:  
-                if len(sdg_scope.map_ranges) == 0:
-                    outer_memlet.subset.ranges = rng_to_subset(sdg_scope.loop_ranges)
-                else:
-                    outer_memlet.subset.ranges = rng_to_subset(sdg_scope.map_ranges)
-            elif outer_memlet.dynamic:
-                outer_memlet.subset.ranges = rng_to_subset(sdg_scope.loop_ranges)
-            else:  
-                warn('Unable to parse memlet ' + str(outer_memlet) 
-                    + " in state "  + str(sdg_scope.sdfg_path.path[-1]) + "\n")
-                # I SUPER dislike this
-                outer_memlet = []                
+        #     # TODO: New. We now always add these ranges. Before, we filtered out suspicious memlets            
+        #     # I really don't like the following part... Looks hacky
+        #     if outer_memlet.data in sdg_scope.SDFG_arrays.keys() and  \
+        #                 sdg_scope.SDFG_arrays[outer_memlet.data].transient:  
+        #         if len(sdg_scope.map_ranges) == 0:
+        #             outer_memlet.subset.ranges = rng_to_subset(sdg_scope.loop_ranges)
+        #         else:
+        #             outer_memlet.subset.ranges = rng_to_subset(sdg_scope.map_ranges)
+        #     elif outer_memlet.dynamic:
+        #         outer_memlet.subset.ranges = rng_to_subset(sdg_scope.loop_ranges)
+        #     else:  
+        #         warn('Unable to parse memlet ' + str(outer_memlet) 
+        #             + " in state "  + str(sdg_scope.sdfg_path.path[-1]) + "\n")
+        #         # I SUPER dislike this
+        #         return None           
+        #     if len(outer_memlet.subset.ranges) > 0 and \
+        #         len(sp.sympify(outer_memlet.subset.ranges[0][0]).free_symbols) > 0:
+        #         a = 1
             
         return outer_memlet
     
@@ -806,7 +828,7 @@ class SDG:
     # SDG PARTITIONING
     # ------------------------------------
     def perform_loop_swapping(self, node : str, swaplist : Dict[str, str], 
-                              visited: Set[str], params : SOAPParameters,
+                              visited: Set[str],
                               first : bool) -> bool:
         """
         Propagates loop variables swapping. E.g., if we have a transient, whose 
@@ -829,7 +851,7 @@ class SDG:
                 if node == "__return_1":
                     self.plot_SDG()
                     a = 1
-                statement.swap_iter_vars(swaplist, inv_swaplist, self.params.solver, params)
+                statement.swap_iter_vars(swaplist, inv_swaplist, self.solver)
                 
                 # if '__tmp7' in self.graph.nodes['__tmp8_1']['st'].phis.keys() and \
                 #         list(self.graph.nodes['__tmp8_1']['st'].phis['__tmp8'].keys())[0] == list(self.graph.nodes['__tmp8_1']['st'].phis['__tmp7'].keys())[0]:
@@ -850,8 +872,8 @@ class SDG:
                 e[2]["label"] = "[" + ",".join(e[2]["base_access"].split('*')) + "]" + \
                                 e[2]["label"].split(']')[1]
             
-            valid_swapping = valid_swapping and (self.perform_loop_swapping(in_node, swaplist, visited, params, False)
-                and self.perform_loop_swapping(out_node, swaplist, visited, params, False))
+            valid_swapping = valid_swapping and (self.perform_loop_swapping(in_node, swaplist, visited, False)
+                and self.perform_loop_swapping(out_node, swaplist, visited, False))
         
         return valid_swapping
                                 
@@ -864,7 +886,7 @@ class SDG:
     
     
     # --- preprocessing ---
-    def remove_transient_arrays(self, params : SOAPParameters) -> None:
+    def remove_transient_arrays(self) -> None:
         """
         removes transient nodes in the sdfg if there is only a single
         in-edge and single out-edge
@@ -909,7 +931,7 @@ class SDG:
                             visited_nodes.remove(node)
                             if node == "fc2_1":
                                 a = 1
-                            if not self.perform_loop_swapping(node, swaplist, visited_nodes, params, first = True):
+                            if not self.perform_loop_swapping(node, swaplist, visited_nodes, first = True):
                                 invalid_swapping = True                            
                             self.plot_SDG()
                             
@@ -1064,14 +1086,14 @@ class SDG:
 
 
     # structure-aware partitioning
-    def calculate_IO_of_SDG(self, params : SOAPParameters) -> Tuple[sp.core.Expr, list[SoapStatement]]:
+    def calculate_IO_of_SDG(self) -> Tuple[sp.core.Expr, list[SoapStatement]]:
         """
         Exhaustively creates all possible subgraphs (using recursive_SDG_subgraphing),
         and then chooses the best (with the lowest I/O cost Q) SDG partition (using compare_st).
         """
         # clean up the SDG.
         # 1. remove intermediate transients:
-        self.remove_transient_arrays(params)
+        self.remove_transient_arrays()
         # 2. remove output transients:
         sinks = [u for u, deg in self.graph.out_degree() if not deg]
         final_sinks = [u for u in sinks if not self.graph.nodes[u]['transient']]
@@ -1103,7 +1125,7 @@ class SDG:
             checked_subgraphs = checked_subgraphs.union(set([frozenset(sg.subgraph) for sg in sdg_subgraphs_statements]))
 
             for subgraph_st in sdg_subgraphs_statements:    
-                subgraph_st.solve(params.solver, params)     
+                subgraph_st.solve(self.solver)     
                 if subgraph_st.parent_subgraph:
                     [better_subgraph, Q_val] = compare_st(subgraph_st, subgraph_st.parent_subgraph)
                     subgraph_st.rhoOpts = better_subgraph.rhoOpts
@@ -1121,7 +1143,7 @@ class SDG:
 
 
     # structure-aware WD analysis
-    def CalculateWDofSDG(self, params : SOAPParameters) -> Tuple[sp.Expr, sp.Expr]:
+    def CalculateWDofSDG(self) -> Tuple[sp.Expr, sp.Expr]:
         # set edge weights to match destination node weights. We need numerical values
         # potentialParams = ['n']                
         potentialParams = ['n', 'm', 'w', 'h', 'N', 'M', 'W', 'H', 'NI', 'NJ', 'NK', 'NP', 'NQ', 'NR', 'step']  

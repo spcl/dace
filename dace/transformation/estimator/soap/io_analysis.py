@@ -3,11 +3,10 @@ from typing import Dict, List, Union
 import sympy as sp
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.estimator.soap.sdg import SDG
-from dace.transformation.estimator.soap.utils import parse_params, SOAPParameters
 from dace.transformation.estimator.soap.solver import Solver
 from dace.transformation.estimator.soap.einsum_to_sdfg import sdfg_gen
 from dataclasses import dataclass, field
-from dace import SDFG
+from dace import SDFG, Config
 import networkx as nx
 
 @dataclass
@@ -72,7 +71,6 @@ def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView],
 
     Input:
     sdfg (SDFG): sdfg to be analyzed
-    params [Optional] (global_parameters): User-defined SOAP parameters. Default values are defined in utils
     generate_schedule [Optional] (bool): Whether the parallel decomposition should be evaluated for each subgraph.
                                          The decomposition parameters are specified in params.param_values.
 
@@ -81,18 +79,15 @@ def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView],
     such as I/O lower bound (Q), computational intensity (rho), symbolic directed graph (SDG),
     and the list of subgraphs (subgraphs) with their optimal tilings and kernel merging
     """
-    if not params:
-        params = parse_params()
-        solver = Solver(cached_only = params.only_cached, caching_solutions= params.caching_solver_solutions)
-        solver.start_solver(params.remoteMatlab)
-        solver.set_timeout(300)
-        params.solver = solver
+    solver = Solver()
+    solver.start_solver()
+    solver.set_timeout(300)
         
-    sdg = SDG(sdfg, params)
+    sdg = SDG(sdfg, solver)
     # check if the created SDG is correct
     assert(nx.number_weakly_connected_components(sdg.graph) == 1)
-    Q, subgraphs = sdg.calculate_IO_of_SDG(params)
-    params.solver.end_solver()
+    Q, subgraphs = sdg.calculate_IO_of_SDG()
+    solver.end_solver()
 
     subgraphs_res = []
     for subgr in subgraphs:
@@ -100,17 +95,20 @@ def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView],
                     variables = subgr.variables, inner_tile = subgr.inner_tile, 
                     outer_tile = subgr.outer_tile, input_arrays = subgr.phis)                    
         if generate_schedule:
-            subgr.init_decomposition(params.decomposition_params,  params)   
+            decomp_list = Config.get("soap", "decomposition", "decomposition_params")
+            decomp_params = list(zip(decomp_list[::2],decomp_list[1::2]))
+            subgr.init_decomposition(decomp_params)
             io_res_sg.loc_domain_dims = subgr.loc_domain_dims
             io_res_sg.p_grid = subgr.p_grid
-            io_res_sg.dimensions_ordered = subgr.dimensions_ordered        
+            io_res_sg.dimensions_ordered = subgr.dimensions_ordered       
+            io_res_sg.get_data_decomposition = subgr.get_data_decomposition 
         subgraphs_res.append(io_res_sg)
     
     return(IOAnalysis(SDFG.__name__, Q, sdg, subgraphs_res))
 
 
 
-def perform_soap_analysis_einsum(einsum_string : str, params: SOAPParameters = [], 
+def perform_soap_analysis_einsum(einsum_string : str,
             generate_schedule : bool = True) -> IOAnalysis:
     """
     Specialization of the main interface dedicated for the einsum tensor operations.
@@ -123,16 +121,14 @@ def perform_soap_analysis_einsum(einsum_string : str, params: SOAPParameters = [
     such as I/O lower bound (Q), computational intensity (rho), symbolic directed graph (SDG),
     and the list of subgraphs (subgraphs) with their optimal tilings and kernel merging
     """
-    if params == []:
-        params = parse_params()
-        solver = Solver(cached_only = params.only_cached, caching_solutions= params.caching_solver_solutions)
-        solver.start_solver(params.remoteMatlab)
-        solver.set_timeout(300)
-        params.solver = solver
+    solver = Solver()
+    solver.start_solver()
+    solver.set_timeout(300)
 
     sdfg = sdfg_gen(einsum_string)
-    sdg = SDG(sdfg, params)
-    Q, subgraphs= sdg.calculate_IO_of_SDG(params)
+    sdg = SDG(sdfg, solver)
+    Q, subgraphs= sdg.calculate_IO_of_SDG()
+    solver.end_solver()
 
     subgraphs_res = []
     for subgr in subgraphs:
@@ -140,7 +136,9 @@ def perform_soap_analysis_einsum(einsum_string : str, params: SOAPParameters = [
                     variables = subgr.variables, inner_tile = subgr.inner_tile, 
                     outer_tile = subgr.outer_tile, input_arrays = subgr.phis)                    
         if generate_schedule:
-            subgr.init_decomposition(params.decomposition_params,  params)
+            decomp_list = Config.get("soap", "decomposition", "decomposition_params")
+            decomp_params = list(zip(decomp_list[::2],decomp_list[1::2]))
+            subgr.init_decomposition(decomp_params)
         
         io_res_sg.loc_domain_dims = subgr.loc_domain_dims
         io_res_sg.p_grid = subgr.p_grid
