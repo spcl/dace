@@ -86,6 +86,14 @@ def test_jacobi2d():
     sdfg.apply_transformations_repeated(SimpleTaskletFusion)
     num = sdfg.apply_transformations_repeated(StencilDetection)
     assert (num == 2)
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.LibraryNode):
+            node.implementation = 'intel_fpga'
+    sdfg.apply_fpga_transformations()
+    # from dace.transformation.auto import auto_optimize as opt
+    # opt.set_fast_implementations(sdfg, dace.dtypes.DeviceType.FPGA)
+    sdfg.expand_library_nodes()
+    sdfg.save('test.sdfg')
     sdfg(TMAX=100, A=A, B=B)
 
     assert (np.allclose(A, refA))
@@ -417,10 +425,10 @@ def test_conv2d():
 if __name__ == '__main__':
     # test_stencil1d()
     # test_jacobi1d()
-    # test_jacobi2d()
+    test_jacobi2d()
     # test_jacobi1d_with_scalar()
     # test_CFD_build_up_b()
     # test_CFD_pressure_poisson()
     # test_hdiff()
-    test_vadv()
+    # test_vadv()
     # test_conv2d()
