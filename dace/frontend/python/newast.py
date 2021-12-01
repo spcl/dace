@@ -3183,7 +3183,7 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 simple_type = dtype
             if not isinstance(simple_type, dtypes.typeclass):
-                raise
+                raise TypeError
         except:
             dtype = None
             warnings.warn('typeclass {} is not supported'.format(type_name))
