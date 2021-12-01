@@ -3711,10 +3711,6 @@ class ProgramVisitor(ExtNodeVisitor):
             # Handle nested closure
             closure_arrays = getattr(fcopy, '__sdfg_closure__',
                                      lambda *args: {})()
-            if hasattr(fcopy, '__sdfg_closure__'):
-                closure_arrays_only = fcopy.__sdfg_closure__(arrays_only=True)
-            else:
-                closure_arrays_only = closure_arrays
             for aname, arr in closure_arrays.items():
                 if aname in sdfg.symbols:
                     outer_name = self.sdfg.find_new_symbol(aname)
@@ -3725,16 +3721,15 @@ class ProgramVisitor(ExtNodeVisitor):
                         arr, sdfg.symbols[aname])
                     continue
 
-                if aname in closure_arrays_only:
-                    desc = data.create_datadescriptor(arr)
-                    outer_name = self.sdfg.add_datadesc(aname,
-                                                        desc,
-                                                        find_new_name=True)
-                    if not desc.transient:
-                        self.nested_closure_arrays[outer_name] = (arr, desc)
-                        # Add closure arrays as function arguments
-                        args.append((aname, outer_name))
-                        required_args.append(aname)
+                desc = data.create_datadescriptor(arr)
+                outer_name = self.sdfg.add_datadesc(aname,
+                                                    desc,
+                                                    find_new_name=True)
+                if not desc.transient:
+                    self.nested_closure_arrays[outer_name] = (arr, desc)
+                    # Add closure arrays as function arguments
+                    args.append((aname, outer_name))
+                    required_args.append(aname)
         else:
             raise DaceSyntaxError(
                 self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
