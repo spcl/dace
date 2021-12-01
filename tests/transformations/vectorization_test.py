@@ -96,3 +96,17 @@ if __name__ == '__main__':
     test_vectorization_uneven()
     test_vectorization_postamble()
     test_propagate_parent()
+
+    # TODO: Pre Ampel test
+    # More tests
+    # Tests with subgraph
+    # tests stride correctness iw stride != 1
+    # Streams
+    # vector / pointer
+    # propagate parent
+    #  Not in targets
+    # Resursive
+    #  Reduction
+    # ...
+    #  Strided map vs. non strides map
+    # 

@@ -73,7 +73,7 @@ class Vectorization(transformation.Transformation):
         # Check if supported!
         supported_targets = [
             dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device,
-            dtypes.ScheduleType.SVE_Map
+            dtypes.ScheduleType.SVE_Map, dtypes.ScheduleType.CPU_Multicore
         ]
 
         if self.target not in supported_targets:
@@ -89,7 +89,6 @@ class Vectorization(transformation.Transformation):
         # Prevent infinite repeats
         if current_map.schedule == dtypes.ScheduleType.SVE_Map:
             return False
-
 
         ########################
         # Ensure only Tasklets and AccessNodes are within the map
@@ -209,199 +208,87 @@ class Vectorization(transformation.Transformation):
 
     def apply(self, sdfg: SDFG):
 
-        if self.target == dtypes.ScheduleType.Default:
+        state = sdfg.node(self.state_id)
+        map_entry = self._map_entry(sdfg)
+        current_map = map_entry.map
 
-            graph = sdfg.nodes()[self.state_id]
-            map_entry = graph.nodes()[self.subgraph[Vectorization._map_entry]]
-            tasklet: nodes.Tasklet = graph.successors(map_entry)[0]
-            param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
+        # Determine new range for vectorized map
+        vector_size = self.vector_len
+        dim_from, dim_to, dim_skip = map_entry.map.range[-1]
+        if self.strided_map:
+            new_range = [dim_from, dim_to - vector_size + 1, vector_size]
+        else:
+            new_range = [
+                dim_from // vector_size, ((dim_to + 1) // vector_size) - 1,
+                dim_skip
+            ]
 
-            # Create new vector size.
-            vector_size = self.vector_len
-            dim_from, dim_to, dim_skip = map_entry.map.range[-1]
-
-            # Determine whether to create preamble or postamble maps
-            if self.preamble is not None:
-                create_preamble = self.preamble
+        # Determine whether to create preamble or postamble maps
+        if self.preamble is not None:
+            create_preamble = self.preamble
+        else:
+            create_preamble = not ((dim_from % vector_size == 0) == True
+                                   or dim_from == 0)
+        if self.postamble is not None:
+            create_postamble = self.postamble
+        else:
+            if isinstance(dim_to, symbolic.SymExpr):
+                create_postamble = (((dim_to.approx + 1) %
+                                     vector_size == 0) == False)
             else:
-                create_preamble = not ((dim_from % vector_size == 0) == True
-                                       or dim_from == 0)
-            if self.postamble is not None:
-                create_postamble = self.postamble
-            else:
-                if isinstance(dim_to, symbolic.SymExpr):
-                    create_postamble = (((dim_to.approx + 1) %
-                                         vector_size == 0) == False)
-                else:
-                    create_postamble = (((dim_to + 1) %
-                                         vector_size == 0) == False)
+                create_postamble = (((dim_to + 1) % vector_size == 0) == False)
 
-            # Determine new range for vectorized map
-            if self.strided_map:
-                new_range = [dim_from, dim_to - vector_size + 1, vector_size]
-            else:
-                new_range = [
-                    dim_from // vector_size, ((dim_to + 1) // vector_size) - 1,
-                    dim_skip
-                ]
+        graph = sdfg.nodes()[self.state_id]
 
-            # Create preamble non-vectorized map (replacing the original map)
-            if create_preamble:
-                old_scope = graph.scope_subgraph(map_entry, True, True)
-                new_scope: ScopeSubgraphView = replicate_scope(
-                    sdfg, graph, old_scope)
-                new_begin = dim_from + (vector_size - (dim_from % vector_size))
-                map_entry.map.range[-1] = (dim_from, new_begin - 1, dim_skip)
-                # Replace map_entry with the replicated scope (so that the preamble
-                # will usually come first in topological sort)
-                map_entry = new_scope.entry
-                tasklet = new_scope.nodes()[old_scope.nodes().index(tasklet)]
-                new_range[0] = new_begin
+        # Create preamble non-vectorized map (replacing the original map)
+        if create_preamble:
+            old_scope = graph.scope_subgraph(map_entry, True, True)
+            new_scope: ScopeSubgraphView = replicate_scope(
+                sdfg, graph, old_scope)
+            new_begin = dim_from + (vector_size - (dim_from % vector_size))
+            map_entry.map.range[-1] = (dim_from, new_begin - 1, dim_skip)
+            # Replace map_entry with the replicated scope (so that the preamble
+            # will usually come first in topological sort)
+            map_entry = new_scope.entry
+            # tasklet = new_scope.nodes()[old_scope.nodes().index(tasklet)]
+            new_range[0] = new_begin
 
-            # Create postamble non-vectorized map
-            if create_postamble:
-                new_scope: ScopeSubgraphView = replicate_scope(
-                    sdfg, graph, graph.scope_subgraph(map_entry, True, True))
-                dim_to_ex = dim_to + 1
-                new_scope.entry.map.range[-1] = (dim_to_ex -
-                                                 (dim_to_ex % vector_size),
-                                                 dim_to, dim_skip)
+        # Create postamble non-vectorized map
+        if create_postamble:
+            new_scope: ScopeSubgraphView = replicate_scope(
+                sdfg, graph, graph.scope_subgraph(map_entry, True, True))
+            dim_to_ex = dim_to + 1
+            new_scope.entry.map.range[-1] = (dim_to_ex -
+                                             (dim_to_ex % vector_size), dim_to,
+                                             dim_skip)
 
+
+        if self.target != dtypes.ScheduleType.SVE_Map:
             # Change the step of the inner-most dimension.
             map_entry.map.range[-1] = tuple(new_range)
 
-            # Vectorize connectors adjacent to the tasklet.
-            for edge in graph.all_edges(tasklet):
-                connectors = (tasklet.in_connectors if edge.dst == tasklet else
-                              tasklet.out_connectors)
-                conn = edge.dst_conn if edge.dst == tasklet else edge.src_conn
-
-                if edge.data.data is None:  # Empty memlets
-                    continue
-                desc = sdfg.arrays[edge.data.data]
-                contigidx = desc.strides.index(1)
-
-                newlist = []
-
-                lastindex = edge.data.subset[contigidx]
-                if isinstance(lastindex, tuple):
-                    newlist = [(rb, re, rs) for rb, re, rs in edge.data.subset]
-                    symbols = set()
-                    for indd in lastindex:
-                        symbols.update(
-                            symbolic.pystr_to_symbolic(indd).free_symbols)
-                else:
-                    newlist = [(rb, rb, 1) for rb in edge.data.subset]
-                    symbols = symbolic.pystr_to_symbolic(lastindex).free_symbols
-
-                oldtype = connectors[conn]
-                if oldtype is None or oldtype.type is None:
-                    oldtype = desc.dtype
-
-                # Vector to scalar WCR edge: change connector and continue
-                lastedge = graph.memlet_path(edge)[-1]
-                if (lastedge.data.subset.num_elements() == 1
-                        and edge.data.wcr is not None):
-                    connectors[conn] = dtypes.vector(oldtype, vector_size)
-                    continue
-
-                if str(param) not in map(str, symbols):
-                    continue
-
-                # Vectorize connector, if not already vectorized
-                if isinstance(oldtype, dtypes.vector):
-                    continue
-
-                connectors[conn] = dtypes.vector(oldtype, vector_size)
-
-                # Modify memlet subset to match vector length
-                if self.strided_map:
-                    rb = newlist[contigidx][0]
-                    if self.propagate_parent:
-                        newlist[contigidx] = (rb / self.vector_len,
-                                              rb / self.vector_len, 1)
-                    else:
-                        newlist[contigidx] = (rb, rb + self.vector_len - 1, 1)
-                else:
-                    rb = newlist[contigidx][0]
-                    if self.propagate_parent:
-                        newlist[contigidx] = (rb, rb, 1)
-                    else:
-                        newlist[contigidx] = (self.vector_len * rb,
-                                              self.vector_len * rb +
-                                              self.vector_len - 1, 1)
-                edge.data.subset = subsets.Range(newlist)
-                edge.data.volume = vector_size
-
-            # Vector length propagation using data descriptors, recursive traversal
-            # outwards
-            if self.propagate_parent:
-                for edge in graph.all_edges(tasklet):
-                    cursdfg = sdfg
-                    curedge = edge
-                    while cursdfg is not None:
-                        arrname = curedge.data.data
-                        dtype = cursdfg.arrays[arrname].dtype
-
-                        # Change type and shape to vector
-                        if not isinstance(dtype, dtypes.vector):
-                            cursdfg.arrays[arrname].dtype = dtypes.vector(
-                                dtype, vector_size)
-                            new_shape = list(cursdfg.arrays[arrname].shape)
-                            contigidx = cursdfg.arrays[arrname].strides.index(1)
-                            new_shape[contigidx] /= vector_size
-                            try:
-                                new_shape[contigidx] = int(new_shape[contigidx])
-                            except TypeError:
-                                pass
-                            cursdfg.arrays[arrname].shape = new_shape
-
-                        propagation.propagate_memlets_sdfg(cursdfg)
-
-                        # Find matching edge in parent
-                        nsdfg = cursdfg.parent_nsdfg_node
-                        if nsdfg is None:
-                            break
-                        tstate = cursdfg.parent
-                        curedge = ([
-                            e for e in tstate.in_edges(nsdfg)
-                            if e.dst_conn == arrname
-                        ] + [
-                            e for e in tstate.out_edges(nsdfg)
-                            if e.src_conn == arrname
-                        ])[0]
-                        cursdfg = cursdfg.parent_sdfg
-
-        elif self.target == dtypes.ScheduleType.SVE_Map:
-
-            state = sdfg.node(self.state_id)
-            map_entry = self._map_entry(sdfg)
+        # Expand the innermost map if multidimensional
+        if len(current_map.params) > 1:
+            ext, rem = dace.transformation.helpers.extract_map_dims(
+                sdfg, map_entry, list(range(len(current_map.params) - 1)))
+            map_entry = rem
             current_map = map_entry.map
 
-            # Expand the innermost map if multidimensional
-            if len(current_map.params) > 1:
-                ext, rem = dace.transformation.helpers.extract_map_dims(
-                    sdfg, map_entry, list(range(len(current_map.params) - 1)))
-                map_entry = rem
-                current_map = map_entry.map
+        subgraph = state.scope_subgraph(map_entry)
 
-            subgraph = state.scope_subgraph(map_entry)
-
+        if self.target == dtypes.ScheduleType.SVE_Map:
             # Set the schedule
             current_map.schedule = dace.dtypes.ScheduleType.SVE_Map
 
-            # Infer all connector types and apply them
-            inferred = infer_types.infer_connector_types(sdfg, state, subgraph)
-            infer_types.apply_connector_types(inferred)
+        # Infer all connector types and apply them
+        inferred = infer_types.infer_connector_types(sdfg, state, subgraph)
+        infer_types.apply_connector_types(inferred)
 
-            # Infer vector connectors and AccessNodes and apply them
-            vector_inference.infer_vectors(
-                sdfg,
-                state,
-                map_entry,
-                self.vector_len,
-                flags=vector_inference.VectorInferenceFlags.Allow_Stride,
-                apply=True)
-        elif self.target == dtypes.ScheduleType.FPGA_Device:
-
-            raise NotImplementedError
+        # Infer vector connectors and AccessNodes and apply them
+        vector_inference.infer_vectors(
+            sdfg,
+            state,
+            map_entry,
+            self.vector_len,
+            flags=vector_inference.VectorInferenceFlags.Allow_Stride,
+            apply=True)
