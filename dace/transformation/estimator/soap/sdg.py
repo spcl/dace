@@ -4,6 +4,7 @@ import sympy as sp
 import networkx as nx
 import graphviz
 from numpy import nanargmax
+from dace.sdfg.sdfg import SDFG
 from dace.transformation.estimator.soap.soap import AccessParams, SoapStatement
 from dace.transformation.estimator.soap.utils import *
 import dace
@@ -20,6 +21,8 @@ from typing import Tuple
 from dace.symbolic import pystr_to_symbolic, issymbolic
 from dace import subsets
 from warnings import warn
+
+from dataclasses import dataclass, field
 
 
 class SDGPath:
@@ -73,15 +76,18 @@ The constuctor takes the input SDFG, and constructs SDG
 It provides functionality both per-statement (per-vertex) I/O analysis, as well 
 as the SDG subgraphing (finding optimal kernel fusions).
 """
+@dataclass
 class SDG:
-    def __init__(self, sdfg : dace.SDFG = None, params : SOAPParameters = None):
-        self.params = params
-        self.graph = nx.MultiDiGraph()
-        self.statements = []
-        self.node_relabeler = {}
+    sdfg : SDFG = None
+    solver : Solver = None
+    graph : nx.MultiDiGraph = None
+    node_relabeler : Dict = field(default_factory=dict)
+    array_version_counter : Dict = None
+
+    def __post_init__(self, sdfg : dace.SDFG = None):
         self.array_version_counter = defaultdict(int)
-        if sdfg is not None:
-            self.from_SDFG(sdfg, params)
+        if self.sdfg is not None:
+            self.from_SDFG(sdfg)
 
     @property
     def nodes(self):

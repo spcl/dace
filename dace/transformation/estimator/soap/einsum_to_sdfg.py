@@ -21,7 +21,7 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 30
         inp_dim [Optinal] (int): If arrays are not provided, inp_dim is used to auto-generate them
 
 
-    Returns:
+    Re5turns:
         dace.SDFG: The SDFG implementing the einsum.
     """
 
@@ -156,3 +156,19 @@ if __name__ == '__main__':
     # sdfg = sdfg_gen(einsum_string, [A, B, I, C, D])
     import pathlib
     sdfg.save(f'{pathlib.Path(__file__).parent.resolve()}/test.sdfg')
+
+
+
+
+def explicit_correlation(image, kernel):
+    hi, wi= image.shape
+    hk, wk = kernel.shape
+    image_padded = np.zeros(shape=(hi + hk - 1, wi + wk - 1))    
+    image_padded[hk//2:-hk//2, wk//2:-wk//2] = image
+    out = np.zeros(shape=image.shape)
+    for row in range(hi):
+        for col in range(wi):
+            for i in range(hk):
+                for j in range(wk):
+                    out[row, col] += image_padded[row + i, col + j]*kernel[i, j]
+    return out
