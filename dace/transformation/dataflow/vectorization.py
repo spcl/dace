@@ -90,7 +90,6 @@ class Vectorization(transformation.Transformation):
         if current_map.schedule == dtypes.ScheduleType.SVE_Map:
             return False
 
-        current_map.schedule = self.target
 
         ########################
         # Ensure only Tasklets and AccessNodes are within the map
