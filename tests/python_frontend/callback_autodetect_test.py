@@ -354,7 +354,7 @@ def test_bad_closure():
     timeprog(A)
     timeprog(B)
 
-    assert np.all(B >= A) and np.all(A >= now)
+    assert np.all(B > A) and np.all(A > now)
 
 
 if __name__ == '__main__':

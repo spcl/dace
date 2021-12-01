@@ -3176,20 +3176,13 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_AnnAssign(self, node: ast.AnnAssign):
         type_name = rname(node.annotation)
         try:
-            dtype = eval(type_name)
-            if not isinstance(dtype, dtypes.typeclass):
-                raise NotImplementedError
+            dtype = eval(astutils.unparse(node.annotation), self.globals,
+                         self.defined)
         except:
             dtype = None
             warnings.warn('typeclass {} is not supported'.format(type_name))
         if node.value is None and dtype is not None:  # Annotating type without assignment
-            try:
-                array_type = eval(astutils.unparse(node.annotation), globals(),
-                                  self.defined)
-            except:
-                # TODO: Use a meaningful exception
-                array_type = dtype
-            self.annotated_types[rname(node.target)] = array_type
+            self.annotated_types[rname(node.target)] = dtype
             return
         self._visit_assign(node, node.target, None, dtype=dtype)
 
@@ -4139,7 +4132,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # annotated assignments
             try:
                 return_type = eval(astutils.unparse(parent.annotation),
-                                   globals(), self.defined)
+                                   self.globals, self.defined)
             except:
                 # TODO: Use a meaningful exception
                 pass
