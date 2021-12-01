@@ -1,13 +1,18 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the vectorization transformation. """
 from dace import data, dtypes, registry, symbolic, subsets
+from dace.frontend.octave.lexer import raise_exception
 from dace.sdfg import nodes, SDFG, SDFGState, propagation
 from dace.sdfg import utils as sdutil
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.transformation import transformation
 from dace.transformation.helpers import replicate_scope
-from dace.properties import Property, make_properties
+from dace.properties import Property, make_properties, EnumProperty, SymbolicProperty
 import itertools
+import dace.transformation.dataflow.vectorization_infer_types as infer_types
+import dace.sdfg.analysis.vector_inference as vector_inference
+import dace.codegen.targets.sve.util as sve_util
+import dace.frontend.operations
 
 
 @registry.autoregister_params(singlestate=True)
@@ -19,9 +24,15 @@ class Vectorization(transformation.Transformation):
         tasklet inside a map access the inner-most loop variable in their last
         dimension. The transformation changes the step of the inner-most loop
         to be equal to the length of the vector and vectorizes the memlets.
+
+        Possible targets: CPU, ARM SVE and FPGA.  
+
   """
 
     vector_len = Property(desc="Vector length", dtype=int, default=4)
+
+    vec_len_sve = SymbolicProperty(desc="Vector length", default=sve_util.SVE_LEN)
+
     propagate_parent = Property(desc="Propagate vector length through "
                                 "parent SDFGs",
                                 dtype=bool,
@@ -35,6 +46,7 @@ class Vectorization(transformation.Transformation):
         default=None,
         allow_none=True,
         desc='Force creation or skipping a preamble map without vectors')
+
     postamble = Property(
         dtype=bool,
         default=None,
@@ -43,74 +55,207 @@ class Vectorization(transformation.Transformation):
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
 
+    target = EnumProperty(dtype=dtypes.ScheduleType,
+                          desc='Set storage type for the newly-created stream',
+                          default=dtypes.ScheduleType.Default)
+
     @staticmethod
     def expressions():
-        return [
-            sdutil.node_path_graph(Vectorization._map_entry)
-        ]
+        return [sdutil.node_path_graph(Vectorization._map_entry)]
 
-    def can_be_applied(self, graph: SDFGState, candidate, expr_index, sdfg, strict=False):
-        map_entry = graph.nodes()[candidate[Vectorization._map_entry]]
+    def can_be_applied(self,
+                       state: SDFGState,
+                       candidate,
+                       expr_index,
+                       sdfg: SDFG,
+                       strict=False) -> bool:
 
-        # Only accept scopes that have one internal tasklet
-        scope = graph.scope_subgraph(map_entry, False, False)
-        if len(scope.nodes()) != 1:
-            return False
-        tasklet = scope.nodes()[0]
-        if not isinstance(tasklet, nodes.Tasklet):
-            return False
-
-        param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
-        found = False
-
-        # Strided maps cannot be vectorized
-        if map_entry.map.range[-1][2] != 1 and self.strided_map:
+        # Check if supported!
+        if self.target not in [
+                dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device,
+                dtypes.ScheduleType.SVE_Map
+        ]:
             return False
 
-        # Check if all edges, adjacent to the tasklet,
-        # use the parameter in their contiguous dimension.
-        for e, conntype in graph.all_edges_and_connectors(tasklet):
+        if self.target == dtypes.ScheduleType.Default:
 
-            # Cases that do not matter for vectorization
-            if e.data.data is None:  # Empty memlets
-                continue
-            if isinstance(sdfg.arrays[e.data.data], data.Stream):  # Streams
-                continue
+            map_entry = state.nodes()[candidate[Vectorization._map_entry]]
 
-            # Vectorization can not be applied in WCR
-            # if e.data.wcr is not None:
-            #     return False
-
-            subset = e.data.subset
-            array = sdfg.arrays[e.data.data]
-
-            # If already vectorized or a pointer, do not apply
-            if isinstance(conntype, (dtypes.vector, dtypes.pointer)):
+            # Only accept scopes that have one internal tasklet
+            scope = state.scope_subgraph(map_entry, False, False)
+            if len(scope.nodes()) != 1:
+                return False
+            tasklet = scope.nodes()[0]
+            if not isinstance(tasklet, nodes.Tasklet):
                 return False
 
-            try:
-                for idx, expr in enumerate(subset):
-                    if isinstance(expr, tuple):
-                        for ex in expr:
-                            ex = symbolic.pystr_to_symbolic(ex)
-                            symbols = ex.free_symbols
+            param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
+            found = False
+
+            # Strided maps cannot be vectorized
+            if map_entry.map.range[-1][2] != 1 and self.strided_map:
+                return False
+
+            # Check if all edges, adjacent to the tasklet,
+            # use the parameter in their contiguous dimension.
+            for e, conntype in state.all_edges_and_connectors(tasklet):
+
+                # Cases that do not matter for vectorization
+                if e.data.data is None:  # Empty memlets
+                    continue
+                if isinstance(sdfg.arrays[e.data.data], data.Stream):  # Streams
+                    continue
+
+                # Vectorization can not be applied in WCR
+                # if e.data.wcr is not None:
+                #     return False
+
+                subset = e.data.subset
+                array = sdfg.arrays[e.data.data]
+
+                # If already vectorized or a pointer, do not apply
+                if isinstance(conntype, (dtypes.vector, dtypes.pointer)):
+                    return False
+
+                try:
+                    for idx, expr in enumerate(subset):
+                        if isinstance(expr, tuple):
+                            for ex in expr:
+                                ex = symbolic.pystr_to_symbolic(ex)
+                                symbols = ex.free_symbols
+                                if param in symbols:
+                                    if array.strides[idx] == 1:
+                                        found = True
+                                    else:
+                                        return False
+                        else:
+                            expr = symbolic.pystr_to_symbolic(expr)
+                            symbols = expr.free_symbols
                             if param in symbols:
                                 if array.strides[idx] == 1:
                                     found = True
                                 else:
                                     return False
-                    else:
-                        expr = symbolic.pystr_to_symbolic(expr)
-                        symbols = expr.free_symbols
-                        if param in symbols:
-                            if array.strides[idx] == 1:
-                                found = True
-                            else:
-                                return False
-            except TypeError:  # cannot determine truth value of Relational
+                except TypeError:  # cannot determine truth value of Relational
+                    return False
+
+            return found
+
+        elif self.target == dtypes.ScheduleType.SVE_Map:
+
+            map_entry = self._map_entry(sdfg)
+            current_map = map_entry.map
+            subgraph = state.scope_subgraph(map_entry)
+            subgraph_contents = state.scope_subgraph(map_entry,
+                                                     include_entry=False,
+                                                     include_exit=False)
+
+            # Prevent infinite repeats
+            if current_map.schedule == dtypes.ScheduleType.SVE_Map:
                 return False
 
-        return found
+            # Infer all connector types for later checks (without modifying the graph)
+            inferred = infer_types.infer_connector_types(sdfg, state, subgraph)
+
+            ########################
+            # Ensure only Tasklets and AccessNodes are within the map
+            for node, _ in subgraph_contents.all_nodes_recursive():
+                if not isinstance(node, (nodes.Tasklet, nodes.AccessNode)):
+                    return False
+
+            ########################
+            # Check for unsupported datatypes on the connectors (including on the Map itself)
+            bit_widths = set()
+            for node, _ in subgraph.all_nodes_recursive():
+                for conn in node.in_connectors:
+                    t = inferred[(node, conn, True)]
+                    bit_widths.add(sve_util.get_base_type(t).bytes)
+                    if not t.type in sve_util.TYPE_TO_SVE:
+                        return False
+                for conn in node.out_connectors:
+                    t = inferred[(node, conn, False)]
+                    bit_widths.add(sve_util.get_base_type(t).bytes)
+                    if not t.type in sve_util.TYPE_TO_SVE:
+                        return False
+
+            # Multiple different bit widths occuring (messes up the predicates)
+            if len(bit_widths) > 1:
+                return False
+
+            ########################
+            # Check for unsupported memlets
+            param_name = current_map.params[-1]
+            for e, _ in subgraph.all_edges_recursive():
+                # Check for unsupported strides
+                # The only unsupported strides are the ones containing the innermost
+                # loop param because they are not constant during a vector step
+                param_sym = symbolic.symbol(current_map.params[-1])
+
+                if param_sym in e.data.get_stride(sdfg,
+                                                  map_entry.map).free_symbols:
+                    return False
+
+                # Check for unsupported WCR
+                if e.data.wcr is not None:
+                    # Unsupported reduction type
+                    reduction_type = dace.frontend.operations.detect_reduction_type(
+                        e.data.wcr)
+                    if reduction_type not in sve_util.REDUCTION_TYPE_TO_SVE:
+                        return False
+
+                    # Param in memlet during WCR is not supported
+                    if param_name in e.data.subset.free_symbols and e.data.wcr_nonatomic:
+                        return False
+
+                    # vreduce is not supported
+                    dst_node = state.memlet_path(e)[-1]
+                    if isinstance(dst_node, nodes.Tasklet):
+                        if isinstance(dst_node.in_connectors[e.dst_conn],
+                                      dtypes.vector):
+                            return False
+                    elif isinstance(dst_node, nodes.AccessNode):
+                        desc = dst_node.desc(sdfg)
+                        if isinstance(desc, data.Scalar) and isinstance(
+                                desc.dtype, dtypes.vector):
+                            return False
+
+            ########################
+            # Check for invalid copies in the subgraph
+            for node, _ in subgraph.all_nodes_recursive():
+                if not isinstance(node, nodes.Tasklet):
+                    continue
+
+                for e in state.in_edges(node):
+                    # Check for valid copies from other tasklets and/or streams
+                    if e.data.data is not None:
+                        src_node = state.memlet_path(e)[0].src
+                        if not isinstance(src_node,
+                                          (nodes.Tasklet, nodes.AccessNode)):
+                            # Make sure we only have Code->Code copies and from arrays
+                            return False
+
+                        if isinstance(src_node, nodes.AccessNode):
+                            src_desc = src_node.desc(sdfg)
+                            if isinstance(src_desc, data.Stream):
+                                # Stream pops are not implemented
+                                return False
+
+            # Run the vector inference algorithm to check if vectorization is feasible
+            try:
+                vector_inference.infer_vectors(
+                    sdfg,
+                    state,
+                    map_entry,
+                    self.vec_len_sve,
+                    flags=vector_inference.VectorInferenceFlags.Allow_Stride,
+                    apply=False)
+            except vector_inference.VectorInferenceException as ex:
+                return False
+
+            return True
+
+        elif self.target == dtypes.ScheduleType.FPGA_Device:
+            raise NotImplementedError
 
     @staticmethod
     def match_to_str(graph, candidate):
@@ -118,162 +263,200 @@ class Vectorization(transformation.Transformation):
         return str(map_entry)
 
     def apply(self, sdfg: SDFG):
-        graph = sdfg.nodes()[self.state_id]
-        map_entry = graph.nodes()[self.subgraph[Vectorization._map_entry]]
-        tasklet: nodes.Tasklet = graph.successors(map_entry)[0]
-        param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
 
-        # Create new vector size.
-        vector_size = self.vector_len
-        dim_from, dim_to, dim_skip = map_entry.map.range[-1]
+        if self.target == dtypes.ScheduleType.Default:
 
-        # Determine whether to create preamble or postamble maps
-        if self.preamble is not None:
-            create_preamble = self.preamble
-        else:
-            create_preamble = not ((dim_from % vector_size == 0) == True
-                                   or dim_from == 0)
-        if self.postamble is not None:
-            create_postamble = self.postamble
-        else:
-            if isinstance(dim_to, symbolic.SymExpr):
-                create_postamble = (((dim_to.approx + 1) %
-                                     vector_size == 0) == False)
+            graph = sdfg.nodes()[self.state_id]
+            map_entry = graph.nodes()[self.subgraph[Vectorization._map_entry]]
+            tasklet: nodes.Tasklet = graph.successors(map_entry)[0]
+            param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
+
+            # Create new vector size.
+            vector_size = self.vector_len
+            dim_from, dim_to, dim_skip = map_entry.map.range[-1]
+
+            # Determine whether to create preamble or postamble maps
+            if self.preamble is not None:
+                create_preamble = self.preamble
             else:
-                create_postamble = (((dim_to + 1) % vector_size == 0) == False)
-
-        # Determine new range for vectorized map
-        if self.strided_map:
-            new_range = [dim_from, dim_to - vector_size + 1, vector_size]
-        else:
-            new_range = [
-                dim_from // vector_size, ((dim_to + 1) // vector_size) - 1,
-                dim_skip
-            ]
-
-        # Create preamble non-vectorized map (replacing the original map)
-        if create_preamble:
-            old_scope = graph.scope_subgraph(map_entry, True, True)
-            new_scope: ScopeSubgraphView = replicate_scope(
-                sdfg, graph, old_scope)
-            new_begin = dim_from + (vector_size - (dim_from % vector_size))
-            map_entry.map.range[-1] = (dim_from, new_begin - 1, dim_skip)
-            # Replace map_entry with the replicated scope (so that the preamble
-            # will usually come first in topological sort)
-            map_entry = new_scope.entry
-            tasklet = new_scope.nodes()[old_scope.nodes().index(tasklet)]
-            new_range[0] = new_begin
-
-        # Create postamble non-vectorized map
-        if create_postamble:
-            new_scope: ScopeSubgraphView = replicate_scope(
-                sdfg, graph, graph.scope_subgraph(map_entry, True, True))
-            dim_to_ex = dim_to + 1
-            new_scope.entry.map.range[-1] = (dim_to_ex -
-                                             (dim_to_ex % vector_size), dim_to,
-                                             dim_skip)
-
-        # Change the step of the inner-most dimension.
-        map_entry.map.range[-1] = tuple(new_range)
-
-        # Vectorize connectors adjacent to the tasklet.
-        for edge in graph.all_edges(tasklet):
-            connectors = (tasklet.in_connectors
-                          if edge.dst == tasklet else tasklet.out_connectors)
-            conn = edge.dst_conn if edge.dst == tasklet else edge.src_conn
-
-            if edge.data.data is None:  # Empty memlets
-                continue
-            desc = sdfg.arrays[edge.data.data]
-            contigidx = desc.strides.index(1)
-
-            newlist = []
-
-            lastindex = edge.data.subset[contigidx]
-            if isinstance(lastindex, tuple):
-                newlist = [(rb, re, rs) for rb, re, rs in edge.data.subset]
-                symbols = set()
-                for indd in lastindex:
-                    symbols.update(
-                        symbolic.pystr_to_symbolic(indd).free_symbols)
+                create_preamble = not ((dim_from % vector_size == 0) == True
+                                       or dim_from == 0)
+            if self.postamble is not None:
+                create_postamble = self.postamble
             else:
-                newlist = [(rb, rb, 1) for rb in edge.data.subset]
-                symbols = symbolic.pystr_to_symbolic(lastindex).free_symbols
+                if isinstance(dim_to, symbolic.SymExpr):
+                    create_postamble = (((dim_to.approx + 1) %
+                                         vector_size == 0) == False)
+                else:
+                    create_postamble = (((dim_to + 1) %
+                                         vector_size == 0) == False)
 
-            oldtype = connectors[conn]
-            if oldtype is None or oldtype.type is None:
-                oldtype = desc.dtype
-
-            # Vector to scalar WCR edge: change connector and continue
-            lastedge = graph.memlet_path(edge)[-1]
-            if (lastedge.data.subset.num_elements() == 1
-                    and edge.data.wcr is not None):
-                connectors[conn] = dtypes.vector(oldtype, vector_size)
-                continue
-
-            if str(param) not in map(str, symbols):
-                continue
-
-            # Vectorize connector, if not already vectorized
-            if isinstance(oldtype, dtypes.vector):
-                continue
-
-            connectors[conn] = dtypes.vector(oldtype, vector_size)
-
-            # Modify memlet subset to match vector length
+            # Determine new range for vectorized map
             if self.strided_map:
-                rb = newlist[contigidx][0]
-                if self.propagate_parent:
-                    newlist[contigidx] = (rb / self.vector_len,
-                                          rb / self.vector_len, 1)
-                else:
-                    newlist[contigidx] = (rb, rb + self.vector_len - 1, 1)
+                new_range = [dim_from, dim_to - vector_size + 1, vector_size]
             else:
-                rb = newlist[contigidx][0]
-                if self.propagate_parent:
-                    newlist[contigidx] = (rb, rb, 1)
-                else:
-                    newlist[contigidx] = (self.vector_len * rb,
-                                          self.vector_len * rb +
-                                          self.vector_len - 1, 1)
-            edge.data.subset = subsets.Range(newlist)
-            edge.data.volume = vector_size
+                new_range = [
+                    dim_from // vector_size, ((dim_to + 1) // vector_size) - 1,
+                    dim_skip
+                ]
 
-        # Vector length propagation using data descriptors, recursive traversal
-        # outwards
-        if self.propagate_parent:
+            # Create preamble non-vectorized map (replacing the original map)
+            if create_preamble:
+                old_scope = graph.scope_subgraph(map_entry, True, True)
+                new_scope: ScopeSubgraphView = replicate_scope(
+                    sdfg, graph, old_scope)
+                new_begin = dim_from + (vector_size - (dim_from % vector_size))
+                map_entry.map.range[-1] = (dim_from, new_begin - 1, dim_skip)
+                # Replace map_entry with the replicated scope (so that the preamble
+                # will usually come first in topological sort)
+                map_entry = new_scope.entry
+                tasklet = new_scope.nodes()[old_scope.nodes().index(tasklet)]
+                new_range[0] = new_begin
+
+            # Create postamble non-vectorized map
+            if create_postamble:
+                new_scope: ScopeSubgraphView = replicate_scope(
+                    sdfg, graph, graph.scope_subgraph(map_entry, True, True))
+                dim_to_ex = dim_to + 1
+                new_scope.entry.map.range[-1] = (dim_to_ex -
+                                                 (dim_to_ex % vector_size),
+                                                 dim_to, dim_skip)
+
+            # Change the step of the inner-most dimension.
+            map_entry.map.range[-1] = tuple(new_range)
+
+            # Vectorize connectors adjacent to the tasklet.
             for edge in graph.all_edges(tasklet):
-                cursdfg = sdfg
-                curedge = edge
-                while cursdfg is not None:
-                    arrname = curedge.data.data
-                    dtype = cursdfg.arrays[arrname].dtype
+                connectors = (tasklet.in_connectors if edge.dst == tasklet else
+                              tasklet.out_connectors)
+                conn = edge.dst_conn if edge.dst == tasklet else edge.src_conn
 
-                    # Change type and shape to vector
-                    if not isinstance(dtype, dtypes.vector):
-                        cursdfg.arrays[arrname].dtype = dtypes.vector(
-                            dtype, vector_size)
-                        new_shape = list(cursdfg.arrays[arrname].shape)
-                        contigidx = cursdfg.arrays[arrname].strides.index(1)
-                        new_shape[contigidx] /= vector_size
-                        try:
-                            new_shape[contigidx] = int(new_shape[contigidx])
-                        except TypeError:
-                            pass
-                        cursdfg.arrays[arrname].shape = new_shape
+                if edge.data.data is None:  # Empty memlets
+                    continue
+                desc = sdfg.arrays[edge.data.data]
+                contigidx = desc.strides.index(1)
 
-                    propagation.propagate_memlets_sdfg(cursdfg)
+                newlist = []
 
-                    # Find matching edge in parent
-                    nsdfg = cursdfg.parent_nsdfg_node
-                    if nsdfg is None:
-                        break
-                    tstate = cursdfg.parent
-                    curedge = ([
-                        e
-                        for e in tstate.in_edges(nsdfg) if e.dst_conn == arrname
-                    ] + [
-                        e for e in tstate.out_edges(nsdfg)
-                        if e.src_conn == arrname
-                    ])[0]
-                    cursdfg = cursdfg.parent_sdfg
+                lastindex = edge.data.subset[contigidx]
+                if isinstance(lastindex, tuple):
+                    newlist = [(rb, re, rs) for rb, re, rs in edge.data.subset]
+                    symbols = set()
+                    for indd in lastindex:
+                        symbols.update(
+                            symbolic.pystr_to_symbolic(indd).free_symbols)
+                else:
+                    newlist = [(rb, rb, 1) for rb in edge.data.subset]
+                    symbols = symbolic.pystr_to_symbolic(lastindex).free_symbols
+
+                oldtype = connectors[conn]
+                if oldtype is None or oldtype.type is None:
+                    oldtype = desc.dtype
+
+                # Vector to scalar WCR edge: change connector and continue
+                lastedge = graph.memlet_path(edge)[-1]
+                if (lastedge.data.subset.num_elements() == 1
+                        and edge.data.wcr is not None):
+                    connectors[conn] = dtypes.vector(oldtype, vector_size)
+                    continue
+
+                if str(param) not in map(str, symbols):
+                    continue
+
+                # Vectorize connector, if not already vectorized
+                if isinstance(oldtype, dtypes.vector):
+                    continue
+
+                connectors[conn] = dtypes.vector(oldtype, vector_size)
+
+                # Modify memlet subset to match vector length
+                if self.strided_map:
+                    rb = newlist[contigidx][0]
+                    if self.propagate_parent:
+                        newlist[contigidx] = (rb / self.vector_len,
+                                              rb / self.vector_len, 1)
+                    else:
+                        newlist[contigidx] = (rb, rb + self.vector_len - 1, 1)
+                else:
+                    rb = newlist[contigidx][0]
+                    if self.propagate_parent:
+                        newlist[contigidx] = (rb, rb, 1)
+                    else:
+                        newlist[contigidx] = (self.vector_len * rb,
+                                              self.vector_len * rb +
+                                              self.vector_len - 1, 1)
+                edge.data.subset = subsets.Range(newlist)
+                edge.data.volume = vector_size
+
+            # Vector length propagation using data descriptors, recursive traversal
+            # outwards
+            if self.propagate_parent:
+                for edge in graph.all_edges(tasklet):
+                    cursdfg = sdfg
+                    curedge = edge
+                    while cursdfg is not None:
+                        arrname = curedge.data.data
+                        dtype = cursdfg.arrays[arrname].dtype
+
+                        # Change type and shape to vector
+                        if not isinstance(dtype, dtypes.vector):
+                            cursdfg.arrays[arrname].dtype = dtypes.vector(
+                                dtype, vector_size)
+                            new_shape = list(cursdfg.arrays[arrname].shape)
+                            contigidx = cursdfg.arrays[arrname].strides.index(1)
+                            new_shape[contigidx] /= vector_size
+                            try:
+                                new_shape[contigidx] = int(new_shape[contigidx])
+                            except TypeError:
+                                pass
+                            cursdfg.arrays[arrname].shape = new_shape
+
+                        propagation.propagate_memlets_sdfg(cursdfg)
+
+                        # Find matching edge in parent
+                        nsdfg = cursdfg.parent_nsdfg_node
+                        if nsdfg is None:
+                            break
+                        tstate = cursdfg.parent
+                        curedge = ([
+                            e for e in tstate.in_edges(nsdfg)
+                            if e.dst_conn == arrname
+                        ] + [
+                            e for e in tstate.out_edges(nsdfg)
+                            if e.src_conn == arrname
+                        ])[0]
+                        cursdfg = cursdfg.parent_sdfg
+
+        elif self.target == dtypes.ScheduleType.SVE_Map:
+
+            state = sdfg.node(self.state_id)
+            map_entry = self._map_entry(sdfg)
+            current_map = map_entry.map
+
+            # Expand the innermost map if multidimensional
+            if len(current_map.params) > 1:
+                ext, rem = dace.transformation.helpers.extract_map_dims(
+                    sdfg, map_entry, list(range(len(current_map.params) - 1)))
+                map_entry = rem
+                current_map = map_entry.map
+
+            subgraph = state.scope_subgraph(map_entry)
+
+            # Set the schedule
+            current_map.schedule = dace.dtypes.ScheduleType.SVE_Map
+
+            # Infer all connector types and apply them
+            inferred = infer_types.infer_connector_types(sdfg, state, subgraph)
+            infer_types.apply_connector_types(inferred)
+
+            # Infer vector connectors and AccessNodes and apply them
+            vector_inference.infer_vectors(
+                sdfg,
+                state,
+                map_entry,
+                self.vec_len_sve,
+                flags=vector_inference.VectorInferenceFlags.Allow_Stride,
+                apply=True)
+        elif self.target == dtypes.ScheduleType.FPGA_Device:
+            
+            raise NotImplementedError

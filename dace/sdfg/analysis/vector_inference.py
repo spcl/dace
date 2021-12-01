@@ -8,7 +8,7 @@ import dace
 from dace import SDFG, SDFGState
 import dace.sdfg.nodes as nodes
 from collections import defaultdict
-import dace.transformation.dataflow.sve.infer_types as infer_types
+import dace.transformation.dataflow.vectorization_infer_types as infer_types
 import dace.dtypes as dtypes
 import dace.data as data
 from typing import *
