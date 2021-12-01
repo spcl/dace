@@ -4,7 +4,7 @@ Tests automatic detection and parsing of nested functions and methods that are
 not annotated with @dace decorators.
 """
 import dace
-from dace.frontend.python.common import DaceSyntaxError
+from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
 from dataclasses import dataclass
 import numpy as np
 import pytest
@@ -104,7 +104,7 @@ def test_nested_autoparse_fail():
         return notworking_nested(a)
 
     A = np.random.rand(20)
-    with pytest.raises(DaceSyntaxError, match='notworking_nested'):
+    with pytest.raises(DaceSyntaxError, match='numpy.allclose'):
         notworking2(A)
 
 
@@ -133,7 +133,7 @@ def test_nested_recursion2_fail():
         return nested_a(a)
 
     A = np.random.rand(20)
-    with pytest.raises(DaceSyntaxError, match='nested_a'):
+    with pytest.raises(DaceSyntaxError, match='nested_'):
         recursive_autoparse(A)
 
 
@@ -154,6 +154,78 @@ def test_nested_autoparse_dec_fail():
         notworking3(A)
 
 
+def freefunction2(A):
+    A += 2
+
+
+def test_autodetect_function_in_for():
+    """ 
+    Tests auto-detection of parsable free functions in a for loop.
+    """
+    @dace
+    def adff(A):
+        for _ in range(5):
+            freefunction2(A)
+
+    A = np.random.rand(20)
+    ref = np.copy(A)
+    adff(A)
+    assert np.allclose(A, ref + 2 * 5)
+
+
+def test_error_handling():
+    class NotConvertible(SDFGConvertible):
+        def __call__(self, a):
+            import numpy as np
+            print('A very pythonic method', a)
+
+        def __sdfg__(self, *args, **kwargs):
+            # Raise a special type of error that does not naturally occur in dace
+            raise NotADirectoryError('I am not really convertible')
+
+        def __sdfg_signature__(self):
+            return ([], [])
+
+    A = np.random.rand(20)
+
+    with pytest.raises(NotADirectoryError):
+
+        @dace.program
+        def testprogram(A, nc: dace.constant):
+            nc(A)
+
+        testprogram(A, NotConvertible())
+
+
+def test_nested_class_error_handling():
+    def not_convertible(f):
+        class NotConvertibleMethod(SDFGConvertible):
+            def __sdfg__(self, *args, **kwargs):
+                # Raise a special type of error that does not naturally occur in dace
+                raise NotADirectoryError('I am not really convertible')
+
+            def __sdfg_signature__(self):
+                return ([], [])
+
+        return NotConvertibleMethod()
+
+    class MaybeConvertible:
+        @not_convertible
+        def __call__(self, a):
+            import numpy as np
+            print('A very pythonic method', a)
+
+    A = np.random.rand(20)
+
+    with pytest.raises(NotADirectoryError):
+
+        @dace.program
+        def testprogram(A, nc: dace.constant):
+            nc(A)
+
+        testprogram(A, MaybeConvertible())
+
+
 if __name__ == '__main__':
     test_autodetect_function()
     test_autodetect_method()
@@ -164,3 +236,6 @@ if __name__ == '__main__':
     test_nested_recursion_fail()
     test_nested_recursion2_fail()
     test_nested_autoparse_dec_fail()
+    test_autodetect_function_in_for()
+    test_error_handling()
+    test_nested_class_error_handling()

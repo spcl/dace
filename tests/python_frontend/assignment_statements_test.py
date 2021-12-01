@@ -3,6 +3,8 @@ import dace
 import numpy as np
 import pytest
 
+from dace.frontend.python.common import DaceSyntaxError
+
 
 @dace.program
 def single_target(a: dace.float32[1]):
@@ -111,6 +113,15 @@ def test_ann_assign_supported_type():
     assert (a.dtype == np.uint16)
 
 
+def test_assignment_to_nonexistent_variable():
+    @dace.program
+    def badprog(B: dace.float64):
+        A[...] = B
+
+    with pytest.raises(DaceSyntaxError):
+        badprog.to_sdfg()
+
+
 if __name__ == "__main__":
     test_single_target()
     test_single_target_parentheses()
@@ -121,3 +132,4 @@ if __name__ == "__main__":
     # test_attribute_reference()
 
     test_ann_assign_supported_type()
+    test_assignment_to_nonexistent_variable()

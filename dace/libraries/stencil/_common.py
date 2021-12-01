@@ -9,6 +9,7 @@ import operator
 from typing import Dict, List, Tuple
 
 import dace
+from dace.codegen.targets.cpp import sym2cpp
 from .subscript_converter import SubscriptConverter
 
 
@@ -106,6 +107,10 @@ def parse_connectors(node, state, sdfg):
         field_to_edge[field] = e
         vector_lengths[field] = desc.veclen
         shape = check_stencil_shape(shape, desc.shape)
+    # Adjust shape for vector length
+    vector_length = max(vector_lengths.values())
+    shape = tuple(s * vector_length if i == len(shape) - 1 else s
+                  for i, s in enumerate(shape))
     return (inputs, outputs, shape, field_to_data, field_to_desc, field_to_edge,
             vector_lengths)
 
@@ -194,7 +199,8 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
     # Loop over each input
     for field_name in node.in_connectors:
         accesses = field_accesses[field_name]
-        dtype = field_to_desc[field_name].dtype.type
+        dtype = field_to_desc[field_name].dtype
+        veclen = dtype.veclen
         iterators = iterator_mapping[field_name]
         num_dims = sum(iterators, 0)
         # Loop over each access to this data
@@ -203,12 +209,32 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
                 raise ValueError(f"Access {field_name}[{indices}] inconsistent "
                                  f"with iterator mapping {iterators}.")
             cond = set()
+            cond_global = set()
             # Loop over each index of this access
             for i, offset in enumerate(indices):
+                if i == len(indices) - 1 and dtype.veclen > 1:
+                    unroll_boundary = f"*{dtype.veclen} + i_unroll"
+                    unroll_write = f"*{dtype.veclen} - i_unroll"
+                else:
+                    unroll_boundary = ""
+                    unroll_write = ""
                 if offset < 0:
-                    term = f"_i{i} < {str(-offset)}"
+                    offset_str = sym2cpp(-offset)
+                    term = f"_i{i}{unroll_boundary} < {offset_str}"
+                    if i != len(indices) - 1:
+                        offset_str = sym2cpp(-offset)
+                        cond_global.add(f"_i{i} < {offset_str}")
+                    elif offset <= -veclen:
+                        offset_str = sym2cpp(-offset // veclen)
+                        cond_global.add(f"_i{i} < {offset_str}")
                 elif offset > 0:
-                    term = f"_i{i} >= {str(shape[i] - offset)}"
+                    offset_str = sym2cpp(shape[i] - offset)
+                    term = f"_i{i}{unroll_boundary} >= {offset_str}"
+                    if i != len(indices) - 1:
+                        cond_global.add(f"_i{i} >= {offset_str}")
+                    elif offset >= veclen:
+                        offset_str = sym2cpp((shape[i] - offset) // veclen)
+                        cond_global.add(f"_i{i} >= {offset_str}")
                 else:
                     continue
                 cond.add(term)
@@ -228,13 +254,13 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
                 elif btype == "shrink":
                     # We don't need to do anything here, it's up to the
                     # user to not use the junk output
-                    if np.issubdtype(dtype, np.floating):
-                        boundary_val = np.finfo(dtype).min
+                    if np.issubdtype(dtype.type, np.floating):
+                        boundary_val = np.finfo(dtype.type).min
                     else:
                         # If not a float, assume it's some kind of integer
-                        boundary_val = np.iinfo(dtype).min
+                        boundary_val = np.iinfo(dtype.type).min
                     # Add this to the output condition
-                    oob_cond |= cond
+                    oob_cond |= cond_global
                 else:
                     raise ValueError(
                         f"Unsupported boundary condition type: {btype}")

@@ -94,7 +94,7 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
                 # appropriate indices
                 unroll_entry, unroll_exit = read_state.add_map(
                     f"{node.name}_elementwise", {elem_it: f"0:{small_veclen}"},
-                    schedule=node.schedule)
+                    schedule=node.schedule, unroll=True)
                 unroll_tasklet = read_state.add_tasklet(
                     f"{node.name}_elementwise", {"unpack_in"}, {"buffer_out"},
                     "buffer_out = unpack_in")
@@ -154,7 +154,7 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
                 pack_access = write_state.add_write(pack_name)
                 unroll_entry, unroll_exit = write_state.add_map(
                     f"{node.name}_elementwise", {elem_it: f"0:{small_veclen}"},
-                    schedule=node.schedule)
+                    schedule=node.schedule, unroll=True)
                 unroll_tasklet = write_state.add_tasklet(
                     f"{node.name}_elementwise", {"buffer_in"}, {"pack_out"},
                     "pack_out = buffer_in")
@@ -342,5 +342,6 @@ class Gearbox(dace.sdfg.nodes.LibraryNode):
             gear_factor = out_desc.veclen // in_desc.veclen
         else:
             raise TypeError(
-                f"Cannot gearbox between {in_desc.dtype} and {out_desc.dtype}.")
+                f"Cannot gearbox between {in_desc.dtype} for {in_edge.dst_conn}"
+                f" and {out_desc.dtype} for {out_edge.src_conn}.")
         return (in_edge, in_desc, out_edge, out_desc, is_pack, gear_factor)

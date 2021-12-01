@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-import astunparse
 from collections import OrderedDict
 import copy
 import itertools
@@ -694,11 +693,35 @@ class TaskletTransformer(ExtNodeTransformer):
         else:
             ignore_indices = []
             sym_rng = []
+            offset = []
             for i, r in enumerate(rng):
+                repl_dict = {}
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
                         sym_rng.append(sr)
+                        # NOTE: Assume that the i-th index of the range is
+                        # dependent on a local symbol s, i.e, rng[i] = f(s).
+                        # Therefore, the i-th index will not be squeezed
+                        # even if it has length equal to 1. However, it must
+                        # still be offsetted by f(min(sr)), so that the indices
+                        # for the squeezed connector start from 0.
+                        # Example:
+                        # Memlet range: [i+1, j, k+1]
+                        # k: local symbol with range(1, 4)
+                        # i,j: global symbols
+                        # Squeezed range: [f(k)] = [k+1]
+                        # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
+                        #                        [f(k)-f(1)] = [k-1]
+                        # NOTE: The code takes into account the case where an
+                        # index is dependent on multiple symbols. See also
+                        # tests/python_frontend/nested_name_accesses_test.py.
+                        step = sr[0][2]
+                        if (step < 0) == True:
+                            repl_dict[s] = sr[0][1]
+                        else:
+                            repl_dict[s] = sr[0][0]
+                offset.append(r[0].subs(repl_dict))
 
             if ignore_indices:
                 tmp_memlet = Memlet.simple(parent_name, rng)
@@ -709,14 +732,19 @@ class TaskletTransformer(ExtNodeTransformer):
                                                   r,
                                                   use_dst=use_dst)
 
-            squeezed_rng = copy.deepcopy(rng)
+            to_squeeze_rng = rng
+            if ignore_indices:
+                to_squeeze_rng = rng.offset_new(offset, True)
+            squeezed_rng = copy.deepcopy(to_squeeze_rng)
             non_squeezed = squeezed_rng.squeeze(ignore_indices)
             # TODO: Need custom shape computation here
             shape = squeezed_rng.size()
             for i, sr in zip(ignore_indices, sym_rng):
                 iMin, iMax, step = sr.ranges[0]
-                ts = rng.tile_sizes[i]
-                sqz_idx = squeezed_rng.ranges.index(rng.ranges[i])
+                if (step < 0) == True:
+                    iMin, iMax, step = iMax, iMin, -step
+                ts = to_squeeze_rng.tile_sizes[i]
+                sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
                 shape[sqz_idx] = ts * sympy.ceiling(
                     ((iMax.approx
                       if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
@@ -1005,6 +1033,7 @@ class ProgramVisitor(ExtNodeVisitor):
                  scope_arrays: Dict[str, data.Data],
                  scope_vars: Dict[str, str],
                  map_symbols: Set[Union[str, symbolic.symbol]] = None,
+                 annotated_types: Dict[str, data.Data] = None,
                  other_sdfgs: Dict[str, Union[SDFG, 'DaceProgram']] = None,
                  nested: bool = False,
                  tmp_idx: int = 0,
@@ -1054,6 +1083,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.accesses = dict()
         self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
+        self.annotated_types: Dict[str, data.Data] = annotated_types or {}
 
         # Keep track of map symbols from upper scopes
         map_symbols = map_symbols or set()
@@ -1341,6 +1371,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                 **self.variables,
                             },
                             map_symbols=map_symbols,
+                            annotated_types=self.annotated_types,
                             other_sdfgs=self.other_sdfgs,
                             nested=True,
                             tmp_idx=self.sdfg._temp_transients + 1)
@@ -1738,8 +1769,10 @@ class ProgramVisitor(ExtNodeVisitor):
                             raise DaceSyntaxError(
                                 self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols
+                        # TODO: If scalar, should add dynamic map connector?
                         if str(atom) not in self.sdfg.symbols:
-                            self.sdfg.add_symbol(str(atom), atom.dtype)
+                            self.sdfg.add_symbol(str(atom),
+                                                 self.defined[str(atom)].dtype)
 
                 for expr in symbolic.swalk(symval):
                     if symbolic.is_sympy_userfunction(expr):
@@ -2772,36 +2805,47 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if wtarget_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
-                if wtarget_subset.size() == op_subset.size():
-                    in1_subset = copy.deepcopy(rtarget_subset)
-                    in1_subset.offset(wtarget_subset, True)
+                sqz_osub = copy.deepcopy(op_subset)
+                oidx = sqz_osub.squeeze()
+                sqz_wsub = copy.deepcopy(wtarget_subset)
+                widx = sqz_wsub.squeeze()
+                sqz_rsub = copy.deepcopy(rtarget_subset)
+                ridx = sqz_rsub.squeeze()
+                if (sqz_wsub.size() == sqz_osub.size()
+                        and sqz_wsub.size() == sqz_rsub.size()):
+                    r_to_w = {i: j for i, j in zip(ridx, widx)}
+                    o_to_w = {i: j for i, j in zip(oidx, widx)}
+                    # NOTE: Since 'sqz_wsub is squeezed, 'start' should be
+                    # equal to 0
+                    map_range = {
+                        f'__i{widx[i]}': f'{start}:{end} + 1:{step}'
+                        for i, (start, end, step) in enumerate(sqz_wsub)
+                    }
                     in1_memlet = Memlet.simple(
                         rtarget_name, ','.join([
-                            '__i%d + %s' % (i, s)
-                            for i, (s, _, _) in enumerate(in1_subset)
+                            f'__i{r_to_w[i]} + {s}' if i in ridx else str(s)
+                            for i, (s, _, _) in enumerate(rtarget_subset)
                         ]))
-                    in2_subset = copy.deepcopy(op_subset)
-                    in2_subset.offset(wtarget_subset, True)
                     in2_memlet = Memlet.simple(
                         op_name, ','.join([
-                            '__i%d + %s' % (i, s)
-                            for i, (s, _, _) in enumerate(in2_subset)
+                            f'__i{o_to_w[i]} + {s}' if i in oidx else str(s)
+                            for i, (s, _, _) in enumerate(op_subset)
                         ]))
                     out_memlet = Memlet.simple(
-                        wtarget_name, ','.join(
-                            ['__i%d' % i for i in range(len(wtarget_subset))]))
+                        wtarget_name, ','.join([
+                            f'__i{i} + {s}' if i in widx else str(s)
+                            for i, (s, _, _) in enumerate(wtarget_subset)
+                        ]))
                     if boolarr is not None:
                         in1_memlet.dynamic = True
                         out_memlet.dynamic = True
                     tasklet_code += '__out = __in1 {op} __in2'.format(op=op)
-                    state.add_mapped_tasklet(state.label, {
-                        '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
-                        for i, (start, end, step) in enumerate(wtarget_subset)
-                    }, {
-                        '__in1': in1_memlet,
-                        '__in2': in2_memlet,
-                        **input_memlets,
-                    },
+                    state.add_mapped_tasklet(state.label,
+                                             map_range, {
+                                                 '__in1': in1_memlet,
+                                                 '__in2': in2_memlet,
+                                                 **input_memlets,
+                                             },
                                              tasklet_code,
                                              {'__out': out_memlet},
                                              external_edges=True,
@@ -2825,7 +2869,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 in1_subset.offset(wtarget_subset, True)
                 in1_memlet = Memlet.simple(
                     rtarget_name, ','.join([
-                        '__i%d + %d' % (i, s)
+                        '__i%d + %s' % (i, s)
                         for i, (s, _, _) in enumerate(in1_subset)
                     ]))
                 if op_name:
@@ -2926,11 +2970,38 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             ignore_indices = []
             sym_rng = []
+            offset = []
             for i, r in enumerate(rng):
+                repl_dict = {}
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
                         sym_rng.append(sr)
+                        # NOTE: Assume that the i-th index of the range is
+                        # dependent on a local symbol s, i.e, rng[i] = f(s).
+                        # Therefore, the i-th index will not be squeezed
+                        # even if it has length equal to 1. However, it must
+                        # still be offsetted by f(min(sr)), so that the indices
+                        # for the squeezed connector start from 0.
+                        # Example:
+                        # Memlet range: [i+1, j, k+1]
+                        # k: local symbol with range(1, 4)
+                        # i,j: global symbols
+                        # Squeezed range: [f(k)] = [k+1]
+                        # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
+                        #                        [f(k)-f(1)] = [k-1]
+                        # NOTE: The code takes into account the case where an
+                        # index is dependent on multiple symbols. See also
+                        # tests/python_frontend/nested_name_accesses_test.py.
+                        step = sr[0][2]
+                        if (step < 0) == True:
+                            repl_dict[s] = sr[0][1]
+                        else:
+                            repl_dict[s] = sr[0][0]
+                if repl_dict:
+                    offset.append(r[0].subs(repl_dict))
+                else:
+                    offset.append(0)
 
             if ignore_indices:
                 tmp_memlet = Memlet.simple(parent_name, rng)
@@ -2940,15 +3011,19 @@ class ProgramVisitor(ExtNodeVisitor):
                                                   parent_array, [s],
                                                   r,
                                                   use_dst=use_dst)
-
-            squeezed_rng = copy.deepcopy(rng)
+            to_squeeze_rng = rng
+            if ignore_indices:
+                to_squeeze_rng = rng.offset_new(offset, True)
+            squeezed_rng = copy.deepcopy(to_squeeze_rng)
             non_squeezed = squeezed_rng.squeeze(ignore_indices)
             # TODO: Need custom shape computation here
             shape = squeezed_rng.size()
             for i, sr in zip(ignore_indices, sym_rng):
                 iMin, iMax, step = sr.ranges[0]
-                ts = rng.tile_sizes[i]
-                sqz_idx = squeezed_rng.ranges.index(rng.ranges[i])
+                if (step < 0) == True:
+                    iMin, iMax, step = iMax, iMin, -step
+                ts = to_squeeze_rng.tile_sizes[i]
+                sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
                 shape[sqz_idx] = ts * sympy.ceiling(
                     ((iMax.approx
                       if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
@@ -3065,8 +3140,9 @@ class ProgramVisitor(ExtNodeVisitor):
         except:
             dtype = None
             warnings.warn('typeclass {} is not supported'.format(type_name))
-        if node.value is None:  # Annotating type without assignment
-            return self.generic_visit(node)
+        if node.value is None and dtype is not None:  # Annotating type without assignment
+            self.annotated_types[rname(node.target)] = dtype
+            return
         self._visit_assign(node, node.target, None, dtype=dtype)
 
     def _visit_assign(self, node, node_target, op, dtype=None, is_return=False):
@@ -3101,6 +3177,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 true_name = defined_vars[name]
                 true_array = defined_arrays[true_name]
 
+            # If type was already annotated
+            if dtype is None and name in self.annotated_types:
+                dtype = self.annotated_types[name]
+
             if (isinstance(target, ast.Attribute)
                     and until(name, '.') in self.globals):
                 raise DaceSyntaxError(
@@ -3111,11 +3191,24 @@ class ProgramVisitor(ExtNodeVisitor):
             if (not is_return and isinstance(target, ast.Name) and true_name
                     and not op and not isinstance(true_array, data.Scalar)
                     and not (true_array.shape == (1, ))):
-                raise DaceSyntaxError(
-                    self, target,
-                    'Cannot reassign value to variable "{}"'.format(name))
+                if (result in self.sdfg.arrays
+                        and self.sdfg.arrays[result].is_equivalent(true_array)):
+                    # Skip error if the arrays are defined exactly in the same way
+                    true_name = None
+                else:
+                    raise DaceSyntaxError(
+                        self, target,
+                        'Cannot reassign value to variable "{}"'.format(name))
 
-            if not true_name and op:
+            if is_return and true_name:
+                if (result in self.sdfg.arrays and
+                        not self.sdfg.arrays[result].is_equivalent(true_array)):
+                    raise DaceSyntaxError(
+                        self, target,
+                        'Return values of a data-centric function must always '
+                        'have the same type and shape')
+
+            if not true_name and (op or isinstance(target, ast.Subscript)):
                 raise DaceSyntaxError(
                     self, target,
                     'Variable "{}" used before definition'.format(name))
@@ -3257,16 +3350,10 @@ class ProgramVisitor(ExtNodeVisitor):
             # Self-copy check
             if result in self.views and new_name == self.views[result][1].data:
                 read_rng = self.views[result][1].subset
-                needs_copy = False
-                for i, sz in enumerate(new_rng.size()):
-                    # NOTE: We only have an issue with partial overlap of the
-                    # read and write subsets. This occurs when the range of
-                    # one of the dimensions is greater than one and the read
-                    # and write ranges (for that particular dimension) are not
-                    # the same.
-                    if sz != 1 and new_rng[i] != read_rng[i]:
-                        needs_copy = True
-                        break
+                try:
+                    needs_copy = not (new_rng.intersects(read_rng) == False)
+                except TypeError:
+                    needs_copy = True
                 if needs_copy:
                     view = self.sdfg.arrays[result]
                     cname, carr = self.sdfg.add_transient(result,
@@ -3587,10 +3674,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 outer_name = self.sdfg.add_datadesc(aname,
                                                     desc,
                                                     find_new_name=True)
-                self.nested_closure_arrays[outer_name] = (arr, desc)
-                # Add closure arrays as function arguments
-                args.append((aname, outer_name))
-                required_args.append(aname)
+                if not desc.transient:
+                    self.nested_closure_arrays[outer_name] = (arr, desc)
+                    # Add closure arrays as function arguments
+                    args.append((aname, outer_name))
+                    required_args.append(aname)
         else:
             raise DaceSyntaxError(
                 self, node, 'Unrecognized SDFG type "%s" in call to "%s"' %
@@ -3942,9 +4030,13 @@ class ProgramVisitor(ExtNodeVisitor):
         if func or funcname in self.other_sdfgs:
             try:
                 return self._parse_sdfg_call(funcname, func, node)
-            except SkipCall:
+            except SkipCall as ex:
                 # Re-parse call with non-parsed information
-                return self.visit_Call(node.func.oldnode)
+                try:
+                    return self.visit_Call(node.func.oldnode)
+                except Exception:  # Anything could happen here
+                    # Raise original exception instead
+                    raise ex.__context__
 
         # Set arguments
         args = []

@@ -310,6 +310,8 @@ def emit_memlet_reference(dispatcher,
             typedef = defined_ctype
         if is_scalar:
             defined_type = DefinedType.Scalar
+            if is_write is False:
+                typedef = f'const {typedef}'
             ref = '&'
     elif defined_type == DefinedType.ArrayInterface:
         base_ctype = conntype.base_type.ctype
@@ -404,8 +406,8 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
 
 
 def _is_c_contiguous(shape, strides):
-    """ 
-    Returns True if the strides represent a non-padded, C-contiguous (last 
+    """
+    Returns True if the strides represent a non-padded, C-contiguous (last
     dimension contiguous) array.
     """
     computed_strides = tuple(
@@ -532,7 +534,7 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    if fpga.is_hbm_array_with_distributed_index(d):
+    if fpga.is_multibank_array_with_distributed_index(d):
         subset_in = fpga.modify_distributed_subset(subset_in, 0)
 
     # Offset according to parameters, then offset according to array
@@ -1254,9 +1256,16 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if name not in self.memlets:
             return self.generic_visit(node)
         memlet, nc, wcr, dtype = self.memlets[name]
+        try:
+            defined_type, _ = self.codegen._dispatcher.defined_vars.get(node.id)
+        except KeyError:
+            defined_type = None
         if (isinstance(dtype, dtypes.pointer)
                 and memlet.subset.num_elements() == 1):
             return ast.Name(id="(*{})".format(name), ctx=node.ctx)
+        elif ((defined_type == DefinedType.Stream
+               or defined_type == DefinedType.StreamArray) and memlet.dynamic):
+            return ast.Name(id=f"{name}.pop()", ctx=node.ctx)
         else:
             return self.generic_visit(node)
 

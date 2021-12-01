@@ -19,6 +19,20 @@ from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible,
                                          SDFGClosure)
 
 
+class DaceRecursionError(Exception):
+    """
+    Exception that indicates a recursion in a data-centric parsed context.
+    The exception includes the id of the topmost function as a stopping
+    condition for parsing.
+    """
+    def __init__(self, fid: int):
+        self.fid = fid
+
+    def __str__(self) -> str:
+        return ('Non-analyzable recursion detected, function cannot be parsed '
+                'as data-centric')
+
+
 @dataclass
 class PreprocessedAST:
     """
@@ -119,6 +133,16 @@ class RewriteSympyEquality(ast.NodeTransformer):
     def visit_Constant(self, node):
         if isinstance(node.value, numpy.bool_):
             node.value = bool(node.value)
+        elif isinstance(node.value, numpy.number):
+            node.value = numpy.asscalar(node.value)
+        return self.generic_visit(node)
+    
+    # Compatibility for Python 3.7
+    def visit_Num(self, node):
+        if isinstance(node.n, numpy.bool_):
+            node.n = bool(node.n)
+        elif isinstance(node.n, numpy.number):
+            node.n = numpy.asscalar(node.n)
         return self.generic_visit(node)
 
 
@@ -497,6 +521,8 @@ class GlobalResolver(ast.NodeTransformer):
             else:
                 if value is None:
                     newnode = ast.NameConstant(value=None)
+                elif isinstance(value, str):
+                    newnode = ast.Str(s=value)
                 else:
                     newnode = ast.Num(n=value)
 
@@ -656,13 +682,42 @@ class GlobalResolver(ast.NodeTransformer):
                 return self.generic_visit(node)
         return self.generic_visit(node)
 
+    def generic_visit_field(self, node: ast.AST, field: str) -> ast.AST:
+        """
+        Modification of ast.NodeTransformer.generic_visit that only visits one
+        field.
+        """
+        old_value = getattr(node, field)
+        if isinstance(old_value, list):
+            new_values = []
+            for value in old_value:
+                if isinstance(value, ast.AST):
+                    value = self.visit(value)
+                    if value is None:
+                        continue
+                    elif not isinstance(value, ast.AST):
+                        new_values.extend(value)
+                        continue
+                new_values.append(value)
+            old_value[:] = new_values
+        elif isinstance(old_value, ast.AST):
+            new_node = self.visit(old_value)
+            if new_node is None:
+                delattr(node, field)
+            else:
+                setattr(node, field, new_node)
+        return node
+
     def visit_For(self, node: ast.For):
         # Special case: for loop generators cannot be dace programs
         oldval = self.do_not_detect_callables
         self.do_not_detect_callables = True
-        result = self.generic_visit(node)
+        self.generic_visit_field(node, 'target')
+        self.generic_visit_field(node, 'iter')
         self.do_not_detect_callables = oldval
-        return result
+        self.generic_visit_field(node, 'body')
+        self.generic_visit_field(node, 'orelse')
+        return node
 
     def visit_Assert(self, node: ast.Assert) -> Any:
         # Try to evaluate assertion statically
@@ -701,7 +756,9 @@ class GlobalResolver(ast.NodeTransformer):
                 not isinstance(v, ast.FormattedValue)
                 or isinstance(v.value, ast.Constant) for v in visited.values
             ]
-            values = [astutils.unparse(v.value) for v in visited.values]
+            values = [v.s if isinstance(v, ast.Str)
+                          else astutils.unparse(v.value)
+                      for v in visited.values]
             return ast.copy_location(
                 ast.Constant(kind='',
                              value=''.join(('{%s}' % v) if not p else v
@@ -761,9 +818,14 @@ class CallTreeResolver(ast.NodeVisitor):
                      value.closure_resolver(constant_args, self.closure)))
             else:
                 self.closure.nested_closures.append((qualname, SDFGClosure()))
-        except:  # Parsing failed (anything can happen here)
+        except DaceRecursionError:  # Parsing failed in a nested context, raise
+            raise
+        except Exception as ex:  # Parsing failed (anything can happen here)
+            warnings.warn(f'Parsing SDFGConvertible {value} failed: {ex}')
+            del self.closure.closure_sdfgs[qualname]
             # Return old call AST instead
             node.func = node.func.oldnode.func
+
             return self.generic_visit(node)
 
 
@@ -843,8 +905,7 @@ def preprocess_dace_program(
     if parent_closure is not None:
         fid = id(f)
         if fid in parent_closure.callstack:
-            raise TypeError('Non-analyzable recursion detected, function '
-                            'cannot be parsed as data-centric')
+            raise DaceRecursionError(fid)
         if len(parent_closure.callstack) > Config.get(
                 'frontend', 'implicit_recursion_depth'):
             raise TypeError('Implicit (automatically parsed) recursion depth '
@@ -858,7 +919,14 @@ def preprocess_dace_program(
     src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
     src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
     src_ast = DeadCodeEliminator().visit(src_ast)
-    CallTreeResolver(closure_resolver.closure, resolved).visit(src_ast)
+    try:
+        CallTreeResolver(closure_resolver.closure, resolved).visit(src_ast)
+    except DaceRecursionError as ex:
+        if id(f) == ex.fid:
+            raise TypeError('Parsing failed due to recursion in a data-centric '
+                            'context called from this function')
+        else:
+            raise ex
     used_arrays = ArrayClosureResolver(closure_resolver.closure)
     used_arrays.visit(src_ast)
 
