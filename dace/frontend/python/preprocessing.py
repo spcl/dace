@@ -136,7 +136,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
         elif isinstance(node.value, numpy.number):
             node.value = numpy.asscalar(node.value)
         return self.generic_visit(node)
-    
+
     # Compatibility for Python 3.7
     def visit_Num(self, node):
         if isinstance(node.n, numpy.bool_):
@@ -403,7 +403,21 @@ def has_replacement(callobj: Callable,
     """
     from dace.frontend.common import op_repository as oprepo
 
+    # Nothing from the `dace` namespace needs preprocessing
+    mod = None
+    try:
+        mod = callobj.__module__
+    except AttributeError:
+        try:
+            mod = parent_object.__module__
+        except AttributeError:
+            pass
+    if mod and (mod == 'dace' or mod.startswith('dace.') or mod == 'math'
+                or mod.startswith('math.')):
+        return True
+
     # Attributes and methods
+    classname = None
     if parent_object is not None:
         classname = type(parent_object).__name__
         attrname = callobj.__name__
@@ -415,10 +429,16 @@ def has_replacement(callobj: Callable,
             return True
 
     # NumPy ufuncs
-    if isinstance(callobj, numpy.ufunc):
+    if (isinstance(callobj, numpy.ufunc)
+            or isinstance(parent_object, numpy.ufunc)):
         return True
 
     # Functions
+    # Special case: Constructor method (e.g., numpy.ndarray)
+    if classname == "type":
+        cbqualname = astutils.rname(node)
+        if oprepo.Replacements.get(cbqualname) is not None:
+            return True
     full_func_name = callobj.__module__ + '.' + callobj.__qualname__
     if oprepo.Replacements.get(full_func_name) is not None:
         return True
@@ -459,7 +479,9 @@ class GlobalResolver(ast.NodeTransformer):
         else:
             return super().generic_visit(node)
 
-    def _qualname_to_array_name(self, qualname: str) -> str:
+    def _qualname_to_array_name(self,
+                                qualname: str,
+                                prefix: str = '__g_') -> str:
         """ Converts a Python qualified attribute name to an SDFG array name. """
         # We only support attributes and subscripts for now
         sanitized = re.sub(r'[\.\[\]\'\",]', '_', qualname)
@@ -467,7 +489,7 @@ class GlobalResolver(ast.NodeTransformer):
             raise NameError(
                 f'Variable name "{sanitized}" is not sanitized '
                 'properly during parsing. Please report this issue.')
-        return f"__g_{sanitized}"
+        return f"{prefix}{sanitized}"
 
     def global_value_to_node(self,
                              value,
@@ -547,6 +569,7 @@ class GlobalResolver(ast.NodeTransformer):
             newnode = ast.Name(id=arrname, ctx=ast.Load())
         elif detect_callables and callable(value):
             # Try parsing the function as a dace function/method
+            newnode = None
             try:
                 from dace.frontend.python import parser  # Avoid import loops
 
@@ -557,18 +580,30 @@ class GlobalResolver(ast.NodeTransformer):
                 # If it is a callable object
                 if (not inspect.isfunction(value)
                         and not inspect.ismethod(value)
+                        and not inspect.isbuiltin(value)
                         and hasattr(value, '__call__')):
                     parent_object = value
                     value = value.__call__
 
                 # Replacements take precedence over auto-parsing
-                if has_replacement(value, parent_object, parent_node):
-                    return None
+                try:
+                    if has_replacement(value, parent_object, parent_node):
+                        return None
+                except Exception:
+                    pass
+
+                # Store the handle to the original callable, in case parsing fails
+                cbqualname = astutils.rname(parent_node)
+                cbname = self._qualname_to_array_name(cbqualname, prefix='')
+                self.closure.callbacks[cbname] = (cbqualname, value, False)
+
+                # From this point on, any failure will result in a callback
+                newnode = ast.Name(id=cbname, ctx=ast.Load())
 
                 # Decorated or functions with missing source code
                 sast, _, _, _ = astutils.function_to_ast(value)
                 if len(sast.body[0].decorator_list) > 0:
-                    return None
+                    return newnode
 
                 parsed = parser.DaceProgram(value, [], {}, False,
                                             dtypes.DeviceType.CPU)
@@ -578,10 +613,12 @@ class GlobalResolver(ast.NodeTransformer):
                     parsed.methodobj = parent_object
                     parsed.objname = inspect.getfullargspec(value).args[0]
 
-                return self.global_value_to_node(parsed, parent_node, qualname,
-                                                 recurse, detect_callables)
-            except:  # Parsing failed (almost any exception can occur)
-                return None
+                res = self.global_value_to_node(parsed, parent_node, qualname,
+                                                recurse, detect_callables)
+                del self.closure.callbacks[cbname]
+                return res
+            except Exception:  # Parsing failed (almost any exception can occur)
+                return newnode
         else:
             return None
 
@@ -756,9 +793,10 @@ class GlobalResolver(ast.NodeTransformer):
                 not isinstance(v, ast.FormattedValue)
                 or isinstance(v.value, ast.Constant) for v in visited.values
             ]
-            values = [v.s if isinstance(v, ast.Str)
-                          else astutils.unparse(v.value)
-                      for v in visited.values]
+            values = [
+                v.s if isinstance(v, ast.Str) else astutils.unparse(v.value)
+                for v in visited.values
+            ]
             return ast.copy_location(
                 ast.Constant(kind='',
                              value=''.join(('{%s}' % v) if not p else v
@@ -769,6 +807,7 @@ class GlobalResolver(ast.NodeTransformer):
 class CallTreeResolver(ast.NodeVisitor):
     def __init__(self, closure: SDFGClosure, globals: Dict[str, Any]) -> None:
         self.closure = closure
+        self.seen_calls: Set[str] = set()
         self.globals = globals
 
     def _eval_args(self, node: ast.Call) -> Dict[str, Any]:
@@ -797,6 +836,7 @@ class CallTreeResolver(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles
         if not isinstance(node.func, (ast.Num, ast.Constant)):
+            self.seen_calls.add(astutils.rname(node.func))
             return self.generic_visit(node)
         if isinstance(node.func, ast.Num):
             value = node.func.n
@@ -812,6 +852,7 @@ class CallTreeResolver(ast.NodeVisitor):
         try:
             qualname = next(k for k, v in self.closure.closure_sdfgs.items()
                             if v is value)
+            self.seen_calls.add(qualname)
             if hasattr(value, 'closure_resolver'):
                 self.closure.nested_closures.append(
                     (qualname,
@@ -920,7 +961,8 @@ def preprocess_dace_program(
     src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
     src_ast = DeadCodeEliminator().visit(src_ast)
     try:
-        CallTreeResolver(closure_resolver.closure, resolved).visit(src_ast)
+        ctr = CallTreeResolver(closure_resolver.closure, resolved)
+        ctr.visit(src_ast)
     except DaceRecursionError as ex:
         if id(f) == ex.fid:
             raise TypeError('Parsing failed due to recursion in a data-centric '
@@ -935,6 +977,12 @@ def preprocess_dace_program(
         k: v
         for k, v in closure_resolver.closure.closure_arrays.items()
         if k in used_arrays.arrays
+    }
+
+    # Filter out callbacks that were removed after dead code elimination
+    closure_resolver.closure.callbacks = {
+        k: v for k, v in closure_resolver.closure.callbacks.items()
+        if k in ctr.seen_calls
     }
 
     # Filter remaining global variables according to type and scoping rules
