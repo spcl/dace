@@ -3178,6 +3178,12 @@ class ProgramVisitor(ExtNodeVisitor):
         try:
             dtype = eval(astutils.unparse(node.annotation), self.globals,
                          self.defined)
+            if isinstance(dtype, data.Data):
+                simple_type = dtype.dtype
+            else:
+                simple_type = dtype
+            if not isinstance(simple_type, dtypes.typeclass):
+                raise
         except:
             dtype = None
             warnings.warn('typeclass {} is not supported'.format(type_name))
