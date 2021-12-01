@@ -349,12 +349,7 @@ class ExtNodeTransformer(ast.NodeTransformer):
                     if isinstance(value, ast.AST):
                         if (field == 'body' or field
                                 == 'orelse') and isinstance(value, ast.Expr):
-                            clsname = type(value).__name__
-                            if getattr(self, "visit_TopLevel" + clsname, False):
-                                value = getattr(self, "visit_TopLevel" +
-                                                clsname)(value)
-                            else:
-                                value = self.visit(value)
+                            value = self.visit_TopLevel(value)
                         else:
                             value = self.visit(value)
                         if value is None:
@@ -476,3 +471,9 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
         else:
             self.defined.add(node.id)
         self.generic_visit(node)
+
+
+class AnnotateTopLevel(ExtNodeTransformer):
+    def visit_TopLevel(self, node):
+        node.toplevel = True
+        return super().visit_TopLevel(node)
