@@ -164,4 +164,6 @@ if __name__ == '__main__':
     # PrePost Ampel test
     # Resursive
     # Multidimesnioal
+    # More types
+
     

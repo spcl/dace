@@ -109,4 +109,4 @@ if __name__ == '__main__':
     #  Reduction
     # ...
     #  Strided map vs. non strides map
-    # 
+    # Types

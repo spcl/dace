@@ -262,7 +262,6 @@ class Vectorization(transformation.Transformation):
                                              (dim_to_ex % vector_size), dim_to,
                                              dim_skip)
 
-
         if self.target != dtypes.ScheduleType.SVE_Map:
             # Change the step of the inner-most dimension.
             map_entry.map.range[-1] = tuple(new_range)
@@ -292,3 +291,64 @@ class Vectorization(transformation.Transformation):
             self.vector_len,
             flags=vector_inference.VectorInferenceFlags.Allow_Stride,
             apply=True)
+
+        # Vector length propagation using data descriptors, recursive traversal
+        # outwards
+        if self.propagate_parent:
+            for edge, _ in subgraph.all_edges_recursive():
+
+                desc = sdfg.arrays[edge.data.data]
+                contigidx = desc.strides.index(1)
+
+                newlist = []
+
+                lastindex = edge.data.subset[contigidx]
+                if isinstance(lastindex, tuple):
+                    newlist = [(rb, re, rs) for rb, re, rs in edge.data.subset]
+                else:
+                    newlist = [(rb, rb, 1) for rb in edge.data.subset]
+
+                # Modify memlet subset to match vector length
+                rb = newlist[contigidx][0]
+                if self.strided_map:
+                    newlist[contigidx] = (rb / self.vector_len,
+                                          rb / self.vector_len, 1)
+                else:
+                    newlist[contigidx] = (rb, rb, 1)
+
+                edge.data.subset = subsets.Range(newlist)
+
+                cursdfg = sdfg
+                curedge = edge
+                while cursdfg is not None:
+                    arrname = curedge.data.data
+                    dtype = cursdfg.arrays[arrname].dtype
+
+                    # Change type and shape to vector
+                    if not isinstance(dtype, dtypes.vector):
+                        cursdfg.arrays[arrname].dtype = dtypes.vector(
+                            dtype, vector_size)
+                        new_shape = list(cursdfg.arrays[arrname].shape)
+                        contigidx = cursdfg.arrays[arrname].strides.index(1)
+                        new_shape[contigidx] /= vector_size
+                        try:
+                            new_shape[contigidx] = int(new_shape[contigidx])
+                        except TypeError:
+                            pass
+                        cursdfg.arrays[arrname].shape = new_shape
+
+                    propagation.propagate_memlets_sdfg(cursdfg)
+
+                    # Find matching edge in parent
+                    nsdfg = cursdfg.parent_nsdfg_node
+                    if nsdfg is None:
+                        break
+                    tstate = cursdfg.parent
+                    curedge = ([
+                        e
+                        for e in tstate.in_edges(nsdfg) if e.dst_conn == arrname
+                    ] + [
+                        e for e in tstate.out_edges(nsdfg)
+                        if e.src_conn == arrname
+                    ])[0]
+                    cursdfg = cursdfg.parent_sdfg
