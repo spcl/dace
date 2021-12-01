@@ -51,3 +51,9 @@ def test_wcr_max():
     assert 'ReductionType::Max' in code
     assert 'svmaxv' in code
 
+
+
+if __name__ == '__main__':
+    test_wcr_sum()
+    test_wcr_min()
+    test_wcr_max()

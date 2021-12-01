@@ -22,3 +22,7 @@ def test_stream_push():
 
     assert 'stream.push' in code
     assert 'svcompact' in code
+
+
+if __name__ == '__main__':
+    test_stream_push()

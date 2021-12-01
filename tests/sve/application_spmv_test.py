@@ -88,3 +88,7 @@ def test_spmv():
     print("Difference:", diff)
     print("==== Program end ====")
     assert diff <= 1e-5
+
+
+if __name__ == '__main__':
+    test_spmv()

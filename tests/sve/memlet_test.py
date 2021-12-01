@@ -101,3 +101,13 @@ def test_indirect_load_implicit():
 
     # This is still an indirect load (uses Indirection tasklet)
     assert 'svld1_gather_index' in code
+
+
+if __name__ == '__main__':
+    test_contiguous_map()
+    test_stride_map()
+    test_fake_stride()
+    test_matrix_stride()
+    test_indirect_load_explicit()
+    test_indirect_load_implicit()
+    

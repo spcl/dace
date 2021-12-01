@@ -76,3 +76,7 @@ def test_filter():
 
     print("==== Program end ====")
     assert diff <= 1e-5
+
+
+if __name__ == '__main__':
+    test_filter()

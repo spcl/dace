@@ -148,3 +148,15 @@ def test_stream_pop():
     # Stream pop is not implemented yet
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
+
+
+if __name__ == '__main__':
+    test_basic_stride()
+    test_irregular_stride()
+    test_diagonal_stride()
+    test_unsupported_type()
+    test_supported_wcr()
+    test_first_level_vectorization()
+    test_stream_push()
+    test_stream_pop()
+    
