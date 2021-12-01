@@ -807,6 +807,7 @@ class GlobalResolver(ast.NodeTransformer):
 class CallTreeResolver(ast.NodeVisitor):
     def __init__(self, closure: SDFGClosure, globals: Dict[str, Any]) -> None:
         self.closure = closure
+        self.seen_calls: Set[str] = set()
         self.globals = globals
 
     def _eval_args(self, node: ast.Call) -> Dict[str, Any]:
@@ -835,6 +836,7 @@ class CallTreeResolver(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles
         if not isinstance(node.func, (ast.Num, ast.Constant)):
+            self.seen_calls.add(astutils.rname(node.func))
             return self.generic_visit(node)
         if isinstance(node.func, ast.Num):
             value = node.func.n
@@ -850,6 +852,7 @@ class CallTreeResolver(ast.NodeVisitor):
         try:
             qualname = next(k for k, v in self.closure.closure_sdfgs.items()
                             if v is value)
+            self.seen_calls.add(qualname)
             if hasattr(value, 'closure_resolver'):
                 self.closure.nested_closures.append(
                     (qualname,
@@ -958,7 +961,8 @@ def preprocess_dace_program(
     src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
     src_ast = DeadCodeEliminator().visit(src_ast)
     try:
-        CallTreeResolver(closure_resolver.closure, resolved).visit(src_ast)
+        ctr = CallTreeResolver(closure_resolver.closure, resolved)
+        ctr.visit(src_ast)
     except DaceRecursionError as ex:
         if id(f) == ex.fid:
             raise TypeError('Parsing failed due to recursion in a data-centric '
@@ -973,6 +977,12 @@ def preprocess_dace_program(
         k: v
         for k, v in closure_resolver.closure.closure_arrays.items()
         if k in used_arrays.arrays
+    }
+
+    # Filter out callbacks that were removed after dead code elimination
+    closure_resolver.closure.callbacks = {
+        k: v for k, v in closure_resolver.closure.callbacks.items()
+        if k in ctr.seen_calls
     }
 
     # Filter remaining global variables according to type and scoping rules

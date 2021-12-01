@@ -55,13 +55,10 @@ class SDFGConvertible(object):
 
     def __sdfg_closure__(
             self,
-            arrays_only: bool = False,
             reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """ 
         Returns the closure arrays of the SDFG represented by this object
         as a mapping between array name and the corresponding value.
-        :param arrays_only: If True, it only returns closure arrays (e.g.,
-                            not callbacks)
         :param reevaluate: If given, re-evaluates closure elements based on the
                            input mapping (keys: array names, values: expressions
                            to evaluate). Otherwise, re-evaluates default
