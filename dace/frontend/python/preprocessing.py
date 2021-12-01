@@ -412,7 +412,8 @@ def has_replacement(callobj: Callable,
             mod = parent_object.__module__
         except AttributeError:
             pass
-    if mod and (mod.startswith('dace.') or mod.startswith('math.')):
+    if mod and (mod == 'dace' or mod.startswith('dace.') or mod == 'math'
+                or mod.startswith('math.')):
         return True
 
     # Attributes and methods
