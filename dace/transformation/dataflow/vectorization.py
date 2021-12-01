@@ -25,18 +25,18 @@ class Vectorization(transformation.Transformation):
         dimension. The transformation changes the step of the inner-most loop
         to be equal to the length of the vector and vectorizes the memlets.
 
-        Possible targets: CPU, ARM SVE and FPGA.  
+        Possible targets: CPU, ARM SVE and FPGA.
+        When choosing ARM SVE the vecor length is ingored as SVE is length agnostic. 
 
   """
 
     vector_len = Property(desc="Vector length", dtype=int, default=4)
 
-    vec_len_sve = SymbolicProperty(desc="Vector length", default=sve_util.SVE_LEN)
-
     propagate_parent = Property(desc="Propagate vector length through "
                                 "parent SDFGs",
                                 dtype=bool,
                                 default=False)
+
     strided_map = Property(desc="Use strided map range (jump by vector length)"
                            " instead of modifying memlets",
                            dtype=bool,
@@ -71,97 +71,37 @@ class Vectorization(transformation.Transformation):
                        strict=False) -> bool:
 
         # Check if supported!
-        if self.target not in [
-                dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device,
-                dtypes.ScheduleType.SVE_Map
-        ]:
+        supported_targets = [
+            dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device,
+            dtypes.ScheduleType.SVE_Map
+        ]
+
+        if self.target not in supported_targets:
             return False
 
-        if self.target == dtypes.ScheduleType.Default:
+        map_entry = self._map_entry(sdfg)
+        current_map = map_entry.map
+        subgraph = state.scope_subgraph(map_entry)
+        subgraph_contents = state.scope_subgraph(map_entry,
+                                                 include_entry=False,
+                                                 include_exit=False)
 
-            map_entry = state.nodes()[candidate[Vectorization._map_entry]]
+        # Prevent infinite repeats
+        if current_map.schedule == dtypes.ScheduleType.SVE_Map:
+            return False
 
-            # Only accept scopes that have one internal tasklet
-            scope = state.scope_subgraph(map_entry, False, False)
-            if len(scope.nodes()) != 1:
+        current_map.schedule = self.target
+
+        ########################
+        # Ensure only Tasklets and AccessNodes are within the map
+        for node, _ in subgraph_contents.all_nodes_recursive():
+            if not isinstance(node, (nodes.Tasklet, nodes.AccessNode)):
                 return False
-            tasklet = scope.nodes()[0]
-            if not isinstance(tasklet, nodes.Tasklet):
-                return False
 
-            param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
-            found = False
-
-            # Strided maps cannot be vectorized
-            if map_entry.map.range[-1][2] != 1 and self.strided_map:
-                return False
-
-            # Check if all edges, adjacent to the tasklet,
-            # use the parameter in their contiguous dimension.
-            for e, conntype in state.all_edges_and_connectors(tasklet):
-
-                # Cases that do not matter for vectorization
-                if e.data.data is None:  # Empty memlets
-                    continue
-                if isinstance(sdfg.arrays[e.data.data], data.Stream):  # Streams
-                    continue
-
-                # Vectorization can not be applied in WCR
-                # if e.data.wcr is not None:
-                #     return False
-
-                subset = e.data.subset
-                array = sdfg.arrays[e.data.data]
-
-                # If already vectorized or a pointer, do not apply
-                if isinstance(conntype, (dtypes.vector, dtypes.pointer)):
-                    return False
-
-                try:
-                    for idx, expr in enumerate(subset):
-                        if isinstance(expr, tuple):
-                            for ex in expr:
-                                ex = symbolic.pystr_to_symbolic(ex)
-                                symbols = ex.free_symbols
-                                if param in symbols:
-                                    if array.strides[idx] == 1:
-                                        found = True
-                                    else:
-                                        return False
-                        else:
-                            expr = symbolic.pystr_to_symbolic(expr)
-                            symbols = expr.free_symbols
-                            if param in symbols:
-                                if array.strides[idx] == 1:
-                                    found = True
-                                else:
-                                    return False
-                except TypeError:  # cannot determine truth value of Relational
-                    return False
-
-            return found
-
-        elif self.target == dtypes.ScheduleType.SVE_Map:
-
-            map_entry = self._map_entry(sdfg)
-            current_map = map_entry.map
-            subgraph = state.scope_subgraph(map_entry)
-            subgraph_contents = state.scope_subgraph(map_entry,
-                                                     include_entry=False,
-                                                     include_exit=False)
-
-            # Prevent infinite repeats
-            if current_map.schedule == dtypes.ScheduleType.SVE_Map:
-                return False
+        if self.target == dtypes.ScheduleType.SVE_Map:
 
             # Infer all connector types for later checks (without modifying the graph)
             inferred = infer_types.infer_connector_types(sdfg, state, subgraph)
-
-            ########################
-            # Ensure only Tasklets and AccessNodes are within the map
-            for node, _ in subgraph_contents.all_nodes_recursive():
-                if not isinstance(node, (nodes.Tasklet, nodes.AccessNode)):
-                    return False
 
             ########################
             # Check for unsupported datatypes on the connectors (including on the Map itself)
@@ -182,80 +122,86 @@ class Vectorization(transformation.Transformation):
             if len(bit_widths) > 1:
                 return False
 
-            ########################
-            # Check for unsupported memlets
-            param_name = current_map.params[-1]
-            for e, _ in subgraph.all_edges_recursive():
-                # Check for unsupported strides
-                # The only unsupported strides are the ones containing the innermost
-                # loop param because they are not constant during a vector step
-                param_sym = symbolic.symbol(current_map.params[-1])
+        ########################
+        # Check for unsupported memlets
+        param_name = current_map.params[-1]
+        for e, _ in subgraph.all_edges_recursive():
+            # Check for unsupported strides
+            # The only unsupported strides are the ones containing the innermost
+            # loop param because they are not constant during a vector step
+            param_sym = symbolic.symbol(current_map.params[-1])
 
-                if param_sym in e.data.get_stride(sdfg,
-                                                  map_entry.map).free_symbols:
-                    return False
-
-                # Check for unsupported WCR
-                if e.data.wcr is not None:
-                    # Unsupported reduction type
-                    reduction_type = dace.frontend.operations.detect_reduction_type(
-                        e.data.wcr)
-                    if reduction_type not in sve_util.REDUCTION_TYPE_TO_SVE:
-                        return False
-
-                    # Param in memlet during WCR is not supported
-                    if param_name in e.data.subset.free_symbols and e.data.wcr_nonatomic:
-                        return False
-
-                    # vreduce is not supported
-                    dst_node = state.memlet_path(e)[-1]
-                    if isinstance(dst_node, nodes.Tasklet):
-                        if isinstance(dst_node.in_connectors[e.dst_conn],
-                                      dtypes.vector):
-                            return False
-                    elif isinstance(dst_node, nodes.AccessNode):
-                        desc = dst_node.desc(sdfg)
-                        if isinstance(desc, data.Scalar) and isinstance(
-                                desc.dtype, dtypes.vector):
-                            return False
-
-            ########################
-            # Check for invalid copies in the subgraph
-            for node, _ in subgraph.all_nodes_recursive():
-                if not isinstance(node, nodes.Tasklet):
-                    continue
-
-                for e in state.in_edges(node):
-                    # Check for valid copies from other tasklets and/or streams
-                    if e.data.data is not None:
-                        src_node = state.memlet_path(e)[0].src
-                        if not isinstance(src_node,
-                                          (nodes.Tasklet, nodes.AccessNode)):
-                            # Make sure we only have Code->Code copies and from arrays
-                            return False
-
-                        if isinstance(src_node, nodes.AccessNode):
-                            src_desc = src_node.desc(sdfg)
-                            if isinstance(src_desc, data.Stream):
-                                # Stream pops are not implemented
-                                return False
-
-            # Run the vector inference algorithm to check if vectorization is feasible
-            try:
-                vector_inference.infer_vectors(
-                    sdfg,
-                    state,
-                    map_entry,
-                    self.vec_len_sve,
-                    flags=vector_inference.VectorInferenceFlags.Allow_Stride,
-                    apply=False)
-            except vector_inference.VectorInferenceException as ex:
+            if param_sym in e.data.get_stride(sdfg, map_entry.map).free_symbols:
                 return False
 
-            return True
+            # if isinstance(dst_node, nodes.Tasklet):
+            #     if isinstance(dst_node.in_connectors[e.dst_conn],
+            #                   (dtypes.vector, dtypes.pointer)):
+            #         return False
 
-        elif self.target == dtypes.ScheduleType.FPGA_Device:
-            raise NotImplementedError
+            # # If already vectorized or a pointer, do not apply
+            # if isinstance(conntype, (dtypes.vector, dtypes.pointer)):
+            #     return False
+
+            # Check for unsupported WCR
+            if e.data.wcr is not None:
+                # Unsupported reduction type
+                reduction_type = dace.frontend.operations.detect_reduction_type(
+                    e.data.wcr)
+                if reduction_type not in sve_util.REDUCTION_TYPE_TO_SVE and self.target == dtypes.ScheduleType.SVE_Map:
+                    return False
+
+                    # Param in memlet during WCR is not supported
+                if param_name in e.data.subset.free_symbols and e.data.wcr_nonatomic:
+                    return False
+
+                # vreduce is not supported
+                dst_node = state.memlet_path(e)[-1]
+                if isinstance(dst_node, nodes.Tasklet):
+                    if isinstance(dst_node.in_connectors[e.dst_conn],
+                                  dtypes.vector):
+                        return False
+
+                elif isinstance(dst_node, nodes.AccessNode):
+                    desc = dst_node.desc(sdfg)
+                    if isinstance(desc, data.Scalar) and isinstance(
+                            desc.dtype, dtypes.vector):
+                        return False
+
+        ########################
+        # Check for invalid copies in the subgraph
+        for node, _ in subgraph.all_nodes_recursive():
+            if not isinstance(node, nodes.Tasklet):
+                continue
+
+            for e in state.in_edges(node):
+                # Check for valid copies from other tasklets and/or streams
+                if e.data.data is not None:
+                    src_node = state.memlet_path(e)[0].src
+                    if not isinstance(src_node,
+                                      (nodes.Tasklet, nodes.AccessNode)):
+                        # Make sure we only have Code->Code copies and from arrays
+                        return False
+
+                    if isinstance(src_node, nodes.AccessNode):
+                        src_desc = src_node.desc(sdfg)
+                        if isinstance(src_desc, data.Stream):
+                            # Stream pops are not implemented
+                            return False
+
+            # Run the vector inference algorithm to check if vectorization is feasible
+        try:
+            vector_inference.infer_vectors(
+                sdfg,
+                state,
+                map_entry,
+                self.vector_len,
+                flags=vector_inference.VectorInferenceFlags.Allow_Stride,
+                apply=False)
+        except vector_inference.VectorInferenceException as ex:
+            return False
+
+        return True
 
     @staticmethod
     def match_to_str(graph, candidate):
@@ -454,9 +400,9 @@ class Vectorization(transformation.Transformation):
                 sdfg,
                 state,
                 map_entry,
-                self.vec_len_sve,
+                self.vector_len,
                 flags=vector_inference.VectorInferenceFlags.Allow_Stride,
                 apply=True)
         elif self.target == dtypes.ScheduleType.FPGA_Device:
-            
+
             raise NotImplementedError
