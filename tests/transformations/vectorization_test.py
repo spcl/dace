@@ -43,6 +43,28 @@ def test_vectorization():
     assert np.allclose(B, A * 2)
 
 
+def test_wrong_targets():
+    sdfg: dace.SDFG = tovec.to_sdfg()
+
+    wrong_targets = [
+        dace.ScheduleType.Sequential,
+        dace.ScheduleType.MPI,
+        dace.ScheduleType.CPU_Multicore,
+        dace.ScheduleType.Unrolled,
+        dace.ScheduleType.GPU_Default,
+        dace.ScheduleType.GPU_Device,
+        dace.ScheduleType.GPU_ThreadBlock,
+        dace.ScheduleType.GPU_ThreadBlock_Dynamic,
+        dace.ScheduleType.GPU_Persistent,
+        dace.ScheduleType.FPGA_Device,
+    ]
+
+    for t in wrong_targets:
+
+        assert sdfg.apply_transformations_repeated(Vectorization,
+                                                   {"target": t}) == 0
+
+
 def test_vectorization_uneven():
     sdfg: dace.SDFG = tovec_uneven.to_sdfg()
 
@@ -92,14 +114,16 @@ def test_propagate_parent():
 
 
 if __name__ == '__main__':
-    test_vectorization()
-    test_vectorization_uneven()
+    # test_vectorization()
+    # test_wrong_targets()
+    # test_vectorization_uneven()
     test_vectorization_postamble()
-    test_propagate_parent()
+    # test_propagate_parent()
 
     # TODO: Pre Ampel test
     # More tests
     # Tests with subgraph
+    # Unsupported types
     # tests stride correctness iw stride != 1
     # Streams
     # vector / pointer

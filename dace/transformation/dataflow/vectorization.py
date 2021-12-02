@@ -25,7 +25,7 @@ class Vectorization(transformation.Transformation):
         dimension. The transformation changes the step of the inner-most loop
         to be equal to the length of the vector and vectorizes the memlets.
 
-        Possible targets: CPU, ARM SVE and FPGA.
+        Possible targets: ARM SVE or Default.
         When choosing ARM SVE the vecor length is ingored as SVE is length agnostic. 
 
   """
@@ -72,22 +72,21 @@ class Vectorization(transformation.Transformation):
 
         # Check if supported!
         supported_targets = [
-            dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device,
-            dtypes.ScheduleType.SVE_Map, dtypes.ScheduleType.CPU_Multicore
+            dtypes.ScheduleType.Default,
+            dtypes.ScheduleType.SVE_Map,
         ]
 
         if self.target not in supported_targets:
             return False
 
         map_entry = self._map_entry(sdfg)
-        current_map = map_entry.map
         subgraph = state.scope_subgraph(map_entry)
         subgraph_contents = state.scope_subgraph(map_entry,
                                                  include_entry=False,
                                                  include_exit=False)
 
         # Prevent infinite repeats
-        if current_map.schedule == dtypes.ScheduleType.SVE_Map:
+        if map_entry.map.schedule == dtypes.ScheduleType.SVE_Map:
             return False
 
         ########################
@@ -122,19 +121,19 @@ class Vectorization(transformation.Transformation):
 
         ########################
         # Check for unsupported memlets
-        param_name = current_map.params[-1]
+        param_name = map_entry.map.params[-1]
         for e, _ in subgraph.all_edges_recursive():
             # Check for unsupported strides
             # The only unsupported strides are the ones containing the innermost
             # loop param because they are not constant during a vector step
-            param_sym = symbolic.symbol(current_map.params[-1])
+            param_sym = symbolic.symbol(map_entry.map.params[-1])
 
             if param_sym in e.data.get_stride(sdfg, map_entry.map).free_symbols:
                 return False
 
             # # If already vectorized or a pointer, do not apply
             dst_node = state.memlet_path(e)[-1]
-            
+
             if isinstance(dst_node, nodes.Tasklet):
                 if isinstance(dst_node.in_connectors[e.dst_conn],
                               (dtypes.vector, dtypes.pointer)):
@@ -153,7 +152,6 @@ class Vectorization(transformation.Transformation):
                     return False
 
                 # vreduce is not supported
-                
                 if isinstance(dst_node, nodes.Tasklet):
                     if isinstance(dst_node.in_connectors[e.dst_conn],
                                   dtypes.vector):
@@ -206,10 +204,8 @@ class Vectorization(transformation.Transformation):
         return str(map_entry)
 
     def apply(self, sdfg: SDFG):
-
         state = sdfg.node(self.state_id)
         map_entry = self._map_entry(sdfg)
-        current_map = map_entry.map
 
         # Determine new range for vectorized map
         vector_size = self.vector_len
@@ -221,6 +217,9 @@ class Vectorization(transformation.Transformation):
                 dim_from // vector_size, ((dim_to + 1) // vector_size) - 1,
                 dim_skip
             ]
+
+        if self.target == dtypes.ScheduleType.SVE_Map:
+            new_range = [dim_from, dim_to, dim_skip]
 
         # Determine whether to create preamble or postamble maps
         if self.preamble is not None:
@@ -240,7 +239,7 @@ class Vectorization(transformation.Transformation):
         graph = sdfg.nodes()[self.state_id]
 
         # Create preamble non-vectorized map (replacing the original map)
-        if create_preamble and self.target != dtypes.ScheduleType.SVE_Map:
+        if create_preamble:
             old_scope = graph.scope_subgraph(map_entry, True, True)
             new_scope: ScopeSubgraphView = replicate_scope(
                 sdfg, graph, old_scope)
@@ -253,7 +252,7 @@ class Vectorization(transformation.Transformation):
             new_range[0] = new_begin
 
         # Create postamble non-vectorized map
-        if create_postamble and dtypes.ScheduleType.SVE_Map:
+        if create_postamble:
             new_scope: ScopeSubgraphView = replicate_scope(
                 sdfg, graph, graph.scope_subgraph(map_entry, True, True))
             dim_to_ex = dim_to + 1
@@ -261,22 +260,20 @@ class Vectorization(transformation.Transformation):
                                              (dim_to_ex % vector_size), dim_to,
                                              dim_skip)
 
-        if self.target != dtypes.ScheduleType.SVE_Map:
-            # Change the step of the inner-most dimension.
-            map_entry.map.range[-1] = tuple(new_range)
+        # Change the step of the inner-most dimension.
+        map_entry.map.range[-1] = tuple(new_range)
 
         # Expand the innermost map if multidimensional
-        if len(current_map.params) > 1:
+        if len(map_entry.map.params) > 1:
             ext, rem = dace.transformation.helpers.extract_map_dims(
-                sdfg, map_entry, list(range(len(current_map.params) - 1)))
+                sdfg, map_entry, list(range(len(map_entry.map.params) - 1)))
             map_entry = rem
-            current_map = map_entry.map
 
         subgraph = state.scope_subgraph(map_entry)
 
         if self.target == dtypes.ScheduleType.SVE_Map:
             # Set the schedule
-            current_map.schedule = dace.dtypes.ScheduleType.SVE_Map
+            map_entry.map.schedule = dace.dtypes.ScheduleType.SVE_Map
 
         # Infer all connector types and apply them
         inferred = infer_types.infer_connector_types(sdfg, state, subgraph)

@@ -36,6 +36,42 @@ def test_basic_stride():
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
 
+def test_supported_types():
+
+    types = [
+        dace.int8, dace.int16, dace.int32, dace.int64, dace.uint8, dace.uint16,
+        dace.uint32, dace.uint64, dace.float16, dace.float32, dace.float64
+    ]
+
+    for t in types:
+
+        @dace.program
+        def program(A: t[N], B: t[N]):
+            for i in dace.map[0:N]:
+                with dace.tasklet:
+                    a << A[i]
+                    b >> B[i]
+                    b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    assert sdfg.apply_transformations(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
+
+
+def test_multiple_bit_widths():
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float64[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B[i]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    assert sdfg.apply_transformations(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
+
+
 def test_irregular_stride():
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
@@ -62,7 +98,7 @@ def test_diagonal_stride():
 
     sdfg = program.to_sdfg(strict=True)
     # [i, i] has a stride of N + 1, so it is perfectly fine
-    assert sdfg.apply_transformations(
+    assert sdfg.apply_transformations_repeated(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
 
@@ -81,7 +117,54 @@ def test_unsupported_type():
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
 
-def test_supported_wcr():
+def test_unsupported_type2():
+    @dace.program
+    def program(A: dace.float32[N], B: dace.complex64[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B[i]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    # Complex datatypes are currently not supported by the codegen
+    assert sdfg.apply_transformations(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
+
+
+def test_unsupported_type3():
+    @dace.program
+    def program(A: dace.vector(dace.float32, 4)[N],
+                B: dace.vector(dace.float32, 4)[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B[i]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    # Complex datatypes are currently not supported by the codegen
+    assert sdfg.apply_transformations(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
+
+
+def test_unsupported_type4():
+    @dace.program
+    def program(A: dace.pointer(dace.float32)[N],
+                B: dace.pointer(dace.float32)[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B[i]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    # Complex datatypes are currently not supported by the codegen
+    assert sdfg.apply_transformations(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
+
+
+def test_supported_wcr_sum():
     @dace.program
     def program(A: dace.float32[N], B: dace.int32[1]):
         for i in dace.map[0:N]:
@@ -92,8 +175,85 @@ def test_supported_wcr():
 
     sdfg = program.to_sdfg(strict=True)
     # Complex datatypes are currently not supported by the codegen
-    assert sdfg.apply_transformations(
+    assert sdfg.apply_transformations_repeated(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
+
+
+def test_supported_wcr_min():
+    @dace.program
+    def program(A: dace.float32[N], B: dace.int32[1]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B(-1, lambda x, y: min(x, y))[0]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    # Complex datatypes are currently not supported by the codegen
+    assert sdfg.apply_transformations_repeated(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
+
+
+def test_supported_wcr_max():
+    @dace.program
+    def program(A: dace.float32[N], B: dace.int32[1]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B(-1, lambda x, y: max(x, y))[0]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    # Complex datatypes are currently not supported by the codegen
+    assert sdfg.apply_transformations_repeated(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
+
+
+def test_unsupported_wcr():
+    @dace.program
+    def program(A: dace.float32[N], B: dace.int32[1]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B(-1, lambda x, y: x * y)[0]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    # Complex datatypes are currently not supported by the codegen
+    assert sdfg.apply_transformations_repeated(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
+
+
+def test_unsupported_wcr_vec():
+    @dace.program
+    def program(A: dace.vector(dace.float32, 4)[N],
+                B: dace.vector(dace.float32, 4)[1]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B(-1, lambda x, y: x * y)[0]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    # Complex datatypes are currently not supported by the codegen
+    assert sdfg.apply_transformations_repeated(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
+
+
+def test_unsupported_wcr_ptr():
+    @dace.program
+    def program(A: dace.pointer(dace.float32)[N],
+                B: dace.pointer(dace.float32)[1]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B(-1, lambda x, y: x * y)[0]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    # Complex datatypes are currently not supported by the codegen
+    assert sdfg.apply_transformations_repeated(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
 
 def test_first_level_vectorization():
@@ -129,7 +289,7 @@ def test_stream_push():
 
     sdfg = program.to_sdfg(strict=True)
     # Stream push is possible
-    assert sdfg.apply_transformations(
+    assert sdfg.apply_transformations_repeated(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
 
@@ -150,20 +310,78 @@ def test_stream_pop():
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
 
+def test_preamble():
+
+    N.set(24)
+
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float32[N]):
+        for i in dace.map[3:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B[i]
+                b = a
+
+    X = np.random.rand(N.get()).astype(np.float64)
+    Y = np.random.rand(N.get()).astype(np.float64)
+
+    sdfg = program.to_sdfg(strict=True)
+    assert sdfg.apply_transformations(Vectorization, {
+        "target": dace.ScheduleType.SVE_Map,
+    }) == 1
+
+    A = np.ndarray([N.get()], dtype=np.float32)
+    B = np.ndarray([N.get()], dtype=np.float32)
+
+    sdfg(A=A, B=B, N=N)
+
+    assert np.allclose(A[3:N.get()], B[3:N.get()])
+
+
+def test_postamble():
+
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float32[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B[i]
+                b = a
+
+    sdfg = program.to_sdfg()
+    assert sdfg.apply_transformations(Vectorization, {
+        "target": dace.ScheduleType.SVE_Map,
+    }) == 1
+
+    for n in range(24, 29):
+        x = np.random.rand(n).astype(np.float32)
+        y = np.random.rand(n).astype(np.float32)
+
+        sdfg(A=x, B=y, N=n)
+        assert np.allclose(x, y)
+
+
 if __name__ == '__main__':
-    test_basic_stride()
-    test_irregular_stride()
-    test_diagonal_stride()
-    test_unsupported_type()
-    test_supported_wcr()
-    test_first_level_vectorization()
-    test_stream_push()
-    test_stream_pop()
+    # test_basic_stride()
+    # test_supported_types()
+    # test_irregular_stride()
+    # test_diagonal_stride()
+    # test_unsupported_type()
+    # test_unsupported_type2()
+    # test_unsupported_type3()
+    # test_unsupported_type4()
+    # test_supported_wcr_sum()
+    # test_supported_wcr_min()
+    # test_supported_wcr_max()
+    # test_unsupported_wcr()
+    # test_unsupported_wcr_vec()
+    # test_unsupported_wcr_ptr()
+    # test_first_level_vectorization()
+    # test_stream_push()
+    # test_stream_pop()
+    # test_multiple_bit_widths()
+    test_preamble()
+    # test_postamble()
 
-
-    # PrePost Ampel test
-    # Resursive
     # Multidimesnioal
-    # More types
-
-    
+    # Propgate parent
