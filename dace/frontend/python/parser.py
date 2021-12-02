@@ -168,6 +168,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.symbols = set(k for k, v in self.global_vars.items()
                            if isinstance(v, symbolic.symbol))
         self.closure_arg_mapping: Dict[str, Callable[[], Any]] = {}
+        self.resolver: pycommon.SDFGClosure = None
 
         # Add type annotations from decorator arguments (DEPRECATED)
         if self.dec_args:
@@ -261,7 +262,10 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         if reevaluate is None:
             result = {k: v() for k, v in self.closure_arg_mapping.items()}
-            result.update({k: v[1] for k, v in self.resolver.callbacks.items()})
+            if self.resolver is not None:
+                result.update(
+                    {k: v[1]
+                     for k, v in self.resolver.callbacks.items()})
             return result
         else:
             return {
