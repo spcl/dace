@@ -133,6 +133,8 @@ class Vectorization(transformation.Transformation):
                 return False
 
             # # If already vectorized or a pointer, do not apply
+            dst_node = state.memlet_path(e)[-1]
+            
             if isinstance(dst_node, nodes.Tasklet):
                 if isinstance(dst_node.in_connectors[e.dst_conn],
                               (dtypes.vector, dtypes.pointer)):
@@ -151,7 +153,7 @@ class Vectorization(transformation.Transformation):
                     return False
 
                 # vreduce is not supported
-                dst_node = state.memlet_path(e)[-1]
+                
                 if isinstance(dst_node, nodes.Tasklet):
                     if isinstance(dst_node.in_connectors[e.dst_conn],
                                   dtypes.vector):
