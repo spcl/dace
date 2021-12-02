@@ -132,14 +132,11 @@ class Vectorization(transformation.Transformation):
             if param_sym in e.data.get_stride(sdfg, map_entry.map).free_symbols:
                 return False
 
-            # if isinstance(dst_node, nodes.Tasklet):
-            #     if isinstance(dst_node.in_connectors[e.dst_conn],
-            #                   (dtypes.vector, dtypes.pointer)):
-            #         return False
-
             # # If already vectorized or a pointer, do not apply
-            # if isinstance(conntype, (dtypes.vector, dtypes.pointer)):
-            #     return False
+            if isinstance(dst_node, nodes.Tasklet):
+                if isinstance(dst_node.in_connectors[e.dst_conn],
+                              (dtypes.vector, dtypes.pointer)):
+                    return False
 
             # Check for unsupported WCR
             if e.data.wcr is not None:
