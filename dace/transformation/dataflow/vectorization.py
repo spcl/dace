@@ -121,23 +121,21 @@ class Vectorization(transformation.Transformation):
 
         ########################
         # Check for unsupported memlets
+        param_sym = symbolic.symbol(map_entry.map.params[-1])
         param_name = map_entry.map.params[-1]
         for e, _ in subgraph.all_edges_recursive():
+
+            # Cases that do not matter for vectorization
+            if e.data.data is None:  # Empty memlets
+                continue
+            if isinstance(sdfg.arrays[e.data.data], data.Stream):  # Streams
+                continue
+
             # Check for unsupported strides
             # The only unsupported strides are the ones containing the innermost
             # loop param because they are not constant during a vector step
-            param_sym = symbolic.symbol(map_entry.map.params[-1])
-
             if param_sym in e.data.get_stride(sdfg, map_entry.map).free_symbols:
                 return False
-
-            # # If already vectorized or a pointer, do not apply
-            dst_node = state.memlet_path(e)[-1]
-
-            if isinstance(dst_node, nodes.Tasklet):
-                if isinstance(dst_node.in_connectors[e.dst_conn],
-                              (dtypes.vector, dtypes.pointer)):
-                    return False
 
             # Check for unsupported WCR
             if e.data.wcr is not None:
@@ -147,11 +145,12 @@ class Vectorization(transformation.Transformation):
                 if reduction_type not in sve_util.REDUCTION_TYPE_TO_SVE and self.target == dtypes.ScheduleType.SVE_Map:
                     return False
 
-                    # Param in memlet during WCR is not supported
+                # Param in memlet during WCR is not supported
                 if param_name in e.data.subset.free_symbols and e.data.wcr_nonatomic:
                     return False
 
                 # vreduce is not supported
+                dst_node = state.memlet_path(e)[-1]
                 if isinstance(dst_node, nodes.Tasklet):
                     if isinstance(dst_node.in_connectors[e.dst_conn],
                                   dtypes.vector):
@@ -169,6 +168,11 @@ class Vectorization(transformation.Transformation):
             if not isinstance(node, nodes.Tasklet):
                 continue
 
+            for e, conntype in state.all_edges_and_connectors(node):
+                # If already vectorized or a pointer, do not apply
+                if isinstance(conntype, (dtypes.vector, dtypes.pointer)):
+                    return False
+
             for e in state.in_edges(node):
                 # Check for valid copies from other tasklets and/or streams
                 if e.data.data is not None:
@@ -180,7 +184,9 @@ class Vectorization(transformation.Transformation):
 
                     if isinstance(src_node, nodes.AccessNode):
                         src_desc = src_node.desc(sdfg)
-                        if isinstance(src_desc, data.Stream):
+                        if isinstance(
+                                src_desc, data.Stream
+                        ) and self.target == dtypes.ScheduleType.SVE_Map:
                             # Stream pops are not implemented
                             return False
 
@@ -192,6 +198,7 @@ class Vectorization(transformation.Transformation):
                 map_entry,
                 self.vector_len,
                 flags=vector_inference.VectorInferenceFlags.Allow_Stride,
+                strided_map=self.strided_map,
                 apply=False)
         except vector_inference.VectorInferenceException as ex:
             return False
@@ -286,7 +293,9 @@ class Vectorization(transformation.Transformation):
             map_entry,
             self.vector_len,
             flags=vector_inference.VectorInferenceFlags.Allow_Stride,
-            apply=True)
+            strided_map=self.strided_map,
+            apply=True,
+        )
 
         # Vector length propagation using data descriptors, recursive traversal
         # outwards

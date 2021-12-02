@@ -79,7 +79,8 @@ class VectorInferenceGraph(DiGraph):
                  initial_constraints: Dict[Union[Tuple[nodes.Tasklet, str,
                                                        bool], nodes.AccessNode],
                                            int] = None,
-                 flags: VectorInferenceFlags = None):
+                 flags: VectorInferenceFlags = None,
+                 strided_map: bool = True):
         """
             Builds a vector inference graph for a Map to infer vectorizable Tasklet connectors
             and AccessNodes in polynomial time.
@@ -91,6 +92,7 @@ class VectorInferenceGraph(DiGraph):
             :param initial_constraints: A dictionary mapping from a connector specified using `(node, name, is_input)`
                                         or an `AccessNode` to either `InferenceNode.Scalar` or `InferenceNode.Vector`.
             :param flags: Additional flags to limit the vectorization.
+            :param strided_map: Use strided map range (jump by vector length) instead of modifying memlets
         """
         super().__init__()
         self.sdfg = sdfg
@@ -120,6 +122,7 @@ class VectorInferenceGraph(DiGraph):
                                         InferenceNode](lambda: None)
 
         self.flags = flags
+        self.strided_map = strided_map
 
         self._build()
         self._detect_constraints()
@@ -488,9 +491,13 @@ class VectorInferenceGraph(DiGraph):
         stride = edge.data.get_stride(self.sdfg, self.map)
 
         # Update the subset using the stride and the vector length on the correct dimension
+        s = stride * self.vec_len
         sub = edge.data.subset[vec_dim]
-        edge.data.subset[vec_dim] = (sub[0], sub[1] + stride * self.vec_len,
-                                     stride)
+
+        if self.strided_map:
+            edge.data.subset[vec_dim] = (sub[0], sub[1] + s, stride)
+        else:
+            edge.data.subset[vec_dim] = (s * sub[0], s * sub[1] + s, stride)
 
     def apply(self):
         """
@@ -534,6 +541,7 @@ def infer_vectors(sdfg: SDFG,
                                                   nodes.AccessNode],
                                             int] = None,
                   flags: VectorInferenceFlags = None,
+                  strided_map: bool = True,
                   apply: bool = True) -> VectorInferenceGraph:
     """
         Builds a vector inference graph for a Map to infer vectorizable Tasklet connectors
@@ -547,11 +555,12 @@ def infer_vectors(sdfg: SDFG,
         :param initial_constraints: A dictionary mapping from a connector specified using `(node, name, is_input)`
                                     or an `AccessNode` to either `InferenceNode.Scalar` or `InferenceNode.Vector`.
         :param flags: Additional flags to limit the vectorization (e. g. allow stride loads).
+        :param strided_map: Use strided map range (jump by vector length) instead of modifying memlets
         :param apply: Whether to apply the vectorization or not.
         :returns: The inference graph for analysis.
     """
     graph = VectorInferenceGraph(sdfg, state, map_entry, vec_len,
-                                 initial_constraints, flags)
+                                 initial_constraints, flags, strided_map)
     graph.infer()
     if apply:
         graph.apply()

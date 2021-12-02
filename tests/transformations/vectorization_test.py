@@ -61,7 +61,7 @@ def test_wrong_targets():
 
     for t in wrong_targets:
 
-        assert sdfg.apply_transformations_repeated(Vectorization,
+        assert sdfg.apply_transformations(Vectorization,
                                                    {"target": t}) == 0
 
 
@@ -114,10 +114,10 @@ def test_propagate_parent():
 
 
 if __name__ == '__main__':
-    # test_vectorization()
+    test_vectorization()
     # test_wrong_targets()
     # test_vectorization_uneven()
-    test_vectorization_postamble()
+    # test_vectorization_postamble()
     # test_propagate_parent()
 
     # TODO: Pre Ampel test
@@ -132,5 +132,5 @@ if __name__ == '__main__':
     # Resursive
     #  Reduction
     # ...
-    #  Strided map vs. non strides map
+    #  Strided map vs. non strides map and more strides
     # Types

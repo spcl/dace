@@ -98,7 +98,7 @@ def test_diagonal_stride():
 
     sdfg = program.to_sdfg(strict=True)
     # [i, i] has a stride of N + 1, so it is perfectly fine
-    assert sdfg.apply_transformations_repeated(
+    assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
 
@@ -175,7 +175,7 @@ def test_supported_wcr_sum():
 
     sdfg = program.to_sdfg(strict=True)
     # Complex datatypes are currently not supported by the codegen
-    assert sdfg.apply_transformations_repeated(
+    assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
 
@@ -190,7 +190,7 @@ def test_supported_wcr_min():
 
     sdfg = program.to_sdfg(strict=True)
     # Complex datatypes are currently not supported by the codegen
-    assert sdfg.apply_transformations_repeated(
+    assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
 
@@ -205,7 +205,7 @@ def test_supported_wcr_max():
 
     sdfg = program.to_sdfg(strict=True)
     # Complex datatypes are currently not supported by the codegen
-    assert sdfg.apply_transformations_repeated(
+    assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
 
@@ -220,7 +220,7 @@ def test_unsupported_wcr():
 
     sdfg = program.to_sdfg(strict=True)
     # Complex datatypes are currently not supported by the codegen
-    assert sdfg.apply_transformations_repeated(
+    assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
 
@@ -236,7 +236,7 @@ def test_unsupported_wcr_vec():
 
     sdfg = program.to_sdfg(strict=True)
     # Complex datatypes are currently not supported by the codegen
-    assert sdfg.apply_transformations_repeated(
+    assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
 
@@ -252,7 +252,7 @@ def test_unsupported_wcr_ptr():
 
     sdfg = program.to_sdfg(strict=True)
     # Complex datatypes are currently not supported by the codegen
-    assert sdfg.apply_transformations_repeated(
+    assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
 
@@ -289,7 +289,7 @@ def test_stream_push():
 
     sdfg = program.to_sdfg(strict=True)
     # Stream push is possible
-    assert sdfg.apply_transformations_repeated(
+    assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
 
@@ -339,7 +339,6 @@ def test_preamble():
 
 
 def test_postamble():
-
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
         for i in dace.map[0:N]:
@@ -362,26 +361,28 @@ def test_postamble():
 
 
 if __name__ == '__main__':
-    # test_basic_stride()
-    # test_supported_types()
-    # test_irregular_stride()
-    # test_diagonal_stride()
-    # test_unsupported_type()
-    # test_unsupported_type2()
-    # test_unsupported_type3()
-    # test_unsupported_type4()
-    # test_supported_wcr_sum()
-    # test_supported_wcr_min()
-    # test_supported_wcr_max()
-    # test_unsupported_wcr()
-    # test_unsupported_wcr_vec()
-    # test_unsupported_wcr_ptr()
-    # test_first_level_vectorization()
-    # test_stream_push()
-    # test_stream_pop()
-    # test_multiple_bit_widths()
+    test_basic_stride()
+    test_supported_types()
+    test_irregular_stride()
+    test_diagonal_stride()
+    test_unsupported_type()
+    test_unsupported_type2()
+    test_unsupported_type3()
+    test_unsupported_type4()
+    test_supported_wcr_sum()
+    test_supported_wcr_min()
+    test_supported_wcr_max()
+    test_unsupported_wcr()
+    test_unsupported_wcr_vec()
+    test_unsupported_wcr_ptr()
+    test_first_level_vectorization()
+    test_stream_push()
+    test_stream_pop()
+    test_multiple_bit_widths()
     test_preamble()
-    # test_postamble()
+    test_postamble()
 
     # Multidimesnioal
     # Propgate parent
+    # Stride vs. Non-Stride and more strides
+    # Vector length
