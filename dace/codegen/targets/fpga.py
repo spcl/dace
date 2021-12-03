@@ -75,6 +75,29 @@ def is_fpga_kernel(sdfg, state):
     return True
 
 
+def is_external_stream(node: dace.sdfg.nodes.Node,
+                       subgraph: Union[dace.sdfg.SDFGState, ScopeSubgraphView]):
+    '''
+    Given a node and a subgraph, returns whether this is an external stream (the other endpoint is in
+    another FPGA Kernel) or not.
+    :return: True if node represent an external stream, False otherwise
+    '''
+
+    external = False
+
+    # If this is a stream, check if the other side of it is in the same kernel/subgraph
+    if isinstance(node, dace.nodes.AccessNode) and isinstance(
+            node.desc(subgraph), dt.Stream):
+        for nn in subgraph.nodes():
+            if nn != node and isinstance(nn, dace.nodes.AccessNode) and node.desc(
+                    subgraph) == nn.desc(subgraph):
+                break
+        else:
+            external = True
+
+    return external
+
+
 def is_multibank_array(array: dt.Data):
     """
     :return: True if this array is placed on HBM/DDR on FPGA Global memory
@@ -512,9 +535,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 start_kernel = start_kernel + num_kernels
 
             # There is no need to generate additional kernels if the number of found kernels
-            # is equal to the number of connected components: use PEs instead
+            # is equal to the number of connected components: use PEs instead (only one kernel)
             if len(subgraphs) == len(kernels):
                 kernels = [(state, 0)]
+
+            self._num_kernels = len(kernels)
 
             state_parameters = []
 
@@ -619,13 +644,14 @@ const unsigned long int _dace_fpga_begin_us = std::chrono::duration_cast<std::ch
 """)
             # Create a vector to collect all events that are being generated to allow
             # waiting before exiting this state
-            kernel_host_stream.write("std::vector<cl::Event> all_events;")
+            kernel_host_stream.write(
+                "std::vector<hlslib::ocl::Event> all_events;")
 
             # Kernels invocations
             kernel_host_stream.write(state_host_body_stream.getvalue())
 
             # Wait for all events
-            kernel_host_stream.write("cl::Event::waitForEvents(all_events);")
+            kernel_host_stream.write("hlslib::ocl::WaitForEvents(all_events);")
 
             # Instrumentation
             if state.instrument == dtypes.InstrumentationType.FPGA:
@@ -777,9 +803,18 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 external = any([
                     t.language == dtypes.Language.SystemVerilog for t in tasks
                 ])
+                is_output = True
+
+                if not external and self._num_kernels > 1:
+                    # Check if this is an external stream
+                    if is_external_stream(n, subgraph):
+                        external = True
+                        is_output = False
+
                 if external:
                     external_streams |= {
-                        (True, e.data.data, subsdfg.arrays[e.data.data], None)
+                        (is_output, e.data.data, subsdfg.arrays[e.data.data],
+                         None)
                         for e in state.out_edges(n)
                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
                     }
@@ -795,12 +830,22 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 tasks = [
                     t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)
                 ]
+
                 external = any([
                     t.language == dtypes.Language.SystemVerilog for t in tasks
                 ])
+                is_output = False
+
+                if not external and self._num_kernels > 1:
+                    # Check if this is an external stream
+                    if is_external_stream(n, subgraph):
+                        external = True
+                        is_output = True
+
                 if external:
                     external_streams |= {
-                        (False, e.data.data, subsdfg.arrays[e.data.data], None)
+                        (is_output, e.data.data, subsdfg.arrays[e.data.data],
+                         None)
                         for e in state.in_edges(n)
                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
                     }
@@ -2464,7 +2509,7 @@ std::cout << "FPGA OpenCL kernel \\"{kernel_name}\\" executed in " << elapsed <<
     {{
 cl_ulong event_start = 0;
 cl_ulong event_end = 0;
-cl::Event const &event = all_events[{kernel_index}];
+hlslib::ocl::Event const &event = all_events[{kernel_index}];
 event.getProfilingInfo(CL_PROFILING_COMMAND_START, &event_start);
 event.getProfilingInfo(CL_PROFILING_COMMAND_END, &event_end);
 if (event_start < first_start) {{
