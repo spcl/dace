@@ -69,8 +69,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                     except SyntaxError:
                         raise InvalidSDFGError(
                             "Memory bank specifier must be convertible to subsets.Range"
-                            f" for array {name}",
-                            sdfg, None)
+                            f" for array {name}", sdfg, None)
                     try:
                         low, high = fpga.get_multibank_ranges_from_subset(
                             bank_assignment[1], sdfg)
@@ -286,7 +285,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                                 break
                     if input_found:
                         break
-                if not input_found and node.setzero == False:
+                if (not input_found and node.setzero == False
+                        and node.data != '__pystate'):
                     warnings.warn(
                         'WARNING: Use of uninitialized transient "%s" in state %s'
                         % (node.data, state.label))

@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes of a single SDFG state and dataflow subgraphs. """
 
+import ast
 import collections
 import copy
 from dace.subsets import Range, Subset
@@ -443,6 +444,15 @@ class StateGraphView(object):
             elif isinstance(n, nd.AccessNode):
                 # Add data descriptor symbols
                 freesyms |= set(map(str, n.desc(sdfg).free_symbols))
+            elif (isinstance(n, nd.Tasklet)
+                  and n.language == dtypes.Language.Python):
+                # Consider callbacks defined as symbols as free
+                for stmt in n.code.code:
+                    for astnode in ast.walk(stmt):
+                        if (isinstance(astnode, ast.Call)
+                                and isinstance(astnode.func, ast.Name)
+                                and astnode.func.id in sdfg.symbols):
+                            freesyms.add(astnode.func.id)
 
             freesyms |= n.free_symbols
         # Free symbols from memlets
