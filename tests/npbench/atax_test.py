@@ -8,7 +8,8 @@ import argparse
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_aopt
+from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+
 
 M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
 
@@ -67,8 +68,8 @@ def run_atax(device_type: dace.dtypes.DeviceType):
 
         ###########################
         # FPGA Auto Opt
-        fpga_aopt.fpga_global_to_local(sdfg)
-        fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
+        fpga_auto_opt.fpga_global_to_local(sdfg)
+        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
 
         # specialize the SDFG (needed by the GEMV expansion)
         sdfg.specialize(dict(M=M, N=N))

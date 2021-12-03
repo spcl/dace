@@ -593,7 +593,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         p.as_arg(False, name=fpga.fpga_ptr(name, p, sdfg,
                                                            bank)))
             elif isinstance(
-                    p, dt.Stream) and name in self._external_streams.values():
+                    p, dt.Stream) and name in self._defined_external_streams:
                 kernel_args.append(
                     f" hlslib::ocl::SimulationOnly({p.as_arg(False, name=name)})"
                 )
@@ -911,7 +911,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         state_parameters.extend(global_data_parameters)
 
         # We need to pass external streams as parameters to module
-        # (unless they are not already there. This could be case of inter-PE intra-kernel streams)
+        # (unless they are already there. This could be case of inter-PE intra-kernel streams)
         for k, v in subgraph_parameters.items():
             for stream_is_out, stream_name, stream_desc, stream_iid in external_streams:
                 for is_output, data_name, desc, interface_id in v:

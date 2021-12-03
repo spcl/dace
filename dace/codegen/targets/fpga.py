@@ -75,6 +75,29 @@ def is_fpga_kernel(sdfg, state):
     return True
 
 
+def is_external_stream(node: dace.sdfg.nodes.Node,
+                       subgraph: Union[dace.sdfg.SDFGState, ScopeSubgraphView]):
+    '''
+    Given a node and a subgraph, returns whether this is an external stream (the other endpoint is in
+    another FPGA Kernel) or not.
+    :return: True if node represent an external stream, False otherwise
+    '''
+
+    external = False
+
+    # If this is a stream, check if the other side of it is in the same kernel/subgraph
+    if isinstance(node, dace.nodes.AccessNode) and isinstance(
+            node.desc(subgraph), dt.Stream):
+        for nn in subgraph.nodes():
+            if nn != node and isinstance(nn, dace.nodes.AccessNode) and node.desc(
+                    subgraph) == nn.desc(subgraph):
+                break
+        else:
+            external = True
+
+    return external
+
+
 def is_multibank_array(array: dt.Data):
     """
     :return: True if this array is placed on HBM/DDR on FPGA Global memory
@@ -783,17 +806,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 is_output = True
 
                 if not external and self._num_kernels > 1:
-                    # If this is a stream, check if the other side of it is in the same kernel/subgraph
-                    if isinstance(n, dace.nodes.AccessNode) and isinstance(
-                            n.desc(subgraph), dt.Stream):
-                        for nn in subgraph.nodes():
-                            if nn != n and isinstance(
-                                    nn, dace.nodes.AccessNode) and n.desc(
-                                        subgraph) == nn.desc(subgraph):
-                                break
-                        else:
-                            external = True
-                            is_output = False
+                    # Check if this is an external stream
+                    if is_external_stream(n, subgraph):
+                        external = True
+                        is_output = False
 
                 if external:
                     external_streams |= {
@@ -821,17 +837,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 is_output = False
 
                 if not external and self._num_kernels > 1:
-                    # If this is a stream, check if the other side of it is in the same kernel/subgraph
-                    if isinstance(n, dace.nodes.AccessNode) and isinstance(
-                            n.desc(subgraph), dt.Stream):
-                        for nn in subgraph.nodes():
-                            if nn != n and isinstance(
-                                    nn, dace.nodes.AccessNode) and n.desc(
-                                        subgraph) == nn.desc(subgraph):
-                                break
-                        else:
-                            external = True
-                            is_output = True
+                    # Check if this is an external stream
+                    if is_external_stream(n, subgraph):
+                        external = True
+                        is_output = True
 
                 if external:
                     external_streams |= {
