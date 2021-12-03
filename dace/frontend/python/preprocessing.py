@@ -849,6 +849,7 @@ class CallTreeResolver(ast.NodeVisitor):
         constant_args = self._eval_args(node)
 
         # Resolve nested closure as necessary
+        qualname = None
         try:
             qualname = next(k for k, v in self.closure.closure_sdfgs.items()
                             if v is value)
@@ -863,7 +864,8 @@ class CallTreeResolver(ast.NodeVisitor):
             raise
         except Exception as ex:  # Parsing failed (anything can happen here)
             warnings.warn(f'Parsing SDFGConvertible {value} failed: {ex}')
-            del self.closure.closure_sdfgs[qualname]
+            if qualname in self.closure.closure_sdfgs:
+                del self.closure.closure_sdfgs[qualname]
             # Return old call AST instead
             node.func = node.func.oldnode.func
 
