@@ -78,6 +78,9 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         # Modules name mangles
         self.module_mange = defaultdict(dict)
 
+        # Keep track of external streams
+        self.external_streams = set()
+
         super().__init__(*args, **kwargs)
 
     @staticmethod
@@ -196,16 +199,22 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
 
         return [host_code_obj] + kernel_code_objs + other_code_objs
 
-    def create_mangled_channel_name(self, var_name, kernel_id):
+    def create_mangled_channel_name(self, var_name, kernel_id, external_stream):
         '''
         Memorize and returns the mangled name of a global channel
         The dictionary is organized as (var_name) : {kernel_id: mangled_name)
+        :param: external_stream: indicates whether this channel is an external stream
+                (inter-FPGA Kernel) or not. If this is the case, it will not actually mangle
+                the name by appending a suffix.
         '''
 
         if kernel_id not in self.channel_mangle[var_name]:
-            existing_count = len(self.channel_mangle[var_name])
-            suffix = f"_{existing_count}" if existing_count > 0 else ""
-            mangled_name = f"{var_name}{suffix}"
+            if not external_stream:
+                existing_count = len(self.channel_mangle[var_name])
+                suffix = f"_{existing_count}" if existing_count > 0 else ""
+                mangled_name = f"{var_name}{suffix}"
+            else:
+                mangled_name = var_name
             self.channel_mangle[var_name][kernel_id] = mangled_name
         return self.channel_mangle[var_name][kernel_id]
 
@@ -255,12 +264,24 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
             size_str = "[" + cpp.sym2cpp(array_size) + "]"
         else:
             size_str = ""
-        # mangle name
-        chan_name = self.create_mangled_channel_name(var_name,
-                                                     self._kernel_count)
-        kernel_stream.write("channel {} {}{}{};".format(vec_type, chan_name,
-                                                        size_str,
-                                                        depth_attribute))
+
+        if var_name in self.external_streams:
+            # This is an external streams: it connects two different FPGA Kernels
+            # that will be code-generated as two separate files.
+            # We need to declare the channel as global variable and it must have have
+            # the same name in both the files.
+
+            chan_name = self.create_mangled_channel_name(
+                var_name, self._kernel_count, True)
+            function_stream.write("channel {} {}{}{};".format(
+                vec_type, chan_name, size_str, depth_attribute))
+        else:
+            # mangle name
+            chan_name = self.create_mangled_channel_name(
+                var_name, self._kernel_count, False)
+
+            kernel_stream.write("channel {} {}{}{};".format(
+                vec_type, chan_name, size_str, depth_attribute))
 
         # Return value is used for adding to defined_vars in fpga.py
         # In Intel FPGA, streams must be defined as global entity, so they will be added to the global variables
@@ -524,6 +545,10 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
          nested_global_transients, bank_assignments,
          external_streams) = self.make_parameters(sdfg, state, subgraphs)
 
+        # save the name of external streams
+        self.external_streams = set(
+            [chan_name for _, chan_name, _, _ in external_streams])
+
         # Emit allocations of inter-kernel memories
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
@@ -582,7 +607,6 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         :param predecessors: list containing all the name of kernels that must be finished before starting this one
         '''
         state_id = sdfg.node_id(state)
-        launch_async = Config.get_bool("compiler", "intel_fpga", "launch_async")
 
         # Check if this kernel depends from other kernels
         needs_synch = len(predecessors) > 0
@@ -597,29 +621,12 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                     f"{kernel_deps_name}.insert({kernel_deps_name}.end(), {pred}_events.begin(), {pred}_events.end());"
                 )
 
-        if launch_async:
-            #TODO remove this?
-
-            # hlslib uses std::async to launch each kernel launch as an
-            # asynchronous task in a separate C++ thread. This seems to cause
-            # problems with some versions of the Intel FPGA runtime, despite it
-            # supposedly being thread-safe, so we allow disabling this.
-            host_stream.write(
-                f"""\
-  std::vector<std::future<std::pair<double, double>>> futures;
-  for (auto &k : {kernel_name}_kernels) {{
-    futures.emplace_back(k.ExecuteTaskAsync());
-  }}
-  for (auto &f : futures) {{
-    f.wait();
-  }}""", sdfg, state_id)
-        else:
-            # While spawning the kernel, indicates the synchronization events (if any)
-            host_stream.write(
-                f"""\
+        # While spawning the kernel, indicates the synchronization events (if any)
+        host_stream.write(
+            f"""\
   std::vector<cl::Event> {kernel_name}_events;
   for (auto &k : {kernel_name}_kernels) {{
-    {kernel_name}_events.emplace_back(k.ExecuteTaskFork({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''}));
+    {kernel_name}_events.emplace_back(k.ExecuteTaskAsync({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''}));
   }}
   all_events.insert(all_events.end(), {kernel_name}_events.begin(), {kernel_name}_events.end());
 """, sdfg, state_id)
