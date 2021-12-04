@@ -4,6 +4,7 @@ import re
 import copy as cp
 import sympy as sp
 import numpy
+from numbers import Number
 from typing import Set, Sequence, Tuple
 
 import dace.dtypes as dtypes
@@ -54,16 +55,38 @@ def create_datadescriptor(obj):
             raise ValueError(
                 "Attempted to convert a torch.Tensor, but torch could not be imported"
             )
+    elif dtypes.is_gpu_array(obj):
+        interface = obj.__cuda_array_interface__
+        dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
+        itemsize = numpy.dtype(interface['typestr']).itemsize
+        if len(interface['shape']) == 0:
+            return Scalar(dtype, storage=dtypes.StorageType.GPU_Global)
+        return Array(dtype=dtype,
+                     shape=interface['shape'],
+                     strides=(tuple(s // itemsize for s in interface['strides'])
+                              if interface['strides'] else None),
+                     storage=dtypes.StorageType.GPU_Global)
     elif symbolic.issymbolic(obj):
         return Scalar(symbolic.symtype(obj))
     elif isinstance(obj, dtypes.typeclass):
         return Scalar(obj)
-    elif obj in {int, float, complex, bool, None}:
+    elif (obj is int or obj is float or obj is complex or obj is bool
+          or obj is None):
         return Scalar(dtypes.typeclass(obj))
+    elif isinstance(obj, type) and issubclass(obj, numpy.number):
+        return Scalar(dtypes.typeclass(obj))
+    elif isinstance(obj, (Number, numpy.number, numpy.bool, numpy.bool_)):
+        return Scalar(dtypes.typeclass(type(obj)))
     elif callable(obj):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))
-    return Scalar(dtypes.typeclass(type(obj)))
+    elif isinstance(obj, str):
+        return Scalar(dtypes.string())
+
+    raise TypeError(
+        f'Could not create a DaCe data descriptor from object {obj}. '
+        'If this is a custom object, consider creating a `__descriptor__` '
+        'adaptor method to the type hint or object itself.')
 
 
 def find_new_name(name: str, existing_names: Sequence[str]) -> str:

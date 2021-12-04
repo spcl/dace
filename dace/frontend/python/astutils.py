@@ -6,6 +6,7 @@ import copy
 from collections import OrderedDict
 import inspect
 import numbers
+import numpy
 import sympy
 from typing import Any, Dict, List, Set, Tuple
 
@@ -198,7 +199,7 @@ def unparse(node):
     if isinstance(node, sympy.Basic):
         return sympy.printing.pycode(node)
     # Support for numerical constants
-    if isinstance(node, numbers.Number):
+    if isinstance(node, (numbers.Number, numpy.bool, numpy.bool_)):
         return str(node)
     # Suport for string
     if isinstance(node, str):
@@ -303,7 +304,7 @@ def negate_expr(node):
     if isinstance(node, sympy.Basic):
         return sympy.Not(node)
     # Support for numerical constants
-    if isinstance(node, numbers.Number):
+    if isinstance(node, (numbers.Number, numpy.bool, numpy.bool_)):
         return str(not node)
     # Negation support for strings (most likely dace.Data.Scalar names)
     if isinstance(node, str):
@@ -348,12 +349,7 @@ class ExtNodeTransformer(ast.NodeTransformer):
                     if isinstance(value, ast.AST):
                         if (field == 'body' or field
                                 == 'orelse') and isinstance(value, ast.Expr):
-                            clsname = type(value).__name__
-                            if getattr(self, "visit_TopLevel" + clsname, False):
-                                value = getattr(self, "visit_TopLevel" +
-                                                clsname)(value)
-                            else:
-                                value = self.visit(value)
+                            value = self.visit_TopLevel(value)
                         else:
                             value = self.visit(value)
                         if value is None:
@@ -475,3 +471,9 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
         else:
             self.defined.add(node.id)
         self.generic_visit(node)
+
+
+class AnnotateTopLevel(ExtNodeTransformer):
+    def visit_TopLevel(self, node):
+        node.toplevel = True
+        return super().visit_TopLevel(node)

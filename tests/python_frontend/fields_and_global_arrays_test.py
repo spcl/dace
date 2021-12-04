@@ -10,22 +10,6 @@ import time
 from types import SimpleNamespace
 
 
-def test_bad_closure():
-    """ 
-    Testing functions that should not be in the closure (must be implemented as
-    callbacks).
-    """
-    with pytest.raises(DaceSyntaxError):
-
-        @dace.program
-        def badprog(A: dace.float64[20]):
-            # Library function that does not return the same value every time
-            A[:] = time.time()
-
-        A = np.random.rand(20)
-        badprog(A)
-
-
 def test_dynamic_closure():
     """ 
     Testing for function closure that was not defined before the program.
@@ -704,7 +688,6 @@ def test_nested_transient_field():
 
 
 if __name__ == '__main__':
-    test_bad_closure()
     test_dynamic_closure()
     test_external_ndarray_readonly()
     test_external_ndarray_modify()

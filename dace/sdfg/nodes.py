@@ -98,18 +98,20 @@ class Node(object):
 
     def add_in_connector(self,
                          connector_name: str,
-                         dtype: dtypes.typeclass = None):
+                         dtype: dtypes.typeclass = None,
+                         force: bool = False):
         """ Adds a new input connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
 
             :param connector_name: The name of the new connector.
             :param dtype: The type of the connector, or None for auto-detect.
+            :param force: Add connector even if output connector already exists.
             :return: True if the operation is successful, otherwise False.
         """
 
-        if (connector_name in self.in_connectors
-                or connector_name in self.out_connectors):
+        if (not force and (connector_name in self.in_connectors
+                or connector_name in self.out_connectors)):
             return False
         connectors = self.in_connectors
         connectors[connector_name] = dtype
@@ -118,18 +120,20 @@ class Node(object):
 
     def add_out_connector(self,
                           connector_name: str,
-                          dtype: dtypes.typeclass = None):
+                          dtype: dtypes.typeclass = None,
+                          force: bool = False):
         """ Adds a new output connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
 
             :param connector_name: The name of the new connector.
             :param dtype: The type of the connector, or None for auto-detect.
+            :param force: Add connector even if input connector already exists.
             :return: True if the operation is successful, otherwise False.
         """
 
-        if (connector_name in self.in_connectors
-                or connector_name in self.out_connectors):
+        if (not force and (connector_name in self.in_connectors
+                or connector_name in self.out_connectors)):
             return False
         connectors = self.out_connectors
         connectors[connector_name] = dtype
