@@ -9,8 +9,7 @@ import argparse
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, MapFusion, StreamingComposition, PruneConnectors
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_aopt
-
+from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 
 N = dc.symbol('N', dtype=dc.int32)
 
@@ -53,10 +52,6 @@ def init_data(N):
     return A
 
 
-
-
-
-
 def run_lu(device_type: dace.dtypes.DeviceType):
     '''
     Runs LU for the given device
@@ -66,7 +61,7 @@ def run_lu(device_type: dace.dtypes.DeviceType):
     # Initialize data (polybench mini size)
     N = 40
     A = init_data(N)
-    gt_A=np.copy(A)
+    gt_A = np.copy(A)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply autopot
@@ -76,10 +71,26 @@ def run_lu(device_type: dace.dtypes.DeviceType):
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
         sdfg = lu_kernel.to_sdfg(strict=True)
+
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
-        #TODO
+        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
+        from dace.libraries.blas import Dot
+        platform = dace.config.Config.get("compiler", "fpga", "vendor")
+        if platform == "intel_fpga":
+            Dot.default_implementation = "FPGA_Accumulate"
+        else:
+            Dot.default_implementation = "FPGA_PartialSums"
+
+        sdfg.expand_library_nodes()
+        sdfg.apply_transformations_repeated([InlineSDFG])
+
+        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
+        fpga_auto_opt.fpga_global_to_local(sdfg)
+
+        sdfg.specialize(dict(N=N))
+        dace_res = sdfg(A=A)
 
     # Compute ground truth and validate result
     ground_truth(N, gt_A)
