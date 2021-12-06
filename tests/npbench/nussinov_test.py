@@ -9,7 +9,7 @@ import argparse
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, MapFusion, StreamingComposition, PruneConnectors
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_aopt
+from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 
 N = dc.symbol('N', dtype=dc.int32)
 
@@ -157,16 +157,16 @@ def run_nussinov(device_type: dace.dtypes.DeviceType):
     assert np.allclose(dace_res, gt_res)
     return sdfg
 
-
+@pytest.mark.skip()
 def test_cpu():
     run_nussinov(dace.dtypes.DeviceType.CPU)
 
-
+@pytest.mark.skip()
 @pytest.mark.gpu
 def test_gpu():
     run_nussinov(dace.dtypes.DeviceType.GPU)
 
-
+@pytest.mark.skip()
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_nussinov(dace.dtypes.DeviceType.FPGA)
