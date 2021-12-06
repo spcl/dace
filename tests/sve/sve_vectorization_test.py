@@ -45,16 +45,13 @@ def matrix_copy(A: dace.float32[N, N], B: dace.float32[N, N]):
             b = a
 
 
-def diag_stride():
-    @dace.program
-    def program(A: dace.float32[N, N], B: dace.float32[N, N]):
-        for i in dace.map[0:N]:
-            with dace.tasklet:
-                a << A[i, i]
-                b >> B[i, i]
-                b = a
-
-    return program
+@dace.program
+def diag_stride(A: dace.float32[N, N], B: dace.float32[N, N]):
+    for i in dace.map[0:N]:
+        with dace.tasklet:
+            a << A[i, i]
+            b >> B[i, i]
+            b = a
 
 
 @pytest.mark.sve
@@ -69,23 +66,26 @@ def test_basic_stride():
     A = np.random.rand(N.get()).astype(np.float32)
     B = np.random.rand(N.get()).astype(np.float32)
 
-    sdfg(A=A, out=B, N=N)
+    sdfg(A=A, B=B, N=N.get())
 
     assert allclose(A, B)
+
 
 @pytest.mark.sve
 def test_basic_stride_vec8():
 
     sdfg = copy_kernel().to_sdfg(strict=True)
-    assert sdfg.apply_transformations(
-        Vectorization, {"target": dace.ScheduleType.SVE_Map, "vector_len": 8}) == 1
+    assert sdfg.apply_transformations(Vectorization, {
+        "target": dace.ScheduleType.SVE_Map,
+        "vector_len": 8
+    }) == 1
 
     N.set(64)
 
     A = np.random.rand(N.get()).astype(np.float32)
     B = np.random.rand(N.get()).astype(np.float32)
 
-    sdfg(A=A, out=B, N=N)
+    sdfg(A=A, B=B, N=N.get())
 
     assert allclose(A, B)
 
@@ -102,7 +102,7 @@ def test_basic_stride_matrix():
     A = np.random.rand(N.get(), N.get()).astype(np.float32)
     B = np.random.rand(N.get(), N.get()).astype(np.float32)
 
-    sdfg(A=A, out=B, N=N)
+    sdfg(A=A, B=B, N=N.get())
 
     assert allclose(A, B)
 
@@ -121,7 +121,7 @@ def test_basic_stride_non_strided_map():
     A = np.random.rand(N.get()).astype(np.float32)
     B = np.random.rand(N.get()).astype(np.float32)
 
-    sdfg(A=A, out=B, N=N)
+    sdfg(A=A, B=B, N=N.get())
 
     assert allclose(A, B)
 
@@ -140,7 +140,7 @@ def test_basic_stride_matrix_non_strided_map():
     A = np.random.rand(N.get(), N.get()).astype(np.float32)
     B = np.random.rand(N.get(), N.get()).astype(np.float32)
 
-    sdfg(A=A, out=B, N=N)
+    sdfg(A=A, B=B, N=N.get())
 
     assert allclose(A, B)
 
@@ -165,7 +165,7 @@ def test_supported_types():
         A = np.random.rand(N.get()).astype(t)
         B = np.random.rand(N.get()).astype(t)
 
-        sdfg(A=A, out=B, N=N)
+        sdfg(A=A, B=B, N=N.get())
 
         assert allclose(A, B)
 
@@ -194,7 +194,7 @@ def test_irregular_stride():
 @pytest.mark.sve
 def test_diagonal_stride():
 
-    sdfg = diag_stride().to_sdfg(strict=True)
+    sdfg = diag_stride.to_sdfg(strict=True)
     # [i, i] has a stride of N + 1, so it is perfectly fine
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
@@ -204,14 +204,14 @@ def test_diagonal_stride():
     A = np.random.rand(N.get(), N.get()).astype(np.float32)
     B = np.random.rand(N.get(), N.get()).astype(np.float32)
 
-    sdfg(A=A, out=B, N=N)
+    sdfg(A=A, B=B, N=N.get())
     assert allclose(A, B)
 
 
 @pytest.mark.sve
 def test_diagonal_stride_non_strided_map():
 
-    sdfg = diag_stride().to_sdfg(strict=True)
+    sdfg = diag_stride.to_sdfg(strict=True)
     # [i, i] has a stride of N + 1, so it is perfectly fine
     assert sdfg.apply_transformations(Vectorization, {
         "target": dace.ScheduleType.SVE_Map,
@@ -223,7 +223,7 @@ def test_diagonal_stride_non_strided_map():
     A = np.random.rand(N.get(), N.get()).astype(np.float32)
     B = np.random.rand(N.get(), N.get()).astype(np.float32)
 
-    sdfg(A=A, out=B, N=N)
+    sdfg(A=A, B=B, N=N.get())
     assert allclose(A, B)
 
 
@@ -251,7 +251,7 @@ def test_unsupported_types():
 # @pytest.mark.sve
 def test_supported_wcr_sum():
     @dace.program
-    def program(A: dace.float32[N], B: dace.int32[1]):
+    def program(A: dace.float32[N], B: dace.float32[1]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
@@ -262,18 +262,17 @@ def test_supported_wcr_sum():
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
-    # NotImplementedError: Vector-vector casting not implemented
-    # N.set(64)
-    # A = np.random.rand(N.get()).astype(np.float32)
-    # B = np.random.rand(1).astype(np.float32)
-    # sdfg(A=A, out=B, N=N)
-    # assert allclose(np.sum(A), B)
+    N.set(64)
+    A = np.random.rand(N.get()).astype(np.float32)
+    B = np.random.rand(1).astype(np.float32)
+    sdfg(A=A, B=B, N=N.get())
+    assert allclose(np.sum(A), B)
 
 
 # @pytest.mark.sve
 def test_supported_wcr_min():
     @dace.program
-    def program(A: dace.float32[N], B: dace.int32[1]):
+    def program(A: dace.float32[N], B: dace.float32[1]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
@@ -284,18 +283,17 @@ def test_supported_wcr_min():
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
-    # NotImplementedError: Vector-vector casting not implemented
-    # N.set(64)
-    # A = np.random.rand(N.get()).astype(np.float32)
-    # B = np.random.rand(1).astype(np.float32)
-    # sdfg(A=A, out=B, N=N)
-    # assert allclose(np.min(A), B)
+    N.set(64)
+    A = np.random.rand(N.get()).astype(np.float32)
+    B = np.random.rand(1).astype(np.float32)
+    sdfg(A=A, B=B, N=N.get())
+    assert allclose(np.min(A), B)
 
 
 # @pytest.mark.sve
 def test_supported_wcr_max():
     @dace.program
-    def program(A: dace.float32[N], B: dace.int32[1]):
+    def program(A: dace.float32[N], B: dace.float32[1]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
@@ -306,17 +304,16 @@ def test_supported_wcr_max():
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
-    # NotImplementedError: Vector-vector casting not implemented
-    # N.set(64)
-    # A = np.random.rand(N.get()).astype(np.float32)
-    # B = np.random.rand(1).astype(np.float32)
-    # sdfg(A=A, out=B, N=N)
-    # assert allclose(np.max(A), B)
+    N.set(64)
+    A = np.random.rand(N.get()).astype(np.float32)
+    B = np.random.rand(1).astype(np.float32)
+    sdfg(A=A, B=B, N=N.get())
+    assert allclose(np.max(A), B)
 
 
 def test_unsupported_wcr():
     @dace.program
-    def program(A: dace.float32[N], B: dace.int32[1]):
+    def program(A: dace.float32[N], B: dace.float32[1]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
@@ -433,7 +430,7 @@ def test_preamble():
     A = np.ndarray([N.get()], dtype=np.float32)
     B = np.ndarray([N.get()], dtype=np.float32)
 
-    sdfg(A=A, B=B, N=N)
+    sdfg(A=A, B=B, N=N.get())
 
     assert np.allclose(A[3:N.get()], B[3:N.get()])
 
@@ -464,6 +461,7 @@ def test_postamble():
 
 if __name__ == '__main__':
     test_basic_stride()
+    test_basic_stride_vec8()
     test_basic_stride_matrix()
     test_basic_stride_non_strided_map()
     test_basic_stride_matrix_non_strided_map()
@@ -484,4 +482,3 @@ if __name__ == '__main__':
     test_multiple_bit_widths()
     test_preamble()
     test_postamble()
-

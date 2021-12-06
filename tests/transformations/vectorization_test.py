@@ -2,6 +2,9 @@
 import dace
 import numpy as np
 from dace.transformation.dataflow import Vectorization
+from numpy.core.numeric import allclose, isclose
+
+N = dace.symbol('N')
 
 
 @dace.program
@@ -9,7 +12,25 @@ def tovec(A: dace.float64[20]):
     return A + A
 
 
-N = dace.symbol('N')
+def copy_kernel(type1=dace.float32, type2=dace.float32):
+    @dace.program
+    def copy(A: type1[N], B: type2[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B[i]
+                b = a
+
+    return copy
+
+
+@dace.program
+def matrix_copy(A: dace.float32[N, N], B: dace.float32[N, N]):
+    for i, j in dace.map[0:N, 0:N]:
+        with dace.tasklet:
+            a << A[i, j]
+            b >> B[i, j]
+            b = a
 
 
 @dace.program
@@ -33,6 +54,15 @@ def tovec_uneven(A: dace.float64[N + 2]):
             b = a + a
 
 
+@dace.program
+def diag_stride(A: dace.float32[N, N], B: dace.float32[N, N]):
+    for i in dace.map[0:N]:
+        with dace.tasklet:
+            a << A[i, i]
+            b >> B[i, i]
+            b = a
+
+
 def test_vectorization():
     sdfg: dace.SDFG = tovec.to_sdfg()
     assert sdfg.apply_transformations(Vectorization, options={'vector_len':
@@ -41,6 +71,79 @@ def test_vectorization():
     A = np.random.rand(20)
     B = sdfg(A=A)
     assert np.allclose(B, A * 2)
+
+
+def test_basic_stride():
+
+    sdfg = copy_kernel().to_sdfg(strict=True)
+    assert sdfg.apply_transformations(Vectorization) == 1
+
+    N.set(64)
+
+    A = np.random.rand(N.get()).astype(np.float32)
+    B = np.random.rand(N.get()).astype(np.float32)
+    sdfg(A=A, B=B, N=N.get())
+    assert allclose(A, B)
+
+
+def test_basic_stride_vec8():
+
+    sdfg = copy_kernel().to_sdfg(strict=True)
+    assert sdfg.apply_transformations(Vectorization, {"vector_len": 8}) == 1
+
+    N.set(64)
+
+    A = np.random.rand(N.get()).astype(np.float32)
+    B = np.random.rand(N.get()).astype(np.float32)
+    sdfg(A=A, B=B, N=N.get())
+    assert allclose(A, B)
+
+
+def test_basic_stride_matrix():
+
+    sdfg = matrix_copy.to_sdfg(strict=True)
+    assert sdfg.apply_transformations(Vectorization) == 1
+
+    N.set(64)
+
+    A = np.random.rand(N.get(), N.get()).astype(np.float32)
+    B = np.random.rand(N.get(), N.get()).astype(np.float32)
+
+    sdfg(A=A, B=B, N=N.get())
+
+    assert allclose(A, B)
+
+
+def test_basic_stride_non_strided_map():
+
+    sdfg = copy_kernel().to_sdfg(strict=True)
+    assert sdfg.apply_transformations(Vectorization,
+                                      {"strided_map": False}) == 1
+
+    N.set(64)
+
+    A = np.random.rand(N.get()).astype(np.float32)
+    B = np.random.rand(N.get()).astype(np.float32)
+
+    sdfg(A=A, B=B, N=N.get())
+
+    assert allclose(A, B)
+
+
+def test_basic_stride_matrix_non_strided_map():
+
+    sdfg = matrix_copy.to_sdfg(strict=True)
+    assert sdfg.apply_transformations(Vectorization,
+                                      {"strided_map": False}) == 1
+
+    N.set(64)
+
+    A = np.random.rand(N.get(), N.get()).astype(np.float32)
+    B = np.random.rand(N.get(), N.get()).astype(np.float32)
+
+    sdfg(A=A, B=B, N=N.get())
+
+    assert allclose(A, B)
 
 
 def test_wrong_targets():
@@ -61,8 +164,110 @@ def test_wrong_targets():
 
     for t in wrong_targets:
 
-        assert sdfg.apply_transformations(Vectorization,
-                                                   {"target": t}) == 0
+        assert sdfg.apply_transformations(Vectorization, {"target": t}) == 0
+
+
+def test_irregular_stride():
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float32[N]):
+        for i in dace.map[0:N * N]:
+            with dace.tasklet:
+                a << A[i * i]
+                b >> B[i * i]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    # [i * i] has a stride of 2i + 1 which is not constant (cannot be vectorized)
+    assert sdfg.apply_transformations(Vectorization) == 0
+
+
+def test_diagonal_stride():
+
+    sdfg = diag_stride.to_sdfg(strict=True)
+    assert sdfg.apply_transformations(Vectorization) == 0
+
+
+# def test_supported_wcr_sum():
+#     @dace.program
+#     def program(A: dace.float32[N], B: dace.float32[1]):
+#         for i in dace.map[0:N]:
+#             with dace.tasklet:
+#                 a << A[i]
+#                 b >> B(-1, lambda x, y: x + y)[0]
+#                 b = a
+
+#     sdfg = program.to_sdfg(strict=True)
+#     assert sdfg.apply_transformations(Vectorization) == 1
+
+#     N.set(64)
+#     A = np.random.rand(N.get()).astype(np.float32)
+#     B = np.random.rand(1).astype(np.float32)
+#     sdfg(A=A, B=B, N=N)
+#     assert allclose(np.sum(A), B)
+
+# def test_supported_wcr_max():
+#     @dace.program
+#     def program(A: dace.float32[N], B: dace.float32[1]):
+#         for i in dace.map[0:N]:
+#             with dace.tasklet:
+#                 a << A[i]
+#                 b >> B(-1, lambda x, y: max(x,y))[0]
+#                 b = a
+
+#     sdfg = program.to_sdfg(strict=True)
+#     assert sdfg.apply_transformations(Vectorization) == 1
+
+#     N.set(64)
+#     A = np.random.rand(N.get()).astype(np.float32)
+#     B = np.random.rand(1).astype(np.float32)
+#     sdfg(A=A, B=B, N=N)
+#     assert allclose(np.max(A), B)
+
+# def test_supported_wcr_min():
+#     @dace.program
+#     def program(A: dace.float32[N], B: dace.float32[1]):
+#         for i in dace.map[0:N]:
+#             with dace.tasklet:
+#                 a << A[i]
+#                 b >> B(-1, lambda x, y: min(x,y))[0]
+#                 b = a
+
+#     sdfg = program.to_sdfg(strict=True)
+#     assert sdfg.apply_transformations(Vectorization) == 1
+
+#     N.set(64)
+#     A = np.random.rand(N.get()).astype(np.float32)
+#     B = np.random.rand(1).astype(np.float32)
+#     sdfg(A=A, B=B, N=N)
+#     assert allclose(np.min(A), B)
+
+
+def test_unsupported_wcr_ptr():
+    @dace.program
+    def program(A: dace.pointer(dace.float32)[N],
+                B: dace.pointer(dace.float32)[1]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B(-1, lambda x, y: x + y)[0]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    assert sdfg.apply_transformations(Vectorization) == 0
+
+
+def test_unsupported_wcr_vec():
+    @dace.program
+    def program(A: dace.vector(dace.float32, 4)[N],
+                B: dace.vector(dace.float32, 4)[1]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B(-1, lambda x, y: x + y)[0]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    assert sdfg.apply_transformations(Vectorization) == 0
 
 
 def test_vectorization_uneven():
@@ -115,10 +320,22 @@ def test_propagate_parent():
 
 if __name__ == '__main__':
     test_vectorization()
-    # test_wrong_targets()
-    # test_vectorization_uneven()
-    # test_vectorization_postamble()
-    # test_propagate_parent()
+    test_basic_stride()
+    test_basic_stride_vec8()
+    test_basic_stride_matrix()
+    test_basic_stride_non_strided_map()
+    test_basic_stride_matrix_non_strided_map()
+    test_wrong_targets()
+    test_irregular_stride()
+    test_diagonal_stride()
+    # test_supported_wcr_sum()
+    # test_supported_wcr_min()
+    # test_supported_wcr_max()
+    test_unsupported_wcr_ptr()
+    test_unsupported_wcr_vec()
+    test_vectorization_uneven()
+    test_vectorization_postamble()
+    test_propagate_parent()
 
     # TODO: Pre Ampel test
     # More tests
@@ -128,7 +345,6 @@ if __name__ == '__main__':
     # Streams
     # vector / pointer
     # propagate parent
-    #  Not in targets
     # Resursive
     #  Reduction
     # ...

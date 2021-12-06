@@ -95,6 +95,12 @@ class Vectorization(transformation.Transformation):
             if not isinstance(node, (nodes.Tasklet, nodes.AccessNode)):
                 return False
 
+        # Strided maps cannot be vectorized
+        if map_entry.map.range[-1][2] != 1 \
+                and self.strided_map \
+                and self.target != dtypes.ScheduleType.SVE_Map:
+            return False
+
         if self.target == dtypes.ScheduleType.SVE_Map:
 
             # Infer all connector types for later checks (without modifying the graph)
@@ -150,7 +156,7 @@ class Vectorization(transformation.Transformation):
                     return False
 
                 # vreduce is not supported
-                dst_node = state.memlet_path(e)[-1]
+                dst_node = state.memlet_path(e)[-1].dst
                 if isinstance(dst_node, nodes.Tasklet):
                     if isinstance(dst_node.in_connectors[e.dst_conn],
                                   dtypes.vector):
@@ -158,8 +164,7 @@ class Vectorization(transformation.Transformation):
 
                 elif isinstance(dst_node, nodes.AccessNode):
                     desc = dst_node.desc(sdfg)
-                    if isinstance(desc, data.Scalar) and isinstance(
-                            desc.dtype, dtypes.vector):
+                    if isinstance(desc.dtype, (dtypes.vector, dace.pointer)):
                         return False
 
         ########################
@@ -171,6 +176,29 @@ class Vectorization(transformation.Transformation):
             for e, conntype in state.all_edges_and_connectors(node):
                 # If already vectorized or a pointer, do not apply
                 if isinstance(conntype, (dtypes.vector, dtypes.pointer)):
+                    return False
+
+            if self.target != dtypes.ScheduleType.SVE_Map:
+                subset = e.data.subset
+                array = sdfg.arrays[e.data.data]
+                param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
+
+                try:
+                    for idx, expr in enumerate(subset):
+                        if isinstance(expr, tuple):
+                            for ex in expr:
+                                ex = symbolic.pystr_to_symbolic(ex)
+                                symbols = ex.free_symbols
+                                if param in symbols:
+                                    if array.strides[idx] != 1:
+                                        return False
+                        else:
+                            expr = symbolic.pystr_to_symbolic(expr)
+                            symbols = expr.free_symbols
+                            if param in symbols:
+                                if array.strides[idx] != 1:
+                                    return False
+                except TypeError:  # cannot determine truth value of Relational
                     return False
 
             for e in state.in_edges(node):
