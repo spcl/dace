@@ -6,7 +6,7 @@ import numpy as np
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG
 from dace.transformation.auto import auto_optimize as aopt
-from dace.transformation.auto import fpga as fpga_aopt
+from dace.transformation.auto import fpga as fpga_auto_opt
 
 N = dace.symbol('N')
 
@@ -78,7 +78,7 @@ def test_rr_interleave():
     sdfg.apply_transformations([FPGATransformSDFG])
 
     #specifically run the the interleave transformation
-    allocated = fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
+    allocated = fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
 
     # There will be 5 arrays (one is a temporary containing A + B)
     assert allocated == [2, 1, 1, 1]

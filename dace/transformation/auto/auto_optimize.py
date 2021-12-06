@@ -27,7 +27,7 @@ from dace.libraries.blas.environments import intel_mkl as mkl, openblas
 from dace.transformation.estimator.enumeration import GreedyEnumerator
 
 # FPGA AutoOpt
-from dace.transformation.auto import fpga as fpga_aopt
+from dace.transformation.auto import fpga as fpga_auto_opt
 
 GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
@@ -551,8 +551,8 @@ def auto_optimize(sdfg: SDFG,
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations
         sdfg.apply_fpga_transformations()
-        fpga_aopt.fpga_global_to_local(sdfg)
-        fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
+        fpga_auto_opt.fpga_global_to_local(sdfg)
+        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
 
         # Set all library nodes to expand to fast library calls
         set_fast_implementations(sdfg, device)
