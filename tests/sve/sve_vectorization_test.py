@@ -248,7 +248,7 @@ def test_unsupported_types():
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
 
-# @pytest.mark.sve
+@pytest.mark.sve
 def test_supported_wcr_sum():
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[1]):
@@ -269,7 +269,7 @@ def test_supported_wcr_sum():
     assert allclose(np.sum(A), B)
 
 
-# @pytest.mark.sve
+@pytest.mark.sve
 def test_supported_wcr_min():
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[1]):
@@ -290,7 +290,7 @@ def test_supported_wcr_min():
     assert allclose(np.min(A), B)
 
 
-# @pytest.mark.sve
+@pytest.mark.sve
 def test_supported_wcr_max():
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[1]):
