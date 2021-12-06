@@ -305,6 +305,29 @@ def test_vectorization_postamble():
         assert np.allclose(z, expected)
 
 
+def test_preamble():
+
+    N.set(24)
+
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float32[N]):
+        for i in dace.map[3:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B[i]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    assert sdfg.apply_transformations(Vectorization) == 1
+
+    A = np.ndarray([N.get()], dtype=np.float32)
+    B = np.ndarray([N.get()], dtype=np.float32)
+
+    sdfg(A=A, B=B, N=N.get())
+
+    assert np.allclose(A[3:N.get()], B[3:N.get()])
+
+
 def test_propagate_parent():
     sdfg: dace.SDFG = tovec.to_sdfg()
     assert sdfg.apply_transformations(Vectorization,
@@ -318,36 +341,60 @@ def test_propagate_parent():
     assert np.allclose(B.reshape(20), A * 2)
 
 
+def test_supported_types():
+
+    types = [
+        # np.bool_,
+        # np.int8,
+        np.int16,
+        np.int32,
+        # np.int64,
+        np.intc,
+        np.uint8,
+        np.uint16,
+        np.uint32,
+        # np.uint64,
+        np.uintc,
+        # np.float16,
+        np.float32,
+        np.float64,
+        np.complex64,
+        np.complex128,
+    ]
+
+    for t in types:
+
+        sdfg = copy_kernel(dace.DTYPE_TO_TYPECLASS[t],
+                           dace.DTYPE_TO_TYPECLASS[t]).to_sdfg(strict=True)
+        assert sdfg.apply_transformations(Vectorization, {'vector_len': 2}) == 1
+
+        N.set(64)
+
+        A = np.random.rand(N.get()).astype(t)
+        B = np.random.rand(N.get()).astype(t)
+
+        sdfg(A=A, B=B, N=N.get())
+
+        assert allclose(A, B)
+
+
 if __name__ == '__main__':
-    # test_vectorization()
-    # test_basic_stride()
+    test_vectorization()
+    test_basic_stride()
     test_basic_stride_vec2()
-    # test_basic_stride_matrix()
-    # test_basic_stride_non_strided_map()
-    # test_basic_stride_matrix_non_strided_map()
-    # test_wrong_targets()
-    # test_irregular_stride()
-    # test_diagonal_stride()
+    test_basic_stride_matrix()
+    test_basic_stride_non_strided_map()
+    test_basic_stride_matrix_non_strided_map()
+    test_wrong_targets()
+    test_irregular_stride()
+    test_diagonal_stride()
     # test_supported_wcr_sum()
     # test_supported_wcr_min()
     # test_supported_wcr_max()
-    # test_unsupported_wcr_ptr()
-    # test_unsupported_wcr_vec()
-    # test_vectorization_uneven()
-    # test_vectorization_postamble()
-    # test_propagate_parent()
-
-    # TODO: Pre Ampel test
-    # More tests
-    # Tests with subgraph
-    # Unsupported types
-    # tests stride correctness iw stride != 1
-    # Streams
-    # vector / pointer
-    # propagate parent
-    # Resursive
-    #  Reduction
-    # ...
-    #  Strided map vs. non strides map and more strides
-    # Types
-    pass
+    test_unsupported_wcr_ptr()
+    test_unsupported_wcr_vec()
+    test_vectorization_uneven()
+    test_vectorization_postamble()
+    test_preamble()
+    test_propagate_parent()
+    test_supported_types()
