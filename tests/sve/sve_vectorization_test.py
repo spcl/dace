@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from numpy.core.numeric import allclose
 from dace.sdfg.graph import NodeNotFoundError
 import dace
 import numpy as np
@@ -23,52 +24,74 @@ def find_connector_by_name(sdfg: SDFG, name: str):
     raise RuntimeError(f'Could not find connector "{name}"')
 
 
-def test_basic_stride():
+def copy_kernel(type1=dace.float32, type2=dace.float32):
     @dace.program
-    def program(A: dace.float32[N], B: dace.float32[N]):
+    def copy(A: type1[N], B: type2[N]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
                 b >> B[i]
                 b = a
 
-    sdfg = program.to_sdfg(strict=True)
+    return copy
+
+
+def diag_stride():
+    @dace.program
+    def program(A: dace.float32[N, N], B: dace.float32[N, N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i, i]
+                b >> B[i, i]
+                b = a
+
+    return program
+
+
+@pytest.mark.sve
+def test_basic_stride():
+
+    sdfg = copy_kernel().to_sdfg(strict=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
+    N.set(64)
 
+    A = np.random.rand(N.get()).astype(np.float32)
+    B = np.random.rand(N.get()).astype(np.float32)
+
+    sdfg(A=A, out=B, N=N)
+
+    assert allclose(A, B)
+
+
+@pytest.mark.sve
 def test_supported_types():
 
     types = [
-        dace.int8, dace.int16, dace.int32, dace.int64, dace.uint8, dace.uint16,
-        dace.uint32, dace.uint64, dace.float16, dace.float32, dace.float64
+        np.int8, np.int16, np.int32, np.int64, np.uint8, np.uint16, np.uint32,
+        np.uint64, np.float16, np.float32, np.float64
     ]
 
     for t in types:
 
-        @dace.program
-        def program(A: t[N], B: t[N]):
-            for i in dace.map[0:N]:
-                with dace.tasklet:
-                    a << A[i]
-                    b >> B[i]
-                    b = a
+        sdfg = copy_kernel(dace.DTYPE_TO_TYPECLASS[t],
+                           dace.DTYPE_TO_TYPECLASS[t]).to_sdfg(strict=True)
+        assert sdfg.apply_transformations(
+            Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
-    sdfg = program.to_sdfg(strict=True)
-    assert sdfg.apply_transformations(
-        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
+        N.set(64)
+
+        A = np.random.rand(N.get()).astype(t)
+        B = np.random.rand(N.get()).astype(t)
+
+        sdfg(A=A, out=B, N=N)
+
+        assert allclose(A, B)
 
 
 def test_multiple_bit_widths():
-    @dace.program
-    def program(A: dace.float32[N], B: dace.float64[N]):
-        for i in dace.map[0:N]:
-            with dace.tasklet:
-                a << A[i]
-                b >> B[i]
-                b = a
-
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = copy_kernel(dace.float32, dace.float64).to_sdfg(strict=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
@@ -88,83 +111,45 @@ def test_irregular_stride():
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
 
+@pytest.mark.sve
 def test_diagonal_stride():
-    @dace.program
-    def program(A: dace.float32[N, N], B: dace.float32[N, N]):
-        for i in dace.map[0:N]:
-            with dace.tasklet:
-                a << A[i, i]
-                b >> B[i, i]
-                b = a
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = diag_stride().to_sdfg(strict=True)
     # [i, i] has a stride of N + 1, so it is perfectly fine
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
+    N.set(64)
 
-def test_unsupported_type():
-    @dace.program
-    def program(A: dace.complex64[N], B: dace.complex64[N]):
-        for i in dace.map[0:N]:
-            with dace.tasklet:
-                a << A[i]
-                b >> B[i]
-                b = a
+    A = np.random.rand(N.get(), N.get()).astype(np.float32)
+    B = np.random.rand(N.get(), N.get()).astype(np.float32)
 
-    sdfg = program.to_sdfg(strict=True)
-    # Complex datatypes are currently not supported by the codegen
+    sdfg(A=A, out=B, N=N)
+    assert allclose(A, B)
+
+
+def test_unsupported_types():
+
+    sdfg = copy_kernel(dace.complex64, dace.complex64).to_sdfg(strict=True)
+    assert sdfg.apply_transformations(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
+
+    sdfg = copy_kernel(dace.float32, dace.complex64).to_sdfg(strict=True)
+    assert sdfg.apply_transformations(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
+
+    sdfg = copy_kernel(dace.vector(dace.float32, 4),
+                       dace.vector(dace.float32, 4)).to_sdfg(strict=True)
+    assert sdfg.apply_transformations(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
+
+    sdfg = copy_kernel(dace.pointer(dace.float32),
+                       dace.pointer(dace.float32)).to_sdfg(strict=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
 
-def test_unsupported_type2():
-    @dace.program
-    def program(A: dace.float32[N], B: dace.complex64[N]):
-        for i in dace.map[0:N]:
-            with dace.tasklet:
-                a << A[i]
-                b >> B[i]
-                b = a
-
-    sdfg = program.to_sdfg(strict=True)
-    # Complex datatypes are currently not supported by the codegen
-    assert sdfg.apply_transformations(
-        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
-
-
-def test_unsupported_type3():
-    @dace.program
-    def program(A: dace.vector(dace.float32, 4)[N],
-                B: dace.vector(dace.float32, 4)[N]):
-        for i in dace.map[0:N]:
-            with dace.tasklet:
-                a << A[i]
-                b >> B[i]
-                b = a
-
-    sdfg = program.to_sdfg(strict=True)
-    # Complex datatypes are currently not supported by the codegen
-    assert sdfg.apply_transformations(
-        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
-
-
-def test_unsupported_type4():
-    @dace.program
-    def program(A: dace.pointer(dace.float32)[N],
-                B: dace.pointer(dace.float32)[N]):
-        for i in dace.map[0:N]:
-            with dace.tasklet:
-                a << A[i]
-                b >> B[i]
-                b = a
-
-    sdfg = program.to_sdfg(strict=True)
-    # Complex datatypes are currently not supported by the codegen
-    assert sdfg.apply_transformations(
-        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
-
-
+# @pytest.mark.sve
 def test_supported_wcr_sum():
     @dace.program
     def program(A: dace.float32[N], B: dace.int32[1]):
@@ -175,11 +160,18 @@ def test_supported_wcr_sum():
                 b = a
 
     sdfg = program.to_sdfg(strict=True)
-    # Complex datatypes are currently not supported by the codegen
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
+    # NotImplementedError: Vector-vector casting not implemented
+    # N.set(64)
+    # A = np.random.rand(N.get()).astype(np.float32)
+    # B = np.random.rand(1).astype(np.float32)
+    # sdfg(A=A, out=B, N=N)
+    # assert allclose(np.sum(A), B)
 
+
+# @pytest.mark.sve
 def test_supported_wcr_min():
     @dace.program
     def program(A: dace.float32[N], B: dace.int32[1]):
@@ -190,11 +182,18 @@ def test_supported_wcr_min():
                 b = a
 
     sdfg = program.to_sdfg(strict=True)
-    # Complex datatypes are currently not supported by the codegen
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
+    # NotImplementedError: Vector-vector casting not implemented
+    # N.set(64)
+    # A = np.random.rand(N.get()).astype(np.float32)
+    # B = np.random.rand(1).astype(np.float32)
+    # sdfg(A=A, out=B, N=N)
+    # assert allclose(np.min(A), B)
 
+
+# @pytest.mark.sve
 def test_supported_wcr_max():
     @dace.program
     def program(A: dace.float32[N], B: dace.int32[1]):
@@ -205,9 +204,15 @@ def test_supported_wcr_max():
                 b = a
 
     sdfg = program.to_sdfg(strict=True)
-    # Complex datatypes are currently not supported by the codegen
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
+
+    # NotImplementedError: Vector-vector casting not implemented
+    # N.set(64)
+    # A = np.random.rand(N.get()).astype(np.float32)
+    # B = np.random.rand(1).astype(np.float32)
+    # sdfg(A=A, out=B, N=N)
+    # assert allclose(np.max(A), B)
 
 
 def test_unsupported_wcr():
@@ -220,7 +225,6 @@ def test_unsupported_wcr():
                 b = a
 
     sdfg = program.to_sdfg(strict=True)
-    # Complex datatypes are currently not supported by the codegen
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
@@ -232,11 +236,10 @@ def test_unsupported_wcr_vec():
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
-                b >> B(-1, lambda x, y: x * y)[0]
+                b >> B(-1, lambda x, y: x + y)[0]
                 b = a
 
     sdfg = program.to_sdfg(strict=True)
-    # Complex datatypes are currently not supported by the codegen
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
@@ -248,11 +251,10 @@ def test_unsupported_wcr_ptr():
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
-                b >> B(-1, lambda x, y: x * y)[0]
+                b >> B(-1, lambda x, y: x + y)[0]
                 b = a
 
     sdfg = program.to_sdfg(strict=True)
-    # Complex datatypes are currently not supported by the codegen
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
@@ -310,6 +312,7 @@ def test_stream_pop():
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
+
 @pytest.mark.sve
 def test_preamble():
 
@@ -322,9 +325,6 @@ def test_preamble():
                 a << A[i]
                 b >> B[i]
                 b = a
-
-    X = np.random.rand(N.get()).astype(np.float64)
-    Y = np.random.rand(N.get()).astype(np.float64)
 
     sdfg = program.to_sdfg(strict=True)
     assert sdfg.apply_transformations(Vectorization, {
@@ -354,7 +354,7 @@ def test_postamble():
         "target": dace.ScheduleType.SVE_Map,
     }) == 1
 
-    n=26
+    n = 26
 
     x = np.random.rand(n).astype(np.float32)
     y = np.random.rand(n).astype(np.float32)
@@ -368,11 +368,8 @@ if __name__ == '__main__':
     # test_supported_types()
     # test_irregular_stride()
     # test_diagonal_stride()
-    # test_unsupported_type()
-    # test_unsupported_type2()
-    # test_unsupported_type3()
-    # test_unsupported_type4()
-    # test_supported_wcr_sum()
+    # test_unsupported_types()
+    test_supported_wcr_sum()
     # test_supported_wcr_min()
     # test_supported_wcr_max()
     # test_unsupported_wcr()
@@ -383,10 +380,9 @@ if __name__ == '__main__':
     # test_stream_pop()
     # test_multiple_bit_widths()
     # test_preamble()
-    test_postamble()
+    # test_postamble()
 
     # Multidimesnioal
-    # Propgate parent
     # Stride vs. Non-Stride and more strides
     # Vector length
     # Run not only apply transformation

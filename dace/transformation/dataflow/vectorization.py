@@ -26,7 +26,7 @@ class Vectorization(transformation.Transformation):
         to be equal to the length of the vector and vectorizes the memlets.
 
         Possible targets: ARM SVE or Default.
-        When choosing ARM SVE the vecor length is ingored as SVE is length agnostic. 
+        Note: ARM SVE is length agnostic. 
 
   """
 
