@@ -86,10 +86,10 @@ def test_basic_stride():
     assert allclose(A, B)
 
 
-def test_basic_stride_vec8():
+def test_basic_stride_vec2():
 
     sdfg = copy_kernel().to_sdfg(strict=True)
-    assert sdfg.apply_transformations(Vectorization, {"vector_len": 8}) == 1
+    assert sdfg.apply_transformations(Vectorization, {"vector_len": 2}) == 1
 
     N.set(64)
 
@@ -202,7 +202,7 @@ def test_diagonal_stride():
 #     N.set(64)
 #     A = np.random.rand(N.get()).astype(np.float32)
 #     B = np.random.rand(1).astype(np.float32)
-#     sdfg(A=A, B=B, N=N)
+#     sdfg(A=A, B=B, N=N.get())
 #     assert allclose(np.sum(A), B)
 
 # def test_supported_wcr_max():
@@ -220,7 +220,7 @@ def test_diagonal_stride():
 #     N.set(64)
 #     A = np.random.rand(N.get()).astype(np.float32)
 #     B = np.random.rand(1).astype(np.float32)
-#     sdfg(A=A, B=B, N=N)
+#     sdfg(A=A, B=B, N=N.get())
 #     assert allclose(np.max(A), B)
 
 # def test_supported_wcr_min():
@@ -238,7 +238,7 @@ def test_diagonal_stride():
 #     N.set(64)
 #     A = np.random.rand(N.get()).astype(np.float32)
 #     B = np.random.rand(1).astype(np.float32)
-#     sdfg(A=A, B=B, N=N)
+#     sdfg(A=A, B=B, N=N.get())
 #     assert allclose(np.min(A), B)
 
 
@@ -319,23 +319,23 @@ def test_propagate_parent():
 
 
 if __name__ == '__main__':
-    test_vectorization()
-    test_basic_stride()
-    test_basic_stride_vec8()
-    test_basic_stride_matrix()
-    test_basic_stride_non_strided_map()
-    test_basic_stride_matrix_non_strided_map()
-    test_wrong_targets()
-    test_irregular_stride()
-    test_diagonal_stride()
+    # test_vectorization()
+    # test_basic_stride()
+    test_basic_stride_vec2()
+    # test_basic_stride_matrix()
+    # test_basic_stride_non_strided_map()
+    # test_basic_stride_matrix_non_strided_map()
+    # test_wrong_targets()
+    # test_irregular_stride()
+    # test_diagonal_stride()
     # test_supported_wcr_sum()
     # test_supported_wcr_min()
     # test_supported_wcr_max()
-    test_unsupported_wcr_ptr()
-    test_unsupported_wcr_vec()
-    test_vectorization_uneven()
-    test_vectorization_postamble()
-    test_propagate_parent()
+    # test_unsupported_wcr_ptr()
+    # test_unsupported_wcr_vec()
+    # test_vectorization_uneven()
+    # test_vectorization_postamble()
+    # test_propagate_parent()
 
     # TODO: Pre Ampel test
     # More tests
@@ -350,3 +350,4 @@ if __name__ == '__main__':
     # ...
     #  Strided map vs. non strides map and more strides
     # Types
+    pass
