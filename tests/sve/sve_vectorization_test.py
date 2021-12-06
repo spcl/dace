@@ -36,6 +36,15 @@ def copy_kernel(type1=dace.float32, type2=dace.float32):
     return copy
 
 
+@dace.program
+def matrix_copy(A: dace.float32[N, N], B: dace.float32[N, N]):
+    for i, j in dace.map[0:N, 0:N]:
+        with dace.tasklet:
+            a << A[i, j]
+            b >> B[i, j]
+            b = a
+
+
 def diag_stride():
     @dace.program
     def program(A: dace.float32[N, N], B: dace.float32[N, N]):
@@ -59,6 +68,77 @@ def test_basic_stride():
 
     A = np.random.rand(N.get()).astype(np.float32)
     B = np.random.rand(N.get()).astype(np.float32)
+
+    sdfg(A=A, out=B, N=N)
+
+    assert allclose(A, B)
+
+@pytest.mark.sve
+def test_basic_stride_vec8():
+
+    sdfg = copy_kernel().to_sdfg(strict=True)
+    assert sdfg.apply_transformations(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map, "vector_len": 8}) == 1
+
+    N.set(64)
+
+    A = np.random.rand(N.get()).astype(np.float32)
+    B = np.random.rand(N.get()).astype(np.float32)
+
+    sdfg(A=A, out=B, N=N)
+
+    assert allclose(A, B)
+
+
+@pytest.mark.sve
+def test_basic_stride_matrix():
+
+    sdfg = matrix_copy.to_sdfg(strict=True)
+    assert sdfg.apply_transformations(
+        Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
+
+    N.set(64)
+
+    A = np.random.rand(N.get(), N.get()).astype(np.float32)
+    B = np.random.rand(N.get(), N.get()).astype(np.float32)
+
+    sdfg(A=A, out=B, N=N)
+
+    assert allclose(A, B)
+
+
+@pytest.mark.sve
+def test_basic_stride_non_strided_map():
+
+    sdfg = copy_kernel().to_sdfg(strict=True)
+    assert sdfg.apply_transformations(Vectorization, {
+        "target": dace.ScheduleType.SVE_Map,
+        "strided_map": False
+    }) == 1
+
+    N.set(64)
+
+    A = np.random.rand(N.get()).astype(np.float32)
+    B = np.random.rand(N.get()).astype(np.float32)
+
+    sdfg(A=A, out=B, N=N)
+
+    assert allclose(A, B)
+
+
+@pytest.mark.sve
+def test_basic_stride_matrix_non_strided_map():
+
+    sdfg = matrix_copy.to_sdfg(strict=True)
+    assert sdfg.apply_transformations(Vectorization, {
+        "target": dace.ScheduleType.SVE_Map,
+        "strided_map": False
+    }) == 1
+
+    N.set(64)
+
+    A = np.random.rand(N.get(), N.get()).astype(np.float32)
+    B = np.random.rand(N.get(), N.get()).astype(np.float32)
 
     sdfg(A=A, out=B, N=N)
 
@@ -118,6 +198,25 @@ def test_diagonal_stride():
     # [i, i] has a stride of N + 1, so it is perfectly fine
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
+
+    N.set(64)
+
+    A = np.random.rand(N.get(), N.get()).astype(np.float32)
+    B = np.random.rand(N.get(), N.get()).astype(np.float32)
+
+    sdfg(A=A, out=B, N=N)
+    assert allclose(A, B)
+
+
+@pytest.mark.sve
+def test_diagonal_stride_non_strided_map():
+
+    sdfg = diag_stride().to_sdfg(strict=True)
+    # [i, i] has a stride of N + 1, so it is perfectly fine
+    assert sdfg.apply_transformations(Vectorization, {
+        "target": dace.ScheduleType.SVE_Map,
+        "strided_map": False
+    }) == 1
 
     N.set(64)
 
@@ -364,25 +463,25 @@ def test_postamble():
 
 
 if __name__ == '__main__':
-    # test_basic_stride()
-    # test_supported_types()
-    # test_irregular_stride()
-    # test_diagonal_stride()
-    # test_unsupported_types()
+    test_basic_stride()
+    test_basic_stride_matrix()
+    test_basic_stride_non_strided_map()
+    test_basic_stride_matrix_non_strided_map()
+    test_supported_types()
+    test_irregular_stride()
+    test_diagonal_stride()
+    test_diagonal_stride_non_strided_map()
+    test_unsupported_types()
     test_supported_wcr_sum()
-    # test_supported_wcr_min()
-    # test_supported_wcr_max()
-    # test_unsupported_wcr()
-    # test_unsupported_wcr_vec()
-    # test_unsupported_wcr_ptr()
-    # test_first_level_vectorization()
-    # test_stream_push()
-    # test_stream_pop()
-    # test_multiple_bit_widths()
-    # test_preamble()
-    # test_postamble()
+    test_supported_wcr_min()
+    test_supported_wcr_max()
+    test_unsupported_wcr()
+    test_unsupported_wcr_vec()
+    test_unsupported_wcr_ptr()
+    test_first_level_vectorization()
+    test_stream_push()
+    test_stream_pop()
+    test_multiple_bit_widths()
+    test_preamble()
+    test_postamble()
 
-    # Multidimesnioal
-    # Stride vs. Non-Stride and more strides
-    # Vector length
-    # Run not only apply transformation

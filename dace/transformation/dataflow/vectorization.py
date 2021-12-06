@@ -226,7 +226,7 @@ class Vectorization(transformation.Transformation):
             ]
 
         if self.target == dtypes.ScheduleType.SVE_Map:
-            new_range = [dim_from, dim_to, dim_skip]
+            new_range = [new_range[0], new_range[1], dim_skip]
 
         # Determine whether to create preamble or postamble maps
         if self.preamble is not None:
@@ -246,7 +246,7 @@ class Vectorization(transformation.Transformation):
         graph = sdfg.nodes()[self.state_id]
 
         # Create preamble non-vectorized map (replacing the original map)
-        if create_preamble:
+        if create_preamble and self.target != dtypes.ScheduleType.SVE_Map:
             old_scope = graph.scope_subgraph(map_entry, True, True)
             new_scope: ScopeSubgraphView = replicate_scope(
                 sdfg, graph, old_scope)
@@ -259,7 +259,7 @@ class Vectorization(transformation.Transformation):
             new_range[0] = new_begin
 
         # Create postamble non-vectorized map
-        if create_postamble:
+        if create_postamble and self.target != dtypes.ScheduleType.SVE_Map:
             new_scope: ScopeSubgraphView = replicate_scope(
                 sdfg, graph, graph.scope_subgraph(map_entry, True, True))
             dim_to_ex = dim_to + 1
