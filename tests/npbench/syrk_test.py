@@ -9,7 +9,7 @@ import argparse
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, MapFusion, StreamingComposition, PruneConnectors
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_aopt
+from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 
 M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
 
@@ -71,8 +71,8 @@ def run_syrk(device_type: dace.dtypes.DeviceType):
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
-        fpga_aopt.fpga_global_to_local(sdfg)
-        fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
+        fpga_auto_opt.fpga_global_to_local(sdfg)
+        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
         sdfg.specialize(dict(N=N, M=M))
         # run program
         sdfg(alpha=alpha, beta=beta, C=C, A=A)
