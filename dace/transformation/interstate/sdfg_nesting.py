@@ -1294,6 +1294,7 @@ class NestSDFG(transformation.Transformation):
                                             replacement_limit_value = state.ranges[
                                                 str(to_solve_limit_value
                                                     )][0][1] + 1
+
                                             to_solve_limit_value = replacement_limit_value
 
                                         # Range Initial value
@@ -1309,14 +1310,15 @@ class NestSDFG(transformation.Transformation):
 
                                             # Note: here we are lenient. We can't evaluate the maximum of the two,
                                             # since we don't know the value of symbols, therefore we only take the one
-                                            # that is not negative
+                                            # that is not negative and not zero
 
                                             newsz_limit = newsz.subs(
                                                 {s: replacement_limit_value})
                                             newsz_initial = newsz.subs(
                                                 {s: replacement_initial_value})
-                                            if newsz_limit.is_negative:
-                                                if newsz_initial.is_negative:
+
+                                            if newsz_limit.is_negative or newsz_limit.is_zero:
+                                                if newsz_initial.is_negative and newsz_initial.is_zero:
                                                     raise ValueError(
                                                         f"Can not over-approximate shape for transient{node.data}"
                                                     )
