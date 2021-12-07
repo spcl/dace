@@ -899,8 +899,6 @@ class Map(object):
         """
         self.range.simplify()
 
-        for i in range(len(self.params)):
-            self.params[i] = simplify(self.params[i])
 
     def get_param_num(self):
         """ Returns the number of map dimension parameters/symbols. """
