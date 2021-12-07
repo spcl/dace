@@ -165,7 +165,7 @@ class Range(Subset):
         for i in range(len(self.ranges)):
             try:
                 self.ranges[i] = symbolic.simplify(self.ranges[i])
-            except TypeError:
+            except:
                 # TODO: Solve this
                 pass
 
