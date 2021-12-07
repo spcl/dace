@@ -2004,6 +2004,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def validate(self) -> None:
         validate_sdfg(self)
 
+    def simplify(self) -> None:
+        """ Simplifies all expression in the SDFG."""
+        for s in self.states():
+            s.simplify()
+
+        for data_str in self._arrays:
+            data = self.data(data_str)
+            data.simplify()
+
+
     def is_valid(self) -> bool:
         """ Returns True if the SDFG is verified correctly (using `validate`).
         """

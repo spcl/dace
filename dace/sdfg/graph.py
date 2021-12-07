@@ -5,6 +5,7 @@ from collections import deque, OrderedDict
 import itertools
 import networkx as nx
 from dace.dtypes import deduplicate
+from dace.memlet import Memlet
 import dace.serialize
 from typing import Any, Callable, Generic, Iterable, List, Sequence, TypeVar, Union
 
@@ -80,6 +81,13 @@ class Edge(Generic[T]):
 
     def reverse(self):
         self._src, self._dst = self._dst, self._src
+
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions if data is a memlet.
+        """
+        if isinstance(self.data, Memlet):
+            self.data.simplify()
 
 
 @dace.serialize.serializable

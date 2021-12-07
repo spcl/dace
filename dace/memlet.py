@@ -15,6 +15,8 @@ from dace.properties import (Property, make_properties, DataProperty,
                              SubsetProperty, SymbolicProperty,
                              DebugInfoProperty, LambdaProperty)
 
+from dace.symbolic import simplify
+
 
 @make_properties
 class Memlet(object):
@@ -493,6 +495,28 @@ class Memlet(object):
     def validate(self, sdfg, state):
         if self.data is not None and self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
+
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in this memlet.
+        """
+        if self.volume is not None:
+            self.volume = simplify(self.volume)
+
+        if self.subset is not None:
+            self.subset.simplify()
+
+        if self.other_subset is not None:
+            self.other_subset.simplify()
+
+        if self.src_subset is not None:
+            self.src_subset.simplify()
+
+        if self.dst_subset is not None:
+            self.dst_subset.simplify()
+
+        if self.num_accesses is not None:
+            self.num_accesses = simplify(self.num_accesses)
 
     @property
     def free_symbols(self) -> Set[str]:

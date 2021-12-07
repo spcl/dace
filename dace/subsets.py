@@ -158,6 +158,17 @@ class Range(Subset):
     def from_indices(indices: 'Indices'):
         return Range([(i, i, 1) for i in indices.indices])
 
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the Range.
+        """
+        for i in range(len(self.ranges)):
+
+            self.ranges[i] = symbolic.simplify(self.ranges[i])
+
+        for i in range(len(self.tile_sizes)):
+            self.tile_sizes[i] = symbolic.simplify(self.tile_sizes[i])
+
     def to_json(self):
         ret = []
 

@@ -170,6 +170,16 @@ class Data(object):
             Raises an exception on error. """
         self._validate()
 
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the node.
+        """
+        shape_list = list(self.shape)
+        for i in range(len(shape_list)):
+            shape_list[i] = symbolic.simplify(shape_list[i])
+
+        self.shape = tuple(shape_list)
+
     # Validation of this class is in a separate function, so that this
     # class can call `_validate()` without calling the subclasses'
     # `validate` function.
@@ -492,6 +502,22 @@ class Array(Data):
         if len(self.offset) != len(self.shape):
             raise TypeError('Offset must be the same size as shape')
 
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the node.
+        """
+        super(Array, self).simplify()
+        self.total_size = symbolic.simplify(self.total_size)
+
+        for i in range(len(self.offset)):
+            self.offset[i] = symbolic.simplify(self.offset[i])
+
+        strides_list = list(self.strides)
+        for i in range(len(strides_list)):
+            strides_list[i] = symbolic.simplify(strides_list[i])
+
+        self.strides = tuple(strides_list)
+
     def covers_range(self, rng):
         if len(rng) != len(self.shape):
             return False
@@ -638,6 +664,16 @@ class Stream(Data):
     @property
     def strides(self):
         return [_prod(self.shape[i + 1:]) for i in range(len(self.shape))]
+
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the node.
+        """
+        super(Stream, self).simplify()
+        self.buffer_size = symbolic.simplify(self.buffer_size)
+
+        for i in range(len(self.offset)):
+            self.offset[i] = symbolic.simplify(self.offset[i])
 
     def clone(self):
         return type(self)(self.dtype, self.buffer_size, self.shape,

@@ -19,7 +19,7 @@ from dace.properties import (EnumProperty, Property, CodeProperty,
                              SDFGReferenceProperty, DictProperty,
                              LibraryImplementationProperty, CodeBlock)
 from dace.frontend.operations import detect_reduction_type
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, simplify
 from dace import data, subsets as sbs, dtypes
 import pydoc
 import warnings
@@ -57,6 +57,12 @@ class Node(object):
             return type(self).__name__
 
     def validate(self, sdfg, state):
+        pass
+
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the state.
+        """
         pass
 
     def to_json(self, parent):
@@ -111,7 +117,7 @@ class Node(object):
         """
 
         if (not force and (connector_name in self.in_connectors
-                or connector_name in self.out_connectors)):
+                           or connector_name in self.out_connectors)):
             return False
         connectors = self.in_connectors
         connectors[connector_name] = dtype
@@ -133,7 +139,7 @@ class Node(object):
         """
 
         if (not force and (connector_name in self.in_connectors
-                or connector_name in self.out_connectors)):
+                           or connector_name in self.out_connectors)):
             return False
         connectors = self.out_connectors
         connectors[connector_name] = dtype
@@ -644,6 +650,12 @@ class NestedSDFG(CodeNode):
         # Recursively validate nested SDFG
         self.sdfg.validate()
 
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the node.
+        """
+        self.sdfg.simplify()
+
 
 # ------------------------------------------------------------------------------
 
@@ -718,6 +730,12 @@ class MapEntry(EntryNode):
 
     def __str__(self):
         return str(self.map)
+
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the node.
+        """
+        self.map.simplify()
 
     @property
     def free_symbols(self) -> Set[str]:
@@ -803,6 +821,12 @@ class MapExit(ExitNode):
     def __str__(self):
         return str(self.map)
 
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the node.
+        """
+        self.map.simplify()
+
 
 @make_properties
 class Map(object):
@@ -869,6 +893,15 @@ class Map(object):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid map name "%s"' % self.label)
 
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the node.
+        """
+        self.range.simplify()
+
+        for i in range(len(self.params)):
+            self.params[i] = simplify(self.params[i])
+
     def get_param_num(self):
         """ Returns the number of map dimension parameters/symbols. """
         return len(self.params)
@@ -925,6 +958,12 @@ class ConsumeEntry(EntryNode):
     @property
     def consume(self):
         return self._consume
+
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the node.
+        """
+        self.consume.simplify()
 
     @consume.setter
     def consume(self, val):
@@ -991,6 +1030,12 @@ class ConsumeExit(ExitNode):
     @property
     def map(self):
         return self._consume.as_map()
+
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the node.
+        """
+        self.consume.simplify()
 
     @property
     def consume(self):
@@ -1081,6 +1126,12 @@ class Consume(object):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid consume name "%s"' % self.label)
 
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the node.
+        """
+        self.num_pes = simplify(self.num_pes)
+
     def get_param_num(self):
         """ Returns the number of consume dimension parameters/symbols. """
         return 1
@@ -1124,6 +1175,13 @@ class PipelineEntry(MapEntry):
             pass  # Overlaps
         return result
 
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the node.
+        """
+        super(PipelineEntry, self).simplify()
+        self.pipeline.simplify()
+
 
 @dace.serialize.serializable
 class PipelineExit(MapExit):
@@ -1138,6 +1196,13 @@ class PipelineExit(MapExit):
     @pipeline.setter
     def pipeline(self, val):
         self._map = val
+
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the node.
+        """
+        super(PipelineEntry, self).simplify()
+        self.pipeline.simplify()
 
 
 @make_properties
@@ -1205,6 +1270,14 @@ class Pipeline(Map):
         if self.drain_size == 0:
             raise ValueError("No drain condition exists for " + self.label)
         return self.iterator_str() + "_drain"
+
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the node.
+        """
+        super(Pipeline, self).simplify()
+        self.init_size = simplify(self.init_size)
+        self.drain_size = simplify(self.drain_size)
 
 
 PipelineEntry = indirect_properties(Pipeline,

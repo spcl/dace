@@ -9,7 +9,7 @@ from dace import (data as dt, dtypes, memlet as mm, serialize, subsets as sbs,
                   symbolic)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import (OrderedMultiDiConnectorGraph, MultiConnectorEdge,
-                             SubgraphView)
+                             SubgraphView, Edge)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.properties import (EnumProperty, Property, DictProperty,
@@ -20,6 +20,7 @@ import itertools
 from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple,
                     Union)
 import warnings
+
 
 
 def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
@@ -815,6 +816,21 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
 
     def validate(self) -> None:
         validate_state(self)
+
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the state.
+        """
+        for e, _ in self.all_edges_recursive():
+            if isinstance(e, Edge):
+                e.simplify()
+
+        for n, _ in self.all_nodes_recursive():
+            if isinstance(n, nd.Node):
+                n.simplify()
+
+
+
 
     def set_default_lineinfo(self, lineinfo: dtypes.DebugInfo):
         """
