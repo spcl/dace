@@ -163,8 +163,11 @@ class Range(Subset):
         Simplifies all expressions in the Range.
         """
         for i in range(len(self.ranges)):
-
-            self.ranges[i] = symbolic.simplify(self.ranges[i])
+            try:
+                self.ranges[i] = symbolic.simplify(self.ranges[i])
+            except TypeError:
+                # TODO: Solve this
+                pass
 
         for i in range(len(self.tile_sizes)):
             self.tile_sizes[i] = symbolic.simplify(self.tile_sizes[i])
@@ -796,6 +799,14 @@ class Indices(Subset):
         else:
             self.indices = [symbolic.pystr_to_symbolic(i) for i in indices]
         self.tile_sizes = [1]
+
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the Indices.
+        """
+
+        for i in range(len(self.indices)):
+            self.indices[i] = symbolic.simplify(self.indices[i])
 
     def to_json(self):
         def a2s(obj):
