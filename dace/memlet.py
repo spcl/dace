@@ -148,6 +148,12 @@ class Memlet(object):
         """
         dace.serialize.all_properties_simplify(self)
 
+        if self.src_subset is not None:
+            self.src_subset.simplify()
+
+        if self.dst_subset is not None:
+            self.dst_subset.simplify()
+
         self.num_accesses = simplify(self.num_accesses)
 
     def to_json(self):
