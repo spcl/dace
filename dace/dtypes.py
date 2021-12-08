@@ -387,6 +387,9 @@ class typeclass(object):
             return True
         return False
 
+    def simplify(self):
+        pass
+
     def to_json(self):
         if self.type is None:
             return None

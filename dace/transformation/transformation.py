@@ -374,6 +374,9 @@ class Transformation(TransformationBase):
         string += self.match_to_str(graph, self.subgraph)
         return string
 
+    def simplify(self):
+        serialize.all_properties_simplify(self)
+
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
         return {
@@ -539,6 +542,10 @@ class ExpandTransformation(Transformation):
         sdutil.change_edge_src(state, node, expansion)
         state.remove_node(node)
         type(self).postprocessing(sdfg, state, expansion)
+
+
+    def simplify(self):
+        serialize.all_properties_simplify(self)
 
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
@@ -730,6 +737,9 @@ class SubgraphTransformation(TransformationBase):
         # Apply to SDFG
         return instance.apply(sdfg)
 
+    def simplify(self):
+        serialize.all_properties_simplify(self)
+        
     def to_json(self, parent=None):
         props = serialize.all_properties_to_json(self)
         return {

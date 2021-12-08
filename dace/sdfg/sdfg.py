@@ -182,6 +182,9 @@ class InterstateEdge(object):
             for k, v in self.assignments.items()
         }
 
+    def simplify(self):
+        dace.serialize.all_properties_simplify(self)
+
     def to_json(self, parent=None):
         return {
             'type': type(self).__name__,
@@ -322,6 +325,19 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         tree of SDFGs (top-level SDFG is 0, nested SDFGs are greater).
         """
         return self.sdfg_list.index(self)
+
+    def simplify(self) -> None:
+        """ Simplifies all expression in the SDFG."""
+
+        # # Location in the SDFG list (only for root SDFG)
+        # if self.parent_sdfg is None:
+        #     self.reset_sdfg_list()
+
+        super().simplify()
+
+        for data_str in self._arrays:
+            data = self.data(data_str)
+            data.simplify()
 
     def to_json(self, hash=False):
         """ Serializes this object to JSON format.
@@ -2003,16 +2019,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def validate(self) -> None:
         validate_sdfg(self)
-
-    def simplify(self) -> None:
-        """ Simplifies all expression in the SDFG."""
-        for s in self.states():
-            s.simplify()
-
-        for data_str in self._arrays:
-            data = self.data(data_str)
-            data.simplify()
-
 
     def is_valid(self) -> bool:
         """ Returns True if the SDFG is verified correctly (using `validate`).

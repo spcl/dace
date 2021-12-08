@@ -51,6 +51,13 @@ class Edge(Generic[T]):
         yield self._dst
         yield self._data
 
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions if data is a memlet.
+        """
+        if isinstance(self.data, Memlet):
+            self.data.simplify()
+
     def to_json(self, parent_graph):
         memlet_ret = self.data.to_json()
         ret = {
@@ -81,13 +88,6 @@ class Edge(Generic[T]):
 
     def reverse(self):
         self._src, self._dst = self._dst, self._src
-
-    def simplify(self) -> None:
-        """
-        Simplifies all expressions if data is a memlet.
-        """
-        if isinstance(self.data, Memlet):
-            self.data.simplify()
 
 
 @dace.serialize.serializable
@@ -183,6 +183,16 @@ class MultiConnectorEdge(MultiEdge, Generic[T]):
 class Graph(Generic[NodeT, EdgeT]):
     def _not_implemented_error(self):
         return NotImplementedError("Not implemented for " + str(type(self)))
+
+    def simplify(self):
+        dace.serialize.all_properties_simplify(self)
+
+        for n in self.nodes():
+            n.simplify()
+
+        for e in self.edges():
+            e.simplify()
+         
 
     def to_json(self):
         ret = {

@@ -22,7 +22,6 @@ from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple,
 import warnings
 
 
-
 def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
     """ Returns a DebugInfo object for the position that called this function.
         :param old_dinfo: Another DebugInfo object that will override the
@@ -817,21 +816,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
     def validate(self) -> None:
         validate_state(self)
 
-    def simplify(self) -> None:
-        """
-        Simplifies all expressions in the state.
-        """
-        for e, _ in self.all_edges_recursive():
-            if isinstance(e, Edge):
-                e.simplify()
-
-        for n, _ in self.all_nodes_recursive():
-            if isinstance(n, nd.Node):
-                n.simplify()
-
-
-
-
     def set_default_lineinfo(self, lineinfo: dtypes.DebugInfo):
         """
         Sets the default source line information to be lineinfo, or None to
@@ -900,6 +884,19 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             edge.src.remove_out_connector(edge.src_conn)
         if edge.dst_conn in edge.dst.in_connectors:
             edge.dst.remove_in_connector(edge.dst_conn)
+
+    def simplify(self) -> None:
+        """
+        Simplifies all expressions in the state.
+        """
+
+        serialize.all_properties_simplify(self)
+
+        for e in self.edges():
+            e.simplify()
+
+        for n in self.nodes():
+            n.simplify()
 
     def to_json(self, parent=None):
         # Create scope dictionary with a failsafe

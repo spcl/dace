@@ -173,6 +173,13 @@ def all_properties_to_json(object_with_properties):
     return retdict
 
 
+def all_properties_simplify(object_with_properties):
+    for x, v in object_with_properties.properties():
+        pass
+
+        # x.simplify(v)
+
+
 def set_properties_from_json(object_with_properties,
                              json_obj,
                              context=None,

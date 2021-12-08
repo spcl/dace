@@ -186,6 +186,7 @@ def test_diagonal_stride():
     sdfg = diag_stride.to_sdfg(strict=True)
     assert sdfg.apply_transformations(Vectorization) == 0
 
+# TODO: Use Dace Reduce
 
 # def test_supported_wcr_sum():
 #     @dace.program

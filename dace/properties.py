@@ -11,10 +11,11 @@ import numpy as np
 import dace.subsets as sbs
 import dace
 import dace.serialize
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import SymExpr, pystr_to_symbolic, simplify
 from dace.dtypes import DebugInfo
 from numbers import Integral, Number
 from typing import List, Set, Union
+import sympy
 
 ###############################################################################
 # External interface to guarantee correct usage
@@ -298,6 +299,9 @@ class Property:
     def from_json(self):
         return self._from_json
 
+    def simplify(self, v):
+        pass
+
     @property
     def to_json(self):
         return self._to_json
@@ -480,6 +484,13 @@ def indirect_properties(indirect_class, indirect_function, override=False):
 class OrderedDictProperty(Property):
     """ Property type for ordered dicts
     """
+    def simplify(self, d):
+        if d is None:
+            return
+        for key in d:
+            if isinstance(d[key], (sympy.Basic, SymExpr)):
+                d[key] = simplify(d[key])
+
     def to_json(self, d):
 
         # The ordered dict is more of a list than a dict.
@@ -527,6 +538,14 @@ class ListProperty(Property):
     @staticmethod
     def to_string(l):
         return str(l)
+
+    def simplify(self, l):
+        if l is None:
+            return
+
+        for i in range(len(l)):
+            if isinstance(l[i], (sympy.Basic, SymExpr)):
+                l[i] = simplify(l[i])
 
     def to_json(self, l):
         if l is None:
@@ -640,6 +659,13 @@ class DictProperty(Property):
     def to_string(d):
         return str(d)
 
+    def simplify(self, d):
+        if d is None:
+            return
+        for key in d:
+            if isinstance(d[key], (sympy.Basic, SymExpr)):
+                d[key] = simplify(d[key])
+
     def to_json(self, d):
         if d is None:
             return None
@@ -702,7 +728,6 @@ class DictProperty(Property):
 
 
 class EnumProperty(Property):
-
     def __init__(self, dtype, *args, **kwargs):
         kwargs['dtype'] = dtype
         super().__init__(*args, **kwargs)
@@ -734,6 +759,10 @@ class EnumProperty(Property):
 
 
 class SDFGReferenceProperty(Property):
+    def simplify(self, obj):
+        if obj is not None:
+            obj.simplify()
+
     def to_json(self, obj):
         if obj is None:
             return None
@@ -882,6 +911,13 @@ class SetProperty(Property):
     @staticmethod
     def from_string(s):
         return [eval(i) for i in re.sub(r"[\{\}\(\)\[\]]", "", s).split(",")]
+
+    def to_json(self, l):
+        if l is None:
+            return
+        for id in range(len(l)):
+            if isinstance(l[id], (sympy.Basic, SymExpr)):
+                l[id] = simplify(l[id])
 
     def to_json(self, l):
         return list(sorted(l))
@@ -1158,6 +1194,10 @@ class SubsetProperty(Property):
             return 'None'
         raise TypeError
 
+    def simplify(self, val):
+        if val is not None:
+            val.simplify()
+
     def to_json(self, val):
         if val is None:
             return None
@@ -1292,6 +1332,14 @@ class ShapeProperty(Property):
     @staticmethod
     def to_string(obj):
         return ", ".join(map(str, obj))
+
+    def simplify(self, v):
+        if v is not None:
+            shape_list = list(v)
+            for i in range(len(shape_list)):
+                shape_list[i] = simplify(shape_list[i])
+
+            self.shape = tuple(shape_list)
 
     def to_json(self, obj):
         if obj is None:
