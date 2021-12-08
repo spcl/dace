@@ -15,13 +15,14 @@ from dace import dtypes
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 
-
 # NOTE: Up to (including) version 1.8, sympy.abc._clash is a dictionary of the
 # form {'N': sympy.abc.N, 'I': sympy.abc.I, 'pi': sympy.abc.pi}
 # Since version 1.9, the values of this dictionary are None. In the dictionary
 # below, we recreate it to be as in versions < 1.9.
-_sympy_clash = {k: v if v else getattr(sympy.abc, k)
-                for k, v in sympy.abc._clash.items()}
+_sympy_clash = {
+    k: v if v else getattr(sympy.abc, k)
+    for k, v in sympy.abc._clash.items()
+}
 
 
 class symbol(sympy.Symbol):
@@ -266,14 +267,14 @@ class SymExpr(object):
         if isinstance(other, SymExpr):
             return self.expr == other.expr and self.approx == other.approx
         return self == pystr_to_symbolic(other)
-    
+
     def __lt__(self, other):
         if isinstance(other, sympy.Expr):
             return self.expr < other
         if isinstance(other, SymExpr):
             return self.expr < other.expr
         return self < pystr_to_symbolic(other)
-    
+
     def __gt__(self, other):
         if isinstance(other, sympy.Expr):
             return self.expr > other
@@ -824,7 +825,12 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
 
 @lru_cache(maxsize=2048)
 def simplify(expr: SymbolicType) -> SymbolicType:
-    return sympy.simplify(expr)
+    if isinstance(expr, SymExpr):
+        expr._main_expr = sympy.simplify(expr.expr)
+        expr._approx_expr = sympy.simplify(expr.approx)
+        return expr
+    else:
+        return sympy.simplify(expr)
 
 
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):

@@ -163,11 +163,13 @@ class Range(Subset):
         Simplifies all expressions in the Range.
         """
         for i in range(len(self.ranges)):
-            try:
-                self.ranges[i] = symbolic.simplify(self.ranges[i])
-            except:
-                # TODO: Solve this
-                pass
+
+            ranges_list = list(self.ranges[i])
+
+            for j in range(len(ranges_list)):
+                ranges_list[j] = symbolic.simplify(ranges_list[j])
+
+            self.ranges[i] = tuple(ranges_list)
 
         for i in range(len(self.tile_sizes)):
             self.tile_sizes[i] = symbolic.simplify(self.tile_sizes[i])
