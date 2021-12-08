@@ -330,8 +330,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """ Simplifies all expression in the SDFG."""
 
         # # Location in the SDFG list (only for root SDFG)
-        # if self.parent_sdfg is None:
-        #     self.reset_sdfg_list()
+        if self.parent_sdfg is None:
+            self.reset_sdfg_list()
 
         super().simplify()
 
