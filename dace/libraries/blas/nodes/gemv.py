@@ -184,37 +184,15 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
 
         node.validate(parent_sdfg, parent_state)
 
-        for e in parent_state.in_edges(node):
-            if e.dst_conn == "_A":
-                desc_aa = parent_sdfg.arrays[e.data.data]
-                if isinstance(desc_aa, dace.nodes.data.View):
-                    # We are going to clone this descriptor. Trace back to the viewed node.
-                    view_node =  sdutils.get_view_node(parent_state, e.src)
-                    desc_aa = parent_sdfg.arrays[view_node.data]
-            elif e.dst_conn == "_x":
-                desc_xx = parent_sdfg.arrays[e.data.data]
-        for e in parent_state.out_edges(node):
-            if e.src_conn == "_y":
-                desc_yy = parent_sdfg.arrays[e.data.data]
-
         sdfg = dace.SDFG("gemv")
         state = sdfg.add_state("gemv")
 
         alpha = node.alpha
         beta = node.beta
 
-        # Create local versions of input data nodes
-        # (if one input node is a view, it must be represented  node access to a view must be e
-
-
-        # _, array_a = sdfg.add_array("_A",
-        #                             desc_a.shape,
-        #                             dtype_a,
-        #                             strides=strides_a,
-        #                             storage=storage)
-
-        ((edge_a, desc_a, shape_a, strides_a), (edge_x, desc_x,
-                                                       shape_x, strides_x),
+        # Get input/output data (the method consider also the presence of view nodes)
+        ((edge_a, desc_a, shape_a, strides_a), (edge_x, desc_x, shape_x,
+                                                strides_x),
          (edge_y, desc_y, shape_y,
           strides_y)) = _get_matmul_operands(node,
                                              parent_state,
@@ -223,44 +201,25 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
                                              name_rhs="_x",
                                              name_out="_y")
 
-        if isinstance(desc_a, dace.nodes.data.View):
-        # We are going to clone this descriptor. Trace back to the viewed node.
-                view_node =  sdutils.get_view_node(parent_state, edge_a.src)
-                desc_a = parent_sdfg.arrays[view_node.data]
-
-        # desc_a = desc_a.clone()
-        # desc_a.transient = False
-        # sdfg.add_datadesc("_A", desc_a)
-        # desc_x = desc_x.clone()
-        # if len(desc_x.shape) !=  len(shape_x):
-        #     desc_x.shape = shape_x
-        #     desc_x.strides =strides_x
-        # # desc_x.shape = shape_x
-        # # desp
-        # desc_x.transient = False
-        # sdfg.add_datadesc("_x", desc_x)
-        # desc_y = desc_y.clone()
-        # desc_y.transient = False
-        # sdfg.add_datadesc("_y", desc_y)
-
+        # Create local versions of input/output data nodes
         _, desc_a = sdfg.add_array("_A",
-                                    shape_a,
-                                    desc_a.dtype,
-                                    strides=strides_a,
-                                    storage=desc_a.storage,
-                                    transient=False)
+                                   shape_a,
+                                   desc_a.dtype,
+                                   strides=strides_a,
+                                   storage=desc_a.storage,
+                                   transient=False)
         _, desc_x = sdfg.add_array("_x",
-                                    shape_x,
-                                    desc_x.dtype,
-                                    strides=strides_x,
-                                    storage=desc_x.storage,
-                                    transient = False)
+                                   shape_x,
+                                   desc_x.dtype,
+                                   strides=strides_x,
+                                   storage=desc_x.storage,
+                                   transient=False)
         _, desc_y_y = sdfg.add_array("_y",
-                                    shape_y,
-                                    desc_y.dtype,
-                                    strides=strides_y,
-                                    storage=desc_y.storage,
-                                    transient=False)
+                                     shape_y,
+                                     desc_y.dtype,
+                                     strides=strides_y,
+                                     storage=desc_y.storage,
+                                     transient=False)
 
         if node.transA and desc_a.dtype.veclen > 1:
             raise NotImplementedError(
