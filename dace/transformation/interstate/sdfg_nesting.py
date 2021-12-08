@@ -1385,8 +1385,11 @@ class NestSDFG(transformation.Transformation):
                     mem.data = outputs[mem.data]
         outer_state = outer_sdfg.add_state(outer_sdfg.label)
 
-        # Clean up any remaining mentions of input nodes in the nested SDFG
+        # Clean up any remaining mentions of input/output nodes in the nested SDFG
         for before, after in inputs.items():
+            nested_sdfg.replace(before, after)
+
+        for before, after in outputs.items():
             nested_sdfg.replace(before, after)
 
         # Remove from the parent SDFG the symbols that are defined in the nested one
