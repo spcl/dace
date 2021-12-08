@@ -115,45 +115,15 @@ def run_nussinov(device_type: dace.dtypes.DeviceType):
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
-        sm_applied = sdfg.apply_transformations_repeated(
-            [InlineSDFG, StreamingMemory],
-            [{}, {
-                'storage': dace.StorageType.FPGA_Local
-            }],
-            print_report=True)
-        # assert sm_applied == 1
-        sc_applied = sdfg.apply_transformations_repeated(
-            [InlineSDFG, StreamingComposition],
-            [{}, {
-                'storage': dace.StorageType.FPGA_Local
-            }],
-            print_report=True)
-        # assert sc_applied == 1
+        fpga_auto_opt.fpga_global_to_local(sdfg) # Necessary
+        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
 
-        # Prune connectors after Streaming Comp
-        pruned_conns = sdfg.apply_transformations_repeated(
-            PruneConnectors, options=[{
-                'remove_unused_containers': True
-            }])
-
-        # assert pruned_conns == 1
-
-        # fpga_aopt.fpga_global_to_local(sdfg)
-        fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
-
-        # # In this case, we want to generate the top-level state as an host-based state,
-        # # not an FPGA kernel. We need to explicitly indicate that
-        # sdfg.states()[0].location["is_FPGA_kernel"] = False
-        # we need to specialize both the top-level SDFG and the nested SDFG
         sdfg.specialize(dict(N=N))
-        # sdfg.states()[0].nodes()[0].sdfg.specialize(dict(N=N))
-        # run program
         dace_res = sdfg(seq=seq)
 
     # Compute ground truth and validate result
     gt_res = ground_truth(N, seq)
-    print(dace_res)
-    print(gt_res)
+
     assert np.allclose(dace_res, gt_res)
     return sdfg
 
@@ -166,7 +136,6 @@ def test_cpu():
 def test_gpu():
     run_nussinov(dace.dtypes.DeviceType.GPU)
 
-@pytest.mark.skip()
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_nussinov(dace.dtypes.DeviceType.FPGA)
