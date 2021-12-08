@@ -1243,7 +1243,10 @@ class SymbolicProperty(Property):
 
         if val is None:
             return
-        self.__set__(obj, simplify(val))
+
+        new_val = simplify(val)
+        # TODO: fix this
+        # self.__set__(obj, new_val)
 
     @staticmethod
     def from_string(s):
