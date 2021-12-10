@@ -540,14 +540,6 @@ required:
                         description: High-level synthesis C++ flags
                         default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant -no-interleaving=default"
 
-                    launch_async:
-                        type: bool
-                        default: false
-                        title: Launch kernels asynchronously
-                        description: >
-                            Instead of launching kernels one-by-one, spawn a separate C++ thread using std::async and
-                            std::future. This also allows each kernel to measure its own runtime from the host code.
-
             #############################################
             # RTL (SystemVerilog) compiler
             rtl:

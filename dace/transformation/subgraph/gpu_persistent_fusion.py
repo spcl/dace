@@ -81,7 +81,7 @@ class GPUPersistentKernel(SubgraphTransformation):
         # for now exactly one inner and one outer entry state
         entry_states_in, entry_states_out = \
             GPUPersistentKernel.get_entry_states(sdfg, subgraph)
-        if len(entry_states_in) > 1 or len(entry_states_out) > 1:
+        if len(entry_states_in) != 1 or len(entry_states_out) > 1:
             return False
 
         entry_state_in = entry_states_in.pop()
