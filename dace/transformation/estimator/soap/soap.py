@@ -670,6 +670,7 @@ class SoapStatement:
                 self.ranges[in_state] = in_ranges
       
         self.name = ';'.join(list(OrderedSet(self.name.split(';')).union(OrderedSet(in_S.name.split(';')))))
+        self.tasklet |= in_S.tasklet
         self.subgraph = self.subgraph.union(in_S.subgraph)
         self.output_arrays = {**self.output_arrays, **in_S.output_arrays}
             
@@ -705,8 +706,6 @@ class SoapStatement:
             #if array not in self.phis:
                 self.output_accesses[array] = copy.deepcopy(access)
                 
-        if "data_2;__tmp4_1;__tmp2_1;data_1" in self.name:
-            a = 1
 
 
     def add_edge_to_statement(self, memlet : dace.Memlet, 

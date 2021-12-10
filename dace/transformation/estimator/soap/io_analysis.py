@@ -1,5 +1,5 @@
 from os import name
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Set
 import sympy as sp
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.estimator.soap.sdg import SDG
@@ -15,6 +15,7 @@ class IOAnalysisSubgraph():
     Q: sp.Expr
     rho : sp.Expr
     input_arrays : Dict
+    tasklets : Set     
     variables :  List[sp.Expr]
     inner_tile : List[sp.Expr]
     outer_tile : List[sp.Expr]
@@ -81,7 +82,7 @@ def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView],
     """
     solver = Solver()
     solver.start_solver()
-    solver.set_timeout(300)
+    solver.set_timeout(10)
         
     sdg = SDG(sdfg, solver)
     # check if the created SDG is correct
@@ -93,7 +94,8 @@ def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView],
     for subgr in subgraphs:
         io_res_sg = IOAnalysisSubgraph(name= subgr.name, Q = subgr.Q, rho = subgr.rhoOpts, 
                     variables = subgr.variables, inner_tile = subgr.inner_tile, 
-                    outer_tile = subgr.outer_tile, input_arrays = subgr.phis)                    
+                    outer_tile = subgr.outer_tile, input_arrays = subgr.phis, 
+                    tasklets = subgr.tasklet)                    
         if generate_schedule:
             decomp_list = Config.get("soap", "decomposition", "decomposition_params")
             decomp_params = list(zip(decomp_list[::2],decomp_list[1::2]))

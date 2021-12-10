@@ -275,7 +275,7 @@ class SDG:
     # the core SDG creation function. The elementary building block for SDG is the SDFG's tasklet
     def _from_SDFG_node(self, node : dace.nodes, 
                 state: dace.SDFGState, sdg_scope : SdgScope) -> None:  
-        if node.label == 'comp_t2':
+        if node.label == 'compute_elem':
             a = 1
                   
         if not state.out_edges(node) or not state.in_edges(node):
@@ -283,7 +283,7 @@ class SDG:
                            
         S = SoapStatement() 
         S.name = node.label
-        S.tasklet = node
+        S.tasklet = {node}
         S.daceRanges[sdg_scope.sdfg_path[-1].label] = sdg_scope.ranges      
         S.output_arrays = sdg_scope.output_arrays  
 
@@ -706,6 +706,7 @@ class SDG:
         Returns an outermost memlet which can be traced from the given inner_memlet
         """
         new_memlet = copy.deepcopy(inner_memlet)
+        new_memlet._state = inner_memlet._state
 
         if new_memlet.data in sdg_scope.sdfg_mapping:
             outer_memlet = copy.deepcopy(sdg_scope.sdfg_mapping[new_memlet.data])
@@ -715,12 +716,26 @@ class SDG:
             
             # a controversial trick for triangular dimensions. If the outer memlet ranges
             # are, e.g., [(0:N),( i + 1:M)], then we cut out this variable offset i and leave
-            # only [(0:N),(0:M)]. Otherwise, we will have problems later.            
-            if any([len(x.free_symbols) > 0 for (x,y,z) in outer_memlet.subset.ranges]):
-                # TODO: remove?
-                a = 1
+            # only [(0:N),(0:M)]. Otherwise, we will have problems later. However, we also
+            # have to keep track which iteraton variable now became the offsets
+            # instead of free variable     
+            offset_variables = set.union(*[sp.sympify(x).free_symbols for (x,y,z) 
+                        in outer_memlet.subset.ranges if (x != y)] + [set()])
             outer_memlet.subset.ranges = [(0,y,z) if (x != y) else (x,y,z)  
                                           for (x,y,z) in outer_memlet.subset.ranges]
+            
+            if len(offset_variables) > 0:
+                # if we have any offset variables, we remove them from new_memlet.subsets                
+                subs_list = [(iter,0) for iter in offset_variables]
+
+                if new_memlet.src_subset is not None:
+                    new_memlet.src_subset.ranges = [(rng[0].subs(subs_list), rng[1].subs(subs_list), rng[2].subs(subs_list)) 
+                                                for rng in new_memlet.src_subset]
+                if new_memlet.dst_subset is not None:
+                    new_memlet.dst_subset.ranges = [(rng[0].subs(subs_list), rng[1].subs(subs_list), rng[2].subs(subs_list)) 
+                                                for rng in new_memlet.dst_subset]
+
+            
             if output:
                 outer_memlet.subset = outer_memlet.subset.compose(new_memlet.dst_subset)
             else:
@@ -733,6 +748,11 @@ class SDG:
 
         if outer_memlet.is_empty():
             return None
+
+        # Remove empty ranges ([0,0,1]). These show up usually if we have a temporary 
+        # scalar memlet (e.g.,. tmp[0]). Instead, we will add "proper" ranges from outer maps.
+        outer_memlet.subset.ranges = [rng for rng in outer_memlet.subset.ranges 
+                                            if len(sp.sympify(rng[0]).free_symbols) > 0]
 
         # if memlet is declared within a map scope (e.g., we have a "sum" memlet inside an outer map),
         # we add the ranges of the outer map to the memlet.
@@ -794,6 +814,8 @@ class SDG:
                         for rng in memlet.subset.ranges
                             if len(rng[0].free_symbols) > 0])
                 
+                if len(memlet_iter_vars) == 0 and not hasattr(sdg_scope, 'inntermost_ranges'):
+                    return SSA_dim
                 # TODO: experimental. We need have four pools to choose from to find the SSA_dim.
                 # 1. innermost_ranges: these are ranges, either from a map or a loop, that is closest to this statement
                 # 2. loop_ranges

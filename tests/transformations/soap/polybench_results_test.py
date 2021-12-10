@@ -56,7 +56,7 @@ def test_manual_polybench_kernels():
 
 
         if exp in final_analysisSym.keys():
-            assert final_analysisSym[exp] == strQ, 'Test failed! For exp ' + exp + ', old bound: ' + str(final_analysisSym[exp]) + ", new bound: " + strQ
+            assert strQ in final_analysisSym[exp], 'Test failed! For exp ' + exp + ', old bound: ' + str(final_analysisSym[exp]) + ", new bound: " + strQ
         elif any(exp in k for k in final_analysisSym.keys()):
             exp = [k for k in final_analysisSym.keys() if exp in k][0]
             assert final_analysisSym[exp] == strQ, 'Test failed! For exp ' + exp + ', old bound: ' + str(final_analysisSym[exp]) + ", new bound: " + strQ
