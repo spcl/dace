@@ -476,11 +476,11 @@ def mem_buffer_vec_add_types(dace_type0, dace_type1, dace_type2, np_type0,
     return sdfg
 
 
-@xilinx_test()
-def test_mem_buffer_vec_add_float16():
-    return mem_buffer_vec_add_types(dace.float16, dace.float16,
-                                         dace.float16, np.float16, np.float16,
-                                         np.float16)
+# @xilinx_test()
+# def test_mem_buffer_vec_add_float16():
+#     return mem_buffer_vec_add_types(dace.float16, dace.float16,
+#                                          dace.float16, np.float16, np.float16,
+#                                          np.float16)
 
 
 @xilinx_test()
@@ -497,10 +497,10 @@ def test_mem_buffer_vec_add_float64():
                                          np.float64)
 
 
-@xilinx_test()
-def test_mem_buffer_vec_add_int8():
-    return mem_buffer_vec_add_types(dace.int8, dace.int8, dace.int8,
-                                         np.int8, np.int8, np.int8)
+# @xilinx_test()
+# def test_mem_buffer_vec_add_int8():
+#     return mem_buffer_vec_add_types(dace.int8, dace.int8, dace.int8,
+#                                          np.int8, np.int8, np.int8)
 
 
 @xilinx_test()
@@ -515,10 +515,10 @@ def test_mem_buffer_vec_add_int32():
                                          np.int32, np.int32, np.int32)
 
 
-@xilinx_test()
-def test_mem_buffer_vec_add_int64():
-    return mem_buffer_vec_add_types(dace.int64, dace.int64, dace.int64,
-                                         np.int64, np.int64, np.int64)
+# @xilinx_test()
+# def test_mem_buffer_vec_add_int64():
+#     return mem_buffer_vec_add_types(dace.int64, dace.int64, dace.int64,
+#                                          np.int64, np.int64, np.int64)
 
 
 @xilinx_test()
@@ -535,17 +535,17 @@ def test_mem_buffer_vec_add_complex128():
                                          np.complex128, np.complex128)
 
 
-@xilinx_test()
-def test_mem_buffer_vec_add_mixed_float():
-    return mem_buffer_vec_add_types(dace.float16, dace.float32,
-                                         dace.float64, np.float16, np.float32,
-                                         np.float64)
+# @xilinx_test()
+# def test_mem_buffer_vec_add_mixed_float():
+#     return mem_buffer_vec_add_types(dace.float16, dace.float32,
+#                                          dace.float64, np.float16, np.float32,
+#                                          np.float64)
 
 
-@xilinx_test()
-def test_mem_buffer_vec_add_mixed_int():
-    return mem_buffer_vec_add_types(dace.int16, dace.int32, dace.int64,
-                                         np.int16, np.int32, np.int64)
+# @xilinx_test()
+# def test_mem_buffer_vec_add_mixed_int():
+#     return mem_buffer_vec_add_types(dace.int16, dace.int32, dace.int64,
+#                                          np.int16, np.int32, np.int64)
 
 
 @xilinx_test()
@@ -967,15 +967,15 @@ if __name__ == "__main__":
     test_mem_buffer_not_applicable(None)
     test_mem_buffer_map_order(None)
 
-    test_mem_buffer_vec_add_float16(None)  
+    # test_mem_buffer_vec_add_float16(None)  
     test_mem_buffer_vec_add_float32(None) 
     test_mem_buffer_vec_add_float64(None)  
-    test_mem_buffer_vec_add_int8(None)  
+    # test_mem_buffer_vec_add_int8(None)  
     test_mem_buffer_vec_add_int16(None)  
     test_mem_buffer_vec_add_int32(None)  
-    test_mem_buffer_vec_add_int64(None)  
-    test_mem_buffer_vec_add_mixed_float(None)  
-    test_mem_buffer_vec_add_mixed_int(None)  
+    # test_mem_buffer_vec_add_int64(None)  
+    # test_mem_buffer_vec_add_mixed_float(None)  
+    # test_mem_buffer_vec_add_mixed_int(None)  
     test_mem_buffer_vec_add_complex64(None)  
     test_mem_buffer_vec_add_complex128(None)  
 
