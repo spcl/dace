@@ -357,6 +357,97 @@ def test_bad_closure():
     assert np.all(B > A) and np.all(A > now)
 
 
+def test_autocallback_arg_annotated():
+    @dace.program
+    def timeprog(A: dace.float64[20], f: dace.callback(dace.float64)):
+        A[:] = f()
+
+    A = np.random.rand(20)
+    now = time.time()
+    timeprog(A, time.time)
+
+    assert np.all(A > now)
+
+
+def test_autocallback_arg_jit():
+    @dace.program
+    def timeprog(A: dace.float64[20], f):
+        A[:] = f()
+
+    A = np.random.rand(20)
+    now = time.time()
+    timeprog(A, time.time)
+
+    assert np.all(A > now)
+
+
+def test_autocallback_arg_nested():
+    @dace.program
+    def nested(a, f):
+        a[:] = f()
+
+    @dace.program
+    def timeprog2(A: dace.float64[20]):
+        for i in dace.map[0:20]:
+            nested(A[i], time.time)
+
+    A = np.random.rand(20)
+    now = time.time()
+    timeprog2(A)
+
+    assert np.all(A > now)
+
+
+def test_autocallback_arg_nested_2():
+    @dace.program
+    def nested(a, f):
+        a[:] = f()
+
+    @dace.program
+    def timeprog2(A: dace.float64[20], f):
+        for i in dace.map[0:20]:
+            nested(A[i], f)
+
+    A = np.random.rand(20)
+    now = time.time()
+    timeprog2(A, time.time)
+
+    assert np.all(A > now)
+
+
+def test_autocallback_defaultarg():
+    def doubleit(a):
+        return a * 2
+
+    @dace.program
+    def dargprog(A: dace.float64[20],
+                 nested: dace.callback(dace.float64, dace.float64) = doubleit):
+        for i in dace.map[0:20]:
+            A[i] = nested(A[i])
+
+    A = np.random.rand(20)
+    expected = A * 2
+    dargprog(A)
+
+    assert np.allclose(A, expected)
+
+
+def test_autocallback_defaultarg_2():
+    def doubleit(a):
+        return a * 2
+
+    @dace.program
+    def dargprog(A: dace.float64[20], nested=doubleit):
+        for i in dace.map[0:20]:
+            A[i] = nested(A[i])
+
+    A = np.random.rand(20)
+    expected = A * 2
+    dargprog(A)
+
+    assert np.allclose(A, expected)
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -372,3 +463,9 @@ if __name__ == '__main__':
     test_callback_samename()
     # test_gpu_callback()
     test_bad_closure()
+    test_autocallback_arg_annotated()
+    test_autocallback_arg_jit()
+    test_autocallback_arg_nested()
+    test_autocallback_arg_nested_2()
+    test_autocallback_defaultarg()
+    test_autocallback_defaultarg_2()
