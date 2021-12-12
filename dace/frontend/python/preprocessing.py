@@ -58,7 +58,10 @@ class StructTransformer(ast.NodeTransformer):
 
     def visit_Call(self, node: ast.Call):
         # Struct initializer
-        name = astutils.rname(node.func)
+        try:
+            name = astutils.rname(node.func)
+        except TypeError:
+            name = None
         if name not in self._structs:
             return self.generic_visit(node)
 
@@ -981,7 +984,8 @@ def preprocess_dace_program(
 
     # Filter out callbacks that were removed after dead code elimination
     closure_resolver.closure.callbacks = {
-        k: v for k, v in closure_resolver.closure.callbacks.items()
+        k: v
+        for k, v in closure_resolver.closure.callbacks.items()
         if k in ctr.seen_calls
     }
 

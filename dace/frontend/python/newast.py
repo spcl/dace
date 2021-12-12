@@ -4979,7 +4979,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     rng = subsets.Range.from_indices(rng)
                 if inference:
                     rng.offset(rng, True)
-                    return self.sdfg.arrays[true_name].dtype, rng.size()
+                    return self.defined[true_name].dtype, rng.size()
                 new_name, new_rng = self._add_read_access(name, rng, node)
                 new_arr = self.sdfg.arrays[new_name]
                 full_rng = subsets.Range.from_array(new_arr)
