@@ -327,12 +327,25 @@ def test_preamble():
     assert np.allclose(A[3:N.get()], B[3:N.get()])
 
 
-def test_propagate_parent():
+def test_propagate_parent_stride():
     sdfg: dace.SDFG = tovec.to_sdfg()
     assert sdfg.apply_transformations(Vectorization,
                                       options={
                                           'vector_len': 2,
-                                          'propagate_parent': True
+                                          'target': dace.ScheduleType.FPGA_Device
+                                      }) == 1
+    assert 'vec<double, 2>' in sdfg.generate_code()[0].code
+    A = np.random.rand(20)
+    B = sdfg(A=A)
+    assert np.allclose(B.reshape(20), A * 2)
+
+def test_propagate_parent_non_stride():
+    sdfg: dace.SDFG = tovec.to_sdfg()
+    assert sdfg.apply_transformations(Vectorization,
+                                      options={
+                                          'vector_len': 2,
+                                          'target': dace.ScheduleType.FPGA_Device,
+                                          'strided_map': False
                                       }) == 1
     assert 'vec<double, 2>' in sdfg.generate_code()[0].code
     A = np.random.rand(20)
@@ -395,5 +408,6 @@ if __name__ == '__main__':
     test_vectorization_uneven()
     test_vectorization_postamble()
     test_preamble()
-    test_propagate_parent()
+    test_propagate_parent_stride()
+    test_propagate_parent_non_stride()
     test_supported_types()

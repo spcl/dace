@@ -25,17 +25,15 @@ class Vectorization(transformation.Transformation):
         dimension. The transformation changes the step of the inner-most loop
         to be equal to the length of the vector and vectorizes the memlets.
 
-        Possible targets: ARM SVE or Default.
-        Note: ARM SVE is length agnostic. 
+        Possible targets: ARM SVE: FPGA, Default.
+        Note: ARM SVE is length agnostic. If target == FPGA, the data containers are vectorized. 
+
+
+
 
   """
 
     vector_len = Property(desc="Vector length", dtype=int, default=4)
-
-    propagate_parent = Property(desc="Propagate vector length through "
-                                "parent SDFGs",
-                                dtype=bool,
-                                default=False)
 
     strided_map = Property(desc="Use strided map range (jump by vector length)"
                            " instead of modifying memlets",
@@ -45,13 +43,17 @@ class Vectorization(transformation.Transformation):
         dtype=bool,
         default=None,
         allow_none=True,
-        desc='Force creation or skipping a preamble map without vectors')
+        desc=
+        'Force creation or skipping a preamble map without vectors. Only available if target == Default'
+    )
 
     postamble = Property(
         dtype=bool,
         default=None,
         allow_none=True,
-        desc='Force creation or skipping a postamble map without vectors')
+        desc=
+        'Force creation or skipping a postamble map without vectors. Only available if target == Default'
+    )
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
 
@@ -72,8 +74,8 @@ class Vectorization(transformation.Transformation):
 
         # Check if supported!
         supported_targets = [
-            dtypes.ScheduleType.Default,
-            dtypes.ScheduleType.SVE_Map,
+            dtypes.ScheduleType.Default, dtypes.ScheduleType.SVE_Map,
+            dtypes.ScheduleType.FPGA_Device
         ]
 
         if self.target not in supported_targets:
@@ -226,7 +228,7 @@ class Vectorization(transformation.Transformation):
                 map_entry,
                 self.vector_len,
                 flags=vector_inference.VectorInferenceFlags.Allow_Stride,
-                strided_map=self.strided_map,
+                strided_map=self.strided_map or self.target == dtypes.ScheduleType.FPGA_Device,
                 apply=False)
         except vector_inference.VectorInferenceException as ex:
             return False
@@ -274,7 +276,7 @@ class Vectorization(transformation.Transformation):
         graph = sdfg.nodes()[self.state_id]
 
         # Create preamble non-vectorized map (replacing the original map)
-        if create_preamble and self.target != dtypes.ScheduleType.SVE_Map:
+        if create_preamble and self.target == dtypes.ScheduleType.Default:
             old_scope = graph.scope_subgraph(map_entry, True, True)
             new_scope: ScopeSubgraphView = replicate_scope(
                 sdfg, graph, old_scope)
@@ -287,7 +289,7 @@ class Vectorization(transformation.Transformation):
             new_range[0] = new_begin
 
         # Create postamble non-vectorized map
-        if create_postamble and self.target != dtypes.ScheduleType.SVE_Map:
+        if create_postamble and self.target == dtypes.ScheduleType.Default:
             new_scope: ScopeSubgraphView = replicate_scope(
                 sdfg, graph, graph.scope_subgraph(map_entry, True, True))
             dim_to_ex = dim_to + 1
@@ -321,13 +323,13 @@ class Vectorization(transformation.Transformation):
             map_entry,
             self.vector_len,
             flags=vector_inference.VectorInferenceFlags.Allow_Stride,
-            strided_map=self.strided_map,
+            strided_map=self.strided_map or self.target == dtypes.ScheduleType.FPGA_Device,
             apply=True,
         )
 
         # Vector length propagation using data descriptors, recursive traversal
         # outwards
-        if self.propagate_parent:
+        if self.target == dtypes.ScheduleType.FPGA_Device:
             for edge, _ in subgraph.all_edges_recursive():
 
                 desc = sdfg.arrays[edge.data.data]
