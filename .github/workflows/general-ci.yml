@@ -37,23 +37,6 @@ jobs:
     - name: Test dependencies
       run: |
         papi_avail
-    
-    - name: Test MPI with pytest
-      run: |
-        export NOSTATUSBAR=1
-        export DACE_testing_serialization=1
-        export DACE_cache=unique
-        export DACE_optimizer_interface=" "
-        if [ "${{ matrix.strict-xforms }}" = "autoopt" ]; then
-            export DACE_optimizer_automatic_strict_transformations=1
-            export DACE_optimizer_autooptimize=1
-            echo "Auto-optimization heuristics"
-        else
-            export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
-        fi
-        mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest --with-mpi --tb=short -m "mpi"
-        coverage combine .; coverage report; coverage xml
-        codecov
 
     - name: Test with pytest
       run: |
@@ -84,6 +67,22 @@ jobs:
             export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
         fi
         pytest -n 1 --cov-report=xml --cov=dace --tb=short -m "lapack"
+        codecov
+    - name: Test MPI with pytest
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_cache=unique
+        export DACE_optimizer_interface=" "
+        if [ "${{ matrix.strict-xforms }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_strict_transformations=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
+        fi
+        mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest --with-mpi --tb=short -m "mpi"
+        coverage combine .; coverage report; coverage xml
         codecov
     - name: Run other tests
       run: |
