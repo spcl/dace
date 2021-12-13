@@ -1003,7 +1003,7 @@ def test_two_maps_legal():
                                                    dace.StorageType.FPGA_Local
                                                }]) == 5
 
-    sdfg(A=A, B=B, C=C, D=D, E=E, N=N)
+    sdfg(A=A, B=B, C=C, D=D, E=E)
 
     assert np.allclose(D, D_exp)
     assert np.allclose(E, E_exp)
@@ -1019,9 +1019,11 @@ def test_two_maps_illegal():
     C = np.random.rand(N).astype(dace.float32.type)
     D = np.random.rand(N).astype(dace.float32.type)
     E = np.random.rand(N).astype(dace.float32.type)
+    E_exp = np.copy(E)
 
     D_exp = A + B
-    E_exp = B + C
+    for i in range(0, 64, 2):
+        E_exp[i] = B[i] + C[i]
 
     sdfg = two_maps_kernel_illegal.to_sdfg()
 
@@ -1035,7 +1037,7 @@ def test_two_maps_illegal():
                                             dace.StorageType.FPGA_Local
                                         }]) == 2
 
-    sdfg(A=A, B=B, C=C, D=D, E=E, N=N)
+    sdfg(A=A, B=B, C=C, D=D, E=E)
 
     assert np.allclose(D, D_exp)
     assert np.allclose(E, E_exp)
@@ -1044,42 +1046,42 @@ def test_two_maps_illegal():
 
 
 if __name__ == "__main__":
-    test_streaming_mem(None)
-    test_streaming_mem_mapnests(None)
-    test_multistream(None)
-    test_multistream_with_deps(None)
-    test_streaming_composition_matching(None)
-    test_streaming_composition(None)
-    test_streaming_composition_mapnests(None)
-    test_streaming_and_composition(None)
+    # test_streaming_mem(None)
+    # test_streaming_mem_mapnests(None)
+    # test_multistream(None)
+    # test_multistream_with_deps(None)
+    # test_streaming_composition_matching(None)
+    # test_streaming_composition(None)
+    # test_streaming_composition_mapnests(None)
+    # test_streaming_and_composition(None)
 
-    test_mem_buffer_vec_add_1(None)
-    test_mem_buffer_vec_add_1_symbolic(None)
-    test_mem_buffer_vec_add(None)
-    test_mem_buffer_mat_add(None)
-    test_mem_buffer_mat_add_symbol(None)
-    test_mem_buffer_tensor_add(None)
-    test_mem_buffer_mapnests(None)
-    test_mem_buffer_multistream(None)
-    test_mem_buffer_multistream_with_deps(None)
-    test_mem_buffer_mat_mul(None)
-    test_mem_buffer_not_applicable(None)
-    test_mem_buffer_map_order(None)
+    # test_mem_buffer_vec_add_1(None)
+    # test_mem_buffer_vec_add_1_symbolic(None)
+    # test_mem_buffer_vec_add(None)
+    # test_mem_buffer_mat_add(None)
+    # test_mem_buffer_mat_add_symbol(None)
+    # test_mem_buffer_tensor_add(None)
+    # test_mem_buffer_mapnests(None)
+    # test_mem_buffer_multistream(None)
+    # test_mem_buffer_multistream_with_deps(None)
+    # test_mem_buffer_mat_mul(None)
+    # test_mem_buffer_not_applicable(None)
+    # test_mem_buffer_map_order(None)
 
-    # test_mem_buffer_vec_add_float16(None)
-    test_mem_buffer_vec_add_float32(None)
-    test_mem_buffer_vec_add_float64(None)
-    # test_mem_buffer_vec_add_int8(None)
-    test_mem_buffer_vec_add_int16(None)
-    test_mem_buffer_vec_add_int32(None)
-    # test_mem_buffer_vec_add_int64(None)
-    # test_mem_buffer_vec_add_mixed_float(None)
-    # test_mem_buffer_vec_add_mixed_int(None)
-    test_mem_buffer_vec_add_complex64(None)
-    test_mem_buffer_vec_add_complex128(None)
+    # # test_mem_buffer_vec_add_float16(None)
+    # test_mem_buffer_vec_add_float32(None)
+    # test_mem_buffer_vec_add_float64(None)
+    # # test_mem_buffer_vec_add_int8(None)
+    # test_mem_buffer_vec_add_int16(None)
+    # test_mem_buffer_vec_add_int32(None)
+    # # test_mem_buffer_vec_add_int64(None)
+    # # test_mem_buffer_vec_add_mixed_float(None)
+    # # test_mem_buffer_vec_add_mixed_int(None)
+    # test_mem_buffer_vec_add_complex64(None)
+    # test_mem_buffer_vec_add_complex128(None)
 
-    test_mem_buffer_atax(None)
-    test_mem_buffer_bicg(None)
+    # test_mem_buffer_atax(None)
+    # test_mem_buffer_bicg(None)
 
-    test_two_maps_legal(None)
+    # test_two_maps_legal(None)
     test_two_maps_illegal(None)
