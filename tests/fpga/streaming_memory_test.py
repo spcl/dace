@@ -21,6 +21,44 @@ K_s = dace.symbol('K_s')
 
 
 @dace.program
+def two_maps_kernel_legal(A: dace.float32[N], B: dace.float32[N],
+                          C: dace.float32[N], D: dace.float32[N],
+                          E: dace.float32[N]):
+    @dace.map
+    def sum(i: _[0:N]):
+        in_a << A[i]
+        in_b << B[i]
+        out >> D[i]
+        out = in_a + in_b
+
+    @dace.map
+    def sum(i: _[0:N]):
+        in_b << B[i]
+        in_c << C[i]
+        out >> E[i]
+        out = in_b + in_c
+
+
+@dace.program
+def two_maps_kernel_illegal(A: dace.float32[N], B: dace.float32[N],
+                            C: dace.float32[N], D: dace.float32[N],
+                            E: dace.float32[N]):
+    @dace.map
+    def sum(i: _[0:N]):
+        in_a << A[i]
+        in_b << B[i]
+        out >> D[i]
+        out = in_a + in_b
+
+    @dace.map
+    def sum(i: _[0:N:2]):
+        in_b << B[i]
+        in_c << C[i]
+        out >> E[i]
+        out = in_b + in_c
+
+
+@dace.program
 def bicg(A: dace.float32[N, M], p: dace.float32[M], r: dace.float32[N]):
     return r @ A, A @ p
 
@@ -445,7 +483,7 @@ def test_mem_buffer_vec_add():
 
 
 def mem_buffer_vec_add_types(dace_type0, dace_type1, dace_type2, np_type0,
-                                  np_type1, np_type2):
+                             np_type1, np_type2):
 
     sdfg: dace.SDFG = vecadd_streaming_type(dace_type0, dace_type1,
                                             dace_type2).to_sdfg()
@@ -485,16 +523,14 @@ def mem_buffer_vec_add_types(dace_type0, dace_type1, dace_type2, np_type0,
 
 @xilinx_test()
 def test_mem_buffer_vec_add_float32():
-    return mem_buffer_vec_add_types(dace.float32, dace.float32,
-                                         dace.float32, np.float32, np.float32,
-                                         np.float32)
+    return mem_buffer_vec_add_types(dace.float32, dace.float32, dace.float32,
+                                    np.float32, np.float32, np.float32)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_float64():
-    return mem_buffer_vec_add_types(dace.float64, dace.float64,
-                                         dace.float64, np.float64, np.float64,
-                                         np.float64)
+    return mem_buffer_vec_add_types(dace.float64, dace.float64, dace.float64,
+                                    np.float64, np.float64, np.float64)
 
 
 # @xilinx_test()
@@ -506,13 +542,13 @@ def test_mem_buffer_vec_add_float64():
 @xilinx_test()
 def test_mem_buffer_vec_add_int16():
     return mem_buffer_vec_add_types(dace.int16, dace.int16, dace.int16,
-                                         np.int16, np.int16, np.int16)
+                                    np.int16, np.int16, np.int16)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_int32():
     return mem_buffer_vec_add_types(dace.int32, dace.int32, dace.int32,
-                                         np.int32, np.int32, np.int32)
+                                    np.int32, np.int32, np.int32)
 
 
 # @xilinx_test()
@@ -524,15 +560,15 @@ def test_mem_buffer_vec_add_int32():
 @xilinx_test()
 def test_mem_buffer_vec_add_complex64():
     return mem_buffer_vec_add_types(dace.complex64, dace.complex64,
-                                         dace.complex64, np.complex64,
-                                         np.complex64, np.complex64)
+                                    dace.complex64, np.complex64, np.complex64,
+                                    np.complex64)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_complex128():
     return mem_buffer_vec_add_types(dace.complex128, dace.complex128,
-                                         dace.complex128, np.complex128,
-                                         np.complex128, np.complex128)
+                                    dace.complex128, np.complex128,
+                                    np.complex128, np.complex128)
 
 
 # @xilinx_test()
@@ -540,7 +576,6 @@ def test_mem_buffer_vec_add_complex128():
 #     return mem_buffer_vec_add_types(dace.float16, dace.float32,
 #                                          dace.float64, np.float16, np.float32,
 #                                          np.float64)
-
 
 # @xilinx_test()
 # def test_mem_buffer_vec_add_mixed_int():
@@ -944,6 +979,70 @@ def test_mem_buffer_bicg():
     return sdfg
 
 
+@xilinx_test()
+def test_two_maps_legal():
+
+    A = np.random.rand(N).astype(dace.float32.type)
+    B = np.random.rand(N).astype(dace.float32.type)
+    C = np.random.rand(N).astype(dace.float32.type)
+    D = np.random.rand(N).astype(dace.float32.type)
+    E = np.random.rand(N).astype(dace.float32.type)
+
+    D_exp = A + B
+    E_exp = B + C
+
+    sdfg: dace.SDFG = two_maps_kernel_legal.to_sdfg()
+
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
+                                               options=[{
+                                                   'use_memory_buffering':
+                                                   True,
+                                                   "storage":
+                                                   dace.StorageType.FPGA_Local
+                                               }]) == 5
+
+    sdfg(A=A, B=B, C=C, D=D, E=E, N=N)
+
+    assert np.allclose(D, D_exp)
+    assert np.allclose(E, E_exp)
+
+    return sdfg
+
+
+@xilinx_test()
+def test_two_maps_illegal():
+
+    A = np.random.rand(N).astype(dace.float32.type)
+    B = np.random.rand(N).astype(dace.float32.type)
+    C = np.random.rand(N).astype(dace.float32.type)
+    D = np.random.rand(N).astype(dace.float32.type)
+    E = np.random.rand(N).astype(dace.float32.type)
+
+    D_exp = A + B
+    E_exp = B + C
+
+    sdfg = two_maps_kernel_illegal.to_sdfg()
+
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    sdfg.apply_transformations_repeated(sm.StreamingMemory,
+                                        options=[{
+                                            'use_memory_buffering':
+                                            True,
+                                            "storage":
+                                            dace.StorageType.FPGA_Local
+                                        }]) == 2
+
+    sdfg(A=A, B=B, C=C, D=D, E=E, N=N)
+
+    assert np.allclose(D, D_exp)
+    assert np.allclose(E, E_exp)
+
+    return sdfg
+
+
 if __name__ == "__main__":
     test_streaming_mem(None)
     test_streaming_mem_mapnests(None)
@@ -967,17 +1066,20 @@ if __name__ == "__main__":
     test_mem_buffer_not_applicable(None)
     test_mem_buffer_map_order(None)
 
-    # test_mem_buffer_vec_add_float16(None)  
-    test_mem_buffer_vec_add_float32(None) 
-    test_mem_buffer_vec_add_float64(None)  
-    # test_mem_buffer_vec_add_int8(None)  
-    test_mem_buffer_vec_add_int16(None)  
-    test_mem_buffer_vec_add_int32(None)  
-    # test_mem_buffer_vec_add_int64(None)  
-    # test_mem_buffer_vec_add_mixed_float(None)  
-    # test_mem_buffer_vec_add_mixed_int(None)  
-    test_mem_buffer_vec_add_complex64(None)  
-    test_mem_buffer_vec_add_complex128(None)  
+    # test_mem_buffer_vec_add_float16(None)
+    test_mem_buffer_vec_add_float32(None)
+    test_mem_buffer_vec_add_float64(None)
+    # test_mem_buffer_vec_add_int8(None)
+    test_mem_buffer_vec_add_int16(None)
+    test_mem_buffer_vec_add_int32(None)
+    # test_mem_buffer_vec_add_int64(None)
+    # test_mem_buffer_vec_add_mixed_float(None)
+    # test_mem_buffer_vec_add_mixed_int(None)
+    test_mem_buffer_vec_add_complex64(None)
+    test_mem_buffer_vec_add_complex128(None)
 
     test_mem_buffer_atax(None)
     test_mem_buffer_bicg(None)
+
+    test_two_maps_legal(None)
+    test_two_maps_illegal(None)
