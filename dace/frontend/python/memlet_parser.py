@@ -224,7 +224,7 @@ def parse_memlet_subset(array: data.Data, node: Union[ast.Name, ast.Subscript],
     if isinstance(node, ast.Subscript):
         # Parse and evaluate ND slice(s) (possibly nested)
         if parsed_slice:
-            cnode = copy.deepcopy(node)
+            cnode = copy.copy(node)
             cnode.slice = parsed_slice
         else:
             cnode = node

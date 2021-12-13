@@ -132,8 +132,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         # 2.1 do some preparation work first:
         # calculate node topology (see apply for definition)
-        node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph,
-                                                        map_entries)
+        try:
+            node_config = SubgraphFusion.get_adjacent_nodes(
+                sdfg, graph, map_entries)
+        except NotImplementedError:
+            return False
         in_nodes, intermediate_nodes, out_nodes = node_config
 
         # 2.2 topological feasibility:
@@ -352,7 +355,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         for (rng, orng) in zip(subset_plus, subset_minus):
                             rng_1dim = subsets.Range((rng, ))
                             orng_1dim = subsets.Range((orng, ))
-                            intersection = rng_1dim.intersects(orng_1dim)
+                            try:
+                                intersection = rng_1dim.intersects(orng_1dim)
+                            except TypeError:
+                                return False
                             if intersection is None or intersection == True:
                                 warnings.warn(
                                     "SubgraphFusion::Disjoint Accesses found!")
