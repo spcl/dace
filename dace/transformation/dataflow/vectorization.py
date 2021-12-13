@@ -120,6 +120,8 @@ class Vectorization(transformation.Transformation):
                           desc='Set storage type for the newly-created stream',
                           default=dtypes.ScheduleType.Default)
 
+    _level = 0  # used to prevent infinite loops
+
     @staticmethod
     def expressions():
         return [sdutil.node_path_graph(Vectorization._map_entry)]
@@ -285,14 +287,14 @@ class Vectorization(transformation.Transformation):
                             return False
 
         # Check if it is possible to vectorize data container
-        if self.target == dtypes.ScheduleType.FPGA_Device:
+        if self.target == dtypes.ScheduleType.FPGA_Device and self._level == 0:
 
             maps_to_vectorize = collect_maps_to_vectorize(
                 sdfg, state, map_entry)
 
             old_map_entry = self._map_entry
+            self._level = 1  # To prevent infinte loop
 
-            self.target = dtypes.ScheduleType.Default  # To prevent infinte loop
             for m in maps_to_vectorize:
                 self._map_entry = m
 
@@ -301,7 +303,7 @@ class Vectorization(transformation.Transformation):
                     return False
 
             self._map_entry = old_map_entry
-            self.target = dtypes.ScheduleType.FPGA_Device
+            self._level = 0
 
             # Run the vector inference algorithm to check if vectorization is feasible
         try:
@@ -325,8 +327,30 @@ class Vectorization(transformation.Transformation):
         return str(map_entry)
 
     def apply(self, sdfg: SDFG):
+
         state = sdfg.node(self.state_id)
-        map_entry = self._map_entry(sdfg)
+        # To support recursivity in the FPGA case, see below
+        if isinstance(self._map_entry, nodes.MapEntry):
+            map_entry = self._map_entry
+        else:
+            map_entry = self._map_entry(sdfg)
+
+        if self.target == dtypes.ScheduleType.FPGA_Device and self._level == 0:
+
+            maps_to_vectorize = collect_maps_to_vectorize(
+                sdfg, state, map_entry)
+
+            old_map_entry = self._map_entry
+            self._level = 1  # To prevent infinte loop
+
+            for m in maps_to_vectorize:
+                self._map_entry = m
+
+                self.apply(sdfg)
+
+            self._map_entry = old_map_entry
+            self._level = 0
+            return
 
         # Determine new range for vectorized map
         vector_size = self.vector_len
@@ -415,6 +439,7 @@ class Vectorization(transformation.Transformation):
         # Vector length propagation using data descriptors, recursive traversal
         # outwards
         if self.target == dtypes.ScheduleType.FPGA_Device:
+
             for edge, _ in subgraph.all_edges_recursive():
 
                 desc = sdfg.arrays[edge.data.data]
