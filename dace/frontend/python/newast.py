@@ -4292,6 +4292,12 @@ class ProgramVisitor(ExtNodeVisitor):
         if not create_graph:
             return []
 
+        # If callback is a scalar descriptor, add explicit read
+        if funcname in self.sdfg.arrays:
+            cbname = '__callback'
+        else:
+            cbname = funcname
+
         # Create a state with a tasklet and the right arguments
         self._add_state('callback_%d' % node.lineno)
         self.last_state.set_default_lineinfo(self.current_lineinfo)
@@ -4305,7 +4311,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                             for name in args} | {'__istate'},
                 {f'__out_{name}'
                  for name in outargs} | {'__ostate'},
-                f'__out_{outargs[0]} = {funcname}({call_args})')
+                f'__out_{outargs[0]} = {cbname}({call_args})')
         else:
             call_args = ', '.join(str(s) for s in allargs)
             tasklet = self.last_state.add_tasklet(
@@ -4313,7 +4319,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                             for name in args} | {'__istate'},
                 {f'__out_{name}'
                  for name in outargs} | {'__ostate'},
-                f'{funcname}({call_args})')
+                f'{cbname}({call_args})')
 
             # Avoid cast of output pointers to scalars in code generation
             for cname in outargs:
@@ -4321,6 +4327,13 @@ class ProgramVisitor(ExtNodeVisitor):
                         and tuple(self.sdfg.arrays[cname].shape) == (1, )):
                     tasklet._out_connectors[f'__out_{cname}'] = dtypes.pointer(
                         self.sdfg.arrays[cname].dtype)
+
+        # If callback is a scalar descriptor, add explicit read
+        if cbname != funcname:
+            tasklet.add_in_connector(cbname)
+            r = self.last_state.add_read(funcname)
+            self.last_state.add_edge(r, None, tasklet, cbname, Memlet(funcname))
+
 
         # Setup arguments in graph
         for arg in args:

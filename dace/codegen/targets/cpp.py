@@ -1261,7 +1261,10 @@ class DaCeKeywordRemover(ExtNodeTransformer):
              and isinstance(self.sdfg.arrays[funcname].dtype, dtypes.callback))
                 or
             (funcname in self.sdfg.symbols
-             and isinstance(self.sdfg.symbols[funcname], dtypes.callback))):
+             and isinstance(self.sdfg.symbols[funcname], dtypes.callback))
+                or
+            (funcname in self.memlets
+             and isinstance(self.memlets[funcname][3], dtypes.callback))):
             # Visit arguments without changing their types
             self.allow_casts = False
             result = self.generic_visit(node)

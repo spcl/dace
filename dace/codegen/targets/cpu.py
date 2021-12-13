@@ -1222,7 +1222,7 @@ class CPUCodeGen(TargetCodeGenerator):
         is_pointer = isinstance(conntype, dtypes.pointer)
 
         # Allocate variable type
-        memlet_type = conntype.dtype.ctype
+        memlet_type = conntype.dtype
 
         desc = sdfg.arrays[memlet.data]
 
@@ -1271,19 +1271,19 @@ class CPUCodeGen(TargetCodeGenerator):
         ]:
             if output:
                 if is_pointer and var_type == DefinedType.ArrayInterface:
-                    result += "{} {} = {};".format(memlet_type, local_name,
+                    result += "{} = {};".format(memlet_type.as_arg(local_name),
                                                    expr)
                 elif not memlet.dynamic or (memlet.dynamic
                                             and memlet.wcr is not None):
                     # Dynamic WCR memlets start uninitialized
-                    result += "{} {};".format(memlet_type, local_name)
+                    result += "{};".format(memlet_type.as_arg(local_name))
                     defined = DefinedType.Scalar
 
             else:
                 if not memlet.dynamic:
                     if is_scalar:
                         # We can pre-read the value
-                        result += "{} {} = {};".format(memlet_type, local_name,
+                        result += "{} = {};".format(memlet_type.as_arg(local_name),
                                                        expr)
                     else:
                         # Pointer reference
@@ -1292,7 +1292,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
-                    memlet_type = '%s const' % memlet_type
+                    memlet_type = '%s const' % memlet_type.ctype
                     result += "{} &{} = {};".format(memlet_type, local_name,
                                                     expr)
                 defined = (DefinedType.Scalar
@@ -1300,7 +1300,7 @@ class CPUCodeGen(TargetCodeGenerator):
         elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if not output:
-                    result += f'{memlet_type} {local_name} = ({expr}).pop();'
+                    result += f'{memlet_type.as_arg(local_name)} = ({expr}).pop();'
                     defined = DefinedType.Scalar
             else:
                 # Just forward actions to the underlying object
