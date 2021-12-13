@@ -11,6 +11,10 @@ N = dace.symbol('N')
 def tovec(A: dace.float64[20]):
     return A + A
 
+@dace.program
+def tovec2(A: dace.float64[20]):
+    return A + A
+
 
 def copy_kernel(type1=dace.float32, type2=dace.float32):
     @dace.program
@@ -159,7 +163,6 @@ def test_wrong_targets():
         dace.ScheduleType.GPU_ThreadBlock,
         dace.ScheduleType.GPU_ThreadBlock_Dynamic,
         dace.ScheduleType.GPU_Persistent,
-        dace.ScheduleType.FPGA_Device,
     ]
 
     for t in wrong_targets:
@@ -328,7 +331,7 @@ def test_preamble():
 
 
 def test_propagate_parent_stride():
-    sdfg: dace.SDFG = tovec.to_sdfg()
+    sdfg: dace.SDFG = tovec2.to_sdfg(strict=True)
     assert sdfg.apply_transformations(Vectorization,
                                       options={
                                           'vector_len': 2,
@@ -338,9 +341,10 @@ def test_propagate_parent_stride():
     A = np.random.rand(20)
     B = sdfg(A=A)
     assert np.allclose(B.reshape(20), A * 2)
+    return sdfg
 
 def test_propagate_parent_non_stride():
-    sdfg: dace.SDFG = tovec.to_sdfg()
+    sdfg: dace.SDFG = tovec.to_sdfg(strict=True)
     assert sdfg.apply_transformations(Vectorization,
                                       options={
                                           'vector_len': 2,
@@ -351,6 +355,7 @@ def test_propagate_parent_non_stride():
     A = np.random.rand(20)
     B = sdfg(A=A)
     assert np.allclose(B.reshape(20), A * 2)
+    return sdfg
 
 
 def test_supported_types():
