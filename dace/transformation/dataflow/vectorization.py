@@ -1,5 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the vectorization transformation. """
+from re import M
+import re
 from dace import data, dtypes, registry, symbolic, subsets
 from dace.frontend.octave.lexer import raise_exception
 from dace.sdfg import nodes, SDFG, SDFGState, propagation
@@ -15,6 +17,55 @@ import dace.codegen.targets.sve.util as sve_util
 import dace.frontend.operations
 
 
+def collect_maps_to_vectorize(sdfg, state, map_entry):
+    """
+    Collect all maps and the corresponding data descriptors that have to be vectorized
+    if target == FPGA.
+    """
+    # Collect all possible and maps
+    all_maps = set()
+
+    for n, s in sdfg.all_nodes_recursive():
+        if isinstance(n, nodes.MapEntry):
+            all_maps.add(n)
+
+    # Check which we have to vectorize
+    data_descriptors_to_vectorize = set()
+    maps_to_vectorize = set()
+
+    # Add current map
+    maps_to_vectorize.add(map_entry)
+    all_maps.remove(map_entry)
+
+    # Add current in edges
+    for e in state.in_edges(map_entry):
+        data_descriptors_to_vectorize.add(e.data.data)
+
+    # Check all the remaing maps
+    collected_all = False
+
+    while not collected_all:
+        collected_all = True
+
+        for n in all_maps:
+
+            add_map = False
+            for e in state.in_edges(n):
+                if e.data.data in data_descriptors_to_vectorize:
+                    add_map = True
+                    collected_all = False
+                    break
+
+            if add_map:
+                maps_to_vectorize.add(n)
+                all_maps.remove(n)
+
+                for e in state.in_edges(n):
+                    data_descriptors_to_vectorize.add(e.data.data)
+                break
+    return maps_to_vectorize, data_descriptors_to_vectorize
+
+
 @registry.autoregister_params(singlestate=True)
 @make_properties
 class Vectorization(transformation.Transformation):
@@ -27,9 +78,6 @@ class Vectorization(transformation.Transformation):
 
         Possible targets: ARM SVE: FPGA, Default.
         Note: ARM SVE is length agnostic. If target == FPGA, the data containers are vectorized. 
-
-
-
 
   """
 
@@ -81,7 +129,12 @@ class Vectorization(transformation.Transformation):
         if self.target not in supported_targets:
             return False
 
-        map_entry = self._map_entry(sdfg)
+        # To support recursivity in the FPGA case, see below
+        if isinstance(self._map_entry, nodes.MapEntry):
+            map_entry = self._map_entry
+        else:
+            map_entry = self._map_entry(sdfg)
+
         subgraph = state.scope_subgraph(map_entry)
         subgraph_contents = state.scope_subgraph(map_entry,
                                                  include_entry=False,
@@ -220,6 +273,25 @@ class Vectorization(transformation.Transformation):
                             # Stream pops are not implemented
                             return False
 
+        # Check if it is possible to vectorize data container
+        if self.target == dtypes.ScheduleType.FPGA_Device:
+
+            maps_to_vectorize, data_descriptors_to_vectorize = collect_maps_to_vectorize(
+                sdfg, state, map_entry)
+
+            old_map_entry = self._map_entry
+
+            self.target = dtypes.ScheduleType.Default  # To prevent infinte loop
+            for m in maps_to_vectorize:
+                self._map_entry = m
+
+                if not self.can_be_applied(state, candidate, expr_index, sdfg,
+                                           strict):
+                    return False
+
+            self._map_entry = old_map_entry
+            self.target = dtypes.ScheduleType.FPGA_Device
+
             # Run the vector inference algorithm to check if vectorization is feasible
         try:
             vector_inference.infer_vectors(
@@ -228,7 +300,8 @@ class Vectorization(transformation.Transformation):
                 map_entry,
                 self.vector_len,
                 flags=vector_inference.VectorInferenceFlags.Allow_Stride,
-                strided_map=self.strided_map or self.target == dtypes.ScheduleType.FPGA_Device,
+                strided_map=self.strided_map
+                or self.target == dtypes.ScheduleType.FPGA_Device,
                 apply=False)
         except vector_inference.VectorInferenceException as ex:
             return False
@@ -323,7 +396,8 @@ class Vectorization(transformation.Transformation):
             map_entry,
             self.vector_len,
             flags=vector_inference.VectorInferenceFlags.Allow_Stride,
-            strided_map=self.strided_map or self.target == dtypes.ScheduleType.FPGA_Device,
+            strided_map=self.strided_map
+            or self.target == dtypes.ScheduleType.FPGA_Device,
             apply=True,
         )
 
