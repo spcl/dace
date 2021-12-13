@@ -17,25 +17,27 @@ import dace.codegen.targets.sve.util as sve_util
 import dace.frontend.operations
 
 
-def collect_maps_to_vectorize(sdfg, state, map_entry):
+def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
     """
     Collect all maps and the corresponding data descriptors that have to be vectorized
     if target == FPGA.
     """
     # Collect all possible and maps
-    all_maps = set()
+    all_maps_entries_exits = set()
 
     for n, s in sdfg.all_nodes_recursive():
-        if isinstance(n, nodes.MapEntry):
-            all_maps.add(n)
+        if isinstance(n, (nodes.MapEntry, nodes.MapExit)):
+            all_maps_entries_exits.add(n)
 
     # Check which we have to vectorize
     data_descriptors_to_vectorize = set()
     maps_to_vectorize = set()
+    entries_exits_to_vectorize = set()
 
     # Add current map
-    maps_to_vectorize.add(map_entry)
-    all_maps.remove(map_entry)
+    maps_to_vectorize.add(map_entry.map)
+    entries_exits_to_vectorize.add(map_entry)
+    all_maps_entries_exits.remove(map_entry)
 
     # Add current in edges
     for e in state.in_edges(map_entry):
@@ -47,23 +49,32 @@ def collect_maps_to_vectorize(sdfg, state, map_entry):
     while not collected_all:
         collected_all = True
 
-        for n in all_maps:
+        for n in all_maps_entries_exits:
 
             add_map = False
-            for e in state.in_edges(n):
-                if e.data.data in data_descriptors_to_vectorize:
+
+            for e in state.all_edges(n):
+                if e.data.data in data_descriptors_to_vectorize or n.map in maps_to_vectorize:
                     add_map = True
                     collected_all = False
                     break
 
             if add_map:
-                maps_to_vectorize.add(n)
-                all_maps.remove(n)
+                maps_to_vectorize.add(n.map)
+                entries_exits_to_vectorize.add(n)
+                all_maps_entries_exits.remove(n)
 
-                for e in state.in_edges(n):
+                for e in state.all_edges(n):
                     data_descriptors_to_vectorize.add(e.data.data)
                 break
-    return maps_to_vectorize, data_descriptors_to_vectorize
+
+    # Only interested in map entries
+    results = set()
+    for m in entries_exits_to_vectorize:
+        if isinstance(m, nodes.MapEntry):
+            results.add(m)
+
+    return results
 
 
 @registry.autoregister_params(singlestate=True)
@@ -276,7 +287,7 @@ class Vectorization(transformation.Transformation):
         # Check if it is possible to vectorize data container
         if self.target == dtypes.ScheduleType.FPGA_Device:
 
-            maps_to_vectorize, data_descriptors_to_vectorize = collect_maps_to_vectorize(
+            maps_to_vectorize = collect_maps_to_vectorize(
                 sdfg, state, map_entry)
 
             old_map_entry = self._map_entry
