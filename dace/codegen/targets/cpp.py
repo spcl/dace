@@ -371,6 +371,9 @@ def emit_memlet_reference(dispatcher,
                                 typedef,
                                 allow_shadowing=True)
 
+    if isinstance(typedef, dtypes.typeclass):
+        return (typedef, pointer_name, expr)
+
     return (typedef + ref, pointer_name, expr)
 
 
@@ -1254,8 +1257,11 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
     def visit_Call(self, node: ast.Call):
         funcname = rname(node.func)
-        if (funcname in self.sdfg.symbols
-                and isinstance(self.sdfg.symbols[funcname], dtypes.callback)):
+        if ((funcname in self.sdfg.arrays
+             and isinstance(self.sdfg.arrays[funcname].dtype, dtypes.callback))
+                or
+            (funcname in self.sdfg.symbols
+             and isinstance(self.sdfg.symbols[funcname], dtypes.callback))):
             # Visit arguments without changing their types
             self.allow_casts = False
             result = self.generic_visit(node)

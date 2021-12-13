@@ -855,8 +855,11 @@ class callback(typeclass):
     def __init__(self, return_types, *variadic_args):
         self.uid = next(_atomic_counter_generator())
         from dace import data
+        self.is_empty = False
         if return_types is None:
             return_types = []
+            if not variadic_args:
+                self.is_empty = True
         elif not isinstance(return_types, (list, tuple, set)):
             return_types = [return_types]
         self.dtype = self

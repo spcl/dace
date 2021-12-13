@@ -1039,7 +1039,7 @@ class TaskletTransformer(ExtNodeTransformer):
                         'Python callbacks that return arrays are not supported'
                         ' within `dace.tasklet` scopes. Please use function '
                         f'"{fname}" outside of a tasklet.')
-        if fname in self.visitor.closure.callbacks:
+        if fname in self.visitor.callbacks:
             # TODO(later): When type/shape inference dives into tasklets
             raise DaceSyntaxError(
                 self, node, 'Automatic Python callbacks are not yet '
@@ -1974,6 +1974,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     add_indirection_subgraph(self.sdfg, state, read_node,
                                              internal_node, memlet, conn, self)
                     continue
+                if (isinstance(arr.dtype, dtypes.callback)
+                        and isinstance(internal_node, nodes.NestedSDFG)):
+                    # Propagate callbacks outwards
+                    arr.dtype = internal_node.sdfg.arrays[conn].dtype
+
                 if memlet.data not in self.sdfg.arrays:
                     arr = self.scope_arrays[memlet.data]
                     if entry_node:
@@ -2180,10 +2185,14 @@ class ProgramVisitor(ExtNodeVisitor):
         """
         for mv in nsdfg_node.symbol_mapping.values():
             for sym in mv.free_symbols:
-                if (sym.name not in self.sdfg.symbols
-                        and sym.name in self.globals and isinstance(
+                if sym.name not in self.sdfg.symbols:
+                    if (sym.name in self.globals and isinstance(
                             self.globals[sym.name], symbolic.symbol)):
-                    self.sdfg.add_symbol(sym.name, self.globals[sym.name].dtype)
+                        self.sdfg.add_symbol(sym.name,
+                                             self.globals[sym.name].dtype)
+                    elif sym.name in self.closure.callbacks:
+                        self.sdfg.add_symbol(sym.name,
+                                             nsdfg_node.sdfg.symbols[sym.name])
 
     def _recursive_visit(self,
                          body: List[ast.AST],
@@ -3714,6 +3723,20 @@ class ProgramVisitor(ExtNodeVisitor):
             args = [(k, v) for k, v in args
                     if k not in constant_args and (v is not None or k in req)]
 
+            # Propagate callback types outwards
+            for inner_name, outer_name in args:
+                if (inner_name in sdfg.symbols and isinstance(
+                        sdfg.symbols[inner_name], dtypes.callback)):
+                    if (outer_name in self.sdfg.symbols and isinstance(
+                            self.sdfg.symbols[outer_name], dtypes.callback)
+                            and self.sdfg.symbols[outer_name].is_empty):
+                        self.sdfg.symbols[outer_name] = sdfg.symbols[inner_name]
+                    if (outer_name in self.sdfg.arrays and isinstance(
+                            self.sdfg.arrays[outer_name].dtype, dtypes.callback)
+                            and self.sdfg.arrays[outer_name].dtype.is_empty):
+                        self.sdfg.arrays[outer_name].dtype = (
+                            sdfg.symbols[inner_name])
+
             # Handle nested closure
             closure_arrays = getattr(fcopy, '__sdfg_closure__',
                                      lambda *args: {})()
@@ -4037,11 +4060,16 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def create_callback(self, node: ast.Call, create_graph=True):
         funcname = astutils.rname(node)
-        if funcname not in self.closure.callbacks:
+        if (funcname not in self.defined
+                and funcname not in self.closure.callbacks):
             raise DaceSyntaxError(
+                self, node,
                 f'Cannot find appropriate Python callback for {funcname}')
         func: Callable[..., Any]
-        _, func, _ = self.closure.callbacks[funcname]
+        if funcname in self.closure.callbacks:
+            _, func, _ = self.closure.callbacks[funcname]
+        else:
+            func = None
 
         # Infer the type of the function arguments and return value
         # TODO(later): Use inspect.signature and node.keywords to
@@ -4076,6 +4104,13 @@ class ProgramVisitor(ExtNodeVisitor):
             argtypes.append(atype)
 
         if node.keywords:
+            if func is None:
+                raise DaceSyntaxError(
+                    self, node,
+                    'Keyword arguments are not supported for ahead-of-time '
+                    'compilation (type-annotated callbacks) when calling '
+                    f'"{funcname}". Please provide the function as a reference.'
+                )
             sig = inspect.signature(func)
             keys = list(sig.parameters.keys())
             order = []
@@ -4110,6 +4145,13 @@ class ProgramVisitor(ExtNodeVisitor):
         # Return type inference
         return_type = None
 
+        # If type is already annotated, defined type takes precedence
+        if funcname in self.defined:
+            if (isinstance(self.defined[funcname], data.Scalar) and isinstance(
+                    self.defined[funcname].dtype, dtypes.callback)):
+                if len(self.defined[funcname].dtype.return_types) > 0:
+                    return_type = self.defined[funcname].dtype.return_types
+
         # Get the parent node of this AST node
         parent_is_toplevel = True
         parent: ast.AST = None
@@ -4131,12 +4173,13 @@ class ProgramVisitor(ExtNodeVisitor):
             return_names = []
             # NOTE: Python doesn't currently allow multiple return values in
             # annotated assignments
-            try:
-                return_type = eval(astutils.unparse(parent.annotation),
-                                   self.globals, self.defined)
-            except:
-                # TODO: Use a meaningful exception
-                pass
+            if not return_type:
+                try:
+                    return_type = eval(astutils.unparse(parent.annotation),
+                                       self.globals, self.defined)
+                except:
+                    # TODO: Use a meaningful exception
+                    pass
             aname, _ = self.sdfg.add_temp_transient_like(return_type)
             return_names = [aname]
             outargs.extend(return_names)
@@ -4147,7 +4190,7 @@ class ProgramVisitor(ExtNodeVisitor):
             defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
 
             return_names = []
-            return_type = []
+            return_type = return_type or []
 
             def parse_target(t: Union[ast.Name, ast.Subscript]):
                 name = rname(t)
@@ -4169,29 +4212,47 @@ class ProgramVisitor(ExtNodeVisitor):
                     if isinstance(dtype, data.Data):
                         n, arr = self.sdfg.add_temp_transient_like(dtype)
                     elif isinstance(dtype, dtypes.typeclass):
-                        n, arr = self.sdfg.add_temp_transient((1,), dtype)
+                        n, arr = self.sdfg.add_temp_transient((1, ), dtype)
                     else:
                         n, arr = None, None
                 else:
                     n, arr = None, None
                 return n, arr
 
-            for target in parent.targets:
-                if isinstance(target, ast.Tuple):
-                    for actual_target in target.elts:
-                        n, arr = parse_target(actual_target)
+            # If return types already exist
+            if return_type:
+                if len(return_type) != len(parent.targets):
+                    raise DaceSyntaxError(
+                        self, node,
+                        'Mismatch in number of return values while calling '
+                        f'{funcname}: expected {len(return_type)}, got '
+                        f'{len(parent.targets)}')
+                for rettype, target in zip(return_type, parent.targets):
+                    if isinstance(rettype, dtypes.typeclass):
+                        n, arr = self.sdfg.add_temp_transient((1, ), rettype)
+                    elif isinstance(rettype, data.Data):
+                        n, arr = self.sdfg.add_temp_transient_like(rettype)
+                    else:
+                        return_type = None
+                        break
+                    return_names.append(n)
+            else:  # Infer return types
+                for target in parent.targets:
+                    if isinstance(target, ast.Tuple):
+                        for actual_target in target.elts:
+                            n, arr = parse_target(actual_target)
+                            if not arr:
+                                return_type = None
+                                break
+                            return_names.append(n)
+                            return_type.append(arr)
+                    else:
+                        n, arr = parse_target(target)
                         if not arr:
                             return_type = None
                             break
                         return_names.append(n)
                         return_type.append(arr)
-                else:
-                    n, arr = parse_target(target)
-                    if not arr:
-                        return_type = None
-                        break
-                    return_names.append(n)
-                    return_type.append(arr)
 
             outargs.extend(return_names)
             allargs.extend([f'__out_{n}' for n in return_names])
@@ -4218,6 +4279,12 @@ class ProgramVisitor(ExtNodeVisitor):
             return_type = None
         callback_type = dace.callback(return_type, *argtypes)
 
+        # Update inferred type in SDFG and scope
+        if funcname in self.sdfg.arrays:
+            self.sdfg.arrays[funcname].dtype = callback_type
+        if funcname in self.scope_arrays:
+            self.scope_arrays[funcname].dtype = callback_type
+
         funcname = self.sdfg.find_new_symbol(funcname)
         self.sdfg.add_symbol(funcname, callback_type)
 
@@ -4229,19 +4296,31 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_state('callback_%d' % node.lineno)
         self.last_state.set_default_lineinfo(self.current_lineinfo)
 
-        call_args = ', '.join(str(s) for s in allargs)
-        tasklet = self.last_state.add_tasklet(
-            f'callback_{node.lineno}', {f'__in_{name}'
-                                        for name in args} | {'__istate'},
-            {f'__out_{name}'
-             for name in outargs} | {'__ostate'}, f'{funcname}({call_args})')
+        if (callback_type.is_scalar_function()
+                and len(callback_type.return_types) == 1):
+            # Scalar functions take the form "out = f(...);"
+            call_args = ', '.join(str(s) for s in allargs[:-1])
+            tasklet = self.last_state.add_tasklet(
+                f'callback_{node.lineno}', {f'__in_{name}'
+                                            for name in args} | {'__istate'},
+                {f'__out_{name}'
+                 for name in outargs} | {'__ostate'},
+                f'__out_{outargs[0]} = {funcname}({call_args})')
+        else:
+            call_args = ', '.join(str(s) for s in allargs)
+            tasklet = self.last_state.add_tasklet(
+                f'callback_{node.lineno}', {f'__in_{name}'
+                                            for name in args} | {'__istate'},
+                {f'__out_{name}'
+                 for name in outargs} | {'__ostate'},
+                f'{funcname}({call_args})')
 
-        # Avoid cast of output pointers to scalars in code generation
-        for cname in outargs:
-            if (cname in self.sdfg.arrays
-                    and tuple(self.sdfg.arrays[cname].shape) == (1, )):
-                tasklet._out_connectors[f'__out_{cname}'] = dtypes.pointer(
-                    self.sdfg.arrays[cname].dtype)
+            # Avoid cast of output pointers to scalars in code generation
+            for cname in outargs:
+                if (cname in self.sdfg.arrays
+                        and tuple(self.sdfg.arrays[cname].shape) == (1, )):
+                    tasklet._out_connectors[f'__out_{cname}'] = dtypes.pointer(
+                        self.sdfg.arrays[cname].dtype)
 
         # Setup arguments in graph
         for arg in args:
@@ -4261,6 +4340,16 @@ class ProgramVisitor(ExtNodeVisitor):
             return []
         else:
             return return_names
+
+    @property
+    def callbacks(self) -> Set[str]:
+        result = {
+            k
+            for k, v in self.defined.items() if isinstance(v, data.Scalar)
+            and isinstance(v.dtype, dtypes.callback)
+        }
+        result.update(self.closure.callbacks.keys())
+        return result
 
     def _connect_pystate(self,
                          tasklet: nodes.CodeNode,
@@ -4374,7 +4463,7 @@ class ProgramVisitor(ExtNodeVisitor):
             func = oprepo.Replacements.get_method(classname, methodname)
             if func is None:
                 nm = rname(node)
-                if create_callbacks and nm in self.closure.callbacks:
+                if create_callbacks and nm in self.callbacks:
                     warnings.warn(
                         'Performance warning: Automatically creating '
                         f'callback to Python interpreter from method "{funcname}" '
@@ -4399,7 +4488,7 @@ class ProgramVisitor(ExtNodeVisitor):
             func = oprepo.Replacements.get(funcname)
             if func is None:
                 nm = rname(node)
-                if nm in self.closure.callbacks:
+                if nm in self.callbacks:
                     warnings.warn(
                         'Performance warning: Automatically creating '
                         f'callback to Python interpreter from method "{funcname}". '
@@ -4616,6 +4705,11 @@ class ProgramVisitor(ExtNodeVisitor):
             return name
 
         if name in self.sdfg.symbols:
+            return name
+
+        if name in self.closure.callbacks:
+            # Add empty callback, to be filled later by the visitor
+            self.sdfg.add_symbol(name, dtypes.callback(None))
             return name
 
         if name not in self.scope_vars:
@@ -4887,6 +4981,8 @@ class ProgramVisitor(ExtNodeVisitor):
             Scalar data are promoted to symbols.
         """
         def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
+            if not isinstance(node, ast.AST):
+                return node
             node_str = astutils.unparse(node)
             sym = None
             if node_str in self.indirections:

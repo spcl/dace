@@ -499,7 +499,7 @@ class GlobalResolver(ast.NodeTransformer):
                              parent_node,
                              qualname,
                              recurse=False,
-                             detect_callables=False):
+                             detect_callables=True):
         # if recurse is false, we don't allow recursion into lists
         # this should not happen anyway; the globals dict should only contain
         # single "level" lists
@@ -687,6 +687,8 @@ class GlobalResolver(ast.NodeTransformer):
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # First visit the subscripted value alone, then the whole subscript
         node.value = self.visit(node.value)
+        if hasattr(node.value, 'n') and node.value.n is None:
+            return self.generic_visit(node)
         return self.visit_Attribute(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
@@ -818,6 +820,8 @@ class CallTreeResolver(ast.NodeVisitor):
 
         # Evaluate positional arguments
         for i, arg in enumerate(node.args):
+            arg = self.visit(arg)
+
             try:
                 val = astutils.evalnode(arg, self.globals)
                 res[i] = val
@@ -827,7 +831,8 @@ class CallTreeResolver(ast.NodeVisitor):
         # Evaluate keyword arguments
         for kwarg in node.keywords:
             kwname = kwarg.arg
-            kwval = kwarg.value
+            kwval = self.visit(kwarg.value)
+
             try:
                 val = astutils.evalnode(kwval, self.globals)
                 res[kwname] = val
@@ -835,6 +840,10 @@ class CallTreeResolver(ast.NodeVisitor):
                 pass
 
         return res
+
+    def visit_Name(self, node: ast.Name):
+        self.seen_calls.add(node.id)
+        return self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles

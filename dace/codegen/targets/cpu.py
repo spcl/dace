@@ -218,7 +218,12 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         ancestor=0,
                                                         is_write=is_write)
         if not declared:
-            declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
+            if isinstance(atype, dtypes.typeclass):
+                declaration_stream.write(
+                    atype.as_arg(aname) + ';', sdfg, state_id, node)
+            else:
+                declaration_stream.write(f'{atype} {aname};', sdfg, state_id,
+                                         node)
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer,
                                                  ctypedef)
@@ -306,7 +311,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                       function_stream, declaration_stream,
                                       allocation_stream)
         if isinstance(nodedesc, data.Scalar):
-            declaration_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name),
+
+            declaration_stream.write(f"{nodedesc.dtype.as_arg(name)};\n",
                                      sdfg, state_id, node)
             self._dispatcher.defined_vars.add(name, DefinedType.Scalar,
                                               nodedesc.dtype.ctype)
@@ -1578,10 +1584,10 @@ class CPUCodeGen(TargetCodeGenerator):
             defined_type, _ = self._dispatcher.defined_vars.get(edge.data.data)
             base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type)
             callsite_stream.write(
-                f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg, state_id,
+                f'{cdtype.as_arg(edge.src_conn)} = {base_ptr};', sdfg, state_id,
                 src_node)
         else:
-            callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg,
+            callsite_stream.write(f'{cdtype.as_arg(edge.src_conn)};', sdfg,
                                   state_id, src_node)
 
     def generate_nsdfg_header(self,
@@ -1599,9 +1605,9 @@ class CPUCodeGen(TargetCodeGenerator):
             toplevel_sdfg: SDFG = sdfg.sdfg_list[0]
             arguments.append(f'{toplevel_sdfg.name}_t *__state')
 
-        arguments += [
-            f'{atype} {aname}' for atype, aname, _ in memlet_references
-        ]
+        arguments += [(atype.as_arg(aname) if isinstance(
+            atype, dtypes.typeclass) else f'{atype} {aname}')
+                      for atype, aname, _ in memlet_references]
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}'
             for aname in sorted(node.symbol_mapping.keys())
@@ -1651,8 +1657,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                           sdfg,
                                           in_memlet,
                                           vconn,
-                                          is_write=vconn
-                                          in node.out_connectors,
+                                          is_write=vconn in node.out_connectors,
                                           conntype=node.in_connectors[vconn]))
 
         for _, uconn, _, _, out_memlet in sorted(
