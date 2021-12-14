@@ -530,15 +530,14 @@ class StreamingMemory(xf.Transformation):
                 new_strides[i] = new_strides[i] / vector_size
             sdfg.arrays[arrname].strides = new_strides
 
-            # Change subset
-            for s in sdfg.states():
-                for e in s.edges():
-                    if e.data.data == self.access(sdfg).data:
-                        new_subset = list(e.data.subset)
-                        i, j, k = new_subset[-1]
-                        new_subset[-1] = (i, (j + 1) / vector_size - 1, k)
-                        e.data = mm.Memlet(data=str(e.src),
-                                           subset=subsets.Range(new_subset))
+            # Change subset int the post state
+            for e in sdfg.states()[-1].edges():
+                if e.data.data == self.access(sdfg).data:
+                    new_subset = list(e.data.subset)
+                    i, j, k = new_subset[-1]
+                    new_subset[-1] = (i, (j + 1) / vector_size - 1, k)
+                    e.data = mm.Memlet(data=str(e.src),
+                                       subset=subsets.Range(new_subset))
 
         # Make read/write components
         ionodes = []
