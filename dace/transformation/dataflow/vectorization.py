@@ -74,7 +74,7 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
         if isinstance(m, nodes.MapEntry):
             results.add(m)
 
-    return results
+    return results, data_descriptors_to_vectorize
 
 
 @registry.autoregister_params(singlestate=True)
@@ -289,7 +289,7 @@ class Vectorization(transformation.Transformation):
         # Check if it is possible to vectorize data container
         if self.target == dtypes.ScheduleType.FPGA_Device and self._level == 0:
 
-            maps_to_vectorize = collect_maps_to_vectorize(
+            maps_to_vectorize, data_descriptors_to_vectorize = collect_maps_to_vectorize(
                 sdfg, state, map_entry)
 
             old_map_entry = self._map_entry
@@ -337,7 +337,7 @@ class Vectorization(transformation.Transformation):
 
         if self.target == dtypes.ScheduleType.FPGA_Device and self._level == 0:
 
-            maps_to_vectorize = collect_maps_to_vectorize(
+            maps_to_vectorize, data_descriptors_to_vectorize = collect_maps_to_vectorize(
                 sdfg, state, map_entry)
 
             old_map_entry = self._map_entry
@@ -350,6 +350,33 @@ class Vectorization(transformation.Transformation):
 
             self._map_entry = old_map_entry
             self._level = 0
+
+            # Change the subset in the post state that copies the data back to the host
+
+            for e in sdfg.states()[-1].edges:
+                if e in data_descriptors_to_vectorize:
+
+                    desc = sdfg.arrays[e.data.data]
+                    contigidx = desc.strides.index(1)
+
+                    newlist = []
+
+                    lastindex = e.data.subset[contigidx]
+                    if isinstance(lastindex, tuple):
+                        newlist = [(rb, re, rs) for rb, re, rs in e.data.subset]
+                    else:
+                        newlist = [(rb, rb, 1) for rb in e.data.subset]
+
+                    # Modify memlet subset to match vector length
+                    rb = newlist[contigidx][0]
+                    if self.strided_map:
+                        newlist[contigidx] = (rb / self.vector_len,
+                                              rb / self.vector_len, 1)
+                    else:
+                        newlist[contigidx] = (rb, rb, 1)
+
+                    e.data.subset = subsets.Range(newlist)
+
             return
 
         # Determine new range for vectorized map
