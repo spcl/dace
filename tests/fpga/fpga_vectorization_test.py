@@ -6,20 +6,31 @@ Can be used for simple vectorization test
 
 import dace
 from dace.fpga_testing import fpga_test
+from dace.fpga_testing import xilinx_test
 import numpy as np
 import argparse
 from dace.transformation.dataflow import Vectorization
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 
 N = dace.symbol("N")
-M = dace.symbol("S")
+M = dace.symbol("M")
 
-SIZE = 64
+SIZE = 4
 
 
 @dace.program
-def matadd_symbol(A: dace.float32[M, N], B: dace.float32[M, N],
-                  C: dace.float32[M, N]):
+def add_1_kernel(A: dace.float32[SIZE], B: dace.float32[SIZE]):
+    B[:] = A + 1.0
+
+
+@dace.program
+def add_1_kernel_sym(A: dace.float32[N], B: dace.float32[N]):
+    B[:] = A + 1.0
+
+
+@dace.program
+def matadd_kernel_sym(A: dace.float32[M, N], B: dace.float32[M, N],
+                      C: dace.float32[M, N]):
     C[:] = A + B
 
 
@@ -27,11 +38,6 @@ def matadd_symbol(A: dace.float32[M, N], B: dace.float32[M, N],
 def matadd_kernel(A: dace.float32[SIZE, SIZE], B: dace.float32[SIZE, SIZE],
                   C: dace.float32[SIZE, SIZE]):
     C[:] = A + B
-
-
-@dace.program
-def vecadd_1_kernel(A: dace.float32[SIZE], B: dace.float32[SIZE]):
-    B[:] = A + 1.0
 
 
 @dace.program
@@ -73,7 +79,7 @@ def two_maps_kernel_illegal(A: dace.float32[N], B: dace.float32[N],
 
 
 @dace.program
-def vec_sum(x: dace.float32[N], y: dace.float32[N], z: dace.float32[N]):
+def vec_sum_kernel(x: dace.float32[N], y: dace.float32[N], z: dace.float32[N]):
     @dace.map
     def sum(i: _[0:N]):
         in_x << x[i]
@@ -84,7 +90,7 @@ def vec_sum(x: dace.float32[N], y: dace.float32[N], z: dace.float32[N]):
         out = in_x + in_y + in_z
 
 
-def two_maps(strided_map):
+def vec_two_maps(strided_map):
     N.set(24)
     A = np.random.rand(N.get()).astype(dace.float32.type)
     B = np.random.rand(N.get()).astype(dace.float32.type)
@@ -115,7 +121,7 @@ def two_maps(strided_map):
     return sdfg
 
 
-def run_vec_sum(vectorize_first: bool):
+def vec_sum(vectorize_first: bool, strided_map: bool):
 
     N.set(24)
 
@@ -126,7 +132,7 @@ def run_vec_sum(vectorize_first: bool):
 
     Z_exp = X + Y + Z
 
-    sdfg = vec_sum.to_sdfg()
+    sdfg = vec_sum_kernel.to_sdfg()
 
     if vectorize_first:
         transformations = [
@@ -135,6 +141,7 @@ def run_vec_sum(vectorize_first: bool):
         ]
         transformation_options = [{
             "target": dace.ScheduleType.FPGA_Device,
+            'strided_map': strided_map
         }, {}]
     else:
         transformations = [
@@ -144,6 +151,7 @@ def run_vec_sum(vectorize_first: bool):
         ]
         transformation_options = [{}, {
             "target": dace.ScheduleType.FPGA_Device,
+            'strided_map': strided_map
         }]
 
     assert sdfg.apply_transformations(transformations,
@@ -158,7 +166,7 @@ def run_vec_sum(vectorize_first: bool):
     return sdfg
 
 
-def test_two_maps_illegal():
+def test_vec_two_maps_illegal():
     sdfg = two_maps_kernel_illegal.to_sdfg()
 
     assert sdfg.apply_transformations(Vectorization,
@@ -169,7 +177,7 @@ def test_two_maps_illegal():
                                       }) == 0
 
 
-def matadd(strided_map):
+def vec_matadd(strided_map):
     sdfg: dace.SDFG = matadd_kernel.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
@@ -194,25 +202,47 @@ def matadd(strided_map):
     return sdfg
 
 
+def vec_matadd_sym(strided_map):
+    sdfg: dace.SDFG = matadd_kernel_sym.to_sdfg()
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    assert sdfg.apply_transformations(Vectorization,
+                                      options={
+                                          'vector_len': 2,
+                                          'target':
+                                          dace.ScheduleType.FPGA_Device,
+                                          'strided_map': strided_map
+                                      }) == 1
+
+    # Run verification
+    A = np.random.rand(SIZE, SIZE).astype(np.float32)
+    B = np.random.rand(SIZE, SIZE).astype(np.float32)
+    C = np.random.rand(SIZE, SIZE).astype(np.float32)
+
+    sdfg(A=A, B=B, C=C, N=SIZE, M=SIZE)
+
+    diff = np.linalg.norm(C - (A + B))
+    assert diff <= 1e-5
+
+    return sdfg
+
+
 def vec_add_1(strided_map):
-    # Make SDFG
-    sdfg: dace.SDFG = vecadd_1_kernel.to_sdfg()
-    # Transform
+    sdfg: dace.SDFG = add_1_kernel.to_sdfg()
 
     sdfg.apply_transformations([
         FPGATransformSDFG,
         InlineSDFG,
     ])
 
-    # assert sdfg.apply_transformations(Vectorization,
-    #                                   options={
-    #                                       'vector_len': 2,
-    #                                       'target':
-    #                                       dace.ScheduleType.FPGA_Device,
-    #                                       'strided_map': strided_map
-    #                                   }) == 1
+    assert sdfg.apply_transformations(Vectorization,
+                                      options={
+                                          'vector_len': 2,
+                                          'target':
+                                          dace.ScheduleType.FPGA_Device,
+                                          'strided_map': strided_map
+                                      }) == 1
 
-    # Run verification
     A = np.random.rand(SIZE).astype(np.float32)
     B = np.random.rand(SIZE).astype(np.float32)
 
@@ -223,55 +253,121 @@ def vec_add_1(strided_map):
     return sdfg
 
 
-@fpga_test()
-def test_two_maps_strided():
-    return two_maps(True)
+def vec_add_1_sym(strided_map):
+    sdfg: dace.SDFG = add_1_kernel_sym.to_sdfg()
+
+    sdfg.apply_transformations([
+        FPGATransformSDFG,
+        InlineSDFG,
+    ])
+
+    assert sdfg.apply_transformations(Vectorization,
+                                      options={
+                                          'vector_len': 2,
+                                          'target':
+                                          dace.ScheduleType.FPGA_Device,
+                                          'strided_map': strided_map
+                                      }) == 1
+
+    A = np.random.rand(SIZE).astype(np.float32)
+    B = np.random.rand(SIZE).astype(np.float32)
+
+    sdfg(A=A, B=B, N=SIZE)
+
+    assert all(B == A + 1)
+
+    return sdfg
 
 
 @fpga_test()
-def test_two_maps_non_strided():
-    return two_maps(False)
+def test_vec_two_maps_strided():
+    return vec_two_maps(True)
 
 
 @fpga_test()
-def test_vec_sum_vectorize_first():
-    return run_vec_sum(True)
+def test_vec_two_maps_non_strided():
+    return vec_two_maps(False)
 
 
 @fpga_test()
-def test_vec_sum_fpga_transform_first():
-    return run_vec_sum(False)
+def test_vec_sum_vectorize_first_strided():
+    return vec_sum(True, True)
 
 
 @fpga_test()
-def test_matadd_stride():
-    return matadd(True)
+def test_vec_sum_vectorize_first_non_strided():
+    return vec_sum(True, False)
 
 
 @fpga_test()
-def test_matadd_non_stride():
-    return matadd(False)
+def test_vec_sum_fpga_transform_first_strided():
+    return vec_sum(False, True)
+
 
 @fpga_test()
-def test_vec1_stride():
+def test_vec_sum_fpga_transform_first_non_strided():
+    return vec_sum(False, False)
+
+
+@xilinx_test()
+def test_vec_matadd_stride():
+    return vec_matadd(True)
+
+
+@xilinx_test()
+def test_vec_matadd_non_stride():
+    return vec_matadd(False)
+
+
+@xilinx_test()
+def test_vec_matadd_stride_sym():
+    return vec_matadd_sym(True)
+
+
+@xilinx_test()
+def test_vec_matadd_non_stride_sym():
+    return vec_matadd_sym(False)
+
+
+@fpga_test()
+def test_vec_add_1_stride():
     return vec_add_1(True)
 
+
 @fpga_test()
-def test_vec1_non_stride():
+def test_vec_add_1_non_stride():
     return vec_add_1(False)
 
 
-if __name__ == "__main__":
-    test_vec1_stride(None)
+@fpga_test()
+def test_vec_add_1_stride_sym():
+    return vec_add_1_sym(True)
 
-    # test_vec_sum_vectorize_first(None)
-    # test_vec_sum_fpga_transform_first(None)
-    # test_two_maps_strided(None)
-    # test_two_maps_non_strided(None)
-    # test_two_maps_illegal()
-    # test_matadd_stride(None)
-    # test_matadd_non_stride(None)
-    # test_vec1_non_stride(None)
+
+@fpga_test()
+def test_vec_add_1_non_stride_sym():
+    return vec_add_1_sym(False)
+
+
+if __name__ == "__main__":
+    test_vec_add_1_stride(None)
+    test_vec_add_1_non_stride(None)
+    test_vec_add_1_stride_sym(None)
+    test_vec_add_1_non_stride_sym(None)
+
+    test_vec_two_maps_strided(None)
+    test_vec_two_maps_non_strided(None)
+    test_vec_two_maps_illegal()
+
+    test_vec_matadd_stride(None)
+    test_vec_matadd_non_stride(None)
+
+    test_vec_matadd_stride_sym(None)
+    test_vec_matadd_non_stride_sym(None)
+
+    test_vec_sum_vectorize_first_strided(None)
+    test_vec_sum_vectorize_first_non_strided(None)
+    test_vec_sum_fpga_transform_first_strided(None)
+    test_vec_sum_fpga_transform_first_non_strided(None)
 
     # TODO: Add more tests
-    # Nested maps

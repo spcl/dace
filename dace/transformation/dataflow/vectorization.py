@@ -2,6 +2,9 @@
 """ Contains classes that implement the vectorization transformation. """
 from re import M
 import re
+import sympy
+
+from numpy.lib.arraysetops import isin
 from dace import data, dtypes, registry, symbolic, subsets
 from dace.frontend.octave.lexer import raise_exception
 from dace.sdfg import nodes, SDFG, SDFGState, propagation
@@ -75,6 +78,9 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
             results.add(m)
 
     return results, data_descriptors_to_vectorize
+
+def isInt(i):
+    return isinstance(i, int) or isinstance(i, sympy.core.numbers.Integer)
 
 
 @registry.autoregister_params(singlestate=True)
@@ -302,6 +308,20 @@ class Vectorization(transformation.Transformation):
                                            strict):
                     return False
 
+            # Check alls strideds of the arrays
+            for a in data_descriptors_to_vectorize:
+                array = sdfg.arrays.get(a)
+                strides_list = list(array.strides)
+
+                if strides_list[-1] != 1:
+                    return False
+
+                strides_list.pop()
+
+                for i in strides_list:
+                    if isInt(i) and i % self.vector_len != 0:
+                        return False
+
             self._map_entry = old_map_entry
             self._level = 0
 
@@ -348,35 +368,38 @@ class Vectorization(transformation.Transformation):
 
                 self.apply(sdfg)
 
-            self._map_entry = old_map_entry
-            self._level = 0
-
             # Change the subset in the post state that copies the data back to the host
+            if len(sdfg.states()) < 3:
+                # FPGA Transformation not yet applied
+                return
 
-            for e in sdfg.states()[-1].edges:
-                if e in data_descriptors_to_vectorize:
+            for e in sdfg.states()[-1].edges():
+
+                if e.data.data in data_descriptors_to_vectorize:
 
                     desc = sdfg.arrays[e.data.data]
                     contigidx = desc.strides.index(1)
-
-                    newlist = []
-
                     lastindex = e.data.subset[contigidx]
-                    if isinstance(lastindex, tuple):
-                        newlist = [(rb, re, rs) for rb, re, rs in e.data.subset]
-                    else:
-                        newlist = [(rb, rb, 1) for rb in e.data.subset]
+                    i, j, k = lastindex
+                    e.data.subset[contigidx] = (i,
+                                                (j + 1) / self.vector_len - 1,
+                                                k)
 
-                    # Modify memlet subset to match vector length
-                    rb = newlist[contigidx][0]
-                    if self.strided_map:
-                        newlist[contigidx] = (rb / self.vector_len,
-                                              rb / self.vector_len, 1)
-                    else:
-                        newlist[contigidx] = (rb, rb, 1)
+            # Change strides of all arrays involved
+            for a in data_descriptors_to_vectorize:
+                array = sdfg.arrays.get(a)
+                new_strides = list(array.strides)
 
-                    e.data.subset = subsets.Range(newlist)
+                for i in range(len(new_strides)):
+                    if i == len(
+                            new_strides
+                    ) - 1:  # Skip last dimension since it is always 1
+                        continue
+                    new_strides[i] = new_strides[i] / self.vector_len
+                sdfg.arrays[a].strides = new_strides
 
+            self._map_entry = old_map_entry
+            self._level = 0
             return
 
         # Determine new range for vectorized map
