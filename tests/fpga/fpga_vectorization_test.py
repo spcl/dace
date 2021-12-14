@@ -14,8 +14,15 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 
 N = dace.symbol("N")
 M = dace.symbol("M")
+K = dace.symbol("K")
 
-SIZE = 4
+SIZE = 64
+
+
+@dace.program
+def tensoradd_kernel(A: dace.float32[M, N, K], B: dace.float32[M, N, K],
+                     C: dace.float32[M, N, K]):
+    C[:] = A + B
 
 
 @dace.program
@@ -279,6 +286,34 @@ def vec_add_1_sym(strided_map):
     return sdfg
 
 
+def tensor_add(strided_map):
+    # Make SDFG
+    sdfg: dace.SDFG = tensoradd_kernel.to_sdfg()
+    # Transform
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    assert sdfg.apply_transformations(Vectorization,
+                                      options={
+                                          'vector_len': 2,
+                                          'target':
+                                          dace.ScheduleType.FPGA_Device,
+                                          'strided_map': strided_map
+                                      }) == 1
+
+    # Run verification
+    A = np.random.rand(SIZE, SIZE, SIZE).astype(np.float32)
+    B = np.random.rand(SIZE, SIZE, SIZE).astype(np.float32)
+    C = np.random.rand(SIZE, SIZE, SIZE).astype(np.float32)
+
+    sdfg(A=A, B=B, C=C, M=SIZE, K=SIZE, N=SIZE)
+
+    diff = np.linalg.norm(C - (A + B))
+
+    assert diff <= 1e-5
+
+    return sdfg
+
+
 @fpga_test()
 def test_vec_two_maps_strided():
     return vec_two_maps(True)
@@ -349,25 +384,38 @@ def test_vec_add_1_non_stride_sym():
     return vec_add_1_sym(False)
 
 
+@xilinx_test()
+def test_vec_tensor_add_stride():
+    return tensor_add(True)
+
+
+@xilinx_test()
+def test_vec_tensor_add_non_stride():
+    return tensor_add(False)
+
+
 if __name__ == "__main__":
-    test_vec_add_1_stride(None)
-    test_vec_add_1_non_stride(None)
-    test_vec_add_1_stride_sym(None)
-    test_vec_add_1_non_stride_sym(None)
+    # test_vec_add_1_stride(None)
+    # test_vec_add_1_non_stride(None)
+    # test_vec_add_1_stride_sym(None)
+    # test_vec_add_1_non_stride_sym(None)
 
-    test_vec_two_maps_strided(None)
-    test_vec_two_maps_non_strided(None)
-    test_vec_two_maps_illegal()
+    # test_vec_two_maps_strided(None)
+    # test_vec_two_maps_non_strided(None)
+    # test_vec_two_maps_illegal()
 
-    test_vec_matadd_stride(None)
-    test_vec_matadd_non_stride(None)
+    # test_vec_matadd_stride(None)
+    # test_vec_matadd_non_stride(None)
 
-    test_vec_matadd_stride_sym(None)
-    test_vec_matadd_non_stride_sym(None)
+    # test_vec_matadd_stride_sym(None)
+    # test_vec_matadd_non_stride_sym(None)
 
-    test_vec_sum_vectorize_first_strided(None)
-    test_vec_sum_vectorize_first_non_strided(None)
-    test_vec_sum_fpga_transform_first_strided(None)
-    test_vec_sum_fpga_transform_first_non_strided(None)
+    # test_vec_sum_vectorize_first_strided(None)
+    # test_vec_sum_vectorize_first_non_strided(None)
+    # test_vec_sum_fpga_transform_first_strided(None)
+    # test_vec_sum_fpga_transform_first_non_strided(None)
+
+    test_vec_tensor_add_stride(None)
+    test_vec_tensor_add_non_stride(None)
 
     # TODO: Add more tests
