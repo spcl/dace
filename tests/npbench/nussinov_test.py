@@ -54,7 +54,6 @@ def match_gt(b1, b2):
         return 0
 
 
-
 def ground_truth(N, seq):
     table = np.zeros((N, N), np.int32)
     for i in range(N - 1, -1, -1):
@@ -65,14 +64,15 @@ def ground_truth(N, seq):
                 table[i, j] = max(table[i, j], table[i + 1, j])
             if j - 1 >= 0 and i + 1 < N:
                 if i < j - 1:
-                    table[i,
-                          j] = max(table[i, j],
-                                   table[i + 1, j - 1] + match_gt(seq[i], seq[j]))
+                    table[i, j] = max(
+                        table[i, j],
+                        table[i + 1, j - 1] + match_gt(seq[i], seq[j]))
                 else:
                     table[i, j] = max(table[i, j], table[i + 1, j - 1])
             for k in range(i + 1, j):
                 table[i, j] = max(table[i, j], table[i, k] + table[k + 1, j])
     return table
+
 
 def init_data(N):
 
@@ -85,7 +85,6 @@ def init_data(N):
             table[i, j] = 0
 
     return seq, table
-
 
 
 def run_nussinov(device_type: dace.dtypes.DeviceType):
@@ -101,12 +100,7 @@ def run_nussinov(device_type: dace.dtypes.DeviceType):
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply autopot
         sdfg = kernel.to_sdfg()
-        # sdfg.apply_strict_transformations()
-
-        # Applying this will let the validation fail
-        # The problem seems to be in Loop2Map. With this version of it fc7ff0b8
-        # then autoopt works again
-        sdfg = auto_optimize(sdfg, device_type)
+        sdfg.apply_strict_transformations()
         dace_res = sdfg(seq=seq, N=N)
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
@@ -115,7 +109,7 @@ def run_nussinov(device_type: dace.dtypes.DeviceType):
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
-        fpga_auto_opt.fpga_global_to_local(sdfg) # Necessary
+        fpga_auto_opt.fpga_global_to_local(sdfg)  # Necessary
         fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
 
         sdfg.specialize(dict(N=N))
@@ -127,14 +121,17 @@ def run_nussinov(device_type: dace.dtypes.DeviceType):
     assert np.allclose(dace_res, gt_res)
     return sdfg
 
+
 @pytest.mark.skip()
 def test_cpu():
     run_nussinov(dace.dtypes.DeviceType.CPU)
+
 
 @pytest.mark.skip()
 @pytest.mark.gpu
 def test_gpu():
     run_nussinov(dace.dtypes.DeviceType.GPU)
+
 
 @fpga_test(assert_ii_1=False)
 def test_fpga():
