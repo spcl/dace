@@ -11,12 +11,20 @@ import numpy as np
 import argparse
 from dace.transformation.dataflow import Vectorization
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from tests.fpga.streaming_memory_test import matadd_multistream
 
 N = dace.symbol("N")
 M = dace.symbol("M")
 K = dace.symbol("K")
 
 SIZE = 64
+
+
+@dace.program
+def matadd_multi_kernel(A: dace.float32[M, N], B: dace.float32[M, N],
+                        C: dace.float32[M, N], D: dace.float32[M, N]):
+    C[:] = A + B
+    D[:] = A - B
 
 
 @dace.program
@@ -314,6 +322,35 @@ def tensor_add(strided_map):
     return sdfg
 
 
+def test_vec_matadd_multi(strided_map):
+    # Make SDFG
+    sdfg: dace.SDFG = matadd_multi_kernel.to_sdfg()
+    # Transform
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    assert sdfg.apply_transformations(Vectorization,
+                                      options={
+                                          'vector_len': 2,
+                                          'target':
+                                          dace.ScheduleType.FPGA_Device,
+                                          'strided_map': strided_map
+                                      }) == 1
+
+    # Run verification
+    A = np.random.rand(SIZE, SIZE).astype(np.float32)
+    B = np.random.rand(SIZE, SIZE).astype(np.float32)
+    C = np.random.rand(SIZE, SIZE).astype(np.float32)
+    D = np.random.rand(SIZE, SIZE).astype(np.float32)
+
+    sdfg(A=A, B=B, C=C, D=D, M=SIZE, N=SIZE)
+
+    diff1 = np.linalg.norm(C - (A + B))
+    diff2 = np.linalg.norm(D - (A - B))
+    assert diff1 <= 1e-5 and diff2 <= 1e-5
+
+    return sdfg
+
+
 @fpga_test()
 def test_vec_two_maps_strided():
     return vec_two_maps(True)
@@ -394,6 +431,16 @@ def test_vec_tensor_add_non_stride():
     return tensor_add(False)
 
 
+@xilinx_test()
+def test_vec_matadd_multi_non_stride():
+    return test_vec_matadd_multi(False)
+
+
+@xilinx_test()
+def test_vec_matadd_multi_stride():
+    return test_vec_matadd_multi(True)
+
+
 if __name__ == "__main__":
     # test_vec_add_1_stride(None)
     # test_vec_add_1_non_stride(None)
@@ -415,7 +462,10 @@ if __name__ == "__main__":
     # test_vec_sum_fpga_transform_first_strided(None)
     # test_vec_sum_fpga_transform_first_non_strided(None)
 
-    test_vec_tensor_add_stride(None)
-    test_vec_tensor_add_non_stride(None)
+    # test_vec_tensor_add_stride(None)
+    # test_vec_tensor_add_non_stride(None)
+
+    test_vec_matadd_multi_non_stride(None)
+    test_vec_matadd_multi_stride(None)
 
     # TODO: Add more tests
