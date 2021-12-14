@@ -3677,12 +3677,11 @@ class ProgramVisitor(ExtNodeVisitor):
             all_args = required_args
         elif isinstance(func, SDFGConvertible) or self._has_sdfg(func):
             argnames, constant_args = func.__sdfg_signature__()
-            args = [(aname, self._parse_function_arg(arg))
+            posargs = [(aname, self._parse_function_arg(arg))
                     for aname, arg in zip(argnames, node.args)]
-            args += [(arg.arg, self._parse_function_arg(arg.value))
+            kwargs = [(arg.arg, self._parse_function_arg(arg.value))
                      for arg in node.keywords]
             required_args = argnames
-            fargs = (self._eval_arg(arg) for _, arg in args)
 
             # fcopy = copy.copy(func)
             fcopy = func
@@ -3690,17 +3689,22 @@ class ProgramVisitor(ExtNodeVisitor):
                 fcopy.global_vars = {**self.globals, **func.global_vars}
 
             try:
+                fargs = tuple(self._eval_arg(arg) for _, arg in posargs)
+                fkwargs = {k: self._eval_arg(arg) for k, arg in kwargs}
+
                 if isinstance(fcopy, DaceProgram):
                     fcopy.signature = copy.deepcopy(func.signature)
-                    sdfg = fcopy.to_sdfg(*fargs, strict=self.strict, save=False)
+                    sdfg = fcopy.to_sdfg(*fargs, **fkwargs, strict=self.strict, save=False)
                 else:
-                    sdfg = fcopy.__sdfg__(*fargs)
+                    sdfg = fcopy.__sdfg__(*fargs, **fkwargs)
             except:  # Parsing failure
                 # If parsing fails in an auto-parsed context, exit silently
                 if hasattr(node.func, 'oldnode'):
                     raise SkipCall
                 else:
                     raise
+
+            args = posargs + kwargs
 
             funcname = sdfg.name
             all_args = required_args
