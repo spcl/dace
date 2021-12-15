@@ -5,6 +5,7 @@ Can be used for simple vectorization test
 """
 
 import dace
+from dace import sdfg
 from dace.fpga_testing import fpga_test
 from dace.fpga_testing import xilinx_test
 import numpy as np
@@ -18,6 +19,31 @@ M = dace.symbol("M")
 K = dace.symbol("K")
 
 SIZE = 64
+
+
+@dace.program
+def vecadd_1_non_appl_1_kernel(A: dace.float32[N], B: dace.float32[N]):
+    for i in dace.map[0:N:2]:
+        with dace.tasklet:
+            in_A << A[i]
+            out >> B[i]
+            out = in_A + 1.0
+
+
+@dace.program
+def matadd_bad_stride_kernel(A: dace.float32[SIZE + 1, SIZE + 1],
+                             B: dace.float32[SIZE + 1, SIZE + 1],
+                             C: dace.float32[SIZE + 1, SIZE + 1]):
+    C[:] = A + B
+
+
+@dace.program
+def vecadd_1_non_appl_0_kernel(A: dace.float32[N], B: dace.float32[N]):
+    for i in dace.map[0:61]:
+        with dace.tasklet:
+            in_A << A[i]
+            out >> B[i]
+            out = in_A + 1.0
 
 
 @dace.program
@@ -351,6 +377,66 @@ def test_vec_matadd_multi(strided_map):
     return sdfg
 
 
+def test_vec_not_applicable():
+
+    sdfg2: dace.SDFG = matadd_bad_stride_kernel.to_sdfg()
+    sdfg2.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    assert sdfg2.apply_transformations(Vectorization,
+                                       options={
+                                           'vector_len': 2,
+                                           'target':
+                                           dace.ScheduleType.FPGA_Device,
+                                           'strided_map': True
+                                       }) == 0
+
+    assert sdfg2.apply_transformations(Vectorization,
+                                       options={
+                                           'vector_len': 2,
+                                           'target':
+                                           dace.ScheduleType.FPGA_Device,
+                                           'strided_map': False
+                                       }) == 0
+
+    sdfg3: dace.SDFG = vecadd_1_non_appl_0_kernel.to_sdfg()
+    sdfg3.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    assert sdfg3.apply_transformations(Vectorization,
+                                       options={
+                                           'vector_len': 2,
+                                           'target':
+                                           dace.ScheduleType.FPGA_Device,
+                                           'strided_map': False
+                                       }) == 0
+
+    assert sdfg3.apply_transformations(Vectorization,
+                                       options={
+                                           'vector_len': 2,
+                                           'target':
+                                           dace.ScheduleType.FPGA_Device,
+                                           'strided_map': True
+                                       }) == 0
+
+    sdfg4: dace.SDFG = vecadd_1_non_appl_1_kernel.to_sdfg()
+    sdfg4.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    assert sdfg4.apply_transformations(Vectorization,
+                                       options={
+                                           'vector_len': 2,
+                                           'target':
+                                           dace.ScheduleType.FPGA_Device,
+                                           'strided_map': False
+                                       }) == 0
+
+    assert sdfg4.apply_transformations(Vectorization,
+                                       options={
+                                           'vector_len': 2,
+                                           'target':
+                                           dace.ScheduleType.FPGA_Device,
+                                           'strided_map': True
+                                       }) == 0
+
+
 @fpga_test()
 def test_vec_two_maps_strided():
     return vec_two_maps(True)
@@ -465,7 +551,12 @@ if __name__ == "__main__":
     # test_vec_tensor_add_stride(None)
     # test_vec_tensor_add_non_stride(None)
 
-    test_vec_matadd_multi_non_stride(None)
-    test_vec_matadd_multi_stride(None)
+    # test_vec_matadd_multi_non_stride(None)
+    # test_vec_matadd_multi_stride(None)
+
+    test_vec_not_applicable()
 
     # TODO: Add more tests
+    # Not applicable inkl. maporder
+    # mat_mul
+    # map

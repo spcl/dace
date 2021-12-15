@@ -79,6 +79,7 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
 
     return results, data_descriptors_to_vectorize
 
+
 def isInt(i):
     return isinstance(i, int) or isinstance(i, sympy.core.numbers.Integer)
 
@@ -322,6 +323,18 @@ class Vectorization(transformation.Transformation):
                     if isInt(i) and i % self.vector_len != 0:
                         return False
 
+            # Check all maps
+            for m in maps_to_vectorize:
+                real_map: nodes.Map = m.map
+                ranges_list = list(real_map.range)
+
+                if isInt(ranges_list[-1][1]
+                         ) and (ranges_list[-1][1] + 1) % self.vector_len != 0:
+                    return False
+                
+                if ranges_list[-1][2] != 1:
+                        return False
+
             self._map_entry = old_map_entry
             self._level = 0
 
@@ -369,7 +382,8 @@ class Vectorization(transformation.Transformation):
                 self.apply(sdfg)
 
             # Change the subset in the post state that copies the data back to the host
-            if len(sdfg.states()) < 3:
+            if len(sdfg.states()) < 3 or not sdfg.states()[-1].name.startswith(
+                    'post_'):
                 # FPGA Transformation not yet applied
                 return
 
