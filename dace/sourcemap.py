@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import collections
 import re
 import json
 import os
 import socket
-from dace import Config
+from dace import Config, dtypes
 from dace.sdfg import state
 from dace.sdfg import nodes
 
@@ -43,65 +44,6 @@ def create_cache(name: str, folder: str) -> str:
         cache_folder = os.path.join(build_folder, name)
         create_folder(os.path.join(cache_folder, "map"))
         return cache_folder
-
-
-def tmp_location(name: str) -> str:
-    """ Returns the absolute path to the temporary folder
-        :param name: name of the SDFG
-        :return: path to the tmp folder
-    """
-    build_folder = Config.get('default_build_folder')
-    return os.path.abspath(os.path.join(build_folder, name, "map", "tmp.json"))
-
-
-def temporaryInfo(name: str, data):
-    """ Creates a temporary file that stores the json object
-        in the map folder (<build folder>/<SDFG name>/map)
-        :param name: name of the SDFG
-        :param data: data to save
-    """
-    create_cache(name, None)
-    path = tmp_location(name)
-
-    with open(path, "w") as writer:
-        json.dump(data, writer)
-
-
-def get_tmp(name: str):
-    """ Returns the data saved in the temporary file
-        from the corresponding function
-        :param name: name of the SDFG
-        :return: the parsed data in the tmp file of the SDFG. 
-        If the tmp file doesn't exist returns None
-    """
-    path = tmp_location(name)
-    if os.path.exists(path):
-        with open(path, "r") as tmp_json:
-            data = json.load(tmp_json)
-        return data
-    else:
-        return None
-
-
-def remove_tmp(name: str, remove_cache: bool = False):
-    """ Remove the tmp created by "temporaryInfo"
-        :param name: name of the sdfg for which the tmp will be removed
-        :param remove_cache: If true, checks if the directory only contains 
-        the tmp file, if this is the case, remove the SDFG cache directory.
-    """
-    build_folder = Config.get('default_build_folder')
-    path = os.path.join(build_folder, name)
-
-    if not os.path.exists(path):
-        return
-
-    os.remove(os.path.join(path, 'map', 'tmp.json'))
-
-    if (remove_cache and len(os.listdir(path)) == 1
-            and len(os.listdir(os.path.join(path, 'map'))) == 0):
-        if os.path.exists(path):
-            os.rmdir(os.path.join(path, 'map'))
-            os.rmdir(path)
 
 
 def send(data: json):
@@ -330,7 +272,7 @@ class MapPython:
         self.map = {}
         self.debuginfo = {}
 
-    def mapper(self, sdfg) -> dict:
+    def mapper(self, sdfg) -> bool:
         """ Creates the source to SDFG node mapping
             :param sdfg: SDFG to create the mapping for
             :return: if the sdfg was created only by the API
@@ -339,30 +281,16 @@ class MapPython:
         self.debuginfo = self.divide()
         self.sorter()
 
-        func_names = []
-        for nested_sdfg in sdfg.all_sdfgs_recursive():
-            func_names.append(nested_sdfg.name)
-
         # Store the start and end line as a tuple
         # for each function/sub-function in the SDFG
-        range_dict = {}
+        range_dict = collections.defaultdict(list)
 
-        for func_name in func_names:
-            tmp = get_tmp(func_name)
-            # SDFGs created with the API don't have tmp files
-            if (tmp and "src_file" in tmp and "start_line" in tmp
-                    and "end_line" in tmp and "other_sdfgs" in tmp):
-                remove_tmp(func_name, True)
-
-                for other_name in tmp['other_sdfgs']:
-                    if other_name not in func_names:
-                        func_names.append(other_name)
-
-                ranges = range_dict.get(tmp["src_file"])
-                if ranges is None:
-                    ranges = []
-                ranges.append((tmp["start_line"], tmp["end_line"]))
-                range_dict[tmp["src_file"]] = ranges
+        for nested_sdfg in sdfg.all_sdfgs_recursive():
+            # NOTE: SDFGs created with the API may not have debuginfo
+            debuginfo: dtypes.DebugInfo = nested_sdfg.debuginfo
+            if debuginfo.filename:
+                range_dict[debuginfo.filename].append(
+                    (debuginfo.start_line, debuginfo.end_line))
 
         self.create_mapping(range_dict)
         return len(range_dict.items()) == 0
