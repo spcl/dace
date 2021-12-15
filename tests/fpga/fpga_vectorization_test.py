@@ -22,6 +22,24 @@ SIZE = 64
 
 
 @dace.program
+def matmul_vec_kernel(A: dace.float32[M, K], B: dace.float32[K, N],
+                      C: dace.float32[M, N]):
+    tmp = np.ndarray([M, N, K], dtype=A.dtype)
+
+    # Multiply every pair of values to a large 3D temporary array
+    for i, j, k in dace.map[0:M, 0:N, 0:K]:
+        with dace.tasklet:
+            in_A << A[i, k]
+            in_B << B[k, j]
+            out >> tmp[i, j, k]
+
+            out = in_A * in_B
+
+    # Sum last dimension of temporary array to obtain resulting matrix
+    dace.reduce(lambda a, b: a + b, tmp, C, axis=2, identity=0)
+
+
+@dace.program
 def maporder_vec_kernel(A: dace.float32[N, N, N], B: dace.float32[N, N, N],
                         C: dace.float32[N, N, N], D: dace.float32[N, N, N],
                         E: dace.float32[N, N, N], F: dace.float32[N, N, N],
@@ -366,7 +384,7 @@ def tensor_add(strided_map):
     return sdfg
 
 
-def test_vec_matadd_multi(strided_map):
+def vec_matadd_multi(strided_map):
     # Make SDFG
     sdfg: dace.SDFG = matadd_multi_kernel.to_sdfg()
     # Transform
@@ -474,6 +492,26 @@ def test_vec_not_applicable():
                                            'strided_map': True
                                        }) == 0
 
+    sdfg6: dace.SDFG = matmul_vec_kernel.to_sdfg()
+
+    sdfg6.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    assert sdfg6.apply_transformations(Vectorization,
+                                       options={
+                                           'vector_len': 2,
+                                           'target':
+                                           dace.ScheduleType.FPGA_Device,
+                                           'strided_map': False
+                                       }) == 0
+
+    assert sdfg6.apply_transformations(Vectorization,
+                                       options={
+                                           'vector_len': 2,
+                                           'target':
+                                           dace.ScheduleType.FPGA_Device,
+                                           'strided_map': True
+                                       }) == 0
+
 
 @fpga_test()
 def test_vec_two_maps_strided():
@@ -557,12 +595,12 @@ def test_vec_tensor_add_non_stride():
 
 @xilinx_test()
 def test_vec_matadd_multi_non_stride():
-    return test_vec_matadd_multi(False)
+    return vec_matadd_multi(False)
 
 
 @xilinx_test()
 def test_vec_matadd_multi_stride():
-    return test_vec_matadd_multi(True)
+    return vec_matadd_multi(True)
 
 
 if __name__ == "__main__":
@@ -593,7 +631,3 @@ if __name__ == "__main__":
     # test_vec_matadd_multi_stride(None)
 
     test_vec_not_applicable()
-
-    # TODO: Add more tests
-    # mat_mul
-    # map
