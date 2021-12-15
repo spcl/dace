@@ -122,18 +122,16 @@ def run_nussinov(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-@pytest.mark.skip()
 def test_cpu():
     run_nussinov(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip()
 @pytest.mark.gpu
 def test_gpu():
     run_nussinov(dace.dtypes.DeviceType.GPU)
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test(assert_ii_1=False, xilinx=False)
 def test_fpga():
     return run_nussinov(dace.dtypes.DeviceType.FPGA)
 
