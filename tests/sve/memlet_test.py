@@ -104,10 +104,10 @@ def test_indirect_load_implicit():
 
 
 if __name__ == '__main__':
-    test_contiguous_map()
-    test_stride_map()
-    test_fake_stride()
+    # test_contiguous_map()
+    # test_stride_map()
+    # test_fake_stride()
     test_matrix_stride()
-    test_indirect_load_explicit()
-    test_indirect_load_implicit()
+    # test_indirect_load_explicit()
+    # test_indirect_load_implicit()
     

@@ -218,13 +218,6 @@ class Vectorization(transformation.Transformation):
             if param_sym in e.data.get_stride(sdfg, map_entry.map).free_symbols:
                 return False
 
-            map_subset = map_entry.map.params
-            edge_subset = [a_tuple[0] for a_tuple in list(e.data.subset)]
-
-            if isinstance(edge_subset[-1],
-                          symbol) and str(edge_subset[-1]) != map_subset[-1]:
-                return False
-
             # Check for unsupported WCR
             if e.data.wcr is not None:
                 # Unsupported reduction type
@@ -341,6 +334,17 @@ class Vectorization(transformation.Transformation):
 
                 if ranges_list[-1][2] != 1:
                     return False
+
+            # Check all edges
+            for m in maps_to_vectorize:
+                subgraph = state.scope_subgraph(m)
+
+            map_subset = map_entry.map.params
+            edge_subset = [a_tuple[0] for a_tuple in list(e.data.subset)]
+
+            if isinstance(edge_subset[-1],
+                          symbol) and str(edge_subset[-1]) != map_subset[-1]:
+                return False
 
             self._map_entry = old_map_entry
             self._level = 0
