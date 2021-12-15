@@ -5,7 +5,7 @@ import re
 import sympy
 
 from numpy.lib.arraysetops import isin
-from dace import data, dtypes, registry, symbolic, subsets
+from dace import data, dtypes, registry, symbolic, subsets, symbol
 from dace.frontend.octave.lexer import raise_exception
 from dace.sdfg import nodes, SDFG, SDFGState, propagation
 from dace.sdfg import utils as sdutil
@@ -218,6 +218,13 @@ class Vectorization(transformation.Transformation):
             if param_sym in e.data.get_stride(sdfg, map_entry.map).free_symbols:
                 return False
 
+            map_subset = map_entry.map.params
+            edge_subset = [a_tuple[0] for a_tuple in list(e.data.subset)]
+
+            if isinstance(edge_subset[-1],
+                          symbol) and str(edge_subset[-1]) != map_subset[-1]:
+                return False
+
             # Check for unsupported WCR
             if e.data.wcr is not None:
                 # Unsupported reduction type
@@ -331,9 +338,9 @@ class Vectorization(transformation.Transformation):
                 if isInt(ranges_list[-1][1]
                          ) and (ranges_list[-1][1] + 1) % self.vector_len != 0:
                     return False
-                
+
                 if ranges_list[-1][2] != 1:
-                        return False
+                    return False
 
             self._map_entry = old_map_entry
             self._level = 0

@@ -22,6 +22,24 @@ SIZE = 64
 
 
 @dace.program
+def maporder_vec_kernel(A: dace.float32[N, N, N], B: dace.float32[N, N, N],
+                        C: dace.float32[N, N, N], D: dace.float32[N, N, N],
+                        E: dace.float32[N, N, N], F: dace.float32[N, N, N],
+                        G: dace.float32[N, N]):
+    for i, j in dace.map[0:N, 0:N]:
+        with dace.tasklet:
+            in_A << A[i, j, 0]  # No
+            in_B << B[i, 0, j]  # Yes
+            in_C << C[0, i, j]  # Yes
+            in_D << D[j, i, 0]  # No
+            in_E << E[j, 0, i]  # No
+            in_F << F[0, j, i]  # No
+            out >> G[i, j]  # Yes
+
+            out = in_A + in_B + in_C + in_D + in_E + in_F
+
+
+@dace.program
 def vecadd_1_non_appl_1_kernel(A: dace.float32[N], B: dace.float32[N]):
     for i in dace.map[0:N:2]:
         with dace.tasklet:
@@ -436,6 +454,26 @@ def test_vec_not_applicable():
                                            'strided_map': True
                                        }) == 0
 
+    sdfg5: dace.SDFG = maporder_vec_kernel.to_sdfg()
+
+    sdfg5.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    assert sdfg5.apply_transformations(Vectorization,
+                                       options={
+                                           'vector_len': 2,
+                                           'target':
+                                           dace.ScheduleType.FPGA_Device,
+                                           'strided_map': False
+                                       }) == 0
+
+    assert sdfg5.apply_transformations(Vectorization,
+                                       options={
+                                           'vector_len': 2,
+                                           'target':
+                                           dace.ScheduleType.FPGA_Device,
+                                           'strided_map': True
+                                       }) == 0
+
 
 @fpga_test()
 def test_vec_two_maps_strided():
@@ -557,6 +595,5 @@ if __name__ == "__main__":
     test_vec_not_applicable()
 
     # TODO: Add more tests
-    # Not applicable inkl. maporder
     # mat_mul
     # map
