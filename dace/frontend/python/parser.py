@@ -145,7 +145,6 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.f = f
         self.dec_args = args
         self.dec_kwargs = kwargs
-        self.name = f.__name__
         self.resolve_functions = constant_functions
         self.argnames = _get_argnames(f)
         if method:
@@ -239,6 +238,16 @@ class DaceProgram(pycommon.SDFGConvertible):
     @methodobj.setter
     def methodobj(self, new_obj: Any):
         self._methodobj = new_obj
+
+    @property
+    def name(self) -> str:
+        """ Returns a unique name for this program. """
+        result = ''
+        if self.f.__module__ is not None and self.f.__module__ != '__main__':
+            result += self.f.__module__.replace('.', '_') + '_'
+        if self._methodobj is not None:
+            result += type(self._methodobj).__name__ + '_'
+        return result + self.f.__name__
 
     def __sdfg_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
         return self.argnames, self.constant_args
