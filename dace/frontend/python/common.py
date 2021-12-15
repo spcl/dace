@@ -2,8 +2,7 @@
 import ast
 import collections
 from dataclasses import dataclass
-from typing import (Any, Callable, Dict, List, Optional, OrderedDict, Sequence,
-                    Tuple, Union)
+from typing import (Any, Callable, Dict, List, Optional, Sequence, Tuple, Union)
 from dace import data
 from dace.sdfg.sdfg import SDFG
 
@@ -113,12 +112,12 @@ class SDFGClosure:
 
     # Nested SDFGs and SDFG-convertible objects that are used in the program
     # (mapping from name to object)
-    closure_sdfgs: OrderedDict[str, Union[SDFG, SDFGConvertible]]
+    closure_sdfgs: Dict[str, Union[SDFG, SDFGConvertible]]
 
     # Callbacks to Python callables that are used in the program
     # Mapping from unique names to a 3-tuple of (python name, callable,
     # does the callback belong to a nested SDFG).
-    callbacks: OrderedDict[str, Tuple[str, Callable[..., Any], bool]]
+    callbacks: Dict[str, Tuple[str, Callable[..., Any], bool]]
 
     # List of nested SDFG-convertible closure objects and their names
     nested_closures: List[Tuple[str, 'SDFGClosure']]

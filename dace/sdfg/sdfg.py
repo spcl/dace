@@ -33,7 +33,7 @@ from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import validate_name
-from dace.properties import (EnumProperty, ListProperty, make_properties,
+from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties,
                              Property, CodeProperty, TransformationHistProperty,
                              SDFGReferenceProperty, DictProperty,
                              OrderedDictProperty, CodeBlock)
@@ -268,6 +268,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         dtype=bool,
         default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
         desc='Whether to generate OpenMP sections in code')
+
+    debuginfo = DebugInfoProperty(allow_none=True)
 
     def __init__(self,
                  name: str,
