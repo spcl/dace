@@ -1310,7 +1310,7 @@ class NestSDFG(transformation.Transformation):
 
                                             # Note: here we are lenient. We can't evaluate the maximum of the two,
                                             # since we don't know the value of symbols, therefore we only take the one
-                                            # that is not negative and not zero
+                                            # that is positive
 
                                             newsz_limit = newsz.subs(
                                                 {s: replacement_limit_value})
