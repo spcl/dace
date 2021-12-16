@@ -10,6 +10,7 @@ from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from dace.libraries.blas import blas_helpers
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import environments
+from dace.sdfg import nodes, utils as sdutils
 import numpy as np
 import warnings
 
@@ -183,31 +184,42 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
 
         node.validate(parent_sdfg, parent_state)
 
-        for e in parent_state.in_edges(node):
-            if e.dst_conn == "_A":
-                desc_a = parent_sdfg.arrays[e.data.data]
-            elif e.dst_conn == "_x":
-                desc_x = parent_sdfg.arrays[e.data.data]
-        for e in parent_state.out_edges(node):
-            if e.src_conn == "_y":
-                desc_y = parent_sdfg.arrays[e.data.data]
-
         sdfg = dace.SDFG("gemv")
         state = sdfg.add_state("gemv")
 
         alpha = node.alpha
         beta = node.beta
 
-        # Create local versions of input data nodes
-        desc_a = desc_a.clone()
-        desc_a.transient = False
-        sdfg.add_datadesc("_A", desc_a)
-        desc_x = desc_x.clone()
-        desc_x.transient = False
-        sdfg.add_datadesc("_x", desc_x)
-        desc_y = desc_y.clone()
-        desc_y.transient = False
-        sdfg.add_datadesc("_y", desc_y)
+        # Get input/output data (the method considers also the presence of view nodes)
+        ((edge_a, desc_a, shape_a, strides_a), (edge_x, desc_x, shape_x,
+                                                strides_x),
+         (edge_y, desc_y, shape_y,
+          strides_y)) = _get_matmul_operands(node,
+                                             parent_state,
+                                             parent_sdfg,
+                                             name_lhs="_A",
+                                             name_rhs="_x",
+                                             name_out="_y")
+
+        # Create local versions of input/output data nodes
+        _, desc_a = sdfg.add_array("_A",
+                                   shape_a,
+                                   desc_a.dtype,
+                                   strides=strides_a,
+                                   storage=desc_a.storage,
+                                   transient=False)
+        _, desc_x = sdfg.add_array("_x",
+                                   shape_x,
+                                   desc_x.dtype,
+                                   strides=strides_x,
+                                   storage=desc_x.storage,
+                                   transient=False)
+        _, desc_y_y = sdfg.add_array("_y",
+                                     shape_y,
+                                     desc_y.dtype,
+                                     strides=strides_y,
+                                     storage=desc_y.storage,
+                                     transient=False)
 
         if node.transA and desc_a.dtype.veclen > 1:
             raise NotImplementedError(
