@@ -81,7 +81,7 @@ def get_kernels():
     
     if Config.get("soap", "tests", "suite_name") == "npbench":
         test_dir = os.path.join(Config.get("soap", "tests", "abs_test_path"), 
-                "npbench/npbench/benchmarks/polybench")
+                "sample-sdfgs/npbench/npbench/benchmarks/polybench")
         experiments = list(os.walk(test_dir))[0][1]
                 
         for exp in experiments:

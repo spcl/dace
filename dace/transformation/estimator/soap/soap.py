@@ -130,6 +130,8 @@ class SoapStatement:
 
 
     def solve(self, solver : Solver) -> None:
+        if self.name == 'temp2_1;C_1':
+            a = 1
         self.update_ranges()        
         self.calculate_dominator_size()  
         self.calculate_H_size()

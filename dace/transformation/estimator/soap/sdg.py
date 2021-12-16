@@ -222,26 +222,32 @@ class SDG:
                 inner_scope = copy.deepcopy(sdg_scope)
                 self._from_SDFG_node(node, state, inner_scope)
             elif isinstance(node, (dace.nodes.AccessNode)):
-                if node.label == "__tmp2":
+                if node.label == "B_0":
                     a = 1
                 # if the access node has a single in-edge coming from a different access node, 
                 # then it is a projection. We then add this to the sdfg mapping.
                 in_edges = state.in_edges(node)
                 if len(in_edges) > 0:
-                    in_node = in_edges[0].src
+                    if isinstance(sdg_scope.SDFG_arrays[node.label], dace.data.View):
+                        # get the original node:
+                        src_node = state.memlet_path(in_edges[0])[0].data
+                        self.add_projection(src_node, state.out_edges(node)[0].data, sdg_scope)
+
                     
-                    # check if this is a projection (access_node -> access_node)
-                    if isinstance(in_node, dace.nodes.AccessNode):
-                        # retreiving the original (non-projected) memlet
-                        src_edges = state.in_edges(in_node)
-                        if len(src_edges) <= 1 and len(state.out_edges(node)) == 1:
-                            self.add_projection(in_edges[0].data, state.out_edges(node)[0].data, sdg_scope)
-                        # elif len(src_edges) == 1 and len(state.out_edges(node)) == 1:
-                        #     self.add_projection(src_edges[0].data, state.out_edges(node)[0].data, sdg_scope)
-                        else:                            
-                            a = 1
+
+                    # # check if this is a projection (access_node -> access_node)
+                    # if isinstance(in_node, dace.nodes.AccessNode):
+                    #     # retreiving the original (non-projected) memlet
+                    #     src_edges = state.in_edges(in_node)
+                    #     if len(src_edges) <= 1 and len(state.out_edges(node)) == 1:
+                    #         self.add_projection(in_edges[0].data, state.out_edges(node)[0].data, sdg_scope)
+                    #     # elif len(src_edges) == 1 and len(state.out_edges(node)) == 1:
+                    #     #     self.add_projection(src_edges[0].data, state.out_edges(node)[0].data, sdg_scope)
+                    #     else:                            
+                    #         a = 1
                     
                     # check if this is an initialization of transient (access_node -> tasklet -> transient access_node)
+                    in_node = in_edges[0].src
                     if sdg_scope.SDFG_arrays[node.data].transient:
                         if isinstance(in_node, dace.nodes.Tasklet):
                             in_edges = state.in_edges(in_node)
@@ -250,6 +256,11 @@ class SDG:
                                 if isinstance(in_in_node, dace.nodes.AccessNode):
                                     # now we need to propagate the updated sdfg_mapping one layer higher
                                     sdg_scope.sdfg_mapping = {**sdg_scope.sdfg_mapping, **{node.data: in_edges[0].data}}
+                            
+                            if len(in_edges) > 1:
+                                in_in_node = in_edges[0].src
+                                if isinstance(in_in_node, dace.nodes.AccessNode):
+                                    a = 1
                         
             elif isinstance(node, dace.nodes.EntryNode): 
                 if 'stateFOR31_map' in node.label:
@@ -275,7 +286,7 @@ class SDG:
     # the core SDG creation function. The elementary building block for SDG is the SDFG's tasklet
     def _from_SDFG_node(self, node : dace.nodes, 
                 state: dace.SDFGState, sdg_scope : SdgScope) -> None:  
-        if node.label == 'compute_elem':
+        if node.label == '_Mult_':
             a = 1
                   
         if not state.out_edges(node) or not state.in_edges(node):
@@ -759,10 +770,23 @@ class SDG:
         # To filter which are the "outer maps", we need to compare outer_memlet._state with 
         # the sdg_scope.sdfg_path, and take all the nodes in the path preceeding it.
         # E.g.: doitgen in polybench kernels. sum[p] is declared inside an outer map[r,q].
-        # The resulting memlet will be sum[p,r,q]      
+        # The resulting memlet will be sum[p,r,q] 
+        mem_scope_ind = sdg_scope.sdfg_path.path.index(outer_memlet._state) + 1    
         outer_maps = [map_node for map_node in 
-                    sdg_scope.sdfg_path[:sdg_scope.sdfg_path.path.index(outer_memlet._state)] 
+                    sdg_scope.sdfg_path[:mem_scope_ind] 
                     if isinstance(map_node, MapEntry)]
+         
+        #  We need to  know if the memlet is definied inside a map of a given state
+        if outer_memlet._state is not None:
+            state = outer_memlet._state
+            mem_acc_node = [n for n in state.nx.nodes if isinstance(n, AccessNode) and n.data == outer_memlet.data][0]
+            scope = 1
+            while scope is not None:                
+                scope = state.scope_dict()[mem_acc_node]
+                if isinstance(scope, MapEntry):
+                    outer_maps.append(scope)
+                    mem_acc_node = scope
+        
         #if new_memlet != outer_memlet:
         for outer_map in outer_maps:
             map_ranges = {k: v for k, v in zip(outer_map.params, outer_map.range.ranges) if isinstance(k, str)}

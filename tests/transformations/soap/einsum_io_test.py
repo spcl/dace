@@ -20,7 +20,6 @@ def test_opt_einsum_example_io():
     """ 
     Test the example from the opt_einsum documentation pi,qj,ijkl,rk,sl->pqrs
     """
-    # get MTTKRP sdfg with auto-generated default tensor sizes  
     sdfg = sdfg_gen('pi,qj,ijkl,rk,sl->pqrs')
 
     soap_result = perform_soap_analysis(sdfg)

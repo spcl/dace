@@ -136,7 +136,8 @@ def perform_soap_analysis_einsum(einsum_string : str,
     for subgr in subgraphs:
         io_res_sg = IOAnalysisSubgraph(name= subgr.name, Q = subgr.Q, rho = subgr.rhoOpts, 
                     variables = subgr.variables, inner_tile = subgr.inner_tile, 
-                    outer_tile = subgr.outer_tile, input_arrays = subgr.phis)                    
+                    outer_tile = subgr.outer_tile, input_arrays = subgr.phis,
+                    tasklets = subgr.tasklet)                    
         if generate_schedule:
             decomp_list = Config.get("soap", "decomposition", "decomposition_params")
             decomp_params = list(zip(decomp_list[::2],decomp_list[1::2]))

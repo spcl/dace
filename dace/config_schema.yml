@@ -804,9 +804,7 @@ required:
                         description: >
                             If access function vectors are not SOAP (e.g., A[i,k] and A[k,j]), should it
                             be assumed that they never overlap and analyze them as separate logical arrays.
-
-            
-            
+                    
             decomposition:
                 type: dict
                 title: Decomposition
@@ -854,7 +852,6 @@ required:
                         default: ""
                         description: >
                             Address of the remote Matlab server.
-
 
                     only_db:
                         type: bool
