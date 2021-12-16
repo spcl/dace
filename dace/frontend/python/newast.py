@@ -4118,11 +4118,19 @@ class ProgramVisitor(ExtNodeVisitor):
         parent_is_toplevel = True
         parent: ast.AST = None
         for anode in ast.walk(self.program_ast):
+            if parent is not None:
+                break
             for child in ast.iter_child_nodes(anode):
                 if child is node:
                     parent = anode
                     parent_is_toplevel = getattr(anode, 'toplevel', False)
                     break
+                if hasattr(child, 'func') and hasattr(child.func, 'oldnode'):
+                    # Check if the AST node is part of a failed parse
+                    if child.func.oldnode is node:
+                        parent = anode
+                        parent_is_toplevel = getattr(anode, 'toplevel', False)
+                        break
         if parent is None:
             raise DaceSyntaxError(
                 self, node,

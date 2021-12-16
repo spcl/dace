@@ -615,7 +615,8 @@ class GlobalResolver(ast.NodeTransformer):
 
                 res = self.global_value_to_node(parsed, parent_node, qualname,
                                                 recurse, detect_callables)
-                del self.closure.callbacks[cbname]
+                # Keep callback in callbacks in case of parsing failure
+                # del self.closure.callbacks[cbname]
                 return res
             except Exception:  # Parsing failed (almost any exception can occur)
                 return newnode
@@ -838,6 +839,8 @@ class CallTreeResolver(ast.NodeVisitor):
         if not isinstance(node.func, (ast.Num, ast.Constant)):
             self.seen_calls.add(astutils.rname(node.func))
             return self.generic_visit(node)
+        if hasattr(node.func, 'oldnode'):
+            self.seen_calls.add(astutils.rname(node.func.oldnode.func))
         if isinstance(node.func, ast.Num):
             value = node.func.n
         else:
