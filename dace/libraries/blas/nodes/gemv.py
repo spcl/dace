@@ -190,7 +190,7 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
         alpha = node.alpha
         beta = node.beta
 
-        # Get input/output data (the method consider also the presence of view nodes)
+        # Get input/output data (the method considers also the presence of view nodes)
         ((edge_a, desc_a, shape_a, strides_a), (edge_x, desc_x, shape_x,
                                                 strides_x),
          (edge_y, desc_y, shape_y,
