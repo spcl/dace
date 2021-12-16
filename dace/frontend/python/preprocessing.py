@@ -840,7 +840,10 @@ class CallTreeResolver(ast.NodeVisitor):
             self.seen_calls.add(astutils.rname(node.func))
             return self.generic_visit(node)
         if hasattr(node.func, 'oldnode'):
-            self.seen_calls.add(astutils.rname(node.func.oldnode.func))
+            if isinstance(node.func.oldnode, ast.Call):
+                self.seen_calls.add(astutils.rname(node.func.oldnode.func))
+            else:
+                self.seen_calls.add(astutils.rname(node.func.oldnode))
         if isinstance(node.func, ast.Num):
             value = node.func.n
         else:
