@@ -382,6 +382,36 @@ def test_object_with_nested_callback():
     assert np.allclose(c, a + b)
 
 
+def test_two_parameters_same_name():
+    @dace_inhibitor
+    def add(a, b):
+        return a + b
+
+    @dace.program
+    def calladd(A: dace.float64[20], B: dace.float64[20]):
+        B[:] = add(A, A)
+
+    a = np.random.rand(20)
+    b = np.random.rand(20)
+    calladd(a, b)
+    assert np.allclose(b, a + a)
+
+
+def test_inout_same_name():
+    @dace_inhibitor
+    def add(a, b):
+        return a + b
+
+    @dace.program
+    def calladd(A: dace.float64[20]):
+        A[:] = add(A, A)
+
+    a = np.random.rand(20)
+    expected = a + a
+    calladd(a)
+    assert np.allclose(expected, a)
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -398,3 +428,5 @@ if __name__ == '__main__':
     # test_gpu_callback()
     test_bad_closure()
     test_object_with_nested_callback()
+    test_two_parameters_same_name()
+    test_inout_same_name()

@@ -4256,12 +4256,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     self.sdfg.arrays[cname].dtype)
 
         # Setup arguments in graph
-        for arg in args:
+        for arg in dtypes.deduplicate(args):
             r = self.last_state.add_read(arg)
             self.last_state.add_edge(r, None, tasklet, f'__in_{arg}',
                                      Memlet(arg))
 
-        for arg in outargs:
+        for arg in dtypes.deduplicate(outargs):
             w = self.last_state.add_write(arg)
             self.last_state.add_edge(tasklet, f'__out_{arg}', w, None,
                                      Memlet(arg))
