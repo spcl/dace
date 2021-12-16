@@ -192,20 +192,11 @@ def parse_dace_program(name: str,
                           repl_callback,
                           value_as_string=True)
 
-    # We save information in a tmp file for improved source mapping.
-    if save:
-        other_functions = [
-            func for func in closure.closure_sdfgs
-            if not func == visitor.orig_name
-        ]
-        data = {
-            "start_line": visitor.src_line + 1,
-            "end_line":
-            visitor.src_line + len(preprocessed_ast.src.split("\n")) - 1,
-            "src_file": path.abspath(preprocessed_ast.filename),
-            "other_sdfgs": other_functions,
-        }
-        sourcemap.temporaryInfo(visitor.orig_name, data)
+    sdfg.debuginfo = dtypes.DebugInfo(
+        visitor.src_line + 1,
+        end_line=visitor.src_line + len(preprocessed_ast.src.split("\n")) - 1,
+        filename=path.abspath(preprocessed_ast.filename),
+    )
 
     return sdfg
 
@@ -4169,7 +4160,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if isinstance(dtype, data.Data):
                         n, arr = self.sdfg.add_temp_transient_like(dtype)
                     elif isinstance(dtype, dtypes.typeclass):
-                        n, arr = self.sdfg.add_temp_transient((1,), dtype)
+                        n, arr = self.sdfg.add_temp_transient((1, ), dtype)
                     else:
                         n, arr = None, None
                 else:
