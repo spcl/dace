@@ -615,7 +615,8 @@ class GlobalResolver(ast.NodeTransformer):
 
                 res = self.global_value_to_node(parsed, parent_node, qualname,
                                                 recurse, detect_callables)
-                del self.closure.callbacks[cbname]
+                # Keep callback in callbacks in case of parsing failure
+                # del self.closure.callbacks[cbname]
                 return res
             except Exception:  # Parsing failed (almost any exception can occur)
                 return newnode
@@ -838,6 +839,11 @@ class CallTreeResolver(ast.NodeVisitor):
         if not isinstance(node.func, (ast.Num, ast.Constant)):
             self.seen_calls.add(astutils.rname(node.func))
             return self.generic_visit(node)
+        if hasattr(node.func, 'oldnode'):
+            if isinstance(node.func.oldnode, ast.Call):
+                self.seen_calls.add(astutils.rname(node.func.oldnode.func))
+            else:
+                self.seen_calls.add(astutils.rname(node.func.oldnode))
         if isinstance(node.func, ast.Num):
             value = node.func.n
         else:
@@ -849,6 +855,7 @@ class CallTreeResolver(ast.NodeVisitor):
         constant_args = self._eval_args(node)
 
         # Resolve nested closure as necessary
+        qualname = None
         try:
             qualname = next(k for k, v in self.closure.closure_sdfgs.items()
                             if v is value)
@@ -863,7 +870,8 @@ class CallTreeResolver(ast.NodeVisitor):
             raise
         except Exception as ex:  # Parsing failed (anything can happen here)
             warnings.warn(f'Parsing SDFGConvertible {value} failed: {ex}')
-            del self.closure.closure_sdfgs[qualname]
+            if qualname in self.closure.closure_sdfgs:
+                del self.closure.closure_sdfgs[qualname]
             # Return old call AST instead
             node.func = node.func.oldnode.func
 

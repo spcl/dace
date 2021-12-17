@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.transformation.interstate import InlineSDFG
 import numpy as np
 import pytest
 
@@ -167,6 +168,36 @@ def test_multistate_inline_samename():
     assert np.allclose(A, expected)
 
 
+def test_inline_symexpr():
+    nsdfg = dace.SDFG('inner')
+    nsdfg.add_array('a', [20], dace.float64)
+    nstate = nsdfg.add_state()
+    nstate.add_mapped_tasklet('doit', {'k': '0:20'}, {},
+                              '''if k < j:
+    o = 2.0''', {'o': dace.Memlet('a[k]', dynamic=True)},
+                              external_edges=True)
+
+    sdfg = dace.SDFG('outer')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_symbol('i', dace.int32)
+    state = sdfg.add_state()
+    w = state.add_write('A')
+    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {}, {'a'},
+                                       {'j': 'min(i, 10)'})
+    state.add_edge(nsdfg_node, 'a', w, None, dace.Memlet('A'))
+
+    # Verify that compilation works before inlining
+    sdfg.compile()
+
+    sdfg.apply_transformations(InlineSDFG)
+
+    # Compile and run
+    a = np.random.rand(20)
+    sdfg(A=a, i=15)
+    assert np.allclose(a[:10], 2.0)
+    assert not np.allclose(a[10:], 2.0)
+
+
 if __name__ == "__main__":
     test()
     # Skipped to to bug that cannot be reproduced
@@ -174,3 +205,4 @@ if __name__ == "__main__":
     test_empty_memlets()
     test_multistate_inline()
     test_multistate_inline_samename()
+    test_inline_symexpr()
