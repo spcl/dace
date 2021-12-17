@@ -2026,9 +2026,15 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         from dace.transformation import dataflow, interstate
         from dace.transformation.dataflow import (RedundantReadSlice,
                                                   RedundantWriteSlice)
+        from dace.sdfg import utils as sdutil
         # This is imported here to avoid an import loop
         from dace.transformation.transformation import (Transformation,
                                                         strict_transformations)
+
+        # First step is to apply multi-state inline, before any state fusion can
+        # occur
+        sdutil.inline_sdfgs(self, multistate=True, strict=True)
+        sdutil.fuse_states(self, strict=True)
 
         self.apply_transformations_repeated(
             [RedundantReadSlice, RedundantWriteSlice],

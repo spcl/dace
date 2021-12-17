@@ -21,7 +21,7 @@ from dace.properties import make_properties, Property
 from dace import data
 
 
-@registry.autoregister_params(singlestate=True, strict=False)
+@registry.autoregister_params(singlestate=True, strict=True)
 @make_properties
 class InlineMultistateSDFG(transformation.Transformation):
     """
