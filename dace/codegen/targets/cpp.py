@@ -1140,7 +1140,11 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             raise SyntaxError('Missing dimensions in expression (expected %d, '
                               'got one)' % len(strides))
 
-        return symbolic.pystr_to_symbolic(unparse(visited_slice)) * strides[0]
+        try:
+            return symbolic.pystr_to_symbolic(unparse(visited_slice)) * strides[0]
+        except (TypeError, sp.SympifyError):
+            # Fallback in case of .pop() or other C++ mannerisms
+            return f'({unparse(visited_slice)}) * {strides[0]}'
 
     def visit_Assign(self, node):
         target = rname(node.targets[-1])
@@ -1275,7 +1279,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             defined_type = None
         if (self.allow_casts and isinstance(dtype, dtypes.pointer)
                 and memlet.subset.num_elements() == 1):
-            return ast.Name(id="(*{})".format(name), ctx=node.ctx)
+            return ast.Name(id="{}[0]".format(name), ctx=node.ctx)
         elif (self.allow_casts and (defined_type == DefinedType.Stream
                                     or defined_type == DefinedType.StreamArray)
               and memlet.dynamic):

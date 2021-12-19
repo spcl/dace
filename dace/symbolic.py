@@ -266,14 +266,14 @@ class SymExpr(object):
         if isinstance(other, SymExpr):
             return self.expr == other.expr and self.approx == other.approx
         return self == pystr_to_symbolic(other)
-    
+
     def __lt__(self, other):
         if isinstance(other, sympy.Expr):
             return self.expr < other
         if isinstance(other, SymExpr):
             return self.expr < other.expr
         return self < pystr_to_symbolic(other)
-    
+
     def __gt__(self, other):
         if isinstance(other, sympy.Expr):
             return self.expr > other
@@ -814,7 +814,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     try:
         return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify),
                              symbol_map)
-    except TypeError:  # Symbol object is not subscriptable
+    except (TypeError,
+            sympy.SympifyError):  # Symbol object is not subscriptable
         # Replace subscript expressions with function calls
         expr = expr.replace('[', '(')
         expr = expr.replace(']', ')')
