@@ -435,11 +435,28 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         will be allocated/deallocated.
         :param top_sdfg: The top-level SDFG to determine for.
         """
-        # Gather shared transients
+        # Gather shared transients, free symbols, and first/last appearance
         shared_transients = {}
+        fsyms = {}
+        first_instance: Dict[int, Dict[str, Tuple[int, nodes.AccessNode]]] = {}
+        last_instance: Dict[int, Dict[str, Tuple[int, nodes.AccessNode]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.sdfg_id] = sdfg.shared_transients(
                 check_toplevel=False)
+            fsyms[sdfg.sdfg_id] = sdfg.free_symbols.union(sdfg.constants.keys())
+
+            # Possibly confusing control flow below finds the first/last state
+            # and node of the data descriptor
+            finst: Dict[str, Tuple[int, nodes.AccessNode]] = {}
+            linst: Dict[str, Tuple[int, nodes.AccessNode]] = {}
+            for state in sdfg.topological_sort():
+                id = sdfg.node_id(state)
+                for node in state.data_nodes():
+                    if node.data not in finst:
+                        finst[node.data] = (id, node)
+                    linst[node.data] = (id, node)
+            first_instance[sdfg.sdfg_id] = finst
+            last_instance[sdfg.sdfg_id] = linst
 
         for sdfg, name, desc in top_sdfg.arrays_recursive():
             if not desc.transient:
@@ -457,28 +474,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # 5. True if allocation should take place, otherwise False.
             # 6. True if deallocation should take place, otherwise False.
 
-            # Possibly confusing control flow below finds the first state
-            # and node of the data descriptor, or continues the
-            # arrays_recursive() loop
-            first_state_instance: int = None
-            first_node_instance: nodes.AccessNode = None
-            last_state_instance: int = None
-            last_node_instance: nodes.AccessNode = None
-            first = True
-            for state in sdfg.topological_sort():
-                id = sdfg.nodes().index(state)
-                for node in state.data_nodes():
-                    if node.data == name:
-                        if first:
-                            first_state_instance = id
-                            first_node_instance = node
-                            first = False
-                        last_state_instance = id
-                        last_node_instance = node
-                        # break
-                else:
-                    continue
-                break
+            first_state_instance, first_node_instance = \
+                first_instance[sdfg.sdfg_id].get(name, (None, None))
+            last_state_instance, last_node_instance = \
+                last_instance[sdfg.sdfg_id].get(name, (None, None))
 
             # Cases
             if desc.lifetime is dtypes.AllocationLifetime.Persistent:
@@ -640,7 +639,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
             # Check if Array/View is dependent on non-free SDFG symbols
             # NOTE: Tuple is (SDFG, State, Node, declare, allocate, deallocate)
-            fsymbols = sdfg.free_symbols.union(sdfg.constants.keys())
+            fsymbols = fsyms[sdfg.sdfg_id]
             if (not isinstance(curscope, nodes.EntryNode)
                     and utils.is_nonfree_sym_dependent(
                         first_node_instance, desc, alloc_state, fsymbols)):

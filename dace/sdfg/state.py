@@ -1010,9 +1010,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         # Add symbols from inter-state edges along the path to the state
         try:
             start_state = sdfg.start_state
-            for path in sdfg.all_simple_paths(start_state, self, as_edges=True):
-                for e in path:
-                    symbols.update(e.data.new_symbols(sdfg, symbols))
+            for e in sdfg.predecessor_state_transitions(start_state):
+                symbols.update(e.data.new_symbols(sdfg, symbols))
         except ValueError:
             # Cannot determine starting state (possibly some inter-state edges
             # do not yet exist)
