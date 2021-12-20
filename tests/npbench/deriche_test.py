@@ -147,7 +147,7 @@ def run_deriche(device_type: dace.dtypes.DeviceType):
         sdfg.apply_transformations_repeated([MapFusion])
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
-
+        # sdfg.view()
         # sm_applied = sdfg.apply_transformations_repeated(
         #     [InlineSDFG, StreamingMemory],
         #     [{}, {
@@ -158,7 +158,6 @@ def run_deriche(device_type: dace.dtypes.DeviceType):
         # assert sm_applied == 2
         #
         sdfg.apply_transformations_repeated([InlineSDFG])
-
         ###########################
         # FPGA Auto Opt
         fpga_auto_opt.fpga_global_to_local(sdfg)
@@ -166,8 +165,9 @@ def run_deriche(device_type: dace.dtypes.DeviceType):
         # # In this case, we want to generate the top-level state as an host-based state,
         # # not an FPGA kernel. We need to explicitly indicate that
         # sdfg.states()[0].location["is_FPGA_kernel"] = False
-        sdfg.specialize(dict(W=W, H=H, alpha=alpha))
-        dace_res = sdfg(imgIn=imgIn)
+        # sdfg.states()[0].nodes()[0].sdfg.specialize(dict(W=W, H=H))
+        sdfg.specialize(dict(W=W, H=H))
+        dace_res = sdfg(imgIn=imgIn, alpha=alpha)
 
     # Compute ground truth and validate result
     ground_truth(W, H, alpha, imgIn, imgOut, y1, y2)
