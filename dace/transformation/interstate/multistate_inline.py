@@ -188,6 +188,11 @@ class InlineMultistateSDFG(transformation.Transformation):
             else:
                 sdfg.add_constant(cstname, cstval)
 
+        # Symbols
+        outer_symbols = {str(k): v for k, v in sdfg.symbols.items()}
+        for ise in sdfg.edges():
+            outer_symbols.update(ise.data.new_symbols(sdfg, outer_symbols))
+
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
         inputs: Dict[str, MultiConnectorEdge] = {}
@@ -237,7 +242,7 @@ class InlineMultistateSDFG(transformation.Transformation):
                     datadesc = nsdfg.arrays[node.data]
                     if node.data not in transients and datadesc.transient:
                         new_name = node.data
-                        if (new_name in sdfg.arrays or new_name in sdfg.symbols
+                        if (new_name in sdfg.arrays or new_name in outer_symbols
                                 or new_name in sdfg.constants):
                             new_name = f'{nsdfg.label}_{node.data}'
 
@@ -255,7 +260,7 @@ class InlineMultistateSDFG(transformation.Transformation):
                         if edge.data.data not in transients and datadesc.transient:
                             new_name = edge.data.data
                             if (new_name in sdfg.arrays
-                                    or new_name in sdfg.symbols
+                                    or new_name in outer_symbols
                                     or new_name in sdfg.constants):
                                 new_name = f'{nsdfg.label}_{edge.data.data}'
 
@@ -344,7 +349,7 @@ class InlineMultistateSDFG(transformation.Transformation):
 
         assignments_to_replace = inner_assignments & outer_assignments
         sym_replacements: Dict[str, str] = {}
-        allnames = set(sdfg.symbols.keys()) | set(sdfg.arrays.keys())
+        allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
         for assign in assignments_to_replace:
             newname = data.find_new_name(assign, allnames)
             allnames.add(newname)
