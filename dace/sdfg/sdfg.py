@@ -32,7 +32,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
-from dace.distr_types import ProcessGrid
+from dace.distr_types import ProcessGrid, SubArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties,
                              Property, CodeProperty, TransformationHistProperty,
@@ -276,6 +276,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                        desc="Process grids for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_arrays_from_json)
+    _subarrays = Property(dtype=dict,
+                          desc="MPI sub-arrays for this SDFG",
+                          to_json=_arrays_to_json,
+                          from_json=_arrays_from_json)
 
     def __init__(self,
                  name: str,
@@ -1676,7 +1680,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return name
     
 
-    def add_pgrid(self, shape=None, parent_grid=None, correspondence=None,
+    def add_pgrid(self, shape=None, parent_grid=None, color=None,
                   exact_grid=None, root=0):
         if not (shape or parent_grid):
             raise ValueError("Process grid must either have its shape defined"
@@ -1688,10 +1692,31 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             parent_grid = self._pgrids[parent_grid]
         self._pgrids[grid_name] = ProcessGrid(
             grid_name, is_subgrid, shape, parent_grid,
-            correspondence, exact_grid, root)
+            color, exact_grid, root)
         self.append_init_code(self._pgrids[grid_name].init_code())
         self.append_exit_code(self._pgrids[grid_name].exit_code())
         return grid_name
+    
+
+    def temp_subarray_name(self):
+        """ Returns a temporary sub-array name that can be used in this SDFG. """
+
+        name = '__subarray%d' % self._pgrids_count
+        while name in self._pgrids:
+            self._pgrids_count += 1
+            name = '__subarray%d' % self._pgrids_count
+        self._pgrids_count += 1
+
+        return name
+    
+
+    def add_subarray(self, dtype, shape, subshape, pgrid, correspondence):
+        subarray_name = self.temp_subarray_name()
+        self._subarrays[subarray_name] = SubArray(
+            subarray_name, dtype, shape, subshape, pgrid, correspondence)
+        self.append_init_code(self._subarrays[subarray_name].init_code())
+        self.append_exit_code(self._subarrays[subarray_name].exit_code())
+        return subarray_name
 
 
     def add_loop(
