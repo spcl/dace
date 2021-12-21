@@ -904,12 +904,13 @@ __kernel void \\
                 # if this is a scalar and the argument passed is also a scalar
                 # then we have to pass it by value, as references do not exist in C99
                 typedef = defined_ctype
-                # if defined_type is not DefinedType.Pointer:
-                #     typedef = typedef + "*"
+                if defined_type is not DefinedType.Pointer:
+                    typedef = typedef + "*"
 
                 memlet_references.append(
                     (typedef, vconn,
                      cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type)))
+
                 self._dispatcher.defined_vars.add(vconn,
                                                   DefinedType.Pointer,
                                                   typedef,
