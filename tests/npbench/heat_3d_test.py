@@ -78,13 +78,13 @@ def run_heat_3d(device_type: dace.dtypes.DeviceType):
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
         # sdfg.view()
-        sm_applied = sdfg.apply_transformations_repeated(
-            [InlineSDFG, StreamingMemory],
-            [{}, {
-                'storage': dace.StorageType.FPGA_Local
-            }],
-            print_report=True)
-
+        # sm_applied = sdfg.apply_transformations_repeated(
+        #     [InlineSDFG, StreamingComposition],
+        #     [{}, {
+        #         'storage': dace.StorageType.FPGA_Local
+        #     }],
+        #     print_report=True)
+        # sdfg.view()
         # assert sm_applied == 2
         #
         sdfg.apply_transformations_repeated([InlineSDFG])
@@ -96,8 +96,8 @@ def run_heat_3d(device_type: dace.dtypes.DeviceType):
         # # not an FPGA kernel. We need to explicitly indicate that
         # sdfg.states()[0].location["is_FPGA_kernel"] = False
         # sdfg.states()[0].nodes()[0].sdfg.specialize(dict(W=W, H=H))
-        sdfg.specialize(dict(N=N, TSTEPS=TSTEPS))
-        sdfg(A=A, B=B)
+        sdfg.specialize(dict(N=N))
+        sdfg(A=A, B=B, TSTEPS=TSTEPS)
 
     # Compute ground truth and validate result
     heat_3d_kernel.f(TSTEPS, gt_A, gt_B)

@@ -830,6 +830,7 @@ __kernel void \\
         arguments = [
             f'{atype} {aname}' for atype, aname, _ in memlet_references
         ]
+
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}'
             for aname in sorted(node.symbol_mapping.keys())
@@ -903,8 +904,8 @@ __kernel void \\
                 # if this is a scalar and the argument passed is also a scalar
                 # then we have to pass it by value, as references do not exist in C99
                 typedef = defined_ctype
-                if defined_type is not DefinedType.Pointer:
-                    typedef = typedef + "*"
+                # if defined_type is not DefinedType.Pointer:
+                #     typedef = typedef + "*"
 
                 memlet_references.append(
                     (typedef, vconn,
