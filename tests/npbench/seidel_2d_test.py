@@ -19,61 +19,62 @@ N = dc.symbol('N', dtype=dc.int32)
 
 
 @dc.program
-def heat_3d_kernel(TSTEPS: dc.int32, A: dc.float32[N, N, N],
-           B: dc.float32[N, N, N]):
+def seidel_2d_kernel(TSTEPS: dc.int32, A: dc.float32[N, N]):
 
-    for t in range(1, TSTEPS):
-        B[1:-1, 1:-1, 1:-1] = (
-                0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] +
-                         A[:-2, 1:-1, 1:-1]) +
-                0.125 * (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] +
-                         A[1:-1, :-2, 1:-1]) +
-                0.125 * (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] +
-                         A[1:-1, 1:-1, 0:-2]) +
-                A[1:-1, 1:-1, 1:-1])
-        A[1:-1, 1:-1, 1:-1] = (
-                0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] +
-                         B[:-2, 1:-1, 1:-1]) +
-                0.125 * (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] +
-                         B[1:-1, :-2, 1:-1]) +
-                0.125 * (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] +
-                         B[1:-1, 1:-1, 0:-2]) +
-                B[1:-1, 1:-1, 1:-1])
+    for t in range(0, TSTEPS - 1):
+        for i in range(1, N - 1):
+            A[i, 1:-1] += (A[i - 1, :-2] + A[i - 1, 1:-1] + A[i - 1, 2:] +
+                           A[i, 2:] + A[i + 1, :-2] + A[i + 1, 1:-1] +
+                           A[i + 1, 2:])
+            for j in range(1, N - 1):
+                A[i, j] += A[i, j - 1]
+                A[i, j] /= 9.0
 
+
+def ground_truth(TSTEPS, N, A):
+
+    for t in range(0, TSTEPS - 1):
+        for i in range(1, N - 1):
+            A[i, 1:N - 1] += (A[i - 1, :N - 2] + A[i - 1, 1:N - 1] +
+                              A[i - 1, 2:] + A[i, 2:] + A[i + 1, :N - 2] +
+                              A[i + 1, 1:N - 1] + A[i + 1, 2:])
+            for j in range(1, N - 1):
+                A[i, j] += A[i, j - 1]
+                A[i, j] /= 9.0
 
 
 def init_data(N):
 
-    A = np.empty((N, N, N), dtype=np.float32)
-    B = np.empty((N, N, N), dtype=np.float32)
+    A = np.empty((N, N), dtype=np.float32)
     for i in range(N):
         for j in range(N):
-            for k in range(N):
-                A[i, j, k] = B[i, j, k] = (i + j + (N - k)) * 10 / N
+            A[i, j] = (i * (j + 2) + 2) / N
 
-    return A, B
+    return A
 
 
-def run_heat_3d(device_type: dace.dtypes.DeviceType):
+def run_seidel_2d(device_type: dace.dtypes.DeviceType):
     '''
-    Runs Heat-3d for the given device
+    Runs Seidel_2d for the given device
     :return: the SDFG
     '''
 
-    # Initialize data (polybench medium size)
-    TSTEPS, N = 100, 40
-    A, B = init_data(N)
+    # Initialize data (polybench small size)
+    TSTEPS, N = 40, 120
+    A = init_data(N)
     gt_A = np.copy(A)
-    gt_B = np.copy(B)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply autopot
-        sdfg = heat_3d_kernel.to_sdfg()
-        sdfg = auto_optimize(sdfg, device_type)
-        sdfg(TSTEPS=TSTEPS, A=A, B=B, N=N)
+        sdfg = seidel_2d_kernel.to_sdfg()
+        sdfg.apply_strict_transformations()
+
+        # FAILS with auto optimization (due to greedy fuse)
+        # sdfg = auto_optimize(sdfg, device_type)
+        sdfg(TSTEPS=TSTEPS, A=A, N=N)
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = heat_3d_kernel.to_sdfg(strict=True)
+        sdfg = seidel_2d_kernel.to_sdfg(strict=True)
         sdfg.apply_transformations_repeated([MapFusion])
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
@@ -100,34 +101,27 @@ def run_heat_3d(device_type: dace.dtypes.DeviceType):
         sdfg(A=A, B=B)
 
     # Compute ground truth and validate result
-    heat_3d_kernel.f(TSTEPS, gt_A, gt_B)
+    ground_truth(TSTEPS, N, gt_A)
+    diff = np.linalg.norm(gt_A - A) / np.linalg.norm(gt_A)
+    print(diff)
     assert np.allclose(A, gt_A)
-    assert np.allclose(B, gt_B)
-    # diff_ex = np.linalg.norm(gt_ex - ex) / np.linalg.norm(gt_ex)
-    # diff_ey = np.linalg.norm(gt_ex - ex) / np.linalg.norm(gt_ex)
-    # diff_hz = np.linalg.norm(gt_ex - ex) / np.linalg.norm(gt_ex)
-    # tol = 1e-6
-    #
-    # assert diff_ex < tol
-    # assert diff_ey < tol
-    # assert diff_hz < tol
 
     return sdfg
 
 
 
 def test_cpu():
-    run_heat_3d(dace.dtypes.DeviceType.CPU)
+    run_seidel_2d(dace.dtypes.DeviceType.CPU)
 
 
 @pytest.mark.gpu
 def test_gpu():
-    run_heat_3d(dace.dtypes.DeviceType.GPU)
+    run_seidel_2d(dace.dtypes.DeviceType.GPU)
 
 
 @fpga_test(assert_ii_1=False)
 def test_fpga():
-    return run_heat_3d(dace.dtypes.DeviceType.FPGA)
+    return run_seidel_2d(dace.dtypes.DeviceType.FPGA)
 
 
 if __name__ == "__main__":
@@ -144,8 +138,8 @@ if __name__ == "__main__":
     target = args["target"]
 
     if target == "cpu":
-        run_heat_3d(dace.dtypes.DeviceType.CPU)
+        run_seidel_2d(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
-        run_heat_3d(dace.dtypes.DeviceType.GPU)
+        run_seidel_2d(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":
-        run_heat_3d(dace.dtypes.DeviceType.FPGA)
+        run_seidel_2d(dace.dtypes.DeviceType.FPGA)
