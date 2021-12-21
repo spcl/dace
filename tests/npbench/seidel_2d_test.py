@@ -79,12 +79,15 @@ def run_seidel_2d(device_type: dace.dtypes.DeviceType):
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
         # sdfg.view()
-        # sm_applied = sdfg.apply_transformations_repeated(
-        #     [InlineSDFG, StreamingComposition],
-        #     [{}, {
-        #         'storage': dace.StorageType.FPGA_Local
-        #     }],
-        #     print_report=True)
+
+        # Streaming memory can be applied ....
+
+        sm_applied = sdfg.apply_transformations_repeated(
+            [InlineSDFG, StreamingMemory],
+            [{}, {
+                'storage': dace.StorageType.FPGA_Local
+            }],
+            print_report=True)
         # sdfg.view()
         # assert sm_applied == 2
         #
@@ -95,10 +98,10 @@ def run_seidel_2d(device_type: dace.dtypes.DeviceType):
         fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
         # # In this case, we want to generate the top-level state as an host-based state,
         # # not an FPGA kernel. We need to explicitly indicate that
-        # sdfg.states()[0].location["is_FPGA_kernel"] = False
-        # sdfg.states()[0].nodes()[0].sdfg.specialize(dict(W=W, H=H))
+        sdfg.states()[0].location["is_FPGA_kernel"] = False
+        sdfg.states()[0].nodes()[0].sdfg.specialize(dict(N=N))
         sdfg.specialize(dict(N=N))
-        sdfg(A=A, B=B)
+        sdfg(A=A, TSTEPS=TSTEPS)
 
     # Compute ground truth and validate result
     ground_truth(TSTEPS, N, gt_A)
