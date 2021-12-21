@@ -32,6 +32,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.distr_types import ProcessGrid
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties,
                              Property, CodeProperty, TransformationHistProperty,
@@ -271,6 +272,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     debuginfo = DebugInfoProperty(allow_none=True)
 
+    _pgrids = Property(dtype=dict,
+                       desc="Process grids for this SDFG",
+                       to_json=_arrays_to_json,
+                       from_json=_arrays_from_json)
+
     def __init__(self,
                  name: str,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
@@ -312,6 +318,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.transformation_hist = []
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
+        # Process grid-related fields
+        self._pgrids = {}
+        self._pgrids_count = 0
 
         # Counter to resolve name conflicts
         self._orig_name = name
@@ -437,6 +446,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             in this SDFG, with an extra `None` entry for empty memlets.
         """
         return self._arrays
+    
+    @property
+    def process_grids(self):
+        """ Returns a dictionary of process grids used in this SDFG.
+        """
+        return self._pgrids
 
     def data(self, dataname: str):
         """ Looks up a data descriptor from its name, which can be an array, stream, or scalar symbol. """
@@ -1647,6 +1662,37 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 self.add_symbol(sym.name, sym.dtype)
 
         return name
+    
+
+    def temp_pgrid_name(self):
+        """ Returns a temporary process grid name that can be used in this SDFG. """
+
+        name = '__pgrid%d' % self._pgrids_count
+        while name in self._pgrids:
+            self._pgrids_count += 1
+            name = '__pgrid%d' % self._pgrids_count
+        self._pgrids_count += 1
+
+        return name
+    
+
+    def add_pgrid(self, shape=None, parent_grid=None, correspondence=None,
+                  exact_grid=None, root=0):
+        if not (shape or parent_grid):
+            raise ValueError("Process grid must either have its shape defined"
+                             " or be linked to a parent-grid.")
+        grid_name = self.temp_pgrid_name()
+        is_subgrid = (parent_grid is not None)
+        shape = shape or []
+        if parent_grid and isinstance(parent_grid, str):
+            parent_grid = self._pgrids[parent_grid]
+        self._pgrids[grid_name] = ProcessGrid(
+            grid_name, is_subgrid, shape, parent_grid,
+            correspondence, exact_grid, root)
+        self.append_init_code(self._pgrids[grid_name].init_code())
+        self.append_exit_code(self._pgrids[grid_name].exit_code())
+        return grid_name
+
 
     def add_loop(
         self,
