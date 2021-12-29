@@ -28,32 +28,14 @@ jobs:
         sudo apt-get install -y libyaml-dev cmake
         sudo apt-get install -y libblas-dev libopenblas-dev liblapacke-dev
         sudo apt-get install -y libpapi-dev papi-tools  # Instrumentation dependencies
-        sudo apt-get install -y mpich # MPI dependencies
         sudo apt-get install -y verilator # RTL simulation dependencies
         python -m pip install --upgrade pip
-        pip install flake8 pytest-xdist coverage codecov mpi4py pytest-mpi
+        pip install flake8 pytest-xdist coverage codecov
         pip install -e ".[testing]"
 
     - name: Test dependencies
       run: |
         papi_avail
-    
-    - name: Test MPI with pytest
-      run: |
-        export NOSTATUSBAR=1
-        export DACE_testing_serialization=1
-        export DACE_cache=unique
-        export DACE_optimizer_interface=" "
-        if [ "${{ matrix.strict-xforms }}" = "autoopt" ]; then
-            export DACE_optimizer_automatic_strict_transformations=1
-            export DACE_optimizer_autooptimize=1
-            echo "Auto-optimization heuristics"
-        else
-            export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
-        fi
-        mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest --with-mpi --tb=short -m "mpi"
-        coverage combine .; coverage report; coverage xml
-        codecov
 
     - name: Test with pytest
       run: |
@@ -70,6 +52,7 @@ jobs:
         fi
         pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga"
         codecov
+
     - name: Test OpenBLAS LAPACK
       run: |
         export NOSTATUSBAR=1
@@ -85,6 +68,7 @@ jobs:
         fi
         pytest -n 1 --cov-report=xml --cov=dace --tb=short -m "lapack"
         codecov
+
     - name: Run other tests
       run: |
         export NOSTATUSBAR=1
