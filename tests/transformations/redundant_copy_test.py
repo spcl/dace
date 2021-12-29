@@ -302,6 +302,18 @@ def test_conv2d():
     assert (len(access_nodes) == 4)
 
 
+def test_redundant_second_copy_isolated():
+    sdfg = dace.SDFG('rsc')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_transient('tmp', [20], dace.float64)
+    state = sdfg.add_state()
+    state.add_nedge(state.add_read('A'), state.add_write('tmp'), dace.Memlet('tmp'))
+
+    assert sdfg.apply_transformations(RedundantSecondArray) == 1
+    sdfg.validate()
+    assert state.number_of_nodes() == 0
+
+
 if __name__ == '__main__':
     test_in()
     test_out()
@@ -313,3 +325,4 @@ if __name__ == '__main__':
     test_array_array_view()
     test_reverse_copy()
     test_conv2d()
+    test_redundant_second_copy_isolated()
