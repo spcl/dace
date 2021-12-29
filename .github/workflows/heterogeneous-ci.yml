@@ -53,8 +53,6 @@ jobs:
         export DACE_cache=unique
         export DACE_optimizer_interface=" "
         mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest --with-mpi --tb=short -m "mpi"
-        coverage combine .; coverage report; coverage xml
-        codecov
 
     - name: Report overall coverage
       run: |
