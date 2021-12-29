@@ -1121,8 +1121,9 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             dimlen = dtype.veclen if isinstance(dtype, dtypes.vector) else 1
             subset_size = memlet.subset.size()
             indexdims = [i for i, s in enumerate(subset_size) if s == 1]
+            # Pointer to a single element can use all strides
             is_scalar = not isinstance(dtype, dtypes.pointer)
-            if is_scalar:
+            if is_scalar or data._prod(subset_size) != 1:
                 strides = [
                     s for i, s in enumerate(strides) if i not in indexdims
                     and not (s == 1 and subset_size[i] == dimlen)
