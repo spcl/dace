@@ -212,6 +212,8 @@ def sdfgs_from_npbench(path):
     for prog in progs:
         try:
             sdfg = prog.to_sdfg()
+            if 'kernel' not in sdfg.name:
+                continue
             sdfg.expand_library_nodes()
             # sdfg.save('tmp.sdfg')
             kernels.append((sdfg, (fname + "_" + sdfg.name)))
@@ -562,7 +564,7 @@ polybenchRes["ludcmp"] =                       ["2*N^3/(3*sqrt(S))"]
 polybenchRes["mvt"] =                          ["N^2"]
 polybenchRes["nussinov"] =                     ["N^3/(3*sqrt(S))", "N^2*(sqrt(S) + S*(N - 3)/3)/S^(3/2)"]
 polybenchRes["seidel2d"] =                     ["4*N^2*T/sqrt(S)"]
-polybenchRes["symm"] =                         ["sqrt(2)*M^2*N/sqrt(S)", "2*M^2*N/sqrt(S)"]
+polybenchRes["symm"] =                         ["sqrt(2)*M^2*N/sqrt(S)", "2*M^2*N/sqrt(S)", "M^2*N/sqrt(S)"]
 polybenchRes["syr2k"] =                        ["2*M*N^2/sqrt(S)"]
 polybenchRes["syrk"] =                         ["M*N^2/sqrt(S)"]
 polybenchRes["trisolv"] =                      ["N^2/2"]

@@ -215,14 +215,14 @@ class SDG:
         sdg_scope.SOAP_executions *= num_executions
         sdg_scope.SDFG_arrays = {**sdg_scope.SDFG_arrays, **state.parent.arrays}
         sdg_scope.input_SDFG_arrays += [src_node.data for src_node in state.source_nodes() if isinstance(src_node, AccessNode)]
-                
+   
         snodes = [n for n in nx.topological_sort(state.nx) if n in state.scope_children()[scope]]
         for node in snodes:
             if isinstance(node, (dace.nodes.Tasklet, dace.nodes.LibraryNode)):
                 inner_scope = copy.deepcopy(sdg_scope)
                 self._from_SDFG_node(node, state, inner_scope)
             elif isinstance(node, (dace.nodes.AccessNode)):
-                if node.label == "B_0":
+                if node.label == "_x":
                     a = 1
                 # if the access node has a single in-edge coming from a different access node, 
                 # then it is a projection. We then add this to the sdfg mapping.
@@ -230,21 +230,15 @@ class SDG:
                 if len(in_edges) > 0:
                     if isinstance(sdg_scope.SDFG_arrays[node.label], dace.data.View):
                         # get the original node:
-                        src_node = state.memlet_path(in_edges[0])[0].data
+                        # src_node = state.memlet_path(in_edges[0])[0].data
+
+                        src_node = in_edges[0].data
+                        
+                        # the view slice will give us a range sth like (j,j,1). We need to convert ti to (0, j-1,1)
+                        # src_node.subset.ranges = [(0, y - 1, 1) if (x == y) else (x,y,z) for (x,y,z) in src_node.subset.ranges ]
+                        # src_node.subset.ranges = [(list(y.free_symbols)[0], list(y.free_symbols)[0], 1) 
+                        #                             if (x != y) else (x,y,z) for (x,y,z) in src_node.subset.ranges ]
                         self.add_projection(src_node, state.out_edges(node)[0].data, sdg_scope)
-
-                    
-
-                    # # check if this is a projection (access_node -> access_node)
-                    # if isinstance(in_node, dace.nodes.AccessNode):
-                    #     # retreiving the original (non-projected) memlet
-                    #     src_edges = state.in_edges(in_node)
-                    #     if len(src_edges) <= 1 and len(state.out_edges(node)) == 1:
-                    #         self.add_projection(in_edges[0].data, state.out_edges(node)[0].data, sdg_scope)
-                    #     # elif len(src_edges) == 1 and len(state.out_edges(node)) == 1:
-                    #     #     self.add_projection(src_edges[0].data, state.out_edges(node)[0].data, sdg_scope)
-                    #     else:                            
-                    #         a = 1
                     
                     # check if this is an initialization of transient (access_node -> tasklet -> transient access_node)
                     in_node = in_edges[0].src
@@ -255,12 +249,24 @@ class SDG:
                                 in_in_node = in_edges[0].src
                                 if isinstance(in_in_node, dace.nodes.AccessNode):
                                     # now we need to propagate the updated sdfg_mapping one layer higher
-                                    sdg_scope.sdfg_mapping = {**sdg_scope.sdfg_mapping, **{node.data: in_edges[0].data}}
-                            
-                            if len(in_edges) > 1:
-                                in_in_node = in_edges[0].src
-                                if isinstance(in_in_node, dace.nodes.AccessNode):
-                                    a = 1
+                                    if node.data == "_x":
+                                        a = 1
+                                    tmp = SDG._fuse_mapping({node.data: in_edges[0].data}, sdg_scope.sdfg_mapping)
+                                    if any([len(sp.sympify(i).free_symbols) > 0 for (i,j,k) in list(tmp.values())[0].subset.ranges]):
+                                    # sdg_scope.sdfg_mapping = {**sdg_scope.sdfg_mapping, **{node.data: in_edges[0].data}}
+                                        sdg_scope.sdfg_mapping = {**sdg_scope.sdfg_mapping, **tmp}
+                                    if "__tmp2" in sdg_scope.sdfg_mapping.keys():
+                                        a = 1
+
+                        if isinstance(in_node, dace.nodes.MapEntry):
+                            if node.data == "_x":
+                                a = 1
+                            tmp = SDG._fuse_mapping({node.data: in_edges[0].data}, sdg_scope.sdfg_mapping)
+                            if any([len(sp.sympify(i).free_symbols) > 0 for (i,j,k) in list(tmp.values())[0].subset.ranges]):
+                                sdg_scope.sdfg_mapping = {**sdg_scope.sdfg_mapping, **tmp}
+                            if "__tmp2" in sdg_scope.sdfg_mapping.keys():
+                                a = 1
+
                         
             elif isinstance(node, dace.nodes.EntryNode): 
                 if 'stateFOR31_map' in node.label:
@@ -275,7 +281,11 @@ class SDG:
                 inner_scope.SOAP_executions = num_executions
                 self._from_SDFG_scope(state, node, inner_scope)
             elif isinstance(node, dace.nodes.NestedSDFG):
+                if node.label == '_MatMult_dot':
+                    a = 1
                 inner_scope = self._add_ranges_and_mappings(state, sdg_scope, node)
+                if "__tmp2" in inner_scope.sdfg_mapping.keys():
+                    a = 1
                 self._from_SDFG_sdfg(node.sdfg, inner_scope)
                 
         # return updated sdg_scope (e.g., sdfg_mapping updated by transients)
@@ -286,7 +296,7 @@ class SDG:
     # the core SDG creation function. The elementary building block for SDG is the SDFG's tasklet
     def _from_SDFG_node(self, node : dace.nodes, 
                 state: dace.SDFGState, sdg_scope : SdgScope) -> None:  
-        if node.label == '_Mult_':
+        if node.label in ['augassign_13_12', 'dot']:
             a = 1
                   
         if not state.out_edges(node) or not state.in_edges(node):
@@ -449,51 +459,47 @@ class SDG:
         
         #inner_scope.sdfg_mapping = cur_scope_mapping
         
-        # transitive mapping
-        fused_mapping = {}
-        for inner_mem, outer_mem in cur_scope_mapping.items():
-            # resolve dynamic arrays and like scalars. If the memlet is dynamic, inherit ranges from 
-            # the tasklet it is assigned in
-            if outer_mem.dynamic:
-                outer_mem.subset.ranges = self._find_transient_assignement(state, sdg_scope, node)
+        # # transitive mapping
+        # fused_mapping = {}
+        # for inner_mem, outer_mem in cur_scope_mapping.items():
+        #     # resolve dynamic arrays and like scalars. If the memlet is dynamic, inherit ranges from 
+        #     # the tasklet it is assigned in
+        #     if outer_mem.dynamic:
+        #         outer_mem.subset.ranges = self._find_transient_assignement(state, sdg_scope, node)
             
-            if outer_mem.data in inner_scope.sdfg_mapping.keys():
-                outmost_mem = copy.deepcopy(inner_scope.sdfg_mapping[outer_mem.data])
-                outmost_mem.subset = SDG._proj_compose(outmost_mem, outer_mem) #outmost_mem.subset.compose(outer_mem.subset)
-                fused_mapping[inner_mem] = outmost_mem
-            else:
-                fused_mapping[inner_mem] = outer_mem
+        #     if outer_mem.data in inner_scope.sdfg_mapping.keys():
+        #         outmost_mem = copy.deepcopy(inner_scope.sdfg_mapping[outer_mem.data])
+        #         # TODO: can we remove the following line?
+        #         # outmost_mem.subset = SDG._proj_compose(outmost_mem, outer_mem) #outmost_mem.subset.compose(outer_mem.subset)
+        #         fused_mapping[inner_mem] = outmost_mem
+        #     else:
+        #         fused_mapping[inner_mem] = outer_mem
         
-        # # After this step, we check the current mapping
-        # # if we map something to transient arrays. 
-        # # If yes, we need to add the outer ranges to them
-        # if len(inner_scope.sdfg_mapping) > 0:
-        #     for inner_mem, outer_mem in fused_mapping.items():
-        #         if sdg_scope.SDFG_arrays[outer_mem.data].transient:
-        #             rngs_to_update = []
-        #             i = 0
-        #             for rng in fused_mapping[inner_mem].subset.ranges:
-        #                 if len(rng[0].free_symbols) == 0:
-        #                     it_var = dace.symbol(list(sdg_scope.loop_ranges)[-1 - i])                   
-        #                     rngs_to_update += [(it_var, it_var, 1)]
-        #                     i += 1
-        #                 else:
-        #                     rngs_to_update += [rng]
-        #             fused_mapping[inner_mem].subset.ranges = rng_to_update
-                            
-        #             # fused_mapping[inner_mem].subset.ranges += \
-        #             #     [(dace.symbol(i), dace.symbol(i), 1) 
-        #             #     for i in sdg_scope.innermost_ranges.keys()]
-        
-        
-        inner_scope.sdfg_mapping = fused_mapping
-        
+        # inner_scope.sdfg_mapping = fused_mapping
+        inner_scope.sdfg_mapping = SDG._fuse_mapping(cur_scope_mapping, inner_scope.sdfg_mapping)
+
+        if "__tmp2" in inner_scope.sdfg_mapping.keys():
+            a = 1
         return inner_scope
     
     
     def _find_transient_assignement(self, state : dace.SDFGState, sdg_scope : SdgScope, node : dace.nodes):
         a = 1
     
+    
+    @staticmethod
+    def _fuse_mapping(inner_mapping : Dict, outer_mapping : Dict) -> Dict:
+        # transitive mapping
+        fused_mapping = {}
+        for inner_mem, outer_mem in inner_mapping.items():
+            if outer_mem.data in outer_mapping.keys():
+                outmost_mem = copy.deepcopy(outer_mapping[outer_mem.data])
+                # TODO: can we remove the following line?
+                # outmost_mem.subset = SDG._proj_compose(outmost_mem, outer_mem) #outmost_mem.subset.compose(outer_mem.subset)
+                fused_mapping[inner_mem] = outmost_mem
+            else:
+                fused_mapping[inner_mem] = outer_mem
+        return fused_mapping
 
     @staticmethod
     def _proj_compose(outer_mem : dace.Memlet, inner_mem : dace.Memlet) -> Range:
@@ -721,9 +727,12 @@ class SDG:
 
         if new_memlet.data in sdg_scope.sdfg_mapping:
             outer_memlet = copy.deepcopy(sdg_scope.sdfg_mapping[new_memlet.data])
-            # TODO: new
-            if sdg_scope.SDFG_arrays[new_memlet.data].transient:
-                return outer_memlet
+
+            # # The following line is needed if the outer memlet is a View. If so, we need to compose slice ranges
+            # outer_memlet.subset = outer_memlet.subset.compose(new_memlet.subset)
+
+            # if sdg_scope.SDFG_arrays[new_memlet.data].transient:
+            #     return outer_memlet
             
             # a controversial trick for triangular dimensions. If the outer memlet ranges
             # are, e.g., [(0:N),( i + 1:M)], then we cut out this variable offset i and leave
@@ -753,7 +762,10 @@ class SDG:
                 try:
                     outer_memlet.subset = outer_memlet.subset.compose(new_memlet.src_subset)
                 except:
-                    outer_memlet.subset = outer_memlet.dst_subset.compose(new_memlet.src_subset)
+                    try:
+                        outer_memlet.subset = outer_memlet.dst_subset.compose(new_memlet.src_subset)
+                    except:
+                        pass
         else:
             outer_memlet = new_memlet  
 

@@ -82,7 +82,7 @@ def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView],
     """
     solver = Solver()
     solver.start_solver()
-    solver.set_timeout(10)
+    solver.set_timeout(200)
         
     sdg = SDG(sdfg, solver)
     # check if the created SDG is correct
