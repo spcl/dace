@@ -1986,23 +1986,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def predecessor_state_transitions(self, state):
         """ Yields paths (lists of edges) that the SDFG can pass through
             before computing the given state. """
-        from networkx import all_simple_paths
-
-        for path in all_simple_paths(self, self.start_state, state):
-            yield [
-                next(e for e in self.out_edges(s) if e.dst == d)
-                for s, d in zip(path[:-1], path[1:])
-            ]
+        return self.bfs_edges(state, reverse=True)
 
     def predecessor_states(self, state):
         """ Returns a list of unique states that the SDFG can pass through
             before computing the given state. """
-        from networkx import all_simple_paths
-
-        return set([
-            n for path in all_simple_paths(self, self.start_state, state)
-            for n in path
-        ])
+        return (e.src for e in self.bfs_edges(state, reverse=True))
 
     def validate(self) -> None:
         validate_sdfg(self)
