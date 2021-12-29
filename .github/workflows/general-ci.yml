@@ -50,7 +50,7 @@ jobs:
         else
             export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
         fi
-        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga"
+        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi"
         codecov
 
     - name: Test OpenBLAS LAPACK
