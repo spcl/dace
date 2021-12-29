@@ -13,6 +13,7 @@ import random
 import re
 import shutil
 import sys
+import time
 from typing import (Any, AnyStr, Dict, Iterator, List, Optional, Set, Tuple,
                     Type, Union)
 import warnings
@@ -2135,7 +2136,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             strict: bool = False,
             states: Optional[List[Any]] = None,
             print_report: Optional[bool] = None,
-            order_by_transformation: bool = True) -> int:
+            order_by_transformation: bool = True,
+            progress: Optional[bool] = None) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
             :param xforms: A Transformation class or a set thereof.
@@ -2151,6 +2153,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                  apply).
             :param order_by_transformation: Try to apply transformations ordered
                                             by class rather than SDFG.
+            :param progress: If True, prints every intermediate transformation
+                             applied. If False, never prints anything. If None
+                             (default), prints only after 5 seconds of
+                             transformations.
             :return: Number of transformations applied.
 
             Examples::
@@ -2161,6 +2167,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Avoiding import loops
         from dace.transformation import optimizer
         from dace.transformation.transformation import Transformation
+            
+        start = time.time()
 
         applied_transformations = collections.defaultdict(int)
 
@@ -2189,6 +2197,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
             match.apply(sdfg)
             applied_transformations[type(match).__name__] += 1
+            if progress or (progress is None and (time.time() - start) > 5):
+                print('Applied {}.\r'.format(', '.join([
+                     '%d %s' % (v, k) for k, v in applied_transformations.items()
+                ])), end='')
             if validate_all:
                 try:
                     self.validate()
@@ -2244,7 +2256,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     raise err
 
         if (len(applied_transformations) > 0
-                and (print_report or
+                and (progress is not False or print_report or
                      (print_report is None and Config.get_bool('debugprint')))):
             print('Applied {}.'.format(', '.join([
                 '%d %s' % (v, k) for k, v in applied_transformations.items()
