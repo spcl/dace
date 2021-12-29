@@ -520,7 +520,7 @@ class MapFusion(transformation.Transformation):
         else:
             local_name, _ = sdfg.add_transient(
                 local_name,
-                edge.data.subset.size(),
+                symbolic.overapproximate(edge.data.subset.size()),
                 dtype=access_node.desc(graph).dtype,
                 find_new_name=True)
             old_edge = dcpy(edge)
