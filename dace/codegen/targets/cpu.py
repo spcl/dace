@@ -1286,7 +1286,11 @@ class CPUCodeGen(TargetCodeGenerator):
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
-                    memlet_type = '%s const' % memlet_type
+                    memlet_type = 'const %s' % memlet_type
+                    if is_pointer:
+                        # This is done to make the reference constant, otherwise
+                        # compilers error out with initial reference value.
+                        memlet_type += ' const'
                     result += "{} &{} = {};".format(memlet_type, local_name,
                                                     expr)
                 defined = (DefinedType.Scalar

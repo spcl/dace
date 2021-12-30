@@ -357,6 +357,61 @@ def test_bad_closure():
     assert np.all(B > A) and np.all(A > now)
 
 
+def test_object_with_nested_callback():
+    c = np.random.rand(20)
+
+    @dace_inhibitor
+    def call_another_function(a, b):
+        nonlocal c
+        c[:] = a + b
+
+    class MyObject:
+        def __call__(self, a, b):
+            c = dict(a=a, b=b)
+            call_another_function(**c)
+
+    obj = MyObject()
+
+    @dace.program
+    def callobj(a, b):
+        obj(a, b)
+
+    a = np.random.rand(20)
+    b = np.random.rand(20)
+    callobj(a, b)
+    assert np.allclose(c, a + b)
+
+
+def test_two_parameters_same_name():
+    @dace_inhibitor
+    def add(a, b):
+        return a + b
+
+    @dace.program
+    def calladd(A: dace.float64[20], B: dace.float64[20]):
+        B[:] = add(A, A)
+
+    a = np.random.rand(20)
+    b = np.random.rand(20)
+    calladd(a, b)
+    assert np.allclose(b, a + a)
+
+
+def test_inout_same_name():
+    @dace_inhibitor
+    def add(a, b):
+        return a + b
+
+    @dace.program
+    def calladd(A: dace.float64[20]):
+        A[:] = add(A, A)
+
+    a = np.random.rand(20)
+    expected = a + a
+    calladd(a)
+    assert np.allclose(expected, a)
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -372,3 +427,6 @@ if __name__ == '__main__':
     test_callback_samename()
     # test_gpu_callback()
     test_bad_closure()
+    test_object_with_nested_callback()
+    test_two_parameters_same_name()
+    test_inout_same_name()
