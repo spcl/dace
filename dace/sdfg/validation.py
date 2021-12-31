@@ -3,7 +3,7 @@
 import copy
 from dace.dtypes import StorageType
 import os
-from typing import Dict, Tuple, Union
+from typing import Dict, Set, Tuple, Union
 import warnings
 from dace import dtypes, data as dt, subsets
 from dace import symbolic
@@ -88,6 +88,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
 
         # Check every state separately
         start_state = sdfg.start_state
+        initialized_transients = {'__pystate'}
         symbols = copy.deepcopy(sdfg.symbols)
         symbols.update(sdfg.arrays)
         symbols.update(
@@ -107,7 +108,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             # Source
             if edge.src not in visited:
                 visited.add(edge.src)
-                validate_state(edge.src, sdfg.node_id(edge.src), sdfg, symbols)
+                validate_state(edge.src, sdfg.node_id(edge.src), sdfg, symbols,
+                               initialized_transients)
 
             ##########################################
             # Edge
@@ -133,13 +135,14 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             # Destination
             if edge.dst not in visited:
                 visited.add(edge.dst)
-                validate_state(edge.dst, sdfg.node_id(edge.dst), sdfg, symbols)
+                validate_state(edge.dst, sdfg.node_id(edge.dst), sdfg, symbols,
+                               initialized_transients)
         # End of state DFS
 
         # If there is only one state, the DFS will miss it
         if start_state not in visited:
             validate_state(start_state, sdfg.node_id(start_state), sdfg,
-                           symbols)
+                           symbols, initialized_transients)
 
         # Validate all inter-state edges (including self-loops not found by DFS)
         for eid, edge in enumerate(sdfg.edges()):
@@ -160,7 +163,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
 def validate_state(state: 'dace.sdfg.SDFGState',
                    state_id: int = None,
                    sdfg: 'dace.sdfg.SDFG' = None,
-                   symbols: Dict[str, dtypes.typeclass] = None):
+                   symbols: Dict[str, dtypes.typeclass] = None,
+                   initialized_transients: Set[str] = None):
     """ Verifies the correctness of an SDFG state by applying multiple
         tests. Raises an InvalidSDFGError with the erroneous node on
         failure.
@@ -178,6 +182,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     sdfg = sdfg or state.parent
     state_id = state_id or sdfg.node_id(state)
     symbols = symbols or {}
+    initialized_transients = initialized_transients or {'__pystate'}
     scope_local_constants: dict[nd.MapEntry, list[str]] = dict()
     scope = state.scope_dict()
 
@@ -269,27 +274,19 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         sdfg, state_id, nid)
 
             # Find uninitialized transients
-            if (arr.transient and state.in_degree(node) == 0
-                    and state.out_degree(node) > 0
-                    # Streams do not need to be initialized
-                    and not isinstance(arr, dt.Stream)):
-                # Find other instances of node in predecessor states
-                states = sdfg.predecessor_states(state)
-                input_found = False
-                for s in states:
-                    for onode in s.nodes():
-                        if (isinstance(onode, nd.AccessNode)
-                                and onode.data == node.data):
-                            if s.in_degree(onode) > 0:
-                                input_found = True
-                                break
-                    if input_found:
-                        break
-                if (not input_found and node.setzero == False
-                        and node.data != '__pystate'):
-                    warnings.warn(
-                        'WARNING: Use of uninitialized transient "%s" in state %s'
-                        % (node.data, state.label))
+            if node.data not in initialized_transients:
+                if (arr.transient and state.in_degree(node) == 0
+                        and state.out_degree(node) > 0
+                        # Streams do not need to be initialized
+                        and not isinstance(arr, dt.Stream)):
+                    if node.setzero == False:
+                        warnings.warn(
+                            'WARNING: Use of uninitialized transient "%s" in state %s'
+                            % (node.data, state.label))
+
+                # Register initialized transients
+                if arr.transient and state.in_degree(node) > 0:
+                    initialized_transients.add(node.data)
 
             # Find writes to input-only arrays
             only_empty_inputs = all(e.data.is_empty()

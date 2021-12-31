@@ -5,6 +5,7 @@ import collections
 import copy
 import os
 import networkx as nx
+import time
 
 import dace.sdfg.nodes
 from dace.sdfg.graph import MultiConnectorEdge
@@ -1012,7 +1013,7 @@ def trace_nested_access(
     return list(reversed(trace))
 
 
-def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = False) -> int:
+def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs) using an optimized
     routine that uses the structure of the StateFusion transformation.
@@ -1020,17 +1021,28 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = False) ->
     :param permissive: If True, operates in permissive mode, which ignores some
                        race condition checks.
     :param progress: If True, prints out a progress bar of fusion (may be
-                     inaccurate, requires ``tqdm``)
+                     inaccurate, requires ``tqdm``). If None, prints out
+                     progress if over 5 seconds have passed. If False, never
+                     shows progress bar.
     :return: The total number of states fused.
     """
     from dace.transformation.interstate import StateFusion  # Avoid import loop
+    if progress is True or progress is None:
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            tqdm = None
+
     counter = 0
-    if progress:
-        from tqdm import tqdm
+    if progress is True or progress is None:
         fusible_states = 0
         for sd in sdfg.all_sdfgs_recursive():
             fusible_states += sd.number_of_edges()
-        pbar = tqdm(total=fusible_states)
+
+    if progress is True:
+        pbar = tqdm(total=fusible_states, desc='Fusing states')
+
+    start = time.time()
 
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
@@ -1039,6 +1051,13 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = False) ->
             applied = 0
             skip_nodes = set()
             for u, v in edges:
+                if (progress is None and tqdm is not None
+                        and (time.time() - start) > 5):
+                    progress = True
+                    pbar = tqdm(total=fusible_states,
+                                desc='Fusing states',
+                                initial=counter)
+
                 if u in skip_nodes or v in skip_nodes:
                     continue
                 candidate = {
@@ -1058,14 +1077,15 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = False) ->
                 break
     if progress:
         pbar.close()
-    if config.Config.get_bool('debugprint'):
+    if config.Config.get_bool('debugprint') and counter > 0:
         print(f'Applied {counter} State Fusions')
     return counter
 
 
 def inline_sdfgs(sdfg: SDFG,
                  permissive: bool = False,
-                 progress: bool = False) -> int:
+                 progress: bool = None,
+                 multistate: bool = True) -> int:
     """
     Inlines all possible nested SDFGs (or sub-SDFGs) using an optimized
     routine that uses the structure of the SDFG hierarchy.
@@ -1073,24 +1093,63 @@ def inline_sdfgs(sdfg: SDFG,
     :param permissive: If True, operates in permissive mode, which ignores some
                        checks.
     :param progress: If True, prints out a progress bar of inlining (may be
-                     inaccurate, requires ``tqdm``)
+                     inaccurate, requires ``tqdm``). If None, prints out
+                     progress if over 5 seconds have passed. If False, never
+                     shows progress bar.
+    :param multistate: Include 
     :return: The total number of SDFGs inlined.
     """
-    from dace.transformation.interstate import InlineSDFG  # Avoid import loop
+    # Avoid import loops
+    from dace.transformation.interstate import InlineSDFG, InlineMultistateSDFG
+    if progress is True or progress is None:
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            tqdm = None
+
     counter = 0
     sdfgs = list(sdfg.all_sdfgs_recursive())
-    if progress:
-        from tqdm import tqdm
-        pbar = tqdm(total=len(sdfgs))
+    if progress is True:
+        pbar = tqdm(total=len(sdfgs), desc='Inlining SDFGs')
+
+    start = time.time()
 
     for sd in reversed(sdfgs):
         id = sd.sdfg_id
-        for state_id, state in enumerate(sd.nodes()):
+        for state in sd.nodes():
             for node in state.nodes():
+                if (progress is None and tqdm is not None
+                        and (time.time() - start) > 5):
+                    progress = True
+                    pbar = tqdm(total=len(sdfgs),
+                                desc='Inlining SDFG',
+                                initial=counter)
+
                 if not isinstance(node, NestedSDFG):
                     continue
                 # We have to reevaluate every time due to changing IDs
                 node_id = state.node_id(node)
+                state_id = sd.node_id(state)
+                if multistate:
+                    candidate = {
+                        InlineMultistateSDFG.nested_sdfg: node_id,
+                    }
+                    inliner = InlineMultistateSDFG(id,
+                                                   state_id,
+                                                   candidate,
+                                                   0,
+                                                   override=True)
+                    if inliner.can_be_applied(state,
+                                              candidate,
+                                              0,
+                                              sd,
+                                              strict=strict):
+                        inliner.apply(sd)
+                        counter += 1
+                        if progress:
+                            pbar.update(1)
+                        continue
+
                 candidate = {
                     InlineSDFG._nested_sdfg: node_id,
                 }
@@ -1106,7 +1165,7 @@ def inline_sdfgs(sdfg: SDFG,
                         pbar.update(1)
     if progress:
         pbar.close()
-    if config.Config.get_bool('debugprint'):
+    if config.Config.get_bool('debugprint') and counter > 0:
         print(f'Inlined {counter} SDFGs')
     return counter
 
