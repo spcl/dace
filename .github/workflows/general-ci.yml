@@ -31,8 +31,7 @@ jobs:
         sudo apt-get install -y mpich # MPI dependencies
         sudo apt-get install -y verilator # RTL simulation dependencies
         python -m pip install --upgrade pip
-        SETUPTOOLS_USE_DISTUTILS=stdlib pip install --no-cache-dir mpi4py
-        pip install flake8 pytest-xdist coverage codecov pytest-mpi
+        pip install flake8 pytest-xdist coverage codecov mpi4py pytest-mpi
         pip install -e ".[testing]"
 
     - name: Test dependencies
