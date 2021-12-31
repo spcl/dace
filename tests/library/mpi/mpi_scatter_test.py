@@ -116,11 +116,176 @@ def test_dace_scatter_gather():
     else:
         assert (True)
 
+B = dace.symbol('B')
+
+# @dace.program
+# def dace_block_scatter(A: dace.int32[N, N]):
+#     lA = np.empty_like(A, shape=[B, B])
+#     dace.comm.BlockScatter(A, lA, [B, B], [2, 2, 2], [0, 2], [1, 0, 1])
+#     return lA
+
+@dace.program
+def dace_block_scatter(A: dace.int32[N, N, N]):
+    # lA = np.empty_like(A, shape=[B, 1, 2*B])
+    # dace.comm.BlockScatter(A, lA, [B, 1, 2*B], [2, 4, 1, 2], [0, 1, 2], [1, 1, 1, 0])
+    lA = np.empty_like(A, shape=[1, 2*B, 2])
+    dace.comm.BlockScatter(A, lA, [1, 4, 2], [4, 1, 2, 2], [0, 1, 3], [1, 1, 0, 1])
+    dace.comm.BlockGather(lA, A, [1, 4, 2], [4, 1, 2, 2], [0, 1, 3], [1, 1, 0, 1])
+    return lA
+
+
+@pytest.mark.mpi
+def test_dace_block_scatter():
+    from mpi4py import MPI as MPI4PY
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    commsize = comm.Get_size()
+    mpi_sdfg = None
+    if commsize != 16:
+        raise ValueError(
+            "This test is supposed to be run with eight processes!")
+    for r in range(commsize):
+        if r == rank:
+            mpi_sdfg = dace_block_scatter.compile()
+        comm.Barrier()
+
+    if rank == 0:
+        A = np.arange(64, dtype=np.int32).reshape(4, 4, 4).copy()
+    else:
+        A = np.zeros((4, 4, 4), dtype=np.int32)
+
+    lA = mpi_sdfg(A=A, N=4, B=2, P=commsize)
+
+    for r in range(commsize):
+        if r == rank:
+            print(f"Rank {r}:")
+            print(lA, flush=True)
+        comm.Barrier()
+    if rank == 0:
+        print(f"Rank 0:")
+        print(A, flush=True)
+
+
+def debug(arr):
+    from mpi4py import MPI as MPI4PY
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    for i in range(size):
+        if i == rank:
+            print(f"Rank {rank}:")
+            print(arr, flush=True)
+        comm.barrier()
+
+
+BS = dace.symbol('BS')
+@dace.program
+def soap_mm(A: dace.float32[N, N], B: dace.float32[N, N]):
+    C = np.ndarray((N, N), dtype=np.float32)
+    lA = np.empty_like(A, shape=[BS, BS])
+    lB = np.empty_like(B, shape=[BS, BS])
+    dace.comm.BlockScatter(A, lA, [BS, BS], [2, 2, 2], [0, 1], [1, 1, 0])
+    debug(lA)
+    dace.comm.BlockScatter(B, lB, [BS, BS], [2, 2, 2], [2, 1], [0, 1, 1])
+    debug(lB)
+    lC = lA @ lB
+    dace.comm.BlockGather(lC, C, [BS, BS], [2, 2, 2], [0, 2], [1, 0, 1])
+    return C
+
+
+@pytest.mark.mpi
+def test_soap_mm():
+    from mpi4py import MPI as MPI4PY
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    commsize = comm.Get_size()
+    mpi_sdfg = None
+    if commsize != 8:
+        raise ValueError(
+            "This test is supposed to be run with eight processes!")
+    for r in range(commsize):
+        if r == rank:
+            mpi_sdfg = soap_mm.compile()
+        comm.Barrier()
+
+    if rank == 0:
+        A = np.arange(64, dtype=np.float32).reshape(8, 8).copy()
+        B = np.arange(64, dtype=np.float32).reshape(8, 8).copy()
+    else:
+        A = np.zeros((1, ), dtype=np.float32)
+        B = np.zeros((1, ), dtype=np.float32)
+
+    C = mpi_sdfg(A=A, B=B, N=8, BS=4, P=commsize, debug=debug, debug_0=debug)
+
+    # for r in range(commsize):
+    #     if r == rank:
+    #         print(f"Rank {r}:")
+    #         print(lA, flush=True)
+    #     comm.Barrier()
+    if rank == 0:
+        print(f"Rank 0:")
+        print(C, flush=True)
+        print("Ref:")
+        print(A @ B, flush=True)
+
+
+P0, P1, P2 = (dace.symbol(s) for s in ('P0', 'P1', 'P2'))
+B0, B1 = (dace.symbol(s) for s in ('B0', 'B1'))
+
+def debug2(arr, subarr):
+    from mpi4py import MPI as MPI4PY
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    if rank == 0:
+        arr[:] = 0
+    for i in range(size):
+        if i == rank:
+            print(f"Rank {rank}:")
+            print(subarr, flush=True)
+        comm.barrier()
+    comm.barrier()
+
+@dace.program
+def pgrid(A: dace.float32[N, N]):
+    mygrid = dace.comm.Cart_create([P0, P1, P2])
+    scatter_grid = dace.comm.Cart_sub(mygrid, [True, True, False], 0)
+    bcast_grid = dace.comm.Cart_sub(mygrid, [False, False, True])
+    lA = np.empty_like(A, shape=[B0, B1])
+    dace.comm.BlockScatter(A, lA, scatter_grid, bcast_grid, [0, 1])
+    debug2(A, lA)
+    dace.comm.BlockGather(lA, A, scatter_grid, bcast_grid, [0, 1])
+
+
+def test_cart():
+    from mpi4py import MPI as MPI4PY
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    commsize = comm.Get_size()
+    mpi_sdfg = None
+    # if commsize != 8:
+    #     raise ValueError(
+    #         "This test is supposed to be run with eight processes!")
+    for r in range(commsize):
+        if r == rank:
+            mpi_sdfg = pgrid.compile()
+        comm.Barrier()
+    if rank == 0:
+        A = np.arange(64, dtype=np.float32).reshape(8, 8).copy()
+    else:
+        A = np.zeros((1, ), dtype=np.float32)
+    mpi_sdfg(P0=2, P1=4, P2=2, N=8, B0=4, B1=2, debug2=debug2, A=A)
+    if rank == 0:
+        print(f"Full array = {A}")
+
 
 ###############################################################################
 
 if __name__ == "__main__":
-    test_mpi("MPI", dace.float32)
-    test_mpi("MPI", dace.float64)
-    test_dace_scatter_gather()
+    # test_mpi("MPI", dace.float32)
+    # test_mpi("MPI", dace.float64)
+    # test_dace_scatter_gather()
+    # test_dace_block_scatter()
+    # test_soap_mm()
+    test_cart()
 ###############################################################################

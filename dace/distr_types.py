@@ -122,7 +122,7 @@ class ProcessGrid(object):
                 tmp += f"""
                     int ranks1[1] = {{{self.exact_grid}}};
                     int ranks2[1];
-                    MPI_Group_translate_ranks(__state->{self.parent_grid}_comm, 1, ranks1, __state->{self.name}_comm, ranks2);
+                    MPI_Group_translate_ranks(__state->{self.parent_grid}_group, 1, ranks1, __state->{self.name}_group, ranks2);
                     __state->{self.name}_valid = (ranks2[0] != MPI_PROC_NULL && ranks2[0] != MPI_UNDEFINED);
                 }}
                 """
@@ -267,7 +267,9 @@ class SubArray(object):
     
     def exit_code(self):
         return f"""
-            delete[] __state->{self.name}_counts;
-            delete[] __state->{self.name}_displs;
-            MPI_Type_free(&__state->{self.name});
+            if (__state->{self.pgrid}_valid) {{
+                delete[] __state->{self.name}_counts;
+                delete[] __state->{self.name}_displs;
+                MPI_Type_free(&__state->{self.name});
+            }}
         """

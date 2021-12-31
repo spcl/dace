@@ -523,6 +523,91 @@ def _wait(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, request: str):
     return None
 
 
+# @oprepo.replaces('dace.comm.BlockScatter')
+# def _block_scatter(pv: 'ProgramVisitor',
+#                    sdfg: SDFG,
+#                    state: SDFGState,
+#                    in_buffer: str,
+#                    out_buffer: str,
+#                    block_sizes: Union[str, Sequence[Union[sp.Expr, Integral]]],
+#                    process_grid: Union[str, Sequence[Union[sp.Expr, Integral]]],
+#                    cd_equiv: Union[str, Sequence[Union[sp.Expr, Integral]]],
+#                    color: Union[str, Sequence[Integral]]):
+
+#     from dace.libraries.mpi import BlockScatter
+
+#     libnode = BlockScatter('_BlockScatter_')
+
+#     inbuf_range = None
+#     if isinstance(in_buffer, tuple):
+#         inbuf_name, inbuf_range = in_buffer
+#     else:
+#         inbuf_name = in_buffer
+#     in_desc = sdfg.arrays[inbuf_name]
+#     inbuf_node = state.add_read(inbuf_name)
+
+#     def _set_int_data(data):
+#         range = None
+#         if isinstance(data, (list, tuple)):
+#             if isinstance(data[0], str):
+#                 name, range = data
+#                 desc = sdfg.arrays[name]
+#                 node = state.add_read(name)
+#             else:
+#                 name, desc = sdfg.add_temp_transient(
+#                     (len(data), ), dtype=dace.int32)
+#                 node = state.add_access(name)
+#                 tasklet = state.add_tasklet(
+#                     '_set_int_data_', {}, {'__out'}, ";".join([
+#                         "__out[{}] = {}".format(i, sz)
+#                         for i, sz in enumerate(data)
+#                     ]))
+#                 state.add_edge(tasklet, '__out', node, None,
+#                             Memlet.from_array(name, desc))
+#         else:
+#             name = data
+#             desc = sdfg.arrays[name]
+#             node = state.add_read(name)
+
+#         if range:
+#             mem = Memlet.simple(name, range)
+#         else:
+#             mem = Memlet.from_array(name, desc)
+
+#         return range, name, desc, node, mem
+
+#     bsizes_range, bsizes_name, bsizes_desc, bsizes_node, bsizes_mem = _set_int_data(block_sizes)
+#     pgrid_range, pgrid_name, pgrid_desc, pgrid_node, pgrid_mem = _set_int_data(process_grid)
+#     equiv_range, equiv_name, equiv_desc, equiv_node, equiv_mem = _set_int_data(cd_equiv)
+#     color_range, color_name, color_desc, color_node, color_mem = _set_int_data(color)
+
+#     outbuf_range = None
+#     if isinstance(out_buffer, tuple):
+#         outbuf_name, outbuf_range = out_buffer
+#     else:
+#         outbuf_name = out_buffer
+#     out_desc = sdfg.arrays[outbuf_name]
+#     outbuf_node = state.add_write(outbuf_name)
+
+#     if inbuf_range:
+#         inbuf_mem = Memlet.simple(inbuf_name, inbuf_range)
+#     else:
+#         inbuf_mem = Memlet.from_array(inbuf_name, in_desc)
+#     if outbuf_range:
+#         outbuf_mem = Memlet.simple(outbuf_name, outbuf_range)
+#     else:
+#         outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
+
+#     state.add_edge(inbuf_node, None, libnode, '_inp_buffer', inbuf_mem)
+#     state.add_edge(bsizes_node, None, libnode, '_block_sizes', bsizes_mem)
+#     state.add_edge(pgrid_node, None, libnode, '_process_grid', pgrid_mem)
+#     state.add_edge(equiv_node, None, libnode, '_cd_equiv', equiv_mem)
+#     state.add_edge(color_node, None, libnode, '_color_dims', color_mem)
+#     state.add_edge(libnode, '_out_buffer', outbuf_node, None, outbuf_mem)
+
+#     return None
+
+
 @oprepo.replaces('dace.comm.Cart_create')
 def _cart_create(pv: 'ProgramVisitor',
                  sdfg: SDFG,
@@ -535,6 +620,7 @@ def _cart_create(pv: 'ProgramVisitor',
         [
             f'MPI_Comm {pgrid_name}_comm;',
             f'MPI_Group {pgrid_name}_group;',
+            f'int {pgrid_name}_dims[{len(dims)}];',
             f'int {pgrid_name}_rank;',
             f'int {pgrid_name}_size;',
             f'bool {pgrid_name}_valid;',
@@ -550,21 +636,26 @@ def _cart_create(pv: 'ProgramVisitor',
 
 @oprepo.replaces('dace.comm.Cart_sub')
 def _cart_sub(pv: 'ProgramVisitor',
-                 sdfg: SDFG,
-                 state: SDFGState,
-                 parent_grid: str,
-                 correspondence: Sequence[Integral],
-                 exact_grid: Union[sp.Expr, Integral] = None):
+              sdfg: SDFG,
+              state: SDFGState,
+              parent_grid: str,
+              color: Sequence[bool],
+              exact_grid: Union[sp.Expr, Integral] = None):
     pgrid_name = sdfg.add_pgrid(
         parent_grid=parent_grid,
-        correspondence=correspondence,
+        color=color,
         exact_grid=exact_grid)
+    pgrid_ndims = 0
+    for _, c in enumerate(color):
+        if c:
+            pgrid_ndims += 1
     from dace.libraries.mpi import Dummy
     tasklet = Dummy(
         pgrid_name,
         [
             f'MPI_Comm {pgrid_name}_comm;',
             f'MPI_Group {pgrid_name}_group;',
+            f'int {pgrid_name}_dims[{pgrid_ndims}];',
             f'int {pgrid_name}_rank;',
             f'int {pgrid_name}_size;',
             f'bool {pgrid_name}_valid;',
@@ -578,20 +669,37 @@ def _cart_sub(pv: 'ProgramVisitor',
     return pgrid_name
 
 
-@oprepo.replaces('dace.comm.BlockGather')
+@oprepo.replaces('dace.comm.BlockScatter')
 def _block_scatter(pv: 'ProgramVisitor',
                    sdfg: SDFG,
                    state: SDFGState,
                    in_buffer: str,
                    out_buffer: str,
-                   block_sizes: Union[str, Sequence[Union[sp.Expr, Integral]]],
-                   process_grid: Union[str, Sequence[Union[sp.Expr, Integral]]],
-                   cd_equiv: Union[str, Sequence[Union[sp.Expr, Integral]]],
-                   color: Union[str, Sequence[Integral]]):
+                   scatter_grid: str,
+                   bcast_grid: str,
+                   correspondence: Sequence[Integral]):
+    in_desc = sdfg.arrays[in_buffer]
+    out_desc = sdfg.arrays[out_buffer]
+    subarray_name = sdfg.add_subarray(
+        in_desc.dtype, in_desc.shape, out_desc.shape,
+        scatter_grid, correspondence)
 
-    from dace.libraries.mpi import BlockGather
-
-    libnode = BlockGather('_BlockGather_')
+    from dace.libraries.mpi import Dummy, BlockScatter
+    tasklet = Dummy(
+        subarray_name,
+        [
+            f'MPI_Datatype {subarray_name};',
+            f'int* {subarray_name}_counts;',
+            f'int* {subarray_name}_displs;'
+        ]
+    )
+    state.add_node(tasklet)
+    _, scal = sdfg.add_scalar(subarray_name, dace.int32, transient=True)
+    wnode = state.add_write(subarray_name)
+    state.add_edge(tasklet, '__out', wnode, None,
+                   Memlet.from_array(subarray_name, scal))
+    
+    libnode = BlockScatter('_BlockScatter_', subarray_name, scatter_grid, bcast_grid)
 
     inbuf_range = None
     if isinstance(in_buffer, tuple):
@@ -600,41 +708,6 @@ def _block_scatter(pv: 'ProgramVisitor',
         inbuf_name = in_buffer
     in_desc = sdfg.arrays[inbuf_name]
     inbuf_node = state.add_read(inbuf_name)
-
-    def _set_int_data(data):
-        range = None
-        if isinstance(data, (list, tuple)):
-            if isinstance(data[0], str):
-                name, range = data
-                desc = sdfg.arrays[name]
-                node = state.add_read(name)
-            else:
-                name, desc = sdfg.add_temp_transient(
-                    (len(data), ), dtype=dace.int32)
-                node = state.add_access(name)
-                tasklet = state.add_tasklet(
-                    '_set_int_data_', {}, {'__out'}, ";".join([
-                        "__out[{}] = {}".format(i, sz)
-                        for i, sz in enumerate(data)
-                    ]))
-                state.add_edge(tasklet, '__out', node, None,
-                            Memlet.from_array(name, desc))
-        else:
-            name = data
-            desc = sdfg.arrays[name]
-            node = state.add_read(name)
-
-        if range:
-            mem = Memlet.simple(name, range)
-        else:
-            mem = Memlet.from_array(name, desc)
-
-        return range, name, desc, node, mem
-
-    bsizes_range, bsizes_name, bsizes_desc, bsizes_node, bsizes_mem = _set_int_data(block_sizes)
-    pgrid_range, pgrid_name, pgrid_desc, pgrid_node, pgrid_mem = _set_int_data(process_grid)
-    equiv_range, equiv_name, equiv_desc, equiv_node, equiv_mem = _set_int_data(cd_equiv)
-    color_range, color_name, color_desc, color_node, color_mem = _set_int_data(color)
 
     outbuf_range = None
     if isinstance(out_buffer, tuple):
@@ -654,13 +727,157 @@ def _block_scatter(pv: 'ProgramVisitor',
         outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
 
     state.add_edge(inbuf_node, None, libnode, '_inp_buffer', inbuf_mem)
-    state.add_edge(bsizes_node, None, libnode, '_block_sizes', bsizes_mem)
-    state.add_edge(pgrid_node, None, libnode, '_process_grid', pgrid_mem)
-    state.add_edge(equiv_node, None, libnode, '_cd_equiv', equiv_mem)
-    state.add_edge(color_node, None, libnode, '_color_dims', color_mem)
     state.add_edge(libnode, '_out_buffer', outbuf_node, None, outbuf_mem)
 
     return None
+
+
+@oprepo.replaces('dace.comm.BlockGather')
+def _block_gather(pv: 'ProgramVisitor',
+                   sdfg: SDFG,
+                   state: SDFGState,
+                   in_buffer: str,
+                   out_buffer: str,
+                   gather_grid: str,
+                   reduce_grid: str,
+                   correspondence: Sequence[Integral]):
+    in_desc = sdfg.arrays[in_buffer]
+    out_desc = sdfg.arrays[out_buffer]
+    subarray_name = sdfg.add_subarray(
+        out_desc.dtype, out_desc.shape, in_desc.shape,
+        gather_grid, correspondence)
+
+    from dace.libraries.mpi import Dummy, BlockGather
+    tasklet = Dummy(
+        subarray_name,
+        [
+            f'MPI_Datatype {subarray_name};',
+            f'int* {subarray_name}_counts;',
+            f'int* {subarray_name}_displs;'
+        ]
+    )
+    state.add_node(tasklet)
+    _, scal = sdfg.add_scalar(subarray_name, dace.int32, transient=True)
+    wnode = state.add_write(subarray_name)
+    state.add_edge(tasklet, '__out', wnode, None,
+                   Memlet.from_array(subarray_name, scal))
+    
+    libnode = BlockGather('_BlockGather_', subarray_name, gather_grid, reduce_grid)
+
+    inbuf_range = None
+    if isinstance(in_buffer, tuple):
+        inbuf_name, inbuf_range = in_buffer
+    else:
+        inbuf_name = in_buffer
+    in_desc = sdfg.arrays[inbuf_name]
+    inbuf_node = state.add_read(inbuf_name)
+
+    outbuf_range = None
+    if isinstance(out_buffer, tuple):
+        outbuf_name, outbuf_range = out_buffer
+    else:
+        outbuf_name = out_buffer
+    out_desc = sdfg.arrays[outbuf_name]
+    outbuf_node = state.add_write(outbuf_name)
+
+    if inbuf_range:
+        inbuf_mem = Memlet.simple(inbuf_name, inbuf_range)
+    else:
+        inbuf_mem = Memlet.from_array(inbuf_name, in_desc)
+    if outbuf_range:
+        outbuf_mem = Memlet.simple(outbuf_name, outbuf_range)
+    else:
+        outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
+
+    state.add_edge(inbuf_node, None, libnode, '_inp_buffer', inbuf_mem)
+    state.add_edge(libnode, '_out_buffer', outbuf_node, None, outbuf_mem)
+
+    return None
+
+
+# @oprepo.replaces('dace.comm.BlockGather')
+# def _block_scatter(pv: 'ProgramVisitor',
+#                    sdfg: SDFG,
+#                    state: SDFGState,
+#                    in_buffer: str,
+#                    out_buffer: str,
+#                    block_sizes: Union[str, Sequence[Union[sp.Expr, Integral]]],
+#                    process_grid: Union[str, Sequence[Union[sp.Expr, Integral]]],
+#                    cd_equiv: Union[str, Sequence[Union[sp.Expr, Integral]]],
+#                    color: Union[str, Sequence[Integral]]):
+
+#     from dace.libraries.mpi import BlockGather
+
+#     libnode = BlockGather('_BlockGather_')
+
+#     inbuf_range = None
+#     if isinstance(in_buffer, tuple):
+#         inbuf_name, inbuf_range = in_buffer
+#     else:
+#         inbuf_name = in_buffer
+#     in_desc = sdfg.arrays[inbuf_name]
+#     inbuf_node = state.add_read(inbuf_name)
+
+#     def _set_int_data(data):
+#         range = None
+#         if isinstance(data, (list, tuple)):
+#             if isinstance(data[0], str):
+#                 name, range = data
+#                 desc = sdfg.arrays[name]
+#                 node = state.add_read(name)
+#             else:
+#                 name, desc = sdfg.add_temp_transient(
+#                     (len(data), ), dtype=dace.int32)
+#                 node = state.add_access(name)
+#                 tasklet = state.add_tasklet(
+#                     '_set_int_data_', {}, {'__out'}, ";".join([
+#                         "__out[{}] = {}".format(i, sz)
+#                         for i, sz in enumerate(data)
+#                     ]))
+#                 state.add_edge(tasklet, '__out', node, None,
+#                             Memlet.from_array(name, desc))
+#         else:
+#             name = data
+#             desc = sdfg.arrays[name]
+#             node = state.add_read(name)
+
+#         if range:
+#             mem = Memlet.simple(name, range)
+#         else:
+#             mem = Memlet.from_array(name, desc)
+
+#         return range, name, desc, node, mem
+
+#     bsizes_range, bsizes_name, bsizes_desc, bsizes_node, bsizes_mem = _set_int_data(block_sizes)
+#     pgrid_range, pgrid_name, pgrid_desc, pgrid_node, pgrid_mem = _set_int_data(process_grid)
+#     equiv_range, equiv_name, equiv_desc, equiv_node, equiv_mem = _set_int_data(cd_equiv)
+#     color_range, color_name, color_desc, color_node, color_mem = _set_int_data(color)
+
+#     outbuf_range = None
+#     if isinstance(out_buffer, tuple):
+#         outbuf_name, outbuf_range = out_buffer
+#     else:
+#         outbuf_name = out_buffer
+#     out_desc = sdfg.arrays[outbuf_name]
+#     outbuf_node = state.add_write(outbuf_name)
+
+#     if inbuf_range:
+#         inbuf_mem = Memlet.simple(inbuf_name, inbuf_range)
+#     else:
+#         inbuf_mem = Memlet.from_array(inbuf_name, in_desc)
+#     if outbuf_range:
+#         outbuf_mem = Memlet.simple(outbuf_name, outbuf_range)
+#     else:
+#         outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
+
+#     state.add_edge(inbuf_node, None, libnode, '_inp_buffer', inbuf_mem)
+#     state.add_edge(bsizes_node, None, libnode, '_block_sizes', bsizes_mem)
+#     state.add_edge(pgrid_node, None, libnode, '_process_grid', pgrid_mem)
+#     state.add_edge(equiv_node, None, libnode, '_cd_equiv', equiv_mem)
+#     state.add_edge(color_node, None, libnode, '_color_dims', color_mem)
+#     state.add_edge(libnode, '_out_buffer', outbuf_node, None, outbuf_mem)
+
+#     return None
 
 
 @oprepo.replaces('dace.comm.BCScatter')
