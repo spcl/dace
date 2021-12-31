@@ -2037,8 +2037,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # First step is to apply multi-state inline, before any state fusion can
         # occur
-        sdutil.inline_sdfgs(self, multistate=True, strict=True)
-        sdutil.fuse_states(self, strict=True)
+        sdutil.inline_sdfgs(self, multistate=True)
+        sdutil.fuse_states(self)
 
         self.apply_transformations_repeated(
             [RedundantReadSlice, RedundantWriteSlice],
