@@ -1339,10 +1339,10 @@ class NestSDFG(transformation.Transformation):
                                 outer_sdfg.arrays[arrname] = dc(arrobj)
                                 nested_sdfg.arrays[arrname_nested] = arrobj
                                 transients[arrname] = arrname_nested
-                                if state.out_degree(node) > 0:
-                                    inputs[arrname] = arrname_nested
-                                if state.in_degree(node) > 0:
-                                    outputs[arrname] = arrname_nested
+                            if state.out_degree(node) > 0:
+                                inputs[arrname] = arrname_nested
+                            if state.in_degree(node) > 0:
+                                outputs[arrname] = arrname_nested
 
         # Catch data containers that we didn't find on any access nodes, and add
         # them as inputs. This can happen when a scalar input is used on an

@@ -866,7 +866,7 @@ class RedundantSecondArray(pm.Transformation):
         def gnode(nname):
             return graph.nodes()[self.subgraph[nname]]
 
-        graph = sdfg.nodes()[self.state_id]
+        graph: SDFGState = sdfg.nodes()[self.state_id]
         in_array = gnode(RedundantSecondArray._in_array)
         out_array = gnode(RedundantSecondArray._out_array)
         in_desc = sdfg.arrays[in_array.data]
@@ -985,6 +985,10 @@ class RedundantSecondArray(pm.Transformation):
                 sdfg.remove_data(out_array.data)
             except ValueError:  # Already in use (e.g., with Views)
                 pass
+        
+        # If first node is now isolated, remove it
+        if len(graph.all_edges(in_array)) == 0:
+            graph.remove_node(in_array)
 
 
 @registry.autoregister_params(singlestate=True, strict=True)

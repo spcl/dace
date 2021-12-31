@@ -21,7 +21,7 @@ from dace.properties import make_properties, Property
 from dace import data
 
 
-@registry.autoregister_params(singlestate=True, strict=False)
+@registry.autoregister_params(singlestate=True, strict=True)
 @make_properties
 class InlineMultistateSDFG(transformation.Transformation):
     """
@@ -354,6 +354,8 @@ class InlineMultistateSDFG(transformation.Transformation):
         #######################################################
         # Add nested SDFG states into top-level SDFG
 
+        outer_start_state = sdfg.start_state
+
         sdfg.add_nodes_from(nsdfg.nodes())
         for ise in nsdfg.edges():
             sdfg.add_edge(ise.src, ise.dst, ise.data)
@@ -372,7 +374,7 @@ class InlineMultistateSDFG(transformation.Transformation):
                 sdfg.add_edge(sink, e.dst, e.data)
 
         # Modify start state as necessary
-        if sdfg.start_state is outer_state:
+        if outer_start_state is outer_state:
             sdfg.start_state = sdfg.node_id(source)
 
         # TODO: Modify memlets by offsetting
@@ -428,6 +430,8 @@ class InlineMultistateSDFG(transformation.Transformation):
         #######################################################
         # Remove nested SDFG and state
         sdfg.remove_node(outer_state)
+
+        return nsdfg.nodes()
 
     # def _modify_access_to_access(
     #     self,

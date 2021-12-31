@@ -701,10 +701,10 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         del self._edges[t]
 
     def in_degree(self, node):
-        return len(self._nodes[node][0])
+        return self._nx.in_degree(node)
 
     def out_degree(self, node):
-        return len(self._nodes[node][1])
+        return self._nx.out_degree(node)
 
     def number_of_nodes(self):
         return len(self._nodes)
