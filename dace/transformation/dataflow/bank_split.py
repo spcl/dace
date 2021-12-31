@@ -81,7 +81,7 @@ class BankSplit(transformation.Transformation):
     @staticmethod
     def can_be_applied(graph: Union[SDFG, SDFGState],
                        candidate: Dict['PatternNode', int], expr_index: int,
-                       sdfg: SDFG, strict: bool) -> bool:
+                       sdfg: SDFG, permissive: bool) -> bool:
         src = graph.nodes()[candidate[BankSplit._src_node]]
         dst = graph.nodes()[candidate[BankSplit._dst_node]]
         src_array = sdfg.arrays[src.data]

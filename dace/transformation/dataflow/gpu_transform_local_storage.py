@@ -72,22 +72,22 @@ class GPUTransformLocalStorage(transformation.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         if expr_index == 0:
             map_entry = graph.nodes()[candidate[
                 GPUTransformLocalStorage._map_entry]]
             candidate_map = map_entry.map
 
-            # Disallow GPUTransform on nested maps in strict mode
-            if strict:
+            # Disallow GPUTransform on nested maps in permissive mode
+            if not permissive:
                 if graph.entry_node(map_entry) is not None:
                     return False
 
             # Map schedules that are disallowed to transform to GPUs
             if (candidate_map.schedule == dtypes.ScheduleType.MPI
                     or candidate_map.schedule == dtypes.ScheduleType.GPU_Device
-                    or candidate_map.schedule ==
-                    dtypes.ScheduleType.GPU_ThreadBlock or
+                    or candidate_map.schedule
+                    == dtypes.ScheduleType.GPU_ThreadBlock or
                     candidate_map.schedule == dtypes.ScheduleType.Sequential):
                 return False
 
@@ -100,8 +100,8 @@ class GPUTransformLocalStorage(transformation.Transformation):
             current_node = map_entry
             while current_node is not None:
                 if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
-                        or current_node.map.schedule ==
-                        dtypes.ScheduleType.GPU_ThreadBlock):
+                        or current_node.map.schedule
+                        == dtypes.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
@@ -132,8 +132,8 @@ class GPUTransformLocalStorage(transformation.Transformation):
             current_node = sdict[reduce]
             while current_node is not None:
                 if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
-                        or current_node.map.schedule ==
-                        dtypes.ScheduleType.GPU_ThreadBlock):
+                        or current_node.map.schedule
+                        == dtypes.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 

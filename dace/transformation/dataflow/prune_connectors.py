@@ -9,7 +9,7 @@ from dace.sdfg import nodes, utils
 from dace.sdfg.analysis import cfg
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
 @properties.make_properties
 class PruneConnectors(pm.Transformation):
     """ Removes unused connectors from nested SDFGs, as well as their memlets
@@ -34,7 +34,7 @@ class PruneConnectors(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: SDFG,
-                       strict: bool = False) -> bool:
+                       permissive: bool = False) -> bool:
 
         nsdfg = graph.node(candidate[PruneConnectors.nsdfg])
 
@@ -132,7 +132,7 @@ class PruneConnectors(pm.Transformation):
                         break
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
 class PruneSymbols(pm.Transformation):
     """ 
     Removes unused symbol mappings from nested SDFGs, as well as internal
@@ -199,7 +199,7 @@ class PruneSymbols(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: SDFG,
-                       strict: bool = False) -> bool:
+                       permissive: bool = False) -> bool:
 
         nsdfg: nodes.NestedSDFG = graph.node(candidate[PruneSymbols.nsdfg])
 

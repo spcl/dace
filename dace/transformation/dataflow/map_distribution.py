@@ -32,7 +32,7 @@ class ElementWiseArrayOperation(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
 
         map_entry = graph.node(candidate[ElementWiseArrayOperation._map_entry])
         map_exit = graph.exit_node(map_entry)
@@ -269,7 +269,7 @@ class ElementWiseArrayOperation2D(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
 
         map_entry = graph.node(candidate[ElementWiseArrayOperation2D._map_entry])
         map_exit = graph.exit_node(map_entry)
@@ -525,7 +525,7 @@ class ElementWiseArrayOperation2D(pm.Transformation):
         map_entry.map.range = subsets.Range(ranges)
 
 
-@registry.autoregister_params(singlestate=True, strict=False)
+@registry.autoregister_params(singlestate=True)
 class RedundantComm2D(pm.Transformation):
     """ Implements the redundant communication removal transformation,
         applied when data are scattered and immediately gathered,
@@ -548,7 +548,7 @@ class RedundantComm2D(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         gather = graph.nodes()[candidate[RedundantComm2D.gather]]
         if '_block_sizes' not in gather.in_connectors:
             return False
@@ -624,7 +624,7 @@ class StencilOperation(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
 
         map_entry = graph.node(candidate[StencilOperation.map_entry])
         map_exit = graph.exit_node(map_entry)
@@ -738,7 +738,7 @@ class OuterProductOperation(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
 
         map_entry = graph.node(candidate[OuterProductOperation.map_entry])
         map_exit = graph.exit_node(map_entry)
@@ -826,7 +826,7 @@ class Reduction1Operation(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
 
         map_entry = graph.node(candidate[Reduction1Operation.map_entry])
         map_exit = graph.exit_node(map_entry)
@@ -879,7 +879,7 @@ class ReductionNOperation(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
 
         map_entry = graph.node(candidate[ReductionNOperation.map_entry])
         map_exit = graph.exit_node(map_entry)

@@ -220,7 +220,7 @@ def test_symbol_dependent_array_in_map():
         return out
 
     # Compile manually to avoid dataflow coarsening
-    sdfg = symbol_dependent_array_in_map.to_sdfg(strict=False)
+    sdfg = symbol_dependent_array_in_map.to_sdfg(coarsen=False)
     sdfg.apply_transformations_repeated(interstate.StateFusion)
     sdfg.apply_transformations_repeated(interstate.InlineSDFG)
     # NOTE: Temporary fix for issue with symbols/free_symbols

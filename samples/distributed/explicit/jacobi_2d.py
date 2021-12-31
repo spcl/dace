@@ -167,7 +167,7 @@ if __name__ == "__main__":
     A, B = setup_func(rank)
 
     mpi_sdfg = None
-    mpi_sdfg = jacobi_2d_dist.to_sdfg(strict=False)
+    mpi_sdfg = jacobi_2d_dist.to_sdfg(coarsen=False)
     if rank == 0:
         mpi_sdfg.coarsen_dataflow()
         mpi_sdfg.apply_transformations_repeated([MapFusion])

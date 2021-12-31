@@ -53,7 +53,7 @@ if __name__ == "__main__":
     size = comm.Get_size()
 
     if rank == 0:
-        mpi_sdfg = gesummv.to_sdfg(strict=False)
+        mpi_sdfg = gesummv.to_sdfg(coarsen=False)
         mpi_sdfg.coarsen_dataflow()
         mpi_sdfg.apply_transformations_repeated(ElementWiseArrayOperation2D)
         mpi_sdfg.apply_transformations_repeated(ElementWiseArrayOperation)

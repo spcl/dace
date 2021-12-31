@@ -166,7 +166,7 @@ def compose_and_push_back(first, second, dims=None, popped=None):
 ##############################################################################
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
 class RedundantArray(pm.Transformation):
     """ Implements the redundant array removal transformation, applied
         when a transient array is copied to and from (to another array),
@@ -183,7 +183,7 @@ class RedundantArray(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         in_array = graph.nodes()[candidate[RedundantArray.in_array]]
         out_array = graph.nodes()[candidate[RedundantArray.out_array]]
 
@@ -230,8 +230,8 @@ class RedundantArray(pm.Transformation):
         if true_in_array is true_out_array and is_array_to_view:
             return False
 
-        if strict:
-            # In strict mode, make sure the memlet covers the removed array
+        if not permissive:
+            # Make sure the memlet covers the removed array
             subset = copy.deepcopy(e1.data.subset)
             subset.squeeze()
             shape = [sz for sz in in_desc.shape if sz != 1]
@@ -239,7 +239,7 @@ class RedundantArray(pm.Transformation):
                 return False
 
             # NOTE: Library node check
-            # The transformation must not apply in strict mode if in_array is
+            # The transformation must not apply in non-permissive mode if in_array is
             # not a view, is output of a library node, and an access or a view
             # of out_desc is also input to the same library node.
             # The reason is that the application of the transformation will lead
@@ -270,7 +270,7 @@ class RedundantArray(pm.Transformation):
                                     if desc is true_out_desc:
                                         return False
 
-            # In strict mode, check if the state has two or more access nodes
+            # In non-permissive mode, check if the state has two or more access nodes
             # for the output array. Definitely one of them (out_array) is a
             # write access. Therefore, there might be a RW, WR, or WW dependency.
             accesses = [
@@ -611,7 +611,7 @@ class RedundantArray(pm.Transformation):
             pass
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
 class RedundantSecondArray(pm.Transformation):
     """ Implements the redundant array removal transformation, applied
         when a transient array is copied from and to (from another array),
@@ -630,7 +630,7 @@ class RedundantSecondArray(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         in_array = graph.nodes()[candidate[RedundantSecondArray._in_array]]
         out_array = graph.nodes()[candidate[RedundantSecondArray._out_array]]
 
@@ -677,8 +677,8 @@ class RedundantSecondArray(pm.Transformation):
         if true_in_array is true_out_array and is_array_to_view:
             return False
 
-        if strict:
-            # In strict mode, make sure the memlet covers the removed array
+        if not permissive:
+            # Make sure the memlet covers the removed array
             if not b1_subset:
                 return False
             subset = copy.deepcopy(b1_subset)
@@ -688,7 +688,7 @@ class RedundantSecondArray(pm.Transformation):
                 return False
 
             # NOTE: Library node check
-            # The transformation must not apply in strict mode if out_array is
+            # The transformation must not apply if out_array is
             # not a view, is input to a library node, and an access or a view
             # of in_desc is also output to the same library node.
             # The reason is that the application of the transformation will lead
@@ -719,7 +719,7 @@ class RedundantSecondArray(pm.Transformation):
                                     if desc is true_in_desc:
                                         return False
 
-            # In strict mode, check if the state has two or more access nodes
+            # Check if the state has two or more access nodes
             # for in_array and at least one of them is a write access. There
             # might be a RW, WR, or WW dependency.
             accesses = [
@@ -987,7 +987,7 @@ class RedundantSecondArray(pm.Transformation):
                 pass
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
 class SqueezeViewRemove(pm.Transformation):
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
@@ -1004,7 +1004,7 @@ class SqueezeViewRemove(pm.Transformation):
                        candidate,
                        expr_index: int,
                        sdfg: SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
         in_array = self.in_array(sdfg)
         out_array = self.out_array(sdfg)
 
@@ -1030,7 +1030,7 @@ class SqueezeViewRemove(pm.Transformation):
         vsqdims = view_subset.squeeze()
 
         # View may modify the behavior of a library node
-        if strict and isinstance(vedge.dst, nodes.LibraryNode):
+        if not permissive and isinstance(vedge.dst, nodes.LibraryNode):
             return False
 
         # Check that subsets are equivalent
@@ -1080,7 +1080,7 @@ class SqueezeViewRemove(pm.Transformation):
             pass
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
 class UnsqueezeViewRemove(pm.Transformation):
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
@@ -1097,7 +1097,7 @@ class UnsqueezeViewRemove(pm.Transformation):
                        candidate,
                        expr_index: int,
                        sdfg: SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
         in_array = self.in_array(sdfg)
         out_array = self.out_array(sdfg)
 
@@ -1123,7 +1123,7 @@ class UnsqueezeViewRemove(pm.Transformation):
         asqdims = array_subset.squeeze()
 
         # View may modify the behavior of a library node
-        if strict and isinstance(vedge.src, nodes.LibraryNode):
+        if not permissive and isinstance(vedge.src, nodes.LibraryNode):
             return False
 
         # Check that subsets are equivalent
@@ -1210,7 +1210,7 @@ def _sliced_dims(adesc: data.Array, vdesc: data.View) -> typing.List[int]:
     return [adesc.strides.index(s) for s in vdesc.strides]
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
 class RedundantReadSlice(pm.Transformation):
     """ Detects patterns of the form Array -> View(Array) and removes
     the View if it is a slice. """
@@ -1226,7 +1226,7 @@ class RedundantReadSlice(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         in_array = graph.nodes()[candidate[RedundantReadSlice.in_array]]
         out_array = graph.nodes()[candidate[RedundantReadSlice.out_array]]
 
@@ -1363,7 +1363,7 @@ class RedundantReadSlice(pm.Transformation):
                 pass
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
 class RedundantWriteSlice(pm.Transformation):
     """ Detects patterns of the form View(Array) -> Array and removes
     the View if it is a slice. """
@@ -1379,7 +1379,7 @@ class RedundantWriteSlice(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         in_array = graph.nodes()[candidate[RedundantWriteSlice.in_array]]
         out_array = graph.nodes()[candidate[RedundantWriteSlice.out_array]]
 

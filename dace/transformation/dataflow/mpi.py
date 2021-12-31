@@ -62,7 +62,7 @@ class MPITransformMap(transformation.Transformation):
         return [sdutil.node_path_graph(MPITransformMap._map_entry)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         map_entry = graph.nodes()[candidate[MPITransformMap._map_entry]]
 
         # Check if the map is one-dimensional

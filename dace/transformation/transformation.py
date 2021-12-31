@@ -56,12 +56,11 @@ class Transformation(TransformationBase):
         registered with ``Transformation.register`` (or, more commonly,
         the ``@dace.registry.autoregister_params`` class decorator) with two
         optional boolean keyword arguments: ``singlestate`` (default: False)
-        and ``strict`` (default: False).
+        and ``coarsening`` (default: False).
         If ``singlestate`` is True, the transformation is matched on subgraphs
         inside an SDFGState; otherwise, subgraphs of the SDFG state machine are
         matched.
-        If ``strict`` is True, this transformation will be considered strict
-        (i.e., always beneficial to perform) and will be performed automatically
+        If ``coarsening`` is True, this transformation will be performed automatically
         as part of SDFG dataflow coarsening.
     """
 
@@ -91,7 +90,7 @@ class Transformation(TransformationBase):
                        candidate: Dict['PatternNode', int],
                        expr_index: int,
                        sdfg: SDFG,
-                       strict: bool = False) -> bool:
+                       permissive: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate
             matched subgraph.
             :param graph: SDFGState object if this Transformation is
@@ -103,7 +102,7 @@ class Transformation(TransformationBase):
                                that was matched.
             :param sdfg: If `graph` is an SDFGState, its parent SDFG. Otherwise
                          should be equal to `graph`.
-            :param strict: Whether transformation should run in strict mode.
+            :param permissive: Whether transformation should run in permissive mode.
             :return: True if the transformation can be applied.
         """
         raise NotImplementedError
@@ -275,7 +274,7 @@ class Transformation(TransformationBase):
                  expr_index: int = 0,
                  verify: bool = True,
                  annotate: bool = True,
-                 strict: bool = False,
+                 permissive: bool = False,
                  save: bool = True,
                  **where: Union[nd.Node, SDFGState]):
         """
@@ -297,7 +296,7 @@ class Transformation(TransformationBase):
         :param expr_index: The pattern expression index to try to match with.
         :param verify: Check that `can_be_applied` returns True before applying.
         :param annotate: Run memlet propagation after application if necessary.
-        :param strict: Apply transformation in strict mode.
+        :param permissive: Apply transformation in permissive mode.
         :param save: Save transformation as part of the SDFG file. Set to
                      False if composing transformations.
         :param where: A dictionary of node names (from the transformation) to
@@ -349,7 +348,7 @@ class Transformation(TransformationBase):
 
         if verify:
             if not instance.can_be_applied(
-                    graph, subgraph, expr_index, sdfg, strict=strict):
+                    graph, subgraph, expr_index, sdfg, permissive=permissive):
                 raise ValueError('Transformation cannot be applied on the '
                                  'given subgraph ("can_be_applied" failed)')
 
@@ -478,7 +477,7 @@ class ExpandTransformation(Transformation):
                        candidate: Dict[nd.Node, int],
                        expr_index: int,
                        sdfg,
-                       strict: bool = False):
+                       permissive: bool = False):
         # All we need is the correct node
         return True
 
@@ -762,5 +761,5 @@ def coarsening_transformations() -> List[Type[Transformation]]:
     """
     return [
         k for k, v in Transformation.extensions().items()
-        if v.get('strict', False)
+        if v.get('coarsening', False)
     ]

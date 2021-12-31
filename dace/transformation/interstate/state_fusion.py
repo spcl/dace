@@ -30,12 +30,12 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
-@registry.autoregister_params(strict=True)
+@registry.autoregister_params(coarsening=True)
 class StateFusion(transformation.Transformation):
     """ Implements the state-fusion transformation.
 
         State-fusion takes two states that are connected through a single edge,
-        and fuses them into one state. If strict, only applies if no memory
+        and fuses them into one state. If permissive, also applies if potential memory
         access hazards are created.
     """
 
@@ -131,7 +131,7 @@ class StateFusion(transformation.Transformation):
         return False
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         # Workaround for supporting old and new conventions
         if isinstance(candidate[StateFusion.first_state], SDFGState):
             first_state: SDFGState = candidate[StateFusion.first_state]
@@ -190,7 +190,7 @@ class StateFusion(transformation.Transformation):
                 if dst == second_state:
                     return False
 
-        if strict:
+        if not permissive:
 
             # NOTE: This is quick fix for MPI Waitall (probably also needed for
             # Wait), until we have a better SDFG representation of the buffer
@@ -296,7 +296,7 @@ class StateFusion(transformation.Transformation):
                 write_write_candidates = (
                     (fused_cc.first_outputs & fused_cc.second_outputs) -
                     fused_cc.second_inputs)
-                
+
                 # Find the leaf (topological) instances of the matches
                 order = [
                     x for x in reversed(

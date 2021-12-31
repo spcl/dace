@@ -560,7 +560,6 @@ def auto_optimize(sdfg: SDFG,
 
     # Collapse maps
     sdfg.apply_transformations_repeated(MapCollapse,
-                                        strict=True,
                                         validate=False,
                                         validate_all=validate_all)
     for node, _ in sdfg.all_nodes_recursive():

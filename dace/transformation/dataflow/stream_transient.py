@@ -79,7 +79,7 @@ class StreamTransient(transformation.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         map_exit = graph.nodes()[candidate[StreamTransient.map_exit]]
         outer_map_exit = graph.nodes()[candidate[
             StreamTransient.outer_map_exit]]
@@ -188,7 +188,7 @@ class AccumulateTransient(transformation.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         map_exit = graph.nodes()[candidate[AccumulateTransient.map_exit]]
         outer_map_exit = graph.nodes()[candidate[
             AccumulateTransient.outer_map_exit]]

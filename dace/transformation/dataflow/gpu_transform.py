@@ -48,7 +48,7 @@ class GPUTransformMap(transformation.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         if expr_index == 0:
             map_entry = graph.nodes()[candidate[GPUTransformMap._map_entry]]
             candidate_map = map_entry.map

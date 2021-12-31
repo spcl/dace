@@ -376,7 +376,7 @@ class TFSession:
                 name=None,
                 patterns=[],
                 validate=False,
-                strict=True):
+                permissive=False):
         """ Compiles a subgraph into a callable function, which is equivalent 
             to calling `run()`. 
             :param nodes: Node or an iterable (e.g. list) of nodes to evaluate.
@@ -385,7 +385,7 @@ class TFSession:
             :param patterns: A list of list of Transformation(s) that should be applied.
             :param validate: Boolean that decides if validation will take place after
                              transformations.
-            :param strict: Should the transformation be strict
+            :param permissive: Should the transformations be permissive
             :return: A function that receives a feed_dict, evaluates the nodes,
                      and returns a tuple of values in the same order as nodes.
         """
@@ -525,7 +525,7 @@ class TFSession:
         if patterns and len(patterns) > 0:
             self.graph.apply_transformations(patterns,
                                              validate=validate,
-                                             strict=strict)
+                                             permissive=permissive)
         compiled_sdfg = self.graph.compile()
         sdfg_args.update(self.callbackFunctionDict)
 
@@ -573,7 +573,7 @@ class TFSession:
         gpu=False,
         transformations=None,
         validate=False,
-        strict=True,
+        permissive=False,
         name=None,
         winograd=False,
     ):
@@ -596,7 +596,7 @@ class TFSession:
             gpu,
             name=name,
             validate=validate,
-            strict=strict,
+            permissive=permissive,
             patterns=transformations,
         )
         return callfunc(feed_dict=feed_dict)

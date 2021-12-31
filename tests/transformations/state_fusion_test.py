@@ -19,7 +19,7 @@ def test_fuse_assignments():
     sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(k=1)))
     sdfg.add_edge(state2, state3,
                   dace.InterstateEdge(assignments=dict(k='k + 1')))
-    sdfg.apply_transformations_repeated(StateFusion, strict=True)
+    sdfg.apply_transformations_repeated(StateFusion)
     assert sdfg.number_of_nodes() == 3
 
 
@@ -43,7 +43,6 @@ def test_fuse_assignment_in_use():
 
     try:
         StateFusion.apply_to(sdfg,
-                             strict=True,
                              first_state=state3,
                              second_state=state4)
         raise AssertionError('States fused, test failed')
@@ -76,7 +75,7 @@ def test_two_to_one_cc_fusion():
     state2.add_edge(state2.add_read('C'), None, t2, 'c', dace.Memlet('C'))
     state2.add_edge(t2, 'out', state2.add_write('C'), None, dace.Memlet('C'))
 
-    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 1
+    assert sdfg.apply_transformations_repeated(StateFusion) == 1
 
 
 def test_one_to_two_cc_fusion():
@@ -100,7 +99,7 @@ def test_one_to_two_cc_fusion():
                     state2.add_tasklet('two', {'b'}, {}, ''), 'b',
                     dace.Memlet('B'))
 
-    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 1
+    assert sdfg.apply_transformations_repeated(StateFusion) == 1
 
 
 def test_two_cc_fusion_separate():
@@ -129,7 +128,7 @@ def test_two_cc_fusion_separate():
     state2.add_edge(state2.add_read('B'), None, t2, 'b', dace.Memlet('B'))
     state2.add_edge(state2.add_read('C'), None, t2, 'c', dace.Memlet('C'))
 
-    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 1
+    assert sdfg.apply_transformations_repeated(StateFusion) == 1
 
 
 def test_two_cc_fusion_together():
@@ -160,7 +159,7 @@ def test_two_cc_fusion_together():
     state2.add_edge(t2, 'd', state2.add_write('A'), None, dace.Memlet('A'))
     state2.add_edge(t2, 'e', state2.add_write('C'), None, dace.Memlet('C'))
 
-    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 1
+    assert sdfg.apply_transformations_repeated(StateFusion) == 1
 
 
 # Data race avoidance tests
@@ -175,8 +174,8 @@ def test_write_write_path():
         tmp = A + 2
         A[:] = tmp + 3
 
-    sdfg = state_fusion_test.to_sdfg(strict=False)
-    sdfg.apply_transformations_repeated(StateFusion, strict=True)
+    sdfg = state_fusion_test.to_sdfg(coarsen=False)
+    sdfg.apply_transformations_repeated(StateFusion)
     assert len(sdfg.nodes()) == 1
 
 
@@ -191,8 +190,8 @@ def test_write_write_no_overlap():
         A[0:N - 1, :] = 1
         A[N - 1, :] = 2
 
-    sdfg = state_fusion_test.to_sdfg(strict=False)
-    sdfg.apply_transformations_repeated(StateFusion, strict=True)
+    sdfg = state_fusion_test.to_sdfg(coarsen=False)
+    sdfg.apply_transformations_repeated(StateFusion)
     assert len(sdfg.nodes()) == 1
 
 
@@ -208,8 +207,8 @@ def test_read_write_no_overlap():
         A[:, 5:N] = 1
         B[:, 3:6] = A[:, 0:3]
 
-    sdfg = state_fusion_test.to_sdfg(strict=False)
-    sdfg.apply_transformations_repeated(StateFusion, strict=True)
+    sdfg = state_fusion_test.to_sdfg(coarsen=False)
+    sdfg.apply_transformations_repeated(StateFusion)
     assert len(sdfg.nodes()) == 1
 
 
@@ -240,7 +239,7 @@ def test_array_in_middle_no_overlap():
     state2.add_edge(rw2, None, t2, 'a', dace.Memlet('A[5:10, 5:10]'))
     state2.add_edge(t2, 'c', wc, None, dace.Memlet('C'))
 
-    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 1
+    assert sdfg.apply_transformations_repeated(StateFusion) == 1
     assert len(list(nx.weakly_connected_components(sdfg.node(0).nx))) == 2
 
 
@@ -271,7 +270,7 @@ def test_array_in_middle_overlap():
     state2.add_edge(rw2, None, t2, 'a', dace.Memlet('A[0:5, 0:5]'))
     state2.add_edge(t2, 'c', wc, None, dace.Memlet('C'))
 
-    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 0
+    assert sdfg.apply_transformations_repeated(StateFusion) == 0
 
 
 def test_two_outputs_same_name():
@@ -301,7 +300,7 @@ def test_two_outputs_same_name():
     state2.add_edge(r1, None, t1, 'a', dace.Memlet('A[1]'))
     state2.add_edge(t1, 'b', w1, None, dace.Memlet('A[1]'))
 
-    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 1
+    assert sdfg.apply_transformations_repeated(StateFusion) == 1
 
     A = np.zeros([2], dtype=np.int32)
     sdfg(A=A, scal=np.int32(0))
@@ -336,7 +335,7 @@ def test_inout_read_after_write():
     state2.add_edge(r1, None, t1, 'bin', dace.Memlet('B[0]'))
     state2.add_edge(t1, 'bout', w1, None, dace.Memlet('B[0]'))
 
-    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 0
+    assert sdfg.apply_transformations_repeated(StateFusion) == 0
 
     A = np.zeros([1], dtype=np.int32)
     B = np.zeros([1], dtype=np.int32)
@@ -369,7 +368,7 @@ def test_inout_second_state():
     state2.add_edge(r1, None, t1, 'a', dace.Memlet('A[0]'))
     state2.add_edge(t1, 'aout', w1, None, dace.Memlet('A[0]'))
 
-    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 0
+    assert sdfg.apply_transformations_repeated(StateFusion) == 0
 
     A = np.zeros([1], dtype=np.int32)
     B = np.zeros([1], dtype=np.int32)
@@ -388,7 +387,7 @@ def test_inout_second_state_2():
                 ao >> A[i, j]
                 ao = 2 * ai
 
-    sdfg = func.to_sdfg(strict=False)
+    sdfg = func.to_sdfg(coarsen=False)
     sdfg.coarsen_dataflow()
     assert sdfg.number_of_nodes() == 2
 

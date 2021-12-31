@@ -52,7 +52,7 @@ class SVEVectorization(transformation.Transformation):
                        candidate,
                        expr_index,
                        sdfg: SDFG,
-                       strict=False) -> bool:
+                       permissive=False) -> bool:
         map_entry = self.map_entry(sdfg)
         current_map = map_entry.map
         subgraph = state.scope_subgraph(map_entry)

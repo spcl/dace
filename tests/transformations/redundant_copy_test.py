@@ -293,7 +293,7 @@ def conv2d(input: dace.float32[N, H, W, C_in], weights: dace.float32[K, K, C_in,
 
 
 def test_conv2d():
-    sdfg = conv2d.to_sdfg(strict=True)
+    sdfg = conv2d.to_sdfg(coarsen=True)
     access_nodes = [
         n for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, nodes.AccessNode)

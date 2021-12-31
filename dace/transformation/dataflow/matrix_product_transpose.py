@@ -43,7 +43,7 @@ class MatrixProductTranspose(transformation.Transformation):
         return [graph]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         _at = graph.nodes()[candidate[MatrixProductTranspose._at]]
         _a_times_b = graph.nodes()[candidate[MatrixProductTranspose._a_times_b]]
         edges = graph.edges_between(_at, _a_times_b)

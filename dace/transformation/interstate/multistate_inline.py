@@ -21,7 +21,7 @@ from dace.properties import make_properties, Property
 from dace import data
 
 
-@registry.autoregister_params(singlestate=True, strict=False)
+@registry.autoregister_params(singlestate=True, coarsening=False)
 @make_properties
 class InlineMultistateSDFG(transformation.Transformation):
     """
@@ -87,7 +87,7 @@ class InlineMultistateSDFG(transformation.Transformation):
                        candidate,
                        expr_index,
                        sdfg,
-                       strict=False):
+                       permissive=False):
         nested_sdfg = self.nested_sdfg(sdfg)
         if nested_sdfg.no_inline:
             return False

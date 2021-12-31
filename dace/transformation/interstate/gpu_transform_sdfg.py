@@ -47,10 +47,9 @@ class GPUTransformSDFG(transformation.Transformation):
                                     dtype=bool,
                                     default=True)
 
-    coarsen = Property(
-        desc='Reapply dataflow coarsening after modifying graph',
-        dtype=bool,
-        default=True)
+    coarsen = Property(desc='Reapply dataflow coarsening after modifying graph',
+                       dtype=bool,
+                       default=True)
 
     exclude_copyin = Property(
         desc="Exclude these arrays from being copied into the device "
@@ -81,7 +80,7 @@ class GPUTransformSDFG(transformation.Transformation):
         return [sd.SDFG('_')]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         for node, _ in sdfg.all_nodes_recursive():
             # Consume scopes are currently unsupported
             if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):

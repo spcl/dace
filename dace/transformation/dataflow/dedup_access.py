@@ -42,7 +42,7 @@ class DeduplicateAccess(xf.Transformation):
                        candidate,
                        expr_index,
                        sdfg,
-                       strict=False):
+                       permissive=False):
         map_entry = graph.node(candidate[DeduplicateAccess._map_entry])
         nid1 = candidate[DeduplicateAccess._node1]
         node1 = graph.node(nid1)
@@ -86,7 +86,7 @@ class DeduplicateAccess(xf.Transformation):
             # ranges whose volume is not comparable by "<",
             # e.g "2*K" >? "K+1" > "K-1" >? "1"
 
-            if not strict:
+            if permissive:
                 try:
                     if union_subset.num_elements() < sum(
                             m.subset.num_elements() for m in memlets):
@@ -99,7 +99,6 @@ class DeduplicateAccess(xf.Transformation):
     @staticmethod
     def match_to_str(graph, candidate):
         return str(graph.node(candidate[DeduplicateAccess._map_entry]))
-
 
     def apply(self, sdfg: sd.SDFG):
         graph: sd.SDFGState = sdfg.nodes()[self.state_id]

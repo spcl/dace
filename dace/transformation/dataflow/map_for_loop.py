@@ -31,7 +31,7 @@ class MapToForLoop(transformation.Transformation):
         return [sdutil.node_path_graph(MapToForLoop._map_entry)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         # Only uni-dimensional maps are accepted.
         map_entry = graph.nodes()[candidate[MapToForLoop._map_entry]]
         if len(map_entry.map.params) > 1:
@@ -86,9 +86,10 @@ class MapToForLoop(transformation.Transformation):
         # End of dynamic input range
 
         # Create a loop inside the nested SDFG
-        loop_result = nsdfg.add_loop(None, nstate, None, loop_idx, replace_param(loop_from),
-                        '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
-                        '%s + %s' % (loop_idx, replace_param(loop_step)))
+        loop_result = nsdfg.add_loop(
+            None, nstate, None, loop_idx, replace_param(loop_from),
+            '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
+            '%s + %s' % (loop_idx, replace_param(loop_step)))
         # store as object fields for external access
         self.before_state, self.guard, self.after_state = loop_result
         # Skip map in input edges

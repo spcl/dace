@@ -32,7 +32,7 @@ def test_find_promotable():
             j += 1
             i += j
 
-    sdfg: dace.SDFG = testprog1.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog1.to_sdfg(coarsen=False)
     scalars = scalar_to_symbol.find_promotable_scalars(sdfg)
     assert 'i' in scalars
     assert 'j' in scalars
@@ -45,7 +45,7 @@ def test_promote_simple():
         j = 5
         A[:] += j
 
-    sdfg: dace.SDFG = testprog2.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog2.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
@@ -92,7 +92,7 @@ def test_promote_simple_c():
             """
             kout >> k
 
-    sdfg: dace.SDFG = testprog3.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog3.to_sdfg(coarsen=False)
     scalars = scalar_to_symbol.find_promotable_scalars(sdfg)
     assert scalars == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
@@ -116,7 +116,7 @@ def test_promote_disconnect():
         j = 5
         A[:] = j
 
-    sdfg: dace.SDFG = testprog4.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog4.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
@@ -185,7 +185,7 @@ def test_promote_array_assignment():
         if j >= 0.0:
             A[:] += j
 
-    sdfg: dace.SDFG = testprog6.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog6.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
@@ -216,7 +216,7 @@ def test_promote_array_assignment_tasklet():
             out = inp
         A[:] += j
 
-    sdfg: dace.SDFG = testprog7.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog7.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
@@ -238,9 +238,9 @@ def test_promote_array_assignment_tasklet():
 class LoopTester(ld.DetectLoop):
     """ Tester method that sets loop index on a guard state. """
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive):
         if not ld.DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg,
-                                            strict):
+                                            permissive):
             return False
         guard = graph.node(candidate[ld.DetectLoop._loop_guard])
         if hasattr(guard, '_LOOPINDEX'):
@@ -266,7 +266,7 @@ def test_promote_loop():
             A += i
             i += 2
 
-    sdfg: dace.SDFG = testprog8.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog8.to_sdfg(coarsen=False)
     assert 'i' in scalar_to_symbol.find_promotable_scalars(sdfg)
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.coarsen_dataflow()
@@ -290,7 +290,7 @@ def test_promote_loops():
                     k += 1
             i += 2
 
-    sdfg: dace.SDFG = testprog9.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog9.to_sdfg(coarsen=False)
     scalars = scalar_to_symbol.find_promotable_scalars(sdfg)
     assert 'i' in scalars
     assert 'k' in scalars
@@ -328,7 +328,7 @@ def test_promote_indirection():
                 b1 >> B[m]
                 b2 >> B[m + 2]
 
-    sdfg: dace.SDFG = testprog10.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog10.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i', 'j', 'k'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     for cursdfg in sdfg.all_sdfgs_recursive():
@@ -363,7 +363,7 @@ def test_promote_output_indirection():
             a[ii] = ii
             a[ii + 1] = ii + 1
 
-    sdfg: dace.SDFG = testprog11.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog11.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.coarsen_dataflow()
@@ -394,7 +394,7 @@ def test_promote_indirection_c():
             aout[ii + 1] = ii + 1;
             '''
 
-    sdfg: dace.SDFG = testprog12.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog12.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     assert all('i' in e.data.free_symbols for e in sdfg.sink_nodes()[0].edges())
@@ -423,7 +423,7 @@ def test_promote_indirection_impossible():
             out >> A(1)[:, :]
             out[i, s] = a[s, i]
 
-    sdfg: dace.SDFG = testprog13.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog13.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.coarsen_dataflow()

@@ -2047,11 +2047,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.apply_transformations_repeated(
             [RedundantReadSlice, RedundantWriteSlice],
             validate=validate,
-            strict=True,
+            permissive=False,
             validate_all=validate_all)
         self.apply_transformations_repeated(coarsening_transformations(),
                                             validate=validate,
-                                            strict=True,
+                                            permissive=False,
                                             validate_all=validate_all)
 
     def apply_transformations(self,
@@ -2061,7 +2061,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                                                 Any]]]] = None,
                               validate: bool = True,
                               validate_all: bool = False,
-                              strict: bool = False,
+                              permissive: bool = False,
                               states: Optional[List[Any]] = None,
                               print_report: Optional[bool] = None) -> int:
         """ This function applies a transformation or a sequence thereof
@@ -2071,7 +2071,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                             to modify transformation parameters.
             :param validate: If True, validates after all transformations.
             :param validate_all: If True, validates after every transformation.
-            :param strict: If True, operates in strict transformation mode.
+            :param permissive: If True, operates in permissive mode.
             :param states: If not None, specifies a subset of states to
                            apply transformations on.
             :param print_report: Whether to show debug prints or not (None if
@@ -2107,11 +2107,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         for xform, opts in zip(xforms, options):
             # Find only the first match
             try:
-                match = next(m
-                             for m in opt.get_pattern_matches(strict=strict,
-                                                              patterns=[xform],
-                                                              states=states,
-                                                              options=[opts]))
+                match = next(
+                    m for m in opt.get_pattern_matches(permissive=permissive,
+                                                       patterns=[xform],
+                                                       states=states,
+                                                       options=[opts]))
             except StopIteration:
                 continue
             sdfg = self.sdfg_list[match.sdfg_id]
@@ -2140,7 +2140,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                                               Any]]]] = None,
             validate: bool = True,
             validate_all: bool = False,
-            strict: bool = False,
+            permissive: bool = False,
             states: Optional[List[Any]] = None,
             print_report: Optional[bool] = None,
             order_by_transformation: bool = True) -> int:
@@ -2151,7 +2151,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                             to modify transformation parameters.
             :param validate: If True, validates after all transformations.
             :param validate_all: If True, validates after every transformation.
-            :param strict: If True, operates in strict transformation mode.
+            :param permissive: If True, operates in permissive mode.
             :param states: If not None, specifies a subset of states to
                            apply transformations on.
             :param print_report: Whether to show debug prints or not (None if
@@ -2215,7 +2215,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     while applied:
                         applied = False
                         for match in opt.get_pattern_matches(
-                                strict=strict,
+                                permissive=permissive,
                                 patterns=[xform],
                                 states=states,
                                 options=[params_by_xform[xform]]):
@@ -2231,7 +2231,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             while applied:
                 applied = False
                 # Find and apply one of the chosen transformations
-                for match in opt.get_pattern_matches(strict=strict,
+                for match in opt.get_pattern_matches(permissive=permissive,
                                                      patterns=xforms,
                                                      states=states,
                                                      options=options):
@@ -2264,7 +2264,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                   states=None,
                                   validate=True,
                                   validate_all=False,
-                                  strict=True):
+                                  permissive=False):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
             :note: It is recommended to apply redundant array removal
@@ -2278,14 +2278,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.apply_transformations(GPUTransformSDFG,
                                    validate=validate,
                                    validate_all=validate_all,
-                                   strict=strict,
+                                   permissive=permissive,
                                    states=states)
 
     def apply_fpga_transformations(self,
                                    states=None,
                                    validate=True,
                                    validate_all=False,
-                                   strict=True):
+                                   permissive=False):
         """ Applies a series of transformations on the SDFG for it to
             generate FPGA code.
 
@@ -2297,7 +2297,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.apply_transformations(FPGATransformSDFG,
                                    validate=validate,
                                    validate_all=validate_all,
-                                   strict=strict,
+                                   permissive=permissive,
                                    states=states)
 
     def expand_library_nodes(self, recursive=True):

@@ -27,7 +27,7 @@ class MapUnroll(transformation.Transformation):
         return [sdutil.node_path_graph(MapUnroll._map_entry)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         map_entry = graph.nodes()[candidate[MapUnroll._map_entry]]
         # Must be top-level map
         if graph.scope_dict()[map_entry] is not None:

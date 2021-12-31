@@ -42,7 +42,7 @@ class PythonLHSExtractor(ast.NodeVisitor):
             self.assignments.add(node.targets[0].id)
 
 
-@registry.autoregister_params(singlestate=True, strict=False)
+@registry.autoregister_params(singlestate=True, coarsening=False)
 class SimpleTaskletFusion(pm.Transformation):
     """ Fuses two connected Tasklets.
         It is recommended that this transformation is used on Tasklets that
@@ -132,7 +132,7 @@ class SimpleTaskletFusion(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
 
         t1 = graph.node(candidate[SimpleTaskletFusion.t1])
         t2 = graph.node(candidate[SimpleTaskletFusion.t2])

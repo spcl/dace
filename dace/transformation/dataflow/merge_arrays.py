@@ -6,7 +6,7 @@ from dace.sdfg import SDFGState
 from dace.sdfg.propagation import propagate_memlet
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
 class InMergeArrays(transformation.Transformation):
     """ Merge duplicate arrays connected to the same scope entry. """
 
@@ -32,7 +32,7 @@ class InMergeArrays(transformation.Transformation):
         return [g]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         arr1_id = candidate[InMergeArrays._array1]
         arr2_id = candidate[InMergeArrays._array2]
 
@@ -124,7 +124,7 @@ class InMergeArrays(transformation.Transformation):
                                           union_inner_edges=True)
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
 class OutMergeArrays(transformation.Transformation):
     """ Merge duplicate arrays connected to the same scope entry. """
 
@@ -150,7 +150,7 @@ class OutMergeArrays(transformation.Transformation):
         return [g]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         arr1_id = candidate[OutMergeArrays._array1]
         arr2_id = candidate[OutMergeArrays._array2]
 
@@ -235,7 +235,7 @@ class OutMergeArrays(transformation.Transformation):
                                           union_inner_edges=True)
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
 class MergeSourceSinkArrays(transformation.Transformation):
     """ Merge duplicate arrays that are source/sink nodes. """
 
@@ -251,7 +251,7 @@ class MergeSourceSinkArrays(transformation.Transformation):
         return [g]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         arr1_id = candidate[MergeSourceSinkArrays._array1]
         arr1 = graph.node(arr1_id)
 

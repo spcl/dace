@@ -920,7 +920,6 @@ def preprocess_dace_program(
     :param modules: A dictionary from an imported module name to the
                     module itself.
     :param constants: A dictionary from a name to a constant value.
-    :param strict: Whether to apply dataflow coarsening after parsing nested dace programs.
     :param resolve_functions: If True, treats all global functions defined
                                 outside of the program as returning constant
                                 values.

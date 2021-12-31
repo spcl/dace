@@ -90,9 +90,9 @@ def test_map_with_tasklets(l: str):
         xf for xf in coarsening_transformations()
         if xf.__name__ != 'SimpleTaskletFusion'
     ]
-    sdfg.apply_transformations_repeated(coarsening_reduced, strict=True)
+    sdfg.apply_transformations_repeated(coarsening_reduced)
     num = sdfg.apply_transformations_repeated(SimpleTaskletFusion)
-    assert(num == 4)
+    assert (num == 4)
     func = sdfg.compile()
     A = np.arange(1, 21, dtype=np.float32)
     B = np.arange(1, 11, dtype=np.float32)

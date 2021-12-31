@@ -28,10 +28,10 @@ class LoopUnroll(DetectLoop):
     )
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         # Is this even a loop
         if not DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg,
-                                         strict):
+                                         permissive):
             return False
 
         guard = graph.node(candidate[DetectLoop._loop_guard])
@@ -76,11 +76,10 @@ class LoopUnroll(DetectLoop):
         last_id = loop_states.index(last_state)
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
 
-
         try:
             start, end, stride = (r for r in rng)
             stride = symbolic.evaluate(stride, sdfg.constants)
-            loop_diff = int(symbolic.evaluate(end-start+1, sdfg.constants))
+            loop_diff = int(symbolic.evaluate(end - start + 1, sdfg.constants))
             is_symbolic = any([symbolic.issymbolic(r) for r in rng[:2]])
         except TypeError:
             raise TypeError('Loop difference and strides cannot be symbolic.')
@@ -90,11 +89,8 @@ class LoopUnroll(DetectLoop):
         for i in range(0, loop_diff, stride):
             current_index = start + i
             # Instantiate loop states with iterate value
-            new_states = self.instantiate_loop(sdfg,
-                                               loop_states,
-                                               loop_subgraph,
-                                               itervar,
-                                               current_index,
+            new_states = self.instantiate_loop(sdfg, loop_states, loop_subgraph,
+                                               itervar, current_index,
                                                str(i) if is_symbolic else None)
 
             # Connect iterations with unconditional edges

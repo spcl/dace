@@ -34,7 +34,7 @@ class DoubleBuffering(transformation.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         map_entry = graph.nodes()[candidate[DoubleBuffering._map_entry]]
         transient = graph.nodes()[candidate[DoubleBuffering._transient]]
 
@@ -46,7 +46,7 @@ class DoubleBuffering(transformation.Transformation):
         if not MapToForLoop.can_be_applied(
                 graph,
             {MapToForLoop._map_entry: candidate[DoubleBuffering._map_entry]},
-                expr_index, sdfg, strict):
+                expr_index, sdfg, permissive):
             return False
 
         # Verify that all directly-connected internal access nodes point to
@@ -162,7 +162,7 @@ class DoubleBuffering(transformation.Transformation):
         sd.replace(initial_state, map_param, map_rstart)
         # Initial writes go to the appropriate buffer
         init_expr = symbolic.pystr_to_symbolic('(%s / %s) %% 2' %
-                                              (map_rstart, map_rstride))
+                                               (map_rstart, map_rstride))
         sd.replace(initial_state, '__dace_db_param', init_expr)
 
         ##############################

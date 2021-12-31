@@ -98,7 +98,7 @@ def type_or_class_match(node_a, node_b):
 def _try_to_match_transformation(
         graph: Union[SDFG, SDFGState], collapsed_graph: nx.DiGraph,
         subgraph: Dict[int, int], sdfg: SDFG, xform: Type[xf.Transformation],
-        expr_idx: int, nxpattern: nx.DiGraph, state_id: int, strict: bool,
+        expr_idx: int, nxpattern: nx.DiGraph, state_id: int, permissive: bool,
         options: Dict[str, Any]) -> Optional[xf.Transformation]:
     """ 
     Helper function that tries to instantiate a pattern match into a 
@@ -120,7 +120,7 @@ def _try_to_match_transformation(
                                            subgraph,
                                            expr_idx,
                                            sdfg,
-                                           strict=strict)
+                                           permissive=permissive)
     except Exception as e:
         if Config.get_bool('optimizer', 'match_exception'):
             raise
@@ -222,7 +222,7 @@ def match_patterns(sdfg: SDFG,
                                    List[Type[xf.Transformation]]],
                    node_match: Callable[[Any, Any], bool] = type_match,
                    edge_match: Optional[Callable[[Any, Any], bool]] = None,
-                   strict: bool = False,
+                   permissive: bool = False,
                    metadata: Optional[PatternMetadataType] = None,
                    states: Optional[List[SDFGState]] = None,
                    options: Optional[List[Dict[str, Any]]] = None):
@@ -232,8 +232,7 @@ def match_patterns(sdfg: SDFG,
         :param patterns: Transformation type (or list thereof) to match.
         :param node_match: Function for checking whether two nodes match.
         :param edge_match: Function for checking whether two edges match.
-        :param strict: Only match transformation if strict (i.e., can only
-                       improve the performance/reduce complexity of the SDFG).
+        :param permissive: Match transformations in permissive mode.
         :param metadata: Transformation metadata that can be reused.
         :param states: If given, only tries to match single-state 
                        transformations on this list.
@@ -272,7 +271,7 @@ def match_patterns(sdfg: SDFG,
             for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
                 match = _try_to_match_transformation(tsdfg, digraph, subgraph,
                                                      tsdfg, xform, expr_idx,
-                                                     nxpattern, -1, strict,
+                                                     nxpattern, -1, permissive,
                                                      opts)
                 if match is not None:
                     yield match
@@ -293,7 +292,7 @@ def match_patterns(sdfg: SDFG,
                                         edge_match):
                     match = _try_to_match_transformation(
                         state, digraph, subgraph, tsdfg, xform, expr_idx,
-                        nxpattern, state_id, strict, opts)
+                        nxpattern, state_id, permissive, opts)
                     if match is not None:
                         yield match
 
