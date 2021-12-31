@@ -976,7 +976,7 @@ class ExpandGemvPBLAS(ExpandTransformation):
             sdfg = _gemTv_pblas.to_sdfg(strict=False)
         else:
             sdfg = _gemNv_pblas.to_sdfg(strict=False)
-        sdfg.apply_strict_transformations()
+        sdfg.coarsen_dataflow()
         return sdfg
 
 

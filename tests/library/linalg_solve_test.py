@@ -159,7 +159,7 @@ def test_solve(implementation, dtype, size, shape):
                      in_subset_str, out_subset_str)
     if implementation == 'cuSolverDn':
         sdfg.apply_gpu_transformations()
-        sdfg.apply_strict_transformations()
+        sdfg.coarsen_dataflow()
     solve_sdfg = sdfg.compile()
 
     A0 = np.zeros(in_shape, dtype=dtype)

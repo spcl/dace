@@ -13,7 +13,7 @@ def test():
     sdfg = strict_after_load.to_sdfg(strict=False)
     sdfg.save(os.path.join('_dacegraphs', 'before.sdfg'))
     sdfg = dace.SDFG.from_file(os.path.join('_dacegraphs', 'before.sdfg'))
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.compile()
 
 

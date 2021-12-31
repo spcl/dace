@@ -62,7 +62,7 @@ class Transformation(TransformationBase):
         matched.
         If ``strict`` is True, this transformation will be considered strict
         (i.e., always beneficial to perform) and will be performed automatically
-        as part of SDFG strict transformations.
+        as part of SDFG dataflow coarsening.
     """
 
     # Properties
@@ -757,8 +757,8 @@ class SubgraphTransformation(TransformationBase):
         return ret
 
 
-def strict_transformations() -> List[Type[Transformation]]:
-    """ :return: List of all registered strict transformations.
+def coarsening_transformations() -> List[Type[Transformation]]:
+    """ :return: List of all registered dataflow coarsening transformations.
     """
     return [
         k for k, v in Transformation.extensions().items()

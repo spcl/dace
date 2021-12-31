@@ -61,7 +61,7 @@ state.add_memlet_path(task,
 sdfg.validate()
 
 # Fuses redundant states and removes unnecessary transient arrays
-sdfg.apply_strict_transformations()
+sdfg.coarsen_dataflow()
 
 ######################################
 if __name__ == '__main__':

@@ -54,13 +54,13 @@ if __name__ == "__main__":
 
     if rank == 0:
         mpi_sdfg = gesummv.to_sdfg(strict=False)
-        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.coarsen_dataflow()
         mpi_sdfg.apply_transformations_repeated(ElementWiseArrayOperation2D)
         mpi_sdfg.apply_transformations_repeated(ElementWiseArrayOperation)
         mpi_sdfg.expand_library_nodes()
-        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.coarsen_dataflow()
         mpi_sdfg.apply_transformations_repeated(RedundantComm2D)
-        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.coarsen_dataflow()
         mpi_func = mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:

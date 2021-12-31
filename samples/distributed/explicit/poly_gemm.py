@@ -124,7 +124,7 @@ if __name__ == "__main__":
     mpi_sdfg = None
     if rank == 0:
         mpi_sdfg = gemm_distr2.to_sdfg(strict=False)
-        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.coarsen_dataflow()
         mpi_func = mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:

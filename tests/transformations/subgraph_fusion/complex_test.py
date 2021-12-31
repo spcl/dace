@@ -139,7 +139,7 @@ def _test_quantitatively(sdfg, graph):
 
 def test_complex():
     sdfg = subgraph_fusion_complex.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     _test_quantitatively(sdfg, sdfg.nodes()[0])
 
 

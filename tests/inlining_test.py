@@ -60,7 +60,7 @@ def test_regression_reshape_unsqueeze():
         nsdfg(input=A, output=B)
 
     sdfg = test_reshape_unsqueeze.to_sdfg(strict=False)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.validate()
 
     a = np.random.rand(3, 3)
@@ -118,7 +118,7 @@ def test_empty_memlets():
     state.add_edge(nsdfg1_node, None, nsdfg2_node, None, dace.Memlet())
 
     sdfg.validate()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
 
 def test_multistate_inline():

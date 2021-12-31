@@ -389,7 +389,7 @@ def test_inout_second_state_2():
                 ao = 2 * ai
 
     sdfg = func.to_sdfg(strict=False)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     assert sdfg.number_of_nodes() == 2
 
 

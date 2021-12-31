@@ -178,7 +178,7 @@ def test_persistent_gpu_transpose_regression():
     sdfg = test_persistent_transpose.to_sdfg()
 
     sdfg.expand_library_nodes()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.apply_gpu_transformations()
 
     for _, _, arr in sdfg.arrays_recursive():

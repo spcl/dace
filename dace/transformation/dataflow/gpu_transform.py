@@ -54,8 +54,8 @@ class GPUTransformMap(transformation.Transformation):
             candidate_map = map_entry.map
 
             # Map schedules that are disallowed to transform to GPUs
-            if (candidate_map.schedule in [dtypes.ScheduleType.MPI] +
-                    dtypes.GPU_SCHEDULES):
+            if (candidate_map.schedule
+                    in [dtypes.ScheduleType.MPI] + dtypes.GPU_SCHEDULES):
                 return False
             if sd.is_devicelevel_gpu(sdfg, graph, map_entry):
                 return False
@@ -126,4 +126,4 @@ class GPUTransformMap(transformation.Transformation):
         transformation.apply(nsdfg_node.sdfg)
 
         # Inline back as necessary
-        sdfg.apply_strict_transformations()
+        sdfg.coarsen_dataflow()

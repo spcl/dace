@@ -15,7 +15,7 @@ def dbladd(A: dace.float64[100, 100], B: dace.float64[100, 100]):
 
 def test_applyto_pattern():
     sdfg = dbladd.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     # Since there is only one state (thanks to StateFusion), we can use the
     # first one in the SDFG
@@ -30,7 +30,7 @@ def test_applyto_pattern():
     add_entry = next(
         n for n in state.nodes()
         if isinstance(n, dace.nodes.MapEntry) and n.label == '_Add__map')
-    # Since all redundant arrays have been removed by strict transformations,
+    # Since all redundant arrays have been removed by dataflow coarsening,
     # we can get the only transient array that remains in the graph
     transient = next(aname for aname, desc in sdfg.arrays.items()
                      if desc.transient)
@@ -46,7 +46,7 @@ def test_applyto_pattern():
 
 def test_applyto_enumerate():
     sdfg = dbladd.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     # Construct subgraph pattern
     pattern = sdutil.node_path_graph(dace.nodes.MapExit, dace.nodes.AccessNode,
@@ -61,7 +61,7 @@ def test_applyto_enumerate():
 
 def test_applyto_subgraph():
     sdfg = dbladd.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     state = sdfg.node(0)
     # Apply to subgraph
     SubgraphFusion.apply_to(sdfg, state.nodes())

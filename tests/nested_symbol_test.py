@@ -32,8 +32,7 @@ def test_nested_symbol():
 
 
 def test_nested_symbol_dynamic():
-    if not dace.Config.get_bool('optimizer',
-                                'automatic_strict_transformations'):
+    if not dace.Config.get_bool('optimizer', 'automatic_dataflow_coarsening'):
         warnings.warn("Test disabled (missing allocation lifetime support)")
         return
 

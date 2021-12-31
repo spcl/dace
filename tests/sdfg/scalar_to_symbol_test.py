@@ -269,7 +269,7 @@ def test_promote_loop():
     sdfg: dace.SDFG = testprog8.to_sdfg(strict=False)
     assert 'i' in scalar_to_symbol.find_promotable_scalars(sdfg)
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     # TODO: LoopDetection does not apply to loops with a multi-state guard
     # assert sdfg.apply_transformations_repeated(LoopTester) == 1
 
@@ -295,7 +295,7 @@ def test_promote_loops():
     assert 'i' in scalars
     assert 'k' in scalars
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     # TODO: LoopDetection does not apply to loops with a multi-state guard
     # xfh.split_interstate_edges(sdfg)
     # assert sdfg.apply_transformations_repeated(LoopTester) == 3
@@ -333,7 +333,7 @@ def test_promote_indirection():
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     for cursdfg in sdfg.all_sdfgs_recursive():
         scalar_to_symbol.remove_symbol_indirection(cursdfg)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     assert sdfg.number_of_nodes() == 1
     assert all(e.data.subset.num_elements() == 1 for e in sdfg.node(0).edges()
@@ -366,7 +366,7 @@ def test_promote_output_indirection():
     sdfg: dace.SDFG = testprog11.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     assert sdfg.number_of_nodes() == 1
 
@@ -399,7 +399,7 @@ def test_promote_indirection_c():
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     assert all('i' in e.data.free_symbols for e in sdfg.sink_nodes()[0].edges())
 
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     assert sdfg.number_of_nodes() == 1
 
     # Check result
@@ -426,7 +426,7 @@ def test_promote_indirection_impossible():
     sdfg: dace.SDFG = testprog13.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     # [A,scal->Tasklet->A]
     assert sdfg.number_of_nodes() == 1
@@ -485,7 +485,7 @@ def test_nested_promotion_connector(with_subscript):
     # Promotion
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'scal'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     assert sdfg.number_of_nodes() == 1
     assert sdfg.node(0).number_of_nodes() == 3

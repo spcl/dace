@@ -353,7 +353,7 @@ class TFSession:
 
         print("Adding connectors")
         self.graph.fill_scope_connectors()
-        # self.graph.apply_strict_transformations(validate=False)
+        # self.graph.coarsen_dataflow(validate=False)
         if gpu:
             self.graph.apply_gpu_transformations()
 

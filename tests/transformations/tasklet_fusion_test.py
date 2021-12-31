@@ -2,7 +2,7 @@
 import numpy as np
 import dace
 from dace import dtypes
-from dace.transformation import strict_transformations
+from dace.transformation import coarsening_transformations
 from dace.transformation.dataflow import SimpleTaskletFusion
 import pytest
 
@@ -86,11 +86,11 @@ def _make_sdfg(l: str = 'Python'):
 @pytest.mark.parametrize("l", [pytest.param('Python'), pytest.param('CPP')])
 def test_map_with_tasklets(l: str):
     sdfg = _make_sdfg(l)
-    strict_reduced = [
-        xf for xf in strict_transformations()
+    coarsening_reduced = [
+        xf for xf in coarsening_transformations()
         if xf.__name__ != 'SimpleTaskletFusion'
     ]
-    sdfg.apply_transformations_repeated(strict_reduced, strict=True)
+    sdfg.apply_transformations_repeated(coarsening_reduced, strict=True)
     num = sdfg.apply_transformations_repeated(SimpleTaskletFusion)
     assert(num == 4)
     func = sdfg.compile()

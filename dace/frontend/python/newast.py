@@ -144,14 +144,14 @@ def parse_dace_program(name: str,
                        argtypes: Dict[str, data.Data],
                        constants: Dict[str, Any],
                        closure: SDFGClosure,
-                       strict: Optional[bool] = None,
+                       coarsen: Optional[bool] = None,
                        save=True) -> SDFG:
     """ Parses a `@dace.program` function into an SDFG.
         :param src_ast: The AST of the Python program to parse.
         :param visitor: A ProgramVisitor object returned from 
                         ``preprocess_dace_program``.
         :param closure: An object that contains the @dace.program closure.
-        :param strict: If True, strict transformations will be performed.
+        :param coarsen: If True, dataflow coarsening will be performed.
         :param save: If True, saves source mapping data for this SDFG.
         :return: A 2-tuple of SDFG and its reduced (used) closure.
     """
@@ -164,7 +164,7 @@ def parse_dace_program(name: str,
                              scope_arrays=argtypes,
                              scope_vars={},
                              closure=closure,
-                             strict=strict)
+                             coarsen=coarsen)
 
     sdfg, _, _, _ = visitor.parse_program(
         preprocessed_ast.preprocessed_ast.body[0])
@@ -1065,7 +1065,7 @@ class ProgramVisitor(ExtNodeVisitor):
                  closure: SDFGClosure = None,
                  nested: bool = False,
                  tmp_idx: int = 0,
-                 strict: Optional[bool] = None):
+                 coarsen: Optional[bool] = None):
         """ ProgramVisitor init method
 
         Arguments:
@@ -1078,7 +1078,7 @@ class ProgramVisitor(ExtNodeVisitor):
             scope_arrays {Dict[str, data.Data]} -- Scope arrays
             scope_vars {Dict[str, str]} -- Scope variables
             closure {SDFGClosure} -- The closure of this program
-            strict {bool} -- Whether to apply strict transforms after parsing nested dace programs
+            coarsen {bool} -- Whether to apply dataflow coarsening after parsing nested dace programs
 
         Keyword Arguments:
             nested {bool} -- True, if SDFG is nested (default: {False})
@@ -1099,7 +1099,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.globals = global_vars
         self.closure = closure
         self.nested = nested
-        self.strict = strict
+        self.coarsen = coarsen
 
         # Keeps track of scope arrays, numbers, variables and accesses
         self.scope_arrays = OrderedDict()
@@ -3689,7 +3689,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     fcopy.signature = copy.deepcopy(func.signature)
                     sdfg = fcopy.to_sdfg(*fargs,
                                          **fkwargs,
-                                         strict=self.strict,
+                                         coarsen=self.coarsen,
                                          save=False)
                 else:
                     sdfg = fcopy.__sdfg__(*fargs, **fkwargs)

@@ -128,7 +128,7 @@ def _test_quantitatively(sdfg, graph):
 
 def test_invariant_dim():
     sdfg = invariant_dimension.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     graph = sdfg.nodes()[0]
     fix_sdfg(sdfg, graph)
     _test_quantitatively(sdfg, graph)

@@ -55,7 +55,7 @@ def test_views_between_maps_work():
 
     sdfg = test_inline_reshape_views_work.to_sdfg(strict=False)
     sdfg.expand_library_nodes()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
 
 if __name__ == "__main__":

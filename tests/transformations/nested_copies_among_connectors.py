@@ -4,9 +4,9 @@ import numpy as np
 
 from dace.transformation import dataflow, interstate, subgraph
 from dace.transformation.interstate import InlineSDFG
-from dace.transformation.transformation import strict_transformations
+from dace.transformation.transformation import coarsening_transformations
 
-xforms = strict_transformations()
+xforms = coarsening_transformations()
 xforms.remove(InlineSDFG)
 
 

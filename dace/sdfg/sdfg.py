@@ -33,10 +33,10 @@ from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import validate_name
-from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties,
-                             Property, CodeProperty, TransformationHistProperty,
-                             SDFGReferenceProperty, DictProperty,
-                             OrderedDictProperty, CodeBlock)
+from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty,
+                             make_properties, Property, CodeProperty,
+                             TransformationHistProperty, SDFGReferenceProperty,
+                             DictProperty, OrderedDictProperty, CodeBlock)
 
 
 def _arrays_to_json(arrays):
@@ -2016,6 +2016,20 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return True
 
     def apply_strict_transformations(self, validate=True, validate_all=False):
+        """
+        This method is DEPRECATED in favor of ``coarsen_dataflow``.
+        Applies safe transformations (that will surely increase the
+        performance) on the SDFG. For example, this fuses redundant states
+        (safely) and removes redundant arrays.
+
+        B{Note:} This is an in-place operation on the SDFG.
+        """
+        warnings.warn(
+            'SDFG.apply_strict_transformations is deprecated, use SDFG.coarsen_dataflow instead.',
+            DeprecationWarning)
+        return self.coarsen_dataflow(validate, validate_all)
+
+    def coarsen_dataflow(self, validate=True, validate_all=False):
         """ Applies safe transformations (that will surely increase the
             performance) on the SDFG. For example, this fuses redundant states
             (safely) and removes redundant arrays.
@@ -2028,14 +2042,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                                   RedundantWriteSlice)
         # This is imported here to avoid an import loop
         from dace.transformation.transformation import (Transformation,
-                                                        strict_transformations)
+                                                        coarsening_transformations)
 
         self.apply_transformations_repeated(
             [RedundantReadSlice, RedundantWriteSlice],
             validate=validate,
             strict=True,
             validate_all=validate_all)
-        self.apply_transformations_repeated(strict_transformations(),
+        self.apply_transformations_repeated(coarsening_transformations(),
                                             validate=validate,
                                             strict=True,
                                             validate_all=validate_all)
@@ -2255,7 +2269,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             generate GPU code.
             :note: It is recommended to apply redundant array removal
             transformation after this transformation. Alternatively,
-            you can apply_strict_transformations() after this transformation.
+            you can coarsen_dataflow() after this transformation.
             :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops

@@ -53,7 +53,7 @@ def test_same_shape():
     B = np.random.rand(1).astype(np.float32)
 
     sdfg = make_sdfg([1], [1], '0', '0')
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     sdfg.save('_dacegraphs/program.sdfg')
     sdfg(A=A, B=B)
@@ -72,7 +72,7 @@ def test_different_shape():
     B = np.random.rand(20, 3).astype(np.float32)
 
     sdfg = make_sdfg([20, 3], [60], '1, 0', '3')
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     sdfg(A=A, B=B)
 
