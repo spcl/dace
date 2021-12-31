@@ -1143,7 +1143,7 @@ def inline_sdfgs(sdfg: SDFG,
                                               candidate,
                                               0,
                                               sd,
-                                              strict=strict):
+                                              permissive=permissive):
                         inliner.apply(sd)
                         counter += 1
                         if progress:
