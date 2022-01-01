@@ -94,7 +94,7 @@ class DeduplicateAccess(xf.Transformation):
                 except TypeError:
                     pass
 
-        return False
+        return True
 
     @staticmethod
     def match_to_str(graph, candidate):

@@ -115,7 +115,7 @@ def test_dedup_access_plus():
                 B[i, j] = inp[0] + inp[1] + inp[2] + inp[3] + inp[4]
 
     sdfg: dace.SDFG = datest.to_sdfg(coarsen=True)
-    assert sdfg.apply_transformations(DeduplicateAccess) == 0
+    assert sdfg.apply_transformations(DeduplicateAccess) == 1
 
 
 def test_dedup_access_square():

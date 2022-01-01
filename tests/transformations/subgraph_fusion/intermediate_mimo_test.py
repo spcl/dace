@@ -80,7 +80,7 @@ def _test_quantitatively(sdfg):
 def test_mimo():
     sdfg = mimo.to_sdfg()
     from dace.transformation.interstate.state_fusion import StateFusion
-    sdfg.apply_transformations_repeated(StateFusion)
+    sdfg.apply_transformations_repeated(StateFusion, permissive=True)
     # merge the C array
     C1 = None
     C2 = None

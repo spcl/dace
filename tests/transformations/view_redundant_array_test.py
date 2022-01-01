@@ -74,7 +74,7 @@ def test_redundant_array_1_into_2_dims(copy_subset, nonstrict):
 
     sdfg.coarsen_dataflow()
     if nonstrict:
-        sdfg.apply_transformations_repeated(RedundantArray)
+        sdfg.apply_transformations_repeated(RedundantArray, permissive=True)
 
         # Ensure a view is created
         assert (len([
@@ -111,7 +111,7 @@ def test_redundant_array_2_into_1_dim(copy_subset, nonstrict):
 
     sdfg.coarsen_dataflow()
     if nonstrict:
-        sdfg.apply_transformations_repeated(RedundantArray)
+        sdfg.apply_transformations_repeated(RedundantArray, permissive=True)
 
         # Ensure a view is created
         assert (len([
