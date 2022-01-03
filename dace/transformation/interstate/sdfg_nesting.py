@@ -24,7 +24,7 @@ from dace.properties import make_properties, Property
 from dace import data
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
 @make_properties
 class InlineSDFG(transformation.Transformation):
     """ Inlines a single-state nested SDFG into a top-level SDFG.
@@ -103,7 +103,7 @@ class InlineSDFG(transformation.Transformation):
                        candidate,
                        expr_index,
                        sdfg,
-                       strict=False):
+                       permissive=False):
         nested_sdfg = graph.nodes()[candidate[InlineSDFG._nested_sdfg]]
         if nested_sdfg.no_inline:
             return False
@@ -880,11 +880,11 @@ class InlineTransients(transformation.Transformation):
                        candidate: Dict[transformation.PatternNode, int],
                        expr_index: int,
                        sdfg: SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
         nsdfg = graph.node(candidate[InlineTransients.nsdfg])
 
         # Not every schedule is supported
-        if strict:
+        if not permissive:
             if nsdfg.schedule not in (dtypes.ScheduleType.Default,
                                       dtypes.ScheduleType.Sequential,
                                       dtypes.ScheduleType.CPU_Multicore,
@@ -1128,7 +1128,7 @@ class RefineNestedAccess(transformation.Transformation):
                        candidate: Dict[transformation.PatternNode, int],
                        expr_index: int,
                        sdfg: SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
         nsdfg = graph.node(candidate[RefineNestedAccess.nsdfg])
         ic, oc = RefineNestedAccess._candidates(graph, nsdfg)
         return (len(ic) + len(oc)) > 0
@@ -1209,7 +1209,7 @@ class NestSDFG(transformation.Transformation):
         return [nx.DiGraph()]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         return True
 
     @staticmethod

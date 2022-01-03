@@ -69,7 +69,7 @@ def test_simple_program():
         a *= 2
         a *= 3
 
-    sdfg = multiply.to_sdfg(strict=True)
+    sdfg = multiply.to_sdfg(coarsen=True)
     for state in sdfg.nodes():
         if any(isinstance(node, Tasklet) for node in state.nodes()):
             break

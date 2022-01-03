@@ -37,6 +37,7 @@ state.add_memlet_path(nsdfg_node,
                       src_conn='bB',
                       memlet=dace.Memlet.simple('B', '0:2, j, 0:4'))
 
+
 def test():
     print('Nested SDFG with non-contiguous access test')
 
@@ -45,17 +46,18 @@ def test():
 
     sdfg(A=input, B=output)
     diff1 = np.linalg.norm(output - input * 5)
-    print("Difference (without strict transformations):", diff1)
+    print("Difference (without dataflow coarsening):", diff1)
 
     output = np.zeros(shape=(2, 3, 4), dtype=np.float32)
 
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg(A=input, B=output)
     diff2 = np.linalg.norm(output - input * 5)
     print("Difference:", diff2)
 
     print("==== Program end ====")
     assert (diff1 <= 1e-5 and diff2 <= 1e-5)
+
 
 if __name__ == "__main__":
     test()

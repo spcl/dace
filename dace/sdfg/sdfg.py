@@ -34,10 +34,10 @@ from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import validate_name
-from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties,
-                             Property, CodeProperty, TransformationHistProperty,
-                             SDFGReferenceProperty, DictProperty,
-                             OrderedDictProperty, CodeBlock)
+from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty,
+                             make_properties, Property, CodeProperty,
+                             TransformationHistProperty, SDFGReferenceProperty,
+                             DictProperty, OrderedDictProperty, CodeBlock)
 
 
 def _arrays_to_json(arrays):
@@ -2006,6 +2006,20 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return True
 
     def apply_strict_transformations(self, validate=True, validate_all=False):
+        """
+        This method is DEPRECATED in favor of ``coarsen_dataflow``.
+        Applies safe transformations (that will surely increase the
+        performance) on the SDFG. For example, this fuses redundant states
+        (safely) and removes redundant arrays.
+
+        B{Note:} This is an in-place operation on the SDFG.
+        """
+        warnings.warn(
+            'SDFG.apply_strict_transformations is deprecated, use SDFG.coarsen_dataflow instead.',
+            DeprecationWarning)
+        return self.coarsen_dataflow(validate, validate_all)
+
+    def coarsen_dataflow(self, validate=True, validate_all=False):
         """ Applies safe transformations (that will surely increase the
             performance) on the SDFG. For example, this fuses redundant states
             (safely) and removes redundant arrays.
@@ -2019,21 +2033,21 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         from dace.sdfg import utils as sdutil
         # This is imported here to avoid an import loop
         from dace.transformation.transformation import (Transformation,
-                                                        strict_transformations)
+                                                        coarsening_transformations)
 
         # First step is to apply multi-state inline, before any state fusion can
         # occur
-        sdutil.inline_sdfgs(self, multistate=True, strict=True)
-        sdutil.fuse_states(self, strict=True)
+        sdutil.inline_sdfgs(self, multistate=True)
+        sdutil.fuse_states(self)
 
         self.apply_transformations_repeated(
             [RedundantReadSlice, RedundantWriteSlice],
             validate=validate,
-            strict=True,
+            permissive=False,
             validate_all=validate_all)
-        self.apply_transformations_repeated(strict_transformations(),
+        self.apply_transformations_repeated(coarsening_transformations(),
                                             validate=validate,
-                                            strict=True,
+                                            permissive=False,
                                             validate_all=validate_all)
 
     def apply_transformations(self,
@@ -2043,7 +2057,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                                                 Any]]]] = None,
                               validate: bool = True,
                               validate_all: bool = False,
-                              strict: bool = False,
+                              permissive: bool = False,
                               states: Optional[List[Any]] = None,
                               print_report: Optional[bool] = None) -> int:
         """ This function applies a transformation or a sequence thereof
@@ -2053,7 +2067,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                             to modify transformation parameters.
             :param validate: If True, validates after all transformations.
             :param validate_all: If True, validates after every transformation.
-            :param strict: If True, operates in strict transformation mode.
+            :param permissive: If True, operates in permissive mode.
             :param states: If not None, specifies a subset of states to
                            apply transformations on.
             :param print_report: Whether to show debug prints or not (None if
@@ -2089,11 +2103,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         for xform, opts in zip(xforms, options):
             # Find only the first match
             try:
-                match = next(m
-                             for m in opt.get_pattern_matches(strict=strict,
-                                                              patterns=[xform],
-                                                              states=states,
-                                                              options=[opts]))
+                match = next(
+                    m for m in opt.get_pattern_matches(permissive=permissive,
+                                                       patterns=[xform],
+                                                       states=states,
+                                                       options=[opts]))
             except StopIteration:
                 continue
             sdfg = self.sdfg_list[match.sdfg_id]
@@ -2122,7 +2136,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                                               Any]]]] = None,
             validate: bool = True,
             validate_all: bool = False,
-            strict: bool = False,
+            permissive: bool = False,
             states: Optional[List[Any]] = None,
             print_report: Optional[bool] = None,
             order_by_transformation: bool = True,
@@ -2134,7 +2148,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                             to modify transformation parameters.
             :param validate: If True, validates after all transformations.
             :param validate_all: If True, validates after every transformation.
-            :param strict: If True, operates in strict transformation mode.
+            :param permissive: If True, operates in permissive mode.
             :param states: If not None, specifies a subset of states to
                            apply transformations on.
             :param print_report: Whether to show debug prints or not (None if
@@ -2208,7 +2222,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     while applied:
                         applied = False
                         for match in opt.get_pattern_matches(
-                                strict=strict,
+                                permissive=permissive,
                                 patterns=[xform],
                                 states=states,
                                 options=[params_by_xform[xform]]):
@@ -2224,7 +2238,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             while applied:
                 applied = False
                 # Find and apply one of the chosen transformations
-                for match in opt.get_pattern_matches(strict=strict,
+                for match in opt.get_pattern_matches(permissive=permissive,
                                                      patterns=xforms,
                                                      states=states,
                                                      options=options):
@@ -2257,12 +2271,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                   states=None,
                                   validate=True,
                                   validate_all=False,
-                                  strict=True):
+                                  permissive=False):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
             :note: It is recommended to apply redundant array removal
             transformation after this transformation. Alternatively,
-            you can apply_strict_transformations() after this transformation.
+            you can coarsen_dataflow() after this transformation.
             :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
@@ -2271,14 +2285,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.apply_transformations(GPUTransformSDFG,
                                    validate=validate,
                                    validate_all=validate_all,
-                                   strict=strict,
+                                   permissive=permissive,
                                    states=states)
 
     def apply_fpga_transformations(self,
                                    states=None,
                                    validate=True,
                                    validate_all=False,
-                                   strict=True):
+                                   permissive=False):
         """ Applies a series of transformations on the SDFG for it to
             generate FPGA code.
 
@@ -2290,7 +2304,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.apply_transformations(FPGATransformSDFG,
                                    validate=validate,
                                    validate_all=validate_all,
-                                   strict=strict,
+                                   permissive=permissive,
                                    states=states)
 
     def expand_library_nodes(self, recursive=True):

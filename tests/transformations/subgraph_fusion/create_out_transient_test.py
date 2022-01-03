@@ -90,7 +90,7 @@ def _test_quantitatively(sdfg, graph):
 def test_out_transient1():
     # non-transient
     sdfg = program1.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     graph = sdfg.nodes()[0]
     _test_quantitatively(sdfg, graph)
 
@@ -98,7 +98,7 @@ def test_out_transient1():
 def test_out_transient2():
     # transient
     sdfg = program2.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     graph = sdfg.nodes()[0]
     _test_quantitatively(sdfg, graph)
 

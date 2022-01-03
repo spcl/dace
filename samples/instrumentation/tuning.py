@@ -34,7 +34,7 @@ def test_configuration(a_trans: bool, b_trans: bool, a_padding: int,
     # Convert the program to an SDFG to enable instrumentation
     sdfg = matmult.to_sdfg()
     # Remove extraneous states
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     # Instrument state that runs in the loop above
     state = next(s for s in sdfg.nodes() if len(s.nodes()) > 0)

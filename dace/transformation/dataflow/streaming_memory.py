@@ -137,7 +137,7 @@ class StreamingMemory(xf.Transformation):
                        candidate: Dict[xf.PatternNode, int],
                        expr_index: int,
                        sdfg: SDFG,
-                       strict: bool = False) -> bool:
+                       permissive: bool = False) -> bool:
         access = graph.node(candidate[StreamingMemory.access])
         # Make sure the access node is only accessed once (read or write),
         # and not at the same time
@@ -411,7 +411,7 @@ class StreamingComposition(xf.Transformation):
                        candidate: Dict[xf.PatternNode, int],
                        expr_index: int,
                        sdfg: SDFG,
-                       strict: bool = False) -> bool:
+                       permissive: bool = False) -> bool:
         access = graph.node(candidate[StreamingComposition.access])
         # Make sure the access node is only accessed once (read or write),
         # and not at the same time

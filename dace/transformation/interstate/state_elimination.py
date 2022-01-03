@@ -12,7 +12,7 @@ from dace.transformation import transformation
 from dace.config import Config
 
 
-@registry.autoregister_params(strict=True)
+@registry.autoregister_params(coarsening=True)
 class EndStateElimination(transformation.Transformation):
     """
     End-state elimination removes a redundant state that has one incoming edge
@@ -26,7 +26,7 @@ class EndStateElimination(transformation.Transformation):
         return [sdutil.node_path_graph(EndStateElimination._end_state)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         state = graph.nodes()[candidate[EndStateElimination._end_state]]
 
         out_edges = graph.out_edges(state)
@@ -66,7 +66,7 @@ class EndStateElimination(transformation.Transformation):
                 sdfg.remove_symbol(sym)
 
 
-@registry.autoregister_params(strict=False)
+@registry.autoregister_params(coarsening=False)
 class StartStateElimination(transformation.Transformation):
     """
     Start-state elimination removes a redundant state that has one outgoing edge
@@ -80,7 +80,7 @@ class StartStateElimination(transformation.Transformation):
         return [sdutil.node_path_graph(StartStateElimination.start_state)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         state = graph.nodes()[candidate[StartStateElimination.start_state]]
 
         # The transformation applies only to nested SDFGs
@@ -139,7 +139,7 @@ def _assignments_to_consider(sdfg, edge):
     return assignments_to_consider
 
 
-@registry.autoregister_params(strict=True)
+@registry.autoregister_params(coarsening=True)
 class StateAssignElimination(transformation.Transformation):
     """
     State assign elimination removes all assignments into the final state
@@ -153,7 +153,7 @@ class StateAssignElimination(transformation.Transformation):
         return [sdutil.node_path_graph(StateAssignElimination._end_state)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         state = graph.nodes()[candidate[StateAssignElimination._end_state]]
 
         out_edges = graph.out_edges(state)
@@ -225,7 +225,7 @@ class StateAssignElimination(transformation.Transformation):
                 # if assignments_to_consider[varname] in sdfg.symbols:
                 if varname in sdfg.free_symbols:
                     repl_dict[varname] = assignments_to_consider[varname]
-        
+
         def _str_repl(s, d):
             for k, v in d.items():
                 s.replace(str(k), str(v))
@@ -243,7 +243,7 @@ def _alias_assignments(sdfg, edge):
     return assignments_to_consider
 
 
-@registry.autoregister_params(strict=True)
+@registry.autoregister_params(coarsening=True)
 class SymbolAliasPromotion(transformation.Transformation):
     """
     SymbolAliasPromotion moves inter-state assignments that create symbolic
@@ -263,7 +263,7 @@ class SymbolAliasPromotion(transformation.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         fstate = graph.nodes()[candidate[SymbolAliasPromotion._first_state]]
         sstate = graph.nodes()[candidate[SymbolAliasPromotion._second_state]]
 
@@ -375,17 +375,17 @@ class HoistState(transformation.Transformation):
                        candidate,
                        expr_index,
                        sdfg,
-                       strict=False):
+                       permissive=False):
         nsdfg: nodes.NestedSDFG = graph.node(candidate[HoistState.nsdfg])
 
         # Must be a free nested SDFG
         if graph.entry_node(nsdfg) is not None:
             return False
 
-        # If strict, must have two states with an empty source state.
+        # Must have two states with an empty source state.
         # Otherwise structured control flow (loop init states, for example)
         # may be broken.
-        if strict:
+        if not permissive:
             if nsdfg.sdfg.number_of_nodes() != 2:
                 return False
             if nsdfg.sdfg.start_state.number_of_nodes() != 0:

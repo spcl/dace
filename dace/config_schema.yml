@@ -86,13 +86,12 @@ required:
                 title: Save intermediate SDFGs
                 description: Save SDFG files after every transformation.
 
-            automatic_strict_transformations:
+            automatic_dataflow_coarsening:
                 type: bool
                 default: true
-                title: Automatic strict transformations
+                title: Automatic dataflow coarsening
                 description: >
-                    Automatically performs strict transformations
-                    that are considered to be safe.
+                    Automatically performs dataflow coarsening on programs.
 
             detect_control_flow:
                 type: bool

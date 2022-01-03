@@ -56,15 +56,13 @@ class Optimizer(object):
             pattern_matching.get_transformation_metadata(patterns, options))
 
     def get_pattern_matches(self,
-                            strict=False,
+                            permissive=False,
                             states=None,
                             patterns=None,
                             sdfg=None,
                             options=None) -> Iterator[Transformation]:
         """ Returns all possible transformations for the current SDFG.
-            :param strict: Only consider strict transformations (i.e., ones
-                           that surely increase performance or enhance
-                           readability)
+            :param permissive: Consider transformations in permissive mode.
             :param states: An iterable of SDFG states to consider when pattern
                            matching. If None, considers all.
             :param patterns: An iterable of transformation classes to consider
@@ -82,7 +80,7 @@ class Optimizer(object):
             sdfg,
             patterns,
             metadata=self.transformation_metadata,
-            strict=strict,
+            permissive=permissive,
             states=states,
             options=options)
 

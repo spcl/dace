@@ -111,7 +111,7 @@ class MapFission(transformation.Transformation):
         return True
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         map_node = graph.node(candidate[MapFission._map_entry])
         nsdfg_node = None
 

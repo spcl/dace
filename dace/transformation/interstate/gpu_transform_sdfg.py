@@ -25,7 +25,7 @@ class GPUTransformSDFG(transformation.Transformation):
           5. Global tasklets are wrapped with a map of size 1
           6. Global Maps are re-scheduled to use the GPU
           7. Make data ready for interstate edges that use them
-          8. Re-apply strict transformations to get rid of extra states and
+          8. Re-apply dataflow coarsening to get rid of extra states and
              transients
     """
 
@@ -47,10 +47,9 @@ class GPUTransformSDFG(transformation.Transformation):
                                     dtype=bool,
                                     default=True)
 
-    strict_transform = Property(
-        desc='Reapply strict transformations after modifying graph',
-        dtype=bool,
-        default=True)
+    coarsen = Property(desc='Reapply dataflow coarsening after modifying graph',
+                       dtype=bool,
+                       default=True)
 
     exclude_copyin = Property(
         desc="Exclude these arrays from being copied into the device "
@@ -81,7 +80,7 @@ class GPUTransformSDFG(transformation.Transformation):
         return [sd.SDFG('_')]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         for node, _ in sdfg.all_nodes_recursive():
             # Consume scopes are currently unsupported
             if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
@@ -261,8 +260,8 @@ class GPUTransformSDFG(transformation.Transformation):
                         # Try to move allocation/deallocation out of loops
                         dsyms = set(map(str, nodedesc.free_symbols))
                         if (self.toplevel_trans
-                                and not isinstance(nodedesc, (data.Stream,
-                                                              data.View))
+                                and not isinstance(nodedesc,
+                                                   (data.Stream, data.View))
                                 and len(dsyms - const_syms) == 0):
                             nodedesc.lifetime = dtypes.AllocationLifetime.SDFG
                     elif nodedesc.storage not in gpu_storage:
@@ -375,9 +374,8 @@ class GPUTransformSDFG(transformation.Transformation):
                                                  dst_array.desc(sdfg)))
 
         #######################################################
-        # Step 8: Strict transformations
-        if not self.strict_transform:
+        # Step 8: Dataflow coarsening
+        if not self.coarsen:
             return
 
-        # Apply strict state fusions greedily.
-        sdfg.apply_strict_transformations()
+        sdfg.coarsen_dataflow()

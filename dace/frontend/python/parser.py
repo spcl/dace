@@ -203,7 +203,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
     def to_sdfg(self,
                 *args,
-                strict=None,
+                coarsen=None,
                 save=False,
                 validate=False,
                 use_cache=False,
@@ -234,7 +234,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         sdfg = self._parse(args,
                            kwargs,
-                           strict=strict,
+                           coarsen=coarsen,
                            save=save,
                            validate=validate)
 
@@ -244,17 +244,16 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         return sdfg
 
-
     def __sdfg__(self, *args, **kwargs) -> SDFG:
         return self._parse(args,
                            kwargs,
-                           strict=None,
+                           coarsen=None,
                            save=False,
                            validate=False)
 
-    def compile(self, *args, strict=None, save=False, **kwargs):
+    def compile(self, *args, coarsen=None, save=False, **kwargs):
         """ Convenience function that parses and compiles a DaCe program. """
-        sdfg = self._parse(args, kwargs, strict=strict, save=save)
+        sdfg = self._parse(args, kwargs, coarsen=coarsen, save=save)
 
         # Invoke auto-optimization as necessary
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
@@ -457,7 +456,7 @@ class DaceProgram(pycommon.SDFGConvertible):
     def _parse(self,
                args,
                kwargs,
-               strict=None,
+               coarsen=None,
                save=False,
                validate=False) -> SDFG:
         """ 
@@ -467,7 +466,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                         decorator).
         :param args: The given arguments to the function.
         :param kwargs: The given keyword arguments to the function.
-        :param strict: Whether to apply strict transformations or not (None
+        :param coarsen: Whether to apply dataflow coarsening or not (None
                        uses configuration-defined value). 
         :param save: If True, saves the generated SDFG to 
                     ``_dacegraphs/program.sdfg`` after parsing.
@@ -479,12 +478,12 @@ class DaceProgram(pycommon.SDFGConvertible):
         from dace.transformation import helpers as xfh
 
         # Obtain DaCe program as SDFG
-        sdfg, cached = self._generate_pdp(args, kwargs, strict=strict)
+        sdfg, cached = self._generate_pdp(args, kwargs, coarsen=coarsen)
 
-        # Apply strict transformations automatically
+        # Apply dataflow coarsening automatically
         if not cached and (
-                strict == True or (strict is None and Config.get_bool(
-                    'optimizer', 'automatic_strict_transformations'))):
+                coarsen == True or (coarsen is None and Config.get_bool(
+                    'optimizer', 'automatic_dataflow_coarsening'))):
 
             # Promote scalars to symbols as necessary
             promoted = scal2sym.promote_scalars_to_symbols(sdfg)
@@ -492,7 +491,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                 print('Promoted scalars {%s} to symbols.' %
                       ', '.join(p for p in sorted(promoted)))
 
-            sdfg.apply_strict_transformations()
+            sdfg.coarsen_dataflow()
 
             # Split back edges with assignments and conditions to allow richer
             # control flow detection in code generation
@@ -728,11 +727,11 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Update SDFG cache with the SDFG and compiled version
         self._cache.add(cachekey, csdfg.sdfg, csdfg)
 
-    def _generate_pdp(self, args, kwargs, strict=None) -> SDFG:
+    def _generate_pdp(self, args, kwargs, coarsen=None) -> SDFG:
         """ Generates the parsed AST representation of a DaCe program.
             :param args: The given arguments to the program.
             :param kwargs: The given keyword arguments to the program.
-            :param strict: Whether to apply strict transforms when parsing 
+            :param coarsen: Whether to apply dataflow coarsening when parsing 
                            nested dace programs.
             :return: A 2-tuple of (parsed SDFG object, was the SDFG retrieved
                      from cache).
@@ -820,7 +819,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                                              argtypes,
                                              self.dec_kwargs,
                                              closure,
-                                             strict=strict)
+                                             coarsen=coarsen)
 
             # Set SDFG argument names, filtering out constants
             sdfg.arg_names = [a for a in self.argnames if a in argtypes]

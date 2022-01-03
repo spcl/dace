@@ -774,6 +774,7 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry,
                 sdfg,
                 _outer_map_entry=extracted_map,
                 _inner_map_entry=entries[idx + 1],
+                permissive=True,  # Since MapExpansion creates sequential maps
             )
 
         # Collapse remaining maps
@@ -783,6 +784,7 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry,
                 sdfg,
                 _outer_map_entry=map_to_collapse,
                 _inner_map_entry=entries[idx + 1],
+                permissive=True,  # Since MapExpansion creates sequential maps
             )
     else:
         extracted_map = map_entry

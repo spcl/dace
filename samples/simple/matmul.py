@@ -168,10 +168,12 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
     btile_j = find_map_by_param(sdfg, 'tile1_j')
     MapCollapse.apply_to(sdfg,
                          _outer_map_entry=gtile_i,
-                         _inner_map_entry=gtile_j)
+                         _inner_map_entry=gtile_j,
+                         permissive=True)
     MapCollapse.apply_to(sdfg,
                          _outer_map_entry=btile_i,
-                         _inner_map_entry=btile_j)
+                         _inner_map_entry=btile_j,
+                         permissive=True)
     btile = find_map_by_param(sdfg, 'tile1_i')
     btile.map.schedule = dace.ScheduleType.GPU_ThreadBlock
 

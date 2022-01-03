@@ -28,7 +28,7 @@ def outer(A, inp1: float, inp2: float):
 def test_symbol_mapping_replace():
 
     with dace.config.set_temporary('optimizer',
-                                   'automatic_strict_transformations',
+                                   'automatic_dataflow_coarsening',
                                    value=True):
         A = np.ones((10, 10, 10))
         ref = A.copy()

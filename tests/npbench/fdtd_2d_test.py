@@ -21,8 +21,8 @@ def kernel(ex: dc.float32[NX, NY], ey: dc.float32[NX, NY],
         ey[0, :] = _fict_[t]
         ey[1:, :] -= 0.5 * (hz[1:, :] - hz[:-1, :])
         ex[:, 1:] -= 0.5 * (hz[:, 1:] - hz[:, :-1])
-        hz[:-1, :-1] -= 0.7 * (ex[:-1, 1:] - ex[:-1, :-1] +
-                               ey[1:, :-1] - ey[:-1, :-1])
+        hz[:-1, :-1] -= 0.7 * (ex[:-1, 1:] - ex[:-1, :-1] + ey[1:, :-1] -
+                               ey[:-1, :-1])
 
 
 def init_data(TMAX, NX, NY):
@@ -51,6 +51,7 @@ def ground_truth(TMAX, NX, NY, ex, ey, hz, _fict_):
         hz[:NX - 1, :NY - 1] -= 0.7 * (ex[:NX - 1, 1:] - ex[:NX - 1, :NY - 1] +
                                        ey[1:, :NY - 1] - ey[:NX - 1, :NY - 1])
 
+
 def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
     '''
     Runs FDTD-2D for the given device
@@ -70,7 +71,7 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
         sdfg(ex=ex, ey=ey, hz=hz, _fict_=_fict_, TMAX=TMAX, NX=NX, NY=NY)
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(strict=True)
+        sdfg = kernel.to_sdfg(coarsen=True)
         sdfg.apply_transformations_repeated([MapFusion])
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
@@ -105,7 +106,6 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-
 def test_cpu():
     run_fdtd_2d(dace.dtypes.DeviceType.CPU)
 
@@ -123,12 +123,11 @@ def test_fpga():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-t",
-        "--target",
-        default='cpu',
-        choices=['cpu', 'gpu', 'fpga'],
-        help='Target platform')
+    parser.add_argument("-t",
+                        "--target",
+                        default='cpu',
+                        choices=['cpu', 'gpu', 'fpga'],
+                        help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]

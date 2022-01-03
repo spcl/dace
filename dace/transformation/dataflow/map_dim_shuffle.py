@@ -30,7 +30,7 @@ class MapDimShuffle(transformation.Transformation):
         return [sdutil.node_path_graph(MapDimShuffle._map_entry)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         return True
 
     @staticmethod

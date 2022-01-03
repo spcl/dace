@@ -49,7 +49,7 @@ class MapReduceFusion(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         tmap_exit = graph.nodes()[candidate[MapReduceFusion._tmap_exit]]
         in_array = graph.nodes()[candidate[MapReduceFusion._in_array]]
         reduce_node = graph.nodes()[candidate[MapReduceFusion._reduce]]
@@ -70,9 +70,9 @@ class MapReduceFusion(pm.Transformation):
         tmem = next(e for e in graph.edges_between(tasklet, tmap_exit)
                     if e.data.data == in_array.data).data
 
-        # (strict) Make sure that the transient is not accessed anywhere else
+        # Make sure that the transient is not accessed anywhere else
         # in this state or other states
-        if strict and (len([
+        if not permissive and (len([
                 n for n in graph.nodes()
                 if isinstance(n, nodes.AccessNode) and n.data == in_array.data
         ]) > 1 or in_array.data in sdfg.shared_transients()):
@@ -207,7 +207,7 @@ class MapWCRFusion(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         tmap_exit = graph.nodes()[candidate[MapWCRFusion._tmap_exit]]
         in_array = graph.nodes()[candidate[MapWCRFusion._in_array]]
         rmap_entry = graph.nodes()[candidate[MapWCRFusion._rmap_out_entry]]
@@ -230,9 +230,9 @@ class MapWCRFusion(pm.Transformation):
         if reduce_edge.data.wcr is None:
             return False
 
-        # (strict) Make sure that the transient is not accessed anywhere else
+        # Make sure that the transient is not accessed anywhere else
         # in this state or other states
-        if strict and (len([
+        if not permissive and (len([
                 n for n in graph.nodes()
                 if isinstance(n, nodes.AccessNode) and n.data == in_array.data
         ]) > 1 or in_array.data in sdfg.shared_transients()):

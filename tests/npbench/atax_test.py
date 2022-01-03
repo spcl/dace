@@ -10,7 +10,6 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 
-
 M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
 
 
@@ -50,7 +49,7 @@ def run_atax(device_type: dace.dtypes.DeviceType):
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(strict=True)
+        sdfg = kernel.to_sdfg(coarsen=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 

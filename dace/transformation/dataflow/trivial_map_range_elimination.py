@@ -25,24 +25,28 @@ class TrivialMapRangeElimination(transformation.Transformation):
         return [sdutil.node_path_graph(TrivialMapRangeElimination._map_entry)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        map_entry = graph.nodes()[candidate[TrivialMapRangeElimination._map_entry]]
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
+        map_entry = graph.nodes()[candidate[
+            TrivialMapRangeElimination._map_entry]]
         if len(map_entry.map.range) <= 1:
-            return False # only acts on multi-dimensional maps
+            return False  # only acts on multi-dimensional maps
         return any(frm == to for frm, to, _ in map_entry.map.range)
 
     @staticmethod
     def match_to_str(graph, candidate):
-        map_entry = graph.nodes()[candidate[TrivialMapRangeElimination._map_entry]]
+        map_entry = graph.nodes()[candidate[
+            TrivialMapRangeElimination._map_entry]]
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
-        map_entry = graph.nodes()[self.subgraph[TrivialMapRangeElimination._map_entry]]
+        map_entry = graph.nodes()[self.subgraph[
+            TrivialMapRangeElimination._map_entry]]
 
         remaining_ranges = []
         remaining_params = []
-        for map_param, ranges in zip(map_entry.map.params, map_entry.map.range.ranges):
+        for map_param, ranges in zip(map_entry.map.params,
+                                     map_entry.map.range.ranges):
             map_from, map_to, _ = ranges
             if map_from == map_to:
                 # Replace the map index variable with the value it obtained

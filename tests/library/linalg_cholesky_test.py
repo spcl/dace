@@ -67,7 +67,7 @@ def test_cholesky(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)
     if implementation == 'cuSolverDn':
         sdfg.apply_gpu_transformations()
-        sdfg.apply_strict_transformations()
+        sdfg.coarsen_dataflow()
     np_dtype = getattr(np, dtype.to_string())
     cholesky_sdfg = sdfg.compile()
 
