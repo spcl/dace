@@ -36,7 +36,7 @@ def test_double_buffering():
     print('Difference (before):', diff)
 
     # Apply local storage transformation on inner map (last two transformations)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     for i in range(2):
         for match in reversed(
                 list(match_patterns(sdfg, InLocalStorage,

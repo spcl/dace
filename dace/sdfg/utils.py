@@ -1018,12 +1018,13 @@ def trace_nested_access(
     return list(reversed(trace))
 
 
-def fuse_states(sdfg: SDFG, strict: bool = True, progress: bool = None) -> int:
+def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs) using an optimized
     routine that uses the structure of the StateFusion transformation.
     :param sdfg: The SDFG to transform.
-    :param strict: If True (default), operates in strict mode.
+    :param permissive: If True, operates in permissive mode, which ignores some
+                       race condition checks.
     :param progress: If True, prints out a progress bar of fusion (may be
                      inaccurate, requires ``tqdm``). If None, prints out
                      progress if over 5 seconds have passed. If False, never
@@ -1069,7 +1070,7 @@ def fuse_states(sdfg: SDFG, strict: bool = True, progress: bool = None) -> int:
                     StateFusion.second_state: v
                 }
                 sf = StateFusion(id, -1, candidate, 0, override=True)
-                if sf.can_be_applied(sd, candidate, 0, sd, strict=strict):
+                if sf.can_be_applied(sd, candidate, 0, sd, permissive=permissive):
                     sf.apply(sd)
                     applied += 1
                     counter += 1
@@ -1087,14 +1088,15 @@ def fuse_states(sdfg: SDFG, strict: bool = True, progress: bool = None) -> int:
 
 
 def inline_sdfgs(sdfg: SDFG,
-                 strict: bool = True,
+                 permissive: bool = False,
                  progress: bool = None,
                  multistate: bool = True) -> int:
     """
     Inlines all possible nested SDFGs (or sub-SDFGs) using an optimized
     routine that uses the structure of the SDFG hierarchy.
     :param sdfg: The SDFG to transform.
-    :param strict: If True (default), operates in strict mode.
+    :param permissive: If True, operates in permissive mode, which ignores some
+                       checks.
     :param progress: If True, prints out a progress bar of inlining (may be
                      inaccurate, requires ``tqdm``). If None, prints out
                      progress if over 5 seconds have passed. If False, never
@@ -1146,7 +1148,7 @@ def inline_sdfgs(sdfg: SDFG,
                                               candidate,
                                               0,
                                               sd,
-                                              strict=strict):
+                                              permissive=permissive):
                         inliner.apply(sd)
                         counter += 1
                         if progress:
@@ -1161,7 +1163,7 @@ def inline_sdfgs(sdfg: SDFG,
                                           candidate,
                                           0,
                                           sd,
-                                          strict=strict):
+                                          permissive=permissive):
                     inliner.apply(sd)
                     counter += 1
                     if progress:

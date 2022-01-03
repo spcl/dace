@@ -35,7 +35,7 @@ class WarpTiling(xf.Transformation):
         return [sdutil.node_path_graph(WarpTiling.mapentry)]
 
     def can_be_applied(self, graph: SDFGState, candidate, expr_index,
-                       sdfg: SDFG, strict) -> bool:
+                       sdfg: SDFG, permissive) -> bool:
         me: nodes.MapEntry = self.mapentry(sdfg)
 
         if len(xfh.get_internal_scopes(graph, me, immediate=True)) == 0:

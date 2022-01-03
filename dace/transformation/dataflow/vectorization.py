@@ -45,11 +45,14 @@ class Vectorization(transformation.Transformation):
 
     @staticmethod
     def expressions():
-        return [
-            sdutil.node_path_graph(Vectorization._map_entry)
-        ]
+        return [sdutil.node_path_graph(Vectorization._map_entry)]
 
-    def can_be_applied(self, graph: SDFGState, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(self,
+                       graph: SDFGState,
+                       candidate,
+                       expr_index,
+                       sdfg,
+                       permissive=False):
         map_entry = graph.nodes()[candidate[Vectorization._map_entry]]
 
         # Only accept scopes that have one internal tasklet

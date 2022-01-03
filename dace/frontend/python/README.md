@@ -44,9 +44,9 @@ There is also upcoming support for NumPy ufuncs. You may preview ufunc support w
 
 ## Known Issues
 
-### Issues when automatic strict transformations are enabled
+### Issues when automatic dataflow coarsening is enabled
 
-When automatic strict transformations are enabled, SDFGs created using the
+When automatic dataflow coarsening is enabled, SDFGs created using the
 Python-Frontend are automatically transformed using:
 - InlineSDFG
 - EndStateElimination
@@ -67,4 +67,4 @@ ranges, leading to RW/WR/WW dependencies, InlineSDFG and StateFusion may violate
 - When there are sequential dependencies between statements due to updating a loop variable,
 StateFusion may erroneously lead to concurrent execution of those statements (see [#315](https://github.com/spcl/dace/issues/315)).
   
-Temporary workaround: Disable the automatic strict transformations flag in the configuration file `.dace.conf`.
+Temporary workaround: Disable the automatic dataflow coarsening flag in the configuration file `.dace.conf`.

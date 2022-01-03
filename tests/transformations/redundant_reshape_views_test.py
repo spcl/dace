@@ -24,7 +24,7 @@ def test_inline_reshape_views_work():
         result[:] = np.reshape(nested_add1(A, B), [9])
         return nested_add1(result, B)
 
-    sdfg = test_inline_reshape_views_work.to_sdfg(strict=True)
+    sdfg = test_inline_reshape_views_work.to_sdfg(coarsen=True)
 
     arrays = 0
     views = 0
@@ -53,9 +53,9 @@ def test_views_between_maps_work():
 
         return np.transpose(result_reshaped)
 
-    sdfg = test_inline_reshape_views_work.to_sdfg(strict=False)
+    sdfg = test_inline_reshape_views_work.to_sdfg(coarsen=False)
     sdfg.expand_library_nodes()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
 
 if __name__ == "__main__":

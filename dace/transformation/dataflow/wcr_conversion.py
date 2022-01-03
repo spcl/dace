@@ -42,7 +42,7 @@ class AugAssignToWCR(transformation.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         inarr = graph.node(candidate[AugAssignToWCR.input])
         tasklet: nodes.Tasklet = graph.node(candidate[AugAssignToWCR.tasklet])
         outarr = graph.node(candidate[AugAssignToWCR.output])
@@ -221,7 +221,7 @@ class AugAssignToWCR(transformation.Transformation):
             new_node = ast.copy_location(
                 ast.Assign(targets=[lhs], value=new_rhs), ast_node)
             tasklet.code.code = [new_node]
-            
+
         elif tasklet.language is dtypes.Language.CPP:
             cstr = tasklet.code.as_string.strip()
             for edge in inedges:
@@ -243,7 +243,6 @@ class AugAssignToWCR(transformation.Transformation):
 
                 if edge.data.subset != outedge.data.subset:
                     continue
-
 
                 # Map asymmetric WCRs to symmetric ones if possible
                 if op in AugAssignToWCR._EXPR_MAP:

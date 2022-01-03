@@ -52,7 +52,7 @@ def run_jacobi_2d(device_type: dace.dtypes.DeviceType):
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(strict=True)
+        sdfg = kernel.to_sdfg(coarsen=True)
         sdfg.apply_transformations_repeated([MapFusion])
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1

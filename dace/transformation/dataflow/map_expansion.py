@@ -35,7 +35,7 @@ class MapExpansion(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
         # A candidate subgraph matches the map-expansion pattern when it
         # includes an N-dimensional map, with N greater than one.
         map_entry = graph.node(candidate[MapExpansion.map_entry])

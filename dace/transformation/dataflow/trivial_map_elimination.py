@@ -26,7 +26,7 @@ class TrivialMapElimination(transformation.Transformation):
         return [sdutil.node_path_graph(TrivialMapElimination._map_entry)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         map_entry = graph.nodes()[candidate[TrivialMapElimination._map_entry]]
         return any(r[0] == r[1] for r in map_entry.map.range)
 

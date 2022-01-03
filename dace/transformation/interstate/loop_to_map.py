@@ -93,10 +93,15 @@ class LoopToMap(DetectLoop):
         desc='The name of the iteration variable (optional).',
     )
 
-    def can_be_applied(self, graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(self,
+                       graph,
+                       candidate,
+                       expr_index,
+                       sdfg,
+                       permissive=False):
         # Is this even a loop
         if not DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg,
-                                         strict):
+                                         permissive):
             return False
 
         guard = graph.node(candidate[DetectLoop._loop_guard])
@@ -129,7 +134,7 @@ class LoopToMap(DetectLoop):
                     to_visit.append(dst)
             states.add(state)
 
-        assert(body_end in states)
+        assert (body_end in states)
 
         write_set = set()
         for state in states:
@@ -171,7 +176,7 @@ class LoopToMap(DetectLoop):
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
                             if not (dst_subset and _check_range(
-                                        dst_subset, a, itersym, b, step)):
+                                    dst_subset, a, itersym, b, step)):
                                 return False
                         # End of check
 
@@ -223,9 +228,12 @@ class LoopToMap(DetectLoop):
                                                       [itervar],
                                                       subsets.Range([
                                                           (start, end, step)
-                                                      ]), use_dst=True)
-                            t_pread = _sanitize_by_index(indices, pread.src_subset)
-                            pwrite = _sanitize_by_index(indices, pwrite.dst_subset)
+                                                      ]),
+                                                      use_dst=True)
+                            t_pread = _sanitize_by_index(
+                                indices, pread.src_subset)
+                            pwrite = _sanitize_by_index(indices,
+                                                        pwrite.dst_subset)
                             if subsets.intersects(t_pread, pwrite) is False:
                                 continue
                             return False

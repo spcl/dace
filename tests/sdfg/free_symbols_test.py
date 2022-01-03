@@ -26,7 +26,7 @@ def fsymtest_multistate(A: dace.float32[20, N]):
 
 def test_single_state():
     sdfg: dace.SDFG = fsymtest.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     assert len(sdfg.nodes()) == 1
     state = sdfg.node(0)
     assert state.free_symbols == {'M', 'N', 'K'}
@@ -56,7 +56,7 @@ def test_state_subgraph():
 
 def test_sdfg():
     sdfg: dace.SDFG = fsymtest_multistate.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     # Test each state separately
     for state in sdfg.nodes():
         assert (state.free_symbols == {'k', 'N', 'M', 'L'}
@@ -67,7 +67,7 @@ def test_sdfg():
 
 def test_constants():
     sdfg: dace.SDFG = fsymtest_multistate.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.add_constant('K', 5)
     sdfg.add_constant('L', 20)
 

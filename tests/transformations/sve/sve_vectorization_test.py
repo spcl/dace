@@ -31,7 +31,7 @@ def test_basic_stride():
                 b >> B[i]
                 b = a
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     assert sdfg.apply_transformations(SVEVectorization) == 1
 
 
@@ -44,7 +44,7 @@ def test_irregular_stride():
                 b >> B[i * i]
                 b = a
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     # [i * i] has a stride of 2i + 1 which is not constant (cannot be vectorized)
     assert sdfg.apply_transformations(SVEVectorization) == 0
 
@@ -58,7 +58,7 @@ def test_diagonal_stride():
                 b >> B[i, i]
                 b = a
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     # [i, i] has a stride of N + 1, so it is perfectly fine
     assert sdfg.apply_transformations(SVEVectorization) == 1
 
@@ -72,7 +72,7 @@ def test_unsupported_type():
                 b >> B[i]
                 b = a
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     # Complex datatypes are currently not supported by the codegen
     assert sdfg.apply_transformations(SVEVectorization) == 0
 
@@ -86,7 +86,7 @@ def test_supported_wcr():
                 b >> B(-1, lambda x, y: x + y)[0]
                 b = a
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     # Complex datatypes are currently not supported by the codegen
     assert sdfg.apply_transformations(SVEVectorization) == 1
 
@@ -101,7 +101,7 @@ def test_first_level_vectorization():
                 b >> B[j]
                 b = a_vec
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     sdfg.apply_transformations(SVEVectorization)
 
     # i is constant in the vectorized map
@@ -121,7 +121,7 @@ def test_stream_push():
                 b = a
         S_out >> B
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     # Stream push is possible
     assert sdfg.apply_transformations(SVEVectorization) == 1
 
@@ -137,6 +137,6 @@ def test_stream_pop():
                 b >> B[i]
                 b = a
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     # Stream pop is not implemented yet
     assert sdfg.apply_transformations(SVEVectorization) == 0

@@ -67,7 +67,7 @@ def run_syrk(device_type: dace.dtypes.DeviceType):
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(strict=True)
+        sdfg = kernel.to_sdfg(coarsen=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 

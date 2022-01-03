@@ -86,7 +86,7 @@ class ReduceExpansion(transformation.Transformation):
         return [utils.node_path_graph(ReduceExpansion._reduce)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         reduce_node = graph.nodes()[candidate[ReduceExpansion._reduce]]
         inedge = graph.in_edges(reduce_node)[0]
         input_dims = inedge.data.subset.dims()
@@ -109,7 +109,7 @@ class ReduceExpansion(transformation.Transformation):
         reduce = candidate[ReduceExpansion._reduce]
         return str(reduce)
 
-    def apply(self, sdfg: SDFG, strict=False):
+    def apply(self, sdfg: SDFG):
         """ Splits the data dimension into an inner and outer dimension,
             where the inner dimension are the reduction axes and the
             outer axes the complement. Pushes the reduce inside a new

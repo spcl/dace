@@ -361,7 +361,7 @@ def test_numpynumber_condition():
             A[:] = 1
 
     # Ensure condition was folded
-    sdfg = conditional_val.to_sdfg(val=np.int64(3), strict=True)
+    sdfg = conditional_val.to_sdfg(val=np.int64(3), coarsen=True)
     assert sdfg.number_of_nodes() == 1
 
     a = np.random.rand(20)
@@ -383,7 +383,7 @@ def test_constant_propagation():
             A[:] = 1
 
     # Ensure condition was folded
-    sdfg = conditional_val.to_sdfg(val=3, strict=True)
+    sdfg = conditional_val.to_sdfg(val=3, coarsen=True)
     assert sdfg.number_of_nodes() == 1
 
     a = np.random.rand(20)

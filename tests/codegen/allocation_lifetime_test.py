@@ -178,7 +178,7 @@ def test_persistent_gpu_transpose_regression():
     sdfg = test_persistent_transpose.to_sdfg()
 
     sdfg.expand_library_nodes()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.apply_gpu_transformations()
 
     for _, _, arr in sdfg.arrays_recursive():
@@ -310,7 +310,7 @@ def test_nested_view_samename():
                            lifetime=dace.AllocationLifetime.Persistent)
         return incall(a, tmp)
 
-    sdfg = top.to_sdfg(strict=False)
+    sdfg = top.to_sdfg(coarsen=False)
 
     a = np.random.rand(20)
     ref = a.copy()
@@ -329,7 +329,7 @@ def test_nested_persistent():
     def toppers(a: dace.float64[20]):
         return nestpers(a)
 
-    sdfg = toppers.to_sdfg(strict=False)
+    sdfg = toppers.to_sdfg(coarsen=False)
     for _, _, arr in sdfg.arrays_recursive():
         if arr.transient:
             arr.lifetime = dace.AllocationLifetime.Persistent

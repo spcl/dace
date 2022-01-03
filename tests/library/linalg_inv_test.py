@@ -324,7 +324,7 @@ def test_inv(implementation, dtype, size, shape, overwrite, getri):
                      in_subset_str, out_subset_str, overwrite, getri)
     if implementation == 'cuSolverDn':
         sdfg.apply_gpu_transformations()
-        sdfg.apply_strict_transformations()
+        sdfg.coarsen_dataflow()
     try:
         inv_sdfg = sdfg.compile()
     except (CompilerConfigurationError, CompilationError):

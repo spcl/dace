@@ -304,7 +304,7 @@ def test_callback_samename():
         call_b()
         call_a()
 
-    sdfg = same_name_nested.to_sdfg(strict=False)
+    sdfg = same_name_nested.to_sdfg(coarsen=False)
     assert list(sdfg.arrays.keys()) == ['__pystate']
 
     same_name_nested()

@@ -8,7 +8,7 @@ from dace.transformation import transformation as pm
 from dace.config import Config
 
 
-@registry.autoregister_params(singlestate=True, strict=False)
+@registry.autoregister_params(singlestate=True, coarsening=False)
 class RedundantArrayCopyingIn(pm.Transformation):
     """ Implements the redundant array removal transformation. Removes the first and second access nodeds
         in pattern A -> B -> A
@@ -30,7 +30,7 @@ class RedundantArrayCopyingIn(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         in_array = graph.nodes()[candidate[RedundantArrayCopying._in_array]]
         med_array = graph.nodes()[candidate[RedundantArrayCopying._med_array]]
         out_array = graph.nodes()[candidate[RedundantArrayCopying._out_array]]
@@ -93,7 +93,7 @@ class RedundantArrayCopyingIn(pm.Transformation):
         graph.remove_node(in_array)
 
 
-@registry.autoregister_params(singlestate=True, strict=False)
+@registry.autoregister_params(singlestate=True, coarsening=False)
 class RedundantArrayCopying(pm.Transformation):
     """ Implements the redundant array removal transformation. Removes the last access node
         in pattern A -> B -> A, and the second (if possible)
@@ -115,7 +115,7 @@ class RedundantArrayCopying(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         in_array = graph.nodes()[candidate[RedundantArrayCopying._in_array]]
         med_array = graph.nodes()[candidate[RedundantArrayCopying._med_array]]
         out_array = graph.nodes()[candidate[RedundantArrayCopying._out_array]]
@@ -125,12 +125,12 @@ class RedundantArrayCopying(pm.Transformation):
             return False
 
         # Make sure that the removal candidate is a transient variable
-        if strict and not out_array.desc(sdfg).transient:
+        if not permissive and not out_array.desc(sdfg).transient:
             return False
 
         # Make sure that the middle access node is not transient. We do this to ensure that everything copied from
         # B -> A is either copied in from A, or uninitialized memory.
-        if strict and not med_array.desc(sdfg).transient:
+        if not permissive and not med_array.desc(sdfg).transient:
             return False
 
         # Make sure that both arrays are using the same storage location
@@ -220,7 +220,7 @@ class RedundantArrayCopying2(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         in_array = graph.nodes()[candidate[RedundantArrayCopying2._in_array]]
         out_array = graph.nodes()[candidate[RedundantArrayCopying2._out_array]]
 
@@ -279,7 +279,7 @@ class RedundantArrayCopying3(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         map_entry = graph.nodes()[candidate[RedundantArrayCopying3._map_entry]]
         out_array = graph.nodes()[candidate[RedundantArrayCopying3._out_array]]
 

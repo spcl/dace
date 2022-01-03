@@ -41,7 +41,7 @@ class FPGATransformState(transformation.Transformation):
         return [sdutil.node_path_graph(FPGATransformState._state)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         state = graph.nodes()[candidate[FPGATransformState._state]]
 
         for node, graph in state.all_nodes_recursive():

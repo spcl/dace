@@ -32,8 +32,7 @@ def test_nested_symbol():
 
 
 def test_nested_symbol_dynamic():
-    if not dace.Config.get_bool('optimizer',
-                                'automatic_strict_transformations'):
+    if not dace.Config.get_bool('optimizer', 'automatic_dataflow_coarsening'):
         warnings.warn("Test disabled (missing allocation lifetime support)")
         return
 
@@ -57,7 +56,7 @@ def test_scal2sym():
         s2 = scal + 1
         symarg(A, N=s2)
 
-    sdfg = scalarg.to_sdfg(strict=False)
+    sdfg = scalarg.to_sdfg(coarsen=False)
     A = np.random.rand(20)
     sc = 5.0
 
@@ -76,7 +75,7 @@ def test_arr2sym():
     def scalarg(A: dace.float64[20], arr: dace.float64[2]):
         symarg(A, N=arr[1])
 
-    sdfg = scalarg.to_sdfg(strict=False)
+    sdfg = scalarg.to_sdfg(coarsen=False)
     A = np.random.rand(20)
     sc = np.array([2.0, 3.0])
 
@@ -103,7 +102,7 @@ def test_nested_symbol_in_args():
         rdt = 1.0 / dt
         inner(field, rdt)
 
-    sdfg = funct.to_sdfg(np.random.randn(10, ), 1.0, strict=False)
+    sdfg = funct.to_sdfg(np.random.randn(10, ), 1.0, coarsen=False)
     sdfg(np.random.randn(10, ), 1.0)
 
 
