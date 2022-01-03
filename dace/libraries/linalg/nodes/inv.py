@@ -18,8 +18,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     if node.overwrite:
         in_shape, in_dtype, in_strides, n = arr_desc
     else:
-        (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides,
-         n) = arr_desc
+        (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides, n) = arr_desc
     dtype = in_dtype
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
@@ -27,10 +26,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     a_arr = sdfg.add_array('_ain', in_shape, dtype=in_dtype, strides=in_strides)
     if not node.overwrite:
         ain_arr = a_arr
-        a_arr = sdfg.add_array('_aout',
-                               out_shape,
-                               dtype=out_dtype,
-                               strides=out_strides)
+        a_arr = sdfg.add_array('_aout', out_shape, dtype=out_dtype, strides=out_strides)
     ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True)
     info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True)
 
@@ -56,38 +52,14 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     info1 = state.add_write('_info')
     info2 = state.add_write('_info')
 
-    state.add_memlet_path(ain,
-                          getrf_node,
-                          dst_conn="_xin",
-                          memlet=Memlet.from_array(*a_arr))
-    state.add_memlet_path(getrf_node,
-                          info1,
-                          src_conn="_res",
-                          memlet=Memlet.from_array(*info_arr))
-    state.add_memlet_path(getrf_node,
-                          ipiv,
-                          src_conn="_ipiv",
-                          memlet=Memlet.from_array(*ipiv_arr))
-    state.add_memlet_path(getrf_node,
-                          ainout,
-                          src_conn="_xout",
-                          memlet=Memlet.from_array(*a_arr))
-    state.add_memlet_path(ainout,
-                          getri_node,
-                          dst_conn="_xin",
-                          memlet=Memlet.from_array(*a_arr))
-    state.add_memlet_path(ipiv,
-                          getri_node,
-                          dst_conn="_ipiv",
-                          memlet=Memlet.from_array(*ipiv_arr))
-    state.add_memlet_path(getri_node,
-                          info2,
-                          src_conn="_res",
-                          memlet=Memlet.from_array(*info_arr))
-    state.add_memlet_path(getri_node,
-                          aout,
-                          src_conn="_xout",
-                          memlet=Memlet.from_array(*a_arr))
+    state.add_memlet_path(ain, getrf_node, dst_conn="_xin", memlet=Memlet.from_array(*a_arr))
+    state.add_memlet_path(getrf_node, info1, src_conn="_res", memlet=Memlet.from_array(*info_arr))
+    state.add_memlet_path(getrf_node, ipiv, src_conn="_ipiv", memlet=Memlet.from_array(*ipiv_arr))
+    state.add_memlet_path(getrf_node, ainout, src_conn="_xout", memlet=Memlet.from_array(*a_arr))
+    state.add_memlet_path(ainout, getri_node, dst_conn="_xin", memlet=Memlet.from_array(*a_arr))
+    state.add_memlet_path(ipiv, getri_node, dst_conn="_ipiv", memlet=Memlet.from_array(*ipiv_arr))
+    state.add_memlet_path(getri_node, info2, src_conn="_res", memlet=Memlet.from_array(*info_arr))
+    state.add_memlet_path(getri_node, aout, src_conn="_xout", memlet=Memlet.from_array(*a_arr))
 
     return sdfg
 
@@ -98,8 +70,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     if node.overwrite:
         in_shape, in_dtype, in_strides, n = arr_desc
     else:
-        (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides,
-         n) = arr_desc
+        (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides, n) = arr_desc
     dtype = in_dtype
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
@@ -107,10 +78,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     a_arr = sdfg.add_array('_ain', in_shape, dtype=in_dtype, strides=in_strides)
     if not node.overwrite:
         ain_arr = a_arr
-        a_arr = sdfg.add_array('_ainout',
-                               [n, n],
-                               dtype=in_dtype,
-                               transient=True)
+        a_arr = sdfg.add_array('_ainout', [n, n], dtype=in_dtype, transient=True)
         b_arr = sdfg.add_array('_aout', out_shape, dtype=out_dtype, strides=out_strides)
     else:
         b_arr = sdfg.add_array('_b', [n, n], dtype=dtype, transient=True)
@@ -139,50 +107,28 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         state.add_nedge(a, ain, Memlet.from_array(*ain_arr))
         bin_name = '_aout'
         bout = state.add_access('_aout')
-    
-    _, _, mx = state.add_mapped_tasklet('_eye_', dict(i="0:n", j="0:n"), {}, '_out = (i == j) ? 1 : 0;', dict(_out=Memlet.simple(bin_name, 'i, j')), language=dace.dtypes.Language.CPP, external_edges=True)
+
+    _, _, mx = state.add_mapped_tasklet('_eye_',
+                                        dict(i="0:n", j="0:n"), {},
+                                        '_out = (i == j) ? 1 : 0;',
+                                        dict(_out=Memlet.simple(bin_name, 'i, j')),
+                                        language=dace.dtypes.Language.CPP,
+                                        external_edges=True)
     bin = state.out_edges(mx)[0].dst
 
     ipiv = state.add_access('_pivots')
     info1 = state.add_write('_info')
     info2 = state.add_write('_info')
 
-    state.add_memlet_path(ain,
-                          getrf_node,
-                          dst_conn="_xin",
-                          memlet=Memlet.from_array(*a_arr))
-    state.add_memlet_path(getrf_node,
-                          info1,
-                          src_conn="_res",
-                          memlet=Memlet.from_array(*info_arr))
-    state.add_memlet_path(getrf_node,
-                          ipiv,
-                          src_conn="_ipiv",
-                          memlet=Memlet.from_array(*ipiv_arr))
-    state.add_memlet_path(getrf_node,
-                          ainout,
-                          src_conn="_xout",
-                          memlet=Memlet.from_array(*a_arr))
-    state.add_memlet_path(ainout,
-                          getrs_node,
-                          dst_conn="_a",
-                          memlet=Memlet.from_array(*a_arr))
-    state.add_memlet_path(bin,
-                          getrs_node,
-                          dst_conn="_rhs_in",
-                          memlet=Memlet.from_array(*b_arr))
-    state.add_memlet_path(ipiv,
-                          getrs_node,
-                          dst_conn="_ipiv",
-                          memlet=Memlet.from_array(*ipiv_arr))
-    state.add_memlet_path(getrs_node,
-                          info2,
-                          src_conn="_res",
-                          memlet=Memlet.from_array(*info_arr))
-    state.add_memlet_path(getrs_node,
-                          bout,
-                          src_conn="_rhs_out",
-                          memlet=Memlet.from_array(*b_arr))
+    state.add_memlet_path(ain, getrf_node, dst_conn="_xin", memlet=Memlet.from_array(*a_arr))
+    state.add_memlet_path(getrf_node, info1, src_conn="_res", memlet=Memlet.from_array(*info_arr))
+    state.add_memlet_path(getrf_node, ipiv, src_conn="_ipiv", memlet=Memlet.from_array(*ipiv_arr))
+    state.add_memlet_path(getrf_node, ainout, src_conn="_xout", memlet=Memlet.from_array(*a_arr))
+    state.add_memlet_path(ainout, getrs_node, dst_conn="_a", memlet=Memlet.from_array(*a_arr))
+    state.add_memlet_path(bin, getrs_node, dst_conn="_rhs_in", memlet=Memlet.from_array(*b_arr))
+    state.add_memlet_path(ipiv, getrs_node, dst_conn="_ipiv", memlet=Memlet.from_array(*ipiv_arr))
+    state.add_memlet_path(getrs_node, info2, src_conn="_res", memlet=Memlet.from_array(*info_arr))
+    state.add_memlet_path(getrs_node, bout, src_conn="_rhs_out", memlet=Memlet.from_array(*b_arr))
 
     return sdfg
 
@@ -200,8 +146,7 @@ class ExpandInvPure(ExpandTransformation):
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
         if node.dtype is None:
-            raise ValueError("Data type must be set to expand " + str(node) +
-                             ".")
+            raise ValueError("Data type must be set to expand " + str(node) + ".")
         return ExpandInvPure.make_sdfg(node, state, sdfg)
 
 
@@ -245,11 +190,7 @@ class ExpandInvCuSolverDn(ExpandTransformation):
 class Inv(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
-    implementations = {
-        "OpenBLAS": ExpandInvOpenBLAS,
-        "MKL": ExpandInvMKL,
-        "cuSolverDn": ExpandInvCuSolverDn
-    }
+    implementations = {"OpenBLAS": ExpandInvOpenBLAS, "MKL": ExpandInvMKL, "cuSolverDn": ExpandInvCuSolverDn}
     default_implementation = None
 
     overwrite = dace.properties.Property(dtype=bool, default=False)
@@ -257,11 +198,7 @@ class Inv(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     def __init__(self, name, overwrite_a=False, use_getri=True, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_ain"},
-                         outputs={"_aout"},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_ain"}, outputs={"_aout"}, **kwargs)
         self.overwrite = overwrite_a
         self.use_getri = use_getri
 
@@ -306,23 +243,19 @@ class Inv(dace.sdfg.nodes.LibraryNode):
         if shape1[0] != shape1[1]:
             raise ValueError("linalg.inv only supported on square matrices")
         if not np.array_equal(shape1, shape2):
-            raise ValueError(
-                "Squeezed shape of input and output must be the same")
+            raise ValueError("Squeezed shape of input and output must be the same")
 
         strides1 = np.array(desc_ain.strides)[dims1].tolist()
         strides2 = np.array(desc_aout.strides)[dims2].tolist()
         if strides2[-1] != 1:
-            raise ValueError(
-                "Matrices with column strides greater than 1 are unsupported")
+            raise ValueError("Matrices with column strides greater than 1 are unsupported")
 
         if self.overwrite and desc_ain is not desc_aout:
-            raise ValueError(
-                "Overwrite enabled but output is different than input")
+            raise ValueError("Overwrite enabled but output is different than input")
         if not self.overwrite and desc_ain is desc_aout:
             raise ValueError("Overwrite disabled but output is same as input")
 
         if self.overwrite:
             return shape1, desc_ain.dtype, strides1, shape1[0]
         else:
-            return (shape1, desc_ain.dtype, strides1, shape2, desc_aout.dtype,
-                    strides2, shape1[0])
+            return (shape1, desc_ain.dtype, strides1, shape2, desc_aout.dtype, strides2, shape1[0])

@@ -2,6 +2,7 @@
 import dace
 import numpy as np
 
+
 def test_nested_symbol_partial():
     W = dace.symbol()
 

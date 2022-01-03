@@ -77,8 +77,7 @@ def test_2fuse():
     sdfg = softmax.to_sdfg()
     sdfg.name = 'softmax_2part'
     sdfg.coarsen_dataflow()
-    X_in = np.random.rand(H.get(), B.get(), SN.get(),
-                          SM.get()).astype(np.float32)
+    X_in = np.random.rand(H.get(), B.get(), SN.get(), SM.get()).astype(np.float32)
 
     csdfg = sdfg.compile()
     res1 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
@@ -102,8 +101,7 @@ def test_1fuse():
     sdfg = softmax.to_sdfg()
     sdfg.name = 'softmax_fused'
     sdfg.coarsen_dataflow()
-    X_in = np.random.rand(H.get(), B.get(), SN.get(),
-                          SM.get()).astype(np.float32)
+    X_in = np.random.rand(H.get(), B.get(), SN.get(), SM.get()).astype(np.float32)
 
     csdfg = sdfg.compile()
     res1 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
@@ -128,8 +126,7 @@ def test_1fuse():
     sdfg = softmax.to_sdfg()
     sdfg.name = 'softmax_fused'
     sdfg.coarsen_dataflow()
-    X_in = np.random.rand(H.get(), B.get(), SN.get(),
-                          SM.get()).astype(np.float32)
+    X_in = np.random.rand(H.get(), B.get(), SN.get(), SM.get()).astype(np.float32)
 
     csdfg = sdfg.compile()
     res1 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)

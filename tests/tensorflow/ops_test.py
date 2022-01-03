@@ -45,8 +45,7 @@ def test_mean():
         output_tf = sess_tf.run(op, feed_dict={inp: real_inp})
         output_dace = sess_dace.run(op, feed_dict={inp: real_inp})
         try:
-            assert tf.norm(output_dace -
-                           output_tf).eval(session=sess_tf) < 1e-10
+            assert tf.norm(output_dace - output_tf).eval(session=sess_tf) < 1e-10
         except:
             print(output_dace)
             print(output_tf)
@@ -88,8 +87,7 @@ def test_slice():
     s = tf.placeholder(tf.int32, [3])
     output = tf.placeholder(tf.int32, [1, 1, 3])
     output = tf.slice(t, b, s)
-    input_tensor = tf.constant([[[1, 1, 1], [2, 2, 2]], [[3, 3, 3], [4, 4, 4]],
-                                [[5, 5, 5], [6, 6, 6]]])
+    input_tensor = tf.constant([[[1, 1, 1], [2, 2, 2]], [[3, 3, 3], [4, 4, 4]], [[5, 5, 5], [6, 6, 6]]])
 
     sess_tf = tf.Session()
     sess_dace = TFSession()
@@ -99,8 +97,7 @@ def test_slice():
     size_tensor_2 = tf.constant([1, 2, 3])
     size_tensor_3 = tf.constant([2, 1, 3])
     tf_out = sess_tf.run(tf.slice(input_tensor, begin_tensor, size_tensor_3))
-    dace_out = sess_dace.run(tf.slice(input_tensor, begin_tensor,
-                                      size_tensor_3))
+    dace_out = sess_dace.run(tf.slice(input_tensor, begin_tensor, size_tensor_3))
     print(tf_out)
     print(dace_out)
     assert (tf_out == dace_out).all()

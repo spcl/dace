@@ -61,10 +61,8 @@ class InstrumentationReport(object):
         return 'InstrumentationReport(name=%s)' % self.name
 
     def sortby(self, column: str, ascending: bool = False):
-        if (column and column.lower()
-                not in ('counter', 'value', 'min', 'max', 'mean', 'median')):
-            raise ValueError('Only Counter, Value, Min, Max, Mean, Median are '
-                             'supported')
+        if (column and column.lower() not in ('counter', 'value', 'min', 'max', 'mean', 'median')):
+            raise ValueError('Only Counter, Value, Min, Max, Mean, Median are ' 'supported')
         self._sortcat = column if column is None else column.lower()
         self._sortdesc = not ascending
 
@@ -85,23 +83,11 @@ class InstrumentationReport(object):
                 # This element is a node.
                 if sdfg != element[0]:
                     # No parent SDFG row present yet, print it.
-                    string += row_format.format('SDFG (' + str(element[0]) +
-                                                ')',
-                                                '',
-                                                '',
-                                                '',
-                                                '',
-                                                width=colw)
+                    string += row_format.format('SDFG (' + str(element[0]) + ')', '', '', '', '', width=colw)
                 sdfg = element[0]
                 if state != element[1]:
                     # No parent state row present yet, print it.
-                    string += row_format.format('|-State (' + str(element[1]) +
-                                                ')',
-                                                '',
-                                                '',
-                                                '',
-                                                '',
-                                                width=colw)
+                    string += row_format.format('|-State (' + str(element[1]) + ')', '', '', '', '', width=colw)
                 state = element[1]
                 element_label = '| |-Node (' + str(element[2]) + ')'
                 indent = '| | |'
@@ -109,13 +95,7 @@ class InstrumentationReport(object):
                 # This element is a state.
                 if sdfg != element[0]:
                     # No parent SDFG row present yet, print it.
-                    string += row_format.format('SDFG (' + str(element[0]) +
-                                                ')',
-                                                '',
-                                                '',
-                                                '',
-                                                '',
-                                                width=colw)
+                    string += row_format.format('SDFG (' + str(element[0]) + ')', '', '', '', '', width=colw)
                 sdfg = element[0]
                 state = element[1]
                 element_label = '|-State (' + str(element[1]) + ')'
@@ -130,19 +110,9 @@ class InstrumentationReport(object):
                 element_label = 'N/A'
 
             if with_element_heading:
-                string += row_format.format(element_label,
-                                            '',
-                                            '',
-                                            '',
-                                            '',
-                                            width=colw)
+                string += row_format.format(element_label, '', '', '', '', width=colw)
 
-            string += row_format.format(indent + label + ':',
-                                        '',
-                                        '',
-                                        '',
-                                        '',
-                                        width=colw)
+            string += row_format.format(indent + label + ':', '', '', '', '', width=colw)
             string += row_format.format(indent,
                                         '%.3f' % np.min(runtimes),
                                         '%.3f' % np.mean(runtimes),
@@ -184,23 +154,15 @@ class InstrumentationReport(object):
 
         if len(self.durations) > 0:
             string += ('-' * (COLW * 5)) + '\n'
-            string += ('{:<{width}}' * 2).format(
-                'Element', 'Runtime (ms)', width=COLW) + '\n'
-            string += row_format.format('',
-                                        'Min',
-                                        'Mean',
-                                        'Median',
-                                        'Max',
-                                        width=COLW)
+            string += ('{:<{width}}' * 2).format('Element', 'Runtime (ms)', width=COLW) + '\n'
+            string += row_format.format('', 'Min', 'Mean', 'Median', 'Max', width=COLW)
             string += ('-' * (COLW * 5)) + '\n'
 
             sdfg = -1
             state = -1
 
             if self._sortcat in ('min', 'mean', 'median', 'max'):
-                element_list = sorted(element_list,
-                                      key=self.getkey,
-                                      reverse=self._sortdesc)
+                element_list = sorted(element_list, key=self.getkey, reverse=self._sortdesc)
 
             for element in element_list:
                 events = self.durations[element]
@@ -209,33 +171,26 @@ class InstrumentationReport(object):
                     for event in events.keys():
                         runtimes = events[event]
 
-                        string, sdfg, state = self._get_runtimes_string(
-                            event, runtimes, element, sdfg, state, string,
-                            row_format, COLW, with_element_heading)
+                        string, sdfg, state = self._get_runtimes_string(event, runtimes, element, sdfg, state, string,
+                                                                        row_format, COLW, with_element_heading)
                         with_element_heading = False
 
             string += ('-' * (COLW * 5)) + '\n'
 
         if len(self.counters) > 0:
             string += ('-' * (COUNTER_COLW * 2)) + '\n'
-            string += ('{:<{width}}' * 2).format(
-                'Counter', 'Value', width=COUNTER_COLW) + '\n'
+            string += ('{:<{width}}' * 2).format('Counter', 'Value', width=COUNTER_COLW) + '\n'
             string += ('-' * (COUNTER_COLW * 2)) + '\n'
 
             if self._sortcat == 'value':
-                counter_list = sorted(self.counters,
-                                      key=lambda k: self.counters[k],
-                                      reverse=self._sortdesc)
+                counter_list = sorted(self.counters, key=lambda k: self.counters[k], reverse=self._sortdesc)
             elif self._sortcat == 'counter':
-                counter_list = sorted(self.counters.keys(),
-                                      reverse=self._sortdesc)
+                counter_list = sorted(self.counters.keys(), reverse=self._sortdesc)
             else:
                 counter_list = self.counters.keys()
 
             for counter in counter_list:
-                string += counter_format.format(counter,
-                                                self.counters[counter],
-                                                width=COUNTER_COLW)
+                string += counter_format.format(counter, self.counters[counter], width=COUNTER_COLW)
             string += ('-' * (COUNTER_COLW * 2)) + '\n'
 
         return string

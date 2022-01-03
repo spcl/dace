@@ -8,8 +8,7 @@ from dace.transformation.dataflow import DoubleBuffering, InLocalStorage
 
 
 @dace.program
-def mm_double_buffered(A: dace.float32[256, 256], B: dace.float32[256, 256],
-                       C: dace.float32[256, 256]):
+def mm_double_buffered(A: dace.float32[256, 256], B: dace.float32[256, 256], C: dace.float32[256, 256]):
     # Write to C in 128x128 output tiles
     for tile_i, tile_j in dace.map[0:256:128, 0:256:128]:
         # Load inputs in increments of 8 (128x8 tiles)
@@ -38,9 +37,7 @@ def test_double_buffering():
     # Apply local storage transformation on inner map (last two transformations)
     sdfg.coarsen_dataflow()
     for i in range(2):
-        for match in reversed(
-                list(match_patterns(sdfg, InLocalStorage,
-                                    states=[sdfg.node(0)]))):
+        for match in reversed(list(match_patterns(sdfg, InLocalStorage, states=[sdfg.node(0)]))):
             match.apply(sdfg)
             break
         else:

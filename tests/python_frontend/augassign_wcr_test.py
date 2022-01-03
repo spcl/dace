@@ -4,8 +4,7 @@ import numpy as np
 
 
 @dace.program
-def augassign_wcr(A: dace.int32[10, 10, 10], B: dace.int32[10],
-                  W: dace.bool_[10]):
+def augassign_wcr(A: dace.int32[10, 10, 10], B: dace.int32[10], W: dace.bool_[10]):
     count = 0
     for i in dace.map[0:10]:
         B[i] = 0
@@ -19,8 +18,7 @@ def augassign_wcr(A: dace.int32[10, 10, 10], B: dace.int32[10],
 
 
 @dace.program
-def augassign_wcr2(A: dace.int32[10, 10, 10], B: dace.int32[10],
-                   W: dace.bool_[10, 10, 10]):
+def augassign_wcr2(A: dace.int32[10, 10, 10], B: dace.int32[10], W: dace.bool_[10, 10, 10]):
     count = 0
     B[:] = 0
     for i, j, k in dace.map[0:10, 0:10, 0:10]:
@@ -32,8 +30,7 @@ def augassign_wcr2(A: dace.int32[10, 10, 10], B: dace.int32[10],
 
 
 @dace.program
-def augassign_wcr3(A: dace.int32[10, 10, 10], B: dace.int32[10],
-                   W: dace.bool_[10, 10, 10], ind: dace.int32[10]):
+def augassign_wcr3(A: dace.int32[10, 10, 10], B: dace.int32[10], W: dace.bool_[10, 10, 10], ind: dace.int32[10]):
     count = 0
     B[:] = 0
     for i, j, k in dace.map[0:10, 0:10, 0:10]:

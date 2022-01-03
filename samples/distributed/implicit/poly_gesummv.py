@@ -6,9 +6,7 @@ import os
 from dace.sdfg.utils import load_precompiled_sdfg
 from mpi4py import MPI
 
-from dace.transformation.dataflow import (ElementWiseArrayOperation,
-                                          ElementWiseArrayOperation2D,
-                                          RedundantComm2D)
+from dace.transformation.dataflow import (ElementWiseArrayOperation, ElementWiseArrayOperation2D, RedundantComm2D)
 
 N = dc.symbol('N', dtype=dc.int64, integer=True, positive=True)
 
@@ -18,8 +16,8 @@ def relerr(ref, val):
 
 
 @dc.program
-def gesummv(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N],
-            B: dc.float64[N, N], x: dc.float64[N], y: dc.float64[N]):
+def gesummv(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N], B: dc.float64[N, N], x: dc.float64[N],
+            y: dc.float64[N]):
 
     y[:] = alpha * A @ x + beta * B @ x
 
@@ -65,21 +63,11 @@ if __name__ == "__main__":
     comm.Barrier()
     if rank > 0:
         build_folder = dc.Config.get('default_build_folder')
-        mpi_func = load_precompiled_sdfg(
-            os.path.join(build_folder, gesummv.name))
+        mpi_func = load_precompiled_sdfg(os.path.join(build_folder, gesummv.name))
     comm.Barrier()
 
     Px, Py = 1, size
-    mpi_func(A=A,
-             B=B,
-             x=x,
-             alpha=alpha,
-             beta=beta,
-             y=y,
-             N=N,
-             commsize=size,
-             Px=Px,
-             Py=Py)
+    mpi_func(A=A, B=B, x=x, alpha=alpha, beta=beta, y=y, N=N, commsize=size, Px=Px, Py=Py)
 
     comm.Barrier()
 

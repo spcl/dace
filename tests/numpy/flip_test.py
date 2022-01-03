@@ -17,22 +17,22 @@ def test_flip_2d(A: dace.int32[10, 5]):
 
 @compare_numpy_output()
 def test_flip_2d_axis0(A: dace.int32[10, 5]):
-    return np.flip(A, axis=(0,))
+    return np.flip(A, axis=(0, ))
 
 
 @compare_numpy_output()
 def test_flip_2d_axis0n(A: dace.int32[10, 5]):
-    return np.flip(A, axis=(-2,))
+    return np.flip(A, axis=(-2, ))
 
 
 @compare_numpy_output()
 def test_flip_2d_axis1(A: dace.int32[10, 5]):
-    return np.flip(A, axis=(1,))
+    return np.flip(A, axis=(1, ))
 
 
 @compare_numpy_output()
 def test_flip_2d_axis1n(A: dace.int32[10, 5]):
-    return np.flip(A, axis=(-1,))
+    return np.flip(A, axis=(-1, ))
 
 
 @compare_numpy_output()

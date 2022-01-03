@@ -86,10 +86,9 @@ class MapToForLoop(transformation.Transformation):
         # End of dynamic input range
 
         # Create a loop inside the nested SDFG
-        loop_result = nsdfg.add_loop(
-            None, nstate, None, loop_idx, replace_param(loop_from),
-            '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
-            '%s + %s' % (loop_idx, replace_param(loop_step)))
+        loop_result = nsdfg.add_loop(None, nstate, None, loop_idx, replace_param(loop_from),
+                                     '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
+                                     '%s + %s' % (loop_idx, replace_param(loop_step)))
         # store as object fields for external access
         self.before_state, self.guard, self.after_state = loop_result
         # Skip map in input edges
@@ -105,8 +104,7 @@ class MapToForLoop(transformation.Transformation):
             nstate.remove_edge(edge)
 
         # Remove nodes from dynamic map range
-        nstate.remove_nodes_from(
-            [e.src for e in dace.sdfg.dynamic_map_inputs(nstate, map_entry)])
+        nstate.remove_nodes_from([e.src for e in dace.sdfg.dynamic_map_inputs(nstate, map_entry)])
         # Remove scope nodes
         nstate.remove_nodes_from([map_entry, map_exit])
 

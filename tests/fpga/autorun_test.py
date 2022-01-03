@@ -22,54 +22,32 @@ def make_sdfg():
     sdfg.add_edge(state, post_state, dace.InterstateEdge())
 
     sdfg.add_array("arr_host", (N, ), DTYPE)
-    sdfg.add_array("arr", (N, ),
-                   DTYPE,
-                   storage=dace.StorageType.FPGA_Global,
-                   transient=True)
+    sdfg.add_array("arr", (N, ), DTYPE, storage=dace.StorageType.FPGA_Global, transient=True)
 
     # Copy from host to device
     pre_host = pre_state.add_read("arr_host")
     pre_device = pre_state.add_write("arr")
-    pre_state.add_memlet_path(pre_host,
-                              pre_device,
-                              memlet=dace.Memlet("arr[0:N]"))
+    pre_state.add_memlet_path(pre_host, pre_device, memlet=dace.Memlet("arr[0:N]"))
 
     # Copy from device to host
     post_device = post_state.add_read("arr")
     post_host = post_state.add_write("arr_host")
-    post_state.add_memlet_path(post_device,
-                               post_host,
-                               memlet=dace.Memlet("arr_host[0:N]"))
+    post_state.add_memlet_path(post_device, post_host, memlet=dace.Memlet("arr_host[0:N]"))
 
-    sdfg.add_stream("pipe_in",
-                    DTYPE,
-                    storage=dace.StorageType.FPGA_Local,
-                    transient=True)
+    sdfg.add_stream("pipe_in", DTYPE, storage=dace.StorageType.FPGA_Local, transient=True)
 
     # Read from memory into a stream
     memory_read = state.add_read("arr")
     pipe_in_write = state.add_write("pipe_in")
-    state.add_memlet_path(memory_read,
-                          pipe_in_write,
-                          memlet=dace.Memlet("arr[0:N]", other_subset="0"))
+    state.add_memlet_path(memory_read, pipe_in_write, memlet=dace.Memlet("arr[0:N]", other_subset="0"))
 
-    sdfg.add_stream("pipes_systolic",
-                    DTYPE,
-                    shape=(P + 1, ),
-                    storage=dace.StorageType.FPGA_Local,
-                    transient=True)
+    sdfg.add_stream("pipes_systolic", DTYPE, shape=(P + 1, ), storage=dace.StorageType.FPGA_Local, transient=True)
 
     # Simple processing element that can be autorun
     pipe_in_read = state.add_read("pipe_in")
-    entry_add, exit_add = state.add_map("add", {"i": "0:N"},
-                                        schedule=dace.ScheduleType.FPGA_Device)
-    tasklet_add = state.add_tasklet("add", {"val_in"}, {"val_out"},
-                                    "val_out = val_in + 9")
-    state.add_memlet_path(pipe_in_read,
-                          entry_add,
-                          tasklet_add,
-                          dst_conn="val_in",
-                          memlet=dace.Memlet("pipe_in[0]"))
+    entry_add, exit_add = state.add_map("add", {"i": "0:N"}, schedule=dace.ScheduleType.FPGA_Device)
+    tasklet_add = state.add_tasklet("add", {"val_in"}, {"val_out"}, "val_out = val_in + 9")
+    state.add_memlet_path(pipe_in_read, entry_add, tasklet_add, dst_conn="val_in", memlet=dace.Memlet("pipe_in[0]"))
     pipe_systolic_write_head = state.add_write("pipes_systolic")
     state.add_memlet_path(tasklet_add,
                           exit_add,
@@ -78,16 +56,13 @@ def make_sdfg():
                           memlet=dace.Memlet("pipes_systolic[0]"))
 
     # Systolic array which can be autorun
-    unroll_entry, unroll_exit = state.add_map(
-        "systolic_array", {"p": "0:P"},
-        schedule=dace.ScheduleType.FPGA_Device,
-        unroll=True)
+    unroll_entry, unroll_exit = state.add_map("systolic_array", {"p": "0:P"},
+                                              schedule=dace.ScheduleType.FPGA_Device,
+                                              unroll=True)
     pipe_unroll_read = state.add_read("pipes_systolic")
     state.add_memlet_path(unroll_entry, pipe_unroll_read, memlet=dace.Memlet())
-    systolic_entry, systolic_exit = state.add_map(
-        "add_systolic", {"i": "0:N"}, schedule=dace.ScheduleType.FPGA_Device)
-    systolic_tasklet = state.add_tasklet("add_systolic", {"val_in"},
-                                         {"val_out"}, "val_out = 2 * val_in")
+    systolic_entry, systolic_exit = state.add_map("add_systolic", {"i": "0:N"}, schedule=dace.ScheduleType.FPGA_Device)
+    systolic_tasklet = state.add_tasklet("add_systolic", {"val_in"}, {"val_out"}, "val_out = 2 * val_in")
     state.add_memlet_path(pipe_unroll_read,
                           systolic_entry,
                           systolic_tasklet,
@@ -104,9 +79,7 @@ def make_sdfg():
     # Write back to memory
     pipe_systolic_read_tail = state.add_read("pipes_systolic")
     memory_write = state.add_write("arr")
-    state.add_memlet_path(pipe_systolic_read_tail,
-                          memory_write,
-                          memlet=dace.Memlet("arr[0:N]", other_subset="P"))
+    state.add_memlet_path(pipe_systolic_read_tail, memory_write, memlet=dace.Memlet("arr[0:N]", other_subset="P"))
 
     return sdfg
 

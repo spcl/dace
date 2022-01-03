@@ -34,8 +34,7 @@ def create_sdfg():
         'y': '0:W',
         'x': '0:H'
     }, {},
-                            'out = dace.float32(0)',
-                            {'out': dace.Memlet.simple('tmp', 'y, x')},
+                            'out = dace.float32(0)', {'out': dace.Memlet.simple('tmp', 'y, x')},
                             external_edges=True)
 
     inp = body.add_read('A')
@@ -72,15 +71,13 @@ def test():
     H.set(1024)
     MAXITER.set(30)
 
-    print('Jacobi 5-point Stencil %dx%d (%d steps)' %
-          (W.get(), H.get(), MAXITER.get()))
+    print('Jacobi 5-point Stencil %dx%d (%d steps)' % (W.get(), H.get(), MAXITER.get()))
 
     A = np.ndarray((H.get(), W.get()), dtype=np.float32)
 
     # Initialize arrays: Randomize A, zero B
     A[:] = dace.float32(0)
-    A[1:H.get() - 1, 1:W.get() - 1] = np.random.rand(
-        (H.get() - 2), (W.get() - 2)).astype(dace.float32.type)
+    A[1:H.get() - 1, 1:W.get() - 1] = np.random.rand((H.get() - 2), (W.get() - 2)).astype(dace.float32.type)
     regression = np.ndarray([H.get() - 2, W.get() - 2], dtype=np.float32)
     regression[:] = A[1:H.get() - 1, 1:W.get() - 1]
 
@@ -93,23 +90,17 @@ def test():
     sdfg.fill_scope_connectors()
     sdfg.apply_transformations(MapTiling, states=[body])
     for node in body.nodes():
-        if (isinstance(node, dace.sdfg.nodes.MapEntry)
-                and node.label[:-2] == 'stencil'):
+        if (isinstance(node, dace.sdfg.nodes.MapEntry) and node.label[:-2] == 'stencil'):
             assert len(body.in_edges(node)) <= 1
 
     sdfg(A=A, H=H.get(), W=W.get(), MAXITER=MAXITER.get())
 
     # Regression
-    kernel = np.array([[0, 0.2, 0], [0.2, 0.2, 0.2], [0, 0.2, 0]],
-                      dtype=np.float32)
+    kernel = np.array([[0, 0.2, 0], [0.2, 0.2, 0.2], [0, 0.2, 0]], dtype=np.float32)
     for i in range(2 * MAXITER.get()):
-        regression = ndimage.convolve(regression,
-                                      kernel,
-                                      mode='constant',
-                                      cval=0.0)
+        regression = ndimage.convolve(regression, kernel, mode='constant', cval=0.0)
 
-    residual = np.linalg.norm(A[1:H.get() - 1, 1:W.get() - 1] -
-                              regression) / (H.get() * W.get())
+    residual = np.linalg.norm(A[1:H.get() - 1, 1:W.get() - 1] - regression) / (H.get() * W.get())
     print("Residual:", residual)
 
     assert residual <= 0.05

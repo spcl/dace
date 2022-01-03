@@ -16,8 +16,7 @@ class FPGATransformSDFG(transformation.Transformation):
     promote_global_trans = properties.Property(
         dtype=bool,
         default=True,
-        desc=
-        "If True, transient arrays that are fully internal are pulled out so "
+        desc="If True, transient arrays that are fully internal are pulled out so "
         "that they can be allocated on the host.")
 
     @staticmethod
@@ -37,8 +36,7 @@ class FPGATransformSDFG(transformation.Transformation):
         # Condition match depends on matching FPGATransformState for each state
         for state_id, state in enumerate(sdfg.nodes()):
             candidate = {FPGATransformState._state: state_id}
-            if not FPGATransformState.can_be_applied(sdfg, candidate,
-                                                     expr_index, sdfg):
+            if not FPGATransformState.can_be_applied(sdfg, candidate, expr_index, sdfg):
                 return False
 
         return True
@@ -57,7 +55,5 @@ class FPGATransformSDFG(transformation.Transformation):
         nesting.promote_global_trans = self.promote_global_trans
         nesting.apply(sdfg)
 
-        fpga_transform = FPGATransformState(sdfg_id, -1,
-                                            {FPGATransformState._state: 0},
-                                            self.expr_index)
+        fpga_transform = FPGATransformState(sdfg_id, -1, {FPGATransformState._state: 0}, self.expr_index)
         fpga_transform.apply(sdfg)

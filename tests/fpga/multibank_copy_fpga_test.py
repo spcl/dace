@@ -38,11 +38,7 @@ def mkc(sdfg: dace.SDFG,
         is_transient = False
         if (storage in _FPGA_STORAGE_TYPES):
             is_transient = True
-        arr = sdfg.add_array(name,
-                             shape,
-                             dace.int32,
-                             storage,
-                             transient=is_transient)
+        arr = sdfg.add_array(name, shape, dace.int32, storage, transient=is_transient)
         if loc is not None:
             arr[1].location["memorytype"] = loc[0]
             arr[1].location["bank"] = loc[1]
@@ -76,19 +72,14 @@ def mkc(sdfg: dace.SDFG,
 
 def copy_multibank_1_mem_type(mem_type):
     sdfg = dace.SDFG("copy_multibank_1_mem_type_" + mem_type)
-    s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
-                  StorageType.FPGA_Global, [3, 4, 4], [3, 4, 4], "a", None,
+    s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default, StorageType.FPGA_Global, [3, 4, 4], [3, 4, 4], "a", None,
                   (mem_type, "0:3"))
-    s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global, None,
-                  [2, 4, 4, 4], "x[1, 1:4, 1:4]->1, 1:4, 1:4, 1", None,
-                  (mem_type, "3:5"))
-    s, _, _ = mkc(sdfg, s, "y", "z", None, StorageType.FPGA_Global, None,
-                  [1, 4, 4, 4], "y[1, 0:4, 0:4, 0:4]->0, 0:4, 0:4, 0:4", None,
-                  (mem_type, "5:6"))
-    s, _, _ = mkc(sdfg, s, "z", "w", None, StorageType.FPGA_Global, None,
-                  [1, 4, 4, 4], "z", None, (mem_type, "6:7"))
-    s, _, c = mkc(sdfg, s, "w", "c", None, StorageType.Default, None,
-                  [1, 4, 4, 4], "w")
+    s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global, None, [2, 4, 4, 4],
+                  "x[1, 1:4, 1:4]->1, 1:4, 1:4, 1", None, (mem_type, "3:5"))
+    s, _, _ = mkc(sdfg, s, "y", "z", None, StorageType.FPGA_Global, None, [1, 4, 4, 4],
+                  "y[1, 0:4, 0:4, 0:4]->0, 0:4, 0:4, 0:4", None, (mem_type, "5:6"))
+    s, _, _ = mkc(sdfg, s, "z", "w", None, StorageType.FPGA_Global, None, [1, 4, 4, 4], "z", None, (mem_type, "6:7"))
+    s, _, c = mkc(sdfg, s, "w", "c", None, StorageType.Default, None, [1, 4, 4, 4], "w")
 
     a.fill(1)
     a[1, 0:4, 1] += 2
@@ -103,19 +94,14 @@ def copy_multibank_1_mem_type(mem_type):
 
 
 def copy_multibank_2_mem_type(mem_type_1, mem_type_2):
-    sdfg = dace.SDFG("copy_multibank_2_mem_type_" + mem_type_1 + "_" +
-                     mem_type_2)
-    s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default,
-                  StorageType.FPGA_Global, [3, 5, 5], [3, 5, 5], "a", None,
+    sdfg = dace.SDFG("copy_multibank_2_mem_type_" + mem_type_1 + "_" + mem_type_2)
+    s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default, StorageType.FPGA_Global, [3, 5, 5], [3, 5, 5], "a", None,
                   (mem_type_1, "0:3"))
-    s, _, _ = mkc(sdfg, s, "x", "d1", None, StorageType.FPGA_Global, None,
-                  [3, 5, 5], "x[2, 0:5, 0:5]->1, 0:5, 0:5", None,
-                  (mem_type_2, "1:4"))
-    s, _, _ = mkc(sdfg, s, "d1", "y", None, StorageType.FPGA_Global, None,
-                  [1, 7, 7], "d1[1, 0:5,0:5]->0, 2:7, 2:7", None,
-                  (mem_type_1, "3:4"))
-    s, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default, None, [1, 7, 7],
-                  "y")
+    s, _, _ = mkc(sdfg, s, "x", "d1", None, StorageType.FPGA_Global, None, [3, 5, 5], "x[2, 0:5, 0:5]->1, 0:5, 0:5",
+                  None, (mem_type_2, "1:4"))
+    s, _, _ = mkc(sdfg, s, "d1", "y", None, StorageType.FPGA_Global, None, [1, 7, 7], "d1[1, 0:5,0:5]->0, 2:7, 2:7",
+                  None, (mem_type_1, "3:4"))
+    s, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default, None, [1, 7, 7], "y")
 
     a.fill(1)
     a[2, 2:4, 2:4] += 3

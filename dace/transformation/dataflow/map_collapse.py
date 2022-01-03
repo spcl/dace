@@ -24,20 +24,16 @@ class MapCollapse(transformation.Transformation):
 
     @staticmethod
     def expressions():
-        return [
-            sdutil.node_path_graph(
-                MapCollapse._outer_map_entry,
-                MapCollapse._inner_map_entry,
-            )
-        ]
+        return [sdutil.node_path_graph(
+            MapCollapse._outer_map_entry,
+            MapCollapse._inner_map_entry,
+        )]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         # Check the edges between the entries of the two maps.
-        outer_map_entry: nodes.MapEntry = graph.nodes()[candidate[
-            MapCollapse._outer_map_entry]]
-        inner_map_entry: nodes.MapEntry = graph.nodes()[candidate[
-            MapCollapse._inner_map_entry]]
+        outer_map_entry: nodes.MapEntry = graph.nodes()[candidate[MapCollapse._outer_map_entry]]
+        inner_map_entry: nodes.MapEntry = graph.nodes()[candidate[MapCollapse._inner_map_entry]]
 
         # Check that inner map range is independent of outer range
         map_deps = set()
@@ -64,8 +60,7 @@ class MapCollapse(transformation.Transformation):
                 memlet_deps = set()
                 for s in memlet.subset:
                     memlet_deps |= set(map(str, symlist(s)))
-                if any(dep in outer_map_entry.map.params
-                       for dep in memlet_deps):
+                if any(dep in outer_map_entry.map.params for dep in memlet_deps):
                     return False
 
         # Check the edges between the exits of the two maps.
@@ -106,12 +101,9 @@ class MapCollapse(transformation.Transformation):
         """
         # Extract the parameters and ranges of the inner/outer maps.
         graph = sdfg.nodes()[self.state_id]
-        outer_map_entry = graph.nodes()[self.subgraph[
-            MapCollapse._outer_map_entry]]
-        inner_map_entry = graph.nodes()[self.subgraph[
-            MapCollapse._inner_map_entry]]
+        outer_map_entry = graph.nodes()[self.subgraph[MapCollapse._outer_map_entry]]
+        inner_map_entry = graph.nodes()[self.subgraph[MapCollapse._inner_map_entry]]
         inner_map_exit = graph.exit_node(inner_map_entry)
         outer_map_exit = graph.exit_node(outer_map_entry)
 
-        return sdutil.merge_maps(graph, outer_map_entry, outer_map_exit,
-                                 inner_map_entry, inner_map_exit)
+        return sdutil.merge_maps(graph, outer_map_entry, outer_map_exit, inner_map_entry, inner_map_exit)

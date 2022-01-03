@@ -17,8 +17,7 @@ def test_fuse_assignments():
     state2 = sdfg.add_state()
     state3 = sdfg.add_state()
     sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(k=1)))
-    sdfg.add_edge(state2, state3,
-                  dace.InterstateEdge(assignments=dict(k='k + 1')))
+    sdfg.add_edge(state2, state3, dace.InterstateEdge(assignments=dict(k='k + 1')))
     sdfg.apply_transformations_repeated(StateFusion)
     assert sdfg.number_of_nodes() == 3
 
@@ -35,16 +34,14 @@ def test_fuse_assignment_in_use():
     sdfg.add_edge(state2, state3, dace.InterstateEdge())
     sdfg.add_edge(state3, state4, dace.InterstateEdge(assignments=dict(k=2)))
 
-    state3.add_edge(state3.add_tasklet('one', {}, {'a'}, 'a = k'), 'a',
-                    state3.add_write('A'), None, dace.Memlet('A[0]'))
+    state3.add_edge(state3.add_tasklet('one', {}, {'a'}, 'a = k'), 'a', state3.add_write('A'), None,
+                    dace.Memlet('A[0]'))
 
-    state4.add_edge(state3.add_tasklet('two', {}, {'a'}, 'a = k'), 'a',
-                    state3.add_write('A'), None, dace.Memlet('A[1]'))
+    state4.add_edge(state3.add_tasklet('two', {}, {'a'}, 'a = k'), 'a', state3.add_write('A'), None,
+                    dace.Memlet('A[1]'))
 
     try:
-        StateFusion.apply_to(sdfg,
-                             first_state=state3,
-                             second_state=state4)
+        StateFusion.apply_to(sdfg, first_state=state3, second_state=state4)
         raise AssertionError('States fused, test failed')
     except ValueError:
         print('Exception successfully caught')
@@ -61,8 +58,7 @@ def test_two_to_one_cc_fusion():
     sdfg.add_edge(state1, state2, dace.InterstateEdge())
 
     # First state
-    state1.add_edge(state1.add_tasklet('one', {}, {'a'}, 'a = 1'), 'a',
-                    state1.add_write('A'), None, dace.Memlet('A'))
+    state1.add_edge(state1.add_tasklet('one', {}, {'a'}, 'a = 1'), 'a', state1.add_write('A'), None, dace.Memlet('A'))
 
     t2 = state1.add_tasklet('two', {}, {'b', 'c'}, 'b = 2; c = 3')
     state1.add_edge(t2, 'b', state1.add_write('B'), None, dace.Memlet('B'))
@@ -92,12 +88,8 @@ def test_one_to_two_cc_fusion():
     state1.add_edge(t1, 'b', state1.add_write('B'), None, dace.Memlet('B'))
 
     # Second state
-    state2.add_edge(state2.add_read('A'), None,
-                    state2.add_tasklet('one', {'a'}, {}, ''), 'a',
-                    dace.Memlet('A'))
-    state2.add_edge(state2.add_read('B'), None,
-                    state2.add_tasklet('two', {'b'}, {}, ''), 'b',
-                    dace.Memlet('B'))
+    state2.add_edge(state2.add_read('A'), None, state2.add_tasklet('one', {'a'}, {}, ''), 'a', dace.Memlet('A'))
+    state2.add_edge(state2.add_read('B'), None, state2.add_tasklet('two', {'b'}, {}, ''), 'b', dace.Memlet('B'))
 
     assert sdfg.apply_transformations_repeated(StateFusion) == 1
 
@@ -112,17 +104,14 @@ def test_two_cc_fusion_separate():
     sdfg.add_edge(state1, state2, dace.InterstateEdge())
 
     # First state
-    state1.add_edge(state1.add_tasklet('one', {}, {'a'}, 'a = 1'), 'a',
-                    state1.add_write('A'), None, dace.Memlet('A'))
+    state1.add_edge(state1.add_tasklet('one', {}, {'a'}, 'a = 1'), 'a', state1.add_write('A'), None, dace.Memlet('A'))
 
     t2 = state1.add_tasklet('two', {}, {'b', 'c'}, 'b = 2; c = 3')
     state1.add_edge(t2, 'b', state1.add_write('B'), None, dace.Memlet('B'))
     state1.add_edge(t2, 'c', state1.add_write('C'), None, dace.Memlet('C'))
 
     # Second state
-    state2.add_edge(state2.add_read('A'), None,
-                    state2.add_tasklet('one', {'a'}, {}, ''), 'a',
-                    dace.Memlet('A'))
+    state2.add_edge(state2.add_read('A'), None, state2.add_tasklet('one', {'a'}, {}, ''), 'a', dace.Memlet('A'))
 
     t2 = state2.add_tasklet('two', {'b', 'c'}, {}, '')
     state2.add_edge(state2.add_read('B'), None, t2, 'b', dace.Memlet('B'))
@@ -141,17 +130,14 @@ def test_two_cc_fusion_together():
     sdfg.add_edge(state1, state2, dace.InterstateEdge())
 
     # First state
-    state1.add_edge(state1.add_tasklet('one', {}, {'a'}, 'a = 1'), 'a',
-                    state1.add_write('A'), None, dace.Memlet('A'))
+    state1.add_edge(state1.add_tasklet('one', {}, {'a'}, 'a = 1'), 'a', state1.add_write('A'), None, dace.Memlet('A'))
 
     t2 = state1.add_tasklet('two', {}, {'b', 'c'}, 'b = 2; c = 3')
     state1.add_edge(t2, 'b', state1.add_write('B'), None, dace.Memlet('B'))
     state1.add_edge(t2, 'c', state1.add_write('C'), None, dace.Memlet('C'))
 
     # Second state
-    state2.add_edge(state2.add_read('B'), None,
-                    state2.add_tasklet('one', {'a'}, {}, ''), 'a',
-                    dace.Memlet('B'))
+    state2.add_edge(state2.add_read('B'), None, state2.add_tasklet('one', {'a'}, {}, ''), 'a', dace.Memlet('B'))
 
     t2 = state2.add_tasklet('two', {'b', 'c'}, {'d', 'e'}, 'd = b + c; e = b')
     state2.add_edge(state2.add_read('A'), None, t2, 'b', dace.Memlet('A'))

@@ -18,33 +18,22 @@ def _construct_graph(tbsize_1=None, tbsize_2=None) -> dace.SDFG:
     int_ceil = sp.Function('int_ceil')
     sdfg = dace.SDFG('kernel_fusion_test')
     sdfg.add_array('hA', [size], dace.float64)
-    sdfg.add_transient('A', [size],
-                       dace.float64,
-                       storage=dace.StorageType.GPU_Global)
+    sdfg.add_transient('A', [size], dace.float64, storage=dace.StorageType.GPU_Global)
     sdfg.add_transient('tmp', [size],
                        dace.float64,
                        storage=dace.StorageType.GPU_Global,
                        lifetime=dace.AllocationLifetime.SDFG)
-    sdfg.add_transient('B', [size],
-                       dace.float64,
-                       storage=dace.StorageType.GPU_Global)
+    sdfg.add_transient('B', [size], dace.float64, storage=dace.StorageType.GPU_Global)
     sdfg.add_array('hB', [size], dace.float64)
     state = sdfg.add_state()
 
     # For compatibility, schedule fused kernel with the smallest concurrent
     # number of blocks
-    fme, fmx = state.add_map('fused_kernel', dict(i='0:2'),
-                             dace.ScheduleType.GPU_Device)
-    ime1, imx1 = state.add_map(
-        'kernel_a',
-        dict(j='0:%s' %
-             (size if tbsize_1 is None else int_ceil(size, tbsize_1))),
-        dace.ScheduleType.GPU_Device)
-    ime2, imx2 = state.add_map(
-        'kernel_b',
-        dict(j='0:%s' %
-             (size if tbsize_2 is None else int_ceil(size, tbsize_2))),
-        dace.ScheduleType.GPU_Device)
+    fme, fmx = state.add_map('fused_kernel', dict(i='0:2'), dace.ScheduleType.GPU_Device)
+    ime1, imx1 = state.add_map('kernel_a', dict(j='0:%s' % (size if tbsize_1 is None else int_ceil(size, tbsize_1))),
+                               dace.ScheduleType.GPU_Device)
+    ime2, imx2 = state.add_map('kernel_b', dict(j='0:%s' % (size if tbsize_2 is None else int_ceil(size, tbsize_2))),
+                               dace.ScheduleType.GPU_Device)
 
     tasklet1 = state.add_tasklet('code_a', {'a'}, {'t'}, 't = a * 5')
     tasklet2 = state.add_tasklet('code_b', {'t'}, {'b'}, 'b = t + 1')
@@ -61,68 +50,42 @@ def _construct_graph(tbsize_1=None, tbsize_2=None) -> dace.SDFG:
 
     # Add thread-block maps and edges as necessary
     if tbsize_1 is not None:
-        tbme1, tbmx1 = state.add_map('block_a', dict(k='0:%s' % tbsize_1),
-                                     dace.ScheduleType.GPU_ThreadBlock)
+        tbme1, tbmx1 = state.add_map('block_a', dict(k='0:%s' % tbsize_1), dace.ScheduleType.GPU_ThreadBlock)
         state.add_memlet_path(a,
                               fme,
                               ime1,
                               tbme1,
                               tasklet1,
                               dst_conn='a',
-                              memlet=dace.Memlet.simple(
-                                  'A',
-                                  '%s - 1 - (j*%s + k)' % (size, tbsize_1)))
+                              memlet=dace.Memlet.simple('A', '%s - 1 - (j*%s + k)' % (size, tbsize_1)))
         state.add_memlet_path(tasklet1,
                               tbmx1,
                               imx1,
                               tmp,
                               src_conn='t',
-                              memlet=dace.Memlet.simple('tmp',
-                                                        'j*%s + k' % tbsize_1))
+                              memlet=dace.Memlet.simple('tmp', 'j*%s + k' % tbsize_1))
     else:
-        state.add_memlet_path(a,
-                              fme,
-                              ime1,
-                              tasklet1,
-                              dst_conn='a',
-                              memlet=dace.Memlet.simple('A',
-                                                        '%s - 1 - j' % size))
-        state.add_memlet_path(tasklet1,
-                              imx1,
-                              tmp,
-                              src_conn='t',
-                              memlet=dace.Memlet.simple('tmp', 'j'))
+        state.add_memlet_path(a, fme, ime1, tasklet1, dst_conn='a', memlet=dace.Memlet.simple('A', '%s - 1 - j' % size))
+        state.add_memlet_path(tasklet1, imx1, tmp, src_conn='t', memlet=dace.Memlet.simple('tmp', 'j'))
 
     if tbsize_2 is not None:
-        tbme2, tbmx2 = state.add_map('block_a', dict(k='0:%s' % tbsize_2),
-                                     dace.ScheduleType.GPU_ThreadBlock)
+        tbme2, tbmx2 = state.add_map('block_a', dict(k='0:%s' % tbsize_2), dace.ScheduleType.GPU_ThreadBlock)
         state.add_memlet_path(tmp,
                               ime2,
                               tbme2,
                               tasklet2,
                               dst_conn='t',
-                              memlet=dace.Memlet.simple('tmp', '(j*%s + k)' %
-                                                        tbsize_2))
+                              memlet=dace.Memlet.simple('tmp', '(j*%s + k)' % tbsize_2))
         state.add_memlet_path(tasklet2,
                               tbmx2,
                               imx2,
                               fmx,
                               b,
                               src_conn='b',
-                              memlet=dace.Memlet.simple('B',
-                                                        'j*%s + k' % tbsize_2))
+                              memlet=dace.Memlet.simple('B', 'j*%s + k' % tbsize_2))
     else:
-        state.add_memlet_path(tmp,
-                              ime2,
-                              tasklet2,
-                              dst_conn='t',
-                              memlet=dace.Memlet.simple('tmp', 'j'))
-        state.add_memlet_path(tasklet2,
-                              imx2,
-                              fmx,
-                              b,
-                              src_conn='b',
-                              memlet=dace.Memlet.simple('B', 'j'))
+        state.add_memlet_path(tmp, ime2, tasklet2, dst_conn='t', memlet=dace.Memlet.simple('tmp', 'j'))
+        state.add_memlet_path(tasklet2, imx2, fmx, b, src_conn='b', memlet=dace.Memlet.simple('B', 'j'))
     return sdfg
 
 

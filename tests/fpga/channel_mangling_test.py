@@ -25,18 +25,9 @@ def make_increment_sdfg(sdfg_name: str, dtype=dace.float32):
 
     fpga_state = inc_sdfg.add_state("fpga_state")
 
-    inc_sdfg.add_array("x",
-                       shape=[N],
-                       dtype=dtype,
-                       storage=dace.dtypes.StorageType.FPGA_Global)
-    inc_sdfg.add_array("y",
-                       shape=[N],
-                       dtype=dtype,
-                       storage=dace.dtypes.StorageType.FPGA_Global)
-    inc_sdfg.add_stream("what_a_nice_pipe",
-                        dtype,
-                        transient=True,
-                        storage=dace.dtypes.StorageType.FPGA_Local)
+    inc_sdfg.add_array("x", shape=[N], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global)
+    inc_sdfg.add_array("y", shape=[N], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global)
+    inc_sdfg.add_stream("what_a_nice_pipe", dtype, transient=True, storage=dace.dtypes.StorageType.FPGA_Local)
 
     data_in = fpga_state.add_read("x")
     data_out = fpga_state.add_write("y")
@@ -44,13 +35,11 @@ def make_increment_sdfg(sdfg_name: str, dtype=dace.float32):
     pipe_read = fpga_state.add_read("what_a_nice_pipe")
 
     # ---------- ----------
-    read_map_entry, read_map_exit = fpga_state.add_map(
-        'read_incr_map',
-        dict(i='0:N'),
-        schedule=dace.dtypes.ScheduleType.FPGA_Device)
+    read_map_entry, read_map_exit = fpga_state.add_map('read_incr_map',
+                                                       dict(i='0:N'),
+                                                       schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
-    incr_tasklet = fpga_state.add_tasklet('incr_task', ['in_con'], ['out_con'],
-                                          'out_con = in_con + 1')
+    incr_tasklet = fpga_state.add_tasklet('incr_task', ['in_con'], ['out_con'], 'out_con = in_con + 1')
 
     # From memory to increment
     fpga_state.add_memlet_path(data_in,
@@ -66,24 +55,18 @@ def make_increment_sdfg(sdfg_name: str, dtype=dace.float32):
                                memlet=dace.Memlet("what_a_nice_pipe[0]"))
 
     # from pipe to memory
-    write_map_entry, write_map_exit = fpga_state.add_map(
-        'write_map',
-        dict(i='0:N'),
-        schedule=dace.dtypes.ScheduleType.FPGA_Device)
+    write_map_entry, write_map_exit = fpga_state.add_map('write_map',
+                                                         dict(i='0:N'),
+                                                         schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
-    copy_tasklet = fpga_state.add_tasklet('copy_task', ['in_con'], ['out_con'],
-                                          'out_con = in_con ')
+    copy_tasklet = fpga_state.add_tasklet('copy_task', ['in_con'], ['out_con'], 'out_con = in_con ')
 
     fpga_state.add_memlet_path(pipe_read,
                                write_map_entry,
                                copy_tasklet,
                                dst_conn='in_con',
                                memlet=dace.Memlet("what_a_nice_pipe[0]"))
-    fpga_state.add_memlet_path(copy_tasklet,
-                               write_map_exit,
-                               data_out,
-                               src_conn='out_con',
-                               memlet=dace.Memlet("y[i]"))
+    fpga_state.add_memlet_path(copy_tasklet, write_map_exit, data_out, src_conn='out_con', memlet=dace.Memlet("y[i]"))
 
     #########
     # Validate
@@ -108,40 +91,24 @@ def make_nested_sdfg_fpga(dtype=dace.float32):
 
     in_host_x = copy_in_state.add_read("X")
 
-    sdfg.add_array("device_X",
-                   shape=[N],
-                   dtype=dtype,
-                   storage=dace.dtypes.StorageType.FPGA_Global,
-                   transient=True)
-    sdfg.add_array("device_tmp",
-                   shape=[N],
-                   dtype=dtype,
-                   storage=dace.dtypes.StorageType.FPGA_Global,
-                   transient=True)
+    sdfg.add_array("device_X", shape=[N], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global, transient=True)
+    sdfg.add_array("device_tmp", shape=[N], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global, transient=True)
 
     in_device_x = copy_in_state.add_write("device_X")
 
-    copy_in_state.add_memlet_path(in_host_x,
-                                  in_device_x,
-                                  memlet=Memlet.simple(in_host_x, "0:N"))
+    copy_in_state.add_memlet_path(in_host_x, in_device_x, memlet=Memlet.simple(in_host_x, "0:N"))
 
     ###########################################################################
     # Copy data from FPGA
 
     copy_out_state = sdfg.add_state("copy_to_host")
     sdfg.add_array("Y", shape=[N], dtype=dtype)
-    sdfg.add_array("device_Y",
-                   shape=[N],
-                   dtype=dtype,
-                   storage=dace.dtypes.StorageType.FPGA_Global,
-                   transient=True)
+    sdfg.add_array("device_Y", shape=[N], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global, transient=True)
 
     out_device = copy_out_state.add_read("device_Y")
     out_host = copy_out_state.add_write("Y")
 
-    copy_out_state.add_memlet_path(out_device,
-                                   out_host,
-                                   memlet=Memlet.simple(out_host, "0:N"))
+    copy_out_state.add_memlet_path(out_device, out_host, memlet=Memlet.simple(out_host, "0:N"))
 
     ########################################################################
     # First state
@@ -154,14 +121,8 @@ def make_nested_sdfg_fpga(dtype=dace.float32):
 
     # add nested sdfg with symbol mapping
     nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x"}, {"y"})
-    state.add_memlet_path(x,
-                          nested_sdfg,
-                          dst_conn="x",
-                          memlet=Memlet("device_X[0:N]"))
-    state.add_memlet_path(nested_sdfg,
-                          tmp,
-                          src_conn="y",
-                          memlet=Memlet("device_tmp[0:N]"))
+    state.add_memlet_path(x, nested_sdfg, dst_conn="x", memlet=Memlet("device_X[0:N]"))
+    state.add_memlet_path(nested_sdfg, tmp, src_conn="y", memlet=Memlet("device_tmp[0:N]"))
 
     ########################################################################
     # First state
@@ -174,14 +135,8 @@ def make_nested_sdfg_fpga(dtype=dace.float32):
 
     # add nested sdfg with symbol mapping
     nested_sdfg = state2.add_nested_sdfg(to_nest, sdfg, {"x"}, {"y"})
-    state2.add_memlet_path(tmp_read,
-                           nested_sdfg,
-                           dst_conn="x",
-                           memlet=Memlet("device_tmp[0:N]"))
-    state2.add_memlet_path(nested_sdfg,
-                           y,
-                           src_conn="y",
-                           memlet=Memlet("device_Y[0:N]"))
+    state2.add_memlet_path(tmp_read, nested_sdfg, dst_conn="x", memlet=Memlet("device_tmp[0:N]"))
+    state2.add_memlet_path(nested_sdfg, y, src_conn="y", memlet=Memlet("device_Y[0:N]"))
 
     ######################################
     # Interstate edges

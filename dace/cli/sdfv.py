@@ -22,8 +22,7 @@ def view(sdfg, filename=None):
         sdfg = dace.serialize.dumps(sdfg.to_json())
 
     basepath = os.path.dirname(os.path.realpath(diode.__file__))
-    template_loader = jinja2.FileSystemLoader(
-        searchpath=os.path.join(basepath, 'templates'))
+    template_loader = jinja2.FileSystemLoader(searchpath=os.path.join(basepath, 'templates'))
     template_env = jinja2.Environment(loader=template_loader)
     template = template_env.get_template('sdfv.html')
 

@@ -30,5 +30,6 @@ def test_compose():
     d_res = Indices.from_string('i,j,k')
     assert d_res == d1.compose(d2)
 
+
 if __name__ == '__main__':
     test_compose()

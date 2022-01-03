@@ -33,5 +33,6 @@ def test():
     diff = np.linalg.norm(B - B_ref)
     assert diff == 0
 
+
 if __name__ == "__main__":
     test()

@@ -7,43 +7,21 @@ import os
 # trimming the absolute path of the resulting files.
 dace_path = os.path.dirname(os.path.abspath(__file__)) + '/dace/'
 diode_path = os.path.dirname(os.path.abspath(__file__)) + '/diode/'
-runtime_files = [
-    f[len(dace_path):]
-    for f in glob.glob(dace_path + 'runtime/include/**/*', recursive=True)
-]
-library_files = [
-    f[len(dace_path):]
-    for f in glob.glob(dace_path + 'libraries/**/include/**/*', recursive=True)
-]
-cmake_files = [
-    f[len(dace_path):]
-    for f in glob.glob(dace_path + 'codegen/**/*.cmake', recursive=True)
-]
+runtime_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'runtime/include/**/*', recursive=True)]
+library_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'libraries/**/include/**/*', recursive=True)]
+cmake_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'codegen/**/*.cmake', recursive=True)]
 diode_files = [
-    f[len(diode_path):]
-    for f in (glob.glob(diode_path + 'webclient/**/*', recursive=True) +
-              glob.glob(diode_path + 'templates/**/*', recursive=True) +
-              glob.glob(diode_path + '**/LICENSE', recursive=True))
+    f[len(diode_path):] for f in (glob.glob(diode_path + 'webclient/**/*', recursive=True) +
+                                  glob.glob(diode_path + 'templates/**/*', recursive=True) +
+                                  glob.glob(diode_path + '**/LICENSE', recursive=True))
 ]
-cub_files = [
-    f[len(dace_path):]
-    for f in glob.glob(dace_path + 'external/cub/cub/**/*', recursive=True)
-] + [dace_path + 'external/cub/LICENSE.TXT']
-hlslib_files = [
-    f[len(dace_path):]
-    for f in glob.glob(dace_path + 'external/hlslib/cmake/**/*', recursive=True)
-] + [
-    f[len(dace_path):]
-    for f in glob.glob(dace_path + 'external/hlslib/include/**/*',
-                       recursive=True)
+cub_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'external/cub/cub/**/*', recursive=True)
+             ] + [dace_path + 'external/cub/LICENSE.TXT']
+hlslib_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'external/hlslib/cmake/**/*', recursive=True)] + [
+    f[len(dace_path):] for f in glob.glob(dace_path + 'external/hlslib/include/**/*', recursive=True)
 ] + [dace_path + 'external/hlslib/LICENSE.md']
-rtllib_files = [
-    f[len(dace_path):]
-    for f in glob.glob(dace_path + 'external/rtllib/cmake/**/*', recursive=True)
-] + [
-    f[len(dace_path):]
-    for f in glob.glob(dace_path + 'external/rtllib/templates/**/*',
-                       recursive=True)
+rtllib_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'external/rtllib/cmake/**/*', recursive=True)] + [
+    f[len(dace_path):] for f in glob.glob(dace_path + 'external/rtllib/templates/**/*', recursive=True)
 ]
 
 with open("README.md", "r") as fp:
@@ -66,26 +44,20 @@ setup(name='dace',
           "Operating System :: OS Independent",
       ],
       python_requires='>=3.6, <3.11',
-      packages=find_packages(
-          exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
+      packages=find_packages(exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
       package_data={
           '': [
-              '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp',
-              'external/moodycamel/*.h', 'external/moodycamel/LICENSE.md',
-              'codegen/Xilinx_HLS.tcl.in'
-          ] + runtime_files + cub_files + diode_files + hlslib_files +
-          library_files + rtllib_files + cmake_files
+              '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp', 'external/moodycamel/*.h',
+              'external/moodycamel/LICENSE.md', 'codegen/Xilinx_HLS.tcl.in'
+          ] + runtime_files + cub_files + diode_files + hlslib_files + library_files + rtllib_files + cmake_files
       },
       include_package_data=True,
       install_requires=[
-          'numpy', 'networkx >= 2.5', 'astunparse', 'sympy<=1.9', 'pyyaml', 'ply',
-          'websockets', 'requests', 'flask', 'scikit-build', 'cmake', 'aenum',
-          'dataclasses; python_version < "3.7"', 'dill', 'pyreadline;platform_system=="Windows"'
+          'numpy', 'networkx >= 2.5', 'astunparse', 'sympy<=1.9', 'pyyaml', 'ply', 'websockets', 'requests', 'flask',
+          'scikit-build', 'cmake', 'aenum', 'dataclasses; python_version < "3.7"', 'dill',
+          'pyreadline;platform_system=="Windows"'
       ],
-      extras_require={
-          'testing':
-          ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click']
-      },
+      extras_require={'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click']},
       entry_points={
           'console_scripts': [
               'dacelab = dace.cli.dacelab:main',

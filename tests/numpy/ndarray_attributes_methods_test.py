@@ -3,7 +3,6 @@ import dace
 import numpy as np
 from common import compare_numpy_output
 
-
 M = 10
 N = 20
 
@@ -41,7 +40,7 @@ def test_fill(A: dace.int32[M, N]):
 
 @compare_numpy_output()
 def test_reshape(A: dace.float32[N, N]):
-    return A.reshape([1, N*N])
+    return A.reshape([1, N * N])
 
 
 @compare_numpy_output()

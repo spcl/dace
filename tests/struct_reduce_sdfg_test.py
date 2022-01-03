@@ -8,15 +8,10 @@ sdfg = dace.SDFG('sred')
 sdfg.add_array('A', [1], vec3d)
 
 state = sdfg.add_state()
-t = state.add_tasklet('sredtask', {}, {'a'},
-                      'a = vec3d(x=float(1.0), y=float(2.0), z=float(3.0))')
+t = state.add_tasklet('sredtask', {}, {'a'}, 'a = vec3d(x=float(1.0), y=float(2.0), z=float(3.0))')
 a = state.add_write('A')
-state.add_edge(
-    t, 'a', a, None,
-    dace.Memlet.simple(
-        'A',
-        '0',
-        wcr_str='lambda a, b: vec3d(x=a.x + b.x, y=a.y + b.y, z=a.z + b.z)'))
+state.add_edge(t, 'a', a, None,
+               dace.Memlet.simple('A', '0', wcr_str='lambda a, b: vec3d(x=a.x + b.x, y=a.y + b.y, z=a.z + b.z)'))
 
 
 def test():

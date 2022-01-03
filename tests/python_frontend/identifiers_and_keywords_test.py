@@ -2,7 +2,6 @@
 import dace
 import numpy as np
 
-
 N = dace.symbol('N')
 
 
@@ -15,7 +14,7 @@ def keyword_false(A: dace.float32[N], B: dace.float32[N], C: dace.bool):
 def test_keyword_false():
     N.set(128)
     A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(),), dtype=np.float32)
+    B = np.zeros((N.get(), ), dtype=np.float32)
     C = False
     try:
         keyword_false(A, B, C)
@@ -26,8 +25,7 @@ def test_keyword_false():
 
 
 @dace.program
-def keyword_none(A: dace.float32[N], B: dace.float32[N],
-                 C: dace.pointer(dace.int32)):
+def keyword_none(A: dace.float32[N], B: dace.float32[N], C: dace.pointer(dace.int32)):
     if C is None:
         B[:] = A[:]
 
@@ -35,7 +33,7 @@ def keyword_none(A: dace.float32[N], B: dace.float32[N],
 def test_keyword_none():
     N.set(128)
     A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(),), dtype=np.float32)
+    B = np.zeros((N.get(), ), dtype=np.float32)
     C = None
     try:
         keyword_none(A, B, C)
@@ -54,7 +52,7 @@ def keyword_true(A: dace.float32[N], B: dace.float32[N], C: dace.bool):
 def test_keyword_true():
     N.set(128)
     A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(),), dtype=np.float32)
+    B = np.zeros((N.get(), ), dtype=np.float32)
     C = True
     try:
         keyword_true(A, B, C)
@@ -65,7 +63,7 @@ def test_keyword_true():
 
 
 @dace.program
-def keyword_and(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D:dace.bool):
+def keyword_and(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D: dace.bool):
     if C and D:
         B[:] = A[:]
 
@@ -73,7 +71,7 @@ def keyword_and(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D:dace.boo
 def test_keyword_and():
     N.set(128)
     A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(),), dtype=np.float32)
+    B = np.zeros((N.get(), ), dtype=np.float32)
     C = True
     D = True
     try:
@@ -85,12 +83,12 @@ def test_keyword_and():
 
 
 @dace.program
-def keyword_assert(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D:dace.bool):
+def keyword_assert(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D: dace.bool):
     with C as A:
         from dace import symbolic
         a = 5
         del a
-        assert(C == True)
+        assert (C == True)
         if C and D:
             B[:] = A[:]
 
@@ -98,7 +96,7 @@ def keyword_assert(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D:dace.
 def test_keyword_assert():
     N.set(128)
     A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(),), dtype=np.float32)
+    B = np.zeros((N.get(), ), dtype=np.float32)
     C = True
     D = True
     try:
@@ -122,7 +120,7 @@ def keyword_ifelse(A: dace.float32[N], B: dace.float32[N], C: dace.int32):
 def test_keyword_ifelse():
     N.set(128)
     A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(),), dtype=np.float32)
+    B = np.zeros((N.get(), ), dtype=np.float32)
     C = np.int32(2)
     try:
         keyword_ifelse(A, B, C)
@@ -141,7 +139,7 @@ def keyword_for(A: dace.float32[N], B: dace.float32[N]):
 def test_keyword_for():
     N.set(128)
     A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(),), dtype=np.float32)
+    B = np.zeros((N.get(), ), dtype=np.float32)
     try:
         keyword_for(A, B)
     except Exception as e:
@@ -166,7 +164,7 @@ def keyword_while(A: dace.float32[N], B: dace.float32[N]):
 def test_keyword_while():
     N.set(128)
     A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(),), dtype=np.float32)
+    B = np.zeros((N.get(), ), dtype=np.float32)
     try:
         keyword_while(A, B)
     except Exception as e:
@@ -179,7 +177,7 @@ def test_keyword_while():
 def keyword_return(A: dace.float32[N]):
     i = dace.define_local_scalar(dtype=dace.int32)
     i = 0
-    B = dace.define_local((N,), dtype=dace.float32)
+    B = dace.define_local((N, ), dtype=dace.float32)
     while True:
         B[i] = A[i] + i - i
         i += 1
@@ -193,7 +191,7 @@ def keyword_return(A: dace.float32[N]):
 def test_keyword_return():
     N.set(128)
     A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(),), dtype=np.float32)
+    B = np.zeros((N.get(), ), dtype=np.float32)
     try:
         B[:] = keyword_return(A)
     except Exception as e:
@@ -203,7 +201,7 @@ def test_keyword_return():
 
 
 @dace.program
-def keyword_notor(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D:dace.bool):
+def keyword_notor(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D: dace.bool):
     if not C or D:
         B[:] = A[:]
 
@@ -211,7 +209,7 @@ def keyword_notor(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D:dace.b
 def test_keyword_notor():
     N.set(128)
     A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(),), dtype=np.float32)
+    B = np.zeros((N.get(), ), dtype=np.float32)
     C = False
     D = True
     try:
@@ -232,7 +230,7 @@ def keyword_lambda(A: dace.float32[N], B: dace.float32[N]):
 def test_keyword_lambda():
     N.set(128)
     A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(),), dtype=np.float32)
+    B = np.zeros((N.get(), ), dtype=np.float32)
     try:
         keyword_lambda(A, B)
     except Exception as e:

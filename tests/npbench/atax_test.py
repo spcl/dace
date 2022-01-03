@@ -57,12 +57,11 @@ def run_atax(device_type: dace.dtypes.DeviceType):
         from dace.libraries.blas import Gemv
         Gemv.default_implementation = "FPGA_Accumulate"
         sdfg.expand_library_nodes()
-        sm_applied = sdfg.apply_transformations_repeated(
-            [InlineSDFG, StreamingMemory],
-            [{}, {
-                'storage': dace.StorageType.FPGA_Local
-            }],
-            print_report=True)
+        sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory],
+                                                         [{}, {
+                                                             'storage': dace.StorageType.FPGA_Local
+                                                         }],
+                                                         print_report=True)
         assert sm_applied == 6  # 3 inlines and 3 Streaming memories
 
         ###########################
@@ -97,11 +96,7 @@ def test_fpga():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t",
-                        "--target",
-                        default='cpu',
-                        choices=['cpu', 'gpu', 'fpga'],
-                        help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]

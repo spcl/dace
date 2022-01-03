@@ -19,8 +19,7 @@ tokens = lexer.tokens
 
 precedence = (
     ("right", "COMMA"),
-    ("right", "DOTDIVEQ", "DOTMULEQ", "EQ", "EXPEQ", "MULEQ", "MINUSEQ",
-     "DIVEQ", "PLUSEQ", "OREQ", "ANDEQ"),
+    ("right", "DOTDIVEQ", "DOTMULEQ", "EQ", "EXPEQ", "MULEQ", "MINUSEQ", "DIVEQ", "PLUSEQ", "OREQ", "ANDEQ"),
     ("nonassoc", "HANDLE"),
     ("left", "COLON"),
     ("left", "ANDAND", "OROR"),

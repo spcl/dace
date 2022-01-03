@@ -17,10 +17,8 @@ class ExpandAdd(ExpandTransformation):
         out_edge = parent_state.out_edges(node)[0]
 
         sdfg = dace.SDFG("nested")
-        sdfg.add_datadesc("_a",
-                          copy.deepcopy(parent_sdfg.arrays[in_edge.data.data]))
-        sdfg.add_datadesc("_b",
-                          copy.deepcopy(parent_sdfg.arrays[out_edge.data.data]))
+        sdfg.add_datadesc("_a", copy.deepcopy(parent_sdfg.arrays[in_edge.data.data]))
+        sdfg.add_datadesc("_b", copy.deepcopy(parent_sdfg.arrays[out_edge.data.data]))
         sdfg.arrays["_a"].transient = False
         sdfg.arrays["_b"].transient = False
         state = sdfg.add_state()

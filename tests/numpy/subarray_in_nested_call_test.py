@@ -45,7 +45,6 @@ def test_inout_connector():
     assert (np.allclose(a, ref))
 
 
-
 if __name__ == '__main__':
     test()
     test_inout_connector()

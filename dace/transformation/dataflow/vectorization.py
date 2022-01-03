@@ -22,24 +22,19 @@ class Vectorization(transformation.Transformation):
   """
 
     vector_len = Property(desc="Vector length", dtype=int, default=4)
-    propagate_parent = Property(desc="Propagate vector length through "
-                                "parent SDFGs",
-                                dtype=bool,
-                                default=False)
+    propagate_parent = Property(desc="Propagate vector length through " "parent SDFGs", dtype=bool, default=False)
     strided_map = Property(desc="Use strided map range (jump by vector length)"
                            " instead of modifying memlets",
                            dtype=bool,
                            default=True)
-    preamble = Property(
-        dtype=bool,
-        default=None,
-        allow_none=True,
-        desc='Force creation or skipping a preamble map without vectors')
-    postamble = Property(
-        dtype=bool,
-        default=None,
-        allow_none=True,
-        desc='Force creation or skipping a postamble map without vectors')
+    preamble = Property(dtype=bool,
+                        default=None,
+                        allow_none=True,
+                        desc='Force creation or skipping a preamble map without vectors')
+    postamble = Property(dtype=bool,
+                         default=None,
+                         allow_none=True,
+                         desc='Force creation or skipping a postamble map without vectors')
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
 
@@ -47,12 +42,7 @@ class Vectorization(transformation.Transformation):
     def expressions():
         return [sdutil.node_path_graph(Vectorization._map_entry)]
 
-    def can_be_applied(self,
-                       graph: SDFGState,
-                       candidate,
-                       expr_index,
-                       sdfg,
-                       permissive=False):
+    def can_be_applied(self, graph: SDFGState, candidate, expr_index, sdfg, permissive=False):
         map_entry = graph.nodes()[candidate[Vectorization._map_entry]]
 
         # Only accept scopes that have one internal tasklet
@@ -134,14 +124,12 @@ class Vectorization(transformation.Transformation):
         if self.preamble is not None:
             create_preamble = self.preamble
         else:
-            create_preamble = not ((dim_from % vector_size == 0) == True
-                                   or dim_from == 0)
+            create_preamble = not ((dim_from % vector_size == 0) == True or dim_from == 0)
         if self.postamble is not None:
             create_postamble = self.postamble
         else:
             if isinstance(dim_to, symbolic.SymExpr):
-                create_postamble = (((dim_to.approx + 1) %
-                                     vector_size == 0) == False)
+                create_postamble = (((dim_to.approx + 1) % vector_size == 0) == False)
             else:
                 create_postamble = (((dim_to + 1) % vector_size == 0) == False)
 
@@ -149,16 +137,12 @@ class Vectorization(transformation.Transformation):
         if self.strided_map:
             new_range = [dim_from, dim_to - vector_size + 1, vector_size]
         else:
-            new_range = [
-                dim_from // vector_size, ((dim_to + 1) // vector_size) - 1,
-                dim_skip
-            ]
+            new_range = [dim_from // vector_size, ((dim_to + 1) // vector_size) - 1, dim_skip]
 
         # Create preamble non-vectorized map (replacing the original map)
         if create_preamble:
             old_scope = graph.scope_subgraph(map_entry, True, True)
-            new_scope: ScopeSubgraphView = replicate_scope(
-                sdfg, graph, old_scope)
+            new_scope: ScopeSubgraphView = replicate_scope(sdfg, graph, old_scope)
             new_begin = dim_from + (vector_size - (dim_from % vector_size))
             map_entry.map.range[-1] = (dim_from, new_begin - 1, dim_skip)
             # Replace map_entry with the replicated scope (so that the preamble
@@ -169,20 +153,16 @@ class Vectorization(transformation.Transformation):
 
         # Create postamble non-vectorized map
         if create_postamble:
-            new_scope: ScopeSubgraphView = replicate_scope(
-                sdfg, graph, graph.scope_subgraph(map_entry, True, True))
+            new_scope: ScopeSubgraphView = replicate_scope(sdfg, graph, graph.scope_subgraph(map_entry, True, True))
             dim_to_ex = dim_to + 1
-            new_scope.entry.map.range[-1] = (dim_to_ex -
-                                             (dim_to_ex % vector_size), dim_to,
-                                             dim_skip)
+            new_scope.entry.map.range[-1] = (dim_to_ex - (dim_to_ex % vector_size), dim_to, dim_skip)
 
         # Change the step of the inner-most dimension.
         map_entry.map.range[-1] = tuple(new_range)
 
         # Vectorize connectors adjacent to the tasklet.
         for edge in graph.all_edges(tasklet):
-            connectors = (tasklet.in_connectors
-                          if edge.dst == tasklet else tasklet.out_connectors)
+            connectors = (tasklet.in_connectors if edge.dst == tasklet else tasklet.out_connectors)
             conn = edge.dst_conn if edge.dst == tasklet else edge.src_conn
 
             if edge.data.data is None:  # Empty memlets
@@ -197,8 +177,7 @@ class Vectorization(transformation.Transformation):
                 newlist = [(rb, re, rs) for rb, re, rs in edge.data.subset]
                 symbols = set()
                 for indd in lastindex:
-                    symbols.update(
-                        symbolic.pystr_to_symbolic(indd).free_symbols)
+                    symbols.update(symbolic.pystr_to_symbolic(indd).free_symbols)
             else:
                 newlist = [(rb, rb, 1) for rb in edge.data.subset]
                 symbols = symbolic.pystr_to_symbolic(lastindex).free_symbols
@@ -209,8 +188,7 @@ class Vectorization(transformation.Transformation):
 
             # Vector to scalar WCR edge: change connector and continue
             lastedge = graph.memlet_path(edge)[-1]
-            if (lastedge.data.subset.num_elements() == 1
-                    and edge.data.wcr is not None):
+            if (lastedge.data.subset.num_elements() == 1 and edge.data.wcr is not None):
                 connectors[conn] = dtypes.vector(oldtype, vector_size)
                 continue
 
@@ -227,8 +205,7 @@ class Vectorization(transformation.Transformation):
             if self.strided_map:
                 rb = newlist[contigidx][0]
                 if self.propagate_parent:
-                    newlist[contigidx] = (rb / self.vector_len,
-                                          rb / self.vector_len, 1)
+                    newlist[contigidx] = (rb / self.vector_len, rb / self.vector_len, 1)
                 else:
                     newlist[contigidx] = (rb, rb + self.vector_len - 1, 1)
             else:
@@ -236,9 +213,7 @@ class Vectorization(transformation.Transformation):
                 if self.propagate_parent:
                     newlist[contigidx] = (rb, rb, 1)
                 else:
-                    newlist[contigidx] = (self.vector_len * rb,
-                                          self.vector_len * rb +
-                                          self.vector_len - 1, 1)
+                    newlist[contigidx] = (self.vector_len * rb, self.vector_len * rb + self.vector_len - 1, 1)
             edge.data.subset = subsets.Range(newlist)
             edge.data.volume = vector_size
 
@@ -254,8 +229,7 @@ class Vectorization(transformation.Transformation):
 
                     # Change type and shape to vector
                     if not isinstance(dtype, dtypes.vector):
-                        cursdfg.arrays[arrname].dtype = dtypes.vector(
-                            dtype, vector_size)
+                        cursdfg.arrays[arrname].dtype = dtypes.vector(dtype, vector_size)
                         new_shape = list(cursdfg.arrays[arrname].shape)
                         contigidx = cursdfg.arrays[arrname].strides.index(1)
                         new_shape[contigidx] /= vector_size
@@ -272,11 +246,6 @@ class Vectorization(transformation.Transformation):
                     if nsdfg is None:
                         break
                     tstate = cursdfg.parent
-                    curedge = ([
-                        e
-                        for e in tstate.in_edges(nsdfg) if e.dst_conn == arrname
-                    ] + [
-                        e for e in tstate.out_edges(nsdfg)
-                        if e.src_conn == arrname
-                    ])[0]
+                    curedge = ([e for e in tstate.in_edges(nsdfg) if e.dst_conn == arrname] +
+                               [e for e in tstate.out_edges(nsdfg) if e.src_conn == arrname])[0]
                     cursdfg = cursdfg.parent_sdfg

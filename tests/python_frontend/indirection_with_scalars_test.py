@@ -38,8 +38,7 @@ def test_nested_scalar_indirection():
 
 def test_array_element_scalar_indirection():
     @dc.program
-    def nested_arrayindex_indirection(A: dc.float64[20, 10],
-                                      indices: dc.int32[2]):
+    def nested_arrayindex_indirection(A: dc.float64[20, 10], indices: dc.int32[2]):
         start = indices[0]
         finish = indices[1]
         A[start:finish] = 0
@@ -55,8 +54,7 @@ def test_array_element_scalar_indirection():
 
 def test_array_element_scalar_indirection_in_map():
     @dc.program
-    def nested_arrayindex_indirection_map(A: dc.float64[20, 10],
-                                          indices: dc.int32[4]):
+    def nested_arrayindex_indirection_map(A: dc.float64[20, 10], indices: dc.int32[4]):
         for i in dc.map[0:2]:
             start = indices[2 * i]
             finish = indices[2 * i + 1]
@@ -82,8 +80,7 @@ def test_submatrix():
         return np.zeros([x1 - x0, N], dtype=dtype)
 
     @dc.program
-    def zero_submatrix(mat: dtype[M, N], starts: data_index[P],
-                       ends: data_index[P]):
+    def zero_submatrix(mat: dtype[M, N], starts: data_index[P], ends: data_index[P]):
         for m in dc.map[0:P]:
             start = starts[m]
             finish = ends[m]
@@ -101,7 +98,6 @@ def test_submatrix():
 
     zero_submatrix(A, starts, ends)
     assert np.allclose(A, expected)
-
 
 
 if __name__ == "__main__":

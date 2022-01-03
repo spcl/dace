@@ -22,18 +22,9 @@ def make_sdfg(dtype):
     root = state.add_access("root")
     bcast_node = mpi.nodes.bcast.Bcast("bcast")
 
-    state.add_memlet_path(x,
-                          bcast_node,
-                          dst_conn="_inbuffer",
-                          memlet=Memlet.simple(x, "0:n", num_accesses=n))
-    state.add_memlet_path(root,
-                          bcast_node,
-                          dst_conn="_root",
-                          memlet=Memlet.simple(root, "0:1", num_accesses=1))
-    state.add_memlet_path(bcast_node,
-                          xout,
-                          src_conn="_outbuffer",
-                          memlet=Memlet.simple(xout, "0:n", num_accesses=1))
+    state.add_memlet_path(x, bcast_node, dst_conn="_inbuffer", memlet=Memlet.simple(x, "0:n", num_accesses=n))
+    state.add_memlet_path(root, bcast_node, dst_conn="_root", memlet=Memlet.simple(root, "0:1", num_accesses=1))
+    state.add_memlet_path(bcast_node, xout, src_conn="_outbuffer", memlet=Memlet.simple(xout, "0:n", num_accesses=1))
 
     return sdfg
 
@@ -48,8 +39,7 @@ def _test_mpi(info, sdfg, dtype):
     commsize = comm.Get_size()
     mpi_sdfg = None
     if commsize < 2:
-        raise ValueError(
-            "This test is supposed to be run with at least two processes!")
+        raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
             mpi_sdfg = sdfg.compile()
@@ -87,8 +77,7 @@ def test_dace_bcast():
     commsize = comm.Get_size()
     mpi_sdfg = None
     if commsize < 2:
-        raise ValueError(
-            "This test is supposed to be run with at least two processes!")
+        raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
             mpi_sdfg = dace_bcast.compile()

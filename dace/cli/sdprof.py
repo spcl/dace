@@ -9,12 +9,8 @@ if __name__ == '__main__':
     parser.add_argument('--sort',
                         '-s',
                         help='Sort by a specific criterion',
-                        choices=('min', 'max', 'mean', 'median', 'counter',
-                                 'value'))
-    parser.add_argument('--ascending',
-                        '-a',
-                        help='Sort in ascending order',
-                        action='store_true')
+                        choices=('min', 'max', 'mean', 'median', 'counter', 'value'))
+    parser.add_argument('--ascending', '-a', help='Sort in ascending order', action='store_true')
 
     args = parser.parse_args()
 

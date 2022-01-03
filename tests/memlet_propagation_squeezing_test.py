@@ -27,39 +27,24 @@ def make_sdfg(squeeze, name):
     a2 = nstate.add_write('a2' if squeeze else 'a')
     t1 = nstate.add_tasklet('add99', {}, {'out'}, 'out = i + 99')
     t2 = nstate.add_tasklet('add101', {}, {'out'}, 'out = i + 101')
-    nstate.add_edge(t1, 'out', a1, None,
-                    dace.Memlet('a1[i]' if squeeze else 'a[i, 1]'))
-    nstate.add_edge(t2, 'out', a2, None,
-                    dace.Memlet('a2[i]' if squeeze else 'a[i+2, 0]'))
+    nstate.add_edge(t1, 'out', a1, None, dace.Memlet('a1[i]' if squeeze else 'a[i, 1]'))
+    nstate.add_edge(t2, 'out', a2, None, dace.Memlet('a2[i]' if squeeze else 'a[i+2, 0]'))
     nsdfg.add_loop(None, nstate, None, 'i', '0', 'i < N - 2', 'i + 1')
 
     # Connect nested SDFG to toplevel one
     nsdfg_node = state.add_nested_sdfg(nsdfg,
-                                       None, {},
-                                       {'a1', 'a2'} if squeeze else {'a'},
+                                       None, {}, {'a1', 'a2'} if squeeze else {'a'},
                                        symbol_mapping=dict(j='j', N='N', M='M'))
     state.add_nedge(me, nsdfg_node, dace.Memlet())
     # Add outer memlet that is overapproximated
     if squeeze:
         # This is expected to propagate to A[0:N - 2, j].
-        state.add_memlet_path(nsdfg_node,
-                              mx,
-                              w,
-                              src_conn='a1',
-                              memlet=dace.Memlet('A[0:N+1, j]'))
+        state.add_memlet_path(nsdfg_node, mx, w, src_conn='a1', memlet=dace.Memlet('A[0:N+1, j]'))
         # This is expected to propagate to A[2:N, j - 1].
-        state.add_memlet_path(nsdfg_node,
-                              mx,
-                              w,
-                              src_conn='a2',
-                              memlet=dace.Memlet('A[2:N+1, j-1]'))
+        state.add_memlet_path(nsdfg_node, mx, w, src_conn='a2', memlet=dace.Memlet('A[2:N+1, j-1]'))
     else:
         # This memlet is expected to propagate to A[0:N, j - 1:j + 1].
-        state.add_memlet_path(nsdfg_node,
-                              mx,
-                              w,
-                              src_conn='a',
-                              memlet=dace.Memlet('A[0:N+1, j-1:j+1]'))
+        state.add_memlet_path(nsdfg_node, mx, w, src_conn='a', memlet=dace.Memlet('A[0:N+1, j-1:j+1]'))
 
     propagation.propagate_memlets_sdfg(sdfg)
 

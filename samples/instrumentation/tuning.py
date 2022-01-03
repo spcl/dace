@@ -25,8 +25,7 @@ def matmult(A: dtype[M, K], B: dtype[K, N], C: dtype[M, N]):
         C[:] = A @ B
 
 
-def test_configuration(a_trans: bool, b_trans: bool, a_padding: int,
-                       b_padding: int) -> InstrumentationReport:
+def test_configuration(a_trans: bool, b_trans: bool, a_padding: int, b_padding: int) -> InstrumentationReport:
     """
     Tests a single configuration of A and B and returns the instrumentation
     report from running the SDFG.
@@ -82,12 +81,7 @@ def test_configuration(a_trans: bool, b_trans: bool, a_padding: int,
 
     # Invoke SDFG: compile without additional transformations and run
     csdfg = sdfg.compile()
-    csdfg(A=A,
-          B=B,
-          C=C,
-          M=np.int32(M.get()),
-          K=np.int32(K.get()),
-          N=np.int32(N.get()))
+    csdfg(A=A, B=B, C=C, M=np.int32(M.get()), K=np.int32(K.get()), N=np.int32(N.get()))
     assert np.allclose(A @ B, C)
 
     # Return instrumentation report
@@ -114,9 +108,7 @@ if __name__ == '__main__':
     for tA_order, tB_order in itertools.product(ORDERS, ORDERS):
         for tA_padding, tB_padding in itertools.product(PADDINGS, PADDINGS):
             print(tA_order, tA_padding, tB_order, tB_padding)
-            report = test_configuration(tA_order == 'transposed',
-                                        tB_order == 'transposed', tA_padding,
-                                        tB_padding)
+            report = test_configuration(tA_order == 'transposed', tB_order == 'transposed', tA_padding, tB_padding)
 
             # Obtain the first entry type from the report (there is only one)
             entry = np.array(list(report.durations.values())[0])
@@ -131,8 +123,7 @@ if __name__ == '__main__':
 
     # Print out best configuration
     A_order, A_padding, B_order, B_padding = best_config
-    print('Fastest configuration for (%dx%dx%d) is:' %
-          (M.get(), K.get(), N.get()))
+    print('Fastest configuration for (%dx%dx%d) is:' % (M.get(), K.get(), N.get()))
     print('  A with storage order %s, padding = %d' % (A_order, A_padding))
     print('  B with storage order %s, padding = %d' % (B_order, B_padding))
     print('  Runtime: %f ms' % best_runtime)
