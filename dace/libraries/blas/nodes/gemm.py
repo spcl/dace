@@ -8,7 +8,10 @@ from dace import SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts, check_access
+from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts,
+                                              check_access,
+                                              dtype_to_cudadatatype,
+                                              to_cublas_computetype)
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands,
                                               _get_codegen_gemm_opts)
 from .. import environments
@@ -277,6 +280,11 @@ class ExpandGemmCuBLAS(ExpandTransformation):
         if not adesc or not bdesc or not cdesc:
             raise ValueError('Unsupported input/output arrays')
 
+        # If buffers are not on the GPU, copy them
+        needs_copy = any(desc.storage not in (dace.StorageType.GPU_Global,
+                                              dace.StorageType.CPU_Pinned)
+                         for desc in (adesc, bdesc, cdesc))
+
         dtype = adesc.dtype.base_type
         func = '%sgemm' % to_blastype(dtype.type)
         if dtype == dace.float16:
@@ -324,9 +332,7 @@ class ExpandGemmCuBLAS(ExpandTransformation):
             {dtype.ctype} alpha = {alpha};
             {dtype.ctype} beta = {beta};
             '''
-            call_suffix += '''
-cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
-            '''
+            call_suffix += '''cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);'''
             alpha = f'({cdtype} *)&alpha'
             beta = f'({cdtype} *)&beta'
         else:
@@ -336,18 +342,54 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
                                      alpha, beta, cdtype, func)
+        opt['arr_prefix'] = arr_prefix = ''
+        if needs_copy:
+            opt['arr_prefix'] = arr_prefix = '_conn'
 
         # Matrix multiplication
-        call = '''cublas{func}(__dace_cublas_handle,
-            CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
-            {M}, {N}, {K},
-            {alpha},
-            ({dtype}*){x}, {lda},
-            ({dtype}*){y}, {ldb},
-            {beta},
-            ({dtype}*)_c, {ldc});'''
+        if (node.compute_type is None and node.accumulator_type is None
+                and node.algorithm is None):
+            call = '''cublas{func}(__dace_cublas_handle,
+                CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
+                {M}, {N}, {K},
+                {alpha},
+                ({dtype}*){arr_prefix}{x}, {lda},
+                ({dtype}*){arr_prefix}{y}, {ldb},
+                {beta},
+                ({dtype}*){arr_prefix}_c, {ldc});'''.format_map(opt)
+        else:
+            if node.compute_type is not None:
+                acctype = node.compute_type
+            elif node.accumulator_type is not None:
+                acc_dtype: dtypes.typeclass = node.accumulator_type
+                acctype = f'CUBLAS_COMPUTE_{to_cublas_computetype(acc_dtype)}'
+            else:
+                acctype = f'CUBLAS_COMPUTE_{to_cublas_computetype(dtype)}'
 
-        code = (call_prefix + call.format_map(opt) + call_suffix)
+            algorithm = 'CUBLAS_GEMM_DEFAULT_TENSOR_OP'
+            if node.algorithm is not None:
+                algorithm = node.algorithm
+
+            call = f'''
+            cublasGemmEx(__dace_cublas_handle,
+                CUBLAS_OP_{opt['ta']}, CUBLAS_OP_{opt['tb']},
+                {opt['M']}, {opt['N']}, {opt['K']},
+                {alpha},
+                {arr_prefix}{opt['x']},
+                {dtype_to_cudadatatype(opt['xdtype'])},
+                {opt['lda']},
+                {arr_prefix}{opt['y']},
+                {dtype_to_cudadatatype(opt['ydtype'])},
+                {opt['ldb']},
+                {beta},
+                {arr_prefix}_c,
+                {dtype_to_cudadatatype(opt['cdtype'])},
+                {opt['ldc']},
+                {acctype},
+                {algorithm});
+            '''
+
+        code = (call_prefix + call + call_suffix)
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             node.in_connectors,
@@ -357,9 +399,7 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
         )
 
         # If buffers are not on the GPU, copy them
-        if any(desc.storage not in
-               [dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned]
-               for desc in [adesc, bdesc, cdesc]):
+        if needs_copy:
             nsdfg = dace.SDFG('nested_gemm')
             for name, desc in [('_a', adesc), ('_b', bdesc), ('_c', cdesc)]:
                 if isinstance(desc, dt.View):
@@ -390,19 +430,6 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
                 "_conn" + k: None
                 for k in tasklet.out_connectors
             }
-
-            call = '''cublas{func}(__dace_cublas_handle,
-                CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
-                {M}, {N}, {K},
-                {alpha},
-                ({dtype}*){x}, {lda},
-                ({dtype}*){y}, {ldb},
-                {beta},
-                ({dtype}*)_conn_c, {ldc});'''
-            opt['x'] = '_conn' + opt['x']
-            opt['y'] = '_conn' + opt['y']
-            tasklet.code.as_string = (call_prefix + call.format_map(opt) +
-                                      call_suffix)
 
             nstate.add_node(tasklet)
             nstate.add_nedge(a, ga, dace.Memlet.from_array('_a', adesc))
@@ -1059,6 +1086,23 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         dtype=bool,
         default=True,
         desc="Whether to have a _cin connector when beta != 0")
+    algorithm = properties.Property(
+        dtype=str,
+        allow_none=True,
+        default=None,
+        desc="If applicable, chooses the vendor-provided implementation "
+        "(algorithm) for the multiplication")
+    accumulator_type = properties.TypeClassProperty(
+        default=None,
+        choices=dtypes.Typeclasses,
+        allow_none=True,
+        desc="Accumulator or intermediate storage type used in multiplication")
+    compute_type = properties.Property(
+        default=None,
+        dtype=str,
+        allow_none=True,
+        desc="If applicable, overrides computation type (CUBLAS-specific, see "
+        "``cublasComputeType_t``)")
 
     def __init__(self,
                  name,

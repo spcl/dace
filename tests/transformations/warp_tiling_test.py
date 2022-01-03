@@ -36,19 +36,18 @@ def softmax(x):
 @pytest.mark.gpu
 def test_warp_softmax(vector_length=1):
     # Get SDFG
-    sdfg = softmax_fwd.to_sdfg(strict=True)
+    sdfg = softmax_fwd.to_sdfg(coarsen=True)
 
     # Apply transformations
     sdfg.apply_transformations_repeated(ReduceExpansion)
     MultiExpansion.apply_to(sdfg, sdfg.node(0).nodes())
     SubgraphFusion.apply_to(sdfg, sdfg.node(0).nodes())
     sdfg.expand_library_nodes()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusion])
     sdfg.apply_transformations(GPUTransformSDFG)
-    sdfg.apply_transformations(WarpTiling)
-    sdfg.apply_transformations_repeated([HoistState, InlineSDFG, StateFusion],
-                                        strict=True)
+    assert sdfg.apply_transformations(WarpTiling) == 1
+    sdfg.apply_transformations_repeated([HoistState, InlineSDFG, StateFusion])
     sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusion])
     if vector_length != 1:
         sdfg.apply_transformations_repeated(
@@ -63,8 +62,10 @@ def test_warp_softmax(vector_length=1):
     sdfg.validate()
     assert sdfg.number_of_nodes() == 1
     state = sdfg.node(0)
-    assert len([c for c in state.scope_children()[None]
-               if isinstance(c, dace.nodes.MapEntry)]) == 1
+    assert len([
+        c for c in state.scope_children()[None]
+        if isinstance(c, dace.nodes.MapEntry)
+    ]) == 1
 
     # Check correctness
     inp = np.random.rand(2, 16, 128, 128).astype(np.float32)

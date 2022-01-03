@@ -66,14 +66,11 @@ def test_var_args_aot():
 
 
 def test_var_args_empty():
-    # This test is supposed to be unsupported
-    with pytest.raises(SyntaxError):
+    @dace.program
+    def arg_aot(*args):
+        return np.zeros([20])
 
-        @dace.program
-        def arg_aot(*args):
-            return np.zeros([20])
-
-        arg_aot.compile()
+    arg_aot.compile()
 
 
 def test_var_kwargs_jit():
@@ -355,6 +352,47 @@ def test_intglobal():
     func(np.empty((10, )))
 
 
+def test_numpynumber_condition():
+    @dace.program
+    def conditional_val(A: dace.float64[20], val: dace.constant):
+        if (val % 4) == 0:
+            A[:] = 0
+        else:
+            A[:] = 1
+
+    # Ensure condition was folded
+    sdfg = conditional_val.to_sdfg(val=np.int64(3), coarsen=True)
+    assert sdfg.number_of_nodes() == 1
+
+    a = np.random.rand(20)
+    conditional_val(a, np.int64(3))
+    assert np.allclose(a, 1)
+    conditional_val(a, np.int64(4))
+    assert np.allclose(a, 0)
+
+
+# Skipped until constant propagation is in place
+@pytest.mark.skip
+def test_constant_propagation():
+    @dace.program
+    def conditional_val(A: dace.float64[20], val: dace.constant):
+        cval = val % 4
+        if cval == 0:
+            A[:] = 0
+        else:
+            A[:] = 1
+
+    # Ensure condition was folded
+    sdfg = conditional_val.to_sdfg(val=3, coarsen=True)
+    assert sdfg.number_of_nodes() == 1
+
+    a = np.random.rand(20)
+    conditional_val(a, 3)
+    assert np.allclose(a, 1)
+    conditional_val(a, 4)
+    assert np.allclose(a, 0)
+
+
 if __name__ == '__main__':
     test_kwargs()
     test_kwargs_jit()
@@ -377,3 +415,5 @@ if __name__ == '__main__':
     test_constant_folding()
     test_boolglobal()
     test_intglobal()
+    test_numpynumber_condition()
+    # test_constant_propagation()

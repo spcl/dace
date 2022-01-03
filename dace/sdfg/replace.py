@@ -92,8 +92,12 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
                         continue
 
                     if lang is dtypes.Language.CPP:  # Replace in C++ code
+                        # Avoid import loop
+                        from dace.codegen.targets.cpp import sym2cpp
+
                         # Use local variables and shadowing to replace
-                        replacement = 'auto %s = %s;\n' % (name, new_name)
+                        replacement = 'auto %s = %s;\n' % (name,
+                                                           sym2cpp(new_name))
                         propval.code = replacement + newcode
                     else:
                         warnings.warn('Replacement of %s with %s was not made '
@@ -101,13 +105,18 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
                                       (name, new_name, lang))
             elif propval.code is not None:
                 for stmt in propval.code:
-                    ASTFindReplace({name: new_name}).visit(stmt)
+                    ASTFindReplace({
+                        name: symbolic.symstr(new_name)
+                    }).visit(stmt)
         elif (isinstance(propclass, properties.DictProperty)
               and pname == 'symbol_mapping'):
             # Symbol mappings for nested SDFGs
             for symname, sym_mapping in propval.items():
-                propval[symname] = symbolic.pystr_to_symbolic(
-                    str(sym_mapping)).subs(symrepl)
+                try:
+                    propval[symname] = symbolic.pystr_to_symbolic(
+                        str(sym_mapping)).subs(symrepl)
+                except AttributeError:  # If the symbolified value has no subs
+                    pass
 
 
 def replace_properties_dict(node: Any, symrepl: Dict[symbolic.SymbolicType,

@@ -53,7 +53,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
             "compiler", "rtl", "verilator_enable_debug")
         self.code_objects: List[codeobject.CodeObject] = list()
         self.cpp_general_header_added: bool = False
-        self.vendor: str = config.Config.get("compiler", "fpga_vendor")
+        self.vendor: str = config.Config.get("compiler", "fpga", "vendor")
         self.hardware_target: bool = config.Config.get(
             "compiler", "xilinx", "mode").startswith("hardware")
 

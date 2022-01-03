@@ -25,8 +25,6 @@ def test_none_or_field_call():
     assert np.allclose(A, 7.0)
 
 
-# Skipped until type analysis works across branches
-@pytest.mark.skip
 def test_none_or_field_assignment_globalarr():
     globalarr = np.random.randn(10)
 
@@ -46,8 +44,6 @@ def test_none_or_field_assignment_globalarr():
     assert np.allclose(A, globalarr)
 
 
-# Skipped until type analysis works across branches
-@pytest.mark.skip
 def test_none_or_field_assignment_arr():
     @dace.program
     def func(A, B, arr):
@@ -119,11 +115,25 @@ def test_kwarg_none():
     assert res == 1.0
 
 
+def test_conditional_print():
+    @dace.program
+    def inner(do_print: dace.constant = False):
+        if do_print:
+            print("PRINT!")
+
+    @dace.program
+    def func():
+        inner(do_print=False)
+
+    func()
+
+
 if __name__ == '__main__':
     test_none_or_field_call()
-    # test_none_or_field_assignment_globalarr()
-    # test_none_or_field_assignment_arr()
+    test_none_or_field_assignment_globalarr()
+    test_none_or_field_assignment_arr()
     test_none_arg()
     # test_maybe_none_scalar_arg()
     test_default_arg()
     test_kwarg_none()
+    test_conditional_print()

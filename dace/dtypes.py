@@ -4,10 +4,11 @@ from __future__ import print_function
 import ctypes
 import aenum
 import inspect
+import itertools
 import numpy
 import re
 from functools import wraps
-from typing import Any
+from typing import Any, Callable, Optional
 from dace.config import Config
 from dace.registry import extensible_enum, undefined_safe_enum
 
@@ -36,6 +37,7 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_Local = ()  #: On-chip memory (bulk storage)
     FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
     FPGA_ShiftRegister = ()  #: Only accessible at constant indices
+    SVE_Register = ()  #: SVE register
 
 
 @undefined_safe_enum
@@ -213,7 +215,7 @@ _CTYPES = {
     numpy.uint8: "unsigned char",
     numpy.uint16: "unsigned short",
     numpy.uint32: "unsigned int",
-    numpy.uintc:  "unsigned int",
+    numpy.uintc: "unsigned int",
     numpy.uint64: "unsigned long long",
     numpy.float16: "dace::float16",
     numpy.float32: "float",
@@ -606,6 +608,9 @@ class pointer(typeclass):
         if json_obj['type'] != 'pointer':
             raise TypeError("Invalid type for pointer")
 
+        if json_obj['dtype'] is None:
+            return pointer(typeclass(None))
+
         return pointer(json_to_typeclass(json_obj['dtype'], context))
 
     def as_ctypes(self):
@@ -684,6 +689,16 @@ class vector(typeclass):
     @veclen.setter
     def veclen(self, val):
         self._veclen = val
+
+
+class string(pointer):
+    """
+    A specialization of the string data type to improve 
+    Python/generated code marshalling.
+    Used internally when `str` types are given
+    """
+    def __init__(self):
+        super().__init__(int8)
 
 
 class struct(typeclass):
@@ -820,6 +835,14 @@ def ptrtonumpy(ptr, inner_ctype, shape):
         ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape)
 
 
+def ptrtocupy(ptr, inner_ctype, shape):
+    import cupy as cp
+    umem = cp.cuda.UnownedMemory(ptr, 0, None)
+    return cp.ndarray(shape=shape,
+                      dtype=inner_ctype,
+                      memptr=cp.cuda.MemoryPointer(umem, 0))
+
+
 def _atomic_counter_generator():
     ctr = 0
     while True:
@@ -829,14 +852,15 @@ def _atomic_counter_generator():
 
 class callback(typeclass):
     """ Looks like dace.callback([None, <some_native_type>], *types)"""
-    def __init__(self, return_type, *variadic_args):
+    def __init__(self, return_types, *variadic_args):
         self.uid = next(_atomic_counter_generator())
         from dace import data
-        if isinstance(return_type, data.Array):
-            raise TypeError("Callbacks that return arrays are "
-                            "not supported as per SDFG semantics")
+        if return_types is None:
+            return_types = []
+        elif not isinstance(return_types, (list, tuple, set)):
+            return_types = [return_types]
         self.dtype = self
-        self.return_type = return_type
+        self.return_types = return_types
         self.input_types = []
         for arg in variadic_args:
             if isinstance(arg, typeclass):
@@ -856,19 +880,45 @@ class callback(typeclass):
         """ Returns the ctypes version of the typeclass. """
         from dace import data
 
-        return_ctype = (self.return_type.as_ctypes()
-                        if self.return_type is not None else None)
+        return_ctype = self.cfunc_return_type().as_ctypes()
         input_ctypes = []
-        for some_arg in self.input_types:
+
+        if self.is_scalar_function():
+            args = self.input_types
+        else:
+            args = itertools.chain(self.input_types, self.return_types)
+
+        for some_arg in args:
             if isinstance(some_arg, data.Array):
                 input_ctypes.append(ctypes.c_void_p)
             else:
-                input_ctypes.append(
-                    some_arg.as_ctypes() if some_arg is not None else None)
+                input_ctypes.append(some_arg.dtype.as_ctypes(
+                ) if some_arg is not None else None)
         if input_ctypes == [None]:
             input_ctypes = []
         cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
         return cf_object
+
+    def is_scalar_function(self) -> bool:
+        '''
+        Returns True if the callback is a function that returns a scalar
+        value (or nothing). Scalar functions are the only ones that can be 
+        used within a `dace.tasklet` explicitly.
+        '''
+        from dace import data
+        if len(self.return_types) == 0 or self.return_types == [None]:
+            return True
+        return (len(self.return_types) == 1
+                and isinstance(self.return_types[0], (typeclass, data.Scalar)))
+
+    def cfunc_return_type(self) -> typeclass:
+        ''' Returns the typeclass of the return value of the function call. '''
+        if len(self.return_types) == 0 or self.return_types == [None]:
+            return typeclass(None)
+        if not self.is_scalar_function():
+            return typeclass(None)
+
+        return self.return_types[0].dtype
 
     def as_numpy_dtype(self):
         return numpy.dtype(self.as_ctypes())
@@ -876,62 +926,126 @@ class callback(typeclass):
     def as_arg(self, name):
         from dace import data
 
-        return_type_cstring = (self.return_type.ctype
-                               if self.return_type is not None else "void")
         input_type_cstring = []
-        for arg in self.input_types:
+
+        if self.is_scalar_function():
+            args = self.input_types
+        else:
+            args = itertools.chain(self.input_types, self.return_types)
+
+        for arg in args:
+            if arg is None:
+                continue
             if isinstance(arg, data.Array):
                 # const hack needed to prevent error in casting const int* to int*
                 input_type_cstring.append(arg.dtype.ctype + " const *")
             else:
-                input_type_cstring.append(arg.ctype if arg is not None else "")
-        cstring = return_type_cstring + " " + "(*" + name + ")("
-        for index, inp_arg in enumerate(input_type_cstring):
-            if index > 0:
-                cstring = cstring + ","
-            cstring = cstring + inp_arg
-        cstring = cstring + ")"
-        return cstring
+                input_type_cstring.append(arg.ctype)
+
+        retval = self.cfunc_return_type()
+        return f'{retval} (*{name})({", ".join(input_type_cstring)})'
 
     def get_trampoline(self, pyfunc, other_arguments):
         from functools import partial
         from dace import data, symbolic
 
-        arraypos = []
-        types_and_sizes = []
+        inp_arraypos = []
+        ret_arraypos = []
+        inp_types_and_sizes = []
+        ret_types_and_sizes = []
+        inp_converters = []
+        ret_converters = []
         for index, arg in enumerate(self.input_types):
             if isinstance(arg, data.Array):
-                arraypos.append(index)
-                types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-        if len(arraypos) == 0:
+                inp_arraypos.append(index)
+                inp_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
+                if arg.storage == StorageType.GPU_Global:
+                    inp_converters.append(ptrtocupy)
+                else:
+                    inp_converters.append(ptrtonumpy)
+            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
+                inp_arraypos.append(index)
+                inp_types_and_sizes.append((ctypes.c_char_p, []))
+                inp_converters.append(lambda a, *args: ctypes.cast(
+                    a, ctypes.c_char_p).value.decode('utf-8'))
+            else:
+                inp_converters.append(lambda a: a)
+        offset = len(self.input_types)
+        for index, arg in enumerate(self.return_types):
+            if isinstance(arg, data.Array):
+                ret_arraypos.append(index + offset)
+                ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
+                if arg.storage == StorageType.GPU_Global:
+                    ret_converters.append(ptrtocupy)
+                else:
+                    ret_converters.append(ptrtonumpy)
+            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
+                ret_arraypos.append(index + offset)
+                ret_types_and_sizes.append((ctypes.c_char_p, []))
+                ret_converters.append(lambda a, *args: ctypes.cast(
+                    a, ctypes.c_char_p).value.decode('utf-8'))
+            else:
+                ret_converters.append(lambda a, *args: a)
+        if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
             return pyfunc
 
         def trampoline(orig_function, indices, data_types_and_sizes,
-                       *other_inputs):
-            list_of_other_inputs = list(other_inputs)
-            for i in indices:
-                data_type, size = data_types_and_sizes[i]
+                       ret_indices, ret_data_types_and_sizes, *other_inputs):
+            last_input = len(other_inputs)
+            if ret_indices:
+                last_input = ret_indices[0]
+            list_of_other_inputs = list(other_inputs[:last_input])
+            list_of_outputs = []
+            if ret_indices:
+                list_of_outputs = list(other_inputs[ret_indices[0]:])
+            for j, i in enumerate(indices):
+                data_type, size = data_types_and_sizes[j]
                 non_symbolic_sizes = []
                 for s in size:
                     if isinstance(s, symbolic.symbol):
                         non_symbolic_sizes.append(other_arguments[str(s)])
                     else:
                         non_symbolic_sizes.append(s)
-                list_of_other_inputs[i] = ptrtonumpy(other_inputs[i], data_type,
-                                                     non_symbolic_sizes)
+                list_of_other_inputs[i] = inp_converters[i](other_inputs[i],
+                                                            data_type,
+                                                            non_symbolic_sizes)
+            for j, i in enumerate(ret_indices):
+                data_type, size = ret_data_types_and_sizes[j]
+                non_symbolic_sizes = []
+                for s in size:
+                    if isinstance(s, symbolic.symbol):
+                        non_symbolic_sizes.append(other_arguments[str(s)])
+                    else:
+                        non_symbolic_sizes.append(s)
+                list_of_outputs[i - ret_indices[0]] = ret_converters[
+                    i - ret_indices[0]](other_inputs[i], data_type,
+                                        non_symbolic_sizes)
+            if ret_indices:
+                ret = orig_function(*list_of_other_inputs)
+                if len(list_of_outputs) == 1:
+                    ret = [ret]
+                for v, r in zip(list_of_outputs, ret):
+                    v[:] = r
+                return
             return orig_function(*list_of_other_inputs)
 
-        return partial(trampoline, pyfunc, arraypos, types_and_sizes)
+        return partial(trampoline, pyfunc, inp_arraypos, inp_types_and_sizes,
+                       ret_arraypos, ret_types_and_sizes)
 
     def __hash__(self):
-        return hash((self.uid, self.return_type, *self.input_types))
+        return hash((self.uid, *self.return_types, *self.input_types))
 
     def to_json(self):
+        if self.return_types:
+            return {
+                'type': 'callback',
+                'arguments': [i.to_json() for i in self.input_types],
+                'returntypes': [r.to_json() for r in self.return_types]
+            }
         return {
             'type': 'callback',
             'arguments': [i.to_json() for i in self.input_types],
-            'returntype':
-            self.return_type.to_json() if self.return_type else None
+            'returntypes': []
         }
 
     @staticmethod
@@ -939,14 +1053,16 @@ class callback(typeclass):
         if json_obj['type'] != "callback":
             raise TypeError("Invalid type for callback")
 
-        rettype = json_obj['returntype']
+        rettypes = json_obj['returntypes']
 
         import dace.serialize  # Avoid import loop
 
-        return callback(
-            json_to_typeclass(rettype) if rettype else None,
-            *(dace.serialize.from_json(arg, context)
-              for arg in json_obj['arguments']))
+        return callback([
+            json_to_typeclass(rettype) if rettype else None
+            for rettype in rettypes
+        ],
+                        *(dace.serialize.from_json(arg, context)
+                          for arg in json_obj['arguments']))
 
     def __str__(self):
         return "dace.callback"
@@ -1082,6 +1198,34 @@ TYPECLASS_TO_STRING = {
     complex64: "dace::complex64",
     complex128: "dace::complex128"
 }
+
+# If torch is importable, define translations between typeclasses and torch types. These are reused by daceml.
+try:
+    import torch
+
+    # conversion happens here in pytorch:
+    # https://github.com/pytorch/pytorch/blob/143ef016ee1b6a39cf69140230d7c371de421186/torch/csrc/utils/tensor_numpy.cpp#L237
+    TYPECLASS_TO_TORCH_DTYPE = {
+        bool_: torch.bool,
+        int8: torch.int8,
+        int16: torch.int16,
+        int32: torch.int32,
+        int64: torch.int64,
+        uint8: torch.uint8,
+        float16: torch.float16,
+        float32: torch.float32,
+        float64: torch.float64,
+        complex64: torch.complex64,
+        complex128: torch.complex128,
+    }
+
+    TORCH_DTYPE_TO_TYPECLASS = {
+        v: k
+        for k, v in TYPECLASS_TO_TORCH_DTYPE.items()
+    }
+
+except ImportError:
+    pass
 
 TYPECLASS_STRINGS = [
     "int", "float", "complex", "bool", "bool_", "int8", "int16", "int32",
@@ -1290,7 +1434,7 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     ]:
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
-            ScheduleType.MPI
+            ScheduleType.MPI, ScheduleType.GPU_Default
         ]
 
     # GPU-global memory
@@ -1304,7 +1448,7 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     if storage is StorageType.FPGA_Global:
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
-            ScheduleType.MPI, ScheduleType.FPGA_Device
+            ScheduleType.MPI, ScheduleType.FPGA_Device, ScheduleType.GPU_Default
         ]
 
     # FPGA-local memory
@@ -1337,9 +1481,30 @@ def is_array(obj: Any) -> bool:
     try:
         if hasattr(obj, '__cuda_array_interface__'):
             return True
-    except RuntimeError:
-        # In PyTorch, accessing this attribute throws a runtime error for variables that require grad
+    except (KeyError, RuntimeError):
+        # In PyTorch, accessing this attribute throws a runtime error for
+        # variables that require grad, or KeyError when a boolean array is used
         return True
     if hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__'):
         return hasattr(obj, 'shape') and len(obj.shape) > 0
+    return False
+
+
+def is_gpu_array(obj: Any) -> bool:
+    """
+    Returns True if an object is a GPU array, i.e., implements the 
+    ``__cuda_array_interface__`` standard (supported by Numba, CuPy, PyTorch,
+    etc.). If the interface is supported, pointers can be directly obtained using the
+    ``_array_interface_ptr`` function.
+
+    :param obj: The given object.
+    :return: True iff the object implements the CUDA array interface.
+    """
+    try:
+        if hasattr(obj, '__cuda_array_interface__'):
+            return True
+    except (KeyError, RuntimeError):
+        # In PyTorch, accessing this attribute throws a runtime error for
+        # variables that require grad, or KeyError when a boolean array is used
+        return False
     return False

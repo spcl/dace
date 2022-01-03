@@ -32,7 +32,7 @@ class MapCollapse(transformation.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         # Check the edges between the entries of the two maps.
         outer_map_entry: nodes.MapEntry = graph.nodes()[candidate[
             MapCollapse._outer_map_entry]]
@@ -84,7 +84,7 @@ class MapCollapse(transformation.Transformation):
             if src != inner_map_exit:
                 return False
 
-        if strict:
+        if not permissive:
             if inner_map_entry.map.schedule != outer_map_entry.map.schedule:
                 return False
 

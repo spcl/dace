@@ -54,7 +54,7 @@ class MapTiling(transformation.Transformation):
         return [sdutil.node_path_graph(MapTiling.map_entry)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         return True
 
     @staticmethod

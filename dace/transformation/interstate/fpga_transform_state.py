@@ -41,7 +41,7 @@ class FPGATransformState(transformation.Transformation):
         return [sdutil.node_path_graph(FPGATransformState._state)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         state = graph.nodes()[candidate[FPGATransformState._state]]
 
         for node, graph in state.all_nodes_recursive():
@@ -76,8 +76,9 @@ class FPGATransformState(transformation.Transformation):
 
         for node in state.nodes():
 
-            if (isinstance(node, nodes.AccessNode)
-                    and node.desc(sdfg).storage != dtypes.StorageType.Default):
+            if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage
+                    not in (dtypes.StorageType.Default,
+                            dtypes.StorageType.Register)):
                 return False
 
             if not isinstance(node, nodes.MapEntry):
@@ -85,10 +86,6 @@ class FPGATransformState(transformation.Transformation):
 
             map_entry = node
             candidate_map = map_entry.map
-
-            # No more than 3 dimensions
-            if candidate_map.range.dims() > 3:
-                return False
 
             # Map schedules that are disallowed to transform to FPGAs
             if (candidate_map.schedule == dtypes.ScheduleType.MPI

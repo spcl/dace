@@ -77,6 +77,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 graph_copy = sdfg_copy.nodes()[sdfg.nodes().index(graph)]
                 subgraph_copy = SubgraphView(graph_copy,
                 [graph_copy.nodes()[i] for i in graph_indices])
+                expansion.sdfg_id = sdfg_copy.sdfg_id
             
                 
                 ##sdfg_copy.apply_transformations(MultiExpansion, states=[graph])

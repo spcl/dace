@@ -65,7 +65,7 @@ setup(name='dace',
           "License :: OSI Approved :: BSD License",
           "Operating System :: OS Independent",
       ],
-      python_requires='>=3.6, <3.10',
+      python_requires='>=3.6, <3.11',
       packages=find_packages(
           exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
       package_data={
@@ -78,13 +78,13 @@ setup(name='dace',
       },
       include_package_data=True,
       install_requires=[
-          'numpy', 'networkx >= 2.5', 'astunparse', 'sympy', 'pyyaml', 'ply',
+          'numpy', 'networkx >= 2.5', 'astunparse', 'sympy<=1.9', 'pyyaml', 'ply',
           'websockets', 'requests', 'flask', 'scikit-build', 'cmake', 'aenum',
           'dataclasses; python_version < "3.7"', 'dill', 'pyreadline;platform_system=="Windows"'
       ],
       extras_require={
           'testing':
-          ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir']
+          ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click']
       },
       entry_points={
           'console_scripts': [

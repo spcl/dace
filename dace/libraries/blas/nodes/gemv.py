@@ -10,6 +10,7 @@ from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from dace.libraries.blas import blas_helpers
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import environments
+from dace.sdfg import nodes, utils as sdutils
 import numpy as np
 import warnings
 
@@ -183,31 +184,42 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
 
         node.validate(parent_sdfg, parent_state)
 
-        for e in parent_state.in_edges(node):
-            if e.dst_conn == "_A":
-                desc_a = parent_sdfg.arrays[e.data.data]
-            elif e.dst_conn == "_x":
-                desc_x = parent_sdfg.arrays[e.data.data]
-        for e in parent_state.out_edges(node):
-            if e.src_conn == "_y":
-                desc_y = parent_sdfg.arrays[e.data.data]
-
         sdfg = dace.SDFG("gemv")
         state = sdfg.add_state("gemv")
 
         alpha = node.alpha
         beta = node.beta
 
-        # Create local versions of input data nodes
-        desc_a = desc_a.clone()
-        desc_a.transient = False
-        sdfg.add_datadesc("_A", desc_a)
-        desc_x = desc_x.clone()
-        desc_x.transient = False
-        sdfg.add_datadesc("_x", desc_x)
-        desc_y = desc_y.clone()
-        desc_y.transient = False
-        sdfg.add_datadesc("_y", desc_y)
+        # Get input/output data (the method considers also the presence of view nodes)
+        ((edge_a, desc_a, shape_a, strides_a), (edge_x, desc_x, shape_x,
+                                                strides_x),
+         (edge_y, desc_y, shape_y,
+          strides_y)) = _get_matmul_operands(node,
+                                             parent_state,
+                                             parent_sdfg,
+                                             name_lhs="_A",
+                                             name_rhs="_x",
+                                             name_out="_y")
+
+        # Create local versions of input/output data nodes
+        _, desc_a = sdfg.add_array("_A",
+                                   shape_a,
+                                   desc_a.dtype,
+                                   strides=strides_a,
+                                   storage=desc_a.storage,
+                                   transient=False)
+        _, desc_x = sdfg.add_array("_x",
+                                   shape_x,
+                                   desc_x.dtype,
+                                   strides=strides_x,
+                                   storage=desc_x.storage,
+                                   transient=False)
+        _, desc_y_y = sdfg.add_array("_y",
+                                     shape_y,
+                                     desc_y.dtype,
+                                     strides=strides_y,
+                                     storage=desc_y.storage,
+                                     transient=False)
 
         if node.transA and desc_a.dtype.veclen > 1:
             raise NotImplementedError(
@@ -767,20 +779,45 @@ class ExpandGemvCuBLAS(ExpandTransformation):
 
         func, ctype, runtimetype = blas_helpers.cublas_type_metadata(dtype)
         func += 'gemv'
+        call_prefix = environments.cublas.cuBLAS.handle_setup_code(node)
+        call_suffix = ''
 
-        # TODO: (alpha,beta) != (1,0)
-        if node.alpha != 1.0 or node.beta != 0.0:
-            raise NotImplementedError
-        alpha = (
-            '__state->cublas_handle.Constants(__dace_cuda_device).%sPone()' %
-            runtimetype)
-        beta = (
-            '__state->cublas_handle.Constants(__dace_cuda_device).%sZero()' %
-            runtimetype)
+        # Handle alpha / beta
+        constants = {
+            1.0:
+            f"__state->cublas_handle.Constants(__dace_cuda_device).{runtimetype}Pone()",
+            0.0:
+            f"__state->cublas_handle.Constants(__dace_cuda_device).{runtimetype}Zero()",
+        }
+        if node.alpha not in constants or node.beta not in constants:
+            # Deal with complex input constants
+            if isinstance(node.alpha, complex):
+                alpha = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
+            else:
+                alpha = f'{dtype.ctype}({node.alpha})'
+            if isinstance(node.beta, complex):
+                beta = f'{dtype.ctype}({node.beta.real}, {node.beta.imag})'
+            else:
+                beta = f'{dtype.ctype}({node.beta})'
 
-        code = (environments.cublas.cuBLAS.handle_setup_code(node) + f"""
+            # Set pointer mode to host
+            call_prefix += f'''cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST);
+            {dtype.ctype} alpha = {alpha};
+            {dtype.ctype} beta = {beta};
+            '''
+            call_suffix += '''
+cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
+            '''
+            alpha = f'({ctype} *)&alpha'
+            beta = f'({ctype} *)&beta'
+        else:
+            alpha = constants[node.alpha]
+            beta = constants[node.beta]
+
+        code = (call_prefix + f"""
 cublas{func}(__dace_cublas_handle, {trans}, {m}, {n}, {alpha}, _A, {lda},
-             _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});""")
+             _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});
+                """ + call_suffix)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -936,10 +973,10 @@ class ExpandGemvPBLAS(ExpandTransformation):
         # in ValueError: Node type "BlockCyclicScatter" not supported for
         # promotion
         if transA:
-            sdfg = _gemTv_pblas.to_sdfg(strict=False)
+            sdfg = _gemTv_pblas.to_sdfg(coarsen=False)
         else:
-            sdfg = _gemNv_pblas.to_sdfg(strict=False)
-        sdfg.apply_strict_transformations()
+            sdfg = _gemNv_pblas.to_sdfg(coarsen=False)
+        sdfg.coarsen_dataflow()
         return sdfg
 
 

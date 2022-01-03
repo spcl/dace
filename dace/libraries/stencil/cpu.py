@@ -1,14 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import ast
-import astunparse
 import collections
 import copy
 import numpy as np
-from typing import Dict, List, Tuple
 
 import dace
 
-from .subscript_converter import SubscriptConverter
 from ._common import *
 
 
@@ -23,8 +19,8 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         sdfg = dace.SDFG(node.label + "_outer")
         state = sdfg.add_state(node.label + "_outer")
 
-        (inputs, outputs, shape, field_to_data, field_to_desc,
-         _, vector_lengths) = parse_connectors(node, parent_state, parent_sdfg)
+        (inputs, outputs, shape, field_to_data, field_to_desc, _,
+         vector_lengths) = parse_connectors(node, parent_state, parent_sdfg)
 
         #######################################################################
         # Tasklet code generation
@@ -33,10 +29,7 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         code = node.code.as_string
 
         # Replace relative indices with memlet names
-        converter = SubscriptConverter()
-        new_ast = converter.visit(ast.parse(code))
-        code = astunparse.unparse(new_ast)
-        field_accesses: Dict[str, List[Tuple[int]]] = converter.mapping
+        code, field_accesses = parse_accesses(code, outputs)
         iterator_mapping = make_iterator_mapping(node, field_accesses, shape)
         validate_vector_lengths(vector_lengths, iterator_mapping)
 
@@ -69,9 +62,8 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
                 if sum(iterator_mapping[k], 0) > 0
             ],
             [])
-        output_connectors = sum(
-            [[f"_{c}" for c in field_accesses[k].values()] for k in outputs],
-            [])
+        output_connectors = sum([[f"_{c}" for c in field_accesses[k].values()]
+                                 for k in outputs], [])
 
         #######################################################################
         # Create tasklet

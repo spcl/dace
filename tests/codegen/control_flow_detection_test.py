@@ -63,7 +63,7 @@ def test_edge_split_loop_detection():
             i += 2
         return A
 
-    sdfg: dace.SDFG = looptest.to_sdfg(strict=True)
+    sdfg: dace.SDFG = looptest.to_sdfg(coarsen=True)
     if dace.Config.get_bool('optimizer', 'detect_control_flow'):
         assert 'for (' in sdfg.generate_code()[0].code
 

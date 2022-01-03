@@ -30,7 +30,7 @@ class FPGATransformSDFG(transformation.Transformation):
         return [nx.DiGraph()]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         # Avoid import loops
         from dace.transformation.interstate import FPGATransformState
 

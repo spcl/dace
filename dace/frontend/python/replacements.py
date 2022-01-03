@@ -77,10 +77,15 @@ def _define_local_scalar(
         sdfg: SDFG,
         state: SDFGState,
         dtype: dace.typeclass,
-        storage: dtypes.StorageType = dtypes.StorageType.Default):
+        storage: dtypes.StorageType = dtypes.StorageType.Default,
+        lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
-    _, desc = sdfg.add_scalar(name, dtype, transient=True, storage=storage)
+    _, desc = sdfg.add_scalar(name,
+                              dtype,
+                              transient=True,
+                              storage=storage,
+                              lifetime=lifetime)
     pv.variables[name] = name
     return name
 
@@ -452,20 +457,22 @@ def _numpy_rot90(pv: 'ProgramVisitor',
     if k == 0:
         return arr
     if k == 2:
-        return _numpy_flip(pv, sdfg, state,
-                           _numpy_flip(pv, sdfg, state, arr, axes[0]), axes[1])
+        res = _numpy_flip(pv, sdfg, state, arr, axes[0])
+        state = pv._add_state(state.label + '_b')
+        return _numpy_flip(pv, sdfg, state, res, axes[1])
 
     axes_list = list(range(ndim))
     (axes_list[axes[0]], axes_list[axes[1]]) = (axes_list[axes[1]],
                                                 axes_list[axes[0]])
 
     if k == 1:
-        return _transpose(pv, sdfg, state,
-                          _numpy_flip(pv, sdfg, state, arr, axes[1]), axes_list)
-    else:
-        # k == 3
-        return _numpy_flip(pv, sdfg, state,
-                           _transpose(pv, sdfg, state, arr, axes_list), axes[1])
+        res = _numpy_flip(pv, sdfg, state, arr, axes[1])
+        state = pv._add_state(state.label + '_b')
+        return _transpose(pv, sdfg, state, res, axes_list)
+    else:  # k == 3
+        res = _transpose(pv, sdfg, state, arr, axes_list)
+        state = pv._add_state(state.label + '_b')
+        return _numpy_flip(pv, sdfg, state, res, axes[1])
 
 
 @oprepo.replaces('elementwise')
@@ -1063,15 +1070,21 @@ def _array_array_where(visitor: 'ProgramVisitor',
 
     left_shape = left_arr.shape if left_arr else [1]
     right_shape = right_arr.shape if right_arr else [1]
+    cond_shape = cond_arr.shape if cond_arr else [1]
 
     (out_shape, all_idx_dict, out_idx, left_idx,
      right_idx) = _broadcast_together(left_shape, right_shape)
+
+    # Broadcast condition with broadcasted left+right
+    _, _, _, cond_idx, _ = _broadcast_together(cond_shape, out_shape)
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):
         left_idx = subsets.Range([(0, 0, 1)])
     if isinstance(right_arr, data.Scalar):
         right_idx = subsets.Range([(0, 0, 1)])
+    if isinstance(cond_arr, data.Scalar):
+        cond_idx = subsets.Range([(0, 0, 1)])
 
     if left_arr is None and right_arr is None:
         raise ValueError('Both x and y cannot be scalars in numpy.where')
@@ -1101,8 +1114,7 @@ def _array_array_where(visitor: 'ProgramVisitor',
                        dace.Memlet.from_array(out_operand, out_arr))
     else:
         inputs = {}
-        inputs['__incond'] = Memlet.simple(cond_operand,
-                                           left_idx if left_arr else right_idx)
+        inputs['__incond'] = Memlet.simple(cond_operand, cond_idx)
         if left_arr:
             inputs['__in1'] = Memlet.simple(left_operand, left_idx)
         if right_arr:
@@ -1260,6 +1272,14 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
 # Defined as a function in order to include the op and the opcode in the closure
 def _makeunop(op, opcode):
     @oprepo.replaces_operator('Array', op)
+    def _op(visitor: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: str,
+            op2=None):
+        return _unop(sdfg, state, op1, opcode, op)
+
+    @oprepo.replaces_operator('View', op)
     def _op(visitor: 'ProgramVisitor',
             sdfg: SDFG,
             state: SDFGState,
@@ -1716,7 +1736,7 @@ def _array_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
         right_shape = [1]
         arguments = [left_arr, right_operand]
-        tasklet_args = ['__in1', str(right_operand)]
+        tasklet_args = ['__in1', f'({str(right_operand)})']
     else:
         left_arr = None
         left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
@@ -1726,7 +1746,7 @@ def _array_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_shape = right_arr.shape
         storage = right_arr.storage
         arguments = [left_operand, right_arr]
-        tasklet_args = [str(left_operand), '__in2']
+        tasklet_args = [f'({str(left_operand)})', '__in2']
 
     result_type, casting = _result_type(arguments, operator)
     left_cast = casting[0]
@@ -1799,7 +1819,7 @@ def _array_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_type = _sym_type(right_operand)
         right_shape = [1]
         arguments = [left_arr, right_operand]
-        tasklet_args = ['__in1', astutils.unparse(right_operand)]
+        tasklet_args = ['__in1', f'({astutils.unparse(right_operand)})']
     else:
         left_arr = None
         left_type = _sym_type(left_operand)
@@ -1809,7 +1829,7 @@ def _array_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_shape = right_arr.shape
         storage = right_arr.storage
         arguments = [left_operand, right_arr]
-        tasklet_args = [astutils.unparse(left_operand), '__in2']
+        tasklet_args = [f'({astutils.unparse(left_operand)})', '__in2']
 
     result_type, casting = _result_type(arguments, operator)
     left_cast = casting[0]
@@ -1927,7 +1947,7 @@ def _scalar_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_scal = None
         right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
         arguments = [left_scal, right_operand]
-        tasklet_args = ['__in1', str(right_operand)]
+        tasklet_args = ['__in1', f'({str(right_operand)})']
     else:
         left_scal = None
         left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
@@ -1935,7 +1955,7 @@ def _scalar_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_type = right_scal.dtype
         storage = right_scal.storage
         arguments = [left_operand, right_scal]
-        tasklet_args = [str(left_operand), '__in2']
+        tasklet_args = [f'({str(left_operand)})', '__in2']
 
     result_type, casting = _result_type(arguments, operator)
     left_cast = casting[0]
@@ -1991,7 +2011,7 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_scal = None
         right_type = _sym_type(right_operand)
         arguments = [left_scal, right_operand]
-        tasklet_args = ['__in1', astutils.unparse(right_operand)]
+        tasklet_args = ['__in1', f'({astutils.unparse(right_operand)})']
     else:
         left_scal = None
         left_type = _sym_type(left_operand)
@@ -1999,7 +2019,7 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         right_type = right_scal.dtype
         storage = right_scal.storage
         arguments = [left_operand, right_scal]
-        tasklet_args = [astutils.unparse(left_operand), '__in2']
+        tasklet_args = [f'({astutils.unparse(left_operand)})', '__in2']
 
     result_type, casting = _result_type(arguments, operator)
     left_cast = casting[0]
@@ -2135,7 +2155,32 @@ def _makebinop(op, opcode):
             op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
+    @oprepo.replaces_operator('View', op, otherclass='Scalar')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
+    @oprepo.replaces_operator('View', op, otherclass='NumConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
+    @oprepo.replaces_operator('View', op, otherclass='BoolConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
+    @oprepo.replaces_operator('View', op, otherclass='symbol')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
     @oprepo.replaces_operator('Scalar', op, otherclass='Array')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
+    @oprepo.replaces_operator('Scalar', op, otherclass='View')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
@@ -2165,6 +2210,11 @@ def _makebinop(op, opcode):
             op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
+    @oprepo.replaces_operator('NumConstant', op, otherclass='View')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
     @oprepo.replaces_operator('NumConstant', op, otherclass='Scalar')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
@@ -2190,6 +2240,11 @@ def _makebinop(op, opcode):
             op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
+    @oprepo.replaces_operator('BoolConstant', op, otherclass='View')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
     @oprepo.replaces_operator('BoolConstant', op, otherclass='Scalar')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
@@ -2211,6 +2266,11 @@ def _makebinop(op, opcode):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='Array')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
+    @oprepo.replaces_operator('symbol', op, otherclass='View')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
@@ -4305,19 +4365,21 @@ def reshape(pv: 'ProgramVisitor',
     else:
         strides = [data._prod(newshape[i + 1:]) for i in range(len(newshape))]
 
-    newarr, _ = sdfg.add_view(arr,
-                              newshape,
-                              desc.dtype,
-                              storage=desc.storage,
-                              strides=strides,
-                              allow_conflicts=desc.allow_conflicts,
-                              total_size=desc.total_size,
-                              may_alias=desc.may_alias,
-                              alignment=desc.alignment,
-                              find_new_name=True)
+    newarr, newdesc = sdfg.add_view(arr,
+                                    newshape,
+                                    desc.dtype,
+                                    storage=desc.storage,
+                                    strides=strides,
+                                    allow_conflicts=desc.allow_conflicts,
+                                    total_size=desc.total_size,
+                                    may_alias=desc.may_alias,
+                                    alignment=desc.alignment,
+                                    find_new_name=True)
 
     # Register view with DaCe program visitor
-    pv.views[newarr] = arr
+    aset = subsets.Range.from_array(desc)
+    vset = subsets.Range.from_array(newdesc)
+    pv.views[newarr] = (arr, Memlet(data=arr, subset=aset, other_subset=vset))
 
     return newarr
 
@@ -4369,7 +4431,10 @@ def view(pv: 'ProgramVisitor',
                               find_new_name=True)
 
     # Register view with DaCe program visitor
-    pv.views[newarr] = arr
+    # NOTE: We do not create here a Memlet of the form `A[subset] -> osubset`
+    # because the View can be of a different dtype. Adding `other_subset` in
+    # such cases will trigger validation error.
+    pv.views[newarr] = (arr, Memlet.from_array(arr, desc))
 
     return newarr
 
@@ -4410,17 +4475,21 @@ def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
         w = state.add_write(newarr)
         state.add_nedge(r, w, Memlet(data=arr))
     else:
-        newarr, _ = sdfg.add_view(arr, [totalsize],
-                                  desc.dtype,
-                                  storage=desc.storage,
-                                  strides=[1],
-                                  allow_conflicts=desc.allow_conflicts,
-                                  total_size=totalsize,
-                                  may_alias=desc.may_alias,
-                                  alignment=desc.alignment,
-                                  find_new_name=True)
+        newarr, newdesc = sdfg.add_view(arr, [totalsize],
+                                        desc.dtype,
+                                        storage=desc.storage,
+                                        strides=[1],
+                                        allow_conflicts=desc.allow_conflicts,
+                                        total_size=totalsize,
+                                        may_alias=desc.may_alias,
+                                        alignment=desc.alignment,
+                                        find_new_name=True)
         # Register view with DaCe program visitor
-        pv.views[newarr] = arr
+        aset = subsets.Range.from_array(desc)
+        vset = subsets.Range.from_array(newdesc)
+        pv.views[newarr] = (arr, Memlet(data=arr,
+                                        subset=aset,
+                                        other_subset=vset))
 
     return newarr
 

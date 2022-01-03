@@ -1,11 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from dace.dtypes import vector
 import dace
-from tests.codegen.sve.vectorization import vectorize
-
-SHOULD_EXECUTE_SVE = False
+from dace.transformation.dataflow.sve.vectorization import SVEVectorization
 
 
-def get_code(program, sve_param):
-    sdfg = program.to_sdfg()
-    vectorize(sdfg, sve_param)
-    return sdfg.generate_code()[0].clean_code
+def vectorize(program):
+    sdfg = program.to_sdfg(coarsen=True)
+    sdfg.apply_transformations(SVEVectorization)
+    return sdfg
+
+
+def get_code(program):
+    return vectorize(program).generate_code()[0].clean_code

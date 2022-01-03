@@ -537,6 +537,8 @@ def _cases_from_branches(
              returns None.
     """
     cond = edges[0].data.condition_sympy()
+    if not isinstance(cond, sp.Basic):
+        return None
     a = sp.Wild('a')
     b = sp.Wild('b', properties=[lambda k: k.is_Integer])
     m = cond.match(sp.Eq(a, b))

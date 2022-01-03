@@ -30,9 +30,9 @@ class LoopPeeling(LoopUnroll):
     )
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         if not DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg,
-                                         strict):
+                                         permissive):
             return False
 
         guard = graph.node(candidate[DetectLoop._loop_guard])

@@ -59,11 +59,15 @@ def copy_expr(
     is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
                                        dtypes.AllocationLifetime.Persistent)
     defined_types = None
+    # Non-free symbol dependent Arrays due to their shape
+    dependent_shape = (isinstance(
+        data_desc, data.Array) and not isinstance(data_desc, data.View) and any(
+            str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
+            for s in data_desc.free_symbols))
     try:
-        if (isinstance(data_desc, data.Array)
-                and not isinstance(data_desc, data.View) and any(
-                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in data_desc.free_symbols)):
+        # NOTE: It is hard to get access to the view-edge here, so always check
+        # the declared-arrays dictionary for Views.
+        if dependent_shape or isinstance(data_desc, data.View):
             defined_types = dispatcher.declared_arrays.get(data_name,
                                                            is_global=is_global)
     except KeyError:
@@ -293,8 +297,8 @@ def emit_memlet_reference(dispatcher,
 
     if fpga.is_fpga_array(desc):
         datadef = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset,
-                                 is_write, dispatcher, ancestor,
-                                 defined_type == DefinedType.ArrayInterface)
+                                is_write, dispatcher, ancestor,
+                                defined_type == DefinedType.ArrayInterface)
     else:
         datadef = ptr(memlet.data, desc, sdfg)
 
@@ -306,6 +310,8 @@ def emit_memlet_reference(dispatcher,
             typedef = defined_ctype
         if is_scalar:
             defined_type = DefinedType.Scalar
+            if is_write is False:
+                typedef = f'const {typedef}'
             ref = '&'
     elif defined_type == DefinedType.ArrayInterface:
         base_ctype = conntype.base_type.ctype
@@ -400,8 +406,8 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
 
 
 def _is_c_contiguous(shape, strides):
-    """ 
-    Returns True if the strides represent a non-padded, C-contiguous (last 
+    """
+    Returns True if the strides represent a non-padded, C-contiguous (last
     dimension contiguous) array.
     """
     computed_strides = tuple(
@@ -528,7 +534,7 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    if fpga.is_hbm_array_with_distributed_index(d):
+    if fpga.is_multibank_array_with_distributed_index(d):
         subset_in = fpga.modify_distributed_subset(subset_in, 0)
 
     # Offset according to parameters, then offset according to array
@@ -611,7 +617,7 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     if fpga.is_fpga_array(desc):
         dname = fpga.fpga_ptr(memlet.data, desc, sdfg, s, is_write, None, None,
-                               defined_type == DefinedType.ArrayInterface)
+                              defined_type == DefinedType.ArrayInterface)
     else:
         dname = ptr(memlet.data, desc, sdfg)
 
@@ -1017,6 +1023,15 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
                          expr_semicolon=False,
                          defined_symbols=defined_symbols)
 
+    def _Name(self, t: ast.Name):
+        if t.id not in self.sdfg.arrays:
+            return super()._Name(t)
+
+        # Replace values with their code-generated names (for example,
+        # persistent arrays)
+        desc = self.sdfg.arrays[t.id]
+        self.write(ptr(t.id, desc, self.sdfg))
+
     def _Subscript(self, t: ast.Subscript):
         from dace.frontend.python.astutils import subscript_to_slice
         target, rng = subscript_to_slice(t, self.sdfg.arrays)
@@ -1055,6 +1070,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         self.memlets = memlets
         self.constants = constants
         self.codegen = codegen
+        self.allow_casts = True
 
     def visit_TopLevelExpr(self, node):
         # This is a DaCe shift, omit it
@@ -1236,14 +1252,34 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
         return ast.copy_location(newnode, node)
 
+    def visit_Call(self, node: ast.Call):
+        funcname = rname(node.func)
+        if (funcname in self.sdfg.symbols
+                and isinstance(self.sdfg.symbols[funcname], dtypes.callback)):
+            # Visit arguments without changing their types
+            self.allow_casts = False
+            result = self.generic_visit(node)
+            self.allow_casts = True
+            return result
+        else:
+            return self.generic_visit(node)
+
     def visit_Name(self, node: ast.Name):
         name = rname(node)
         if name not in self.memlets:
             return self.generic_visit(node)
         memlet, nc, wcr, dtype = self.memlets[name]
-        if (isinstance(dtype, dtypes.pointer)
+        try:
+            defined_type, _ = self.codegen._dispatcher.defined_vars.get(node.id)
+        except KeyError:
+            defined_type = None
+        if (self.allow_casts and isinstance(dtype, dtypes.pointer)
                 and memlet.subset.num_elements() == 1):
             return ast.Name(id="(*{})".format(name), ctx=node.ctx)
+        elif (self.allow_casts and (defined_type == DefinedType.Stream
+                                    or defined_type == DefinedType.StreamArray)
+              and memlet.dynamic):
+            return ast.Name(id=f"{name}.pop()", ctx=node.ctx)
         else:
             return self.generic_visit(node)
 

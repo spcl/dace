@@ -163,5 +163,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    run_gemv(args.target, args.n, args.m, args.alpha, args.transposed,
+    run_gemv(args.target, args.N, args.M, args.alpha, args.transposed,
              args.vectorize, args.tile_size_x, args.tile_size_y)

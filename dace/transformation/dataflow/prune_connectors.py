@@ -3,19 +3,27 @@ from os import stat
 from typing import Any, AnyStr, Dict, Set, Tuple, Union
 import re
 
-from dace import dtypes, registry, SDFG, SDFGState, symbolic
+from dace import dtypes, registry, SDFG, SDFGState, symbolic, properties
 from dace.transformation import transformation as pm, helpers
 from dace.sdfg import nodes, utils
 from dace.sdfg.analysis import cfg
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
+@properties.make_properties
 class PruneConnectors(pm.Transformation):
     """ Removes unused connectors from nested SDFGs, as well as their memlets
         in the outer scope, replacing them with empty memlets if necessary.
+
+        Optionally: after pruning, removes the unused containers from parent SDFG.
     """
 
     nsdfg = pm.PatternNode(nodes.NestedSDFG)
+
+    remove_unused_containers = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='If True, remove unused containers from parent SDFG.')
 
     @staticmethod
     def expressions():
@@ -26,7 +34,7 @@ class PruneConnectors(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: SDFG,
-                       strict: bool = False) -> bool:
+                       permissive: bool = False) -> bool:
 
         nsdfg = graph.node(candidate[PruneConnectors.nsdfg])
 
@@ -75,7 +83,6 @@ class PruneConnectors(pm.Transformation):
         # Detect which nodes are used, so we can delete unused nodes after the
         # connectors have been pruned
         all_data_used = read_set | write_set
-
         # Add WCR outputs to "do not prune" input list
         for e in state.out_edges(nsdfg):
             if e.data.wcr is not None and e.src_conn in prune_in:
@@ -112,8 +119,20 @@ class PruneConnectors(pm.Transformation):
                 # If the data is now unused, we can purge it from the SDFG
                 nsdfg.sdfg.remove_data(conn)
 
+        if self.remove_unused_containers:
+            # Remove unused containers from parent SDFGs
+            containers = list(sdfg.arrays.keys())
+            for name in containers:
+                s = nsdfg.sdfg
+                while s.parent_sdfg:
+                    s = s.parent_sdfg
+                    try:
+                        s.remove_data(name)
+                    except ValueError:
+                        break
 
-@registry.autoregister_params(singlestate=True, strict=True)
+
+@registry.autoregister_params(singlestate=True, coarsening=True)
 class PruneSymbols(pm.Transformation):
     """ 
     Removes unused symbol mappings from nested SDFGs, as well as internal
@@ -180,7 +199,7 @@ class PruneSymbols(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: SDFG,
-                       strict: bool = False) -> bool:
+                       permissive: bool = False) -> bool:
 
         nsdfg: nodes.NestedSDFG = graph.node(candidate[PruneSymbols.nsdfg])
 

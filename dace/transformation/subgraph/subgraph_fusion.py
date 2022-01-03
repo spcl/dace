@@ -132,8 +132,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         # 2.1 do some preparation work first:
         # calculate node topology (see apply for definition)
-        node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph,
-                                                        map_entries)
+        try:
+            node_config = SubgraphFusion.get_adjacent_nodes(
+                sdfg, graph, map_entries)
+        except NotImplementedError:
+            return False
         in_nodes, intermediate_nodes, out_nodes = node_config
 
         # 2.2 topological feasibility:
@@ -352,7 +355,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         for (rng, orng) in zip(subset_plus, subset_minus):
                             rng_1dim = subsets.Range((rng, ))
                             orng_1dim = subsets.Range((orng, ))
-                            intersection = rng_1dim.intersects(orng_1dim)
+                            try:
+                                intersection = rng_1dim.intersects(orng_1dim)
+                            except TypeError:
+                                return False
                             if intersection is None or intersection == True:
                                 warnings.warn(
                                     "SubgraphFusion::Disjoint Accesses found!")
@@ -697,7 +703,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # create new transient at exit replacing the array
             # and redirect all traffic
             data_ref = sdfg.data(node.data)
+
             out_trans_data_name = node.data + '_OUT'
+            out_trans_data_name = sdfg._find_new_name(out_trans_data_name)
             data_trans = sdfg.add_transient(name=out_trans_data_name,
                                             shape=dcpy(data_ref.shape),
                                             dtype=dcpy(data_ref.dtype),
@@ -723,9 +731,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         return transients_created
 
     def determine_invariant_dimensions(
-        self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
-        intermediate_nodes: List[nodes.AccessNode],
-        map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit]):
+            self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
+            intermediate_nodes: List[nodes.AccessNode],
+            map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit]):
         ''' Determines the invariant dimensions for each node -- dimensions in 
             which the access set of the memlets propagated through map entries and 
             exits does not change.
@@ -971,6 +979,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         union = None
                         for oe in graph.out_edges(transients_created[dst]):
                             union = subsets.union(union, oe.data.subset)
+                        if isinstance(union, subsets.Indices):
+                            union = subsets.Range.from_indices(union)
                         inner_memlet = dcpy(edge.data)
                         for i, s in enumerate(edge.data.subset):
                             if i in invariant_dimensions[dst.label]:
@@ -1142,7 +1152,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 for edge in chain(transient_in_edges, transient_out_edges):
                     for e in graph.memlet_tree(edge):
                         if e.data.data == node.data:
-                            e.data.data += '_OUT'
+                            e.data.data = transients_created[node].data
 
             # memlets of all in between transients:
             # offset memlets if array has been compressed

@@ -5,6 +5,7 @@ import collections
 import copy
 import os
 import networkx as nx
+import time
 
 import dace.sdfg.nodes
 from dace.sdfg.graph import MultiConnectorEdge
@@ -122,7 +123,12 @@ def dfs_topological_sort(G, sources=None, condition=None):
     """
     if sources is None:
         # produce edges for all components
-        nodes = G
+        if hasattr(G, 'source_nodes'):
+            nodes = list(G.source_nodes())
+            if len(nodes) == 0:
+                nodes = G
+        else:
+            nodes = G
     else:
         # produce edges for components with source
         try:
@@ -601,6 +607,22 @@ def get_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
         return view_edge.dst
 
 
+def get_last_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
+    """
+    Given a view access node, returns the last viewed access node
+    if existent, else None
+    """
+    sdfg = state.parent
+    node = view
+    desc = sdfg.arrays[node.data]
+    while isinstance(desc, dt.View):
+        node = get_view_node(state, node)
+        if node is None or not isinstance(node, nd.AccessNode):
+            return None
+        desc = sdfg.arrays[node.data]
+    return node
+
+
 def get_view_edge(state: SDFGState,
                   view: nd.AccessNode) -> gr.MultiConnectorEdge[mm.Memlet]:
     """
@@ -996,24 +1018,36 @@ def trace_nested_access(
     return list(reversed(trace))
 
 
-def fuse_states(sdfg: SDFG, strict: bool = True, progress: bool = False) -> int:
+def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs) using an optimized
     routine that uses the structure of the StateFusion transformation.
     :param sdfg: The SDFG to transform.
-    :param strict: If True (default), operates in strict mode.
+    :param permissive: If True, operates in permissive mode, which ignores some
+                       race condition checks.
     :param progress: If True, prints out a progress bar of fusion (may be
-                     inaccurate, requires ``tqdm``)
+                     inaccurate, requires ``tqdm``). If None, prints out
+                     progress if over 5 seconds have passed. If False, never
+                     shows progress bar.
     :return: The total number of states fused.
     """
     from dace.transformation.interstate import StateFusion  # Avoid import loop
+    if progress is True or progress is None:
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            tqdm = None
+
     counter = 0
-    if progress:
-        from tqdm import tqdm
+    if progress is True or progress is None:
         fusible_states = 0
         for sd in sdfg.all_sdfgs_recursive():
             fusible_states += sd.number_of_edges()
-        pbar = tqdm(total=fusible_states)
+
+    if progress is True:
+        pbar = tqdm(total=fusible_states, desc='Fusing states')
+
+    start = time.time()
 
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
@@ -1022,6 +1056,13 @@ def fuse_states(sdfg: SDFG, strict: bool = True, progress: bool = False) -> int:
             applied = 0
             skip_nodes = set()
             for u, v in edges:
+                if (progress is None and tqdm is not None
+                        and (time.time() - start) > 5):
+                    progress = True
+                    pbar = tqdm(total=fusible_states,
+                                desc='Fusing states',
+                                initial=counter)
+
                 if u in skip_nodes or v in skip_nodes:
                     continue
                 candidate = {
@@ -1029,7 +1070,7 @@ def fuse_states(sdfg: SDFG, strict: bool = True, progress: bool = False) -> int:
                     StateFusion.second_state: v
                 }
                 sf = StateFusion(id, -1, candidate, 0, override=True)
-                if sf.can_be_applied(sd, candidate, 0, sd, strict=strict):
+                if sf.can_be_applied(sd, candidate, 0, sd, permissive=permissive):
                     sf.apply(sd)
                     applied += 1
                     counter += 1
@@ -1041,38 +1082,79 @@ def fuse_states(sdfg: SDFG, strict: bool = True, progress: bool = False) -> int:
                 break
     if progress:
         pbar.close()
-    if config.Config.get_bool('debugprint'):
+    if config.Config.get_bool('debugprint') and counter > 0:
         print(f'Applied {counter} State Fusions')
     return counter
 
 
 def inline_sdfgs(sdfg: SDFG,
-                 strict: bool = True,
-                 progress: bool = False) -> int:
+                 permissive: bool = False,
+                 progress: bool = None,
+                 multistate: bool = True) -> int:
     """
     Inlines all possible nested SDFGs (or sub-SDFGs) using an optimized
     routine that uses the structure of the SDFG hierarchy.
     :param sdfg: The SDFG to transform.
-    :param strict: If True (default), operates in strict mode.
+    :param permissive: If True, operates in permissive mode, which ignores some
+                       checks.
     :param progress: If True, prints out a progress bar of inlining (may be
-                     inaccurate, requires ``tqdm``)
+                     inaccurate, requires ``tqdm``). If None, prints out
+                     progress if over 5 seconds have passed. If False, never
+                     shows progress bar.
+    :param multistate: Include 
     :return: The total number of SDFGs inlined.
     """
-    from dace.transformation.interstate import InlineSDFG  # Avoid import loop
+    # Avoid import loops
+    from dace.transformation.interstate import InlineSDFG, InlineMultistateSDFG
+    if progress is True or progress is None:
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            tqdm = None
+
     counter = 0
     sdfgs = list(sdfg.all_sdfgs_recursive())
-    if progress:
-        from tqdm import tqdm
-        pbar = tqdm(total=len(sdfgs))
+    if progress is True:
+        pbar = tqdm(total=len(sdfgs), desc='Inlining SDFGs')
+
+    start = time.time()
 
     for sd in reversed(sdfgs):
         id = sd.sdfg_id
-        for state_id, state in enumerate(sd.nodes()):
+        for state in sd.nodes():
             for node in state.nodes():
+                if (progress is None and tqdm is not None
+                        and (time.time() - start) > 5):
+                    progress = True
+                    pbar = tqdm(total=len(sdfgs),
+                                desc='Inlining SDFG',
+                                initial=counter)
+
                 if not isinstance(node, NestedSDFG):
                     continue
                 # We have to reevaluate every time due to changing IDs
                 node_id = state.node_id(node)
+                state_id = sd.node_id(state)
+                if multistate:
+                    candidate = {
+                        InlineMultistateSDFG.nested_sdfg: node_id,
+                    }
+                    inliner = InlineMultistateSDFG(id,
+                                                   state_id,
+                                                   candidate,
+                                                   0,
+                                                   override=True)
+                    if inliner.can_be_applied(state,
+                                              candidate,
+                                              0,
+                                              sd,
+                                              permissive=permissive):
+                        inliner.apply(sd)
+                        counter += 1
+                        if progress:
+                            pbar.update(1)
+                        continue
+
                 candidate = {
                     InlineSDFG._nested_sdfg: node_id,
                 }
@@ -1081,14 +1163,14 @@ def inline_sdfgs(sdfg: SDFG,
                                           candidate,
                                           0,
                                           sd,
-                                          strict=strict):
+                                          permissive=permissive):
                     inliner.apply(sd)
                     counter += 1
                     if progress:
                         pbar.update(1)
     if progress:
         pbar.close()
-    if config.Config.get_bool('debugprint'):
+    if config.Config.get_bool('debugprint') and counter > 0:
         print(f'Inlined {counter} SDFGs')
     return counter
 
@@ -1154,3 +1236,40 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
     state = graph if isinstance(graph, SDFGState) else graph._graph
     return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(
         state.node_id(node))
+
+
+def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data,
+                             state: SDFGState, fsymbols: Set[str]) -> bool:
+    """
+    Checks whether the Array or View descriptor is non-free symbol dependent.
+    An Array is non-free symbol dependent when its attributes (e.g., shape)
+    depend on non-free symbols. A View is non-free symbol dependent when either
+    its adjacent edges or its viewed node depend on non-free symbols.
+    :param node: the access node to check
+    :param desc: the data descriptor to check
+    :param state: the state that contains the node
+    :param fsymbols: the free symbols to check against
+    """
+    if isinstance(desc, dt.View):
+        # Views can be non-free symbol dependent due to the adjacent edges.
+        e = get_view_edge(state, node)
+        if e.data:
+            src_subset = e.data.get_src_subset(e, state)
+            dst_subset = e.data.get_dst_subset(e, state)
+            free_symbols = set()
+            if src_subset:
+                free_symbols |= src_subset.free_symbols
+            if dst_subset:
+                free_symbols |= dst_subset.free_symbols
+            if any(str(s) not in fsymbols for s in free_symbols):
+                return True
+        # If the viewed node/descriptor is non-free symbol dependent, then so
+        # is the View.
+        n = get_view_node(state, node)
+        if n and isinstance(n, nd.AccessNode):
+            d = state.parent.arrays[n.data]
+            return is_nonfree_sym_dependent(n, d, state, fsymbols)
+    elif isinstance(desc, dt.Array):
+        if any(str(s) not in fsymbols for s in desc.free_symbols):
+            return True
+    return False

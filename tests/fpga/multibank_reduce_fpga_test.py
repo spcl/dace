@@ -5,22 +5,26 @@ from dace import subsets
 from dace.fpga_testing import xilinx_test
 import numpy as np
 
-# A test checking wcr-reduction with HBM arrays as inputs and output
+# A test checking wcr-reduction with HBM/DDR arrays as inputs and output
 
 
-def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
+def create_multibank_reduce_sdfg(
+    name,
+    mem_type,
+    banks=2,
+):
     N = dace.symbol("N")
     M = dace.symbol("M")
 
-    sdfg = dace.SDFG(name)
-    state = sdfg.add_state('red_hbm', True)
+    sdfg = dace.SDFG(name + "_" + mem_type)
+    state = sdfg.add_state('red_' + mem_type, True)
 
     in1 = sdfg.add_array("in1", [banks, N, M], dace.float32)
     in2 = sdfg.add_array("in2", [banks, N, M], dace.float32)
     out = sdfg.add_array("out", [banks, N], dace.float32)
-    in1[1].location["memorytype"] = "hbm"
-    in2[1].location["memorytype"] = "hbm"
-    out[1].location["memorytype"] = "hbm"
+    in1[1].location["memorytype"] = mem_type
+    in2[1].location["memorytype"] = mem_type
+    out[1].location["memorytype"] = mem_type
     in1[1].location["bank"] = f"0:{banks}"
     in2[1].location["bank"] = f"{banks}:{2*banks}"
     out[1].location["bank"] = f"{2*banks}:{3*banks}"
@@ -71,34 +75,72 @@ def create_test_set(N, M, banks):
     return (in1, in2, expected, out)
 
 
-def exec_test(N, M, banks, name):
+def exec_test(N, M, banks, mem_type, name):
     in1, in2, expected, target = create_test_set(N, M, banks)
-    sdfg = create_hbm_reduce_sdfg(banks, name)
+    sdfg = create_multibank_reduce_sdfg(name, mem_type, banks)
     sdfg(in1=in1, in2=in2, out=target, N=N, M=M)
     assert np.allclose(expected, target, rtol=1e-6)
     return sdfg
 
 
-@xilinx_test(assert_ii_1=False)
-def test_hbm_reduce_2x3_2b(assert_ii_1=False):
-    return exec_test(2, 3, 2, "red_2x3_2b")
+@xilinx_test()
+def test_hbm_reduce_2x3_2b():
+    return exec_test(2, 3, 2, "hbm", "red_2x3_2b")
 
 
-@xilinx_test(assert_ii_1=False)
+@xilinx_test()
 def test_hbm_reduce_10x50_4b():
-    return exec_test(10, 50, 4, "red_10x50_4b")
+    return exec_test(10, 50, 4, "hbm", "red_10x50_4b")
 
 
-@xilinx_test(assert_ii_1=False)
+@xilinx_test()
 def test_hbm_reduce_red_1x50_1b():
-    return exec_test(1, 50, 1, "red_1x50_1b")
+    return exec_test(1, 50, 1, "hbm", "red_1x50_1b")
 
 
-@xilinx_test(assert_ii_1=False)
+@xilinx_test()
 def test_hbm_reduce_red_1x40_8b():
-    return exec_test(1, 40, 8, "red_1x40_8b")
+    return exec_test(1, 40, 8, "hbm", "red_1x40_8b")
 
 
-@xilinx_test(assert_ii_1=False)
+@xilinx_test()
 def test_hbm_reduce_red_2x40_6b():
-    return exec_test(2, 40, 6, "red_2x40_6b")
+    return exec_test(2, 40, 6, "hbm", "red_2x40_6b")
+
+
+@xilinx_test()
+def test_ddr_reduce_2x3_2b():
+    return exec_test(2, 3, 2, "ddr", "red_2x3_2b")
+
+
+@xilinx_test()
+def test_ddr_reduce_10x50_4b():
+    return exec_test(10, 50, 4, "ddr", "red_10x50_4b")
+
+
+@xilinx_test()
+def test_ddr_reduce_red_1x50_1b():
+    return exec_test(1, 50, 1, "ddr", "red_1x50_1b")
+
+
+@xilinx_test()
+def test_ddr_reduce_red_1x40_8b():
+    return exec_test(1, 40, 8, "ddr", "red_1x40_8b")
+
+
+@xilinx_test()
+def test_ddr_reduce_red_2x40_6b():
+    return exec_test(2, 40, 6, "ddr", "red_2x40_6b")
+
+
+if __name__ == "__main__":
+    test_hbm_reduce_2x3_2b(None)
+    test_hbm_reduce_10x50_4b(None)
+    test_hbm_reduce_red_1x50_1b(None)
+    test_hbm_reduce_red_1x40_8b(None)
+    test_hbm_reduce_red_2x40_6b(None)
+    test_ddr_reduce_2x3_2b(None)
+    test_ddr_reduce_10x50_4b(None)
+    test_ddr_reduce_red_1x50_1b(None)
+    test_ddr_reduce_red_1x40_8b(None)
+    test_ddr_reduce_red_2x40_6b(None)

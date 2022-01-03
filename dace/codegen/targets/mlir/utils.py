@@ -97,6 +97,9 @@ def get_entry_args(entry_func: Union[mlir.astnodes.Function,
             ret.append((arg_name, arg_type))
         return ret
 
+    if entry_func.args is None:
+        return []
+
     for arg in entry_func.args:
         arg_name = arg.name.value
         arg_type = arg.type

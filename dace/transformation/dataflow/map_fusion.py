@@ -91,7 +91,7 @@ class MapFusion(transformation.Transformation):
         return result
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         first_map_exit = graph.nodes()[candidate[MapFusion.first_map_exit]]
         first_map_entry = graph.entry_node(first_map_exit)
         second_map_entry = graph.nodes()[candidate[MapFusion.second_map_entry]]
@@ -375,19 +375,9 @@ class MapFusion(transformation.Transformation):
                     nodes_to_remove.add(access_node)
                     continue
 
-                # If the source is an access node, modify the memlet to point
-                # to it
-                if (isinstance(edge.src, nodes.AccessNode)
-                        and edge.data.data != edge.src.data):
-                    edge.data.data = edge.src.data
-                    edge.data.subset = ("0" if edge.data.other_subset is None
-                                        else edge.data.other_subset)
-                    edge.data.other_subset = None
-
-                else:
-                    # Add a transient scalar/array
-                    self.fuse_nodes(sdfg, graph, edge, new_dsts[0].dst,
-                                    new_dsts[0].dst_conn, new_dsts[1:])
+                # Add a transient scalar/array
+                self.fuse_nodes(sdfg, graph, edge, new_dsts[0].dst,
+                                new_dsts[0].dst_conn, new_dsts[1:])
 
                 edges_to_remove.add(edge)
 
@@ -528,9 +518,11 @@ class MapFusion(transformation.Transformation):
                 graph.add_edge(local_node, src_connector, e.dst, e.dst_conn,
                                dcpy(edge.data))
         else:
-            sdfg.add_transient(local_name,
-                               edge.data.subset.size(),
-                               dtype=access_node.desc(graph).dtype)
+            local_name, _ = sdfg.add_transient(
+                local_name,
+                symbolic.overapproximate(edge.data.subset.size()),
+                dtype=access_node.desc(graph).dtype,
+                find_new_name=True)
             old_edge = dcpy(edge)
             local_node = graph.add_access(local_name)
             src_connector = None

@@ -32,6 +32,7 @@ class MLIRCodeGen(TargetCodeGenerator):
                 dfg.node_id(node))
             node.code.code = node.code.code.replace(
                 "mlir_entry", "mlir_entry_" + function_uid)
+            node.label = node.name + "_" + function_uid
             self._codeobjects.append(
                 CodeObject(node.name, node.code.code, "mlir", MLIRCodeGen,
                            node.name + "_Source"))

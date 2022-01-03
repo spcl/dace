@@ -30,7 +30,7 @@ def test_out():
     state.add_edge(C, None, trans, "_inp", sdfg.make_array_memlet("C"))
     state.add_edge(trans, "_out", D, None, sdfg.make_array_memlet("D"))
 
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.apply_transformations_repeated(RedundantArrayCopying)
     assert len(state.nodes()) == 3
     assert B not in state.nodes()
@@ -82,7 +82,7 @@ def test_out_success():
                           src_conn='__out')
 
     sdfg.validate()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     arrays, views = 0, 0
     for n in state.nodes():
         if isinstance(n, dace.nodes.AccessNode):
@@ -128,7 +128,7 @@ def test_out_failure_subset_mismatch():
                                  other_subset_str="1, 2, 0:3, 4"))
 
     sdfg.validate()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     assert len(state.nodes()) == 3
     assert B in state.nodes()
 
@@ -154,7 +154,7 @@ def test_out_failure_no_overlap():
                                  other_subset_str="1, 2, 0:3, 4"))
 
     sdfg.validate()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     assert len(state.nodes()) == 3
     assert B in state.nodes()
 
@@ -180,7 +180,7 @@ def test_out_failure_partial_overlap():
                                  other_subset_str="1, 2, 0:3, 4"))
 
     sdfg.validate()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     assert len(state.nodes()) == 3
     assert B in state.nodes()
 
@@ -207,7 +207,7 @@ def test_in():
     state.add_edge(B, None, C, None, sdfg.make_array_memlet("B"))
     state.add_edge(C, None, D, None, sdfg.make_array_memlet("C"))
 
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.apply_transformations_repeated(RedundantArrayCopyingIn)
     assert len(state.nodes()) == 3
     assert C not in state.nodes()
@@ -293,13 +293,25 @@ def conv2d(input: dace.float32[N, H, W, C_in], weights: dace.float32[K, K, C_in,
 
 
 def test_conv2d():
-    sdfg = conv2d.to_sdfg(strict=True)
+    sdfg = conv2d.to_sdfg(coarsen=True)
     access_nodes = [
         n for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, nodes.AccessNode)
         and not isinstance(sdfg.arrays[n.data], dace.data.View)
     ]
     assert (len(access_nodes) == 4)
+
+
+def test_redundant_second_copy_isolated():
+    sdfg = dace.SDFG('rsc')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_transient('tmp', [20], dace.float64)
+    state = sdfg.add_state()
+    state.add_nedge(state.add_read('A'), state.add_write('tmp'), dace.Memlet('tmp'))
+
+    assert sdfg.apply_transformations(RedundantSecondArray) == 1
+    sdfg.validate()
+    assert state.number_of_nodes() == 0
 
 
 if __name__ == '__main__':
@@ -313,3 +325,4 @@ if __name__ == '__main__':
     test_array_array_view()
     test_reverse_copy()
     test_conv2d()
+    test_redundant_second_copy_isolated()

@@ -8,7 +8,7 @@ from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
 from typing import Dict, List, Optional, Tuple, Set, Union
 
-from dace import dtypes, symbolic
+from dace import data, dtypes, symbolic
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
@@ -366,25 +366,43 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
 
 
 def _get_internal_subset(internal_memlet: Memlet,
-                         external_memlet: Memlet) -> subsets.Subset:
+                         external_memlet: Memlet,
+                         use_src_subset: bool = False,
+                         use_dst_subset: bool = False) -> subsets.Subset:
     if (internal_memlet.data != external_memlet.data
             and internal_memlet.other_subset is not None):
         return internal_memlet.other_subset
+    if not use_src_subset and not use_dst_subset:
+        return internal_memlet.subset
+    if use_src_subset and use_dst_subset:
+        raise ValueError('Source and destination subsets cannot be '
+                         'specified at the same time')
+    if use_src_subset:
+        return internal_memlet.src_subset
+    if use_dst_subset:
+        return internal_memlet.dst_subset
     return internal_memlet.subset
 
 
 def unsqueeze_memlet(internal_memlet: Memlet,
                      external_memlet: Memlet,
-                     preserve_minima: bool = False) -> Memlet:
+                     preserve_minima: bool = False,
+                     use_src_subset: bool = False,
+                     use_dst_subset: bool = False) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
         :param internal_memlet: The internal memlet (inside nested SDFG)
                                 before modification.
         :param external_memlet: The external memlet before modification.
         :param preserve_minima: Do not change the subset's minimum elements.
+        :param use_src_subset: If both sides of the memlet refer to same array,
+                               prefer source subset.
+        :param use_dst_subset: If both sides of the memlet refer to same array,
+                               prefer destination subset.
         :return: Offset Memlet to set on the resulting graph.
     """
-    internal_subset = _get_internal_subset(internal_memlet, external_memlet)
+    internal_subset = _get_internal_subset(internal_memlet, external_memlet,
+                                           use_src_subset, use_dst_subset)
     result = copy.deepcopy(internal_memlet)
     result.data = external_memlet.data
     result.other_subset = None
@@ -450,6 +468,7 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
     new_nodes = []
     new_entry = None
     new_exit = None
+    to_find_new_names: Set[nodes.AccessNode] = set()
     for node in scope.nodes():
         node_copy = copy.deepcopy(node)
         if node == scope.entry:
@@ -457,6 +476,10 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
         elif node == exit_node:
             new_exit = node_copy
 
+        if (isinstance(node, nodes.AccessNode)
+                and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope
+                and node.desc(sdfg).transient):
+            to_find_new_names.add(node_copy)
         state.add_node(node_copy)
         new_nodes.append(node_copy)
 
@@ -476,6 +499,17 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
 
     # Set the exit node's map to match the entry node
     new_exit.map = new_entry.map
+
+    # Replicate all temporary transients within scope
+    for node in to_find_new_names:
+        desc = node.desc(sdfg)
+        new_name = sdfg.add_datadesc(node.data,
+                                     copy.deepcopy(desc),
+                                     find_new_name=True)
+        node.data = new_name
+        for edge in state.all_edges(node):
+            for e in state.memlet_tree(edge):
+                e.data.data = new_name
 
     return ScopeSubgraphView(state, new_nodes, new_entry)
 
@@ -630,7 +664,8 @@ def constant_symbols(sdfg: SDFG) -> Set[str]:
     return set(sdfg.symbols) - interstate_symbols
 
 
-def simplify_state(state: SDFGState) -> MultiDiGraph:
+def simplify_state(state: SDFGState,
+                   remove_views: bool = False) -> MultiDiGraph:
     """
     Returns a networkx MultiDiGraph object that contains all the access nodes
     and corresponding edges of an SDFG state. The removed code nodes and map
@@ -639,6 +674,8 @@ def simplify_state(state: SDFGState) -> MultiDiGraph:
     :param state: The input SDFG state.
     :return: The MultiDiGraph object.
     """
+
+    sdfg = state.parent
 
     # Copy the whole state
     G = MultiDiGraph()
@@ -658,7 +695,8 @@ def simplify_state(state: SDFGState) -> MultiDiGraph:
     # wcr edges and connect their predecessors and successors
     for n in state.nodes():
         if n in G.nodes():
-            if not isinstance(n, nodes.AccessNode):
+            if (not isinstance(n, nodes.AccessNode) or
+                (remove_views and isinstance(sdfg.arrays[n.data], data.View))):
                 for p in G.predecessors(n):
                     for c in G.successors(n):
                         G.add_edge(p, c)
@@ -736,6 +774,7 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry,
                 sdfg,
                 _outer_map_entry=extracted_map,
                 _inner_map_entry=entries[idx + 1],
+                permissive=True,  # Since MapExpansion creates sequential maps
             )
 
         # Collapse remaining maps
@@ -745,11 +784,11 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry,
                 sdfg,
                 _outer_map_entry=map_to_collapse,
                 _inner_map_entry=entries[idx + 1],
+                permissive=True,  # Since MapExpansion creates sequential maps
             )
     else:
         extracted_map = map_entry
         map_to_collapse = map_entry
-
 
     return extracted_map, map_to_collapse
 
@@ -879,6 +918,31 @@ def contained_in(state: SDFGState, node: nodes.Node,
         curscope = cursdfg.parent_nsdfg_node
         cursdfg = cursdfg.parent_sdfg
     return False
+
+
+def get_parent_map(
+    state: SDFGState,
+    node: Optional[nodes.Node] = None
+) -> Optional[Tuple[nodes.EntryNode, SDFGState]]:
+    """
+    Returns the map in which the state (and node) are contained in, or None if
+    it is free.
+    :param state: The state to test or parent of the node to test.
+    :param node: The node to test (optional).
+    :return: A tuple of (entry node, state) or None.
+    """
+    cursdfg = state.parent
+    curstate = state
+    curscope = node
+    while cursdfg is not None:
+        if curscope is not None:
+            curscope = curstate.entry_node(curscope)
+            if curscope is not None:
+                return curscope, curstate
+        curstate = cursdfg.parent
+        curscope = cursdfg.parent_nsdfg_node
+        cursdfg = cursdfg.parent_sdfg
+    return None
 
 
 def redirect_edge(

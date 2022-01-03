@@ -64,6 +64,22 @@ def calc_set_image_range(map_idx, map_set, array_range):
                         new_range[i].subs([(symbol, approx)]))
                 else:
                     new_range[i] = SymExpr(new_range[i], new_range[i])
+            if isinstance(new_range[0], SymExpr):
+                start = new_range[0].approx
+            else:
+                start = new_range[0]
+            if isinstance(new_range[1], SymExpr):
+                stop = new_range[1].approx
+            else:
+                stop = new_range[1]
+            if isinstance(new_range[2], SymExpr):
+                step = new_range[2].approx
+            else:
+                step = new_range[2]
+            descending = (start > stop) == True
+            posstep = (step > 0) == True
+            if descending and posstep:
+                new_range[0], new_range[1] = new_range[1], new_range[0]
         image.append(new_range)
     return subsets.Range(image)
 
@@ -181,7 +197,7 @@ class StripMining(transformation.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         return True
 
     @staticmethod

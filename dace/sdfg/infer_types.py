@@ -25,8 +25,8 @@ def infer_connector_types(sdfg: SDFG):
                     continue
                 scalar = (e.data.subset and e.data.subset.num_elements() == 1)
                 if e.data.data is not None:
-                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is
-                                           not dtypes.StorageType.GPU_Global)
+                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage
+                                           is not dtypes.StorageType.GPU_Global)
                 else:
                     allocated_as_scalar = True
 
@@ -64,11 +64,11 @@ def infer_connector_types(sdfg: SDFG):
                           and (not e.data.dynamic or
                                (e.data.dynamic and e.data.wcr is not None)))
                 if e.data.data is not None:
-                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is
-                                           not dtypes.StorageType.GPU_Global)
+                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage
+                                           is not dtypes.StorageType.GPU_Global)
                 else:
                     allocated_as_scalar = True
-                    
+
                 if node.out_connectors[cname].type is None:
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
@@ -94,7 +94,7 @@ def infer_connector_types(sdfg: SDFG):
             # If there are any remaining uninferable connectors, fail
             for e in state.out_edges(node):
                 cname = e.src_conn
-                if cname and node.out_connectors[cname].type is None:
+                if cname and node.out_connectors[cname] is None:
                     raise TypeError('Ambiguous or uninferable type in'
                                     ' connector "%s" of node "%s"' %
                                     (cname, node))
@@ -105,7 +105,7 @@ def infer_connector_types(sdfg: SDFG):
 
 
 def set_default_schedule_and_storage_types(
-    sdfg: SDFG, toplevel_schedule: dtypes.ScheduleType):
+        sdfg: SDFG, toplevel_schedule: dtypes.ScheduleType):
     """ 
     Sets default storage and schedule types throughout SDFG in-place.
     Replaces `ScheduleType.Default` and `StorageType.Default`
@@ -244,7 +244,8 @@ def _set_default_storage_types(sdfg: SDFG,
 
     # Take care of remaining arrays/scalars, e.g., code->code edges
     for desc in sdfg.arrays.values():
-        if desc.storage is dtypes.StorageType.Default:
+        if ((desc.transient or sdfg.parent_sdfg is None)
+                and desc.storage is dtypes.StorageType.Default):
             desc.storage = dtypes.StorageType.Register
 
     for state in sdfg.nodes():

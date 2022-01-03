@@ -65,7 +65,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     language = 'hls'
 
     def __init__(self, *args, **kwargs):
-        fpga_vendor = Config.get("compiler", "fpga_vendor")
+        fpga_vendor = Config.get("compiler", "fpga", "vendor")
         if fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return
@@ -78,6 +78,9 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         # Modules name mangles
         self.module_mange = defaultdict(dict)
 
+        # Keep track of external streams
+        self.external_streams = set()
+
         super().__init__(*args, **kwargs)
 
     @staticmethod
@@ -89,8 +92,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         target_board = Config.get("compiler", "intel_fpga", "board")
         enable_debugging = ("ON" if Config.get_bool(
             "compiler", "intel_fpga", "enable_debugging") else "OFF")
-        autobuild = ("ON" if Config.get_bool("compiler", "autobuild_bitstreams")
-                     else "OFF")
+        autobuild = ("ON" if Config.get_bool("compiler", "fpga",
+                                             "autobuild_bitstreams") else "OFF")
         options = [
             "-DDACE_INTELFPGA_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_INTELFPGA_KERNEL_FLAGS=\"{}\"".format(kernel_flags),
@@ -196,16 +199,22 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
 
         return [host_code_obj] + kernel_code_objs + other_code_objs
 
-    def create_mangled_channel_name(self, var_name, kernel_id):
+    def create_mangled_channel_name(self, var_name, kernel_id, external_stream):
         '''
         Memorize and returns the mangled name of a global channel
         The dictionary is organized as (var_name) : {kernel_id: mangled_name)
+        :param: external_stream: indicates whether this channel is an external stream
+                (inter-FPGA Kernel) or not. If this is the case, it will not actually mangle
+                the name by appending a suffix.
         '''
 
         if kernel_id not in self.channel_mangle[var_name]:
-            existing_count = len(self.channel_mangle[var_name])
-            suffix = f"_{existing_count}" if existing_count > 0 else ""
-            mangled_name = f"{var_name}{suffix}"
+            if not external_stream:
+                existing_count = len(self.channel_mangle[var_name])
+                suffix = f"_{existing_count}" if existing_count > 0 else ""
+                mangled_name = f"{var_name}{suffix}"
+            else:
+                mangled_name = var_name
             self.channel_mangle[var_name][kernel_id] = mangled_name
         return self.channel_mangle[var_name][kernel_id]
 
@@ -233,27 +242,46 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
         return self.module_mange[module_name][kernel_id]
 
     def define_stream(self, dtype, buffer_size, var_name, array_size,
-                      function_stream, kernel_stream):
+                      function_stream, kernel_stream, sdfg):
         """
         Defines a stream
         :return: a tuple containing the  type of the created variable, and boolean indicating
             whether this is a global variable or not
         """
         vec_type = self.make_vector_type(dtype, False)
-        if buffer_size > 1:
-            depth_attribute = " __attribute__((depth({})))".format(buffer_size)
+        minimum_depth = Config.get("compiler", "fpga", "minimum_fifo_depth")
+        buffer_size = evaluate(buffer_size, sdfg.constants)
+        if minimum_depth:
+            minimum_depth = int(minimum_depth)
+            if minimum_depth > buffer_size:
+                buffer_size = minimum_depth
+        if buffer_size != 1:
+            depth_attribute = " __attribute__((depth({})))".format(
+                cpp.sym2cpp(buffer_size))
         else:
             depth_attribute = ""
         if cpp.sym2cpp(array_size) != "1":
             size_str = "[" + cpp.sym2cpp(array_size) + "]"
         else:
             size_str = ""
-        # mangle name
-        chan_name = self.create_mangled_channel_name(var_name,
-                                                     self._kernel_count)
-        kernel_stream.write("channel {} {}{}{};".format(vec_type, chan_name,
-                                                        size_str,
-                                                        depth_attribute))
+
+        if var_name in self.external_streams:
+            # This is an external streams: it connects two different FPGA Kernels
+            # that will be code-generated as two separate files.
+            # We need to declare the channel as global variable and it must have have
+            # the same name in both the files.
+
+            chan_name = self.create_mangled_channel_name(
+                var_name, self._kernel_count, True)
+            function_stream.write("channel {} {}{}{};".format(
+                vec_type, chan_name, size_str, depth_attribute))
+        else:
+            # mangle name
+            chan_name = self.create_mangled_channel_name(
+                var_name, self._kernel_count, False)
+
+            kernel_stream.write("channel {} {}{}{};".format(
+                vec_type, chan_name, size_str, depth_attribute))
 
         # Return value is used for adding to defined_vars in fpga.py
         # In Intel FPGA, streams must be defined as global entity, so they will be added to the global variables
@@ -443,7 +471,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
 #pragma unroll
 for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
   {name}[u_{name}] = {name}[u_{name} + {veclen}];
-}}\n""".format(name=var_name, size=arr_size, veclen=dtype.veclen)
+}}\n""".format(name=var_name, size=arr_size, veclen=cpp.sym2cpp(dtype.veclen))
         # Then do write
         res += self.make_write(defined_type, dtype, var_name, write_expr, index,
                                read_expr, wcr, is_unpack, packing_factor)
@@ -517,6 +545,10 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
          nested_global_transients, bank_assignments,
          external_streams) = self.make_parameters(sdfg, state, subgraphs)
 
+        # save the name of external streams
+        self.external_streams = set(
+            [chan_name for _, chan_name, _, _ in external_streams])
+
         # Emit allocations of inter-kernel memories
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
@@ -575,7 +607,6 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         :param predecessors: list containing all the name of kernels that must be finished before starting this one
         '''
         state_id = sdfg.node_id(state)
-        launch_async = Config.get_bool("compiler", "intel_fpga", "launch_async")
 
         # Check if this kernel depends from other kernels
         needs_synch = len(predecessors) > 0
@@ -590,29 +621,12 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                     f"{kernel_deps_name}.insert({kernel_deps_name}.end(), {pred}_events.begin(), {pred}_events.end());"
                 )
 
-        if launch_async:
-            #TODO remove this?
-
-            # hlslib uses std::async to launch each kernel launch as an
-            # asynchronous task in a separate C++ thread. This seems to cause
-            # problems with some versions of the Intel FPGA runtime, despite it
-            # supposedly being thread-safe, so we allow disabling this.
-            host_stream.write(
-                f"""\
-  std::vector<std::future<std::pair<double, double>>> futures;
-  for (auto &k : {kernel_name}_kernels) {{
-    futures.emplace_back(k.ExecuteTaskAsync());
-  }}
-  for (auto &f : futures) {{
-    f.wait();
-  }}""", sdfg, state_id)
-        else:
-            # While spawning the kernel, indicates the synchronization events (if any)
-            host_stream.write(
-                f"""\
+        # While spawning the kernel, indicates the synchronization events (if any)
+        host_stream.write(
+            f"""\
   std::vector<cl::Event> {kernel_name}_events;
   for (auto &k : {kernel_name}_kernels) {{
-    {kernel_name}_events.emplace_back(k.ExecuteTaskFork({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''}));
+    {kernel_name}_events.emplace_back(k.ExecuteTaskAsync({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''}));
   }}
   all_events.insert(all_events.end(), {kernel_name}_events.begin(), {kernel_name}_events.end());
 """, sdfg, state_id)
@@ -1268,6 +1282,8 @@ __kernel void \\
             self._other_codes["converters"] = CodeIOStream()
         converter_stream = self._other_codes["converters"]
 
+        veclen = cpp.sym2cpp(veclen)
+
         if is_unpack:
             converter_name = "unpack_{dtype}{veclen}".format(dtype=ctype,
                                                              veclen=veclen)
@@ -1589,13 +1605,13 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             veclen = veclen_rhs
             ocltype = fpga.vector_element_type_of(dtype).ocltype
             self.width_converters.add((True, ocltype, veclen))
-            unpack_str = "unpack_{}{}".format(ocltype, veclen)
+            unpack_str = "unpack_{}{}".format(ocltype, cpp.sym2cpp(veclen))
 
         if veclen_lhs > veclen_rhs and isinstance(dtype_rhs, dace.pointer):
             veclen = veclen_lhs
             ocltype = fpga.vector_element_type_of(dtype).ocltype
             self.width_converters.add((False, ocltype, veclen))
-            pack_str = "pack_{}{}".format(ocltype, veclen)
+            pack_str = "pack_{}{}".format(ocltype, cpp.sym2cpp(veclen))
             # TODO: Horrible hack to not dereference pointers if we have to
             # unpack it
             if value[0] == "*":
@@ -1691,7 +1707,9 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
              or defined_type == DefinedType.StreamArray) and memlet.dynamic):
             # Input memlet, we read from channel
             # we should not need mangle here, since we are in a tasklet
-            updated = ast.Name(id="read_channel_intel({})".format(node.id))
+            updated = ast.Call(func=ast.Name(id="read_channel_intel"),
+                               args=[ast.Name(id=node.id)],
+                               keywords=[])
             self.used_streams.append(node.id)
         elif defined_type == DefinedType.Pointer and memlet.dynamic:
             # if this has a variable number of access, it has been declared

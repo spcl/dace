@@ -8,7 +8,7 @@ Unfortunately this doesn't currently work for Intel, since Intel does not
 support vectors of vectors in kernel code.
 """
 import dace
-from dace.fpga_testing import xilinx_test
+from dace.fpga_testing import fpga_test, xilinx_test
 from dace.libraries.standard import Gearbox
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 import numpy as np
@@ -26,11 +26,14 @@ def run_program(sdfg: dace.SDFG):
     assert all(output_array == input_array + 1)
 
 
-def memory_buffering(vec_width, use_library_node):
+def memory_buffering(vec_width, use_library_node, elementwise):
 
     gear_factor = mem_width // vec_width
     kernel_type = dace.vector(dtype, vec_width)
-    memory_type = dace.vector(kernel_type, gear_factor)
+    if elementwise:
+        memory_type = dace.vector(dtype, mem_width)
+    else:
+        memory_type = dace.vector(kernel_type, gear_factor)
     sdfg = dace.SDFG("memory_buffering_library_node")
     state = sdfg.add_state("memory_buffering_library_node")
 
@@ -265,25 +268,36 @@ buffer_out = wide""")
 
 @xilinx_test()
 def test_memory_buffering_manual():
-    return memory_buffering(4, False)
+    return memory_buffering(4, False, False)
 
 
 @xilinx_test()
 def test_memory_buffering_manual_scalar():
-    return memory_buffering(1, False)
+    return memory_buffering(1, False, False)
 
 
 @xilinx_test()
 def test_memory_buffering_library_node():
-    return memory_buffering(4, True)
+    return memory_buffering(4, True, False)
 
 
 @xilinx_test()
 def test_memory_buffering_library_node_scalar():
-    return memory_buffering(1, True)
+    return memory_buffering(1, True, False)
+
+
+@fpga_test()
+def test_memory_buffering_library_node_elementwise():
+    return memory_buffering(4, True, True)
+
+
+@fpga_test()
+def test_memory_buffering_library_node_elementwise_scalar():
+    return memory_buffering(1, True, True)
 
 
 if __name__ == "__main__":
     test_memory_buffering_manual(None)
     test_memory_buffering_library_node(None)
     test_memory_buffering_library_node_scalar(None)
+    test_memory_buffering_library_node_elementwise(None)

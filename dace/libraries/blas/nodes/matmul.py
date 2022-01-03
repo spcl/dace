@@ -109,6 +109,9 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
 
     opt['x'] = '_a'
     opt['y'] = '_b'
+    opt['xdtype'] = adesc.dtype
+    opt['ydtype'] = bdesc.dtype
+    opt['cdtype'] = cdesc.dtype
     opt['M'] = sym2cpp(ashape[-2])
     opt['N'] = sym2cpp(bshape[-1])
     opt['K'] = sym2cpp(ashape[-1])
@@ -121,6 +124,7 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
             bopt['sa'], bopt['sb'] = bopt['sb'], bopt['sa']
         opt['lda'], opt['ldb'] = opt['ldb'], opt['lda']
         opt['x'], opt['y'] = opt['y'], opt['x']
+        opt['xdtype'], opt['ydtype'] = opt['ydtype'], opt['xdtype']
         opt['ta'], opt['tb'] = opt['tb'], opt['ta']
         opt['M'], opt['N'] = opt['N'], opt['M']
 

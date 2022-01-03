@@ -24,7 +24,7 @@ class TensorflowRedundantArray(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         in_array = graph.nodes()[candidate[TensorflowRedundantArray._in_array]]
         out_array = graph.nodes()[candidate[
             TensorflowRedundantArray._out_array]]

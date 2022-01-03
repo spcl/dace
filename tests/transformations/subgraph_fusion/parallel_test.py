@@ -70,7 +70,7 @@ def test_p1():
     R.set(25)
 
     sdfg = subgraph_fusion_parallel.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     state = sdfg.nodes()[0]
 
     A = np.random.rand(N.get()).astype(np.float64)

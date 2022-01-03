@@ -11,18 +11,24 @@ from dace.codegen import cppunparse
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from typing import IO, Tuple, Union
 from dace import registry, symbolic, dtypes
-import dace.codegen.targets.sve.preprocess as preprocess
-import dace.codegen.targets.sve.util as util
+from dace.codegen.targets.sve import preprocess as preprocess
+from dace.codegen.targets.sve import util as util
 import dace.frontend.python.astutils as astutils
 from dace.codegen.targets.sve.type_compatibility import assert_type_compatibility
 import copy
 import collections
 import numpy as np
+from dace import data as data
+from dace.frontend.operations import detect_reduction_type
+from dace.codegen.targets.cpp import is_write_conflicted, cpp_ptr_expr, DefinedType, sym2cpp
 
 
 class SVEUnparser(cppunparse.CPPUnparser):
     def __init__(self,
                  sdfg: SDFG,
+                 dfg,
+                 map,
+                 cpu_codegen,
                  tree: ast.AST,
                  file: IO[str],
                  code,
@@ -30,9 +36,15 @@ class SVEUnparser(cppunparse.CPPUnparser):
                  pred_name,
                  counter_type,
                  defined_symbols=None,
-                 stream_associations=dict()):
+                 stream_associations=None,
+                 wcr_associations=None):
 
         self.sdfg = sdfg
+        self.dfg = dfg
+        self.map = map
+
+        self.cpu_codegen = cpu_codegen
+
         self.dtypes = {k: v[3] for k, v in memlets.items() if k is not None}
         for k, v in sdfg.constants.items():
             if k is not None:
@@ -52,7 +64,8 @@ class SVEUnparser(cppunparse.CPPUnparser):
         self.if_depth = 0
 
         # Stream associations keep track between the local stream variable name <-> underlying stream
-        self.stream_associations = stream_associations
+        self.stream_associations = stream_associations or {}
+        self.wcr_associations = wcr_associations or {}
 
         # Detect fused operations first (are converted into internal calls)
         preprocessed = preprocess.SVEBinOpFuser(defined_symbols).visit(tree)
@@ -149,9 +162,17 @@ class SVEUnparser(cppunparse.CPPUnparser):
             # Unparsing a scalar
             if isinstance(expect, dtypes.vector):
                 # Expecting a vector: duplicate the scalar
-                self.write(f'svdup_{util.TYPE_TO_SVE_SUFFIX[expect.type]}(')
-                self.dispatch_expect(tree, expect.base_type)
-                self.write(')')
+                if expect.type in [np.bool, np.bool_, bool]:
+                    # Special case for duplicating boolean into predicate
+                    suffix = f'b{self.pred_bits}'
+                    #self.write(f'svptrue_{suffix}()')
+                    self.dispatch_expect(tree, expect.base_type)
+                    self.write(f' ? svptrue_{suffix}() : svpfalse_b()')
+                else:
+                    self.write(f'svdup_{util.TYPE_TO_SVE_SUFFIX[expect.type]}(')
+                    self.dispatch_expect(tree, expect.base_type)
+                    self.write(')')
+
             elif isinstance(expect, dtypes.pointer):
                 # Expecting a pointer
                 raise util.NotSupportedError(
@@ -294,19 +315,95 @@ class SVEUnparser(cppunparse.CPPUnparser):
             ptr_cast = '(unsigned long long*) '
 
         # Push the temporary array onto the stream using DaCe's push
-        self.fill(f'{target_stream[0]}.push(&__tmp[0], {ptr_cast}__cnt);')
+        self.fill(f'{target_stream[0]}.push({ptr_cast}&__tmp[0], __cnt);')
         self.leave()
+
+    def vector_reduction_expr(self, edge, dtype, rhs):
+        # Check whether it is a known reduction that is possible in SVE
+        reduction_type = detect_reduction_type(edge.data.wcr)
+        if reduction_type not in util.REDUCTION_TYPE_TO_SVE:
+            raise util.NotSupportedError('Unsupported reduction in SVE')
+
+        nc = not is_write_conflicted(self.dfg, edge)
+        if not nc or not isinstance(edge.src.out_connectors[edge.src_conn],
+                                    (dtypes.pointer, dtypes.vector)):
+            # WCR on vectors works in two steps:
+            # 1. Reduce the SVE register using SVE instructions into a scalar
+            # 2. WCR the scalar to memory using DaCe functionality
+            dst_node = self.dfg.memlet_path(edge)[-1].dst
+            if (isinstance(dst_node, nodes.AccessNode) and 
+                dst_node.desc(self.sdfg).storage == dtypes.StorageType.SVE_Register):
+                return
+
+            wcr = self.cpu_codegen.write_and_resolve_expr(self.sdfg,
+                                                          edge.data,
+                                                          not nc,
+                                                          None,
+                                                          '@',
+                                                          dtype=dtype)
+            self.fill(wcr[:wcr.find('@')])
+            self.write(util.REDUCTION_TYPE_TO_SVE[reduction_type])
+            self.write('(')
+            self.write(self.pred_name)
+            self.write(', ')
+            self.dispatch_expect(rhs, dtypes.vector(dtype, -1))
+            self.write(')')
+            self.write(wcr[wcr.find('@') + 1:])
+            self.write(';')
+        else:
+            ######################
+            # Horizontal non-atomic reduction
+
+            stride = edge.data.get_stride(self.sdfg, self.map)
+
+            # long long fix
+            ptr_cast = ''
+            src_type = edge.src.out_connectors[edge.src_conn]
+
+            if src_type.type == np.int64:
+                ptr_cast = '(int64_t*) '
+            elif src_type.type == np.uint64:
+                ptr_cast = '(uint64_t*) '
+
+            store_args = '{}, {}'.format(
+                self.pred_name,
+                ptr_cast +
+                cpp_ptr_expr(self.sdfg, edge.data, DefinedType.Pointer),
+            )
+
+            red_type = util.REDUCTION_TYPE_TO_SVE[reduction_type][:-1] + '_x'
+            if stride == 1:
+                self.write(
+                    f'svst1({store_args}, {red_type}({self.pred_name}, svld1({store_args}), '
+                )
+                self.dispatch_expect(rhs, dtypes.vector(dtype, -1))
+                self.write('));')
+            else:
+                store_args = f'{store_args}, svindex_s{util.get_base_type(src_type).bytes * 8}(0, {sym2cpp(stride)})'
+                self.write(
+                    f'svst1_scatter_index({store_args}, {red_type}({self.pred_name}, svld1_gather_index({store_args}), '
+                )
+                self.dispatch_expect(rhs, dtypes.vector(dtype, -1))
+                self.write('));')
+
+    def resolve_conflict(self, t, target):
+        dst_node, edge, base_type = self.wcr_associations[target.id]
+        self.vector_reduction_expr(edge, base_type, t.value)
 
     def _Assign(self, t):
         if len(t.targets) > 1:
             raise util.NotSupportedError('Tuple output not supported')
 
         target = t.targets[0]
-
         if isinstance(target,
                       ast.Name) and target.id in self.stream_associations:
             # Assigning to a stream variable is equivalent to a push
             self.push_to_stream(t, target)
+            return
+        elif isinstance(target,
+                        ast.Name) and target.id in self.wcr_associations:
+            # Assigning to a WCR output
+            self.resolve_conflict(t, target)
             return
 
         lhs_type, rhs_type = self.infer(target, t.value)
@@ -517,7 +614,8 @@ class SVEUnparser(cppunparse.CPPUnparser):
         # Bool ops are nested SVE instructions, so we must make sure they all act on vectors
         for type in types:
             if not isinstance(type, dtypes.vector):
-                raise util.NotSupportedError('Unvectorizable boolean operation')
+                raise util.NotSupportedError(
+                    'Non-vectorizable boolean operation')
 
         # There can be many t.values, e.g. if
         # x or y or z

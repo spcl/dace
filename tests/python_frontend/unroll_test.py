@@ -1,0 +1,196 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+""" Tests loop unrolling functionality. """
+import dace
+from dace.frontend.python import astutils
+from dace.frontend.python.preprocessing import LoopUnroller, DaceSyntaxError
+import numpy as np
+import pytest
+
+
+def test_native_unroll():
+    """ Tests that unrolling functionality works. """
+    a = 0
+    for i in dace.unroll(range(2, 4)):
+        a += i * i
+
+    assert a == 13
+
+
+def test_dace_unroll():
+    """ Tests that unrolling functionality works within DaCe programs. """
+    @dace.program
+    def tounroll(A: dace.float64[1]):
+        for i in dace.unroll(range(1, 4)):
+            A[0] += i * i
+
+    src_ast, fname, _, _ = astutils.function_to_ast(tounroll.f)
+    lu = LoopUnroller(tounroll.global_vars, fname)
+    unrolled = lu.visit(src_ast)
+    assert len(unrolled.body[0].body) == 3
+
+    a = np.zeros([1])
+    tounroll(a)
+    assert a[0] == 14
+
+
+def test_dace_unroll_multistatement():
+    """ Tests unrolling functionality with multiple statements. """
+    @dace.program
+    def tounroll(A: dace.float64[1]):
+        for i in dace.unroll(range(1, 4)):
+            A[0] += i * i
+            if i in (3, ):
+                A[0] += 2
+
+    src_ast, fname, _, _ = astutils.function_to_ast(tounroll.f)
+    lu = LoopUnroller(tounroll.global_vars, fname)
+    unrolled = lu.visit(src_ast)
+    assert len(unrolled.body[0].body) == 6
+
+    a = np.zeros([1])
+    tounroll(a)
+    assert a[0] == 16
+
+
+def test_dace_unroll_break():
+    """ Tests unrolling functionality with control flow statements. """
+    @dace.program
+    def tounroll(A: dace.float64[1]):
+        for i in dace.unroll(range(1, 4)):
+            A[0] += i * i
+            if i in (2, 3):
+                break
+
+    src_ast, fname, _, _ = astutils.function_to_ast(tounroll.f)
+    lu = LoopUnroller(tounroll.global_vars, fname)
+    with pytest.raises(DaceSyntaxError):
+        unrolled = lu.visit(src_ast)
+
+
+def test_dace_unroll_generator():
+    """
+    Tests that dace does not unroll arbitrary generators by default, but does
+    so if explicitly defined with dace.unroll.
+    """
+    def mygenerator():
+        for i in range(5):
+            yield i * i
+
+    a = np.zeros([1])
+
+    with pytest.raises(DaceSyntaxError):
+
+        @dace.program
+        def tounroll_fail(A: dace.float64[1]):
+            for val in mygenerator():
+                A += val
+
+        tounroll_fail(a)
+
+    @dace.program
+    def tounroll(A: dace.float64[1]):
+        for val in dace.unroll(mygenerator()):
+            A += val
+
+    tounroll(a)
+    assert a[0] == 30
+
+
+def test_auto_unroll_tuple():
+    """ Tests that unrolling functionality works automatically on tuples. """
+    @dace.program
+    def tounroll(A: dace.float64[1], B: dace.float64[2], C: dace.float64[1]):
+        for arr in (A, B[1], C, B[0]):
+            arr += 5
+
+    a = np.zeros([1])
+    b = np.zeros([2])
+    c = np.zeros([1])
+    tounroll(a, b, c)
+    assert a[0] == 5
+    assert b[0] == 5
+    assert b[1] == 5
+    assert c[0] == 5
+
+
+def test_auto_unroll_dictionary():
+    """
+    Tests that unrolling functionality works automatically on dictionaries.
+    """
+    @dace.program
+    def tounroll(A: dace.float64[1], d: dace.constant):
+        for val in d:
+            A += val
+
+    a = np.zeros([1])
+    d = {1: 2, 3: 4}
+    tounroll(a, d)
+    assert a[0] == 4
+
+
+def test_auto_unroll_dictionary_method():
+    """
+    Tests that unrolling functionality works automatically on dict methods.
+    """
+    @dace.program
+    def tounroll(A: dace.float64[1], d: dace.constant):
+        for val in d.values():
+            A += val
+
+    a = np.zeros([1])
+    d = {1: 2, 3: 4}
+    tounroll(a, d)
+    assert a[0] == 6
+
+
+# Raise error if ndarray is the generator and dace.unroll was not specified
+def test_ndarray_generator():
+    @dace.program
+    def tounroll(A: dace.float64[1], values: dace.float64[5]):
+        for val in values:
+            A += val
+
+    a = np.zeros([1])
+    v = np.random.rand(5)
+    with pytest.raises(DaceSyntaxError):
+        tounroll(a, v)
+        assert a[0] == np.sum(v)
+
+
+def test_tuple_elements_enumerate():
+    @dace.program
+    def tounroll(A: dace.float64[3]):
+        for i, val in enumerate([1, 2, 3]):
+            A[i] += val
+
+    a = np.zeros([3])
+    tounroll(a)
+    assert np.allclose(a, np.array([1, 2, 3]))
+
+
+def test_tuple_elements_zip():
+    a1 = [2, 3, 4]
+    a2 = (4, 5, 6)
+
+    @dace.program
+    def tounroll(A: dace.float64[1]):
+        for a, b in zip(a1, a2):
+            A += 2 * a + b
+
+    a = np.zeros([1])
+    tounroll(a)
+    assert np.allclose(a, (2 + 3 + 4) * 2 + (4 + 5 + 6))
+
+
+if __name__ == '__main__':
+    test_native_unroll()
+    test_dace_unroll()
+    test_dace_unroll_multistatement()
+    test_dace_unroll_break()
+    test_dace_unroll_generator()
+    test_auto_unroll_tuple()
+    test_auto_unroll_dictionary()
+    test_auto_unroll_dictionary_method()
+    test_ndarray_generator()
+    test_tuple_elements_enumerate()
+    test_tuple_elements_zip()

@@ -18,7 +18,7 @@ def test_stream_push():
 
         stream >> B
 
-    code = get_code(program, 'i')
+    code = get_code(program)
 
     assert 'stream.push' in code
     assert 'svcompact' in code

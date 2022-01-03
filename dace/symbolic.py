@@ -16,6 +16,14 @@ from dace import dtypes
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 
 
+# NOTE: Up to (including) version 1.8, sympy.abc._clash is a dictionary of the
+# form {'N': sympy.abc.N, 'I': sympy.abc.I, 'pi': sympy.abc.pi}
+# Since version 1.9, the values of this dictionary are None. In the dictionary
+# below, we recreate it to be as in versions < 1.9.
+_sympy_clash = {k: v if v else getattr(sympy.abc, k)
+                for k, v in sympy.abc._clash.items()}
+
+
 class symbol(sympy.Symbol):
     """ Defines a symbolic expression. Extends SymPy symbols with DaCe-related
         information. """
@@ -62,7 +70,7 @@ class symbol(sympy.Symbol):
 
     def __getstate__(self):
         return dict(
-            super().__getstate__(), **{
+            self.assumptions0, **{
                 'value': self.value,
                 'dtype': self.dtype,
                 '_constraints': self._constraints
@@ -366,8 +374,12 @@ def issymbolic(value, constants=None):
 
 
 def overapproximate(expr):
-    """ Takes a sympy expression and returns its maximal possible value
-        in specific cases. """
+    """
+    Takes a sympy expression and returns its maximal possible value
+    in specific cases.
+    """
+    if isinstance(expr, list):
+        return [overapproximate(elem) for elem in expr]
     if isinstance(expr, SymExpr):
         if expr.expr != expr.approx:
             return expr.approx
@@ -794,7 +806,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
-    locals.update(sympy.abc._clash)
+    locals.update(_sympy_clash)
 
     # Sympy processes "not/and/or" as direct evaluation. Replace with
     # And/Or(x, y), Not(x)
@@ -915,7 +927,8 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
 
 def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType,
                                                                str]],
-                 replace_callback: Callable[[Dict[str, str]], None]) -> None:
+                 replace_callback: Callable[[Dict[str, str]], None],
+                 value_as_string: bool = False) -> None:
     """
     Safely replaces symbolic expressions that may clash with each other via a
     two-step replacement. For example, the mapping ``{M: N, N: M}`` would be
@@ -925,6 +938,8 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType,
     :param replace_callback: A callable function that receives a replacement
                              dictionary and performs the replacement (can be 
                              unsafe).
+    :param value_as_string: Replacement values are replaced as strings rather 
+                            than symbols.
     """
     # First, filter out direct (to constants) and degenerate (N -> N) replacements
     repl = {}
@@ -936,7 +951,8 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType,
 
         # Not symbolic
         try:
-            v = pystr_to_symbolic(v)
+            if not value_as_string:
+                v = pystr_to_symbolic(v)
         except (TypeError, ValueError, AttributeError, sympy.SympifyError):
             repl[k] = v
             continue

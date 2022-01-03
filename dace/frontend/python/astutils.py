@@ -6,6 +6,7 @@ import copy
 from collections import OrderedDict
 import inspect
 import numbers
+import numpy
 import sympy
 from typing import Any, Dict, List, Set, Tuple
 
@@ -65,6 +66,8 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     """
     if not isinstance(node, ast.AST):
         return node
+    if isinstance(node, ast.Num):  # For compatibility
+        return node.n
     try:
         # Ensure context is load so eval works (e.g., when using value as lhs)
         if not isinstance(getattr(node, 'ctx', False), ast.Load):
@@ -196,7 +199,7 @@ def unparse(node):
     if isinstance(node, sympy.Basic):
         return sympy.printing.pycode(node)
     # Support for numerical constants
-    if isinstance(node, numbers.Number):
+    if isinstance(node, (numbers.Number, numpy.bool, numpy.bool_)):
         return str(node)
     # Suport for string
     if isinstance(node, str):
@@ -301,7 +304,7 @@ def negate_expr(node):
     if isinstance(node, sympy.Basic):
         return sympy.Not(node)
     # Support for numerical constants
-    if isinstance(node, numbers.Number):
+    if isinstance(node, (numbers.Number, numpy.bool, numpy.bool_)):
         return str(not node)
     # Negation support for strings (most likely dace.Data.Scalar names)
     if isinstance(node, str):
@@ -346,12 +349,7 @@ class ExtNodeTransformer(ast.NodeTransformer):
                     if isinstance(value, ast.AST):
                         if (field == 'body' or field
                                 == 'orelse') and isinstance(value, ast.Expr):
-                            clsname = type(value).__name__
-                            if getattr(self, "visit_TopLevel" + clsname, False):
-                                value = getattr(self, "visit_TopLevel" +
-                                                clsname)(value)
-                            else:
-                                value = self.visit(value)
+                            value = self.visit_TopLevel(value)
                         else:
                             value = self.visit(value)
                         if value is None:
@@ -403,18 +401,30 @@ class ExtNodeVisitor(ast.NodeVisitor):
 class ASTFindReplace(ast.NodeTransformer):
     def __init__(self, repldict: Dict[str, str]):
         self.repldict = repldict
+        # If ast.Names were given, use them as keys as well
+        self.repldict.update({
+            k.id: v
+            for k, v in self.repldict.items() if isinstance(k, ast.Name)
+        })
 
     def visit_Name(self, node: ast.Name):
         if node.id in self.repldict:
-            new_node = ast.copy_location(
-                ast.parse(str(self.repldict[node.id])).body[0].value, node)
+            val = self.repldict[node.id]
+            if isinstance(val, ast.AST):
+                new_node = ast.copy_location(val, node)
+            else:
+                new_node = ast.copy_location(
+                    ast.parse(str(self.repldict[node.id])).body[0].value, node)
             return new_node
 
         return self.generic_visit(node)
 
     def visit_keyword(self, node: ast.keyword):
         if node.arg in self.repldict:
-            node.arg = self.repldict[node.arg]
+            val = self.repldict[node.arg]
+            if isinstance(val, ast.AST):
+                val = unparse(val)
+            node.arg = val
         return self.generic_visit(node)
 
 
@@ -461,3 +471,9 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
         else:
             self.defined.add(node.id)
         self.generic_visit(node)
+
+
+class AnnotateTopLevel(ExtNodeTransformer):
+    def visit_TopLevel(self, node):
+        node.toplevel = True
+        return super().visit_TopLevel(node)

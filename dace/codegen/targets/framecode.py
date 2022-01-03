@@ -14,7 +14,7 @@ from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.targets.cpp import unparse_interstate_edge
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
-from dace.sdfg import nodes
+from dace.sdfg import nodes, utils
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 from dace.sdfg import scope as sdscope
 from dace import dtypes, data, config
@@ -243,7 +243,8 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
         for sd in sdfg.all_sdfgs_recursive():
             if None in sd.init_code:
                 callsite_stream.write(codeblock_to_cpp(sd.init_code[None]), sd)
-            callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']), sd)
+            if 'frame' in sd.init_code:
+                callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']), sd)
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
@@ -273,7 +274,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         for sd in sdfg.all_sdfgs_recursive():
             if None in sd.exit_code:
                 callsite_stream.write(codeblock_to_cpp(sd.exit_code[None]), sd)
-            callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
+            if 'frame' in sd.exit_code:
+                callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
@@ -489,13 +491,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 if first_node_instance is None:
                     continue
 
-                # TODO: The change below was done so that test_alloc_persistent
-                # passes (tests/codegen/allocation_lifetime_test.py)
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
-                # definition = desc.as_arg(name=f'{name}') + ';'
                 self.statestruct.append(definition)
 
-                self.to_allocate[top_sdfg].append(
+                self.to_allocate[sdfg].append(
                     (sdfg, first_state_instance, first_node_instance, True,
                      True, True))
                 continue
@@ -558,7 +557,15 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 curscope: Union[nodes.EntryNode, SDFGState] = None
                 curstate: SDFGState = None
                 multistate = False
+
+                # Does the array appear in inter-state edges?
+                for isedge in sdfg.edges():
+                    if name in isedge.data.free_symbols:
+                        multistate = True
+
                 for state in sdfg.nodes():
+                    if multistate:
+                        break
                     sdict = state.scope_dict()
                     for node in state.nodes():
                         if not isinstance(node, nodes.AccessNode):
@@ -633,14 +640,12 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             if curscope is None:
                 curscope = top_sdfg
 
-            # Check if array shape is dependent on non-free SDFG symbols
-            # NOTE: Only arrays supported now (not Views)
+            # Check if Array/View is dependent on non-free SDFG symbols
             # NOTE: Tuple is (SDFG, State, Node, declare, allocate, deallocate)
-            if (isinstance(desc, data.Array)
-                    and not isinstance(desc, data.View)
-                    and not isinstance(curscope, nodes.EntryNode) and any(
-                        str(s) not in sdfg.free_symbols.union(
-                            sdfg.constants.keys()) for s in desc.free_symbols)):
+            fsymbols = sdfg.free_symbols.union(sdfg.constants.keys())
+            if (not isinstance(curscope, nodes.EntryNode)
+                    and utils.is_nonfree_sym_dependent(
+                        first_node_instance, desc, alloc_state, fsymbols)):
                 # Declare in current (SDFG) scope
                 self.to_allocate[curscope].append(
                     (sdfg, first_state_instance, first_node_instance, True,
@@ -758,7 +763,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
              for aname, arr in sdfg.arrays.items()})
         interstate_symbols = {}
         for e in sdfg.edges():
-            symbols = e.data.new_symbols(global_symbols)
+            symbols = e.data.new_symbols(sdfg, global_symbols)
             # Inferred symbols only take precedence if global symbol not defined
             symbols = {
                 k: v if k not in global_symbols else global_symbols[k]
@@ -771,7 +776,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             isvar = data.Scalar(isvarType)
             callsite_stream.write(
                 '%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
-            self.dispatcher.defined_vars.add(isvarName, isvarType,
+            self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar,
                                              isvarType.ctype)
 
         callsite_stream.write('\n', sdfg)

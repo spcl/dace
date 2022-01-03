@@ -14,7 +14,7 @@ import warnings
 
 # Transformations
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion
-from dace.transformation.interstate import LoopToMap
+from dace.transformation.interstate import LoopToMap, RefineNestedAccess
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import ReduceExpansion
 from dace.transformation.subgraph import helpers as xfsh
@@ -27,7 +27,7 @@ from dace.libraries.blas.environments import intel_mkl as mkl, openblas
 from dace.transformation.estimator.enumeration import GreedyEnumerator
 
 # FPGA AutoOpt
-from dace.transformation.auto import fpga as fpga_aopt
+from dace.transformation.auto import fpga as fpga_auto_opt
 
 GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
@@ -54,8 +54,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
     debugprint = config.Config.get_bool('debugprint')
     if isinstance(graph_or_subgraph, SDFG):
         # If we have an SDFG, recurse into graphs
-        graph_or_subgraph.apply_strict_transformations(
-            validate_all=validate_all)
+        graph_or_subgraph.coarsen_dataflow(validate_all=validate_all)
         # MapFusion for trivial cases
         graph_or_subgraph.apply_transformations_repeated(
             MapFusion, validate_all=validate_all)
@@ -110,7 +109,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             if expand_reductions:
                 for graph in sdfg.nodes():
                     for node in graph.nodes():
-                        if isinstance(node, dace.libraries.standard.nodes.Reduce):
+                        if isinstance(node,
+                                      dace.libraries.standard.nodes.Reduce):
                             try:
                                 ReduceExpansion.apply_to(sdfg, _reduce=node)
                             except ValueError as e:
@@ -119,7 +119,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             fusion_condition.expansion_split = not permutations_only
 
         condition_function = lambda sdfg, subgraph: fusion_condition.can_be_applied(
-                                                    sdfg, subgraph)
+            sdfg, subgraph)
         enumerator = GreedyEnumerator(sdfg,
                                       graph,
                                       subgraph,
@@ -428,6 +428,10 @@ def set_fast_implementations(sdfg: SDFG,
         if isinstance(node, nodes.LibraryNode):
             for impl in implementation_prio:
                 if impl in node.implementations:
+                    if isinstance(node,
+                                  dace.libraries.standard.nodes.reduce.Reduce
+                                  ) and node.implementation == 'CUDA (block)':
+                        continue
                     node.implementation = impl
                     break
 
@@ -480,8 +484,8 @@ def auto_optimize(sdfg: SDFG,
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
-        * Strict transformations
-        * Strict auto-parallelization (loop-to-map)
+        * Dataflow coarsening
+        * Auto-parallelization (loop-to-map)
         * Greedy application of SubgraphFusion
         * Tiled write-conflict resolution (MapTiling -> AccumulateTransient)
         * Tiled stream accumulation (MapTiling -> AccumulateTransient)
@@ -501,25 +505,24 @@ def auto_optimize(sdfg: SDFG,
     """
     debugprint = config.Config.get_bool('debugprint')
 
-    # Strict transformations and loop parallelization
+    # Dataflow coarsening and loop parallelization
     transformed = True
     sdfg.apply_transformations_repeated(TrivialMapElimination,
                                         validate=validate,
                                         validate_all=validate_all)
     while transformed:
-        sdfg.apply_strict_transformations(validate=False,
-                                          validate_all=validate_all)
-        xfh.split_interstate_edges(sdfg)
-        l2ms = sdfg.apply_transformations_repeated(LoopToMap,
-                                                   strict=True,
-                                                   validate=False,
-                                                   validate_all=validate_all)
+        sdfg.coarsen_dataflow(validate=False, validate_all=validate_all)
+        for s in sdfg.sdfg_list:
+            xfh.split_interstate_edges(s)
+        l2ms = sdfg.apply_transformations_repeated(
+            (LoopToMap, RefineNestedAccess),
+            validate=False,
+            validate_all=validate_all)
         transformed = l2ms > 0
 
     # Collapse maps and eliminate trivial dimensions
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.apply_transformations_repeated(MapCollapse,
-                                        strict=True,
                                         validate=False,
                                         validate_all=validate_all)
 
@@ -527,10 +530,10 @@ def auto_optimize(sdfg: SDFG,
 
     if device == dtypes.DeviceType.GPU:
         sdfg.apply_gpu_transformations()
-        sdfg.apply_strict_transformations()
+        sdfg.coarsen_dataflow()
 
     # fuse subgraphs greedily
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
 
@@ -544,8 +547,8 @@ def auto_optimize(sdfg: SDFG,
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations
         sdfg.apply_fpga_transformations()
-        fpga_aopt.fpga_global_to_local(sdfg)
-        fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
+        fpga_auto_opt.fpga_global_to_local(sdfg)
+        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
 
         # Set all library nodes to expand to fast library calls
         set_fast_implementations(sdfg, device)
@@ -557,7 +560,6 @@ def auto_optimize(sdfg: SDFG,
 
     # Collapse maps
     sdfg.apply_transformations_repeated(MapCollapse,
-                                        strict=True,
                                         validate=False,
                                         validate_all=validate_all)
     for node, _ in sdfg.all_nodes_recursive():
@@ -601,7 +603,6 @@ def auto_optimize(sdfg: SDFG,
 
     # Set all Default storage types that are constant sized to registers
     move_small_arrays_to_stack(sdfg)
-
     '''
     # Fix storage and allocation properties, e.g., for benchmarking purposes
     # FORNOW: Leave out

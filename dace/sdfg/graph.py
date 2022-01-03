@@ -396,12 +396,11 @@ class Graph(Generic[NodeT, EdgeT]):
                     queue.append(succ)
         return seen.keys()
 
-    def all_simple_paths(
-        self,
-        source_node: NodeT,
-        dest_node: NodeT,
-        as_edges: bool = False
-    ) -> Iterable[Sequence[Union[Edge[EdgeT], NodeT]]]:
+    def all_simple_paths(self,
+                         source_node: NodeT,
+                         dest_node: NodeT,
+                         as_edges: bool = False
+                         ) -> Iterable[Sequence[Union[Edge[EdgeT], NodeT]]]:
         """ 
         Finds all simple paths (with no repeating nodes) from source_node
         to dest_node.
@@ -450,7 +449,8 @@ class SubgraphView(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
                  subgraph_nodes: Sequence[NodeT]):
         super().__init__()
         self._graph = graph
-        self._subgraph_nodes = subgraph_nodes
+        self._subgraph_nodes = list(
+            sorted(subgraph_nodes, key=lambda n: graph.node_id(n)))
 
     def nodes(self) -> Sequence[NodeT]:
         return self._subgraph_nodes
@@ -671,7 +671,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         self._nodes[node] = (OrderedDict(), OrderedDict())
         self._nx.add_node(node)
 
-    def add_edge(self, src: NodeT, dst: NodeT, data: EdgeT):
+    def add_edge(self, src: NodeT, dst: NodeT, data: EdgeT = None):
         t = (src, dst)
         if t in self._edges:
             raise RuntimeError("Duplicate edge added")
@@ -701,10 +701,10 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         del self._edges[t]
 
     def in_degree(self, node):
-        return len(self._nodes[node][0])
+        return self._nx.in_degree(node)
 
     def out_degree(self, node):
-        return len(self._nodes[node][1])
+        return self._nx.out_degree(node)
 
     def number_of_nodes(self):
         return len(self._nodes)

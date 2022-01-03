@@ -44,7 +44,7 @@ class CopyToDevice(transformation.Transformation):
         return [sdutil.node_path_graph(CopyToDevice._nested_sdfg)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         nested_sdfg = graph.nodes()[candidate[CopyToDevice._nested_sdfg]]
 
         for edge in graph.all_edges(nested_sdfg):

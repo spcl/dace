@@ -15,8 +15,7 @@ def trace(A):
 
 
 @dace.program
-def hermitian_transpose(A: dace.complex128[BS, BS],
-                        B: dace.complex128[BS, BS]):
+def hermitian_transpose(A: dace.complex128[BS, BS], B: dace.complex128[BS, BS]):
     @dace.map(_[0:BS, 0:BS])
     def her_trans(i, j):
         inp << A[i, j]
@@ -25,21 +24,29 @@ def hermitian_transpose(A: dace.complex128[BS, BS],
 
 
 @dace.program
-def rgf_dense(
-        HD: dace.complex128[N, BS, BS], HE: dace.complex128[N, BS, BS],
-        HF: dace.complex128[N, BS, BS], sigmaRSD: dace.complex128[N, BS, BS],
-        sigmaRSE: dace.complex128[N, BS, BS],
-        sigmaRSF: dace.complex128[N, BS, BS],
-        sigmaLSD: dace.complex128[N, BS, BS],
-        sigmaLSE: dace.complex128[N, BS, BS],
-        sigmaLSF: dace.complex128[N, BS, BS],
-        sigmaGSD: dace.complex128[N, BS, BS],
-        sigmaGSE: dace.complex128[N, BS, BS],
-        sigmaGSF: dace.complex128[N, BS, BS], sigRl: dace.complex128[BS, BS],
-        sigRr: dace.complex128[BS, BS], gammaleft: dace.complex128[BS, BS],
-        gammaright: dace.complex128[BS, BS], fl: dace.float64[1],
-        fr: dace.float64[1], GL: dace.complex128[N, BS, BS],
-        GG: dace.complex128[N, BS, BS], dTGL: dace.complex128[N]):
+def rgf_dense(HD: dace.complex128[N, BS, BS], HE: dace.complex128[N, BS, BS],
+              HF: dace.complex128[N, BS, BS], sigmaRSD: dace.complex128[N, BS,
+                                                                        BS],
+              sigmaRSE: dace.complex128[N, BS,
+                                        BS], sigmaRSF: dace.complex128[N, BS,
+                                                                       BS],
+              sigmaLSD: dace.complex128[N, BS,
+                                        BS], sigmaLSE: dace.complex128[N, BS,
+                                                                       BS],
+              sigmaLSF: dace.complex128[N, BS,
+                                        BS], sigmaGSD: dace.complex128[N, BS,
+                                                                       BS],
+              sigmaGSE: dace.complex128[N, BS,
+                                        BS], sigmaGSF: dace.complex128[N, BS,
+                                                                       BS],
+              sigRl: dace.complex128[BS, BS], sigRr: dace.complex128[BS, BS],
+              gammaleft: dace.complex128[BS,
+                                         BS], gammaright: dace.complex128[BS,
+                                                                          BS],
+              fl: dace.float64[1], fr: dace.float64[1], GL: dace.complex128[N,
+                                                                            BS,
+                                                                            BS],
+              GG: dace.complex128[N, BS, BS], dTGL: dace.complex128[N]):
 
     gR = np.ndarray((N, BS, BS), np.complex128)
     gL = np.ndarray((N, BS, BS), np.complex128)
@@ -170,8 +177,8 @@ def rgf_dense(
 if __name__ == '__main__':
 
     print("=== Generating SDFG ===")
-    sdfg = rgf_dense.to_sdfg(strict=False)
-    print("=== Applying strict transformations ===")
-    sdfg.apply_strict_transformations()
+    sdfg = rgf_dense.to_sdfg(coarsen=False)
+    print("=== Applying dataflow coarsening ===")
+    sdfg.coarsen_dataflow()
     print("=== Compiling ===")
     sdfg.compile()

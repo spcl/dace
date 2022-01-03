@@ -529,7 +529,7 @@ class CompiledSDFG(object):
 
                 shape = tuple(symbolic.evaluate(s, syms) for s in arr.shape)
                 dtype = arr.dtype.as_numpy_dtype()
-                total_size = symbolic.evaluate(arr.total_size, syms)
+                total_size = int(symbolic.evaluate(arr.total_size, syms))
                 strides = tuple(
                     symbolic.evaluate(s, syms) * arr.dtype.bytes
                     for s in arr.strides)

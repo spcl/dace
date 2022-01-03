@@ -358,20 +358,30 @@ class Memlet(object):
         # Find source/destination of memlet
         try:
             path = state.memlet_path(edge)
-        except (ValueError, AssertionError, StopIteration):
+        except (ValueError, StopIteration):
             # Cannot initialize yet
             return
 
-        is_data_src = True
+        is_data_src = False
+        is_data_dst = False
+        if isinstance(path[0].src, AccessNode):
+            if path[0].src.data == self._data:
+                is_data_src = True
         if isinstance(path[-1].dst, AccessNode):
             if path[-1].dst.data == self._data:
-                is_data_src = False
-        self._is_data_src = is_data_src
+                is_data_dst = True
+        if is_data_src and is_data_dst:
+            # In case both point to the same array,
+            # prefer existing setting or is_data_src=True
+            if self._is_data_src is None:
+                self._is_data_src = True
+        else:
+            self._is_data_src = is_data_src
 
         # If subset is None, fill in with entire array
         if (self.data is not None and self.subset is None):
             self.subset = subsets.Range.from_array(sdfg.arrays[self.data])
-    
+
     def get_src_subset(self, edge: 'dace.sdfg.graph.MultiConnectorEdge',
                        state: 'dace.sdfg.SDFGState'):
         self.try_initialize(state.parent, state, edge)
@@ -381,7 +391,6 @@ class Memlet(object):
                        state: 'dace.sdfg.SDFGState'):
         self.try_initialize(state.parent, state, edge)
         return self.dst_subset
-
 
     @staticmethod
     def from_array(dataname, datadesc, wcr=None):
@@ -497,6 +506,31 @@ class Memlet(object):
             result |= self.dst_subset.free_symbols
         return result
 
+    def get_stride(self,
+                   sdfg: 'dace.sdfg.SDFG',
+                   map: 'dace.sdfg.nodes.Map',
+                   dim: int = -1) -> 'dace.symbolic.SymExpr':
+        """ Returns the stride of the underlying memory when traversing a Map.
+            
+            :param sdfg: The SDFG in which the memlet resides.
+            :param map: The map in which the memlet resides.
+            :param dim: The dimension that is incremented. By default it is the innermost.
+        """
+        if self.data is None:
+            return symbolic.pystr_to_symbolic('0')
+
+        param = symbolic.symbol(map.params[dim])
+        array = sdfg.arrays[self.data]
+
+        # Flatten the subset to a 1D-offset (using the array strides) at some iteration
+        curr = self.subset.at([0] * len(array.strides), array.strides)
+
+        # Substitute the param with the next (possibly strided) value
+        next = curr.subs(param, param + map.range[dim][2])
+
+        # The stride is the difference between both
+        return (next - curr).simplify()
+
     def __label__(self, sdfg, state):
         """ Returns a string representation of the memlet for display in a
             graph.
@@ -547,7 +581,10 @@ class Memlet(object):
             result += ' (CR: %s)' % wcrstr
 
         if self.other_subset is not None:
-            result += ' -> [%s]' % str(self.other_subset)
+            if self._is_data_src is False:
+                result += ' <- [%s]' % str(self.other_subset)
+            else:
+                result += ' -> [%s]' % str(self.other_subset)
         return result
 
     def __repr__(self):

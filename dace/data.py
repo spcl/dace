@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
-import re, json
+import re
 import copy as cp
 import sympy as sp
 import numpy
-from typing import Set
+from numbers import Number
+from typing import Set, Sequence, Tuple
 
 import dace.dtypes as dtypes
 from dace.codegen import cppunparse
@@ -42,16 +43,94 @@ def create_datadescriptor(obj):
         return Array(dtype=dtype,
                      strides=tuple(s // obj.itemsize for s in obj.strides),
                      shape=obj.shape)
+    # special case for torch tensors. Maybe __array__ could be used here for a more
+    # general solution, but torch doesn't support __array__ for cuda tensors.
+    elif type(obj).__module__ == "torch" and type(obj).__name__ == "Tensor":
+        try:
+            import torch
+            return Array(dtype=dtypes.TORCH_DTYPE_TO_TYPECLASS[obj.dtype],
+                         strides=obj.stride(),
+                         shape=tuple(obj.shape))
+        except ImportError:
+            raise ValueError(
+                "Attempted to convert a torch.Tensor, but torch could not be imported"
+            )
+    elif dtypes.is_gpu_array(obj):
+        interface = obj.__cuda_array_interface__
+        dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
+        itemsize = numpy.dtype(interface['typestr']).itemsize
+        if len(interface['shape']) == 0:
+            return Scalar(dtype, storage=dtypes.StorageType.GPU_Global)
+        return Array(dtype=dtype,
+                     shape=interface['shape'],
+                     strides=(tuple(s // itemsize for s in interface['strides'])
+                              if interface['strides'] else None),
+                     storage=dtypes.StorageType.GPU_Global)
     elif symbolic.issymbolic(obj):
         return Scalar(symbolic.symtype(obj))
     elif isinstance(obj, dtypes.typeclass):
         return Scalar(obj)
-    elif obj in {int, float, complex, bool, None}:
+    elif (obj is int or obj is float or obj is complex or obj is bool
+          or obj is None):
         return Scalar(dtypes.typeclass(obj))
+    elif isinstance(obj, type) and issubclass(obj, numpy.number):
+        return Scalar(dtypes.typeclass(obj))
+    elif isinstance(obj, (Number, numpy.number, numpy.bool, numpy.bool_)):
+        return Scalar(dtypes.typeclass(type(obj)))
     elif callable(obj):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))
-    return Scalar(dtypes.typeclass(type(obj)))
+    elif isinstance(obj, str):
+        return Scalar(dtypes.string())
+
+    raise TypeError(
+        f'Could not create a DaCe data descriptor from object {obj}. '
+        'If this is a custom object, consider creating a `__descriptor__` '
+        'adaptor method to the type hint or object itself.')
+
+
+def find_new_name(name: str, existing_names: Sequence[str]) -> str:
+    """
+    Returns a name that matches the given ``name`` as a prefix, but does not
+    already exist in the given existing name set. The behavior is typically
+    to append an underscore followed by a unique (increasing) number. If the
+    name does not already exist in the set, it is returned as-is.
+    :param name: The given name to find.
+    :param existing_names: The set of existing names.
+    :return: A new name that is not in existing_names.
+    """
+    if name not in existing_names:
+        return name
+    cur_offset = 0
+    new_name = name + '_' + str(cur_offset)
+    while new_name in existing_names:
+        cur_offset += 1
+        new_name = name + '_' + str(cur_offset)
+    return new_name
+
+
+def _prod(sequence):
+    return functools.reduce(lambda a, b: a * b, sequence, 1)
+
+
+def find_new_name(name: str, existing_names: Sequence[str]) -> str:
+    """
+    Returns a name that matches the given ``name`` as a prefix, but does not
+    already exist in the given existing name set. The behavior is typically
+    to append an underscore followed by a unique (increasing) number. If the
+    name does not already exist in the set, it is returned as-is.
+    :param name: The given name to find.
+    :param existing_names: The set of existing names.
+    :return: A new name that is not in existing_names.
+    """
+    if name not in existing_names:
+        return name
+    cur_offset = 0
+    new_name = name + '_' + str(cur_offset)
+    while new_name in existing_names:
+        cur_offset += 1
+        new_name = name + '_' + str(cur_offset)
+    return new_name
 
 
 @make_properties
@@ -144,6 +223,69 @@ class Data(object):
     def ctype(self):
         return self.dtype.ctype
 
+    def strides_from_layout(
+        self,
+        *dimensions: int,
+        alignment: symbolic.SymbolicType = 1,
+        only_first_aligned: bool = False,
+    ) -> Tuple[Tuple[symbolic.SymbolicType], symbolic.SymbolicType]:
+        """
+        Returns the absolute strides and total size of this data descriptor,
+        according to the given dimension ordering and alignment.
+        :param dimensions: A sequence of integers representing a permutation
+                           of the descriptor's dimensions.
+        :param alignment: Padding (in elements) at the end, ensuring stride
+                          is a multiple of this number. 1 (default) means no
+                          padding.
+        :param only_first_aligned: If True, only the first dimension is padded
+                                   with ``alignment``. Otherwise all dimensions
+                                   are.
+        :return: A 2-tuple of (tuple of strides, total size).
+        """
+        # Verify dimensions
+        if tuple(sorted(dimensions)) != tuple(range(len(self.shape))):
+            raise ValueError('Every dimension must be given and appear once.')
+        if (alignment < 1) == True or (alignment < 0) == True:
+            raise ValueError('Invalid alignment value')
+
+        strides = [1] * len(dimensions)
+        total_size = 1
+        first = True
+        for dim in dimensions:
+            strides[dim] = total_size
+            if not only_first_aligned or first:
+                dimsize = (((self.shape[dim] + alignment - 1) // alignment) *
+                           alignment)
+            else:
+                dimsize = self.shape[dim]
+            total_size *= dimsize
+            first = False
+
+        return (tuple(strides), total_size)
+
+    def set_strides_from_layout(self,
+                                *dimensions: int,
+                                alignment: symbolic.SymbolicType = 1,
+                                only_first_aligned: bool = False):
+        """
+        Sets the absolute strides and total size of this data descriptor,
+        according to the given dimension ordering and alignment.
+        :param dimensions: A sequence of integers representing a permutation
+                           of the descriptor's dimensions.
+        :param alignment: Padding (in elements) at the end, ensuring stride
+                          is a multiple of this number. 1 (default) means no
+                          padding.
+        :param only_first_aligned: If True, only the first dimension is padded
+                                   with ``alignment``. Otherwise all dimensions
+                                   are.
+        """
+        strides, totalsize = self.strides_from_layout(
+            *dimensions,
+            alignment=alignment,
+            only_first_aligned=only_first_aligned)
+        self.strides = strides
+        self.total_size = totalsize
+
 
 @make_properties
 class Scalar(Data):
@@ -229,10 +371,6 @@ class Scalar(Data):
         return True
 
 
-def _prod(sequence):
-    return functools.reduce(lambda a, b: a * b, sequence, 1)
-
-
 @make_properties
 class Array(Data):
     """ Array/constant descriptor (dimensions, type and other properties). """
@@ -252,12 +390,11 @@ class Array(Data):
         'that dimension.')
 
     total_size = SymbolicProperty(
-        default=1,
+        default=0,
         desc='The total allocated size of the array. Can be used for'
         ' padding.')
 
-    offset = ListProperty(element_type=symbolic.pystr_to_symbolic,
-                          desc='Initial offset to translate all indices by.')
+    offset = ShapeProperty(desc='Initial offset to translate all indices by.')
 
     may_alias = Property(dtype=bool,
                          default=False,
@@ -322,9 +459,6 @@ class Array(Data):
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
 
-        # Take care of symbolic expressions
-        attrs['strides'] = list(map(str, attrs['strides']))
-
         retdict = {"type": type(self).__name__, "attributes": attrs}
 
         return retdict
@@ -334,8 +468,15 @@ class Array(Data):
         # Create dummy object
         ret = cls(dtypes.int8, ())
         serialize.set_properties_from_json(ret, json_obj, context=context)
-        # TODO: This needs to be reworked (i.e. integrated into the list property)
-        ret.strides = list(map(symbolic.pystr_to_symbolic, ret.strides))
+
+        # Default shape-related properties
+        if not ret.offset:
+            ret.offset = [0] * len(ret.shape)
+        if not ret.strides:
+            # Default strides are C-ordered
+            ret.strides = [_prod(ret.shape[i + 1:]) for i in range(len(ret.shape))]
+        if ret.total_size == 0:
+            ret.total_size = _prod(ret.shape)
 
         # Check validity now
         ret.validate()
@@ -392,7 +533,7 @@ class Array(Data):
 
     # Checks for equivalent shape and type
     def is_equivalent(self, other):
-        if not isinstance(other, type(self)):
+        if not isinstance(other, Array):
             return False
 
         # Test type

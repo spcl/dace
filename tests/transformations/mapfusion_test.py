@@ -71,7 +71,7 @@ def fusion_chain(A: dace.float32[10, 20], B: dace.float32[10, 20]):
 def test_fusion_simple():
     sdfg = fusion.to_sdfg()
     sdfg.save(os.path.join('_dacegraphs', 'before1.sdfg'))
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.apply_transformations_repeated(MapFusion)
     sdfg.save(os.path.join('_dacegraphs', 'after1.sdfg'))
 
@@ -91,7 +91,7 @@ def test_multiple_fusions():
         [node for state in sdfg.nodes() for node in state.nodes()])
 
     sdfg.save(os.path.join('_dacegraphs', 'before2.sdfg'))
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.apply_transformations_repeated(MapFusion)
     sdfg.save(os.path.join('_dacegraphs', 'after2.sdfg'))
 
@@ -120,7 +120,7 @@ def test_multiple_fusions():
 def test_fusion_chain():
     sdfg = fusion_chain.to_sdfg()
     sdfg.save(os.path.join('_dacegraphs', 'before3.sdfg'))
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.apply_transformations(MapFusion)
     num_nodes_before = len(
         [node for state in sdfg.nodes() for node in state.nodes()])
@@ -165,7 +165,7 @@ def test_fusion_with_transient():
     A = np.random.rand(2, 20)
     expected = A * A * 2
     sdfg = fusion_with_transient.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.apply_transformations(MapFusion)
     sdfg(A=A)
     assert np.allclose(A, expected)

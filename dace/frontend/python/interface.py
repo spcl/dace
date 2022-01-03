@@ -232,3 +232,12 @@ class tasklet(metaclass=TaskletMetaclass):
         # syntax and undefined connector names, or TypeError due to bad shifts).
         # Thus, their contents are skipped.
         return True
+
+
+def unroll(generator):
+    """
+    Explicitly annotates that a loop should be unrolled during parsing.
+    :param generator: The original generator to loop over.
+    :note: Only use with stateless and compile-time evaluateable loops!
+    """
+    yield from generator
