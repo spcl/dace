@@ -710,6 +710,8 @@ class EnumProperty(Property):
         def f(s, *args, **kwargs):
             if s is None:
                 return None
+            if isinstance(s, dtype):
+                return s
             try:
                 self._undefined_val = None
                 return dtype[s]
