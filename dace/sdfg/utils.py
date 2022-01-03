@@ -123,7 +123,12 @@ def dfs_topological_sort(G, sources=None, condition=None):
     """
     if sources is None:
         # produce edges for all components
-        nodes = G
+        if hasattr(G, 'source_nodes'):
+            nodes = list(G.source_nodes())
+            if len(nodes) == 0:
+                nodes = G
+        else:
+            nodes = G
     else:
         # produce edges for components with source
         try:

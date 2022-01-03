@@ -243,7 +243,8 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
         for sd in sdfg.all_sdfgs_recursive():
             if None in sd.init_code:
                 callsite_stream.write(codeblock_to_cpp(sd.init_code[None]), sd)
-            callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']), sd)
+            if 'frame' in sd.init_code:
+                callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']), sd)
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
@@ -273,7 +274,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         for sd in sdfg.all_sdfgs_recursive():
             if None in sd.exit_code:
                 callsite_stream.write(codeblock_to_cpp(sd.exit_code[None]), sd)
-            callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
+            if 'frame' in sd.exit_code:
+                callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:

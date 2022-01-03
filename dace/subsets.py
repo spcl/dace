@@ -778,8 +778,6 @@ class Indices(Subset):
                             ' array or None')
         if isinstance(indices, str):
             raise TypeError("Expected collection of index expression: got str")
-        if isinstance(indices, tuple):
-            self.indices = symbolic.SymExpr(indices[0], indices[1])
         elif isinstance(indices, symbolic.SymExpr):
             self.indices = indices
         else:
