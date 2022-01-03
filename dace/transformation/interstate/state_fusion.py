@@ -14,16 +14,18 @@ from dace.config import Config
 
 # Helper class for finding connected component correspondences
 class CCDesc:
-    def __init__(self, first_inputs: Set[str], first_outputs: Set[str],
+    def __init__(self, first_input_nodes: Set[nodes.AccessNode],
                  first_output_nodes: Set[nodes.AccessNode],
-                 second_inputs: Set[str], second_outputs: Set[str],
-                 second_input_nodes: Set[nodes.AccessNode]) -> None:
-        self.first_inputs = first_inputs
-        self.first_outputs = first_outputs
+                 second_input_nodes: Set[nodes.AccessNode],
+                 second_output_nodes: Set[nodes.AccessNode]) -> None:
+        self.first_inputs = {n.data for n in first_input_nodes}
+        self.first_input_nodes = first_input_nodes
+        self.first_outputs = {n.data for n in first_output_nodes}
         self.first_output_nodes = first_output_nodes
-        self.second_inputs = second_inputs
-        self.second_outputs = second_outputs
+        self.second_inputs = {n.data for n in second_input_nodes}
         self.second_input_nodes = second_input_nodes
+        self.second_outputs = {n.data for n in second_output_nodes}
+        self.second_output_nodes = second_output_nodes
 
 
 def top_level_nodes(state: SDFGState):
@@ -72,18 +74,14 @@ class StateFusion(transformation.Transformation):
         result = []
         for cc in nx.weakly_connected_components(g):
             input1, output1, input2, output2 = set(), set(), set(), set()
-            outn1, inpn2 = set(), set()
             for gind, cind in cc:
                 if gind == 0:
-                    input1 |= {n.data for n in first_cc_input[cind]}
-                    output1 |= {n.data for n in first_cc_output[cind]}
-                    outn1 |= first_cc_output[cind]
+                    input1 |= first_cc_input[cind]
+                    output1 |= first_cc_output[cind]
                 else:
-                    input2 |= {n.data for n in second_cc_input[cind]}
-                    output2 |= {n.data for n in second_cc_output[cind]}
-                    inpn2 |= second_cc_input[cind]
-            result.append(CCDesc(input1, output1, outn1, input2, output2,
-                                 inpn2))
+                    input2 |= second_cc_input[cind]
+                    output2 |= second_cc_output[cind]
+            result.append(CCDesc(input1, output1, input2, output2))
 
         return result
 
@@ -296,7 +294,7 @@ class StateFusion(transformation.Transformation):
                 write_write_candidates = (
                     (fused_cc.first_outputs & fused_cc.second_outputs) -
                     fused_cc.second_inputs)
-                
+
                 # Find the leaf (topological) instances of the matches
                 order = [
                     x for x in reversed(
@@ -308,7 +306,7 @@ class StateFusion(transformation.Transformation):
                 match_nodes = {
                     next(n for n in order if n.data == match)
                     for match in (fused_cc.first_outputs
-                                    & fused_cc.second_inputs)
+                                  & fused_cc.second_inputs)
                 }
 
                 # If we have potential candidates, check if there is a
@@ -414,12 +412,50 @@ class StateFusion(transformation.Transformation):
                 second_inout = ((fused_cc.first_inputs | fused_cc.first_outputs)
                                 & fused_cc.second_outputs)
                 for inout in second_inout:
-                    nodes_first = [
-                        n for n in match_nodes
-                        if n.data == inout
-                    ]
+                    nodes_first = [n for n in match_nodes if n.data == inout]
                     if any(first_state.out_degree(n) > 0 for n in nodes_first):
                         return False
+
+                    # If we have potential candidates, check if there is a
+                    # path from the first read to the second write (in that
+                    # case, there is no hazard):
+                    nodes_first = {
+                        n
+                        for n in fused_cc.first_input_nodes
+                        | fused_cc.first_output_nodes if n.data == inout
+                    }
+                    nodes_second = {
+                        n
+                        for n in fused_cc.second_output_nodes if n.data == inout
+                    }
+
+                    # If there is a path for the candidate that goes through
+                    # the match nodes in both states, there is no conflict
+                    fail = False
+                    path_found = False
+                    for match in match_nodes:
+                        for node in nodes_first:
+                            path_to = nx.has_path(first_state._nx, node, match)
+                            if not path_to:
+                                continue
+                            path_found = True
+                            node2 = next(n for n in second_input
+                                         if n.data == match.data)
+                            if not all(
+                                    nx.has_path(second_state._nx, node2, n)
+                                    for n in nodes_second):
+                                fail = True
+                                break
+                        if fail or path_found:
+                            break
+
+                    # Check for intersection (if None, fusion is ok)
+                    if fail or not path_found:
+                        if StateFusion.memlets_intersect(
+                                first_state, nodes_first, True, second_state,
+                                nodes_second, False):
+                            return False
+                # End of read-write hazard check
 
                 # Read-after-write dependencies: if there is more than one first
                 # output with the same data, make sure it can be unambiguously

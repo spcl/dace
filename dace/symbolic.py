@@ -374,8 +374,12 @@ def issymbolic(value, constants=None):
 
 
 def overapproximate(expr):
-    """ Takes a sympy expression and returns its maximal possible value
-        in specific cases. """
+    """
+    Takes a sympy expression and returns its maximal possible value
+    in specific cases.
+    """
+    if isinstance(expr, list):
+        return [overapproximate(elem) for elem in expr]
     if isinstance(expr, SymExpr):
         if expr.expr != expr.approx:
             return expr.approx

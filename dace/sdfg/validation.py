@@ -88,6 +88,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
 
         # Check every state separately
         start_state = sdfg.start_state
+        initialized_transients = {'__pystate'}
         symbols = copy.deepcopy(sdfg.symbols)
         symbols.update(sdfg.arrays)
         symbols.update(
@@ -183,7 +184,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     state_id = state_id or sdfg.node_id(state)
     symbols = symbols or {}
     initialized_transients = (initialized_transients
-                              if initialized_transients is not None else set())
+                              if initialized_transients is not None else {'__pystate'})
     scope_local_constants: dict[nd.MapEntry, list[str]] = dict()
     scope = state.scope_dict()
 
