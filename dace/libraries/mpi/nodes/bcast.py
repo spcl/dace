@@ -61,11 +61,7 @@ class Bcast(dace.sdfg.nodes.LibraryNode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_inbuffer", "_root"},
-                         outputs={"_outbuffer"},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -84,8 +80,7 @@ class Bcast(dace.sdfg.nodes.LibraryNode):
                 root = sdfg.arrays[e.data.data]
 
         if inbuffer != outbuffer:
-            raise (
-                ValueError("Bcast input and output buffer must be the same!"))
+            raise (ValueError("Bcast input and output buffer must be the same!"))
         if root.dtype.base_type != dace.dtypes.int32:
             raise (ValueError("Bcast root must be an integer!"))
 

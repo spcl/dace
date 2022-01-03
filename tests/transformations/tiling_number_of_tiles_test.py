@@ -28,13 +28,7 @@ def test_tiling_number_of_tiles():
     Z = np.copy(Y)
     sdfg = axpy.to_sdfg()
     sdfg.coarsen_dataflow()
-    sdfg.apply_transformations(StripMining,
-                               options=[{
-                                   'tile_size':
-                                   '16',
-                                   'tiling_type':
-                                   dace.TilingType.NumberOfTiles
-                               }])
+    sdfg.apply_transformations(StripMining, options=[{'tile_size': '16', 'tiling_type': dace.TilingType.NumberOfTiles}])
     sdfg(A=A, X=X, Y=Y, N=size)
     assert np.allclose(Y, A * X + Z)
     print('PASS')

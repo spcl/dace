@@ -94,8 +94,7 @@ if __name__ == "__main__":
     comm.Barrier()
     if rank > 0:
         build_folder = dc.Config.get('default_build_folder')
-        mpi_func = load_precompiled_sdfg(
-            os.path.join(build_folder, jacobi_1d_dist.name))
+        mpi_func = load_precompiled_sdfg(os.path.join(build_folder, jacobi_1d_dist.name))
 
     mpi_func(A=A, B=B, TSTEPS=TSTEPS, N=N, lN=lN, rank=rank, size=size)
 

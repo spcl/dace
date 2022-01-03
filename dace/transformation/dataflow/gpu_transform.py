@@ -18,22 +18,13 @@ class GPUTransformMap(transformation.Transformation):
         outside it, generating CPU<->GPU memory copies automatically.
     """
 
-    fullcopy = Property(desc="Copy whole arrays rather than used subset",
-                        dtype=bool,
-                        default=False)
+    fullcopy = Property(desc="Copy whole arrays rather than used subset", dtype=bool, default=False)
 
-    toplevel_trans = Property(desc="Make all GPU transients top-level",
-                              dtype=bool,
-                              default=False)
+    toplevel_trans = Property(desc="Make all GPU transients top-level", dtype=bool, default=False)
 
-    register_trans = Property(
-        desc="Make all transients inside GPU maps registers",
-        dtype=bool,
-        default=False)
+    register_trans = Property(desc="Make all transients inside GPU maps registers", dtype=bool, default=False)
 
-    sequential_innermaps = Property(desc="Make all internal maps Sequential",
-                                    dtype=bool,
-                                    default=False)
+    sequential_innermaps = Property(desc="Make all internal maps Sequential", dtype=bool, default=False)
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
 
@@ -42,10 +33,7 @@ class GPUTransformMap(transformation.Transformation):
 
     @staticmethod
     def expressions():
-        return [
-            sdutil.node_path_graph(GPUTransformMap._map_entry),
-            sdutil.node_path_graph(GPUTransformMap._reduce)
-        ]
+        return [sdutil.node_path_graph(GPUTransformMap._map_entry), sdutil.node_path_graph(GPUTransformMap._reduce)]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
@@ -54,8 +42,7 @@ class GPUTransformMap(transformation.Transformation):
             candidate_map = map_entry.map
 
             # Map schedules that are disallowed to transform to GPUs
-            if (candidate_map.schedule
-                    in [dtypes.ScheduleType.MPI] + dtypes.GPU_SCHEDULES):
+            if (candidate_map.schedule in [dtypes.ScheduleType.MPI] + dtypes.GPU_SCHEDULES):
                 return False
             if sd.is_devicelevel_gpu(sdfg, graph, map_entry):
                 return False
@@ -68,18 +55,15 @@ class GPUTransformMap(transformation.Transformation):
             # allocated on non-default space
             subgraph = graph.scope_subgraph(map_entry)
             for node in subgraph.nodes():
-                if (isinstance(node, nodes.AccessNode) and
-                        node.desc(sdfg).storage != dtypes.StorageType.Default
-                        and
-                        node.desc(sdfg).storage != dtypes.StorageType.Register):
+                if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage != dtypes.StorageType.Default
+                        and node.desc(sdfg).storage != dtypes.StorageType.Register):
                     return False
 
             # If one of the outputs is a stream, do not match
             map_exit = graph.exit_node(map_entry)
             for edge in graph.out_edges(map_exit):
                 dst = graph.memlet_path(edge)[-1].dst
-                if (isinstance(dst, nodes.AccessNode)
-                        and isinstance(sdfg.arrays[dst.data], data.Stream)):
+                if (isinstance(dst, nodes.AccessNode) and isinstance(sdfg.arrays[dst.data], data.Stream)):
                     return False
 
             return True
@@ -103,18 +87,13 @@ class GPUTransformMap(transformation.Transformation):
         graph = sdfg.nodes()[self.state_id]
         if self.expr_index == 0:
             map_entry = graph.nodes()[self.subgraph[GPUTransformMap._map_entry]]
-            nsdfg_node = helpers.nest_state_subgraph(
-                sdfg,
-                graph,
-                graph.scope_subgraph(map_entry),
-                full_data=self.fullcopy)
-        else:
-            cnode = graph.nodes()[self.subgraph[GPUTransformMap._reduce]]
             nsdfg_node = helpers.nest_state_subgraph(sdfg,
                                                      graph,
-                                                     SubgraphView(
-                                                         graph, [cnode]),
+                                                     graph.scope_subgraph(map_entry),
                                                      full_data=self.fullcopy)
+        else:
+            cnode = graph.nodes()[self.subgraph[GPUTransformMap._reduce]]
+            nsdfg_node = helpers.nest_state_subgraph(sdfg, graph, SubgraphView(graph, [cnode]), full_data=self.fullcopy)
 
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFG

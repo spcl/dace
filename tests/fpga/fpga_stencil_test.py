@@ -37,30 +37,20 @@ def make_sdfg(name="fpga_stcl_test", dtype=dace.float32, veclen=8):
     # Host to device
     pre_read = pre_state.add_read("a")
     pre_write = pre_state.add_write("a_device")
-    pre_state.add_memlet_path(
-        pre_read, pre_write, memlet=dace.Memlet(f"a_device[0:N, 0:M/{veclen}]"))
+    pre_state.add_memlet_path(pre_read, pre_write, memlet=dace.Memlet(f"a_device[0:N, 0:M/{veclen}]"))
 
     # Device to host
     post_read = post_state.add_read("b_device")
     post_write = post_state.add_write("b")
-    post_state.add_memlet_path(
-        post_read,
-        post_write,
-        memlet=dace.Memlet(f"b_device[0:N, 0:M/{veclen}]"))
+    post_state.add_memlet_path(post_read, post_write, memlet=dace.Memlet(f"b_device[0:N, 0:M/{veclen}]"))
 
     # Compute state
     read_memory = state.add_read("a_device")
     write_memory = state.add_write("b_device")
 
     # Memory streams
-    sdfg.add_stream("a_stream",
-                    vtype,
-                    storage=dace.StorageType.FPGA_Local,
-                    transient=True)
-    sdfg.add_stream("b_stream",
-                    vtype,
-                    storage=dace.StorageType.FPGA_Local,
-                    transient=True)
+    sdfg.add_stream("a_stream", vtype, storage=dace.StorageType.FPGA_Local, transient=True)
+    sdfg.add_stream("b_stream", vtype, storage=dace.StorageType.FPGA_Local, transient=True)
     produce_input_stream = state.add_write("a_stream")
     consume_input_stream = state.add_read("a_stream")
     produce_output_stream = state.add_write("b_stream")
@@ -86,94 +76,70 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                                      drain_overlap=True)
 
     # Unrolled map
-    unroll_entry, unroll_exit = state.add_map(
-        name + "_unroll", {"u": "0:{}".format(veclen)},
-        schedule=dace.ScheduleType.FPGA_Device,
-        unroll=True)
+    unroll_entry, unroll_exit = state.add_map(name + "_unroll", {"u": "0:{}".format(veclen)},
+                                              schedule=dace.ScheduleType.FPGA_Device,
+                                              unroll=True)
 
     # Container-to-container copies between arrays and streams
     state.add_memlet_path(read_memory,
                           produce_input_stream,
-                          memlet=dace.Memlet(
-                              f"{read_memory.data}[0:N, 0:M/{veclen}]",
-                              other_subset="0"))
+                          memlet=dace.Memlet(f"{read_memory.data}[0:N, 0:M/{veclen}]", other_subset="0"))
     state.add_memlet_path(consume_output_stream,
                           write_memory,
-                          memlet=dace.Memlet(
-                              write_memory.data,
-                              f"{write_memory.data}[0:N, 0:M/{veclen}]",
-                              other_subset="0"))
+                          memlet=dace.Memlet(write_memory.data,
+                                             f"{write_memory.data}[0:N, 0:M/{veclen}]",
+                                             other_subset="0"))
 
     # Container-to-container copy from vectorized stream to non-vectorized
     # buffer
-    sdfg.add_array("input_buffer", (1, ),
-                   vtype,
-                   storage=dace.StorageType.FPGA_Local,
-                   transient=True)
+    sdfg.add_array("input_buffer", (1, ), vtype, storage=dace.StorageType.FPGA_Local, transient=True)
     sdfg.add_array("shift_register", (2 * m + veclen, ),
                    dtype,
                    storage=dace.StorageType.FPGA_ShiftRegister,
                    transient=True)
-    sdfg.add_array("output_buffer", (veclen, ),
-                   dtype,
-                   storage=dace.StorageType.FPGA_Local,
-                   transient=True)
-    sdfg.add_array("output_buffer_packed", (1, ),
-                   vtype,
-                   storage=dace.StorageType.FPGA_Local,
-                   transient=True)
+    sdfg.add_array("output_buffer", (veclen, ), dtype, storage=dace.StorageType.FPGA_Local, transient=True)
+    sdfg.add_array("output_buffer_packed", (1, ), vtype, storage=dace.StorageType.FPGA_Local, transient=True)
     input_buffer = state.add_access("input_buffer")
     shift_register = state.add_access("shift_register")
     output_buffer = state.add_access("output_buffer")
     output_buffer_packed = state.add_access("output_buffer_packed")
 
     # Only write if not initializing
-    read_tasklet = state.add_tasklet(
-        name + "_conditional_read", {"_in"}, {"_out"},
-        "if not {}:\n\t_out = _in".format(entry.pipeline.drain_condition()))
+    read_tasklet = state.add_tasklet(name + "_conditional_read", {"_in"}, {"_out"},
+                                     "if not {}:\n\t_out = _in".format(entry.pipeline.drain_condition()))
 
     # Input stream to buffer
     state.add_memlet_path(consume_input_stream,
                           entry,
                           read_tasklet,
                           dst_conn="_in",
-                          memlet=dace.Memlet(f"{consume_input_stream.data}[0]",
-                                             dynamic=True))
-    state.add_memlet_path(read_tasklet,
-                          input_buffer,
-                          src_conn="_out",
-                          memlet=dace.Memlet(f"{input_buffer.data}[0]"))
+                          memlet=dace.Memlet(f"{consume_input_stream.data}[0]", dynamic=True))
+    state.add_memlet_path(read_tasklet, input_buffer, src_conn="_out", memlet=dace.Memlet(f"{input_buffer.data}[0]"))
     state.add_memlet_path(input_buffer,
                           shift_register,
-                          memlet=dace.Memlet(
-                              f"{input_buffer.data}[0]",
-                              other_subset=f"2*M:(2*M + {veclen})"))
+                          memlet=dace.Memlet(f"{input_buffer.data}[0]", other_subset=f"2*M:(2*M + {veclen})"))
 
     # Stencils accesses
-    state.add_memlet_path(
-        shift_register,
-        unroll_entry,
-        tasklet,
-        dst_conn="_north",
-        memlet=dace.Memlet(f"{shift_register.data}[u]"))  # North
-    state.add_memlet_path(
-        shift_register,
-        unroll_entry,
-        tasklet,
-        dst_conn="_west",
-        memlet=dace.Memlet(f"{shift_register.data}[u + M - 1]"))  # West
-    state.add_memlet_path(
-        shift_register,
-        unroll_entry,
-        tasklet,
-        dst_conn="_east",
-        memlet=dace.Memlet(f"{shift_register.data}[u + M + 1]"))  # East
-    state.add_memlet_path(
-        shift_register,
-        unroll_entry,
-        tasklet,
-        dst_conn="_south",
-        memlet=dace.Memlet(f"{shift_register.data}[u + 2 * M]"))  # South
+    state.add_memlet_path(shift_register,
+                          unroll_entry,
+                          tasklet,
+                          dst_conn="_north",
+                          memlet=dace.Memlet(f"{shift_register.data}[u]"))  # North
+    state.add_memlet_path(shift_register,
+                          unroll_entry,
+                          tasklet,
+                          dst_conn="_west",
+                          memlet=dace.Memlet(f"{shift_register.data}[u + M - 1]"))  # West
+    state.add_memlet_path(shift_register,
+                          unroll_entry,
+                          tasklet,
+                          dst_conn="_east",
+                          memlet=dace.Memlet(f"{shift_register.data}[u + M + 1]"))  # East
+    state.add_memlet_path(shift_register,
+                          unroll_entry,
+                          tasklet,
+                          dst_conn="_south",
+                          memlet=dace.Memlet(f"{shift_register.data}[u + 2 * M]"))  # South
 
     # Tasklet to buffer
     state.add_memlet_path(tasklet,
@@ -185,13 +151,11 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
     # Pack buffer
     state.add_memlet_path(output_buffer,
                           output_buffer_packed,
-                          memlet=dace.Memlet(f"{output_buffer_packed.data}[0]",
-                                             other_subset=f"0:{veclen}"))
+                          memlet=dace.Memlet(f"{output_buffer_packed.data}[0]", other_subset=f"0:{veclen}"))
 
     # Only write if not initializing
-    write_tasklet = state.add_tasklet(
-        name + "_conditional_write", {"_in"}, {"_out"},
-        "if not {}:\n\t_out = _in".format(entry.pipeline.init_condition()))
+    write_tasklet = state.add_tasklet(name + "_conditional_write", {"_in"}, {"_out"},
+                                      "if not {}:\n\t_out = _in".format(entry.pipeline.init_condition()))
 
     # Buffer to output stream
     state.add_memlet_path(output_buffer_packed,
@@ -204,8 +168,7 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                           exit,
                           produce_output_stream,
                           src_conn="_out",
-                          memlet=dace.Memlet(f"{produce_output_stream.data}[0]",
-                                             dynamic=True))
+                          memlet=dace.Memlet(f"{produce_output_stream.data}[0]", dynamic=True))
 
     return sdfg
 
@@ -228,12 +191,10 @@ def test_fpga_stencil():
     jacobi(a=a, b=b)
     padded = np.ones((n + 2, m + 2), dtype.type)
     padded[1:-1, 1:-1] = a
-    ref = 0.25 * (padded[:-2, 1:-1] + padded[2:, 1:-1] + padded[1:-1, :-2] +
-                  padded[1:-1, 2:])
+    ref = 0.25 * (padded[:-2, 1:-1] + padded[2:, 1:-1] + padded[1:-1, :-2] + padded[1:-1, 2:])
 
     if (b != ref).any():
-        raise ValueError("Unexpected output:\nGot: {}\nExpected: {}".format(
-            b, ref))
+        raise ValueError("Unexpected output:\nGot: {}\nExpected: {}".format(b, ref))
 
     return jacobi
 

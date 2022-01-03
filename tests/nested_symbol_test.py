@@ -88,13 +88,12 @@ def test_nested_symbol_in_args():
     state = inner.add_state('inner_state')
     inner.add_symbol('rdt', stype=float)
     inner.add_datadesc('field', dace.float64[10])
-    state.add_mapped_tasklet(
-        'tasklet',
-        map_ranges={'i': "0:10"},
-        inputs={},
-        outputs={'field_out': dace.Memlet.simple('field', subset_str="i")},
-        code="field_out = rdt",
-        external_edges=True)
+    state.add_mapped_tasklet('tasklet',
+                             map_ranges={'i': "0:10"},
+                             inputs={},
+                             outputs={'field_out': dace.Memlet.simple('field', subset_str="i")},
+                             code="field_out = rdt",
+                             external_edges=True)
     inner.arg_names = ['field', 'rdt']
 
     @dace.program

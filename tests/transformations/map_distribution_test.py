@@ -22,8 +22,7 @@ def test_eao_mpi():
     commsize = comm.Get_size()
     mpi_sdfg = None
     if commsize < 2:
-        raise ValueError(
-            "This test is supposed to be run with at least two processes!")
+        raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
             mpi_sdfg = eao_mpi.to_sdfg(coarsen=True)

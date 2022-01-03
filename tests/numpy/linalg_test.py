@@ -29,7 +29,6 @@ def relative_error(value, ref):
     return np.linalg.norm(value - ref) / np.linalg.norm(ref)
 
 
-
 @dace.program
 def linalg_inv(A: dace.float64[100, 100]):
     return np.linalg.inv(A)

@@ -22,21 +22,14 @@ class LocalStorage(xf.Transformation, ABC):
     node_a = xf.PatternNode(nodes.Node)
     node_b = xf.PatternNode(nodes.Node)
 
-    array = Property(
-        dtype=str,
-        desc="Array to create local storage for (if empty, first available)",
-        default=None,
-        allow_none=True)
+    array = Property(dtype=str,
+                     desc="Array to create local storage for (if empty, first available)",
+                     default=None,
+                     allow_none=True)
 
-    prefix = Property(dtype=str,
-                      default="trans_",
-                      allow_none=True,
-                      desc='Prefix for new data node')
+    prefix = Property(dtype=str, default="trans_", allow_none=True, desc='Prefix for new data node')
 
-    create_array = Property(dtype=bool,
-                            default=True,
-                            desc="if false, it does not create a new array.",
-                            allow_none=True)
+    create_array = Property(dtype=bool, default=True, desc="if false, it does not create a new array.", allow_none=True)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -47,12 +40,10 @@ class LocalStorage(xf.Transformation, ABC):
     def annotates_memlets():
         # Skip memlet propagation for now
         return True
-        
+
     @staticmethod
     def expressions():
-        return [
-            sdutil.node_path_graph(LocalStorage.node_a, LocalStorage.node_b)
-        ]
+        return [sdutil.node_path_graph(LocalStorage.node_a, LocalStorage.node_b)]
 
     @staticmethod
     def match_to_str(graph, candidate):
@@ -72,8 +63,7 @@ class LocalStorage(xf.Transformation, ABC):
 
         array = self.array
         if array is None or len(array) == 0:
-            array = next(e.data.data
-                         for e in graph.edges_between(node_a, node_b)
+            array = next(e.data.data for e in graph.edges_between(node_a, node_b)
                          if e.data.data is not None and e.data.wcr is None)
 
         original_edge = None
@@ -87,8 +77,7 @@ class LocalStorage(xf.Transformation, ABC):
             for edge in graph.edges_between(node_a, node_b):
                 original_edge = edge
                 invariant_memlet = edge.data
-                warnings.warn('Array %s not found! Using array %s instead.' %
-                              (array, invariant_memlet.data))
+                warnings.warn('Array %s not found! Using array %s instead.' % (array, invariant_memlet.data))
                 array = invariant_memlet.data
                 break
         if invariant_memlet is None:
@@ -96,13 +85,10 @@ class LocalStorage(xf.Transformation, ABC):
         if self.create_array:
             # Add transient array
             new_data, _ = sdfg.add_transient(
-                            name = prefix + invariant_memlet.data,
-                            shape = [
-                                symbolic.overapproximate(r).simplify()
-                                for r in invariant_memlet.bounding_box_size()
-                                    ],
-                            dtype = sdfg.arrays[invariant_memlet.data].dtype,
-                            find_new_name=True)
+                name=prefix + invariant_memlet.data,
+                shape=[symbolic.overapproximate(r).simplify() for r in invariant_memlet.bounding_box_size()],
+                dtype=sdfg.arrays[invariant_memlet.data].dtype,
+                find_new_name=True)
 
         else:
             new_data = prefix + invariant_memlet.data
@@ -118,15 +104,11 @@ class LocalStorage(xf.Transformation, ABC):
         # Reconnect, assuming one edge to the access node
         graph.remove_edge(original_edge)
         if propagate_forward:
-            graph.add_edge(node_a, original_edge.src_conn, data_node, None,
-                           to_data_mm)
-            new_edge = graph.add_edge(data_node, None, node_b,
-                                      original_edge.dst_conn, from_data_mm)
+            graph.add_edge(node_a, original_edge.src_conn, data_node, None, to_data_mm)
+            new_edge = graph.add_edge(data_node, None, node_b, original_edge.dst_conn, from_data_mm)
         else:
-            new_edge = graph.add_edge(node_a, original_edge.src_conn, data_node,
-                                      None, to_data_mm)
-            graph.add_edge(data_node, None, node_b, original_edge.dst_conn,
-                           from_data_mm)
+            new_edge = graph.add_edge(node_a, original_edge.src_conn, data_node, None, to_data_mm)
+            graph.add_edge(data_node, None, node_b, original_edge.dst_conn, from_data_mm)
 
         # Offset all edges in the memlet tree (including the new edge)
         for edge in graph.memlet_tree(new_edge):
@@ -146,8 +128,7 @@ class InLocalStorage(LocalStorage):
     def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         node_a = graph.nodes()[candidate[LocalStorage.node_a]]
         node_b = graph.nodes()[candidate[LocalStorage.node_b]]
-        if (isinstance(node_a, nodes.EntryNode)
-                and isinstance(node_b, nodes.EntryNode)):
+        if (isinstance(node_a, nodes.EntryNode) and isinstance(node_b, nodes.EntryNode)):
             # Empty memlets cannot match
             for edge in graph.edges_between(node_a, node_b):
                 if edge.data.data is not None:
@@ -166,8 +147,7 @@ class OutLocalStorage(LocalStorage):
         node_a = graph.nodes()[candidate[LocalStorage.node_a]]
         node_b = graph.nodes()[candidate[LocalStorage.node_b]]
 
-        if (isinstance(node_a, nodes.ExitNode)
-                and isinstance(node_b, nodes.ExitNode)):
+        if (isinstance(node_a, nodes.ExitNode) and isinstance(node_b, nodes.ExitNode)):
 
             for edge in graph.edges_between(node_a, node_b):
                 # Empty memlets cannot match; WCR edges not supported (use

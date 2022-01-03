@@ -20,8 +20,7 @@ def test_tasklet_with_global_state():
         code_exit='delete __state->global_int;',
     )
 
-    state.add_edge(tasklet, "out", state.add_write("output"), None,
-                   dace.Memlet("output[0]"))
+    state.add_edge(tasklet, "out", state.add_write("output"), None, dace.Memlet("output[0]"))
 
     output = np.zeros((1, ), dtype=np.int32)
     sdfg(output=output)

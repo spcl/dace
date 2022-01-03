@@ -41,8 +41,7 @@ class InlineMultistateSDFG(transformation.Transformation):
         return [sdutil.node_path_graph(InlineMultistateSDFG.nested_sdfg)]
 
     @staticmethod
-    def _check_strides(inner_strides: List[symbolic.SymbolicType],
-                       outer_strides: List[symbolic.SymbolicType],
+    def _check_strides(inner_strides: List[symbolic.SymbolicType], outer_strides: List[symbolic.SymbolicType],
                        memlet: Memlet, nested_sdfg: nodes.NestedSDFG) -> bool:
         """
         Returns True if the strides of the inner array can be matched
@@ -67,12 +66,8 @@ class InlineMultistateSDFG(transformation.Transformation):
             return True
 
         # Take unsqueezing into account
-        dims_to_ignore = [
-            i for i, s in enumerate(memlet.subset.size()) if s == 1
-        ]
-        ostrides = [
-            os for i, os in enumerate(outer_strides) if i not in dims_to_ignore
-        ]
+        dims_to_ignore = [i for i, s in enumerate(memlet.subset.size()) if s == 1]
+        ostrides = [os for i, os in enumerate(outer_strides) if i not in dims_to_ignore]
 
         if len(ostrides) == 0:
             ostrides = [1]
@@ -82,12 +77,7 @@ class InlineMultistateSDFG(transformation.Transformation):
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
-    def can_be_applied(self,
-                       state: SDFGState,
-                       candidate,
-                       expr_index,
-                       sdfg,
-                       permissive=False):
+    def can_be_applied(self, state: SDFGState, candidate, expr_index, sdfg, permissive=False):
         nested_sdfg = self.nested_sdfg(sdfg)
         if nested_sdfg.no_inline:
             return False
@@ -110,14 +100,12 @@ class InlineMultistateSDFG(transformation.Transformation):
                     if state.in_degree(node) > 0:
                         return False
                     # Only accept full ranges for now. TODO(later): Improve
-                    if e.data.subset != subsets.Range.from_array(
-                            sdfg.arrays[node.data]):
+                    if e.data.subset != subsets.Range.from_array(sdfg.arrays[node.data]):
                         return False
                     # Do not accept views. TODO(later): Improve
                     outer_desc = sdfg.arrays[node.data]
                     inner_desc = nested_sdfg.sdfg.arrays[e.dst_conn]
-                    if (outer_desc.shape != inner_desc.shape
-                            or outer_desc.strides != inner_desc.strides):
+                    if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
                         return False
                     found = True
 
@@ -127,14 +115,12 @@ class InlineMultistateSDFG(transformation.Transformation):
                     if state.out_degree(node) > 0:
                         return False
                     # Only accept full ranges for now. TODO(later): Improve
-                    if e.data.subset != subsets.Range.from_array(
-                            sdfg.arrays[node.data]):
+                    if e.data.subset != subsets.Range.from_array(sdfg.arrays[node.data]):
                         return False
                     # Do not accept views. TODO(later): Improve
                     outer_desc = sdfg.arrays[node.data]
                     inner_desc = nested_sdfg.sdfg.arrays[e.src_conn]
-                    if (outer_desc.shape != inner_desc.shape
-                            or outer_desc.strides != inner_desc.strides):
+                    if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
                         return False
                     found = True
 
@@ -158,8 +144,7 @@ class InlineMultistateSDFG(transformation.Transformation):
         nsdfg: SDFG = nsdfg_node.sdfg
 
         if nsdfg_node.schedule is not dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(
-                nsdfg, nsdfg_node.schedule)
+            infer_types.set_default_schedule_and_storage_types(nsdfg, nsdfg_node.schedule)
 
         #######################################################
         # Collect and update top-level SDFG metadata
@@ -242,31 +227,23 @@ class InlineMultistateSDFG(transformation.Transformation):
                     datadesc = nsdfg.arrays[node.data]
                     if node.data not in transients and datadesc.transient:
                         new_name = node.data
-                        if (new_name in sdfg.arrays or new_name in outer_symbols
-                                or new_name in sdfg.constants):
+                        if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants):
                             new_name = f'{nsdfg.label}_{node.data}'
 
-                        name = sdfg.add_datadesc(new_name,
-                                                 datadesc,
-                                                 find_new_name=True)
+                        name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
                         transients[node.data] = name
 
             # All transients of edges between code nodes are also added to parent
             for edge in nstate.edges():
-                if (isinstance(edge.src, nodes.CodeNode)
-                        and isinstance(edge.dst, nodes.CodeNode)):
+                if (isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode)):
                     if edge.data.data is not None:
                         datadesc = nsdfg.arrays[edge.data.data]
                         if edge.data.data not in transients and datadesc.transient:
                             new_name = edge.data.data
-                            if (new_name in sdfg.arrays
-                                    or new_name in outer_symbols
-                                    or new_name in sdfg.constants):
+                            if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants):
                                 new_name = f'{nsdfg.label}_{edge.data.data}'
 
-                            name = sdfg.add_datadesc(new_name,
-                                                     datadesc,
-                                                     find_new_name=True)
+                            name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
                             transients[edge.data.data] = name
 
         #######################################################
@@ -275,14 +252,9 @@ class InlineMultistateSDFG(transformation.Transformation):
         # Replace data names with their top-level counterparts
         repldict = {}
         repldict.update(transients)
-        repldict.update({
-            k: v.data.data
-            for k, v in itertools.chain(inputs.items(), outputs.items())
-        })
+        repldict.update({k: v.data.data for k, v in itertools.chain(inputs.items(), outputs.items())})
 
-        symbolic.safe_replace(repldict,
-                              nsdfg.replace_dict,
-                              value_as_string=True)
+        symbolic.safe_replace(repldict, nsdfg.replace_dict, value_as_string=True)
 
         # Add views whenever reshapes are necessary
         # for dname in reshapes:

@@ -29,8 +29,7 @@ def scale(C, beta):
 
 def test_automatic_callback():
     @dace.program
-    def autocallback(A: dace.float64[N, N], B: dace.float64[N, N],
-                     C: dace.float64[N, N], beta: dace.float64):
+    def autocallback(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp: dace.float64[N, N] = almost_gemm(A, 0.5, B)
         scale(C, beta)
         C += tmp
@@ -48,8 +47,7 @@ def test_automatic_callback():
 
 def test_automatic_callback_2():
     @dace.program
-    def autocallback(A: dace.float64[N, N], B: dace.float64[N, N],
-                     C: dace.float64[N, N], beta: dace.float64):
+    def autocallback(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp: dace.float64[N, N]
         tmp2: dace.float64
         tmp, tmp2 = almost_gemm_2(A, 0.5, B)
@@ -69,8 +67,7 @@ def test_automatic_callback_2():
 
 def test_automatic_callback_inference():
     @dace.program
-    def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N],
-                         C: dace.float64[N, N], beta: dace.float64):
+    def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp = np.ndarray([N, N], dace.float64)
         tmp[:] = almost_gemm(A, 0.5, B)
         scale(C, beta)
@@ -89,8 +86,7 @@ def test_automatic_callback_inference():
 
 def test_automatic_callback_inference_2():
     @dace.program
-    def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N],
-                         C: dace.float64[N, N], beta: dace.float64):
+    def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp = np.ndarray([N, N], dace.float64)
         tmp2 = np.float64(0.0)
         tmp[:], tmp2 = almost_gemm_2(A, 0.5, B)
@@ -170,8 +166,7 @@ def test_callback_tasklet():
 
 def test_view_callback():
     @dace.program
-    def autocallback(A: dace.float64[2 * N, N], B: dace.float64[N, N],
-                     C: dace.float64[N, N], beta: dace.float64):
+    def autocallback(A: dace.float64[2 * N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         A[N:, :] = almost_gemm(A[:N, :], 0.5, B)
         scale(C, beta)
         C += A[N:, :]
@@ -324,9 +319,7 @@ def test_gpu_callback():
 
     @dace.program
     def gpucallback(A):
-        tmp = dace.ndarray([20],
-                           dace.float64,
-                           storage=dace.StorageType.GPU_Global)
+        tmp = dace.ndarray([20], dace.float64, storage=dace.StorageType.GPU_Global)
         tmp[:] = A
         cb_with_gpu(tmp)
         A[:] = tmp

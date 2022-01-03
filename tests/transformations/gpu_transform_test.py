@@ -7,6 +7,7 @@ from dace.transformation.interstate import GPUTransformSDFG
 
 def test_toplevel_transient_lifetime():
     N = dace.symbol('N')
+
     @dace.program
     def program(A: dace.float64[20, 20]):
         for i in range(20):
@@ -16,8 +17,7 @@ def test_toplevel_transient_lifetime():
             tmp2 *= 10
 
     sdfg = program.to_sdfg()
-    sdfg.apply_transformations(GPUTransformSDFG,
-                               options=dict(toplevel_trans=True))
+    sdfg.apply_transformations(GPUTransformSDFG, options=dict(toplevel_trans=True))
 
     for name, desc in sdfg.arrays.items():
         if name == 'tmp2':

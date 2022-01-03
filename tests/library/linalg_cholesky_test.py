@@ -29,39 +29,19 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     chlsky_node = Cholesky("cholesky", lower=True)
     chlsky_node.implementation = implementation
 
-    state.add_memlet_path(xin,
-                          chlsky_node,
-                          dst_conn="_a",
-                          memlet=Memlet.from_array(*inp))
-    state.add_memlet_path(chlsky_node,
-                          xout,
-                          src_conn="_b",
-                          memlet=Memlet.from_array(*out))
+    state.add_memlet_path(xin, chlsky_node, dst_conn="_a", memlet=Memlet.from_array(*inp))
+    state.add_memlet_path(chlsky_node, xout, src_conn="_b", memlet=Memlet.from_array(*out))
 
     return sdfg
 
 
 @pytest.mark.parametrize("implementation, dtype, storage", [
-    pytest.param(
-        "MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
-    pytest.param(
-        "MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
-    pytest.param("OpenBLAS",
-                 dace.float32,
-                 dace.StorageType.Default,
-                 marks=pytest.mark.lapack),
-    pytest.param("OpenBLAS",
-                 dace.float64,
-                 dace.StorageType.Default,
-                 marks=pytest.mark.lapack),
-    pytest.param("cuSolverDn",
-                 dace.float32,
-                 dace.StorageType.GPU_Global,
-                 marks=pytest.mark.gpu),
-    pytest.param("cuSolverDn",
-                 dace.float64,
-                 dace.StorageType.GPU_Global,
-                 marks=pytest.mark.gpu),
+    pytest.param("MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
+    pytest.param("MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
+    pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default, marks=pytest.mark.lapack),
+    pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
+    pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+    pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
 ])
 def test_cholesky(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)
@@ -85,8 +65,7 @@ def test_cholesky(implementation, dtype, storage):
         rtol = 1e-12
     else:
         raise NotImplementedError
-    assert (np.linalg.norm(cholesky_ref - B) /
-            np.linalg.norm(cholesky_ref)) < rtol
+    assert (np.linalg.norm(cholesky_ref - B) / np.linalg.norm(cholesky_ref)) < rtol
 
 
 ###############################################################################

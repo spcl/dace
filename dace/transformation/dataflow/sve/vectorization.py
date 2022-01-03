@@ -47,18 +47,11 @@ class SVEVectorization(transformation.Transformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry)]
 
-    def can_be_applied(self,
-                       state: SDFGState,
-                       candidate,
-                       expr_index,
-                       sdfg: SDFG,
-                       permissive=False) -> bool:
+    def can_be_applied(self, state: SDFGState, candidate, expr_index, sdfg: SDFG, permissive=False) -> bool:
         map_entry = self.map_entry(sdfg)
         current_map = map_entry.map
         subgraph = state.scope_subgraph(map_entry)
-        subgraph_contents = state.scope_subgraph(map_entry,
-                                                 include_entry=False,
-                                                 include_exit=False)
+        subgraph_contents = state.scope_subgraph(map_entry, include_entry=False, include_exit=False)
 
         # Prevent infinite repeats
         if current_map.schedule == dace.dtypes.ScheduleType.SVE_Map:
@@ -107,8 +100,7 @@ class SVEVectorization(transformation.Transformation):
             # Check for unsupported WCR
             if e.data.wcr is not None:
                 # Unsupported reduction type
-                reduction_type = dace.frontend.operations.detect_reduction_type(
-                    e.data.wcr)
+                reduction_type = dace.frontend.operations.detect_reduction_type(e.data.wcr)
                 if reduction_type not in sve.util.REDUCTION_TYPE_TO_SVE:
                     return False
 
@@ -119,13 +111,11 @@ class SVEVectorization(transformation.Transformation):
                 # vreduce is not supported
                 dst_node = state.memlet_path(e)[-1]
                 if isinstance(dst_node, nodes.Tasklet):
-                    if isinstance(dst_node.in_connectors[e.dst_conn],
-                                  dtypes.vector):
+                    if isinstance(dst_node.in_connectors[e.dst_conn], dtypes.vector):
                         return False
                 elif isinstance(dst_node, nodes.AccessNode):
                     desc = dst_node.desc(sdfg)
-                    if isinstance(desc, data.Scalar) and isinstance(
-                            desc.dtype, dtypes.vector):
+                    if isinstance(desc, data.Scalar) and isinstance(desc.dtype, dtypes.vector):
                         return False
 
         ########################
@@ -138,8 +128,7 @@ class SVEVectorization(transformation.Transformation):
                 # Check for valid copies from other tasklets and/or streams
                 if e.data.data is not None:
                     src_node = state.memlet_path(e)[0].src
-                    if not isinstance(src_node,
-                                      (nodes.Tasklet, nodes.AccessNode)):
+                    if not isinstance(src_node, (nodes.Tasklet, nodes.AccessNode)):
                         # Make sure we only have Code->Code copies and from arrays
                         return False
 
@@ -151,13 +140,12 @@ class SVEVectorization(transformation.Transformation):
 
         # Run the vector inference algorithm to check if vectorization is feasible
         try:
-            vector_inference.infer_vectors(
-                sdfg,
-                state,
-                map_entry,
-                self.vec_len,
-                flags=vector_inference.VectorInferenceFlags.Allow_Stride,
-                apply=False)
+            vector_inference.infer_vectors(sdfg,
+                                           state,
+                                           map_entry,
+                                           self.vec_len,
+                                           flags=vector_inference.VectorInferenceFlags.Allow_Stride,
+                                           apply=False)
         except vector_inference.VectorInferenceException as ex:
             return False
 
@@ -170,8 +158,8 @@ class SVEVectorization(transformation.Transformation):
 
         # Expand the innermost map if multidimensional
         if len(current_map.params) > 1:
-            ext, rem = dace.transformation.helpers.extract_map_dims(
-                sdfg, map_entry, list(range(len(current_map.params) - 1)))
+            ext, rem = dace.transformation.helpers.extract_map_dims(sdfg, map_entry,
+                                                                    list(range(len(current_map.params) - 1)))
             map_entry = rem
             current_map = map_entry.map
 
@@ -185,10 +173,9 @@ class SVEVectorization(transformation.Transformation):
         infer_types.apply_connector_types(inferred)
 
         # Infer vector connectors and AccessNodes and apply them
-        vector_inference.infer_vectors(
-            sdfg,
-            state,
-            map_entry,
-            self.vec_len,
-            flags=vector_inference.VectorInferenceFlags.Allow_Stride,
-            apply=True)
+        vector_inference.infer_vectors(sdfg,
+                                       state,
+                                       map_entry,
+                                       self.vec_len,
+                                       flags=vector_inference.VectorInferenceFlags.Allow_Stride,
+                                       apply=True)

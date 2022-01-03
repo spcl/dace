@@ -62,8 +62,7 @@ class AST_Ident(AST_Node):
             corresponding SDFG access node this currently maps to. """
         bt = self.search_vardef_in_scope(self.value).get_basetype()
         if bt is None:
-            raise ValueError("Request for basetype of identifier " +
-                             self.value +
+            raise ValueError("Request for basetype of identifier " + self.value +
                              " which is not defined in the current scope")
         else:
             return bt
@@ -96,13 +95,10 @@ class AST_Constant(AST_Node):
             sdfg.add_transient(name, dims, basetype, debuginfo=self.context)
         trans = sdfg.nodes()[state].add_access(name)
         code = "out = " + str(self.get_value()) + ";"
-        tasklet = sdfg.nodes()[state].add_tasklet('init', {}, {'out'}, code,
-                                                  dace.Language.CPP)
-        sdfg.nodes()[state].add_edge(
-            tasklet, 'out', trans, None,
-            dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg)))
-        print("The result of expr " + str(self) + " will be stored in " +
-              str(name))
+        tasklet = sdfg.nodes()[state].add_tasklet('init', {}, {'out'}, code, dace.Language.CPP)
+        sdfg.nodes()[state].add_edge(tasklet, 'out', trans, None,
+                                     dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg)))
+        print("The result of expr " + str(self) + " will be stored in " + str(name))
 
     def get_children(self):
         return []

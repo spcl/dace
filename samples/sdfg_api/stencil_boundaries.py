@@ -16,16 +16,12 @@ STENCIL_KERNEL = np.random.rand(7, 7).astype(np.float32)
 # Helper function
 def dirichlet_tasklet(state, B, x0, y0, width, height, initval=0):
     # Set up map that only has one exit
-    _, me, mx = state.add_mapped_tasklet(
-        'boundary',
-        dict(i='%s:%s' % (y0, y0 + height), j='%s:%s' % (x0, x0 + width)), {},
-        '''b = %f''' % initval,
-        dict(b=dace.Memlet.simple(B.data, 'i,j')),
-        external_edges=False)
-    state.add_nedge(
-        mx, B,
-        dace.Memlet.simple(B.data,
-                           '%s:%s, %s:%s' % (y0, y0 + height, x0, x0 + width)))
+    _, me, mx = state.add_mapped_tasklet('boundary',
+                                         dict(i='%s:%s' % (y0, y0 + height), j='%s:%s' % (x0, x0 + width)), {},
+                                         '''b = %f''' % initval,
+                                         dict(b=dace.Memlet.simple(B.data, 'i,j')),
+                                         external_edges=False)
+    state.add_nedge(mx, B, dace.Memlet.simple(B.data, '%s:%s, %s:%s' % (y0, y0 + height, x0, x0 + width)))
 
 
 #################
@@ -40,18 +36,17 @@ sdfg.add_constant('KERNEL', STENCIL_KERNEL)
 mainstate = sdfg.add_state()
 
 # The 7x7 stencil
-_, me, mx = mainstate.add_mapped_tasklet(
-    'stencil',
-    dict(i='3:H-3', j='3:W-3'),
-    dict(a=dace.Memlet.simple('A', 'i-3:i+4, j-3:j+4')),
-    '''
+_, me, mx = mainstate.add_mapped_tasklet('stencil',
+                                         dict(i='3:H-3', j='3:W-3'),
+                                         dict(a=dace.Memlet.simple('A', 'i-3:i+4, j-3:j+4')),
+                                         '''
 b = 0
 for ky in range(7):
     for kx in range(7):
         b += a[ky,kx] * KERNEL[ky*7+kx]
                                         ''',
-    dict(b=dace.Memlet.simple('B', 'i,j')),
-    external_edges=False)
+                                         dict(b=dace.Memlet.simple('B', 'i,j')),
+                                         external_edges=False)
 
 # Connect arrays (we want them to appear once for the main body and all bounds)
 A = mainstate.add_read('A')

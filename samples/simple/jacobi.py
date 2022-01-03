@@ -61,15 +61,13 @@ if __name__ == "__main__":
     H.set(args["H"])
     MAXITER.set(args["MAXITER"])
 
-    print('Jacobi 5-point Stencil %dx%d (%d steps)' %
-          (W.get(), H.get(), MAXITER.get()))
+    print('Jacobi 5-point Stencil %dx%d (%d steps)' % (W.get(), H.get(), MAXITER.get()))
 
     A = dace.ndarray([H, W], dtype=dace.float32)
 
     # Initialize arrays: Randomize A, zero B
     A[:] = dace.float32(0)
-    A[1:H.get() - 1, 1:W.get() - 1] = np.random.rand(
-        (H.get() - 2), (W.get() - 2)).astype(dace.float32.type)
+    A[1:H.get() - 1, 1:W.get() - 1] = np.random.rand((H.get() - 2), (W.get() - 2)).astype(dace.float32.type)
     regression = np.ndarray([H.get() - 2, W.get() - 2], dtype=np.float32)
     regression[:] = A[1:H.get() - 1, 1:W.get() - 1]
 
@@ -81,16 +79,11 @@ if __name__ == "__main__":
     jacobi(A, MAXITER)
 
     # Regression
-    kernel = np.array([[0, 0.2, 0], [0.2, 0.2, 0.2], [0, 0.2, 0]],
-                      dtype=np.float32)
+    kernel = np.array([[0, 0.2, 0], [0.2, 0.2, 0.2], [0, 0.2, 0]], dtype=np.float32)
     for i in range(2 * MAXITER.get()):
-        regression = ndimage.convolve(regression,
-                                      kernel,
-                                      mode='constant',
-                                      cval=0.0)
+        regression = ndimage.convolve(regression, kernel, mode='constant', cval=0.0)
 
-    residual = np.linalg.norm(A[1:H.get() - 1, 1:W.get() - 1] -
-                              regression) / (H.get() * W.get())
+    residual = np.linalg.norm(A[1:H.get() - 1, 1:W.get() - 1] - regression) / (H.get() * W.get())
     print("Residual:", residual)
 
     #print(A.view(type=np.ndarray))

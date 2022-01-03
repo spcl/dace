@@ -38,8 +38,7 @@ class Enumerator:
         self._condition_function = condition_function
 
         # get map related information
-        self._map_entries = helpers.get_outermost_scope_maps(
-            sdfg, graph, subgraph)
+        self._map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
         self._max_length = len(self._map_entries)
 
     def iterator(self):
@@ -68,15 +67,9 @@ class Enumerator:
         # helper dict needed for a quick build
         exit_nodes = {graph.exit_node(me): me for me in self._map_entries}
         if subgraph:
-            proximity_in = set(ie.src for me in self._map_entries
-                               for ie in graph.in_edges(me))
-            proximity_out = set(ie.dst for me in exit_nodes
-                                for ie in graph.out_edges(me))
-            extended_subgraph = SubgraphView(
-                graph,
-                set(
-                    itertools.chain(subgraph.nodes(), proximity_in,
-                                    proximity_out)))
+            proximity_in = set(ie.src for me in self._map_entries for ie in graph.in_edges(me))
+            proximity_out = set(ie.dst for me in exit_nodes for ie in graph.out_edges(me))
+            extended_subgraph = SubgraphView(graph, set(itertools.chain(subgraph.nodes(), proximity_in, proximity_out)))
 
         for node in (extended_subgraph.nodes() if subgraph else graph.nodes()):
             if isinstance(node, nodes.AccessNode):
@@ -85,9 +78,7 @@ class Enumerator:
                     if isinstance(e.src, nodes.MapExit) and e.src in exit_nodes:
                         adjacent_entries.add(exit_nodes[e.src])
                 for e in graph.out_edges(node):
-                    if isinstance(
-                            e.dst,
-                            nodes.MapEntry) and e.dst in self._map_entries:
+                    if isinstance(e.dst, nodes.MapEntry) and e.dst in self._map_entries:
                         adjacent_entries.add(e.dst)
 
                 # bidirectional mapping
@@ -112,9 +103,7 @@ class Enumerator:
                             parent_dict[other_entry].add(map_entry)
 
         # find out source nodes
-        self._source_maps = [
-            me for me in self._map_entries if len(parent_dict[me]) == 0
-        ]
+        self._source_maps = [me for me in self._map_entries if len(parent_dict[me]) == 0]
         # assign a unique id to each map entry according to topological
         # ordering. If on same level, sort according to ID for determinism
 
@@ -122,8 +111,7 @@ class Enumerator:
         current_id = 0
         while current_id < len(self._map_entries):
             # get current ids whose in_degree is 0
-            candidates = list(me for (me, s) in parent_dict.items()
-                              if len(s) == 0 and me not in self._labels)
+            candidates = list(me for (me, s) in parent_dict.items() if len(s) == 0 and me not in self._labels)
             candidates.sort(key=lambda me: self._graph.node_id(me))
             for c in candidates:
                 self._labels[c] = current_id

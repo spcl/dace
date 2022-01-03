@@ -38,17 +38,12 @@ def make_sdfg(name="transpose"):
     # Host to device
     pre_read = pre_state.add_read("a_input")
     pre_write = pre_state.add_write("a_input_device")
-    pre_state.add_memlet_path(pre_read,
-                              pre_write,
-                              memlet=dace.Memlet.simple(pre_write, "0:N, 0:M"))
+    pre_state.add_memlet_path(pre_read, pre_write, memlet=dace.Memlet.simple(pre_write, "0:N, 0:M"))
 
     # Device to host
     post_read = post_state.add_read("a_output_device")
     post_write = post_state.add_write("a_output")
-    post_state.add_memlet_path(post_read,
-                               post_write,
-                               memlet=dace.Memlet.simple(
-                                   post_write, "0:N, 0:M"))
+    post_state.add_memlet_path(post_read, post_write, memlet=dace.Memlet.simple(post_write, "0:N, 0:M"))
 
     # Compute state
     read = state.add_read("a_input_device")
@@ -60,23 +55,18 @@ def make_sdfg(name="transpose"):
     entry, exit = state.add_map(name, {
         "i": "0:N",
         "j": "0:M",
-    },
-                                schedule=dace.ScheduleType.FPGA_Device)
+    }, schedule=dace.ScheduleType.FPGA_Device)
 
     state.add_memlet_path(read,
                           entry,
                           tasklet,
                           dst_conn="_in",
-                          memlet=dace.Memlet.simple("a_input_device",
-                                                    "i, j",
-                                                    num_accesses=1))
+                          memlet=dace.Memlet.simple("a_input_device", "i, j", num_accesses=1))
     state.add_memlet_path(tasklet,
                           exit,
                           write,
                           src_conn="_out",
-                          memlet=dace.Memlet.simple("a_output_device",
-                                                    "j, i",
-                                                    num_accesses=1))
+                          memlet=dace.Memlet.simple("a_output_device", "j, i", num_accesses=1))
 
     return sdfg
 

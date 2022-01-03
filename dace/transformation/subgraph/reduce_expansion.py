@@ -39,26 +39,19 @@ class ReduceExpansion(transformation.Transformation):
 
     debug = Property(desc="Debug Info", dtype=bool, default=False)
 
-    create_in_transient = Property(desc="Create local in-transient"
-                                   "in registers",
-                                   dtype=bool,
-                                   default=False)
+    create_in_transient = Property(desc="Create local in-transient" "in registers", dtype=bool, default=False)
 
-    create_out_transient = Property(desc="Create local out-transient"
-                                    "in registers",
-                                    dtype=bool,
-                                    default=False)
+    create_out_transient = Property(desc="Create local out-transient" "in registers", dtype=bool, default=False)
 
-    reduce_implementation = Property(
-        desc="Reduce implementation of inner reduce. If specified,"
-        "overrides any existing implementations",
-        dtype=str,
-        default=None,
-        choices=[
-            'pure', 'OpenMP', 'CUDA (device)', 'CUDA (block)',
-            'CUDA (block allreduce)', 'CUDA (warp)', 'CUDA (warp allreduce)'
-        ],
-        allow_none=True)
+    reduce_implementation = Property(desc="Reduce implementation of inner reduce. If specified,"
+                                     "overrides any existing implementations",
+                                     dtype=str,
+                                     default=None,
+                                     choices=[
+                                         'pure', 'OpenMP', 'CUDA (device)', 'CUDA (block)', 'CUDA (block allreduce)',
+                                         'CUDA (warp)', 'CUDA (warp allreduce)'
+                                     ],
+                                     allow_none=True)
 
     reduction_type_update = {
         dtypes.ReductionType.Max: 'out = max(reduction_in, array_in)',
@@ -184,9 +177,7 @@ class ReduceExpansion(transformation.Transformation):
                         enqueued.add(in_edge.src)
 
             if self.debug and array_closest_ancestor:
-                print(
-                    f"ReduceExpansion::Closest ancestor={array_closest_ancestor}"
-                )
+                print(f"ReduceExpansion::Closest ancestor={array_closest_ancestor}")
             elif self.debug:
                 print("ReduceExpansion::No closest ancestor found")
 
@@ -196,22 +187,18 @@ class ReduceExpansion(transformation.Transformation):
 
             from dace.transformation.dataflow.local_storage import LocalStorage
             local_storage_subgraph = {
-                LocalStorage.node_a:
-                nsdfg.sdfg.nodes()[0].nodes().index(inner_exit),
-                LocalStorage.node_b:
-                nsdfg.sdfg.nodes()[0].nodes().index(outer_exit)
+                LocalStorage.node_a: nsdfg.sdfg.nodes()[0].nodes().index(inner_exit),
+                LocalStorage.node_b: nsdfg.sdfg.nodes()[0].nodes().index(outer_exit)
             }
             nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
             nstate_id = 0
-            local_storage = LocalStorage(nsdfg_id, nstate_id,
-                                         local_storage_subgraph, 0)
+            local_storage = LocalStorage(nsdfg_id, nstate_id, local_storage_subgraph, 0)
             local_storage.array = array_out
             local_storage.apply(nsdfg.sdfg)
             out_transient_node_inner = local_storage._data_node
 
             # push to register
-            nsdfg.sdfg.data(out_transient_node_inner.data
-                            ).storage = dtypes.StorageType.Register
+            nsdfg.sdfg.data(out_transient_node_inner.data).storage = dtypes.StorageType.Register
 
             # remove WCRs from all edges where possible if there is no
             # prior occurrence
@@ -230,30 +217,24 @@ class ReduceExpansion(transformation.Transformation):
 
             from dace.transformation.dataflow.local_storage import LocalStorage
             local_storage_subgraph = {
-                LocalStorage.node_a:
-                nsdfg.sdfg.nodes()[0].nodes().index(outer_entry),
-                LocalStorage.node_b:
-                nsdfg.sdfg.nodes()[0].nodes().index(inner_entry)
+                LocalStorage.node_a: nsdfg.sdfg.nodes()[0].nodes().index(outer_entry),
+                LocalStorage.node_b: nsdfg.sdfg.nodes()[0].nodes().index(inner_entry)
             }
 
             nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
             nstate_id = 0
-            local_storage = LocalStorage(nsdfg_id, nstate_id,
-                                         local_storage_subgraph, 0)
+            local_storage = LocalStorage(nsdfg_id, nstate_id, local_storage_subgraph, 0)
             local_storage.array = array_in
             local_storage.apply(nsdfg.sdfg)
             in_transient_node_inner = local_storage._data_node
 
             # push to register
-            nsdfg.sdfg.data(in_transient_node_inner.data
-                            ).storage = dtypes.StorageType.Register
+            nsdfg.sdfg.data(in_transient_node_inner.data).storage = dtypes.StorageType.Register
 
         # inline fuse back our nested SDFG
         from dace.transformation.interstate import InlineSDFG
-        inline_sdfg = InlineSDFG(
-            sdfg.sdfg_list.index(sdfg),
-            sdfg.nodes().index(graph),
-            {InlineSDFG._nested_sdfg: graph.nodes().index(nsdfg)}, 0)
+        inline_sdfg = InlineSDFG(sdfg.sdfg_list.index(sdfg),
+                                 sdfg.nodes().index(graph), {InlineSDFG._nested_sdfg: graph.nodes().index(nsdfg)}, 0)
         inline_sdfg.apply(sdfg)
 
         new_schedule = dtypes.ScheduleType.Default
@@ -262,24 +243,17 @@ class ReduceExpansion(transformation.Transformation):
                              else implementation
         new_axes = dcpy(reduce_node.axes)
 
-        reduce_node_new = graph.add_reduce(wcr=wcr,
-                                           axes=new_axes,
-                                           schedule=new_schedule,
-                                           identity=identity)
+        reduce_node_new = graph.add_reduce(wcr=wcr, axes=new_axes, schedule=new_schedule, identity=identity)
         reduce_node_new.implementation = new_implementation
         # replace inner map with new reduction node
         edge_tmp = graph.in_edges(inner_entry)[0]
         memlet_src_reduce = dcpy(edge_tmp.data)
-        graph.add_edge(edge_tmp.src, edge_tmp.src_conn, reduce_node_new, None,
-                       memlet_src_reduce)
+        graph.add_edge(edge_tmp.src, edge_tmp.src_conn, reduce_node_new, None, memlet_src_reduce)
 
         edge_tmp = graph.out_edges(inner_exit)[0]
-        memlet_reduce_dst = Memlet(data=edge_tmp.data.data,
-                                   volume=1,
-                                   subset=edge_tmp.data.subset)
+        memlet_reduce_dst = Memlet(data=edge_tmp.data.data, volume=1, subset=edge_tmp.data.subset)
 
-        graph.add_edge(reduce_node_new, None, edge_tmp.dst, edge_tmp.dst_conn,
-                       memlet_reduce_dst)
+        graph.add_edge(reduce_node_new, None, edge_tmp.dst, edge_tmp.dst_conn, memlet_reduce_dst)
 
         identity_tasklet = graph.out_edges(inner_entry)[0].dst
         graph.remove_node(inner_entry)
@@ -298,24 +272,19 @@ class ReduceExpansion(transformation.Transformation):
 
         if identity is None and self.create_out_transient:
             if self.debug:
-                print(
-                    "ReduceExpansion::Trying to infer reduction WCR type due to out transient created"
-                )
+                print("ReduceExpansion::Trying to infer reduction WCR type due to out transient created")
             # set the reduction identity accordingly so that the correct
             # blank result is written to the out_transient node
             # we use default values deducted from the reduction type
             reduction_type = detect_reduction_type(wcr)
             try:
-                reduce_node_new.identity = self.reduction_type_identity[
-                    reduction_type]
+                reduce_node_new.identity = self.reduction_type_identity[reduction_type]
             except KeyError:
 
                 if reduction_type == dtypes.ReductionType.Min:
-                    reduce_node_new.identity = dtypes.max_value(
-                        sdfg.arrays[out_storage_node.data].dtype)
+                    reduce_node_new.identity = dtypes.max_value(sdfg.arrays[out_storage_node.data].dtype)
                 elif reduction_type == dtypes.ReductionType.Max:
-                    reduce_node_new.identity = dtypes.min_value(
-                        sdfg.arrays[out_storage_node.data].dtype)
+                    reduce_node_new.identity = dtypes.min_value(sdfg.arrays[out_storage_node.data].dtype)
                 else:
                     raise ValueError(f"Cannot infer reduction identity."
                                      "Please specify the identity of node"
@@ -375,28 +344,21 @@ class ReduceExpansion(transformation.Transformation):
             output_size = outedge.data.subset.size()
 
             ome, omx = nstate.add_map(
-                'reduce_output', {
-                    '_o%d' % i: '0:%s' % symstr(sz)
-                    for i, sz in enumerate(outedge.data.subset.size())
-                })
-            outm = Memlet.simple('_out',
-                                 ','.join(
-                                     ['_o%d' % i for i in range(output_dims)]),
-                                 wcr_str=node.wcr)
+                'reduce_output', {'_o%d' % i: '0:%s' % symstr(sz)
+                                  for i, sz in enumerate(outedge.data.subset.size())})
+            outm = Memlet.simple('_out', ','.join(['_o%d' % i for i in range(output_dims)]), wcr_str=node.wcr)
             inmm = Memlet.simple('_in', ','.join(input_subset))
         else:
             ome, omx = None, None
             outm = Memlet.simple('_out', '0', wcr_str=node.wcr)
-            inmm = Memlet.simple(
-                '_in', ','.join(['_i%d' % i for i in range(len(axes))]))
+            inmm = Memlet.simple('_in', ','.join(['_i%d' % i for i in range(len(axes))]))
 
         # Add inner map, which corresponds to the range to reduce, containing
         # an identity tasklet
         ime, imx = nstate.add_map(
-            'reduce_values', {
-                '_i%d' % i: '0:%s' % symstr(inedge.data.subset.size()[axis])
-                for i, axis in enumerate(sorted(axes))
-            })
+            'reduce_values',
+            {'_i%d' % i: '0:%s' % symstr(inedge.data.subset.size()[axis])
+             for i, axis in enumerate(sorted(axes))})
 
         # Add identity tasklet for reduction
         t = nstate.add_tasklet('identity', {'inp'}, {'out'}, 'out = inp')

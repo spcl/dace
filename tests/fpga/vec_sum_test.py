@@ -42,23 +42,15 @@ def run_vec_sum(vectorize_first: bool):
             dace.transformation.dataflow.vectorization.Vectorization,
             dace.transformation.interstate.fpga_transform_sdfg.FPGATransformSDFG
         ]
-        transformation_options = [{
-            "propagate_parent": True,
-            "postamble": False
-        }, {}]
+        transformation_options = [{"propagate_parent": True, "postamble": False}, {}]
     else:
         transformations = [
-            dace.transformation.interstate.fpga_transform_sdfg.
-            FPGATransformSDFG,
+            dace.transformation.interstate.fpga_transform_sdfg.FPGATransformSDFG,
             dace.transformation.dataflow.vectorization.Vectorization
         ]
-        transformation_options = [{}, {
-            "propagate_parent": True,
-            "postamble": False
-        }]
+        transformation_options = [{}, {"propagate_parent": True, "postamble": False}]
 
-    assert sdfg.apply_transformations(transformations,
-                                      transformation_options) == 2
+    assert sdfg.apply_transformations(transformations, transformation_options) == 2
 
     sdfg(x=X, y=Y, z=Z, N=N)
 

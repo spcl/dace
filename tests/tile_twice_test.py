@@ -14,8 +14,7 @@ def test():
     sdfg = tile_twice_test.to_sdfg()
     sdfg.coarsen_dataflow()
     sdfg.apply_transformations(MapTiling, options={'tile_sizes': (5, )})
-    for i, match in enumerate(
-            match_patterns(sdfg, MapTiling, states=[sdfg.node(0)])):
+    for i, match in enumerate(match_patterns(sdfg, MapTiling, states=[sdfg.node(0)])):
         if i == 0:  # Match the first map again
             match.tile_sizes = (4, )
             match.apply_pattern(sdfg)

@@ -50,17 +50,14 @@ class MapFusion(transformation.Transformation):
 
     @staticmethod
     def expressions():
-        return [
-            sdutil.node_path_graph(
-                MapFusion.first_map_exit,
-                MapFusion.array,
-                MapFusion.second_map_entry,
-            )
-        ]
+        return [sdutil.node_path_graph(
+            MapFusion.first_map_exit,
+            MapFusion.array,
+            MapFusion.second_map_entry,
+        )]
 
     @staticmethod
-    def find_permutation(first_map: nodes.Map,
-                         second_map: nodes.Map) -> Union[List[int], None]:
+    def find_permutation(first_map: nodes.Map, second_map: nodes.Map) -> Union[List[int], None]:
         """ Find permutation between two map ranges.
             :param first_map: First map.
             :param second_map: Second map.
@@ -113,22 +110,19 @@ class MapFusion(transformation.Transformation):
 
                 # If array is used anywhere else in this state.
                 num_occurrences = len([
-                    n for s in sdfg.nodes() for n in s.nodes()
-                    if isinstance(n, nodes.AccessNode) and n.data == dst.data
+                    n for s in sdfg.nodes() for n in s.nodes() if isinstance(n, nodes.AccessNode) and n.data == dst.data
                 ])
                 if num_occurrences > 1:
                     return False
             else:
                 return False
         # Check map ranges
-        perm = MapFusion.find_permutation(first_map_entry.map,
-                                          second_map_entry.map)
+        perm = MapFusion.find_permutation(first_map_entry.map, second_map_entry.map)
         if perm is None:
             return False
 
         # Check if any intermediate transient is also going to another location
-        second_inodes = set(e.src for e in graph.in_edges(second_map_entry)
-                            if isinstance(e.src, nodes.AccessNode))
+        second_inodes = set(e.src for e in graph.in_edges(second_map_entry) if isinstance(e.src, nodes.AccessNode))
         transients_to_remove = intermediate_nodes & second_inodes
         # if any(e.dst != second_map_entry for n in transients_to_remove
         #        for e in graph.out_edges(n)):
@@ -154,8 +148,7 @@ class MapFusion(transformation.Transformation):
                     source_node = _n
                     destination_node = graph.memlet_path(second_edge)[0].src
                     # NOTE: Assumes graph has networkx version
-                    if destination_node in nx.descendants(
-                            graph._nx, source_node):
+                    if destination_node in nx.descendants(graph._nx, source_node):
                         return False
                 continue
 
@@ -165,8 +158,7 @@ class MapFusion(transformation.Transformation):
             sbs_permuted = dcpy(second_edge.data.subset)
             if sbs_permuted:
                 # Create intermediate dicts to avoid conflicts, such as {i:j, j:i}
-                symbolic.safe_replace(params_dict,
-                                      lambda m: sbs_permuted.replace(m))
+                symbolic.safe_replace(params_dict, lambda m: sbs_permuted.replace(m))
 
             for first_memlet in out_memlets:
                 if first_memlet.data != second_edge.data.data:
@@ -186,8 +178,7 @@ class MapFusion(transformation.Transformation):
         # (after fusing the maps)
         first_map_inputnodes = {
             e.src: e.src.data
-            for e in graph.in_edges(first_map_entry)
-            if isinstance(e.src, nodes.AccessNode)
+            for e in graph.in_edges(first_map_entry) if isinstance(e.src, nodes.AccessNode)
         }
         input_views = set()
         viewed_inputnodes = dict()
@@ -202,8 +193,7 @@ class MapFusion(transformation.Transformation):
                 viewed_inputnodes[e.src.data] = v
         second_map_outputnodes = {
             e.dst: e.dst.data
-            for e in graph.out_edges(second_map_exit)
-            if isinstance(e.dst, nodes.AccessNode)
+            for e in graph.out_edges(second_map_exit) if isinstance(e.dst, nodes.AccessNode)
         }
         output_views = set()
         viewed_outputnodes = dict()
@@ -216,16 +206,11 @@ class MapFusion(transformation.Transformation):
             if e:
                 second_map_outputnodes[e.dst] = e.dst.data
                 viewed_outputnodes[e.dst.data] = v
-        common_data = set(first_map_inputnodes.values()).intersection(
-            set(second_map_outputnodes.values()))
+        common_data = set(first_map_inputnodes.values()).intersection(set(second_map_outputnodes.values()))
         if common_data:
-            input_data = [
-                viewed_inputnodes[d].data
-                if d in viewed_inputnodes.keys() else d for d in common_data
-            ]
+            input_data = [viewed_inputnodes[d].data if d in viewed_inputnodes.keys() else d for d in common_data]
             input_accesses = [
-                graph.memlet_path(e)[-1].data.src_subset
-                for e in graph.out_edges(first_map_entry)
+                graph.memlet_path(e)[-1].data.src_subset for e in graph.out_edges(first_map_entry)
                 if e.data.data in input_data
             ]
             if len(input_accesses) > 1:
@@ -240,13 +225,9 @@ class MapFusion(transformation.Transformation):
                             if r != (0, 0, 1):
                                 return False
 
-            output_data = [
-                viewed_outputnodes[d].data
-                if d in viewed_outputnodes.keys() else d for d in common_data
-            ]
+            output_data = [viewed_outputnodes[d].data if d in viewed_outputnodes.keys() else d for d in common_data]
             output_accesses = [
-                graph.memlet_path(e)[0].data.dst_subset
-                for e in graph.in_edges(second_map_exit)
+                graph.memlet_path(e)[0].data.dst_subset for e in graph.in_edges(second_map_exit)
                 if e.data.data in output_data
             ]
 
@@ -275,8 +256,7 @@ class MapFusion(transformation.Transformation):
         first_exit = graph.nodes()[candidate[MapFusion.first_map_exit]]
         second_entry = graph.nodes()[candidate[MapFusion.second_map_entry]]
 
-        return " -> ".join(entry.map.label + ": " + str(entry.map.params)
-                           for entry in [first_exit, second_entry])
+        return " -> ".join(entry.map.label + ": " + str(entry.map.params) for entry in [first_exit, second_entry])
 
     def apply(self, sdfg):
         """
@@ -354,10 +334,7 @@ class MapFusion(transformation.Transformation):
             tree = graph.memlet_tree(edge)
             access_node = tree.root().edge.dst
             if access_node not in do_not_erase:
-                out_edges = [
-                    e for e in graph.out_edges(access_node)
-                    if e.dst == second_entry
-                ]
+                out_edges = [e for e in graph.out_edges(access_node) if e.dst == second_entry]
                 # In this transformation, there can only be one edge to the
                 # second map
                 assert len(out_edges) == 1
@@ -376,8 +353,7 @@ class MapFusion(transformation.Transformation):
                     continue
 
                 # Add a transient scalar/array
-                self.fuse_nodes(sdfg, graph, edge, new_dsts[0].dst,
-                                new_dsts[0].dst_conn, new_dsts[1:])
+                self.fuse_nodes(sdfg, graph, edge, new_dsts[0].dst, new_dsts[0].dst_conn, new_dsts[1:])
 
                 edges_to_remove.add(edge)
 
@@ -396,8 +372,7 @@ class MapFusion(transformation.Transformation):
                 )
                 second_exit.add_out_connector('OUT_' + conn)
 
-                graph.add_edge(edge.src, edge.src_conn, second_exit,
-                               'IN_' + conn, dcpy(edge.data))
+                graph.add_edge(edge.src, edge.src_conn, second_exit, 'IN_' + conn, dcpy(edge.data))
                 second_exit.add_in_connector('IN_' + conn)
 
                 edges_to_remove.add(out_e)
@@ -410,8 +385,7 @@ class MapFusion(transformation.Transformation):
                     second_memlet_path = graph.memlet_path(out_e)
                     source_node = second_memlet_path[0].src
                     if source_node == access_node:
-                        self.fuse_nodes(sdfg, graph, edge, out_e.dst,
-                                        out_e.dst_conn)
+                        self.fuse_nodes(sdfg, graph, edge, out_e.dst, out_e.dst_conn)
 
         ###
         # First scope exit is isolated and can now be safely removed
@@ -433,8 +407,7 @@ class MapFusion(transformation.Transformation):
             # This is an external input to the second map which will now go
             # through the first map.
             conn = first_entry.next_connector()
-            graph.add_edge(edge.src, edge.src_conn, first_entry, 'IN_' + conn,
-                           dcpy(edge.data))
+            graph.add_edge(edge.src, edge.src_conn, first_entry, 'IN_' + conn, dcpy(edge.data))
             first_entry.add_in_connector('IN_' + conn)
             graph.remove_edge(edge)
             for out_enode in tree.children:
@@ -456,13 +429,7 @@ class MapFusion(transformation.Transformation):
         # Fix scope exit to point to the right map
         second_exit.map = first_entry.map
 
-    def fuse_nodes(self,
-                   sdfg,
-                   graph,
-                   edge,
-                   new_dst,
-                   new_dst_conn,
-                   other_edges=None):
+    def fuse_nodes(self, sdfg, graph, edge, new_dst, new_dst_conn, other_edges=None):
         """ Fuses two nodes via memlets and possibly transient arrays. """
         other_edges = other_edges or []
         memlet_path = graph.memlet_path(edge)
@@ -490,45 +457,37 @@ class MapFusion(transformation.Transformation):
 
             # If source of edge leads to multiple destinations,
             # redirect all through an access node
-            out_edges = list(
-                graph.out_edges_by_connector(edge.src, edge.src_conn))
+            out_edges = list(graph.out_edges_by_connector(edge.src, edge.src_conn))
             if len(out_edges) > 1:
                 local_node = graph.add_access(local_name)
                 src_connector = None
 
                 # Add edge that leads to transient node
-                graph.add_edge(edge.src, edge.src_conn, local_node, None,
-                               dcpy(edge.data))
+                graph.add_edge(edge.src, edge.src_conn, local_node, None, dcpy(edge.data))
 
                 for other_edge in out_edges:
                     if other_edge is not edge:
                         graph.remove_edge(other_edge)
-                        graph.add_edge(local_node, src_connector,
-                                       other_edge.dst, other_edge.dst_conn,
-                                       other_edge.data)
+                        graph.add_edge(local_node, src_connector, other_edge.dst, other_edge.dst_conn, other_edge.data)
             else:
                 local_node = edge.src
                 src_connector = edge.src_conn
 
             # Add edge that leads to the second node
-            graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
-                           dcpy(edge.data))
+            graph.add_edge(local_node, src_connector, new_dst, new_dst_conn, dcpy(edge.data))
 
             for e in other_edges:
-                graph.add_edge(local_node, src_connector, e.dst, e.dst_conn,
-                               dcpy(edge.data))
+                graph.add_edge(local_node, src_connector, e.dst, e.dst_conn, dcpy(edge.data))
         else:
-            local_name, _ = sdfg.add_transient(
-                local_name,
-                symbolic.overapproximate(edge.data.subset.size()),
-                dtype=access_node.desc(graph).dtype,
-                find_new_name=True)
+            local_name, _ = sdfg.add_transient(local_name,
+                                               symbolic.overapproximate(edge.data.subset.size()),
+                                               dtype=access_node.desc(graph).dtype,
+                                               find_new_name=True)
             old_edge = dcpy(edge)
             local_node = graph.add_access(local_name)
             src_connector = None
             edge.data.data = local_name
-            edge.data.subset = ",".join(
-                ["0:" + str(s) for s in edge.data.subset.size()])
+            edge.data.subset = ",".join(["0:" + str(s) for s in edge.data.subset.size()])
             # Add edge that leads to transient node
             graph.add_edge(
                 edge.src,
@@ -539,12 +498,10 @@ class MapFusion(transformation.Transformation):
             )
 
             # Add edge that leads to the second node
-            graph.add_edge(local_node, src_connector, new_dst, new_dst_conn,
-                           dcpy(edge.data))
+            graph.add_edge(local_node, src_connector, new_dst, new_dst_conn, dcpy(edge.data))
 
             for e in other_edges:
-                graph.add_edge(local_node, src_connector, e.dst, e.dst_conn,
-                               dcpy(edge.data))
+                graph.add_edge(local_node, src_connector, e.dst, e.dst_conn, dcpy(edge.data))
 
             # Modify data and memlets on all surrounding edges to match array
             for neighbor in graph.all_edges(local_node):

@@ -24,8 +24,7 @@ class TrivialTaskletElimination(transformation.Transformation):
     @staticmethod
     def expressions():
         return [
-            sdutil.node_path_graph(TrivialTaskletElimination.read,
-                                   TrivialTaskletElimination.tasklet,
+            sdutil.node_path_graph(TrivialTaskletElimination.read, TrivialTaskletElimination.tasklet,
                                    TrivialTaskletElimination.write)
         ]
 
@@ -64,8 +63,7 @@ class TrivialTaskletElimination(transformation.Transformation):
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         read = graph.nodes()[self.subgraph[TrivialTaskletElimination.read]]
-        tasklet = graph.nodes()[self.subgraph[
-            TrivialTaskletElimination.tasklet]]
+        tasklet = graph.nodes()[self.subgraph[TrivialTaskletElimination.tasklet]]
         write = graph.nodes()[self.subgraph[TrivialTaskletElimination.write]]
 
         in_edge = graph.edges_between(read, tasklet)[0]

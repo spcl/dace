@@ -23,8 +23,8 @@ class DaceSyntaxError(Exception):
             col = 0
 
         if self.visitor is not None:
-            return (self.message + "\n  File \"" + str(self.visitor.filename) +
-                    "\", line " + str(line) + ", column " + str(col))
+            return (self.message + "\n  File \"" + str(self.visitor.filename) + "\", line " + str(line) + ", column " +
+                    str(col))
         else:
             return (self.message + "\n  in line " + str(line) + ":" + str(col))
 
@@ -52,9 +52,7 @@ class SDFGConvertible(object):
         """
         raise NotImplementedError
 
-    def __sdfg_closure__(
-            self,
-            reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def __sdfg_closure__(self, reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """ 
         Returns the closure arrays of the SDFG represented by this object
         as a mapping between array name and the corresponding value.
@@ -78,10 +76,9 @@ class SDFGConvertible(object):
         """
         raise NotImplementedError
 
-    def closure_resolver(
-            self,
-            constant_args: Dict[str, Any],
-            parent_closure: Optional['SDFGClosure'] = None) -> 'SDFGClosure':
+    def closure_resolver(self,
+                         constant_args: Dict[str, Any],
+                         parent_closure: Optional['SDFGClosure'] = None) -> 'SDFGClosure':
         """ 
         Returns an SDFGClosure object representing the closure of the
         object to be converted to an SDFG.
@@ -156,8 +153,7 @@ class SDFGClosure:
         # }
 
         for _, child in self.nested_closures:
-            for arrname, (_, desc, evaluator,
-                          _) in sorted(child.closure_arrays.items()):
+            for arrname, (_, desc, evaluator, _) in sorted(child.closure_arrays.items()):
 
                 # Check if the same array is already passed as part of a
                 # nested closure
@@ -165,11 +161,9 @@ class SDFGClosure:
                 if id(arr) in self.array_mapping:
                     continue
 
-                new_name = data.find_new_name(arrname,
-                                              self.closure_arrays.keys())
+                new_name = data.find_new_name(arrname, self.closure_arrays.keys())
                 if not desc.transient:
-                    self.closure_arrays[new_name] = (arrname, desc, evaluator,
-                                                     True)
+                    self.closure_arrays[new_name] = (arrname, desc, evaluator, True)
                     self.array_mapping[id(arr)] = new_name
 
             for cbname, (_, cb, _) in sorted(child.callbacks.items()):

@@ -16,19 +16,16 @@ if __name__ == "__main__":
     # Set up the network
     image_node = tf.placeholder(dtype=tf.float32, shape=(20, 30))
     label_node = tf.placeholder(tf.int32, shape=(20))
-    linear_layer = fullConnectionTf1 = tf.layers.dense(
-        image_node,
-        units=10,
-        activation=None,
-        use_bias=False,
-        kernel_initializer=tf.random_normal_initializer(seed=SEED))
-    softmax = tf.nn.sparse_softmax_cross_entropy_with_logits(
-        labels=label_node, logits=linear_layer)
+    linear_layer = fullConnectionTf1 = tf.layers.dense(image_node,
+                                                       units=10,
+                                                       activation=None,
+                                                       use_bias=False,
+                                                       kernel_initializer=tf.random_normal_initializer(seed=SEED))
+    softmax = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=label_node, logits=linear_layer)
     loss = tf.reduce_mean(softmax, name="loss")
 
     # Set up the optimizer
-    optimizer = tf.train.GradientDescentOptimizer(
-        learning_rate=tf.constant(0.01)).minimize(loss)
+    optimizer = tf.train.GradientDescentOptimizer(learning_rate=tf.constant(0.01)).minimize(loss)
 
     # Randomize inputs
     image = np.random.rand(5, 20, 30).astype(np.float32)

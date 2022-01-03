@@ -4,8 +4,7 @@ import numpy as np
 import dace
 from dace import nodes
 from dace.libraries.blas import Transpose
-from dace.transformation.dataflow import (RedundantArray, RedundantSecondArray,
-                                          RedundantArrayCopying,
+from dace.transformation.dataflow import (RedundantArray, RedundantSecondArray, RedundantArrayCopying,
                                           RedundantArrayCopyingIn)
 
 
@@ -13,9 +12,7 @@ def test_out():
     sdfg = dace.SDFG("test_redundant_copy_out")
     state = sdfg.add_state()
     sdfg.add_array("A", [3, 3], dace.float32)
-    sdfg.add_transient("B", [3, 3],
-                       dace.float32,
-                       storage=dace.StorageType.GPU_Global)
+    sdfg.add_transient("B", [3, 3], dace.float32, storage=dace.StorageType.GPU_Global)
     sdfg.add_transient("C", [3, 3], dace.float32)
     sdfg.add_array("D", [3, 3], dace.float32)
 
@@ -55,31 +52,20 @@ def test_out_success():
     C = state.add_access("C")
 
     state.add_nedge(A, B, dace.Memlet.simple("A", "0, 0:3, 2:5"))
-    state.add_nedge(
-        B, C, dace.Memlet.simple("B", "0:3, 2",
-                                 other_subset_str="1, 2, 0:3, 4"))
+    state.add_nedge(B, C, dace.Memlet.simple("B", "0:3, 2", other_subset_str="1, 2, 0:3, 4"))
 
     sdfg.add_scalar("D", dace.float32, transient=True)
     sdfg.add_array("E", [3, 3, 3], dace.float32)
 
     me, mx = state.add_map("Map", dict(i='0:3', j='0:3', k='0:3'))
-    t = state.add_tasklet("Tasklet", {'__in1', '__in2'}, {'__out'},
-                          "__out = __in1 + __in2")
+    t = state.add_tasklet("Tasklet", {'__in1', '__in2'}, {'__out'}, "__out = __in1 + __in2")
     D = state.add_access("D")
     E = state.add_access("E")
 
-    state.add_memlet_path(B,
-                          me,
-                          t,
-                          memlet=dace.Memlet.simple("B", "i, j"),
-                          dst_conn='__in1')
+    state.add_memlet_path(B, me, t, memlet=dace.Memlet.simple("B", "i, j"), dst_conn='__in1')
     state.add_memlet_path(B, me, D, memlet=dace.Memlet.simple("B", "j, k"))
     state.add_edge(D, None, t, '__in2', dace.Memlet.simple("D", "0"))
-    state.add_memlet_path(t,
-                          mx,
-                          E,
-                          memlet=dace.Memlet.simple("E", "i, j, k"),
-                          src_conn='__out')
+    state.add_memlet_path(t, mx, E, memlet=dace.Memlet.simple("E", "i, j, k"), src_conn='__out')
 
     sdfg.validate()
     sdfg.coarsen_dataflow()
@@ -123,9 +109,7 @@ def test_out_failure_subset_mismatch():
     C = state.add_access("C")
 
     state.add_nedge(A, B, dace.Memlet.simple("A", "0, 0:3, 2:5"))
-    state.add_nedge(
-        B, C, dace.Memlet.simple("B", "0:3, 2",
-                                 other_subset_str="1, 2, 0:3, 4"))
+    state.add_nedge(B, C, dace.Memlet.simple("B", "0:3, 2", other_subset_str="1, 2, 0:3, 4"))
 
     sdfg.validate()
     sdfg.coarsen_dataflow()
@@ -145,13 +129,8 @@ def test_out_failure_no_overlap():
     B = state.add_access("B")
     C = state.add_access("C")
 
-    state.add_nedge(
-        A, B, dace.Memlet.simple("A",
-                                 "0, 0:3, 2:5",
-                                 other_subset_str="5:8, 5:8"))
-    state.add_nedge(
-        B, C, dace.Memlet.simple("B", "0:3, 2",
-                                 other_subset_str="1, 2, 0:3, 4"))
+    state.add_nedge(A, B, dace.Memlet.simple("A", "0, 0:3, 2:5", other_subset_str="5:8, 5:8"))
+    state.add_nedge(B, C, dace.Memlet.simple("B", "0:3, 2", other_subset_str="1, 2, 0:3, 4"))
 
     sdfg.validate()
     sdfg.coarsen_dataflow()
@@ -171,13 +150,8 @@ def test_out_failure_partial_overlap():
     B = state.add_access("B")
     C = state.add_access("C")
 
-    state.add_nedge(
-        A, B, dace.Memlet.simple("A",
-                                 "0, 0:3, 2:5",
-                                 other_subset_str="5:8, 5:8"))
-    state.add_nedge(
-        B, C, dace.Memlet.simple("B", "4:7, 6",
-                                 other_subset_str="1, 2, 0:3, 4"))
+    state.add_nedge(A, B, dace.Memlet.simple("A", "0, 0:3, 2:5", other_subset_str="5:8, 5:8"))
+    state.add_nedge(B, C, dace.Memlet.simple("B", "4:7, 6", other_subset_str="1, 2, 0:3, 4"))
 
     sdfg.validate()
     sdfg.coarsen_dataflow()
@@ -190,9 +164,7 @@ def test_in():
     state = sdfg.add_state()
     sdfg.add_array("A", [3, 3], dace.float32)
     sdfg.add_transient("B", [3, 3], dace.float32)
-    sdfg.add_transient("C", [3, 3],
-                       dace.float32,
-                       storage=dace.StorageType.GPU_Global)
+    sdfg.add_transient("C", [3, 3], dace.float32, storage=dace.StorageType.GPU_Global)
     sdfg.add_array("D", [3, 3], dace.float32)
 
     A = state.add_access("A")
@@ -269,14 +241,12 @@ def test_reverse_copy():
     assert np.allclose(p, pp)
 
 
-C_in, C_out, H, K, N, W = (dace.symbol(s, dace.int64)
-                           for s in ('C_in', 'C_out', 'H', 'K', 'N', 'W'))
+C_in, C_out, H, K, N, W = (dace.symbol(s, dace.int64) for s in ('C_in', 'C_out', 'H', 'K', 'N', 'W'))
 
 
 # Deep learning convolutional operator (stride = 1)
 @dace.program
-def conv2d(input: dace.float32[N, H, W, C_in], weights: dace.float32[K, K, C_in,
-                                                                     C_out]):
+def conv2d(input: dace.float32[N, H, W, C_in], weights: dace.float32[K, K, C_in, C_out]):
     output = np.ndarray((N, H - K + 1, W - K + 1, C_out), dtype=np.float32)
 
     # Loop structure adapted from https://github.com/SkalskiP/ILearnDeepLearning.py/blob/ba0b5ba589d4e656141995e8d1a06d44db6ce58d/01_mysteries_of_neural_networks/06_numpy_convolutional_neural_net/src/layers/convolutional.py#L88
@@ -284,8 +254,7 @@ def conv2d(input: dace.float32[N, H, W, C_in], weights: dace.float32[K, K, C_in,
     for i in range(H - K + 1):
         for j in range(W - K + 1):
             output[:, i, j, :] = np.sum(
-                input[:, i:i + K, j:j + K, :, np.newaxis] *
-                weights[np.newaxis, :, :, :],
+                input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
                 axis=(1, 2, 3),
             )
 
@@ -296,8 +265,7 @@ def test_conv2d():
     sdfg = conv2d.to_sdfg(coarsen=True)
     access_nodes = [
         n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, nodes.AccessNode)
-        and not isinstance(sdfg.arrays[n.data], dace.data.View)
+        if isinstance(n, nodes.AccessNode) and not isinstance(sdfg.arrays[n.data], dace.data.View)
     ]
     assert (len(access_nodes) == 4)
 

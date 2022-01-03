@@ -19,8 +19,7 @@ M.set(30)
 
 
 @dace.program
-def reduction_test_1(A: dace.float64[M, N], B: dace.float64[M, N],
-                     C: dace.float64[N]):
+def reduction_test_1(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
 
     tmp = np.ndarray(shape=[M, N], dtype=np.float64)
     tmp[:] = 2 * A[:] + B[:]
@@ -28,8 +27,7 @@ def reduction_test_1(A: dace.float64[M, N], B: dace.float64[M, N],
 
 
 @dace.program
-def reduction_test_2(A: dace.float64[M, N], B: dace.float64[M, N],
-                     C: dace.float64[N]):
+def reduction_test_2(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
 
     tmp = np.ndarray(shape=[M, N], dtype=np.float64)
     C[:] = dace.reduce(lambda a, b: max(a, b), B, axis=0)
@@ -68,10 +66,7 @@ def test_p1(in_transient, out_transient):
     csdfg(A=A, B=B, C=C1, N=N, M=M)
     del csdfg
 
-    expand_reduce(sdfg,
-                  state,
-                  create_in_transient=in_transient,
-                  create_out_transient=out_transient)
+    expand_reduce(sdfg, state, create_in_transient=in_transient, create_out_transient=out_transient)
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, N=N, M=M)
     del csdfg
@@ -97,10 +92,7 @@ def test_p2(in_transient, out_transient):
     csdfg(A=A, B=B, C=C1, N=N, M=M)
     del csdfg
 
-    expand_reduce(sdfg,
-                  state,
-                  create_in_transient=in_transient,
-                  create_out_transient=out_transient)
+    expand_reduce(sdfg, state, create_in_transient=in_transient, create_out_transient=out_transient)
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, N=N, M=M)
 
