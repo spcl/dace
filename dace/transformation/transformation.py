@@ -57,6 +57,15 @@ class PatternTransformation(TransformationBase):
     _subgraph = DictProperty(key_type=int, value_type=int, category="(Debug)")
     expr_index = Property(dtype=int, category="(Debug)")
 
+    @classmethod
+    def subclasses_recursive(cls) -> Set[Type['PatternTransformation']]:
+        """ Returns all subclasses of this class, including subclasses of subclasses. """
+        subclasses = set(cls.__subclasses__())
+        subsubclasses = set()
+        for sc in subclasses:
+            subsubclasses.update(sc.subclasses_recursive())
+        return subclasses | subsubclasses
+
     def annotates_memlets(self) -> bool:
         """ Indicates whether the transformation annotates the edges it creates
             or modifies with the appropriate memlets. This determines
@@ -68,7 +77,7 @@ class PatternTransformation(TransformationBase):
         """ Returns a list of Graph objects that will be matched in the
             subgraph isomorphism phase. Used as a pre-pass before calling
             `can_be_applied`.
-            :see: Transformation.can_be_applied
+            :see: PatternTransformation.can_be_applied
         """
         raise NotImplementedError
 
@@ -80,12 +89,12 @@ class PatternTransformation(TransformationBase):
                        permissive: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate
             matched subgraph.
-            :param graph: SDFGState object if this Transformation is
+            :param graph: SDFGState object if this transformation is
                           single-state, or SDFG object otherwise.
             :param candidate: A mapping between node IDs returned from
-                              `Transformation.expressions` and the nodes in
+                              `PatternTransformation.expressions` and the nodes in
                               `graph`.
-            :param expr_index: The list index from `Transformation.expressions`
+            :param expr_index: The list index from `PatternTransformation.expressions`
                                that was matched.
             :param sdfg: If `graph` is an SDFGState, its parent SDFG. Otherwise
                          should be equal to `graph`.
@@ -123,15 +132,15 @@ class PatternTransformation(TransformationBase):
                              transformation does not operate on a single state,
                              the value should be -1.
             :param subgraph: A mapping between node IDs returned from
-                             `Transformation.expressions` and the nodes in
+                             `PatternTransformation.expressions` and the nodes in
                              `graph`.
-            :param expr_index: The list index from `Transformation.expressions`
+            :param expr_index: The list index from `PatternTransformation.expressions`
                                that was matched.
             :param override: If True, accepts the subgraph dictionary as-is
                              (mostly for internal use).
             :param options: An optional dictionary of transformation properties
             :raise TypeError: When transformation is not subclass of
-                              Transformation.
+                              PatternTransformation.
             :raise TypeError: When state_id is not instance of int.
             :raise TypeError: When subgraph is not a dict of
                               PatternNode : int.
@@ -194,7 +203,7 @@ class PatternTransformation(TransformationBase):
             propagation.propagate_memlets_sdfg(tsdfg)
         return retval
 
-    def __lt__(self, other: 'Transformation') -> bool:
+    def __lt__(self, other: 'PatternTransformation') -> bool:
         """
         Comparing two transformations by their class name and node IDs
         in match. Used for ordering transformations consistently.
@@ -346,8 +355,9 @@ class PatternTransformation(TransformationBase):
         return {'type': 'Transformation', 'transformation': type(self).__name__, **props}
 
     @staticmethod
-    def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'Transformation':
-        xform = next(ext for ext in Transformation.extensions().keys() if ext.__name__ == json_obj['transformation'])
+    def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'PatternTransformation':
+        xform = next(ext for ext in PatternTransformation.subclasses_recursive()
+                     if ext.__name__ == json_obj['transformation'])
 
         # Recreate subgraph
         expr = xform.expressions()[json_obj['expr_index']]
@@ -474,7 +484,7 @@ class PatternNode(object):
     """
     Static field wrapper of a node or an SDFG state that designates it as part
     of a subgraph pattern. These objects are used in subclasses of
-    `Transformation` to represent the subgraph patterns.
+    ``PatternTransformation`` to represent the subgraph patterns.
 
     Example use:
     ```
@@ -499,7 +509,7 @@ class PatternNode(object):
     def __call__(self, sdfg: SDFG) -> Union[nd.Node, SDFGState]:
         """
         Returns the matched node corresponding to this pattern node in the
-        given SDFG. Requires the match (Transformation class) instance to
+        given SDFG. Requires the match (PatternTransformation class) instance to
         be set.
         :param sdfg: The SDFG on which the transformation was applied.
         :return: The SDFG state or node that corresponds to this pattern node
@@ -631,7 +641,7 @@ class SubgraphTransformation(TransformationBase):
     than matching a specific pattern.
 
     Subclasses need to implement the `can_be_applied` and `apply` operations,
-    as well as registered with the subclass registry. See the `Transformation`
+    as well as registered with the subclass registry. See the ``PatternTransformation``
     class docstring for more information.
     """
 
@@ -783,4 +793,4 @@ class SubgraphTransformation(TransformationBase):
 def coarsening_transformations() -> List[Type[PatternTransformation]]:
     """ :return: List of all registered dataflow coarsening transformations.
     """
-    return list(DataflowCoarseningTransformation.__subclasses__)
+    return list(DataflowCoarseningTransformation.__subclasses__())

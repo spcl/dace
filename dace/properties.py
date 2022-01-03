@@ -538,7 +538,7 @@ class TransformationHistProperty(Property):
     """
     def __init__(self, *args, **kwargs):
         """
-        Create a List property with element type Transformation.
+        Create a List property with element type TransformationBase.
         :param args: Other arguments (inherited from Property).
         :param kwargs: Other keyword arguments (inherited from Property).
         """

@@ -1916,10 +1916,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         # These are imported in order to update the transformation registry
         from dace.transformation import dataflow, interstate
-        from dace.transformation.dataflow import (RedundantReadSlice, RedundantWriteSlice)
+        from dace.transformation.dataflow import RedundantReadSlice, RedundantWriteSlice
         from dace.sdfg import utils as sdutil
         # This is imported here to avoid an import loop
-        from dace.transformation.transformation import (Transformation, coarsening_transformations)
+        from dace.transformation.transformation import coarsening_transformations
 
         # First step is to apply multi-state inline, before any state fusion can
         # occur
@@ -1945,7 +1945,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                               print_report: Optional[bool] = None) -> int:
         """ This function applies a transformation or a sequence thereof
             consecutively. Operates in-place.
-            :param xforms: A Transformation class or a sequence.
+            :param xforms: A PatternTransformation class or a sequence.
             :param options: An optional dictionary (or sequence of dictionaries)
                             to modify transformation parameters.
             :param validate: If True, validates after all transformations.
@@ -1969,11 +1969,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         # Avoiding import loops
         from dace.transformation import optimizer
-        from dace.transformation.transformation import Transformation
+        from dace.transformation.transformation import PatternTransformation
 
         applied_transformations = collections.defaultdict(int)
 
-        if isinstance(xforms, type) and issubclass(xforms, Transformation):
+        if isinstance(xforms, type) and issubclass(xforms, PatternTransformation):
             xforms = [xforms]
 
         if isinstance(options, dict):
@@ -2018,7 +2018,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                        progress: Optional[bool] = None) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
-            :param xforms: A Transformation class or a set thereof.
+            :param xforms: A PatternTransformation class or a set thereof.
             :param options: An optional dictionary (or sequence of dictionaries)
                             to modify transformation parameters.
             :param validate: If True, validates after all transformations.
@@ -2044,13 +2044,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         # Avoiding import loops
         from dace.transformation import optimizer
-        from dace.transformation.transformation import Transformation
+        from dace.transformation.transformation import PatternTransformation
 
         start = time.time()
 
         applied_transformations = collections.defaultdict(int)
 
-        if isinstance(xforms, type) and issubclass(xforms, Transformation):
+        if isinstance(xforms, type) and issubclass(xforms, PatternTransformation):
             xforms = [xforms]
 
         # Ensure transformations are unique

@@ -13,7 +13,7 @@ from dace.config import Config
 from dace.sdfg import propagation
 from dace.sdfg.graph import SubgraphView
 from dace.transformation import pattern_matching
-from dace.transformation.transformation import Transformation
+from dace.transformation.transformation import PatternTransformation
 
 # This import is necessary since it registers all the patterns
 from dace.transformation import dataflow, interstate, subgraph
@@ -37,7 +37,7 @@ class Optimizer(object):
             self.sdfg = copy.deepcopy(sdfg)
 
         # Initialize patterns to search for
-        self.patterns = set(k for k, v in Transformation.extensions().items())
+        self.patterns = PatternTransformation.subclasses_recursive()
         self.applied_patterns = set()
         self.transformation_metadata = None
 
@@ -46,7 +46,7 @@ class Optimizer(object):
         raise NotImplementedError
 
     def set_transformation_metadata(self,
-                                    patterns: List[Type[Transformation]],
+                                    patterns: List[Type[PatternTransformation]],
                                     options: Optional[List[Dict[str, Any]]] = None):
         """ 
         Caches transformation metadata for a certain set of patterns to match.
@@ -58,18 +58,18 @@ class Optimizer(object):
                             states=None,
                             patterns=None,
                             sdfg=None,
-                            options=None) -> Iterator[Transformation]:
+                            options=None) -> Iterator[PatternTransformation]:
         """ Returns all possible transformations for the current SDFG.
             :param permissive: Consider transformations in permissive mode.
             :param states: An iterable of SDFG states to consider when pattern
                            matching. If None, considers all.
             :param patterns: An iterable of transformation classes to consider
                              when matching. If None, considers all registered
-                             transformations in ``Transformation``.
+                             transformations in ``PatternTransformation``.
             :param sdfg: If not None, searches for patterns on given SDFG.
             :param options: An optional iterable of transformation parameters.
-            :return: List of matching ``Transformation`` objects.
-            :see: Transformation.
+            :return: List of matching ``PatternTransformation`` objects.
+            :see: PatternTransformation.
         """
         sdfg = sdfg or self.sdfg
         patterns = patterns or self.patterns

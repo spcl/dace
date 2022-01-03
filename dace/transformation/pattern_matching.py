@@ -92,9 +92,9 @@ def type_or_class_match(node_a, node_b):
 
 
 def _try_to_match_transformation(graph: Union[SDFG, SDFGState], collapsed_graph: nx.DiGraph, subgraph: Dict[int, int],
-                                 sdfg: SDFG, xform: Type[xf.Transformation], expr_idx: int, nxpattern: nx.DiGraph,
-                                 state_id: int, permissive: bool, options: Dict[str,
-                                                                                Any]) -> Optional[xf.Transformation]:
+                                 sdfg: SDFG, xform: Type[xf.PatternTransformation], expr_idx: int,
+                                 nxpattern: nx.DiGraph, state_id: int, permissive: bool,
+                                 options: Dict[str, Any]) -> Optional[xf.PatternTransformation]:
     """ 
     Helper function that tries to instantiate a pattern match into a 
     transformation object. 
@@ -120,16 +120,16 @@ def _try_to_match_transformation(graph: Union[SDFG, SDFGState], collapsed_graph:
     return None
 
 
-TransformationData = List[Tuple[Type[xf.Transformation], int, nx.DiGraph, Callable, Dict[str, Any]]]
+TransformationData = List[Tuple[Type[xf.PatternTransformation], int, nx.DiGraph, Callable, Dict[str, Any]]]
 PatternMetadataType = Tuple[TransformationData, TransformationData]
 
 
-def get_transformation_metadata(patterns: List[Type[xf.Transformation]],
+def get_transformation_metadata(patterns: List[Type[xf.PatternTransformation]],
                                 options: Optional[List[Dict[str, Any]]] = None) -> PatternMetadataType:
     """
     Collect all transformation expressions and metadata once, for use when
     applying transformations repeatedly.
-    :param patterns: Transformation type (or list thereof) to compute.
+    :param patterns: PatternTransformation type (or list thereof) to compute.
     :param options: An optional list of transformation parameter dictionaries.
     :return: A tuple of inter-state and single-state pattern matching
              transformations.
@@ -139,10 +139,9 @@ def get_transformation_metadata(patterns: List[Type[xf.Transformation]],
 
     singlestate_transformations: TransformationData = []
     interstate_transformations: TransformationData = []
-    ext_dict = xf.Transformation.extensions()
     for pattern, opts in zip(patterns, options):
         # Find if the transformation is inter-state
-        is_interstate = not ext_dict[pattern].get('singlestate', False)
+        is_interstate = isinstance(pattern, xf.MultiStateTransformation)
         for i, expr in enumerate(pattern.expressions()):
             # Make a networkx-version of the match subgraph
             nxpattern = collapse_multigraph_to_nx(expr)
@@ -195,7 +194,7 @@ def _edge_matcher(digraph, nxpattern, node_pred, edge_pred):
 
 
 def match_patterns(sdfg: SDFG,
-                   patterns: Union[Type[xf.Transformation], List[Type[xf.Transformation]]],
+                   patterns: Union[Type[xf.PatternTransformation], List[Type[xf.PatternTransformation]]],
                    node_match: Callable[[Any, Any], bool] = type_match,
                    edge_match: Optional[Callable[[Any, Any], bool]] = None,
                    permissive: bool = False,
@@ -205,7 +204,7 @@ def match_patterns(sdfg: SDFG,
     """ Returns a generator of Transformations that match the input SDFG. 
         Ordered by SDFG ID.
         :param sdfg: The SDFG to match in.
-        :param patterns: Transformation type (or list thereof) to match.
+        :param patterns: PatternTransformation type (or list thereof) to match.
         :param node_match: Function for checking whether two nodes match.
         :param edge_match: Function for checking whether two edges match.
         :param permissive: Match transformations in permissive mode.
@@ -214,7 +213,7 @@ def match_patterns(sdfg: SDFG,
                        transformations on this list.
         :param options: An optional iterable of transformation parameter
                         dictionaries.
-        :return: A list of Transformation objects that match.
+        :return: A list of PatternTransformation objects that match.
     """
 
     if isinstance(patterns, type):
